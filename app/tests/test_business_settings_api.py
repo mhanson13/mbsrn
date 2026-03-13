@@ -86,6 +86,21 @@ def test_patch_business_settings_normalizes_email_and_phone(db_session, seeded_b
     assert payload["notification_phone"] == "+13032102035"
 
 
+def test_patch_business_settings_normalizes_global_e164_phone(db_session, seeded_business) -> None:
+    client = _make_client(db_session)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "notification_phone": "+44 20 7123 4567",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["notification_phone"] == "+442071234567"
+
+
 def test_patch_business_settings_invalid_email_rejected(db_session, seeded_business) -> None:
     client = _make_client(db_session)
 

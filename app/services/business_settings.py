@@ -9,6 +9,7 @@ from app.repositories.business_repository import BusinessRepository
 from app.schemas.business import BusinessSettingsUpdateRequest
 
 _EMAIL_REGEX = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
+_E164_REGEX = re.compile(r"^\+[1-9]\d{9,14}$")
 
 
 class BusinessSettingsNotFoundError(ValueError):
@@ -63,7 +64,7 @@ class BusinessSettingsService:
     def _validate_effective_settings(self, effective: dict) -> None:
         sms_enabled = bool(effective["sms_enabled"])
         email_enabled = bool(effective["email_enabled"])
-        sms_channel_usable = sms_enabled and self._is_valid_us_phone(effective["notification_phone"])
+        sms_channel_usable = sms_enabled and self._is_valid_phone_e164(effective["notification_phone"])
         email_channel_usable = email_enabled and self._is_valid_email(effective["notification_email"])
 
         if sms_enabled and not sms_channel_usable:
@@ -93,15 +94,7 @@ class BusinessSettingsService:
             return False
         return bool(_EMAIL_REGEX.match(value.strip()))
 
-    def _is_valid_us_phone(self, value: str | None) -> bool:
-        return self._normalize_us_phone(value) is not None
-
-    def _normalize_us_phone(self, value: str | None) -> str | None:
+    def _is_valid_phone_e164(self, value: str | None) -> bool:
         if not value:
-            return None
-        digits = re.sub(r"\D", "", value)
-        if len(digits) == 11 and digits.startswith("1"):
-            digits = digits[1:]
-        if len(digits) != 10:
-            return None
-        return f"+1{digits}"
+            return False
+        return bool(_E164_REGEX.match(value.strip()))
