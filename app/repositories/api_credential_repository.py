@@ -4,9 +4,10 @@ import hashlib
 import hmac
 
 from sqlalchemy import Select, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.api_credential import APICredential
+from app.models.principal import Principal
 
 
 def hash_bearer_token(token: str, *, pepper: str | None = None) -> str:
@@ -53,6 +54,7 @@ class APICredentialRepository:
     def get_for_business(self, business_id: str, credential_id: str) -> APICredential | None:
         stmt: Select[tuple[APICredential]] = (
             select(APICredential)
+            .options(joinedload(APICredential.principal))
             .where(APICredential.business_id == business_id)
             .where(APICredential.id == credential_id)
         )
@@ -61,6 +63,7 @@ class APICredentialRepository:
     def list_for_business(self, business_id: str) -> list[APICredential]:
         stmt: Select[tuple[APICredential]] = (
             select(APICredential)
+            .options(joinedload(APICredential.principal))
             .where(APICredential.business_id == business_id)
             .order_by(APICredential.created_at.desc(), APICredential.id.desc())
         )
@@ -70,9 +73,15 @@ class APICredentialRepository:
         for token_hash in self._hash_candidates(token):
             stmt: Select[tuple[APICredential]] = (
                 select(APICredential)
+                .join(
+                    Principal,
+                    (Principal.business_id == APICredential.business_id)
+                    & (Principal.id == APICredential.principal_id),
+                )
                 .where(APICredential.token_hash == token_hash)
                 .where(APICredential.is_active.is_(True))
                 .where(APICredential.revoked_at.is_(None))
+                .where(Principal.is_active.is_(True))
             )
             credential = self.session.scalar(stmt)
             if credential is not None:

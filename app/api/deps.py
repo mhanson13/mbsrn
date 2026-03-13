@@ -24,6 +24,7 @@ from app.jobs.lead_reminders import LeadReminderJob
 from app.repositories.api_credential_repository import APICredentialRepository
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.lead_repository import LeadRepository
+from app.repositories.principal_repository import PrincipalRepository
 from app.services.business_settings import BusinessSettingsService
 from app.services.api_credentials import APICredentialService
 from app.services.dedupe import LeadDeduplicationService
@@ -68,6 +69,10 @@ def get_api_credential_repository(
         token_hash_pepper=settings.api_token_hash_pepper,
         allow_legacy_hash_fallback=settings.allow_legacy_token_hash_fallback,
     )
+
+
+def get_principal_repository(db: Session = Depends(get_db)) -> PrincipalRepository:
+    return PrincipalRepository(db)
 
 
 def get_parser_service() -> LeadParserService:
@@ -218,11 +223,13 @@ def get_business_settings_service(
 def get_api_credential_service(
     db: Session = Depends(get_db),
     business_repository: BusinessRepository = Depends(get_business_repository),
+    principal_repository: PrincipalRepository = Depends(get_principal_repository),
     api_credential_repository: APICredentialRepository = Depends(get_api_credential_repository),
 ) -> APICredentialService:
     return APICredentialService(
         session=db,
         business_repository=business_repository,
+        principal_repository=principal_repository,
         api_credential_repository=api_credential_repository,
     )
 

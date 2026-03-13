@@ -78,6 +78,7 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 
 ## API Credential Auth
 - Primary auth path is DB-backed bearer credentials in `api_credentials`.
+- Credentials are tied to persisted principals in `principals` scoped by business.
 - Manage credentials per business:
   - `POST /api/businesses/{business_id}/credentials`
   - `POST /api/businesses/{business_id}/credentials/{credential_id}/disable`

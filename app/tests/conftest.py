@@ -13,6 +13,7 @@ from app.db.base import Base
 from app.models.api_credential import APICredential  # noqa: F401
 from app.models.business import Business
 from app.models.lead import Lead, LeadSource, LeadStatus
+from app.models.principal import Principal  # noqa: F401
 
 
 @pytest.fixture()

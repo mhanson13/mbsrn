@@ -15,7 +15,10 @@ from app.core.time import utc_now
 from app.models.api_credential import APICredential
 from app.models.business import Business
 from app.models.lead import Lead, LeadSource, LeadStatus
+from app.models.principal import Principal
 from app.repositories.api_credential_repository import hash_bearer_token
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 PROD_PEPPER = "prod-pepper"
 
@@ -50,6 +53,25 @@ def _make_client(db_session) -> TestClient:
 
     app.dependency_overrides[get_db] = override_get_db
     return TestClient(app)
+
+
+def _seed_principal(
+    db_session,
+    *,
+    business_id: str,
+    principal_id: str,
+    display_name: str | None = None,
+    is_active: bool = True,
+) -> Principal:
+    principal = Principal(
+        business_id=business_id,
+        id=principal_id,
+        display_name=display_name or principal_id,
+        is_active=is_active,
+    )
+    db_session.add(principal)
+    db_session.flush()
+    return principal
 
 
 def test_db_credential_resolves_principal_and_tenant_scope(
@@ -93,6 +115,7 @@ def test_db_credential_resolves_principal_and_tenant_scope(
     )
     db_session.add_all([lead_a, lead_b])
 
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="user-a")
     db_session.add(
         APICredential(
             id=str(uuid4()),
@@ -126,6 +149,7 @@ def test_inactive_db_credential_is_rejected(
     seeded_business,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="user-a")
     db_session.add(
         APICredential(
             id=str(uuid4()),
@@ -149,6 +173,7 @@ def test_revoked_db_credential_is_rejected(
     seeded_business,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="user-a")
     db_session.add(
         APICredential(
             id=str(uuid4()),
@@ -207,6 +232,7 @@ def test_db_credential_auth_ignores_env_principal_when_compat_is_disabled(
         status=LeadStatus.NEW,
     )
     db_session.add_all([lead_a, lead_b])
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="db-user-a")
     db_session.add(
         APICredential(
             id=str(uuid4()),
@@ -249,6 +275,7 @@ def test_legacy_unpeppered_hash_is_rejected_by_default(
     seeded_business,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="legacy-hash-user")
     db_session.add(
         APICredential(
             id=str(uuid4()),
@@ -272,6 +299,7 @@ def test_legacy_unpeppered_hash_can_be_enabled_temporarily_for_migration(
     seeded_business,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="legacy-hash-user")
     db_session.add(
         APICredential(
             id=str(uuid4()),
@@ -289,3 +317,72 @@ def test_legacy_unpeppered_hash_can_be_enabled_temporarily_for_migration(
     client = _make_client(db_session)
     response = client.get("/api/leads", headers={"Authorization": "Bearer legacy-hash-token"})
     assert response.status_code == 200
+
+
+def test_inactive_principal_blocks_active_credential_auth(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="inactive-principal",
+        is_active=False,
+    )
+    db_session.add(
+        APICredential(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            principal_id="inactive-principal",
+            token_hash=hash_bearer_token("inactive-principal-token", pepper=PROD_PEPPER),
+            is_active=True,
+            revoked_at=None,
+        )
+    )
+    db_session.commit()
+
+    _set_env_defaults(monkeypatch, default_business_id=seeded_business.id)
+    client = _make_client(db_session)
+    response = client.get("/api/leads", headers={"Authorization": "Bearer inactive-principal-token"})
+    assert response.status_code == 401
+
+
+def test_db_rejects_cross_business_principal_credential_mismatch(
+    db_session,
+    seeded_business,
+) -> None:
+    other_business = Business(
+        id=str(uuid4()),
+        name="Other Tenant",
+        notification_phone="+13035550199",
+        notification_email="owner@other.example",
+        sms_enabled=True,
+        email_enabled=True,
+        customer_auto_ack_enabled=True,
+        contractor_alerts_enabled=True,
+        timezone="America/Denver",
+    )
+    db_session.add(other_business)
+    db_session.flush()
+    _seed_principal(
+        db_session,
+        business_id=other_business.id,
+        principal_id="shared-principal",
+    )
+    db_session.commit()
+    db_session.execute(text("PRAGMA foreign_keys=ON"))
+
+    db_session.add(
+        APICredential(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            principal_id="shared-principal",
+            token_hash=hash_bearer_token("mismatch-token", pepper=PROD_PEPPER),
+            is_active=True,
+            revoked_at=None,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        db_session.commit()

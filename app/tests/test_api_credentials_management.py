@@ -15,6 +15,7 @@ from app.core.time import utc_now
 from app.models.api_credential import APICredential
 from app.models.business import Business
 from app.models.lead import Lead, LeadSource, LeadStatus
+from app.models.principal import Principal
 from app.repositories.api_credential_repository import hash_bearer_token
 
 PROD_PEPPER = "prod-pepper"
@@ -116,6 +117,7 @@ def test_create_credential_returns_token_and_authenticates(
     assert token
     assert credential_payload["business_id"] == seeded_business.id
     assert credential_payload["principal_id"] == "owner-user-1"
+    assert credential_payload["principal_display_name"] == "owner-user-1"
     assert credential_payload["is_active"] is True
     assert "token_hash" not in create_payload
     assert "token_hash" not in credential_payload
@@ -123,6 +125,9 @@ def test_create_credential_returns_token_and_authenticates(
     stored_credential = db_session.get(APICredential, credential_payload["id"])
     assert stored_credential is not None
     assert stored_credential.token_hash == hash_bearer_token(token, pepper=PROD_PEPPER)
+    stored_principal = db_session.get(Principal, (seeded_business.id, "owner-user-1"))
+    assert stored_principal is not None
+    assert stored_principal.display_name == "owner-user-1"
 
     leads_client = _make_leads_client(db_session)
     auth_response = leads_client.get(
@@ -269,3 +274,27 @@ def test_cross_tenant_credential_management_is_blocked(
         json={"principal_id": "malicious-user"},
     )
     assert response.status_code == 404
+
+
+def test_create_credential_can_set_principal_display_name(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_production_auth_defaults(monkeypatch, default_business_id=seeded_business.id)
+    management_client = _make_management_client(db_session, business_id=seeded_business.id)
+
+    create_response = management_client.post(
+        f"/api/businesses/{seeded_business.id}/credentials",
+        json={
+            "principal_id": "owner-user-5",
+            "principal_display_name": "Owner Operator",
+        },
+    )
+    assert create_response.status_code == 201
+    payload = create_response.json()
+    assert payload["credential"]["principal_display_name"] == "Owner Operator"
+
+    stored_principal = db_session.get(Principal, (seeded_business.id, "owner-user-5"))
+    assert stored_principal is not None
+    assert stored_principal.display_name == "Owner Operator"

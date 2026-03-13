@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
 from app.models.api_credential import APICredential
+from app.models.principal import Principal
 from app.repositories.api_credential_repository import APICredentialRepository
 from app.repositories.business_repository import BusinessRepository
+from app.repositories.principal_repository import PrincipalRepository
 
 
 class APICredentialNotFoundError(ValueError):
@@ -33,22 +35,35 @@ class APICredentialService:
         *,
         session: Session,
         business_repository: BusinessRepository,
+        principal_repository: PrincipalRepository,
         api_credential_repository: APICredentialRepository,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
+        self.principal_repository = principal_repository
         self.api_credential_repository = api_credential_repository
 
     def list_for_business(self, *, business_id: str) -> list[APICredential]:
         self._ensure_business_exists(business_id)
         return self.api_credential_repository.list_for_business(business_id)
 
-    def create_credential(self, *, business_id: str, principal_id: str) -> IssuedAPICredential:
+    def create_credential(
+        self,
+        *,
+        business_id: str,
+        principal_id: str,
+        principal_display_name: str | None = None,
+    ) -> IssuedAPICredential:
         self._ensure_business_exists(business_id)
         normalized_principal_id = self._normalize_principal_id(principal_id)
-        return self._issue_new_credential(
+        principal = self._ensure_principal(
             business_id=business_id,
             principal_id=normalized_principal_id,
+            principal_display_name=principal_display_name,
+        )
+        return self._issue_new_credential(
+            business_id=business_id,
+            principal_id=principal.id,
         )
 
     def disable_credential(self, *, business_id: str, credential_id: str) -> APICredential:
@@ -73,13 +88,18 @@ class APICredentialService:
         credential = self._get_for_business(business_id=business_id, credential_id=credential_id)
         if credential.revoked_at is not None:
             raise APICredentialValidationError("Credential is already revoked and cannot be rotated.")
+        principal = self.principal_repository.get_for_business(business_id, credential.principal_id)
+        if principal is None:
+            raise APICredentialValidationError("Credential principal is missing.")
+        if not principal.is_active:
+            raise APICredentialValidationError("Credential principal is inactive and cannot be rotated.")
 
         for _ in range(3):
             token = secrets.token_urlsafe(32)
             replacement = APICredential(
                 id=str(uuid4()),
                 business_id=business_id,
-                principal_id=credential.principal_id,
+                principal_id=principal.id,
                 token_hash=self.api_credential_repository.hash_token(token),
                 is_active=True,
                 revoked_at=None,
@@ -90,8 +110,8 @@ class APICredentialService:
                 self.api_credential_repository.save(credential)
                 self.api_credential_repository.create(replacement)
                 self.session.commit()
-                self.session.refresh(replacement)
-                return IssuedAPICredential(credential=replacement, token=token)
+                refreshed = self.api_credential_repository.get_for_business(business_id, replacement.id)
+                return IssuedAPICredential(credential=refreshed or replacement, token=token)
             except IntegrityError:
                 self.session.rollback()
                 credential = self._get_for_business(business_id=business_id, credential_id=credential_id)
@@ -120,8 +140,8 @@ class APICredentialService:
             try:
                 self.api_credential_repository.create(credential)
                 self.session.commit()
-                self.session.refresh(credential)
-                return IssuedAPICredential(credential=credential, token=token)
+                refreshed = self.api_credential_repository.get_for_business(business_id, credential.id)
+                return IssuedAPICredential(credential=refreshed or credential, token=token)
             except IntegrityError:
                 self.session.rollback()
                 continue
@@ -134,6 +154,45 @@ class APICredentialService:
         if len(normalized) > 64:
             raise APICredentialValidationError("principal_id must be 64 characters or fewer.")
         return normalized
+
+    def _normalize_principal_display_name(self, principal_display_name: str | None) -> str | None:
+        if principal_display_name is None:
+            return None
+        normalized = principal_display_name.strip()
+        if not normalized:
+            return None
+        if len(normalized) > 255:
+            raise APICredentialValidationError("principal_display_name must be 255 characters or fewer.")
+        return normalized
+
+    def _ensure_principal(
+        self,
+        *,
+        business_id: str,
+        principal_id: str,
+        principal_display_name: str | None,
+    ) -> Principal:
+        principal = self.principal_repository.get_for_business(business_id, principal_id)
+        normalized_display_name = self._normalize_principal_display_name(principal_display_name)
+
+        if principal is None:
+            principal = Principal(
+                business_id=business_id,
+                id=principal_id,
+                display_name=normalized_display_name or principal_id,
+                is_active=True,
+            )
+            self.principal_repository.create(principal)
+            return principal
+
+        if not principal.is_active:
+            raise APICredentialValidationError("Principal is inactive.")
+
+        if normalized_display_name and principal.display_name != normalized_display_name:
+            principal.display_name = normalized_display_name
+            self.principal_repository.save(principal)
+
+        return principal
 
     def _ensure_business_exists(self, business_id: str) -> None:
         business = self.business_repository.get(business_id)

@@ -11,6 +11,7 @@ class APICredentialRead(BaseModel):
     id: str
     business_id: str
     principal_id: str
+    principal_display_name: str
     is_active: bool
     revoked_at: datetime | None
     created_at: datetime
@@ -19,6 +20,7 @@ class APICredentialRead(BaseModel):
 
 class APICredentialCreateRequest(BaseModel):
     principal_id: str = Field(min_length=1, max_length=64)
+    principal_display_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("principal_id", mode="before")
     @classmethod
@@ -26,6 +28,16 @@ class APICredentialCreateRequest(BaseModel):
         normalized = str(value).strip()
         if not normalized:
             raise ValueError("principal_id is required.")
+        return normalized
+
+    @field_validator("principal_display_name", mode="before")
+    @classmethod
+    def normalize_principal_display_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            return None
         return normalized
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, ForeignKeyConstraint, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import utc_now
@@ -11,6 +11,13 @@ from app.db.base import Base
 
 class APICredential(Base):
     __tablename__ = "api_credentials"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["business_id", "principal_id"],
+            ["principals.business_id", "principals.id"],
+            name="fk_api_credentials_business_id_principal_id_principals",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     business_id: Mapped[str] = mapped_column(
@@ -25,4 +32,11 @@ class APICredential(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
-    business = relationship("Business")
+    business = relationship("Business", overlaps="principal,credentials")
+    principal = relationship("Principal", back_populates="credentials", overlaps="business")
+
+    @property
+    def principal_display_name(self) -> str:
+        if self.principal is None:
+            return self.principal_id
+        return self.principal.display_name

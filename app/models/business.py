@@ -29,3 +29,4 @@ class Business(Base):
 
     events = relationship("LeadEvent", back_populates="business")
     leads = relationship("Lead", back_populates="business")
+    principals = relationship("Principal", back_populates="business")

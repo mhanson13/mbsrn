@@ -107,6 +107,7 @@ def create_api_credential(
         issued = api_credential_service.create_credential(
             business_id=scoped_business_id,
             principal_id=payload.principal_id,
+            principal_display_name=payload.principal_display_name,
         )
     except APICredentialNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

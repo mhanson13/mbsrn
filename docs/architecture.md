@@ -36,6 +36,7 @@ work-boots/
 ## Tenant Context
 - Tenant scope is resolved at the API boundary via server-side request context dependency (`get_tenant_context`).
 - Primary auth path is persisted API credentials: bearer token -> `api_credentials` lookup -> `principal_id` + `business_id`.
+- Credentials now bind to persisted principals in `principals` via `(business_id, principal_id)` ownership constraints.
 - API credentials are operationally managed via business-scoped endpoints:
   - `POST /api/businesses/{business_id}/credentials` (issue new token)
   - `POST /api/businesses/{business_id}/credentials/{credential_id}/disable`
