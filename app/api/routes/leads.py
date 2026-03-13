@@ -49,9 +49,10 @@ def list_leads(
 @router.get("/{lead_id}", response_model=LeadRead)
 def get_lead(
     lead_id: str,
+    business_id: str = Query(...),
     lead_repository: LeadRepository = Depends(get_lead_repository),
 ) -> LeadRead:
-    lead = lead_repository.get(lead_id)
+    lead = lead_repository.get_for_business(business_id, lead_id)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
     return LeadRead.model_validate(lead)
