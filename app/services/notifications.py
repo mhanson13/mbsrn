@@ -13,6 +13,7 @@ from app.repositories.lead_repository import LeadRepository
 
 
 _EMAIL_REGEX = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
+_E164_REGEX = re.compile(r"^\+[1-9]\d{9,14}$")
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class NotificationAttempt:
     recipient: str
     sent: bool
     provider: str | None
+    provider_message_id: str | None
     detail: str
     fallback: bool
 
@@ -57,6 +59,15 @@ class NotificationDispatchService:
         business: Business,
         idempotency_key: str | None = None,
     ) -> NotificationResult:
+        scope_mismatch = self._scope_guard(
+            lead=lead,
+            business=business,
+            kind="customer_ack",
+            idempotency_key=idempotency_key,
+        )
+        if scope_mismatch:
+            return scope_mismatch
+
         if not business.customer_auto_ack_enabled:
             reason = "Customer auto acknowledgment is disabled for this business."
             self._record_event(
@@ -92,6 +103,15 @@ class NotificationDispatchService:
         business: Business,
         idempotency_key: str | None = None,
     ) -> NotificationResult:
+        scope_mismatch = self._scope_guard(
+            lead=lead,
+            business=business,
+            kind="contractor_alert",
+            idempotency_key=idempotency_key,
+        )
+        if scope_mismatch:
+            return scope_mismatch
+
         if not business.contractor_alerts_enabled:
             reason = "Contractor alerts are disabled for this business."
             self._record_event(
@@ -131,6 +151,19 @@ class NotificationDispatchService:
         age_minutes: float,
         idempotency_key: str | None = None,
     ) -> NotificationResult:
+        scope_mismatch = self._scope_guard(
+            lead=lead,
+            business=business,
+            kind="owner_reminder",
+            idempotency_key=idempotency_key,
+            extra_payload={
+                "threshold_minutes": threshold_minutes,
+                "lead_age_minutes": age_minutes,
+            },
+        )
+        if scope_mismatch:
+            return scope_mismatch
+
         if not business.contractor_alerts_enabled:
             reason = "Contractor alerts are disabled for this business."
             self._record_event(
@@ -178,7 +211,11 @@ class NotificationDispatchService:
         idempotency_key: str | None,
         extra_payload: dict | None = None,
     ) -> NotificationResult:
-        payload_base = {"notification_kind": kind, "idempotency_key": idempotency_key}
+        payload_base = {
+            "notification_kind": kind,
+            "idempotency_key": idempotency_key,
+            "business_id": lead.business_id,
+        }
         if extra_payload:
             payload_base.update(extra_payload)
 
@@ -238,6 +275,7 @@ class NotificationDispatchService:
                     dispatch = self.sms_provider.send_sms(to_number=recipient, body=message)
                     provider = dispatch.provider
                     detail = dispatch.status
+                    provider_message_id = dispatch.provider_message_id
                 else:
                     dispatch = self.email_provider.send_email(
                         to_address=recipient,
@@ -246,6 +284,7 @@ class NotificationDispatchService:
                     )
                     provider = dispatch.provider
                     detail = dispatch.status
+                    provider_message_id = dispatch.provider_message_id
             except Exception as exc:  # noqa: BLE001
                 detail = str(exc)
                 attempts.append(
@@ -254,6 +293,7 @@ class NotificationDispatchService:
                         recipient=recipient,
                         sent=False,
                         provider=None,
+                        provider_message_id=None,
                         detail=detail,
                         fallback=is_fallback,
                     )
@@ -277,6 +317,7 @@ class NotificationDispatchService:
                     recipient=recipient,
                     sent=True,
                     provider=provider,
+                    provider_message_id=provider_message_id,
                     detail=detail,
                     fallback=is_fallback,
                 )
@@ -289,6 +330,7 @@ class NotificationDispatchService:
                     "channel": channel,
                     "recipient": recipient,
                     "provider": provider,
+                    "provider_message_id": provider_message_id,
                     "detail": detail,
                     "fallback": is_fallback,
                 },
@@ -302,6 +344,7 @@ class NotificationDispatchService:
                         "channel": channel,
                         "recipient": recipient,
                         "provider": provider,
+                        "provider_message_id": provider_message_id,
                     },
                 )
             return NotificationResult(
@@ -335,18 +378,26 @@ class NotificationDispatchService:
         business: Business,
     ) -> list[tuple[Literal["sms", "email"], str]]:
         channels: list[tuple[Literal["sms", "email"], str]] = []
-        if business.sms_enabled and self._is_valid_phone(lead.phone):
-            channels.append(("sms", self._normalize_phone(str(lead.phone))))
-        if business.email_enabled and self._is_valid_email(lead.email):
-            channels.append(("email", str(lead.email).strip()))
+        if business.sms_enabled:
+            normalized_phone = self._normalize_phone(lead.phone)
+            if normalized_phone:
+                channels.append(("sms", normalized_phone))
+        if business.email_enabled:
+            normalized_email = self._normalize_email(lead.email)
+            if normalized_email:
+                channels.append(("email", normalized_email))
         return channels
 
     def _contractor_channels(self, *, business: Business) -> list[tuple[Literal["sms", "email"], str]]:
         channels: list[tuple[Literal["sms", "email"], str]] = []
-        if business.sms_enabled and self._is_valid_phone(business.notification_phone):
-            channels.append(("sms", self._normalize_phone(str(business.notification_phone))))
-        if business.email_enabled and self._is_valid_email(business.notification_email):
-            channels.append(("email", str(business.notification_email).strip()))
+        if business.sms_enabled:
+            normalized_phone = self._normalize_phone(business.notification_phone)
+            if normalized_phone:
+                channels.append(("sms", normalized_phone))
+        if business.email_enabled:
+            normalized_email = self._normalize_email(business.notification_email)
+            if normalized_email:
+                channels.append(("email", normalized_email))
         return channels
 
     def _already_sent(self, *, lead_id: str, kind: str, idempotency_key: str) -> bool:
@@ -386,25 +437,74 @@ class NotificationDispatchService:
             attempts=[],
         )
 
-    def _is_valid_email(self, value: str | None) -> bool:
+    def _scope_guard(
+        self,
+        *,
+        lead: Lead,
+        business: Business,
+        kind: str,
+        idempotency_key: str | None,
+        extra_payload: dict | None = None,
+    ) -> NotificationResult | None:
+        if lead.business_id == business.id:
+            return None
+
+        reason = "Lead does not belong to the supplied business context."
+        payload = {
+            "notification_kind": kind,
+            "idempotency_key": idempotency_key,
+            "lead_business_id": lead.business_id,
+            "business_id": business.id,
+            "reason": reason,
+        }
+        if extra_payload:
+            payload.update(extra_payload)
+        self._record_event(
+            lead_id=lead.id,
+            event_type=LeadEventType.NOTIFICATION_DISPATCH_SKIPPED,
+            payload=payload,
+        )
+        return self._skipped_result(reason)
+
+    def _normalize_email(self, value: str | None) -> str | None:
         if not value:
-            return False
-        return bool(_EMAIL_REGEX.match(value.strip()))
+            return None
+        normalized = str(value).strip().lower()
+        if not _EMAIL_REGEX.match(normalized):
+            return None
+        return normalized
+
+    def _is_valid_email(self, value: str | None) -> bool:
+        return self._normalize_email(value) is not None
 
     def _is_valid_phone(self, value: str | None) -> bool:
-        if not value:
-            return False
-        # MVP assumption: phone validation currently accepts US/NANP patterns only.
-        digits = re.sub(r"\D", "", value)
-        if len(digits) == 11 and digits.startswith("1"):
-            digits = digits[1:]
-        return len(digits) == 10
+        return self._normalize_phone(value) is not None
 
-    def _normalize_phone(self, value: str) -> str:
-        digits = re.sub(r"\D", "", value)
-        if len(digits) == 11 and digits.startswith("1"):
-            digits = digits[1:]
-        return f"+1{digits}" if len(digits) == 10 else value
+    def _normalize_phone(self, value: str | None) -> str | None:
+        if not value:
+            return None
+        condensed = re.sub(r"[()\s\-.]", "", str(value).strip())
+        if not condensed:
+            return None
+
+        if condensed.startswith("+"):
+            if condensed.count("+") != 1:
+                return None
+            digits = condensed[1:]
+            if not digits.isdigit():
+                return None
+            normalized = f"+{digits}"
+            if not _E164_REGEX.match(normalized):
+                return None
+            return normalized
+
+        if "+" in condensed or not condensed.isdigit():
+            return None
+        if len(condensed) == 10:
+            return f"+1{condensed}"
+        if len(condensed) == 11 and condensed.startswith("1"):
+            return f"+{condensed}"
+        return None
 
 
 # Backward-compatible alias used by existing imports.

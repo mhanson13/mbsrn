@@ -4,6 +4,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from app.core.time import utc_now
+from app.models.business import Business
 from app.models.lead import Lead, LeadSource, LeadStatus
 from app.models.lead_event import LeadEvent
 from app.repositories.lead_repository import LeadRepository
@@ -243,3 +244,85 @@ def test_no_valid_targets_is_skipped_not_failed(db_session, seeded_business) -> 
     assert "notification_dispatch_requested" in event_types
     assert "notification_dispatch_skipped" in event_types
     assert "notification_dispatch_failed" not in event_types
+
+
+def test_contractor_sms_supports_global_e164_number(db_session, seeded_business) -> None:
+    seeded_business.sms_enabled = True
+    seeded_business.email_enabled = False
+    seeded_business.contractor_alerts_enabled = True
+    seeded_business.notification_phone = "+44 20 7123 4567"
+    seeded_business.notification_email = None
+    db_session.commit()
+
+    lead = _seed_lead(db_session, seeded_business.id, email="lead@example.com", phone="+13035550000")
+    sms = RecordingSMSProvider()
+    email = RecordingEmailProvider()
+    service = NotificationDispatchService(
+        lead_repository=LeadRepository(db_session),
+        email_provider=email,
+        sms_provider=sms,
+    )
+
+    result = service.send_owner_notification(lead=lead, business=seeded_business)
+
+    assert result.sent is True
+    assert result.channel == "sms"
+    assert len(sms.calls) == 1
+    assert sms.calls[0][0] == "+442071234567"
+    assert len(email.calls) == 0
+
+
+def test_scope_mismatch_skips_dispatch_and_records_event(db_session, seeded_business) -> None:
+    seeded_business.sms_enabled = True
+    seeded_business.email_enabled = True
+    seeded_business.contractor_alerts_enabled = True
+    seeded_business.notification_phone = "+13035550122"
+    seeded_business.notification_email = "owner@tmfire.example"
+    db_session.commit()
+
+    lead = _seed_lead(db_session, seeded_business.id, email=None, phone="+13035550111")
+    other_business = Business(
+        id=str(uuid4()),
+        name="Other Contractor",
+        notification_phone="+13035550999",
+        notification_email="other@example.com",
+        sms_enabled=True,
+        email_enabled=True,
+        customer_auto_ack_enabled=True,
+        contractor_alerts_enabled=True,
+        timezone="America/Denver",
+    )
+    sms = RecordingSMSProvider()
+    email = RecordingEmailProvider()
+    service = NotificationDispatchService(
+        lead_repository=LeadRepository(db_session),
+        email_provider=email,
+        sms_provider=sms,
+    )
+
+    result = service.send_owner_notification(
+        lead=lead,
+        business=other_business,
+        idempotency_key="scope-mismatch",
+    )
+
+    assert result.skipped is True
+    assert result.sent is False
+    assert result.attempted is False
+    assert len(sms.calls) == 0
+    assert len(email.calls) == 0
+
+    skip_events = (
+        db_session.query(LeadEvent)
+        .filter(
+            LeadEvent.lead_id == lead.id,
+            LeadEvent.event_type == "notification_dispatch_skipped",
+        )
+        .all()
+    )
+    assert any(
+        event.payload_json.get("reason") == "Lead does not belong to the supplied business context."
+        and event.payload_json.get("lead_business_id") == lead.business_id
+        and event.payload_json.get("business_id") == other_business.id
+        for event in skip_events
+    )
