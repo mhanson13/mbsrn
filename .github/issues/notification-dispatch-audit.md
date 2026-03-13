@@ -1,3 +1,5 @@
+# Notification Dispatch Audit
+
 ## Summary
 
 Review and harden the notification dispatch layer so contractor alerts, customer acknowledgments, and reminder notifications behave predictably in pilot environments.

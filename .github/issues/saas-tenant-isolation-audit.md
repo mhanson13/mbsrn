@@ -1,3 +1,5 @@
+# SaaS Tenant Isolation Audit
+
 ## Summary
 
 Audit the current backend for multi-tenant SaaS readiness by verifying that all lead, reminder, notification, and business settings flows are correctly scoped by `business_id`.

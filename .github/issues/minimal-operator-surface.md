@@ -1,3 +1,5 @@
+# Minimal Operator Surface
+
 ## Summary
 
 Define and build the smallest useful operator/admin surface needed to run the pilot without relying entirely on raw API calls.

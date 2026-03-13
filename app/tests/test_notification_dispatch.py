@@ -326,3 +326,55 @@ def test_scope_mismatch_skips_dispatch_and_records_event(db_session, seeded_busi
         and event.payload_json.get("business_id") == other_business.id
         for event in skip_events
     )
+
+
+def test_duplicate_idempotency_key_suppresses_second_send(db_session, seeded_business) -> None:
+    seeded_business.sms_enabled = True
+    seeded_business.email_enabled = False
+    seeded_business.contractor_alerts_enabled = True
+    seeded_business.notification_phone = "+13035550122"
+    seeded_business.notification_email = None
+    db_session.commit()
+
+    lead = _seed_lead(db_session, seeded_business.id, email="lead@example.com", phone="+13035550111")
+    sms = RecordingSMSProvider()
+    email = RecordingEmailProvider()
+    service = NotificationDispatchService(
+        lead_repository=LeadRepository(db_session),
+        email_provider=email,
+        sms_provider=sms,
+    )
+
+    first = service.send_owner_notification(
+        lead=lead,
+        business=seeded_business,
+        idempotency_key="owner-alert:dedupe-1",
+    )
+    second = service.send_owner_notification(
+        lead=lead,
+        business=seeded_business,
+        idempotency_key="owner-alert:dedupe-1",
+    )
+
+    assert first.sent is True
+    assert first.skipped is False
+    assert second.sent is False
+    assert second.skipped is True
+    assert second.detail == "Dispatch skipped due to duplicate idempotency key."
+    assert len(sms.calls) == 1
+    assert len(email.calls) == 0
+
+    skip_events = (
+        db_session.query(LeadEvent)
+        .filter(
+            LeadEvent.lead_id == lead.id,
+            LeadEvent.event_type == "notification_dispatch_skipped",
+        )
+        .all()
+    )
+    assert any(
+        event.payload_json.get("notification_kind") == "contractor_alert"
+        and event.payload_json.get("idempotency_key") == "owner-alert:dedupe-1"
+        and event.payload_json.get("reason") == "Duplicate idempotency key detected."
+        for event in skip_events
+    )

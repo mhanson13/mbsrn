@@ -1,3 +1,5 @@
+# Reminder Engine Reliability
+
 ## Summary
 
 Harden the reminder engine so stale lead reminders are reliable, repeat-safe, and operationally useful.

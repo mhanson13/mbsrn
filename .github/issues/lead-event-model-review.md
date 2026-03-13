@@ -1,3 +1,5 @@
+# Lead Event Model Review
+
 ## Summary
 
 Review the `lead_events` model and usage patterns to confirm it remains a clean audit trail as the system grows.

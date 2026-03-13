@@ -1,3 +1,5 @@
+# Business Settings Hardening
+
 ## Summary
 
 Harden the business settings control plane so pilot customers can configure notifications safely and predictably.

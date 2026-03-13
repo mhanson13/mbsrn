@@ -1,11 +1,30 @@
-# GitHub Issue Automation Setup
+# GitHub Issue Automation Setup v2
 
-This folder contains a simple issue automation setup for the `work-boots` repository.
+This package contains a corrected issue automation setup for `work-boots`.
 
-## What is included
+## Fixes in v2
 
-- `.github/issues/*.md` issue templates/content files
-- `scripts/create_issues.ps1` PowerShell script to create GitHub issues with `gh`
+- Adds `scripts/create_labels.ps1` so labels exist before issue creation
+- Uses first `# Title` heading in each issue file for the issue title
+- Falls back to filename if no `# Title` heading exists
+- Fails early if required labels are missing
+
+## Included files
+
+- `.github/issues/*.md`
+- `scripts/create_labels.ps1`
+- `scripts/create_issues.ps1`
+
+## Suggested usage
+
+From the repo root:
+
+```powershell
+.\scripts\create_labels.ps1 -DryRun
+.\scripts\create_labels.ps1
+.\scripts\create_issues.ps1 -DryRun
+.\scripts\create_issues.ps1
+```
 
 ## Prerequisites
 
@@ -14,32 +33,3 @@ Install GitHub CLI and authenticate locally:
 ```powershell
 gh auth login
 ```
-
-## Usage
-
-From the repository root:
-
-```powershell
-.\scripts\create_issues.ps1
-```
-
-Dry run:
-
-```powershell
-.\scripts\create_issues.ps1 -DryRun
-```
-
-Use a different repo:
-
-```powershell
-.\scripts\create_issues.ps1 -Repo "owner/repo"
-```
-
-## Suggested placement in your repo
-
-Copy these into your actual repo:
-
-- `.github/issues/`
-- `scripts/create_issues.ps1`
-
-Then run the script from the repo root after authenticating with GitHub CLI.
