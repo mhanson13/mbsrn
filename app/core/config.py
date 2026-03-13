@@ -19,9 +19,12 @@ class Settings:
     environment: str
     database_url: str
     default_business_id: str
+    allow_auth_compat_fallback: bool
     api_principal_credentials: tuple[PrincipalCredential, ...]
     api_auth_token: str | None
     api_auth_business_id: str | None
+    api_token_hash_pepper: str | None
+    allow_legacy_token_hash_fallback: bool
     sms_provider: str
     email_provider: str
     twilio_account_sid: str | None
@@ -88,17 +91,24 @@ def _parse_principal_credentials(raw: str | None) -> tuple[PrincipalCredential, 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    environment = os.getenv("ENVIRONMENT", "development")
+    env_normalized = environment.strip().lower()
+    default_allow_compat = env_normalized in {"development", "dev", "test"}
+
     return Settings(
         app_name=os.getenv("APP_NAME", "Work Boots Console Lead Intake"),
-        environment=os.getenv("ENVIRONMENT", "development"),
+        environment=environment,
         database_url=os.getenv(
             "DATABASE_URL",
             "postgresql+psycopg://postgres:postgres@localhost:5432/work_boots_console",
         ),
         default_business_id=os.getenv("DEFAULT_BUSINESS_ID", "11111111-1111-1111-1111-111111111111"),
+        allow_auth_compat_fallback=_env_bool("ALLOW_AUTH_COMPAT_FALLBACK", default_allow_compat),
         api_principal_credentials=_parse_principal_credentials(os.getenv("API_AUTH_PRINCIPALS_JSON")),
         api_auth_token=os.getenv("API_AUTH_TOKEN"),
         api_auth_business_id=os.getenv("API_AUTH_BUSINESS_ID"),
+        api_token_hash_pepper=os.getenv("API_TOKEN_HASH_PEPPER"),
+        allow_legacy_token_hash_fallback=_env_bool("ALLOW_LEGACY_TOKEN_HASH_FALLBACK", True),
         sms_provider=os.getenv("SMS_PROVIDER", "mock").strip().lower(),
         email_provider=os.getenv("EMAIL_PROVIDER", "mock").strip().lower(),
         twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),

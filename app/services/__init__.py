@@ -1,3 +1,9 @@
+from app.services.api_credentials import (
+    APICredentialNotFoundError,
+    APICredentialService,
+    APICredentialValidationError,
+    IssuedAPICredential,
+)
 from app.services.business_settings import BusinessSettingsService
 from app.services.dedupe import LeadDeduplicationService
 from app.services.email_intake import EmailIntakeService
@@ -11,6 +17,9 @@ from app.services.summary import LeadSummaryService
 from app.services.timeline import LeadTimelineService
 
 __all__ = [
+    "APICredentialNotFoundError",
+    "APICredentialService",
+    "APICredentialValidationError",
     "BusinessSettingsService",
     "EmailIntakeService",
     "InvalidStatusTransitionError",
@@ -24,4 +33,5 @@ __all__ = [
     "ResponseMetricsService",
     "LeadSummaryService",
     "NotificationService",
+    "IssuedAPICredential",
 ]

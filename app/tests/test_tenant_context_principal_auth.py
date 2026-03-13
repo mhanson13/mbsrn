@@ -29,6 +29,7 @@ def _set_auth_env(
     principals: list[dict[str, str]] | None = None,
     legacy_token: str | None = None,
     legacy_business_id: str | None = None,
+    allow_auth_compat_fallback: bool | None = None,
     environment: str = "test",
     default_business_id: str,
 ) -> None:
@@ -46,6 +47,11 @@ def _set_auth_env(
         monkeypatch.delenv("API_AUTH_BUSINESS_ID", raising=False)
     else:
         monkeypatch.setenv("API_AUTH_BUSINESS_ID", legacy_business_id)
+
+    if allow_auth_compat_fallback is None:
+        monkeypatch.delenv("ALLOW_AUTH_COMPAT_FALLBACK", raising=False)
+    else:
+        monkeypatch.setenv("ALLOW_AUTH_COMPAT_FALLBACK", "true" if allow_auth_compat_fallback else "false")
 
     monkeypatch.setenv("ENVIRONMENT", environment)
     monkeypatch.setenv("DEFAULT_BUSINESS_ID", default_business_id)
@@ -102,6 +108,7 @@ def test_principal_token_binds_tenant_scope_not_global_default(
                 "business_id": seeded_business.id,
             }
         ],
+        allow_auth_compat_fallback=True,
         environment="production",
         default_business_id=other_business.id,
     )
@@ -145,6 +152,7 @@ def test_principal_registry_requires_valid_bearer_token(
                 "business_id": seeded_business.id,
             }
         ],
+        allow_auth_compat_fallback=True,
         environment="production",
         default_business_id=seeded_business.id,
     )
@@ -191,6 +199,7 @@ def test_legacy_shared_token_compatibility_fallback_still_works(
         principals=None,
         legacy_token="legacy-shared-token",
         legacy_business_id=seeded_business.id,
+        allow_auth_compat_fallback=True,
         environment="production",
         default_business_id=str(uuid4()),
     )
@@ -242,4 +251,55 @@ def test_no_auth_config_in_production_is_rejected(
     client = TestClient(app)
 
     response = client.get("/api/leads")
+    assert response.status_code == 401
+
+
+def test_env_principal_fallback_is_disabled_in_production_by_default(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lead = Lead(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        source=LeadSource.MANUAL,
+        source_ref=None,
+        submitted_at=utc_now() - timedelta(minutes=5),
+        customer_name="Tenant A Lead",
+        phone="3035550198",
+        status=LeadStatus.NEW,
+    )
+    db_session.add(lead)
+    db_session.commit()
+
+    _set_auth_env(
+        monkeypatch,
+        principals=[
+            {
+                "token": "tenant-a-token",
+                "principal_id": "user-a",
+                "business_id": seeded_business.id,
+            }
+        ],
+        allow_auth_compat_fallback=None,
+        environment="production",
+        default_business_id=seeded_business.id,
+    )
+
+    app = FastAPI()
+    app.include_router(leads_router)
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+
+    response = client.get(
+        f"/api/leads/{lead.id}",
+        headers={"Authorization": "Bearer tenant-a-token"},
+    )
     assert response.status_code == 401

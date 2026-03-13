@@ -76,4 +76,14 @@ Set provider selection in `.env`:
 Default local mode is `mock`.  
 When using `twilio` or `smtp`, configure the corresponding credentials in `.env`.
 
+## API Credential Auth
+- Primary auth path is DB-backed bearer credentials in `api_credentials`.
+- Manage credentials per business:
+  - `POST /api/businesses/{business_id}/credentials`
+  - `POST /api/businesses/{business_id}/credentials/{credential_id}/disable`
+  - `POST /api/businesses/{business_id}/credentials/{credential_id}/revoke`
+  - `POST /api/businesses/{business_id}/credentials/{credential_id}/rotate`
+- Issued token plaintext is shown once at creation/rotation; only `token_hash` is persisted.
+- Env compatibility auth fallbacks are gated by `ALLOW_AUTH_COMPAT_FALLBACK`.
+
 Archived legacy scaffolding and deprecated files live under [`_archive/`](_archive).

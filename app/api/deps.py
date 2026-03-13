@@ -24,6 +24,7 @@ from app.repositories.api_credential_repository import APICredentialRepository
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.lead_repository import LeadRepository
 from app.services.business_settings import BusinessSettingsService
+from app.services.api_credentials import APICredentialService
 from app.services.dedupe import LeadDeduplicationService
 from app.services.email_intake import EmailIntakeService
 from app.services.lead_intake import LeadIntakeService
@@ -58,7 +59,12 @@ def get_lead_repository(db: Session = Depends(get_db)) -> LeadRepository:
 def get_api_credential_repository(
     db: Session = Depends(get_db),
 ) -> APICredentialRepository:
-    return APICredentialRepository(db)
+    settings = get_settings()
+    return APICredentialRepository(
+        db,
+        token_hash_pepper=settings.api_token_hash_pepper,
+        allow_legacy_hash_fallback=settings.allow_legacy_token_hash_fallback,
+    )
 
 
 def get_parser_service() -> LeadParserService:
@@ -206,6 +212,18 @@ def get_business_settings_service(
     return BusinessSettingsService(session=db, business_repository=business_repository)
 
 
+def get_api_credential_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    api_credential_repository: APICredentialRepository = Depends(get_api_credential_repository),
+) -> APICredentialService:
+    return APICredentialService(
+        session=db,
+        business_repository=business_repository,
+        api_credential_repository=api_credential_repository,
+    )
+
+
 def _parse_bearer_token(authorization: str | None) -> str | None:
     if not authorization:
         return None
@@ -247,23 +265,27 @@ def get_tenant_context(
                 auth_source="db_api_credential",
             )
 
-        # Compatibility fallback for env-configured principal credentials.
-        if settings.api_principal_credentials:
-            credential = _match_principal_credential(token=token, credentials=settings.api_principal_credentials)
-            if credential is not None:
-                return TenantContext(
-                    business_id=credential.business_id,
-                    principal_id=credential.principal_id,
-                    auth_source="env_principal_token",
+        if settings.allow_auth_compat_fallback:
+            # Compatibility fallback for env-configured principal credentials.
+            if settings.api_principal_credentials:
+                credential = _match_principal_credential(
+                    token=token,
+                    credentials=settings.api_principal_credentials,
                 )
+                if credential is not None:
+                    return TenantContext(
+                        business_id=credential.business_id,
+                        principal_id=credential.principal_id,
+                        auth_source="env_principal_token",
+                    )
 
-        # Compatibility fallback for earlier shared-token deployments.
-        if settings.api_auth_token and secrets.compare_digest(token, settings.api_auth_token):
-            return TenantContext(
-                business_id=settings.api_auth_business_id or settings.default_business_id,
-                principal_id="legacy_api_token",
-                auth_source="legacy_api_token",
-            )
+            # Compatibility fallback for earlier shared-token deployments.
+            if settings.api_auth_token and secrets.compare_digest(token, settings.api_auth_token):
+                return TenantContext(
+                    business_id=settings.api_auth_business_id or settings.default_business_id,
+                    principal_id="legacy_api_token",
+                    auth_source="legacy_api_token",
+                )
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

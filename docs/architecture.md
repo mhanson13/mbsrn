@@ -36,10 +36,16 @@ work-boots/
 ## Tenant Context
 - Tenant scope is resolved at the API boundary via server-side request context dependency (`get_tenant_context`).
 - Primary auth path is persisted API credentials: bearer token -> `api_credentials` lookup -> `principal_id` + `business_id`.
+- API credentials are operationally managed via business-scoped endpoints:
+  - `POST /api/businesses/{business_id}/credentials` (issue new token)
+  - `POST /api/businesses/{business_id}/credentials/{credential_id}/disable`
+  - `POST /api/businesses/{business_id}/credentials/{credential_id}/revoke`
+  - `POST /api/businesses/{business_id}/credentials/{credential_id}/rotate`
+- Credential tokens are only returned at issue/rotate time; database stores `token_hash` only.
 - Tenant-sensitive routes pass only auth-derived tenant `business_id` into services/repositories.
 - Client-supplied `business_id` fields/query params are compatibility-only and are not trusted; mismatches are rejected.
-- Env principal-token mode (`API_AUTH_PRINCIPALS_JSON`) remains as temporary compatibility fallback and is lower priority than DB credential lookup.
-- Legacy shared-token mode (`API_AUTH_TOKEN` + `API_AUTH_BUSINESS_ID`) remains as temporary compatibility fallback.
+- Optional keyed hashing is supported via `API_TOKEN_HASH_PEPPER`; legacy SHA-256 hashes can remain readable during rollout with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true`.
+- Env principal-token mode (`API_AUTH_PRINCIPALS_JSON`) and legacy shared-token mode are compatibility fallbacks gated by `ALLOW_AUTH_COMPAT_FALLBACK` (off by default in production).
 - Dev/test-only fallback uses `DEFAULT_BUSINESS_ID` only when no auth config is present.
 - Inactive credentials (`is_active=false`) and revoked credentials (`revoked_at` set) are rejected.
 - Service/repository/database tenant checks remain in place as defense in depth.

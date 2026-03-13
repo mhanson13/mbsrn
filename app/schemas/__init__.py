@@ -1,3 +1,10 @@
+from app.schemas.api_credential import (
+    APICredentialCreateRequest,
+    APICredentialIssueResponse,
+    APICredentialListResponse,
+    APICredentialRead,
+    APICredentialRotateResponse,
+)
 from app.schemas.business import BusinessSettingsRead, BusinessSettingsUpdateRequest
 from app.schemas.lead import (
     EmailIntakeRequest,
@@ -19,6 +26,11 @@ from app.schemas.lead import (
 )
 
 __all__ = [
+    "APICredentialCreateRequest",
+    "APICredentialIssueResponse",
+    "APICredentialListResponse",
+    "APICredentialRead",
+    "APICredentialRotateResponse",
     "EmailIntakeRequest",
     "EmailIntakeResponse",
     "EmailLeadFields",
