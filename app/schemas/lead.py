@@ -11,7 +11,8 @@ from app.models.lead_event import ActorType
 
 
 class ManualIntakeRequest(BaseModel):
-    business_id: str
+    # Deprecated for tenant-scoped routes; kept optional for backward compatibility.
+    business_id: str | None = None
     submitted_at: datetime
     customer_name: str | None = None
     phone: str | None = None
@@ -32,7 +33,8 @@ class EmailLeadFields(BaseModel):
 
 
 class EmailIntakeRequest(BaseModel):
-    business_id: str
+    # Deprecated for tenant-scoped routes; kept optional for backward compatibility.
+    business_id: str | None = None
     source_ref: str | None = None
     received_at: datetime
     from_address: str | None = None
@@ -135,7 +137,8 @@ class LeadTimelineResponse(BaseModel):
 
 
 class ReminderRunRequest(BaseModel):
-    business_id: str
+    # Deprecated for tenant-scoped routes; kept optional for backward compatibility.
+    business_id: str | None = None
 
 
 class ReminderRunActionRead(BaseModel):

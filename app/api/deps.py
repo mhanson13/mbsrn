@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from dataclasses import dataclass
+import secrets
 
-from fastapi import Depends
+from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -31,6 +33,12 @@ from app.services.reminder_engine import ReminderEngineService
 from app.services.response_metrics import ResponseMetricsService
 from app.services.summary import LeadSummaryService
 from app.services.timeline import LeadTimelineService
+
+
+@dataclass(frozen=True)
+class TenantContext:
+    business_id: str
+    auth_source: str
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -188,3 +196,51 @@ def get_business_settings_service(
     business_repository: BusinessRepository = Depends(get_business_repository),
 ) -> BusinessSettingsService:
     return BusinessSettingsService(session=db, business_repository=business_repository)
+
+
+def _parse_bearer_token(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Authorization header format. Expected: Bearer <token>.",
+        )
+    return token.strip()
+
+
+def get_tenant_context(authorization: str | None = Header(default=None)) -> TenantContext:
+    """Resolve tenant scope from server-side auth context (not request business_id fields)."""
+    settings = get_settings()
+
+    # Incremental auth mode: when API_AUTH_TOKEN is configured, require Bearer auth
+    # and derive tenant scope from server-side settings.
+    if settings.api_auth_token:
+        token = _parse_bearer_token(authorization)
+        if token is None or not secrets.compare_digest(token, settings.api_auth_token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unauthorized.",
+            )
+        return TenantContext(
+            business_id=settings.api_auth_business_id or settings.default_business_id,
+            auth_source="api_token",
+        )
+
+    # Local/dev fallback: single-tenant scope from server config only.
+    return TenantContext(
+        business_id=settings.default_business_id,
+        auth_source="default_business",
+    )
+
+
+def resolve_tenant_business_id(
+    *,
+    tenant_context: TenantContext,
+    requested_business_id: str | None,
+) -> str:
+    if requested_business_id and requested_business_id != tenant_context.business_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
+    return tenant_context.business_id

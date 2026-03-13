@@ -26,6 +26,9 @@ class LeadIntakeService:
         self.lead_repository = lead_repository
 
     def create_manual_lead(self, payload: ManualIntakeRequest) -> Lead:
+        if not payload.business_id:
+            raise ValueError("Business not found")
+
         business = self.business_repository.get(payload.business_id)
         if not business:
             raise ValueError("Business not found")

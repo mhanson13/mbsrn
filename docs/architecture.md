@@ -33,6 +33,12 @@ work-boots/
 4. Reminder job scans stale `new` leads and triggers mock notifications.
 5. Summary endpoints expose pipeline and response metrics.
 
+## Tenant Context
+- Tenant scope is resolved at the API boundary via server-side request context dependency (`get_tenant_context`).
+- Tenant-sensitive routes must pass only auth-derived tenant `business_id` into services/repositories.
+- Client-supplied `business_id` fields/query params are compatibility-only and are not trusted; mismatches are rejected.
+- Service/repository/database tenant checks remain in place as defense in depth.
+
 ## Design Principles
 - One deployable backend process.
 - Explicit service/repository boundaries.

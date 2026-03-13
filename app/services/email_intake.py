@@ -45,6 +45,9 @@ class EmailIntakeService:
         self.notification_service = notification_service
 
     def ingest(self, payload: EmailIntakeRequest) -> EmailIntakeResult:
+        if not payload.business_id:
+            raise ValueError("Business not found")
+
         business = self.business_repository.get(payload.business_id)
         if not business:
             raise ValueError("Business not found")

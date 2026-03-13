@@ -11,6 +11,8 @@ class Settings:
     environment: str
     database_url: str
     default_business_id: str
+    api_auth_token: str | None
+    api_auth_business_id: str | None
     sms_provider: str
     email_provider: str
     twilio_account_sid: str | None
@@ -42,6 +44,8 @@ def get_settings() -> Settings:
             "postgresql+psycopg://postgres:postgres@localhost:5432/work_boots_console",
         ),
         default_business_id=os.getenv("DEFAULT_BUSINESS_ID", "11111111-1111-1111-1111-111111111111"),
+        api_auth_token=os.getenv("API_AUTH_TOKEN"),
+        api_auth_business_id=os.getenv("API_AUTH_BUSINESS_ID"),
         sms_provider=os.getenv("SMS_PROVIDER", "mock").strip().lower(),
         email_provider=os.getenv("EMAIL_PROVIDER", "mock").strip().lower(),
         twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
