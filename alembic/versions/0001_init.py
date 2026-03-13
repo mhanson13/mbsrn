@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 
 revision = "0001_init"
@@ -18,9 +19,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    lead_source = sa.Enum("godaddy_email", "manual", "phone", "other", name="leadsource")
-    lead_status = sa.Enum("new", "contacted", "estimate_scheduled", "won", "lost", name="leadstatus")
-    actor_type = sa.Enum("system", "owner", "admin", "customer", name="actortype")
+    lead_source = postgresql.ENUM(
+        "godaddy_email", "manual", "phone", "other", name="leadsource", create_type=False
+    )
+    lead_status = postgresql.ENUM(
+        "new", "contacted", "estimate_scheduled", "won", "lost", name="leadstatus", create_type=False
+    )
+    actor_type = postgresql.ENUM(
+        "system", "owner", "admin", "customer", name="actortype", create_type=False
+    )
 
     lead_source.create(op.get_bind(), checkfirst=True)
     lead_status.create(op.get_bind(), checkfirst=True)

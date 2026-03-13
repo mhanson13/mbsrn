@@ -1,6 +1,6 @@
 """enforce tenant ownership on lead_events via composite foreign key
 
-Revision ID: 0004_lead_events_composite_tenant_fk
+Revision ID: 0004_lead_events_tenant_fk
 Revises: 0003_lead_events_business_id
 Create Date: 2026-03-13
 """
@@ -12,7 +12,7 @@ from alembic import op
 from sqlalchemy.engine.reflection import Inspector
 
 
-revision = "0004_lead_events_composite_tenant_fk"
+revision = "0004_lead_events_tenant_fk"
 down_revision = "0003_lead_events_business_id"
 branch_labels = None
 depends_on = None
