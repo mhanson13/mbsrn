@@ -87,6 +87,8 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `POST /api/businesses/{business_id}/credentials/{credential_id}/rotate`
 - Credential-management endpoints require an `admin` principal role.
 - Issued token plaintext is shown once at creation/rotation; only `token_hash` is persisted.
+- Credentials store non-secret metadata for operations: `label`, `last_used_at`, `rotated_from_credential_id`.
+- Successful DB credential authentication updates `last_used_at`.
 - `API_TOKEN_HASH_PEPPER` is required in production.
 - Legacy unpeppered hash verification is off by default and can be enabled temporarily with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true`.
 - Env compatibility auth (`API_AUTH_PRINCIPALS_JSON`) is non-production only and gated by `ALLOW_AUTH_COMPAT_FALLBACK` (off by default).

@@ -44,6 +44,8 @@ work-boots/
   - `POST /api/businesses/{business_id}/credentials/{credential_id}/revoke`
   - `POST /api/businesses/{business_id}/credentials/{credential_id}/rotate`
 - Credential tokens are only returned at issue/rotate time; database stores `token_hash` only.
+- Credential metadata includes `label`, `last_used_at`, and `rotated_from_credential_id` for operational auditability.
+- Successful DB credential authentication updates `last_used_at`.
 - Tenant-sensitive routes pass only auth-derived tenant `business_id` into services/repositories.
 - Client-supplied `business_id` fields/query params are compatibility-only and are not trusted; mismatches are rejected.
 - `API_TOKEN_HASH_PEPPER` is required in production so token verification uses keyed hashing.

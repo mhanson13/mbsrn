@@ -140,6 +140,9 @@ def test_create_credential_returns_token_and_authenticates(
     assert credential_payload["business_id"] == seeded_business.id
     assert credential_payload["principal_id"] == "owner-user-1"
     assert credential_payload["principal_display_name"] == "owner-user-1"
+    assert credential_payload["label"] is None
+    assert credential_payload["last_used_at"] is None
+    assert credential_payload["rotated_from_credential_id"] is None
     assert credential_payload["is_active"] is True
     assert "token_hash" not in create_payload
     assert "token_hash" not in credential_payload
@@ -233,7 +236,7 @@ def test_rotate_credential_replaces_old_token_and_keeps_tenant_scope(
 
     issued = management_client.post(
         f"/api/businesses/{seeded_business.id}/credentials",
-        json={"principal_id": "owner-user-4"},
+        json={"principal_id": "owner-user-4", "credential_label": "Main Owner Key"},
     ).json()
     old_credential_id = issued["credential"]["id"]
     old_token = issued["token"]
@@ -249,6 +252,8 @@ def test_rotate_credential_replaces_old_token_and_keeps_tenant_scope(
     assert rotate_payload["replaced_credential_id"] == old_credential_id
     assert new_credential_id != old_credential_id
     assert new_token != old_token
+    assert rotate_payload["credential"]["label"] == "Main Owner Key"
+    assert rotate_payload["credential"]["rotated_from_credential_id"] == old_credential_id
 
     old_credential = db_session.get(APICredential, old_credential_id)
     new_credential = db_session.get(APICredential, new_credential_id)
@@ -311,15 +316,49 @@ def test_create_credential_can_set_principal_display_name(
         json={
             "principal_id": "owner-user-5",
             "principal_display_name": "Owner Operator",
+            "credential_label": "Owner Operator Primary",
         },
     )
     assert create_response.status_code == 201
     payload = create_response.json()
     assert payload["credential"]["principal_display_name"] == "Owner Operator"
+    assert payload["credential"]["label"] == "Owner Operator Primary"
 
     stored_principal = db_session.get(Principal, (seeded_business.id, "owner-user-5"))
     assert stored_principal is not None
     assert stored_principal.display_name == "Owner Operator"
+
+
+def test_list_credentials_exposes_allowed_metadata_only(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_production_auth_defaults(monkeypatch, default_business_id=seeded_business.id)
+    management_client = _make_management_client(db_session, business_id=seeded_business.id)
+
+    create_response = management_client.post(
+        f"/api/businesses/{seeded_business.id}/credentials",
+        json={
+            "principal_id": "owner-user-7",
+            "principal_display_name": "Owner Seven",
+            "principal_role": "admin",
+            "credential_label": "Owner Seven Primary",
+        },
+    )
+    assert create_response.status_code == 201
+
+    list_response = management_client.get(f"/api/businesses/{seeded_business.id}/credentials")
+    assert list_response.status_code == 200
+    payload = list_response.json()
+    assert payload["total"] >= 1
+    first = payload["items"][0]
+    assert first["principal_id"] == "owner-user-7"
+    assert first["principal_display_name"] == "Owner Seven"
+    assert first["principal_role"] == "admin"
+    assert first["label"] == "Owner Seven Primary"
+    assert "token_hash" not in first
+    assert "token" not in first
 
 
 def test_operator_principal_cannot_manage_credentials(

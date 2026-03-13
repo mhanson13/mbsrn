@@ -54,9 +54,11 @@ class APICredentialService:
         principal_id: str,
         principal_display_name: str | None = None,
         principal_role: PrincipalRole | None = None,
+        credential_label: str | None = None,
     ) -> IssuedAPICredential:
         self._ensure_business_exists(business_id)
         normalized_principal_id = self._normalize_principal_id(principal_id)
+        normalized_credential_label = self._normalize_credential_label(credential_label)
         principal = self._ensure_principal(
             business_id=business_id,
             principal_id=normalized_principal_id,
@@ -66,6 +68,7 @@ class APICredentialService:
         return self._issue_new_credential(
             business_id=business_id,
             principal_id=principal.id,
+            credential_label=normalized_credential_label,
         )
 
     def disable_credential(self, *, business_id: str, credential_id: str) -> APICredential:
@@ -103,6 +106,8 @@ class APICredentialService:
                 business_id=business_id,
                 principal_id=principal.id,
                 token_hash=self.api_credential_repository.hash_token(token),
+                label=credential.label,
+                rotated_from_credential_id=credential.id,
                 is_active=True,
                 revoked_at=None,
             )
@@ -127,6 +132,7 @@ class APICredentialService:
         *,
         business_id: str,
         principal_id: str,
+        credential_label: str | None,
     ) -> IssuedAPICredential:
         # Token is generated once and only returned at issue/rotate time.
         for _ in range(3):
@@ -136,6 +142,7 @@ class APICredentialService:
                 business_id=business_id,
                 principal_id=principal_id,
                 token_hash=self.api_credential_repository.hash_token(token),
+                label=credential_label,
                 is_active=True,
                 revoked_at=None,
             )
@@ -155,6 +162,16 @@ class APICredentialService:
             raise APICredentialValidationError("principal_id is required.")
         if len(normalized) > 64:
             raise APICredentialValidationError("principal_id must be 64 characters or fewer.")
+        return normalized
+
+    def _normalize_credential_label(self, credential_label: str | None) -> str | None:
+        if credential_label is None:
+            return None
+        normalized = credential_label.strip()
+        if not normalized:
+            return None
+        if len(normalized) > 128:
+            raise APICredentialValidationError("credential_label must be 128 characters or fewer.")
         return normalized
 
     def _normalize_principal_display_name(self, principal_display_name: str | None) -> str | None:

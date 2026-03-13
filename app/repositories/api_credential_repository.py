@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from datetime import datetime
 
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.time import utc_now
 from app.models.api_credential import APICredential
 from app.models.principal import Principal
 
@@ -47,6 +49,17 @@ class APICredentialRepository:
         return credential
 
     def save(self, credential: APICredential) -> APICredential:
+        self.session.add(credential)
+        self.session.flush()
+        return credential
+
+    def mark_last_used(
+        self,
+        credential: APICredential,
+        *,
+        used_at: datetime | None = None,
+    ) -> APICredential:
+        credential.last_used_at = used_at or utc_now()
         self.session.add(credential)
         self.session.flush()
         return credential

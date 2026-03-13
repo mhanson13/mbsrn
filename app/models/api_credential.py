@@ -26,8 +26,15 @@ class APICredential(Base):
     )
     principal_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    label: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    rotated_from_credential_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("api_credentials.id"),
+        nullable=True,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False

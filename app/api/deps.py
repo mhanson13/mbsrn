@@ -282,6 +282,15 @@ def get_tenant_context(
     if token is not None:
         db_credential = api_credential_repository.get_active_by_token(token)
         if db_credential is not None:
+            try:
+                api_credential_repository.mark_last_used(db_credential)
+                api_credential_repository.session.commit()
+            except Exception:  # noqa: BLE001
+                api_credential_repository.session.rollback()
+                logger.warning(
+                    "Failed to persist api credential last_used_at for credential_id=%s.",
+                    db_credential.id,
+                )
             return TenantContext(
                 business_id=db_credential.business_id,
                 principal_id=db_credential.principal_id,

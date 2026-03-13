@@ -116,9 +116,10 @@ def test_db_credential_resolves_principal_and_tenant_scope(
     db_session.add_all([lead_a, lead_b])
 
     _seed_principal(db_session, business_id=seeded_business.id, principal_id="user-a")
+    credential_id = str(uuid4())
     db_session.add(
         APICredential(
-            id=str(uuid4()),
+            id=credential_id,
             business_id=seeded_business.id,
             principal_id="user-a",
             token_hash=hash_bearer_token("db-tenant-a-token", pepper=PROD_PEPPER),
@@ -135,6 +136,9 @@ def test_db_credential_resolves_principal_and_tenant_scope(
     same_tenant = client.get(f"/api/leads/{lead_a.id}", headers=headers)
     assert same_tenant.status_code == 200
     assert same_tenant.json()["business_id"] == seeded_business.id
+    db_credential = db_session.get(APICredential, credential_id)
+    assert db_credential is not None
+    assert db_credential.last_used_at is not None
 
     spoofed_cross_tenant = client.get(
         f"/api/leads/{lead_b.id}",
