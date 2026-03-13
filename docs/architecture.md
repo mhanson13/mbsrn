@@ -35,11 +35,13 @@ work-boots/
 
 ## Tenant Context
 - Tenant scope is resolved at the API boundary via server-side request context dependency (`get_tenant_context`).
-- Preferred auth path is principal-bound credentials (`API_AUTH_PRINCIPALS_JSON`): bearer token -> `principal_id` -> `business_id`.
+- Primary auth path is persisted API credentials: bearer token -> `api_credentials` lookup -> `principal_id` + `business_id`.
 - Tenant-sensitive routes pass only auth-derived tenant `business_id` into services/repositories.
 - Client-supplied `business_id` fields/query params are compatibility-only and are not trusted; mismatches are rejected.
+- Env principal-token mode (`API_AUTH_PRINCIPALS_JSON`) remains as temporary compatibility fallback and is lower priority than DB credential lookup.
 - Legacy shared-token mode (`API_AUTH_TOKEN` + `API_AUTH_BUSINESS_ID`) remains as temporary compatibility fallback.
-- Dev/test-only fallback uses `DEFAULT_BUSINESS_ID` when no auth config is present.
+- Dev/test-only fallback uses `DEFAULT_BUSINESS_ID` only when no auth config is present.
+- Inactive credentials (`is_active=false`) and revoked credentials (`revoked_at` set) are rejected.
 - Service/repository/database tenant checks remain in place as defense in depth.
 
 ## Design Principles

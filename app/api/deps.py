@@ -20,6 +20,7 @@ from app.integrations import (
     TwilioSMSProvider,
 )
 from app.jobs.lead_reminders import LeadReminderJob
+from app.repositories.api_credential_repository import APICredentialRepository
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.lead_repository import LeadRepository
 from app.services.business_settings import BusinessSettingsService
@@ -52,6 +53,12 @@ def get_business_repository(db: Session = Depends(get_db)) -> BusinessRepository
 
 def get_lead_repository(db: Session = Depends(get_db)) -> LeadRepository:
     return LeadRepository(db)
+
+
+def get_api_credential_repository(
+    db: Session = Depends(get_db),
+) -> APICredentialRepository:
+    return APICredentialRepository(db)
 
 
 def get_parser_service() -> LeadParserService:
@@ -223,42 +230,51 @@ def _match_principal_credential(
     return None
 
 
-def get_tenant_context(authorization: str | None = Header(default=None)) -> TenantContext:
+def get_tenant_context(
+    authorization: str | None = Header(default=None),
+    api_credential_repository: APICredentialRepository = Depends(get_api_credential_repository),
+) -> TenantContext:
     """Resolve tenant scope from server-side auth context (not request business_id fields)."""
     settings = get_settings()
+    token = _parse_bearer_token(authorization)
 
-    # Primary auth mode: credential-backed principal -> business tenant binding.
-    if settings.api_principal_credentials:
-        token = _parse_bearer_token(authorization)
-        if token is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Unauthorized.",
+    if token is not None:
+        db_credential = api_credential_repository.get_active_by_token(token)
+        if db_credential is not None:
+            return TenantContext(
+                business_id=db_credential.business_id,
+                principal_id=db_credential.principal_id,
+                auth_source="db_api_credential",
             )
-        credential = _match_principal_credential(token=token, credentials=settings.api_principal_credentials)
-        if credential is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Unauthorized.",
+
+        # Compatibility fallback for env-configured principal credentials.
+        if settings.api_principal_credentials:
+            credential = _match_principal_credential(token=token, credentials=settings.api_principal_credentials)
+            if credential is not None:
+                return TenantContext(
+                    business_id=credential.business_id,
+                    principal_id=credential.principal_id,
+                    auth_source="env_principal_token",
+                )
+
+        # Compatibility fallback for earlier shared-token deployments.
+        if settings.api_auth_token and secrets.compare_digest(token, settings.api_auth_token):
+            return TenantContext(
+                business_id=settings.api_auth_business_id or settings.default_business_id,
+                principal_id="legacy_api_token",
+                auth_source="legacy_api_token",
             )
-        return TenantContext(
-            business_id=credential.business_id,
-            principal_id=credential.principal_id,
-            auth_source="principal_token",
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized.",
         )
 
-    # Compatibility fallback for earlier shared-token deployments.
-    if settings.api_auth_token:
-        token = _parse_bearer_token(authorization)
-        if token is None or not secrets.compare_digest(token, settings.api_auth_token):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Unauthorized.",
-            )
-        return TenantContext(
-            business_id=settings.api_auth_business_id or settings.default_business_id,
-            principal_id="legacy_api_token",
-            auth_source="legacy_api_token",
+    # If auth is configured, missing bearer token is unauthorized.
+    if settings.api_principal_credentials or settings.api_auth_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized.",
         )
 
     # Dev/test fallback only: keep local workflows operational without auth setup.
