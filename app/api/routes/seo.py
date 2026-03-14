@@ -13,9 +13,12 @@ from app.api.deps import (
 from app.schemas.seo_audit import (
     SEOAuditFindingListResponse,
     SEOAuditFindingRead,
+    SEOAuditReportRead,
+    SEOAuditReportSiteRead,
     SEOAuditRunCreateRequest,
     SEOAuditRunListResponse,
     SEOAuditRunRead,
+    SEOAuditRunSummaryRead,
 )
 from app.schemas.seo_site import (
     SEOSiteCreateRequest,
@@ -191,9 +194,90 @@ def list_seo_audit_run_findings(
         findings = seo_audit_service.list_findings_for_run(business_id=scoped_business_id, run_id=run_id)
     except SEOAuditNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    by_category, by_severity = seo_audit_service.summarize_findings(findings=findings)
     return SEOAuditFindingListResponse(
         items=[SEOAuditFindingRead.model_validate(item) for item in findings],
         total=len(findings),
+        by_category=by_category,
+        by_severity=by_severity,
+    )
+
+
+@router.get("/audit-runs/{run_id}/summary", response_model=SEOAuditRunSummaryRead)
+def get_seo_audit_run_summary(
+    business_id: str,
+    run_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_audit_service: SEOAuditService = Depends(get_seo_audit_service),
+) -> SEOAuditRunSummaryRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        summary = seo_audit_service.get_run_summary(business_id=scoped_business_id, run_id=run_id)
+    except SEOAuditNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOAuditRunSummaryRead(
+        run_id=summary.run.id,
+        business_id=summary.run.business_id,
+        site_id=summary.run.site_id,
+        status=summary.run.status,
+        total_pages=summary.total_pages,
+        total_findings=summary.total_findings,
+        critical_findings=summary.critical_findings,
+        warning_findings=summary.warning_findings,
+        info_findings=summary.info_findings,
+        crawl_duration=summary.crawl_duration,
+        health_score=summary.health_score,
+        by_category=summary.by_category,
+        by_severity=summary.by_severity,
+    )
+
+
+@router.get("/audit-runs/{run_id}/report", response_model=SEOAuditReportRead)
+def get_seo_audit_run_report(
+    business_id: str,
+    run_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_audit_service: SEOAuditService = Depends(get_seo_audit_service),
+) -> SEOAuditReportRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        report = seo_audit_service.get_run_report(business_id=scoped_business_id, run_id=run_id)
+    except SEOAuditNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOAuditReportRead(
+        site=SEOAuditReportSiteRead(
+            id=report.site.id,
+            display_name=report.site.display_name,
+            base_url=report.site.base_url,
+            normalized_domain=report.site.normalized_domain,
+        ),
+        audit=SEOAuditRunSummaryRead(
+            run_id=report.summary.run.id,
+            business_id=report.summary.run.business_id,
+            site_id=report.summary.run.site_id,
+            status=report.summary.run.status,
+            total_pages=report.summary.total_pages,
+            total_findings=report.summary.total_findings,
+            critical_findings=report.summary.critical_findings,
+            warning_findings=report.summary.warning_findings,
+            info_findings=report.summary.info_findings,
+            crawl_duration=report.summary.crawl_duration,
+            health_score=report.summary.health_score,
+            by_category=report.summary.by_category,
+            by_severity=report.summary.by_severity,
+        ),
+        findings=SEOAuditFindingListResponse(
+            items=[SEOAuditFindingRead.model_validate(item) for item in report.findings],
+            total=len(report.findings),
+            by_category=report.summary.by_category,
+            by_severity=report.summary.by_severity,
+        ),
     )
 
 

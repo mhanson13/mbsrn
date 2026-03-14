@@ -106,6 +106,28 @@ def test_audit_run_endpoints_persist_and_retrieve_findings(db_session, seeded_bu
     findings = client.get(f"/api/businesses/{seeded_business.id}/seo/audit-runs/{run_id}/findings")
     assert findings.status_code == 200
     assert findings.json()["total"] >= 1
+    assert "by_category" in findings.json()
+    assert "by_severity" in findings.json()
+    assert findings.json()["by_severity"]["CRITICAL"] >= 0
+    assert findings.json()["by_severity"]["WARNING"] >= 0
+    assert findings.json()["by_severity"]["INFO"] >= 0
+
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/audit-runs/{run_id}/summary")
+    assert summary.status_code == 200
+    summary_payload = summary.json()
+    assert summary_payload["run_id"] == run_id
+    assert summary_payload["total_pages"] >= 1
+    assert summary_payload["total_findings"] >= 1
+    assert 0 <= summary_payload["health_score"] <= 100
+
+    report = client.get(f"/api/businesses/{seeded_business.id}/seo/audit-runs/{run_id}/report")
+    assert report.status_code == 200
+    report_payload = report.json()
+    assert report_payload["site"]["id"] == site_id
+    assert report_payload["audit"]["run_id"] == run_id
+    assert report_payload["findings"]["total"] >= 1
 
     cross_tenant = client.get(f"/api/businesses/{other_business.id}/seo/audit-runs/{run_id}/findings")
     assert cross_tenant.status_code == 404
+    cross_tenant_summary = client.get(f"/api/businesses/{other_business.id}/seo/audit-runs/{run_id}/summary")
+    assert cross_tenant_summary.status_code == 404

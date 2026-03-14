@@ -59,3 +59,34 @@ class SEOAuditFindingRead(BaseModel):
 class SEOAuditFindingListResponse(BaseModel):
     items: list[SEOAuditFindingRead]
     total: int
+    by_category: dict[str, int] = Field(default_factory=dict)
+    by_severity: dict[str, int] = Field(default_factory=dict)
+
+
+class SEOAuditRunSummaryRead(BaseModel):
+    run_id: str
+    business_id: str
+    site_id: str
+    status: str
+    total_pages: int
+    total_findings: int
+    critical_findings: int
+    warning_findings: int
+    info_findings: int
+    crawl_duration: int | None
+    health_score: int
+    by_category: dict[str, int] = Field(default_factory=dict)
+    by_severity: dict[str, int] = Field(default_factory=dict)
+
+
+class SEOAuditReportSiteRead(BaseModel):
+    id: str
+    display_name: str
+    base_url: str
+    normalized_domain: str
+
+
+class SEOAuditReportRead(BaseModel):
+    site: SEOAuditReportSiteRead
+    audit: SEOAuditRunSummaryRead
+    findings: SEOAuditFindingListResponse

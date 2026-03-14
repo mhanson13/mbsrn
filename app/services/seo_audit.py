@@ -11,6 +11,7 @@ from app.core.time import utc_now
 from app.models.seo_audit_finding import SEOAuditFinding
 from app.models.seo_audit_page import SEOAuditPage
 from app.models.seo_audit_run import SEOAuditRun, SEOAuditRunStatus
+from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
@@ -21,6 +22,19 @@ from app.services.seo_finding_rules import SEOFindingRules
 
 
 logger = logging.getLogger(__name__)
+
+SEVERITY_LEVELS = ("CRITICAL", "WARNING", "INFO")
+CATEGORY_LEVELS = ("SEO", "CONTENT", "STRUCTURE", "TECHNICAL")
+HEALTH_SCORE_BASE = 100
+HEALTH_SCORE_PENALTIES = {
+    "missing_title": 12,
+    "missing_meta_description": 8,
+    "duplicate_title": 6,
+    "duplicate_meta_description": 5,
+    "thin_content": 5,
+    "missing_canonical": 4,
+    "missing_h1": 10,
+}
 
 
 class SEOAuditNotFoundError(ValueError):
@@ -35,6 +49,27 @@ class SEOAuditValidationError(ValueError):
 class AuditRunResult:
     run: SEOAuditRun
     pages: list[SEOAuditPage]
+    findings: list[SEOAuditFinding]
+
+
+@dataclass(frozen=True)
+class AuditRunSummary:
+    run: SEOAuditRun
+    total_pages: int
+    total_findings: int
+    critical_findings: int
+    warning_findings: int
+    info_findings: int
+    crawl_duration: int | None
+    health_score: int
+    by_category: dict[str, int]
+    by_severity: dict[str, int]
+
+
+@dataclass(frozen=True)
+class AuditRunReport:
+    site: SEOSite
+    summary: AuditRunSummary
     findings: list[SEOAuditFinding]
 
 
@@ -177,6 +212,61 @@ class SEOAuditService:
         if run is None:
             raise SEOAuditNotFoundError("SEO audit run not found")
         return self.seo_audit_repository.list_findings_for_business_run(business_id, run_id)
+
+    def get_run_summary(self, *, business_id: str, run_id: str) -> AuditRunSummary:
+        self._require_business(business_id)
+        run = self.seo_audit_repository.get_run_for_business(business_id, run_id)
+        if run is None:
+            raise SEOAuditNotFoundError("SEO audit run not found")
+
+        findings = self.seo_audit_repository.list_findings_for_business_run(business_id, run_id)
+        pages = self.seo_audit_repository.list_pages_for_business_run(business_id, run_id)
+        by_category, by_severity = self.summarize_findings(findings=findings)
+        return AuditRunSummary(
+            run=run,
+            total_pages=len(pages),
+            total_findings=len(findings),
+            critical_findings=by_severity["CRITICAL"],
+            warning_findings=by_severity["WARNING"],
+            info_findings=by_severity["INFO"],
+            crawl_duration=run.crawl_duration_ms,
+            health_score=self.calculate_health_score(findings=findings),
+            by_category=by_category,
+            by_severity=by_severity,
+        )
+
+    def get_run_report(self, *, business_id: str, run_id: str) -> AuditRunReport:
+        summary = self.get_run_summary(business_id=business_id, run_id=run_id)
+        site = self.seo_site_repository.get_for_business(business_id, summary.run.site_id)
+        if site is None:
+            raise SEOAuditNotFoundError("SEO site not found")
+        findings = self.seo_audit_repository.list_findings_for_business_run(business_id, run_id)
+        return AuditRunReport(site=site, summary=summary, findings=findings)
+
+    def summarize_findings(self, *, findings: list[SEOAuditFinding]) -> tuple[dict[str, int], dict[str, int]]:
+        by_category = {key: 0 for key in CATEGORY_LEVELS}
+        by_severity = {key: 0 for key in SEVERITY_LEVELS}
+        for finding in findings:
+            category = (finding.category or "").strip().upper()
+            severity = (finding.severity or "").strip().upper()
+            if category not in by_category:
+                category = "TECHNICAL"
+            if severity not in by_severity:
+                severity = "INFO"
+            by_category[category] += 1
+            by_severity[severity] += 1
+        return by_category, by_severity
+
+    def calculate_health_score(self, *, findings: list[SEOAuditFinding]) -> int:
+        penalty = 0
+        for finding in findings:
+            penalty += HEALTH_SCORE_PENALTIES.get((finding.finding_type or "").strip().lower(), 0)
+        score = HEALTH_SCORE_BASE - penalty
+        if score < 0:
+            return 0
+        if score > 100:
+            return 100
+        return score
 
     def _persist_pages(
         self,

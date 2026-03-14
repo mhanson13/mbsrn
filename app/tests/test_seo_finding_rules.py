@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.models.seo_audit_page import SEOAuditPage
-from app.services.seo_finding_rules import SEOFindingRules
+from app.services.seo_finding_rules import FindingCategory, FindingSeverity, SEOFindingRules
 
 
 def _page(
@@ -60,6 +60,16 @@ def test_finding_rules_cover_additional_deterministic_checks() -> None:
     assert "extremely_thin_content" in finding_types
     assert "missing_internal_links" in finding_types
     assert "missing_canonical" in finding_types
+
+    categories = {item.category for item in findings}
+    severities = {item.severity for item in findings}
+    assert FindingCategory.SEO in categories
+    assert FindingCategory.CONTENT in categories
+    assert FindingCategory.STRUCTURE in categories
+    assert FindingCategory.TECHNICAL in categories
+    assert FindingSeverity.CRITICAL in severities
+    assert FindingSeverity.WARNING in severities
+    assert FindingSeverity.INFO in severities
 
 
 def test_duplicate_title_and_meta_detection_is_case_insensitive_per_run() -> None:

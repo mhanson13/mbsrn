@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import threading
+import time
 from urllib.error import URLError
 
 import pytest
@@ -99,6 +101,11 @@ def test_url_normalization_handles_index_fragments_and_duplicate_query_items() -
     )
     assert preferred_scheme == "https://example.com/services/fire"
 
+    tracking_cleaned = crawler.normalize_url(
+        "https://example.com/service?utm_source=google&a=1&gclid=abc&a=1",
+    )
+    assert tracking_cleaned == "https://example.com/service?a=1"
+
 
 def test_crawler_retries_transient_failures() -> None:
     crawler = _RetryCrawler()
@@ -126,3 +133,41 @@ def test_crawler_enforces_response_size_limit() -> None:
 
     with pytest.raises(SEOCrawlerValidationError):
         crawler._read_limited_body_bytes(_LargeResponse())
+
+
+def test_crawler_parallel_fetch_is_bounded_and_deterministic() -> None:
+    class _ConcurrentCrawler(SEOCrawler):
+        def __init__(self) -> None:
+            super().__init__(timeout_seconds=1, max_workers=3)
+            self._active = 0
+            self.max_active = 0
+            self.lock = threading.Lock()
+
+        def _fetch_page(self, requested_url: str, depth: int):  # type: ignore[override]
+            with self.lock:
+                self._active += 1
+                if self._active > self.max_active:
+                    self.max_active = self._active
+            try:
+                time.sleep(0.02)
+                return super()._fetch_page(requested_url, depth)
+            finally:
+                with self.lock:
+                    self._active -= 1
+
+        def _fetch(self, url: str) -> FetchResponse:  # type: ignore[override]
+            if url == "https://example.com/":
+                body = "".join(f'<a href="/page-{i}">x</a>' for i in range(6))
+                return FetchResponse(final_url=url, status_code=200, body=body)
+            return FetchResponse(final_url=url, status_code=200, body="<html><body>ok</body></html>")
+
+    crawler = _ConcurrentCrawler()
+    results = crawler.crawl(
+        base_url="https://example.com/",
+        max_pages=7,
+        max_depth=2,
+        same_domain_only=True,
+    )
+    assert len(results) == 7
+    assert crawler.max_active <= 3
+    assert crawler.max_active > 1

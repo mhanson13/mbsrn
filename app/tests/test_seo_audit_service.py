@@ -93,6 +93,8 @@ def test_audit_service_persists_pages_findings_and_run_status(db_session, seeded
     assert len(result.findings) > 0
 
     finding_types = {f.finding_type for f in result.findings}
+    severities = {f.severity for f in result.findings}
+    categories = {f.category for f in result.findings}
     assert "missing_title" in finding_types
     assert "missing_meta_description" in finding_types
     assert "missing_h1" in finding_types
@@ -101,3 +103,10 @@ def test_audit_service_persists_pages_findings_and_run_status(db_session, seeded
     assert "thin_content" in finding_types
     assert "missing_internal_links" in finding_types
     assert "broken_internal_links" in finding_types
+    assert "CRITICAL" in severities
+    assert "WARNING" in severities
+    assert "INFO" in severities
+    assert "SEO" in categories
+    assert "CONTENT" in categories
+    assert "STRUCTURE" in categories
+    assert "TECHNICAL" in categories

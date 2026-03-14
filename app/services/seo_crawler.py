@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from collections import deque
 from dataclasses import dataclass
 from html import unescape
@@ -16,6 +17,7 @@ HTTP_SCHEMES = {"http", "https"}
 PRIVATE_HOSTS = {"localhost", "::1"}
 DEFAULT_INDEX_PATHS = {"/index.html", "/index.htm", "/index.php", "/default.aspx"}
 TRANSIENT_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+IGNORED_QUERY_PARAMS = {"gclid", "fbclid", "msclkid", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"}
 
 
 class SEOCrawlerValidationError(ValueError):
@@ -68,12 +70,14 @@ class SEOCrawler:
         retry_backoff_seconds: float = 0.25,
         max_redirects: int = 5,
         max_response_bytes: int = 1_000_000,
+        max_workers: int = 4,
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
         self.max_redirects = max_redirects
         self.max_response_bytes = max_response_bytes
+        self.max_workers = max(1, max_workers)
         self.last_crawl_stats: CrawlStats | None = None
 
     def crawl(
@@ -105,40 +109,50 @@ class SEOCrawler:
         errors_encountered = 0
 
         while queue and len(crawled) < max_pages:
-            current_url, depth = queue.popleft()
-            page = self._fetch_page(current_url, depth)
-            crawled.append(page)
-            if page.fetch_error is not None:
-                errors_encountered += 1
+            current_depth = queue[0][1]
+            current_batch: list[tuple[str, int]] = []
+            while queue and queue[0][1] == current_depth and len(crawled) + len(current_batch) < max_pages:
+                current_batch.append(queue.popleft())
+            current_batch.sort(key=lambda item: self._url_priority_key(item[0]))
+            batch_pages = self._fetch_batch(current_batch)
 
-            if depth >= max_depth:
-                continue
-            if page.body_text is None:
-                continue
+            for page in batch_pages:
+                crawled.append(page)
+                if page.fetch_error is not None:
+                    errors_encountered += 1
 
-            for candidate in page.outgoing_internal_links:
-                try:
-                    normalized_candidate = self.normalize_url(
-                        candidate,
-                        preferred_scheme=base_scheme if same_domain_only else None,
-                        preferred_host=base_host if same_domain_only else None,
-                    )
-                except SEOCrawlerValidationError:
-                    pages_skipped += 1
+                if page.depth >= max_depth:
                     continue
-                parts = urlsplit(normalized_candidate)
-                if parts.scheme not in HTTP_SCHEMES:
-                    pages_skipped += 1
+                if page.body_text is None:
                     continue
-                if same_domain_only and parts.netloc != base_netloc:
-                    pages_skipped += 1
-                    continue
-                if normalized_candidate in seen_urls:
-                    duplicate_urls_skipped += 1
-                    continue
-                seen_urls.add(normalized_candidate)
-                pages_discovered += 1
-                queue.append((normalized_candidate, depth + 1))
+
+                next_depth_links: list[str] = []
+                for candidate in page.outgoing_internal_links:
+                    try:
+                        normalized_candidate = self.normalize_url(
+                            candidate,
+                            preferred_scheme=base_scheme if same_domain_only else None,
+                            preferred_host=base_host if same_domain_only else None,
+                        )
+                    except SEOCrawlerValidationError:
+                        pages_skipped += 1
+                        continue
+                    parts = urlsplit(normalized_candidate)
+                    if parts.scheme not in HTTP_SCHEMES:
+                        pages_skipped += 1
+                        continue
+                    if same_domain_only and parts.netloc != base_netloc:
+                        pages_skipped += 1
+                        continue
+                    if normalized_candidate in seen_urls:
+                        duplicate_urls_skipped += 1
+                        continue
+                    seen_urls.add(normalized_candidate)
+                    pages_discovered += 1
+                    next_depth_links.append(normalized_candidate)
+
+                for normalized_candidate in sorted(next_depth_links, key=self._url_priority_key):
+                    queue.append((normalized_candidate, page.depth + 1))
 
         if queue:
             pages_skipped += len(queue)
@@ -150,6 +164,23 @@ class SEOCrawler:
             errors_encountered=errors_encountered,
         )
         return crawled
+
+    def _fetch_batch(self, batch: list[tuple[str, int]]) -> list[CrawlPageResult]:
+        if not batch:
+            return []
+        if self.max_workers <= 1 or len(batch) == 1:
+            return [self._fetch_page(url, depth) for url, depth in batch]
+
+        results: list[CrawlPageResult | None] = [None] * len(batch)
+        worker_count = min(self.max_workers, len(batch))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures: dict[Future[CrawlPageResult], int] = {}
+            for idx, (url, depth) in enumerate(batch):
+                futures[executor.submit(self._fetch_page, url, depth)] = idx
+            for future in as_completed(futures):
+                idx = futures[future]
+                results[idx] = future.result()
+        return [result for result in results if result is not None]
 
     def normalize_url(
         self,
@@ -190,6 +221,7 @@ class SEOCrawler:
                 path = "/"
 
         query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        query_pairs = [(key, value) for key, value in query_pairs if key.lower() not in IGNORED_QUERY_PARAMS]
         deduplicated_pairs = sorted(set(query_pairs))
         query = urlencode(deduplicated_pairs, doseq=True)
         return urlunsplit((scheme, netloc, path, query, ""))
@@ -349,3 +381,9 @@ class SEOCrawler:
                 continue
             links.append(normalized)
         return links
+
+    @staticmethod
+    def _url_priority_key(url: str) -> tuple[int, str]:
+        parsed = urlsplit(url)
+        path = parsed.path or "/"
+        return (len(path), f"{path}?{parsed.query}")

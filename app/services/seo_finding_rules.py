@@ -5,6 +5,19 @@ from dataclasses import dataclass
 from app.models.seo_audit_page import SEOAuditPage
 
 
+class FindingCategory:
+    SEO = "SEO"
+    CONTENT = "CONTENT"
+    STRUCTURE = "STRUCTURE"
+    TECHNICAL = "TECHNICAL"
+
+
+class FindingSeverity:
+    INFO = "INFO"
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"
+
+
 @dataclass(frozen=True)
 class FindingDraft:
     page_id: str | None
@@ -53,8 +66,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="missing_title",
-                        category="metadata",
-                        severity="high",
+                        category=FindingCategory.SEO,
+                        severity=FindingSeverity.CRITICAL,
                         title="Missing title tag",
                         details=f"Page {page.url} has no title tag.",
                         rule_key="missing_title",
@@ -71,8 +84,8 @@ class SEOFindingRules:
                         FindingDraft(
                             page_id=page.id,
                             finding_type="title_too_short",
-                            category="metadata",
-                            severity="medium",
+                            category=FindingCategory.SEO,
+                            severity=FindingSeverity.WARNING,
                             title="Title tag too short",
                             details=(
                                 f"Page {page.url} title length is {title_length}. "
@@ -87,8 +100,8 @@ class SEOFindingRules:
                         FindingDraft(
                             page_id=page.id,
                             finding_type="title_too_long",
-                            category="metadata",
-                            severity="low",
+                            category=FindingCategory.SEO,
+                            severity=FindingSeverity.INFO,
                             title="Title tag too long",
                             details=(
                                 f"Page {page.url} title length is {title_length}. "
@@ -104,8 +117,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="missing_meta_description",
-                        category="metadata",
-                        severity="medium",
+                        category=FindingCategory.SEO,
+                        severity=FindingSeverity.WARNING,
                         title="Missing meta description",
                         details=f"Page {page.url} has no meta description.",
                         rule_key="missing_meta_description",
@@ -122,8 +135,8 @@ class SEOFindingRules:
                         FindingDraft(
                             page_id=page.id,
                             finding_type="meta_description_too_short",
-                            category="metadata",
-                            severity="low",
+                            category=FindingCategory.SEO,
+                            severity=FindingSeverity.INFO,
                             title="Meta description too short",
                             details=(
                                 f"Page {page.url} meta description length is {meta_length}. "
@@ -138,8 +151,8 @@ class SEOFindingRules:
                         FindingDraft(
                             page_id=page.id,
                             finding_type="meta_description_too_long",
-                            category="metadata",
-                            severity="low",
+                            category=FindingCategory.SEO,
+                            severity=FindingSeverity.INFO,
                             title="Meta description too long",
                             details=(
                                 f"Page {page.url} meta description length is {meta_length}. "
@@ -156,8 +169,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="missing_h1",
-                        category="content",
-                        severity="medium",
+                        category=FindingCategory.STRUCTURE,
+                        severity=FindingSeverity.CRITICAL,
                         title="Missing H1 heading",
                         details=f"Page {page.url} has no H1 heading.",
                         rule_key="missing_h1",
@@ -169,8 +182,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="multiple_h1",
-                        category="content",
-                        severity="medium",
+                        category=FindingCategory.STRUCTURE,
+                        severity=FindingSeverity.WARNING,
                         title="Multiple H1 headings",
                         details=f"Page {page.url} has {len(h1_items)} H1 headings.",
                         rule_key="multiple_h1",
@@ -184,8 +197,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="missing_h2",
-                        category="content",
-                        severity="low",
+                        category=FindingCategory.STRUCTURE,
+                        severity=FindingSeverity.INFO,
                         title="Missing H2 headings",
                         details=f"Page {page.url} has no H2 headings.",
                         rule_key="missing_h2",
@@ -198,8 +211,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="missing_canonical",
-                        category="technical",
-                        severity="low",
+                        category=FindingCategory.TECHNICAL,
+                        severity=FindingSeverity.WARNING,
                         title="Missing canonical URL",
                         details=f"Page {page.url} has no canonical tag.",
                         rule_key="missing_canonical",
@@ -213,8 +226,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="thin_content",
-                        category="content",
-                        severity="medium",
+                        category=FindingCategory.CONTENT,
+                        severity=FindingSeverity.WARNING,
                         title="Thin content",
                         details=(
                             f"Page {page.url} has low word count ({word_count}). "
@@ -229,8 +242,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="extremely_thin_content",
-                        category="content",
-                        severity="high",
+                        category=FindingCategory.CONTENT,
+                        severity=FindingSeverity.CRITICAL,
                         title="Extremely thin content",
                         details=(
                             f"Page {page.url} has very low word count ({word_count}). "
@@ -246,8 +259,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="missing_internal_links",
-                        category="technical",
-                        severity="low",
+                        category=FindingCategory.STRUCTURE,
+                        severity=FindingSeverity.WARNING,
                         title="Missing internal links",
                         details=f"Page {page.url} has no internal outgoing links.",
                         rule_key="missing_internal_links",
@@ -261,8 +274,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="broken_internal_links",
-                        category="technical",
-                        severity="high",
+                        category=FindingCategory.TECHNICAL,
+                        severity=FindingSeverity.CRITICAL,
                         title="Broken internal links",
                         details=f"Page {page.url} contains {broken_count} broken internal links.",
                         rule_key="broken_internal_links",
@@ -278,8 +291,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="duplicate_title",
-                        category="metadata",
-                        severity="high",
+                        category=FindingCategory.SEO,
+                        severity=FindingSeverity.CRITICAL,
                         title="Duplicate title tag",
                         details=f"Title '{title_key}' appears on multiple pages in this run.",
                         rule_key="duplicate_title",
@@ -295,8 +308,8 @@ class SEOFindingRules:
                     FindingDraft(
                         page_id=page.id,
                         finding_type="duplicate_meta_description",
-                        category="metadata",
-                        severity="medium",
+                        category=FindingCategory.SEO,
+                        severity=FindingSeverity.WARNING,
                         title="Duplicate meta description",
                         details=f"Meta description '{meta_key}' appears on multiple pages in this run.",
                         rule_key="duplicate_meta_description",
