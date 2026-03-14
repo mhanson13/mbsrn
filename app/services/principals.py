@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.models.principal import Principal, PrincipalRole
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.principal_repository import PrincipalRepository
+from app.services.auth_audit import AuthAuditService
 from app.schemas.principal import PrincipalUpdateRequest
 
 
@@ -17,16 +18,24 @@ class PrincipalValidationError(ValueError):
 
 
 class PrincipalService:
+    PRINCIPAL_TARGET = "principal"
+    EVENT_PRINCIPAL_CREATED = "principal_created"
+    EVENT_PRINCIPAL_UPDATED = "principal_updated"
+    EVENT_PRINCIPAL_ACTIVATED = "principal_activated"
+    EVENT_PRINCIPAL_DEACTIVATED = "principal_deactivated"
+
     def __init__(
         self,
         *,
         session: Session,
         business_repository: BusinessRepository,
         principal_repository: PrincipalRepository,
+        auth_audit_service: AuthAuditService,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
         self.principal_repository = principal_repository
+        self.auth_audit_service = auth_audit_service
 
     def list_for_business(self, *, business_id: str) -> list[Principal]:
         self._ensure_business_exists(business_id)
@@ -58,6 +67,17 @@ class PrincipalService:
             is_active=True,
         )
         self.principal_repository.create(principal)
+        self.auth_audit_service.record_event(
+            business_id=business_id,
+            actor_principal_id=normalized_actor_principal_id,
+            target_type=self.PRINCIPAL_TARGET,
+            target_id=principal.id,
+            event_type=self.EVENT_PRINCIPAL_CREATED,
+            details={
+                "role": principal.role.value,
+                "is_active": principal.is_active,
+            },
+        )
         self.session.commit()
         self.session.refresh(principal)
         return principal
@@ -95,6 +115,18 @@ class PrincipalService:
             principal.updated_by_principal_id = normalized_actor_principal_id
 
         self.principal_repository.save(principal)
+        self.auth_audit_service.record_event(
+            business_id=business_id,
+            actor_principal_id=normalized_actor_principal_id,
+            target_type=self.PRINCIPAL_TARGET,
+            target_id=principal.id,
+            event_type=self.EVENT_PRINCIPAL_UPDATED,
+            details={
+                "updated_fields": sorted(list(updates.keys())),
+                "role": principal.role.value,
+                "is_active": principal.is_active,
+            },
+        )
         self.session.commit()
         self.session.refresh(principal)
         return principal
@@ -114,6 +146,14 @@ class PrincipalService:
         if normalized_actor_principal_id is not None:
             principal.updated_by_principal_id = normalized_actor_principal_id
         self.principal_repository.save(principal)
+        self.auth_audit_service.record_event(
+            business_id=business_id,
+            actor_principal_id=normalized_actor_principal_id,
+            target_type=self.PRINCIPAL_TARGET,
+            target_id=principal.id,
+            event_type=self.EVENT_PRINCIPAL_ACTIVATED,
+            details={"is_active": True},
+        )
         self.session.commit()
         self.session.refresh(principal)
         return principal
@@ -139,6 +179,14 @@ class PrincipalService:
         if normalized_actor_principal_id is not None:
             principal.updated_by_principal_id = normalized_actor_principal_id
         self.principal_repository.save(principal)
+        self.auth_audit_service.record_event(
+            business_id=business_id,
+            actor_principal_id=normalized_actor_principal_id,
+            target_type=self.PRINCIPAL_TARGET,
+            target_id=principal.id,
+            event_type=self.EVENT_PRINCIPAL_DEACTIVATED,
+            details={"is_active": False},
+        )
         self.session.commit()
         self.session.refresh(principal)
         return principal

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import (
     get_api_credential_service,
+    get_auth_audit_service,
     get_business_settings_service,
     get_principal_service,
     require_credential_manager_principal,
@@ -19,6 +20,7 @@ from app.schemas.api_credential import (
     APICredentialRead,
     APICredentialRotateResponse,
 )
+from app.schemas.auth_audit import AuthAuditEventListResponse, AuthAuditEventRead
 from app.schemas.business import BusinessSettingsRead, BusinessSettingsUpdateRequest
 from app.schemas.principal import (
     PrincipalCreateRequest,
@@ -31,6 +33,7 @@ from app.services.api_credentials import (
     APICredentialService,
     APICredentialValidationError,
 )
+from app.services.auth_audit import AuthAuditNotFoundError, AuthAuditService
 from app.services.business_settings import (
     BusinessSettingsNotFoundError,
     BusinessSettingsService,
@@ -142,7 +145,7 @@ def create_api_credential(
 def disable_api_credential(
     business_id: str,
     credential_id: str,
-    _: Principal = Depends(require_credential_manager_principal),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
     tenant_context: TenantContext = Depends(get_tenant_context),
     api_credential_service: APICredentialService = Depends(get_api_credential_service),
 ) -> APICredentialRead:
@@ -154,6 +157,7 @@ def disable_api_credential(
         credential = api_credential_service.disable_credential(
             business_id=scoped_business_id,
             credential_id=credential_id,
+            actor_principal_id=admin_principal.id,
         )
     except APICredentialNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -167,7 +171,7 @@ def disable_api_credential(
 def revoke_api_credential(
     business_id: str,
     credential_id: str,
-    _: Principal = Depends(require_credential_manager_principal),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
     tenant_context: TenantContext = Depends(get_tenant_context),
     api_credential_service: APICredentialService = Depends(get_api_credential_service),
 ) -> APICredentialRead:
@@ -179,6 +183,7 @@ def revoke_api_credential(
         credential = api_credential_service.revoke_credential(
             business_id=scoped_business_id,
             credential_id=credential_id,
+            actor_principal_id=admin_principal.id,
         )
     except APICredentialNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -193,7 +198,7 @@ def revoke_api_credential(
 def rotate_api_credential(
     business_id: str,
     credential_id: str,
-    _: Principal = Depends(require_credential_manager_principal),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
     tenant_context: TenantContext = Depends(get_tenant_context),
     api_credential_service: APICredentialService = Depends(get_api_credential_service),
 ) -> APICredentialRotateResponse:
@@ -205,6 +210,7 @@ def rotate_api_credential(
         issued = api_credential_service.rotate_credential(
             business_id=scoped_business_id,
             credential_id=credential_id,
+            actor_principal_id=admin_principal.id,
         )
     except APICredentialNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -351,3 +357,33 @@ def deactivate_principal(
     except PrincipalValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return PrincipalRead.model_validate(principal)
+
+
+@router.get("/{business_id}/auth-audit-events", response_model=AuthAuditEventListResponse)
+def list_auth_audit_events(
+    business_id: str,
+    target_type: str | None = None,
+    event_type: str | None = None,
+    limit: int = 100,
+    _: Principal = Depends(require_credential_manager_principal),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    auth_audit_service: AuthAuditService = Depends(get_auth_audit_service),
+) -> AuthAuditEventListResponse:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        events = auth_audit_service.list_for_business(
+            business_id=scoped_business_id,
+            target_type=target_type,
+            event_type=event_type,
+            limit=limit,
+        )
+    except AuthAuditNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return AuthAuditEventListResponse(
+        items=[AuthAuditEventRead.model_validate(event) for event in events],
+        total=len(events),
+    )

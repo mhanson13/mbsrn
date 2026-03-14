@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from app.db.base import Base
-from app.models import api_credential, business, lead, lead_event, principal
+from app.models import api_credential, auth_audit_event, business, lead, lead_event, principal
 
 config = context.config
 

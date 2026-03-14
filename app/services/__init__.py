@@ -4,6 +4,7 @@ from app.services.api_credentials import (
     APICredentialValidationError,
     IssuedAPICredential,
 )
+from app.services.auth_audit import AuthAuditNotFoundError, AuthAuditService
 from app.services.business_settings import BusinessSettingsService
 from app.services.dedupe import LeadDeduplicationService
 from app.services.email_intake import EmailIntakeService
@@ -21,6 +22,8 @@ __all__ = [
     "APICredentialNotFoundError",
     "APICredentialService",
     "APICredentialValidationError",
+    "AuthAuditNotFoundError",
+    "AuthAuditService",
     "BusinessSettingsService",
     "EmailIntakeService",
     "InvalidStatusTransitionError",

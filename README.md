@@ -91,6 +91,8 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `POST /api/businesses/{business_id}/credentials/{credential_id}/disable`
   - `POST /api/businesses/{business_id}/credentials/{credential_id}/revoke`
   - `POST /api/businesses/{business_id}/credentials/{credential_id}/rotate`
+- View auth/admin audit history per business (admin only):
+  - `GET /api/businesses/{business_id}/auth-audit-events`
 - Credential-management endpoints require an `admin` principal role.
 - Issued token plaintext is shown once at creation/rotation; only `token_hash` is persisted.
 - Credentials store non-secret metadata for operations: `label`, `last_used_at`, `rotated_from_credential_id`.
@@ -100,10 +102,12 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `created_by_principal_id`
   - `updated_by_principal_id`
   - `last_authenticated_at`
+- Auth/admin audit events are persisted for principal and credential lifecycle actions with business scope and actor/target context.
+- Audit payloads exclude secret fields (`token`, `token_hash`).
 - `API_TOKEN_HASH_PEPPER` is required in production.
 - Legacy unpeppered hash verification is off by default and can be enabled temporarily with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true`.
 - Legacy shared-token auth (`API_AUTH_TOKEN` / `API_AUTH_BUSINESS_ID`) is no longer part of runtime auth resolution.
 
-Out of scope in this pass: full IAM/user-role management.
+Out of scope in this pass: full IAM/user-role management and enterprise-grade audit retention/compliance tooling.
 
 Archived legacy scaffolding and deprecated files live under [`_archive/`](_archive).

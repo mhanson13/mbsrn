@@ -22,11 +22,13 @@ from app.integrations import (
 from app.jobs.lead_reminders import LeadReminderJob
 from app.models.principal import Principal, PrincipalRole
 from app.repositories.api_credential_repository import APICredentialRepository
+from app.repositories.auth_audit_repository import AuthAuditRepository
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.lead_repository import LeadRepository
 from app.repositories.principal_repository import PrincipalRepository
 from app.services.business_settings import BusinessSettingsService
 from app.services.api_credentials import APICredentialService
+from app.services.auth_audit import AuthAuditService
 from app.services.dedupe import LeadDeduplicationService
 from app.services.email_intake import EmailIntakeService
 from app.services.lead_intake import LeadIntakeService
@@ -70,6 +72,10 @@ def get_api_credential_repository(
         token_hash_pepper=settings.api_token_hash_pepper,
         allow_legacy_hash_fallback=settings.allow_legacy_token_hash_fallback,
     )
+
+
+def get_auth_audit_repository(db: Session = Depends(get_db)) -> AuthAuditRepository:
+    return AuthAuditRepository(db)
 
 
 def get_principal_repository(db: Session = Depends(get_db)) -> PrincipalRepository:
@@ -221,17 +227,31 @@ def get_business_settings_service(
     return BusinessSettingsService(session=db, business_repository=business_repository)
 
 
+def get_auth_audit_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    auth_audit_repository: AuthAuditRepository = Depends(get_auth_audit_repository),
+) -> AuthAuditService:
+    return AuthAuditService(
+        session=db,
+        business_repository=business_repository,
+        auth_audit_repository=auth_audit_repository,
+    )
+
+
 def get_api_credential_service(
     db: Session = Depends(get_db),
     business_repository: BusinessRepository = Depends(get_business_repository),
     principal_repository: PrincipalRepository = Depends(get_principal_repository),
     api_credential_repository: APICredentialRepository = Depends(get_api_credential_repository),
+    auth_audit_service: AuthAuditService = Depends(get_auth_audit_service),
 ) -> APICredentialService:
     return APICredentialService(
         session=db,
         business_repository=business_repository,
         principal_repository=principal_repository,
         api_credential_repository=api_credential_repository,
+        auth_audit_service=auth_audit_service,
     )
 
 
@@ -239,11 +259,13 @@ def get_principal_service(
     db: Session = Depends(get_db),
     business_repository: BusinessRepository = Depends(get_business_repository),
     principal_repository: PrincipalRepository = Depends(get_principal_repository),
+    auth_audit_service: AuthAuditService = Depends(get_auth_audit_service),
 ) -> PrincipalService:
     return PrincipalService(
         session=db,
         business_repository=business_repository,
         principal_repository=principal_repository,
+        auth_audit_service=auth_audit_service,
     )
 
 

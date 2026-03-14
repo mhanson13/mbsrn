@@ -13,6 +13,7 @@ from app.models.principal import Principal, PrincipalRole
 from app.repositories.api_credential_repository import APICredentialRepository
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.principal_repository import PrincipalRepository
+from app.services.auth_audit import AuthAuditService
 
 
 class APICredentialNotFoundError(ValueError):
@@ -30,6 +31,15 @@ class IssuedAPICredential:
 
 
 class APICredentialService:
+    PRINCIPAL_TARGET = "principal"
+    CREDENTIAL_TARGET = "api_credential"
+    EVENT_PRINCIPAL_CREATED = "principal_created"
+    EVENT_PRINCIPAL_UPDATED = "principal_updated"
+    EVENT_CREDENTIAL_CREATED = "credential_created"
+    EVENT_CREDENTIAL_DISABLED = "credential_disabled"
+    EVENT_CREDENTIAL_REVOKED = "credential_revoked"
+    EVENT_CREDENTIAL_ROTATED = "credential_rotated"
+
     def __init__(
         self,
         *,
@@ -37,11 +47,13 @@ class APICredentialService:
         business_repository: BusinessRepository,
         principal_repository: PrincipalRepository,
         api_credential_repository: APICredentialRepository,
+        auth_audit_service: AuthAuditService,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
         self.principal_repository = principal_repository
         self.api_credential_repository = api_credential_repository
+        self.auth_audit_service = auth_audit_service
 
     def list_for_business(self, *, business_id: str) -> list[APICredential]:
         self._ensure_business_exists(business_id)
@@ -60,39 +72,91 @@ class APICredentialService:
         self._ensure_business_exists(business_id)
         normalized_principal_id = self._normalize_principal_id(principal_id)
         normalized_credential_label = self._normalize_credential_label(credential_label)
+        normalized_actor_principal_id = self._normalize_actor_principal_id(actor_principal_id)
         principal = self._ensure_principal(
             business_id=business_id,
             principal_id=normalized_principal_id,
             principal_display_name=principal_display_name,
             principal_role=principal_role,
-            actor_principal_id=actor_principal_id,
+            actor_principal_id=normalized_actor_principal_id,
         )
-        return self._issue_new_credential(
+        issued = self._issue_new_credential(
             business_id=business_id,
             principal_id=principal.id,
             credential_label=normalized_credential_label,
         )
+        self.auth_audit_service.record_event(
+            business_id=business_id,
+            actor_principal_id=normalized_actor_principal_id,
+            target_type=self.CREDENTIAL_TARGET,
+            target_id=issued.credential.id,
+            event_type=self.EVENT_CREDENTIAL_CREATED,
+            details={
+                "principal_id": issued.credential.principal_id,
+                "label": issued.credential.label,
+            },
+        )
+        self.session.commit()
+        self.session.refresh(issued.credential)
+        return issued
 
-    def disable_credential(self, *, business_id: str, credential_id: str) -> APICredential:
+    def disable_credential(
+        self,
+        *,
+        business_id: str,
+        credential_id: str,
+        actor_principal_id: str | None = None,
+    ) -> APICredential:
         credential = self._get_for_business(business_id=business_id, credential_id=credential_id)
+        normalized_actor_principal_id = self._normalize_actor_principal_id(actor_principal_id)
         credential.is_active = False
         self.api_credential_repository.save(credential)
+        self.auth_audit_service.record_event(
+            business_id=business_id,
+            actor_principal_id=normalized_actor_principal_id,
+            target_type=self.CREDENTIAL_TARGET,
+            target_id=credential.id,
+            event_type=self.EVENT_CREDENTIAL_DISABLED,
+            details={"principal_id": credential.principal_id},
+        )
         self.session.commit()
         self.session.refresh(credential)
         return credential
 
-    def revoke_credential(self, *, business_id: str, credential_id: str) -> APICredential:
+    def revoke_credential(
+        self,
+        *,
+        business_id: str,
+        credential_id: str,
+        actor_principal_id: str | None = None,
+    ) -> APICredential:
         credential = self._get_for_business(business_id=business_id, credential_id=credential_id)
+        normalized_actor_principal_id = self._normalize_actor_principal_id(actor_principal_id)
         if credential.revoked_at is None:
             credential.revoked_at = utc_now()
         credential.is_active = False
         self.api_credential_repository.save(credential)
+        self.auth_audit_service.record_event(
+            business_id=business_id,
+            actor_principal_id=normalized_actor_principal_id,
+            target_type=self.CREDENTIAL_TARGET,
+            target_id=credential.id,
+            event_type=self.EVENT_CREDENTIAL_REVOKED,
+            details={"principal_id": credential.principal_id},
+        )
         self.session.commit()
         self.session.refresh(credential)
         return credential
 
-    def rotate_credential(self, *, business_id: str, credential_id: str) -> IssuedAPICredential:
+    def rotate_credential(
+        self,
+        *,
+        business_id: str,
+        credential_id: str,
+        actor_principal_id: str | None = None,
+    ) -> IssuedAPICredential:
         credential = self._get_for_business(business_id=business_id, credential_id=credential_id)
+        normalized_actor_principal_id = self._normalize_actor_principal_id(actor_principal_id)
         if credential.revoked_at is not None:
             raise APICredentialValidationError("Credential is already revoked and cannot be rotated.")
         principal = self.principal_repository.get_for_business(business_id, credential.principal_id)
@@ -118,6 +182,18 @@ class APICredentialService:
                 credential.revoked_at = utc_now()
                 self.api_credential_repository.save(credential)
                 self.api_credential_repository.create(replacement)
+                self.auth_audit_service.record_event(
+                    business_id=business_id,
+                    actor_principal_id=normalized_actor_principal_id,
+                    target_type=self.CREDENTIAL_TARGET,
+                    target_id=replacement.id,
+                    event_type=self.EVENT_CREDENTIAL_ROTATED,
+                    details={
+                        "principal_id": replacement.principal_id,
+                        "label": replacement.label,
+                        "replaced_credential_id": credential.id,
+                    },
+                )
                 self.session.commit()
                 refreshed = self.api_credential_repository.get_for_business(business_id, replacement.id)
                 return IssuedAPICredential(credential=refreshed or replacement, token=token)
@@ -150,7 +226,6 @@ class APICredentialService:
             )
             try:
                 self.api_credential_repository.create(credential)
-                self.session.commit()
                 refreshed = self.api_credential_repository.get_for_business(business_id, credential.id)
                 return IssuedAPICredential(credential=refreshed or credential, token=token)
             except IntegrityError:
@@ -210,6 +285,17 @@ class APICredentialService:
                 is_active=True,
             )
             self.principal_repository.create(principal)
+            self.auth_audit_service.record_event(
+                business_id=business_id,
+                actor_principal_id=normalized_actor_principal_id,
+                target_type=self.PRINCIPAL_TARGET,
+                target_id=principal.id,
+                event_type=self.EVENT_PRINCIPAL_CREATED,
+                details={
+                    "role": principal.role.value,
+                    "is_active": principal.is_active,
+                },
+            )
             return principal
 
         if not principal.is_active:
@@ -226,6 +312,23 @@ class APICredentialService:
             principal.updated_by_principal_id = normalized_actor_principal_id
         if changed:
             self.principal_repository.save(principal)
+            updated_fields: list[str] = []
+            if normalized_display_name and principal.display_name == normalized_display_name:
+                updated_fields.append("display_name")
+            if principal_role is not None:
+                updated_fields.append("role")
+            self.auth_audit_service.record_event(
+                business_id=business_id,
+                actor_principal_id=normalized_actor_principal_id,
+                target_type=self.PRINCIPAL_TARGET,
+                target_id=principal.id,
+                event_type=self.EVENT_PRINCIPAL_UPDATED,
+                details={
+                    "updated_fields": sorted(updated_fields),
+                    "role": principal.role.value,
+                    "is_active": principal.is_active,
+                },
+            )
 
         return principal
 

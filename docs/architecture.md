@@ -49,11 +49,15 @@ work-boots/
   - `PATCH /api/businesses/{business_id}/principals/{principal_id}`
   - `POST /api/businesses/{business_id}/principals/{principal_id}/activate`
   - `POST /api/businesses/{business_id}/principals/{principal_id}/deactivate`
+- Lightweight auth/admin audit history is available via:
+  - `GET /api/businesses/{business_id}/auth-audit-events`
 - Credential tokens are only returned at issue/rotate time; database stores `token_hash` only.
 - Credential metadata includes `label`, `last_used_at`, and `rotated_from_credential_id` for operational auditability.
 - Principal metadata includes `created_by_principal_id`, `updated_by_principal_id`, and `last_authenticated_at` for lightweight admin-action visibility.
 - Successful DB credential authentication updates `last_used_at`.
 - Successful DB credential authentication also updates principal `last_authenticated_at`.
+- Auth/admin audit events persist business-scoped actor/target/event context for high-value principal and credential actions.
+- Audit payloads intentionally exclude secret values (for example `token` and `token_hash`).
 - Tenant-sensitive routes pass only auth-derived tenant `business_id` into services/repositories.
 - Client-supplied `business_id` fields/query params are compatibility-only and are not trusted; mismatches are rejected.
 - `API_TOKEN_HASH_PEPPER` is required in production so token verification uses keyed hashing.
@@ -67,6 +71,7 @@ work-boots/
 
 ## Current Out Of Scope
 - Full IAM model (users, roles, memberships, session lifecycle).
+- Full enterprise audit platform (retention policy engine, external sinks, compliance workflows).
 
 ## Design Principles
 - One deployable backend process.
