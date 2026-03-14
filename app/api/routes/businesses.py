@@ -108,7 +108,7 @@ def list_api_credentials(
 def create_api_credential(
     business_id: str,
     payload: APICredentialCreateRequest,
-    _: Principal = Depends(require_credential_manager_principal),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
     tenant_context: TenantContext = Depends(get_tenant_context),
     api_credential_service: APICredentialService = Depends(get_api_credential_service),
 ) -> APICredentialIssueResponse:
@@ -123,6 +123,7 @@ def create_api_credential(
             principal_display_name=payload.principal_display_name,
             principal_role=payload.principal_role,
             credential_label=payload.credential_label,
+            actor_principal_id=admin_principal.id,
         )
     except APICredentialNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -245,7 +246,7 @@ def list_principals(
 def create_principal(
     business_id: str,
     payload: PrincipalCreateRequest,
-    _: Principal = Depends(require_credential_manager_principal),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
     tenant_context: TenantContext = Depends(get_tenant_context),
     principal_service: PrincipalService = Depends(get_principal_service),
 ) -> PrincipalRead:
@@ -259,6 +260,7 @@ def create_principal(
             principal_id=payload.principal_id,
             display_name=payload.display_name,
             role=payload.role,
+            actor_principal_id=admin_principal.id,
         )
     except PrincipalNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -275,7 +277,7 @@ def patch_principal(
     business_id: str,
     principal_id: str,
     payload: PrincipalUpdateRequest,
-    _: Principal = Depends(require_credential_manager_principal),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
     tenant_context: TenantContext = Depends(get_tenant_context),
     principal_service: PrincipalService = Depends(get_principal_service),
 ) -> PrincipalRead:
@@ -288,6 +290,7 @@ def patch_principal(
             business_id=scoped_business_id,
             principal_id=principal_id,
             payload=payload,
+            actor_principal_id=admin_principal.id,
         )
     except PrincipalNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -303,7 +306,7 @@ def patch_principal(
 def activate_principal(
     business_id: str,
     principal_id: str,
-    _: Principal = Depends(require_credential_manager_principal),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
     tenant_context: TenantContext = Depends(get_tenant_context),
     principal_service: PrincipalService = Depends(get_principal_service),
 ) -> PrincipalRead:
@@ -315,6 +318,7 @@ def activate_principal(
         principal = principal_service.activate_principal(
             business_id=scoped_business_id,
             principal_id=principal_id,
+            actor_principal_id=admin_principal.id,
         )
     except PrincipalNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -328,7 +332,7 @@ def activate_principal(
 def deactivate_principal(
     business_id: str,
     principal_id: str,
-    _: Principal = Depends(require_credential_manager_principal),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
     tenant_context: TenantContext = Depends(get_tenant_context),
     principal_service: PrincipalService = Depends(get_principal_service),
 ) -> PrincipalRead:
@@ -340,6 +344,7 @@ def deactivate_principal(
         principal = principal_service.deactivate_principal(
             business_id=scoped_business_id,
             principal_id=principal_id,
+            actor_principal_id=admin_principal.id,
         )
     except PrincipalNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

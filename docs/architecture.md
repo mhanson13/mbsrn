@@ -51,7 +51,9 @@ work-boots/
   - `POST /api/businesses/{business_id}/principals/{principal_id}/deactivate`
 - Credential tokens are only returned at issue/rotate time; database stores `token_hash` only.
 - Credential metadata includes `label`, `last_used_at`, and `rotated_from_credential_id` for operational auditability.
+- Principal metadata includes `created_by_principal_id`, `updated_by_principal_id`, and `last_authenticated_at` for lightweight admin-action visibility.
 - Successful DB credential authentication updates `last_used_at`.
+- Successful DB credential authentication also updates principal `last_authenticated_at`.
 - Tenant-sensitive routes pass only auth-derived tenant `business_id` into services/repositories.
 - Client-supplied `business_id` fields/query params are compatibility-only and are not trusted; mismatches are rejected.
 - `API_TOKEN_HASH_PEPPER` is required in production so token verification uses keyed hashing.

@@ -96,6 +96,10 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 - Credentials store non-secret metadata for operations: `label`, `last_used_at`, `rotated_from_credential_id`.
 - Successful DB credential authentication updates `last_used_at`.
 - Inactive principals are blocked from authentication and admin operations immediately.
+- Principals store non-secret metadata for lifecycle/audit visibility:
+  - `created_by_principal_id`
+  - `updated_by_principal_id`
+  - `last_authenticated_at`
 - `API_TOKEN_HASH_PEPPER` is required in production.
 - Legacy unpeppered hash verification is off by default and can be enabled temporarily with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true`.
 - Legacy shared-token auth (`API_AUTH_TOKEN` / `API_AUTH_BUSINESS_ID`) is no longer part of runtime auth resolution.

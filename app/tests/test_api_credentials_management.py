@@ -152,6 +152,8 @@ def test_create_credential_returns_token_and_authenticates(
     stored_principal = db_session.get(Principal, (seeded_business.id, "owner-user-1"))
     assert stored_principal is not None
     assert stored_principal.display_name == "owner-user-1"
+    assert stored_principal.created_by_principal_id == "management-admin"
+    assert stored_principal.updated_by_principal_id == "management-admin"
 
     leads_client = _make_leads_client(db_session)
     auth_response = leads_client.get(
@@ -326,6 +328,8 @@ def test_create_credential_can_set_principal_display_name(
     stored_principal = db_session.get(Principal, (seeded_business.id, "owner-user-5"))
     assert stored_principal is not None
     assert stored_principal.display_name == "Owner Operator"
+    assert stored_principal.created_by_principal_id == "management-admin"
+    assert stored_principal.updated_by_principal_id == "management-admin"
 
 
 def test_list_credentials_exposes_allowed_metadata_only(

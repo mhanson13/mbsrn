@@ -13,8 +13,11 @@ class PrincipalRead(BaseModel):
     business_id: str
     id: str
     display_name: str
+    created_by_principal_id: str | None
+    updated_by_principal_id: str | None
     role: PrincipalRole
     is_active: bool
+    last_authenticated_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

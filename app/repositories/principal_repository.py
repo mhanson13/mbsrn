@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now
 from app.models.principal import Principal, PrincipalRole
 
 
@@ -45,3 +48,18 @@ class PrincipalRepository:
             .where(Principal.is_active.is_(True))
         )
         return int(self.session.scalar(stmt) or 0)
+
+    def mark_last_authenticated(
+        self,
+        *,
+        business_id: str,
+        principal_id: str,
+        authenticated_at: datetime | None = None,
+    ) -> Principal | None:
+        principal = self.get_for_business(business_id, principal_id)
+        if principal is None:
+            return None
+        principal.last_authenticated_at = authenticated_at or utc_now()
+        self.session.add(principal)
+        self.session.flush()
+        return principal

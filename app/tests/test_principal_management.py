@@ -113,9 +113,13 @@ def test_admin_can_manage_principals_lifecycle(
         },
     )
     assert create_response.status_code == 201
-    assert create_response.json()["display_name"] == "Crew Lead"
-    assert create_response.json()["role"] == "operator"
-    assert create_response.json()["is_active"] is True
+    create_payload = create_response.json()
+    assert create_payload["display_name"] == "Crew Lead"
+    assert create_payload["role"] == "operator"
+    assert create_payload["is_active"] is True
+    assert create_payload["created_by_principal_id"] == "admin-owner"
+    assert create_payload["updated_by_principal_id"] == "admin-owner"
+    assert create_payload["last_authenticated_at"] is None
 
     update_response = client.patch(
         f"/api/businesses/{seeded_business.id}/principals/crew-lead-1",
@@ -123,8 +127,11 @@ def test_admin_can_manage_principals_lifecycle(
         json={"display_name": "Crew Captain", "role": "admin"},
     )
     assert update_response.status_code == 200
-    assert update_response.json()["display_name"] == "Crew Captain"
-    assert update_response.json()["role"] == "admin"
+    update_payload = update_response.json()
+    assert update_payload["display_name"] == "Crew Captain"
+    assert update_payload["role"] == "admin"
+    assert update_payload["created_by_principal_id"] == "admin-owner"
+    assert update_payload["updated_by_principal_id"] == "admin-owner"
 
     list_response = client.get(
         f"/api/businesses/{seeded_business.id}/principals",
@@ -135,20 +142,28 @@ def test_admin_can_manage_principals_lifecycle(
     principal_ids = {item["id"] for item in payload["items"]}
     assert "admin-owner" in principal_ids
     assert "crew-lead-1" in principal_ids
+    managed_principal = next(item for item in payload["items"] if item["id"] == "crew-lead-1")
+    assert managed_principal["created_by_principal_id"] == "admin-owner"
+    assert managed_principal["updated_by_principal_id"] == "admin-owner"
+    assert "last_authenticated_at" in managed_principal
 
     deactivate_response = client.post(
         f"/api/businesses/{seeded_business.id}/principals/crew-lead-1/deactivate",
         headers=headers,
     )
     assert deactivate_response.status_code == 200
-    assert deactivate_response.json()["is_active"] is False
+    deactivate_payload = deactivate_response.json()
+    assert deactivate_payload["is_active"] is False
+    assert deactivate_payload["updated_by_principal_id"] == "admin-owner"
 
     activate_response = client.post(
         f"/api/businesses/{seeded_business.id}/principals/crew-lead-1/activate",
         headers=headers,
     )
     assert activate_response.status_code == 200
-    assert activate_response.json()["is_active"] is True
+    activate_payload = activate_response.json()
+    assert activate_payload["is_active"] is True
+    assert activate_payload["updated_by_principal_id"] == "admin-owner"
 
 
 def test_operator_cannot_manage_principals(
@@ -217,6 +232,48 @@ def test_inactive_principal_cannot_authenticate_even_with_active_credential(
         headers={"Authorization": f"Bearer {operator_token}"},
     )
     assert auth_response.status_code == 401
+
+
+def test_successful_auth_updates_principal_last_authenticated_at(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_production_auth_defaults(monkeypatch, default_business_id=seeded_business.id)
+    lead = Lead(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        source=LeadSource.MANUAL,
+        source_ref=None,
+        submitted_at=utc_now() - timedelta(minutes=5),
+        customer_name="Auth Metadata Lead",
+        phone="3035550102",
+        status=LeadStatus.NEW,
+    )
+    db_session.add(lead)
+    db_session.commit()
+
+    operator_token = _seed_credential(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="operator-user-usage",
+        role=PrincipalRole.OPERATOR,
+    )
+    principal_before = db_session.get(Principal, (seeded_business.id, "operator-user-usage"))
+    assert principal_before is not None
+    assert principal_before.last_authenticated_at is None
+
+    client = _make_client(db_session, include_leads=True)
+    auth_response = client.get(
+        f"/api/leads/{lead.id}",
+        headers={"Authorization": f"Bearer {operator_token}"},
+    )
+    assert auth_response.status_code == 200
+
+    db_session.expire_all()
+    principal_after = db_session.get(Principal, (seeded_business.id, "operator-user-usage"))
+    assert principal_after is not None
+    assert principal_after.last_authenticated_at is not None
 
 
 def test_cross_tenant_principal_management_is_blocked(

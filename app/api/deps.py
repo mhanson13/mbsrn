@@ -263,6 +263,7 @@ def _parse_bearer_token(authorization: str | None) -> str | None:
 def get_tenant_context(
     authorization: str | None = Header(default=None),
     api_credential_repository: APICredentialRepository = Depends(get_api_credential_repository),
+    principal_repository: PrincipalRepository = Depends(get_principal_repository),
 ) -> TenantContext:
     """Resolve tenant scope from server-side auth context (not request business_id fields)."""
     settings = get_settings()
@@ -273,12 +274,17 @@ def get_tenant_context(
         if db_credential is not None:
             try:
                 api_credential_repository.mark_last_used(db_credential)
+                principal_repository.mark_last_authenticated(
+                    business_id=db_credential.business_id,
+                    principal_id=db_credential.principal_id,
+                )
                 api_credential_repository.session.commit()
             except Exception:  # noqa: BLE001
                 api_credential_repository.session.rollback()
                 logger.warning(
-                    "Failed to persist api credential last_used_at for credential_id=%s.",
+                    "Failed to persist auth usage metadata for credential_id=%s principal_id=%s.",
                     db_credential.id,
+                    db_credential.principal_id,
                 )
             return TenantContext(
                 business_id=db_credential.business_id,

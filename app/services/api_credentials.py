@@ -55,6 +55,7 @@ class APICredentialService:
         principal_display_name: str | None = None,
         principal_role: PrincipalRole | None = None,
         credential_label: str | None = None,
+        actor_principal_id: str | None = None,
     ) -> IssuedAPICredential:
         self._ensure_business_exists(business_id)
         normalized_principal_id = self._normalize_principal_id(principal_id)
@@ -64,6 +65,7 @@ class APICredentialService:
             principal_id=normalized_principal_id,
             principal_display_name=principal_display_name,
             principal_role=principal_role,
+            actor_principal_id=actor_principal_id,
         )
         return self._issue_new_credential(
             business_id=business_id,
@@ -191,15 +193,19 @@ class APICredentialService:
         principal_id: str,
         principal_display_name: str | None,
         principal_role: PrincipalRole | None,
+        actor_principal_id: str | None,
     ) -> Principal:
         principal = self.principal_repository.get_for_business(business_id, principal_id)
         normalized_display_name = self._normalize_principal_display_name(principal_display_name)
+        normalized_actor_principal_id = self._normalize_actor_principal_id(actor_principal_id)
 
         if principal is None:
             principal = Principal(
                 business_id=business_id,
                 id=principal_id,
                 display_name=normalized_display_name or principal_id,
+                created_by_principal_id=normalized_actor_principal_id,
+                updated_by_principal_id=normalized_actor_principal_id,
                 role=principal_role or PrincipalRole.OPERATOR,
                 is_active=True,
             )
@@ -216,10 +222,17 @@ class APICredentialService:
         if principal_role is not None and principal.role != principal_role:
             principal.role = principal_role
             changed = True
+        if changed and normalized_actor_principal_id is not None:
+            principal.updated_by_principal_id = normalized_actor_principal_id
         if changed:
             self.principal_repository.save(principal)
 
         return principal
+
+    def _normalize_actor_principal_id(self, actor_principal_id: str | None) -> str | None:
+        if actor_principal_id is None:
+            return None
+        return self._normalize_principal_id(actor_principal_id)
 
     def _ensure_business_exists(self, business_id: str) -> None:
         business = self.business_repository.get(business_id)

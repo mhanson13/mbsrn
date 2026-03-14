@@ -138,6 +138,9 @@ def test_db_credential_resolves_principal_and_tenant_scope(
     db_credential = db_session.get(APICredential, credential_id)
     assert db_credential is not None
     assert db_credential.last_used_at is not None
+    principal = db_session.get(Principal, (seeded_business.id, "user-a"))
+    assert principal is not None
+    assert principal.last_authenticated_at is not None
 
     spoofed_cross_tenant = client.get(
         f"/api/leads/{lead_b.id}",
