@@ -85,6 +85,8 @@ Current SEO.ai Phase 1 endpoints (business-scoped):
   - `GET /api/businesses/{business_id}/seo/sites/{site_id}/audit-runs`
   - `GET /api/businesses/{business_id}/seo/audit-runs/{run_id}`
   - `GET /api/businesses/{business_id}/seo/audit-runs/{run_id}/findings`
+  - `GET /api/businesses/{business_id}/seo/audit-runs/{run_id}/summary`
+  - `GET /api/businesses/{business_id}/seo/audit-runs/{run_id}/report`
 - Audit summary (manual trigger only):
   - `POST /api/businesses/{business_id}/seo/audit-runs/{run_id}/summarize`
 
