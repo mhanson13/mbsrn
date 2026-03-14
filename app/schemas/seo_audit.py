@@ -23,6 +23,10 @@ class SEOAuditRunRead(BaseModel):
     max_depth: int
     pages_discovered: int
     pages_crawled: int
+    pages_skipped: int
+    errors_encountered: int
+    duplicate_urls_skipped: int
+    crawl_duration_ms: int | None
     error_summary: str | None
     created_by_principal_id: str | None
     created_at: datetime

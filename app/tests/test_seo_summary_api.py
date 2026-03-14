@@ -176,3 +176,26 @@ def test_summary_requires_completed_run(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
     response = client.post(f"/api/businesses/{seeded_business.id}/seo/audit-runs/{run.id}/summarize")
     assert response.status_code == 422
+
+
+def test_summary_generation_is_stable_with_zero_findings(db_session, seeded_business) -> None:
+    run = SEOAuditRun(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=str(uuid4()),
+        status="completed",
+        max_pages=10,
+        max_depth=2,
+        pages_discovered=0,
+        pages_crawled=0,
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    client = _make_client(db_session, business_id=seeded_business.id)
+    response = client.post(f"/api/businesses/{seeded_business.id}/seo/audit-runs/{run.id}/summarize")
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["top_issues_json"] == []
+    assert len(payload["top_priorities_json"]) == 3

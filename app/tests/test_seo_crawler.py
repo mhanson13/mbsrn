@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from app.services.seo_crawler import FetchResponse, SEOCrawler
+import io
+from urllib.error import URLError
+
+import pytest
+
+from app.services.seo_crawler import FetchResponse, SEOCrawler, SEOCrawlerValidationError
 
 
 class _FakeCrawler(SEOCrawler):
@@ -12,6 +17,18 @@ class _FakeCrawler(SEOCrawler):
     def _fetch(self, url: str) -> FetchResponse:  # type: ignore[override]
         self.requested.append(url)
         return self.pages[url]
+
+
+class _RetryCrawler(SEOCrawler):
+    def __init__(self) -> None:
+        super().__init__(timeout_seconds=1, max_retries=2, retry_backoff_seconds=0)
+        self.attempts = 0
+
+    def _fetch_once(self, url: str) -> FetchResponse:  # type: ignore[override]
+        self.attempts += 1
+        if self.attempts < 3:
+            raise URLError("temporary upstream failure")
+        return FetchResponse(final_url=url, status_code=200, body="<html><body>ok</body></html>")
 
 
 def test_crawler_is_bounded_and_same_domain_only() -> None:
@@ -62,3 +79,50 @@ def test_crawler_is_bounded_and_same_domain_only() -> None:
     crawled_urls = [item.final_url for item in full]
     assert "https://example.com/b?x=1&y=2" in crawled_urls
     assert crawled_urls.count("https://example.com/b?x=1&y=2") == 1
+    assert crawler.last_crawl_stats is not None
+    assert crawler.last_crawl_stats.duplicate_urls_skipped >= 1
+
+
+def test_url_normalization_handles_index_fragments_and_duplicate_query_items() -> None:
+    crawler = SEOCrawler()
+
+    normalized = crawler.normalize_url("https://Example.com/index.html?a=1&a=1&b=2#frag")
+    assert normalized == "https://example.com/?a=1&b=2"
+
+    normalized_slash = crawler.normalize_url("https://example.com/services/")
+    assert normalized_slash == "https://example.com/services"
+
+    preferred_scheme = crawler.normalize_url(
+        "http://example.com/services//fire///",
+        preferred_scheme="https",
+        preferred_host="example.com",
+    )
+    assert preferred_scheme == "https://example.com/services/fire"
+
+
+def test_crawler_retries_transient_failures() -> None:
+    crawler = _RetryCrawler()
+    result = crawler.crawl(
+        base_url="https://example.com/",
+        max_pages=1,
+        max_depth=1,
+        same_domain_only=True,
+    )
+    assert len(result) == 1
+    assert crawler.attempts == 3
+
+
+def test_crawler_enforces_response_size_limit() -> None:
+    crawler = SEOCrawler(max_response_bytes=16)
+
+    class _LargeResponse:
+        headers = {"Content-Length": "1024"}
+
+        def __init__(self) -> None:
+            self._stream = io.BytesIO(b"<html>" + (b"a" * 1000) + b"</html>")
+
+        def read(self, size: int) -> bytes:  # noqa: ARG002
+            return self._stream.read(size)
+
+    with pytest.raises(SEOCrawlerValidationError):
+        crawler._read_limited_body_bytes(_LargeResponse())

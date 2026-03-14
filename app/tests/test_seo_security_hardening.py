@@ -53,6 +53,7 @@ def test_redirects_cannot_bypass_ssrf_protection(monkeypatch: pytest.MonkeyPatch
 
     class _FakeResponse:
         status = 200
+        headers = {"Content-Type": "text/html"}
 
         def geturl(self) -> str:
             return "http://127.0.0.1/internal"
@@ -66,11 +67,11 @@ def test_redirects_cannot_bypass_ssrf_protection(monkeypatch: pytest.MonkeyPatch
         def __exit__(self, exc_type, exc, tb):  # noqa: ANN001, ANN204
             return False
 
-    monkeypatch.setattr(
-        seo_crawler_module,
-        "urlopen",
-        lambda request, timeout=8: _FakeResponse(),  # noqa: ARG005
-    )
+    class _FakeOpener:
+        def open(self, request, timeout=8):  # noqa: ANN001, ARG002
+            return _FakeResponse()
+
+    monkeypatch.setattr(seo_crawler_module, "build_opener", lambda *args, **kwargs: _FakeOpener())
 
     crawler = _RedirectGuardCrawler(timeout_seconds=1)
     with pytest.raises(SEOCrawlerValidationError):

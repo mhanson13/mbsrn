@@ -79,6 +79,9 @@ def test_audit_logs_include_business_site_run_and_state_transitions(db_session, 
     assert f"business_id={seeded_business.id}" in joined
     assert f"site_id={site.id}" in joined
     assert f"audit_run_id={result.run.id}" in joined
+    assert "pages_discovered=" in joined
+    assert "pages_crawled=" in joined
+    assert "errors_encountered=" in joined
 
 
 def test_audit_failure_logs_include_reason(db_session, seeded_business, caplog) -> None:

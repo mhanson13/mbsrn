@@ -67,6 +67,7 @@ Project docs live under [`docs/`](docs):
 - `lead-intake-flow.md`
 - `seo-ai-requirements.md`
 - `seo-ai-phase1-implementation-checklist.md`
+- `seo-ai-phase1-audit-hardening.md`
 - `phase3-response-and-reminders.md`
 - `phase4-notifications-and-hardening.md`
 - `security-architecture.md`

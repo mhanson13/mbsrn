@@ -93,6 +93,10 @@ def test_audit_run_endpoints_persist_and_retrieve_findings(db_session, seeded_bu
     run_payload = run_response.json()
     assert run_payload["status"] == "completed"
     assert run_payload["pages_crawled"] >= 1
+    assert run_payload["pages_skipped"] >= 0
+    assert run_payload["errors_encountered"] >= 0
+    assert run_payload["duplicate_urls_skipped"] >= 0
+    assert run_payload["crawl_duration_ms"] is not None
     run_id = run_payload["id"]
 
     list_runs = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/audit-runs")

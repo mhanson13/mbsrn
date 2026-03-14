@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import time
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -14,7 +15,7 @@ from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.schemas.seo_audit import SEOAuditRunCreateRequest
-from app.services.seo_crawler import CrawlPageResult, SEOCrawler, SEOCrawlerValidationError
+from app.services.seo_crawler import CrawlPageResult, CrawlStats, SEOCrawler, SEOCrawlerValidationError
 from app.services.seo_extractor import SEOExtractor
 from app.services.seo_finding_rules import SEOFindingRules
 
@@ -82,16 +83,20 @@ class SEOAuditService:
         self.seo_audit_repository.create_run(run)
         self.session.commit()
 
+        started_monotonic = time.monotonic()
+        started_at = utc_now()
         run.status = SEOAuditRunStatus.RUNNING.value
-        run.started_at = utc_now()
+        run.started_at = started_at
         self.seo_audit_repository.save_run(run)
         self.session.commit()
         logger.info(
-            "SEO audit run started business_id=%s site_id=%s audit_run_id=%s status=%s",
+            "SEO audit run started business_id=%s site_id=%s audit_run_id=%s status=%s max_pages=%s max_depth=%s",
             business_id,
             site_id,
             run.id,
             run.status,
+            payload.max_pages,
+            payload.max_depth,
         )
 
         try:
@@ -101,7 +106,13 @@ class SEOAuditService:
                 max_depth=payload.max_depth,
                 same_domain_only=True,
             )
-            persisted_pages, broken_links_by_page_id = self._persist_pages(
+            crawl_stats = self.crawler.last_crawl_stats or CrawlStats(
+                pages_discovered=len(crawl_pages),
+                pages_skipped=0,
+                duplicate_urls_skipped=0,
+                errors_encountered=0,
+            )
+            persisted_pages, broken_links_by_page_id, extraction_errors = self._persist_pages(
                 run=run,
                 crawl_pages=crawl_pages,
             )
@@ -111,28 +122,40 @@ class SEOAuditService:
                 broken_links_by_page_id=broken_links_by_page_id,
             )
 
-            run.pages_discovered = len(crawl_pages)
+            run.pages_discovered = crawl_stats.pages_discovered
             run.pages_crawled = len(persisted_pages)
+            run.pages_skipped = crawl_stats.pages_skipped
+            run.errors_encountered = crawl_stats.errors_encountered + extraction_errors
+            run.duplicate_urls_skipped = crawl_stats.duplicate_urls_skipped
             run.status = SEOAuditRunStatus.COMPLETED.value
             run.completed_at = utc_now()
+            run.crawl_duration_ms = int((time.monotonic() - started_monotonic) * 1000)
             run.error_summary = None
             self.seo_audit_repository.save_run(run)
             self.session.commit()
             logger.info(
-                "SEO audit run completed business_id=%s site_id=%s audit_run_id=%s status=%s pages_discovered=%s pages_crawled=%s findings=%s",
+                (
+                    "SEO audit run completed business_id=%s site_id=%s audit_run_id=%s status=%s "
+                    "pages_discovered=%s pages_crawled=%s pages_skipped=%s duplicate_urls_skipped=%s "
+                    "errors_encountered=%s crawl_duration_ms=%s findings=%s"
+                ),
                 business_id,
                 site_id,
                 run.id,
                 run.status,
                 run.pages_discovered,
                 run.pages_crawled,
+                run.pages_skipped,
+                run.duplicate_urls_skipped,
+                run.errors_encountered,
+                run.crawl_duration_ms,
                 len(persisted_findings),
             )
             return AuditRunResult(run=run, pages=persisted_pages, findings=persisted_findings)
         except SEOCrawlerValidationError as exc:
-            return self._fail_run(run=run, reason=str(exc))
+            return self._fail_run(run=run, reason=str(exc), started_monotonic=started_monotonic)
         except Exception as exc:  # noqa: BLE001
-            return self._fail_run(run=run, reason=str(exc))
+            return self._fail_run(run=run, reason=str(exc), started_monotonic=started_monotonic)
 
     def get_run(self, *, business_id: str, run_id: str) -> SEOAuditRun:
         self._require_business(business_id)
@@ -160,15 +183,27 @@ class SEOAuditService:
         *,
         run: SEOAuditRun,
         crawl_pages: list[CrawlPageResult],
-    ) -> tuple[list[SEOAuditPage], dict[str, int]]:
+    ) -> tuple[list[SEOAuditPage], dict[str, int], int]:
         status_by_url: dict[str, int] = {page.final_url: page.status_code for page in crawl_pages}
         persisted_pages: list[SEOAuditPage] = []
         broken_links_by_page_id: dict[str, int] = {}
+        extraction_errors = 0
 
         for crawl_page in crawl_pages:
-            extracted = (
-                self.extractor.extract(crawl_page.body_text) if crawl_page.body_text is not None else None
-            )
+            extracted = None
+            if crawl_page.body_text is not None:
+                try:
+                    extracted = self.extractor.extract(crawl_page.body_text)
+                except Exception as exc:  # noqa: BLE001
+                    extraction_errors += 1
+                    logger.warning(
+                        "SEO extractor failed business_id=%s site_id=%s audit_run_id=%s url=%s reason=%s",
+                        run.business_id,
+                        run.site_id,
+                        run.id,
+                        crawl_page.final_url,
+                        str(exc),
+                    )
             page = SEOAuditPage(
                 id=str(uuid4()),
                 business_id=run.business_id,
@@ -189,6 +224,15 @@ class SEOAuditService:
             )
             self.seo_audit_repository.add_page(page)
             persisted_pages.append(page)
+            if crawl_page.fetch_error:
+                logger.warning(
+                    "SEO crawl page fetch error business_id=%s site_id=%s audit_run_id=%s url=%s reason=%s",
+                    run.business_id,
+                    run.site_id,
+                    run.id,
+                    crawl_page.final_url,
+                    crawl_page.fetch_error,
+                )
 
             broken = 0
             for target in crawl_page.outgoing_internal_links:
@@ -197,7 +241,7 @@ class SEOAuditService:
             broken_links_by_page_id[page.id] = broken
 
         self.session.flush()
-        return persisted_pages, broken_links_by_page_id
+        return persisted_pages, broken_links_by_page_id, extraction_errors
 
     def _persist_findings(
         self,
@@ -236,7 +280,13 @@ class SEOAuditService:
         if business is None:
             raise SEOAuditNotFoundError("Business not found")
 
-    def _fail_run(self, *, run: SEOAuditRun, reason: str) -> AuditRunResult:
+    def _fail_run(
+        self,
+        *,
+        run: SEOAuditRun,
+        reason: str,
+        started_monotonic: float | None = None,
+    ) -> AuditRunResult:
         logger.warning(
             "SEO audit run failed business_id=%s site_id=%s audit_run_id=%s status=failed reason=%s",
             run.business_id,
@@ -246,6 +296,8 @@ class SEOAuditService:
         )
         run.status = SEOAuditRunStatus.FAILED.value
         run.completed_at = utc_now()
+        if started_monotonic is not None:
+            run.crawl_duration_ms = int((time.monotonic() - started_monotonic) * 1000)
         run.error_summary = reason[:1000]
         self.seo_audit_repository.save_run(run)
         self.session.commit()

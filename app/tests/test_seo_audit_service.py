@@ -85,6 +85,10 @@ def test_audit_service_persists_pages_findings_and_run_status(db_session, seeded
     assert result.run.status == "completed"
     assert result.run.pages_discovered >= 2
     assert result.run.pages_crawled >= 2
+    assert result.run.pages_skipped >= 0
+    assert result.run.errors_encountered >= 0
+    assert result.run.duplicate_urls_skipped >= 0
+    assert result.run.crawl_duration_ms is not None
     assert len(result.pages) >= 2
     assert len(result.findings) > 0
 
@@ -92,6 +96,8 @@ def test_audit_service_persists_pages_findings_and_run_status(db_session, seeded
     assert "missing_title" in finding_types
     assert "missing_meta_description" in finding_types
     assert "missing_h1" in finding_types
+    assert "missing_h2" in finding_types
     assert "missing_canonical" in finding_types
     assert "thin_content" in finding_types
+    assert "missing_internal_links" in finding_types
     assert "broken_internal_links" in finding_types
