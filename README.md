@@ -71,6 +71,21 @@ Project docs live under [`docs/`](docs):
 - `phase4-notifications-and-hardening.md`
 - `security-architecture.md`
 
+## SEO.ai Phase 1
+Current SEO.ai Phase 1 endpoints (business-scoped):
+- Sites:
+  - `GET /api/businesses/{business_id}/seo/sites`
+  - `POST /api/businesses/{business_id}/seo/sites`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}`
+  - `PATCH /api/businesses/{business_id}/seo/sites/{site_id}`
+- Audit runs:
+  - `POST /api/businesses/{business_id}/seo/sites/{site_id}/audit-runs`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/audit-runs`
+  - `GET /api/businesses/{business_id}/seo/audit-runs/{run_id}`
+  - `GET /api/businesses/{business_id}/seo/audit-runs/{run_id}/findings`
+- Audit summary (manual trigger only):
+  - `POST /api/businesses/{business_id}/seo/audit-runs/{run_id}/summarize`
+
 ## Notification Provider Modes
 Set provider selection in `.env`:
 - `SMS_PROVIDER=mock|dev|twilio`

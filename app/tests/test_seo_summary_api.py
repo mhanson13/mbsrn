@@ -14,6 +14,7 @@ from app.api.deps import (
 )
 from app.api.routes.seo import router as seo_router
 from app.integrations.seo_summary_provider import SEOAuditSummaryProvider
+from app.models.business import Business
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_audit_summary import SEOAuditSummary
 from app.services.seo_crawler import FetchResponse, SEOCrawler
@@ -78,6 +79,20 @@ def _make_client(db_session, *, business_id: str, summary_provider: SEOAuditSumm
 
 
 def test_summary_generation_is_manual_trigger_and_versioned(db_session, seeded_business) -> None:
+    other_business = Business(
+        id=str(uuid4()),
+        name="Other Tenant",
+        notification_phone="+13035550199",
+        notification_email="owner@other.example",
+        sms_enabled=True,
+        email_enabled=True,
+        customer_auto_ack_enabled=True,
+        contractor_alerts_enabled=True,
+        timezone="America/Denver",
+    )
+    db_session.add(other_business)
+    db_session.commit()
+
     client = _make_client(db_session, business_id=seeded_business.id)
     create_site = client.post(
         f"/api/businesses/{seeded_business.id}/seo/sites",
@@ -109,6 +124,9 @@ def test_summary_generation_is_manual_trigger_and_versioned(db_session, seeded_b
     second_summary = client.post(f"/api/businesses/{seeded_business.id}/seo/audit-runs/{run_id}/summarize")
     assert second_summary.status_code == 201
     assert second_summary.json()["version"] == 2
+
+    cross_tenant = client.post(f"/api/businesses/{other_business.id}/seo/audit-runs/{run_id}/summarize")
+    assert cross_tenant.status_code == 404
 
 
 def test_summary_failure_does_not_change_completed_run_state(db_session, seeded_business) -> None:

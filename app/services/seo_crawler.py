@@ -159,8 +159,9 @@ class SEOCrawler:
             method="GET",
         )
         with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
+            final_url = self.normalize_url(response.geturl())
+            self._validate_resolvable_host(final_url)
             body = response.read().decode("utf-8", errors="replace")
-            final_url = response.geturl()
             status_code = int(getattr(response, "status", 200) or 200)
             return FetchResponse(final_url=final_url, status_code=status_code, body=body)
 
