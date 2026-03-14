@@ -3,12 +3,11 @@ from __future__ import annotations
 from collections.abc import Generator
 from dataclasses import dataclass
 import logging
-import secrets
 
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.config import PrincipalCredential, get_settings
+from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.integrations import (
     DevEmailProvider,
@@ -248,17 +247,6 @@ def _parse_bearer_token(authorization: str | None) -> str | None:
     return token.strip()
 
 
-def _match_principal_credential(
-    *,
-    token: str,
-    credentials: tuple[PrincipalCredential, ...],
-) -> PrincipalCredential | None:
-    for credential in credentials:
-        if secrets.compare_digest(token, credential.token):
-            return credential
-    return None
-
-
 def get_tenant_context(
     authorization: str | None = Header(default=None),
     api_credential_repository: APICredentialRepository = Depends(get_api_credential_repository),
@@ -266,18 +254,6 @@ def get_tenant_context(
     """Resolve tenant scope from server-side auth context (not request business_id fields)."""
     settings = get_settings()
     token = _parse_bearer_token(authorization)
-    environment = settings.environment.strip().lower()
-    compat_fallback_enabled = settings.allow_auth_compat_fallback and environment in {
-        "development",
-        "dev",
-        "test",
-    }
-    if settings.allow_auth_compat_fallback and not compat_fallback_enabled and settings.api_principal_credentials:
-        logger.warning(
-            "ALLOW_AUTH_COMPAT_FALLBACK is set but ignored for ENVIRONMENT=%s; "
-            "DB-backed credentials are required in this environment.",
-            settings.environment,
-        )
 
     if token is not None:
         db_credential = api_credential_repository.get_active_by_token(token)
@@ -297,33 +273,6 @@ def get_tenant_context(
                 auth_source="db_api_credential",
             )
 
-        if compat_fallback_enabled:
-            # Compatibility fallback for env-configured principal credentials.
-            if settings.api_principal_credentials:
-                credential = _match_principal_credential(
-                    token=token,
-                    credentials=settings.api_principal_credentials,
-                )
-                if credential is not None:
-                    logger.warning(
-                        "Using non-production auth compatibility fallback for principal token "
-                        "(principal_id=%s, business_id=%s).",
-                        credential.principal_id,
-                        credential.business_id,
-                    )
-                    return TenantContext(
-                        business_id=credential.business_id,
-                        principal_id=credential.principal_id,
-                        auth_source="env_principal_token",
-                    )
-
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized.",
-        )
-
-    # If auth is configured, missing bearer token is unauthorized.
-    if compat_fallback_enabled and settings.api_principal_credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthorized.",

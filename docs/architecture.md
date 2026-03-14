@@ -50,7 +50,6 @@ work-boots/
 - Client-supplied `business_id` fields/query params are compatibility-only and are not trusted; mismatches are rejected.
 - `API_TOKEN_HASH_PEPPER` is required in production so token verification uses keyed hashing.
 - Legacy unpeppered SHA-256 verification is disabled by default and only enabled temporarily with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true` during migration.
-- Env principal-token mode (`API_AUTH_PRINCIPALS_JSON`) is a non-production compatibility fallback gated by `ALLOW_AUTH_COMPAT_FALLBACK` (off by default).
 - Legacy shared-token auth (`API_AUTH_TOKEN` / `API_AUTH_BUSINESS_ID`) is no longer used for runtime tenant auth.
 - Dev/test-only fallback uses `DEFAULT_BUSINESS_ID` only when no auth config is present.
 - Inactive credentials (`is_active=false`) and revoked credentials (`revoked_at` set) are rejected.

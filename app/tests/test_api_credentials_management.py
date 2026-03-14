@@ -31,7 +31,6 @@ def _clear_settings_cache() -> None:
 def _set_production_auth_defaults(monkeypatch: pytest.MonkeyPatch, *, default_business_id: str) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("DEFAULT_BUSINESS_ID", default_business_id)
-    monkeypatch.setenv("ALLOW_AUTH_COMPAT_FALLBACK", "false")
     monkeypatch.setenv("API_TOKEN_HASH_PEPPER", PROD_PEPPER)
     monkeypatch.setenv("ALLOW_LEGACY_TOKEN_HASH_FALLBACK", "false")
     monkeypatch.delenv("API_AUTH_TOKEN", raising=False)

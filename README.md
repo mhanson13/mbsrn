@@ -91,7 +91,6 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 - Successful DB credential authentication updates `last_used_at`.
 - `API_TOKEN_HASH_PEPPER` is required in production.
 - Legacy unpeppered hash verification is off by default and can be enabled temporarily with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true`.
-- Env compatibility auth (`API_AUTH_PRINCIPALS_JSON`) is non-production only and gated by `ALLOW_AUTH_COMPAT_FALLBACK` (off by default).
 - Legacy shared-token auth (`API_AUTH_TOKEN` / `API_AUTH_BUSINESS_ID`) is no longer part of runtime auth resolution.
 
 Out of scope in this pass: full IAM/user-role management.
