@@ -69,6 +69,9 @@ Project docs live under [`docs/`](docs):
 - `seo-ai-phase1-implementation-checklist.md`
 - `seo-ai-phase1-audit-hardening.md`
 - `seo-ai-phase1-5-usability-and-diagnostics.md`
+- `seo-ai-phase2-competitor-intelligence.md`
+- `seo-ai-phase2-data-model.md`
+- `seo-ai-phase2-api.md`
 - `phase3-response-and-reminders.md`
 - `phase4-notifications-and-hardening.md`
 - `security-architecture.md`
