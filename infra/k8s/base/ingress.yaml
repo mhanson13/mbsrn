@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: work-boots-ingress
+  namespace: work-boots
+  annotations:
+    kubernetes.io/ingress.class: gce
+spec:
+  rules:
+    - host: workboots.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: work-boots-api
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: work-boots-ui
+                port:
+                  number: 3000

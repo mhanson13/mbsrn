@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: work-boots-ui
+  namespace: work-boots
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: work-boots-ui
+  template:
+    metadata:
+      labels:
+        app: work-boots-ui
+    spec:
+      containers:
+        - name: ui
+          image: us-central1-docker.pkg.dev/PROJECT_ID/work-boots/ui:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: work-boots-config
+            - secretRef:
+                name: work-boots-secrets
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "192Mi"
+            limits:
+              cpu: "750m"
+              memory: "768Mi"

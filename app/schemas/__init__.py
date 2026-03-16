@@ -5,6 +5,7 @@ from app.schemas.api_credential import (
     APICredentialRead,
     APICredentialRotateResponse,
 )
+from app.schemas.auth import AuthExchangeResponse, AuthMeResponse, AuthPrincipalRead, GoogleAuthExchangeRequest
 from app.schemas.auth_audit import AuthAuditEventListResponse, AuthAuditEventRead
 from app.schemas.business import BusinessSettingsRead, BusinessSettingsUpdateRequest
 from app.schemas.principal import (
@@ -12,6 +13,11 @@ from app.schemas.principal import (
     PrincipalListResponse,
     PrincipalRead,
     PrincipalUpdateRequest,
+)
+from app.schemas.principal_identity import (
+    PrincipalIdentityCreateRequest,
+    PrincipalIdentityListResponse,
+    PrincipalIdentityRead,
 )
 from app.schemas.seo_site import (
     SEOSiteCreateRequest,
@@ -93,8 +99,11 @@ __all__ = [
     "APICredentialListResponse",
     "APICredentialRead",
     "APICredentialRotateResponse",
+    "AuthExchangeResponse",
+    "AuthMeResponse",
     "AuthAuditEventListResponse",
     "AuthAuditEventRead",
+    "AuthPrincipalRead",
     "EmailIntakeRequest",
     "EmailIntakeResponse",
     "EmailLeadFields",
@@ -110,6 +119,9 @@ __all__ = [
     "ManualIntakeResponse",
     "ParsedLeadData",
     "PrincipalCreateRequest",
+    "PrincipalIdentityCreateRequest",
+    "PrincipalIdentityListResponse",
+    "PrincipalIdentityRead",
     "PrincipalListResponse",
     "PrincipalRead",
     "PrincipalUpdateRequest",
@@ -162,4 +174,5 @@ __all__ = [
     "SEOAutomationRunRead",
     "SEOAutomationStatusRead",
     "StatusPatchResponse",
+    "GoogleAuthExchangeRequest",
 ]

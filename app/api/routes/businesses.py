@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import (
     get_api_credential_service,
+    get_principal_identity_service,
     get_auth_audit_service,
     get_business_settings_service,
     get_principal_service,
@@ -29,6 +30,11 @@ from app.schemas.principal import (
     PrincipalRead,
     PrincipalUpdateRequest,
 )
+from app.schemas.principal_identity import (
+    PrincipalIdentityCreateRequest,
+    PrincipalIdentityListResponse,
+    PrincipalIdentityRead,
+)
 from app.services.api_credentials import (
     APICredentialNotFoundError,
     APICredentialService,
@@ -41,6 +47,12 @@ from app.services.business_settings import (
     BusinessSettingsValidationError,
 )
 from app.services.principals import PrincipalNotFoundError, PrincipalService, PrincipalValidationError
+from app.services.principal_identities import (
+    PrincipalIdentityNotFoundError,
+    PrincipalIdentityService,
+    PrincipalIdentityValidationError,
+    PrincipalIdentityCreateInput,
+)
 
 router = APIRouter(prefix="/api/businesses", tags=["businesses"])
 
@@ -366,6 +378,118 @@ def deactivate_principal(
     except PrincipalValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return PrincipalRead.model_validate(principal)
+
+
+@router.get("/{business_id}/principal-identities", response_model=PrincipalIdentityListResponse)
+def list_principal_identities(
+    business_id: str,
+    _: Principal = Depends(require_credential_manager_principal),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    principal_identity_service: PrincipalIdentityService = Depends(get_principal_identity_service),
+) -> PrincipalIdentityListResponse:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        items = principal_identity_service.list_for_business(business_id=scoped_business_id)
+    except PrincipalIdentityNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return PrincipalIdentityListResponse(
+        items=[PrincipalIdentityRead.model_validate(item) for item in items],
+        total=len(items),
+    )
+
+
+@router.post(
+    "/{business_id}/principal-identities",
+    response_model=PrincipalIdentityRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_principal_identity(
+    business_id: str,
+    payload: PrincipalIdentityCreateRequest,
+    _: None = Depends(require_admin_rate_limit("principal_identity_create")),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    principal_identity_service: PrincipalIdentityService = Depends(get_principal_identity_service),
+) -> PrincipalIdentityRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        identity = principal_identity_service.create_identity(
+            business_id=scoped_business_id,
+            payload=PrincipalIdentityCreateInput(
+                provider=payload.provider,
+                provider_subject=payload.provider_subject,
+                principal_id=payload.principal_id,
+                email=payload.email,
+                email_verified=payload.email_verified,
+                is_active=payload.is_active,
+            ),
+            actor_principal_id=admin_principal.id,
+        )
+    except PrincipalIdentityNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PrincipalIdentityValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return PrincipalIdentityRead.model_validate(identity)
+
+
+@router.post(
+    "/{business_id}/principal-identities/{identity_id}/activate",
+    response_model=PrincipalIdentityRead,
+)
+def activate_principal_identity(
+    business_id: str,
+    identity_id: str,
+    _: None = Depends(require_admin_rate_limit("principal_identity_activate")),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    principal_identity_service: PrincipalIdentityService = Depends(get_principal_identity_service),
+) -> PrincipalIdentityRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        identity = principal_identity_service.activate_identity(
+            business_id=scoped_business_id,
+            identity_id=identity_id,
+            actor_principal_id=admin_principal.id,
+        )
+    except PrincipalIdentityNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return PrincipalIdentityRead.model_validate(identity)
+
+
+@router.post(
+    "/{business_id}/principal-identities/{identity_id}/deactivate",
+    response_model=PrincipalIdentityRead,
+)
+def deactivate_principal_identity(
+    business_id: str,
+    identity_id: str,
+    _: None = Depends(require_admin_rate_limit("principal_identity_deactivate")),
+    admin_principal: Principal = Depends(require_credential_manager_principal),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    principal_identity_service: PrincipalIdentityService = Depends(get_principal_identity_service),
+) -> PrincipalIdentityRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        identity = principal_identity_service.deactivate_identity(
+            business_id=scoped_business_id,
+            identity_id=identity_id,
+            actor_principal_id=admin_principal.id,
+        )
+    except PrincipalIdentityNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return PrincipalIdentityRead.model_validate(identity)
 
 
 @router.get("/{business_id}/auth-audit-events", response_model=AuthAuditEventListResponse)

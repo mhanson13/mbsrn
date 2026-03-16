@@ -4,6 +4,12 @@ from app.services.api_credentials import (
     APICredentialValidationError,
     IssuedAPICredential,
 )
+from app.services.auth_identity import (
+    AuthExchangeResult,
+    AuthIdentityNotFoundError,
+    AuthIdentityService,
+    AuthIdentityValidationError,
+)
 from app.services.auth_audit import AuthAuditNotFoundError, AuthAuditService
 from app.services.business_settings import BusinessSettingsService
 from app.services.dedupe import LeadDeduplicationService
@@ -13,6 +19,12 @@ from app.services.lifecycle import InvalidStatusTransitionError, LeadLifecycleSe
 from app.services.notifications import NotificationDispatchService, NotificationService
 from app.services.parser import LeadParserService
 from app.services.principals import PrincipalNotFoundError, PrincipalService, PrincipalValidationError
+from app.services.principal_identities import (
+    PrincipalIdentityCreateInput,
+    PrincipalIdentityNotFoundError,
+    PrincipalIdentityService,
+    PrincipalIdentityValidationError,
+)
 from app.services.reminder_engine import ReminderEngineService
 from app.services.response_metrics import ResponseMetricsService
 from app.services.seo_audit import SEOAuditNotFoundError, SEOAuditService, SEOAuditValidationError
@@ -52,6 +64,10 @@ __all__ = [
     "APICredentialValidationError",
     "AuthAuditNotFoundError",
     "AuthAuditService",
+    "AuthExchangeResult",
+    "AuthIdentityNotFoundError",
+    "AuthIdentityService",
+    "AuthIdentityValidationError",
     "BusinessSettingsService",
     "EmailIntakeService",
     "InvalidStatusTransitionError",
@@ -93,6 +109,10 @@ __all__ = [
     "LeadSummaryService",
     "NotificationService",
     "PrincipalNotFoundError",
+    "PrincipalIdentityCreateInput",
+    "PrincipalIdentityNotFoundError",
+    "PrincipalIdentityService",
+    "PrincipalIdentityValidationError",
     "PrincipalService",
     "PrincipalValidationError",
     "IssuedAPICredential",

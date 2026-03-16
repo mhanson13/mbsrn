@@ -59,6 +59,19 @@ python -m pip install -r requirements-dev.txt
 pytest
 ```
 
+## Run Operator UI
+The standalone operator console lives under `frontend/operator-ui`.
+
+```powershell
+cd frontend/operator-ui
+npm install
+npm run dev
+```
+
+Set `frontend/operator-ui/.env.local` with:
+- `NEXT_PUBLIC_API_BASE_URL` (for example `http://127.0.0.1:8000`)
+- `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (Google OIDC client ID)
+
 ## Documentation
 Project docs live under [`docs/`](docs):
 - `lead-intake-engine.md`
@@ -89,6 +102,8 @@ Project docs live under [`docs/`](docs):
 - `seo-ai-phase4-automation-and-operationalization.md` (implemented monolith-safe orchestration over persisted SEO pipeline artifacts)
 - `seo-ai-phase4-data-model.md` (implemented automation config/run persistence model)
 - `seo-ai-phase4-api.md` (implemented automation config/run API contract)
+- `operator-ui-and-google-auth.md` (implemented operator UI + Google identity exchange to internal principal authorization)
+- `deployment-gke-cicd.md` (implemented GKE deployment, Artifact Registry image flow, and GitHub Actions CI/CD)
 - `phase3-response-and-reminders.md`
 - `phase4-notifications-and-hardening.md`
 - `security-architecture.md`
@@ -240,6 +255,18 @@ Default local mode is `mock`.
 When using `twilio` or `smtp`, configure the corresponding credentials in `.env`.
 
 ## API Credential Auth
+- Runtime auth supports two bearer-token paths:
+  - DB API credentials (`api_credentials`) for service-to-service and operator-issued keys.
+  - Google OIDC exchange -> internal signed app session token for human operator UI sessions.
+- Google remains identity-only; authorization is enforced by internal principal/business/role mappings.
+- Google auth endpoints:
+  - `POST /api/auth/google/exchange` (exchange Google ID token for app bearer token)
+  - `GET /api/auth/me` (current principal context)
+- Principal identity mapping endpoints (admin only):
+  - `GET /api/businesses/{business_id}/principal-identities`
+  - `POST /api/businesses/{business_id}/principal-identities`
+  - `POST /api/businesses/{business_id}/principal-identities/{identity_id}/activate`
+  - `POST /api/businesses/{business_id}/principal-identities/{identity_id}/deactivate`
 - Primary auth path is DB-backed bearer credentials in `api_credentials`.
 - Credentials are tied to persisted principals in `principals` scoped by business.
 - Principals have minimal roles (`admin`, `operator`) for sensitive business actions.
@@ -278,6 +305,18 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 - `API_TOKEN_HASH_PEPPER` is required in production.
 - Legacy unpeppered hash verification is off by default and can be enabled temporarily with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true`.
 - Legacy shared-token auth (`API_AUTH_TOKEN` / `API_AUTH_BUSINESS_ID`) is no longer part of runtime auth resolution.
+
+## Deployment And CI/CD
+- Kubernetes manifests are under `infra/k8s` (kustomize base + `dev`/`prod` overlays).
+- CI/CD workflows are under `.github/workflows`:
+  - `backend-ci.yml`
+  - `frontend-ci.yml`
+  - `deploy-gke.yml`
+- Image builds use Google Cloud Buildpacks (`gcloud builds submit --pack`) and produce OCI images for containerd/GKE.
+- Artifact Registry image naming convention:
+  - `us-central1-docker.pkg.dev/<project>/<repository>/api:<tag>`
+  - `us-central1-docker.pkg.dev/<project>/<repository>/ui:<tag>`
+- Google Cloud authentication in GitHub Actions uses Workload Identity Federation (no long-lived key files).
 
 Out of scope in this pass: full IAM/user-role management and enterprise-grade audit retention/compliance tooling.
 

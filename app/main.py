@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from app.api.routes import businesses_router, intake_router, jobs_router, leads_router, seo_router, seo_v1_router
+from app.api.routes import auth_router, businesses_router, intake_router, jobs_router, leads_router, seo_router, seo_v1_router
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
@@ -38,5 +38,6 @@ app.include_router(intake_router)
 app.include_router(leads_router)
 app.include_router(jobs_router)
 app.include_router(businesses_router)
+app.include_router(auth_router)
 app.include_router(seo_router)
 app.include_router(seo_v1_router)

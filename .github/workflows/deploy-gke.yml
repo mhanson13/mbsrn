@@ -1,0 +1,83 @@
+name: deploy-gke
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment overlay"
+        required: true
+        default: "prod"
+        type: choice
+        options: ["dev", "prod"]
+  push:
+    branches: ["main"]
+    paths:
+      - "app/**"
+      - "frontend/operator-ui/**"
+      - "infra/k8s/**"
+      - ".github/workflows/deploy-gke.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
+      GAR_REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
+      GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+      GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubectl for GKE
+        run: |
+          gcloud container clusters get-credentials "${GKE_CLUSTER}" --region "${GKE_LOCATION}" --project "${PROJECT_ID}"
+
+      - name: Apply kustomize overlay
+        env:
+          OVERLAY: ${{ github.event.inputs.environment || 'prod' }}
+        run: |
+          kubectl apply -k "infra/k8s/overlays/${OVERLAY}"
+
+      - name: Update deployment images
+        env:
+          OVERLAY: ${{ github.event.inputs.environment || 'prod' }}
+        run: |
+          API_IMAGE="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPOSITORY}/api:${GITHUB_SHA}"
+          UI_IMAGE="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPOSITORY}/ui:${GITHUB_SHA}"
+          NAMESPACE="work-boots"
+          if [ "${OVERLAY}" = "dev" ]; then
+            NAMESPACE="work-boots-dev"
+          fi
+
+          kubectl -n "${NAMESPACE}" set image deployment/work-boots-api api="${API_IMAGE}"
+          kubectl -n "${NAMESPACE}" set image deployment/work-boots-ui ui="${UI_IMAGE}"
+
+      - name: Verify rollout
+        env:
+          OVERLAY: ${{ github.event.inputs.environment || 'prod' }}
+        run: |
+          NAMESPACE="work-boots"
+          if [ "${OVERLAY}" = "dev" ]; then
+            NAMESPACE="work-boots-dev"
+          fi
+          kubectl -n "${NAMESPACE}" rollout status deployment/work-boots-api --timeout=5m
+          kubectl -n "${NAMESPACE}" rollout status deployment/work-boots-ui --timeout=5m

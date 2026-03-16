@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.rate_limit import InMemoryRateLimiter, get_rate_limiter
+from app.core.session_token import AppSessionTokenError, AppSessionTokenService
 from app.db.session import get_db_session
 from app.integrations import (
     DevEmailProvider,
@@ -22,6 +23,7 @@ from app.integrations import (
     SEORecommendationNarrativeProvider,
     SEOCompetitorComparisonSummaryProvider,
     SEOAuditSummaryProvider,
+    GoogleOIDCTokenInfoVerifier,
     SMTPEmailProvider,
     SMSProvider,
     TwilioSMSProvider,
@@ -33,6 +35,7 @@ from app.repositories.api_credential_repository import APICredentialRepository
 from app.repositories.auth_audit_repository import AuthAuditRepository
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.lead_repository import LeadRepository
+from app.repositories.principal_identity_repository import PrincipalIdentityRepository
 from app.repositories.principal_repository import PrincipalRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.repositories.seo_audit_summary_repository import SEOAuditSummaryRepository
@@ -44,6 +47,7 @@ from app.repositories.seo_recommendation_repository import SEORecommendationRepo
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.services.business_settings import BusinessSettingsService
 from app.services.api_credentials import APICredentialService
+from app.services.auth_identity import AuthIdentityService
 from app.services.auth_audit import AuthAuditService
 from app.services.dedupe import LeadDeduplicationService
 from app.services.email_intake import EmailIntakeService
@@ -51,6 +55,7 @@ from app.services.lead_intake import LeadIntakeService
 from app.services.lifecycle import LeadLifecycleService
 from app.services.notifications import NotificationDispatchService
 from app.services.parser import LeadParserService
+from app.services.principal_identities import PrincipalIdentityService
 from app.services.principals import PrincipalService
 from app.services.reminder_engine import ReminderEngineService
 from app.services.response_metrics import ResponseMetricsService
@@ -77,6 +82,7 @@ class TenantContext:
     business_id: str
     principal_id: str
     auth_source: str
+    principal_role: PrincipalRole | None = None
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -108,6 +114,10 @@ def get_auth_audit_repository(db: Session = Depends(get_db)) -> AuthAuditReposit
 
 def get_principal_repository(db: Session = Depends(get_db)) -> PrincipalRepository:
     return PrincipalRepository(db)
+
+
+def get_principal_identity_repository(db: Session = Depends(get_db)) -> PrincipalIdentityRepository:
+    return PrincipalIdentityRepository(db)
 
 
 def get_seo_site_repository(db: Session = Depends(get_db)) -> SEOSiteRepository:
@@ -345,6 +355,29 @@ def get_seo_recommendation_narrative_provider() -> SEORecommendationNarrativePro
     return MockSEORecommendationNarrativeProvider()
 
 
+def get_google_oidc_verifier() -> GoogleOIDCTokenInfoVerifier:
+    settings = get_settings()
+    client_id = (settings.google_oidc_client_id or "").strip()
+    if not settings.google_auth_enabled or not client_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google authentication is not configured.",
+        )
+    return GoogleOIDCTokenInfoVerifier(
+        client_id=client_id,
+        tokeninfo_url=settings.google_oidc_tokeninfo_url,
+        timeout_seconds=settings.google_oidc_timeout_seconds,
+    )
+
+
+def get_session_token_service() -> AppSessionTokenService | None:
+    settings = get_settings()
+    secret = (settings.app_session_secret or "").strip()
+    if not secret:
+        return None
+    return AppSessionTokenService(secret=secret, ttl_seconds=settings.app_session_ttl_seconds)
+
+
 def get_seo_summary_service(
     db: Session = Depends(get_db),
     business_repository: BusinessRepository = Depends(get_business_repository),
@@ -521,6 +554,43 @@ def get_principal_service(
     )
 
 
+def get_principal_identity_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    principal_repository: PrincipalRepository = Depends(get_principal_repository),
+    principal_identity_repository: PrincipalIdentityRepository = Depends(get_principal_identity_repository),
+    auth_audit_service: AuthAuditService = Depends(get_auth_audit_service),
+) -> PrincipalIdentityService:
+    return PrincipalIdentityService(
+        session=db,
+        business_repository=business_repository,
+        principal_repository=principal_repository,
+        principal_identity_repository=principal_identity_repository,
+        auth_audit_service=auth_audit_service,
+    )
+
+
+def get_auth_identity_service(
+    db: Session = Depends(get_db),
+    principal_repository: PrincipalRepository = Depends(get_principal_repository),
+    principal_identity_repository: PrincipalIdentityRepository = Depends(get_principal_identity_repository),
+    oidc_verifier: GoogleOIDCTokenInfoVerifier = Depends(get_google_oidc_verifier),
+    session_token_service: AppSessionTokenService | None = Depends(get_session_token_service),
+) -> AuthIdentityService:
+    if session_token_service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Application session token configuration is missing.",
+        )
+    return AuthIdentityService(
+        session=db,
+        principal_repository=principal_repository,
+        principal_identity_repository=principal_identity_repository,
+        oidc_verifier=oidc_verifier,
+        session_token_service=session_token_service,
+    )
+
+
 def _client_ip(request: Request) -> str:
     if request.client and request.client.host:
         return request.client.host
@@ -553,6 +623,7 @@ def get_tenant_context(
     authorization: str | None = Header(default=None),
     api_credential_repository: APICredentialRepository = Depends(get_api_credential_repository),
     principal_repository: PrincipalRepository = Depends(get_principal_repository),
+    session_token_service: AppSessionTokenService | None = Depends(get_session_token_service),
     rate_limiter: InMemoryRateLimiter = Depends(get_rate_limiter),
 ) -> TenantContext:
     """Resolve tenant scope from server-side auth context (not request business_id fields)."""
@@ -575,6 +646,24 @@ def get_tenant_context(
                 )
                 _raise_rate_limit(category="auth", retry_after_seconds=decision.retry_after_seconds)
 
+        if token.startswith("wb1."):
+            if session_token_service is None:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.")
+            try:
+                claims = session_token_service.verify(token)
+            except AppSessionTokenError as exc:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+
+            principal = principal_repository.get_for_business(claims.business_id, claims.principal_id)
+            if principal is None or not principal.is_active:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.")
+            return TenantContext(
+                business_id=claims.business_id,
+                principal_id=claims.principal_id,
+                auth_source=claims.auth_source,
+                principal_role=principal.role,
+            )
+
         db_credential = api_credential_repository.get_active_by_token(token)
         if db_credential is not None:
             try:
@@ -595,6 +684,7 @@ def get_tenant_context(
                 business_id=db_credential.business_id,
                 principal_id=db_credential.principal_id,
                 auth_source="db_api_credential",
+                principal_role=db_credential.principal_role,
             )
 
         raise HTTPException(

@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: work-boots-api
+  namespace: work-boots
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: work-boots-api
+  template:
+    metadata:
+      labels:
+        app: work-boots-api
+    spec:
+      containers:
+        - name: api
+          image: us-central1-docker.pkg.dev/PROJECT_ID/work-boots/api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          envFrom:
+            - configMapRef:
+                name: work-boots-config
+            - secretRef:
+                name: work-boots-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"

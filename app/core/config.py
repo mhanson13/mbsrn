@@ -11,6 +11,12 @@ class Settings:
     environment: str
     database_url: str
     default_business_id: str
+    google_auth_enabled: bool
+    google_oidc_client_id: str | None
+    google_oidc_tokeninfo_url: str
+    google_oidc_timeout_seconds: int
+    app_session_secret: str | None
+    app_session_ttl_seconds: int
     api_token_hash_pepper: str | None
     allow_legacy_token_hash_fallback: bool
     sms_provider: str
@@ -43,9 +49,17 @@ def _env_bool(name: str, default: bool) -> bool:
 def get_settings() -> Settings:
     environment = os.getenv("ENVIRONMENT", "development")
     env_normalized = environment.strip().lower()
+    google_auth_enabled = _env_bool("GOOGLE_AUTH_ENABLED", False)
+    google_oidc_client_id = os.getenv("GOOGLE_OIDC_CLIENT_ID")
+    app_session_secret = os.getenv("APP_SESSION_SECRET")
     api_token_hash_pepper = os.getenv("API_TOKEN_HASH_PEPPER")
     if env_normalized == "production" and not api_token_hash_pepper:
         raise RuntimeError("API_TOKEN_HASH_PEPPER is required when ENVIRONMENT=production.")
+    if env_normalized == "production" and google_auth_enabled:
+        if not google_oidc_client_id:
+            raise RuntimeError("GOOGLE_OIDC_CLIENT_ID is required when GOOGLE_AUTH_ENABLED=true in production.")
+        if not app_session_secret:
+            raise RuntimeError("APP_SESSION_SECRET is required when GOOGLE_AUTH_ENABLED=true in production.")
 
     return Settings(
         app_name=os.getenv("APP_NAME", "Work Boots Console Lead Intake"),
@@ -55,6 +69,12 @@ def get_settings() -> Settings:
             "postgresql+psycopg://postgres:postgres@localhost:5432/work_boots_console",
         ),
         default_business_id=os.getenv("DEFAULT_BUSINESS_ID", "11111111-1111-1111-1111-111111111111"),
+        google_auth_enabled=google_auth_enabled,
+        google_oidc_client_id=google_oidc_client_id,
+        google_oidc_tokeninfo_url=os.getenv("GOOGLE_OIDC_TOKENINFO_URL", "https://oauth2.googleapis.com/tokeninfo"),
+        google_oidc_timeout_seconds=int(os.getenv("GOOGLE_OIDC_TIMEOUT_SECONDS", "5")),
+        app_session_secret=app_session_secret,
+        app_session_ttl_seconds=int(os.getenv("APP_SESSION_TTL_SECONDS", "3600")),
         api_token_hash_pepper=api_token_hash_pepper,
         allow_legacy_token_hash_fallback=_env_bool("ALLOW_LEGACY_TOKEN_HASH_FALLBACK", False),
         sms_provider=os.getenv("SMS_PROVIDER", "mock").strip().lower(),

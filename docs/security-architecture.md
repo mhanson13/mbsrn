@@ -20,7 +20,9 @@ Defense in depth is applied from request entry to persistence:
 ```text
 Client
   ↓
-API Authentication (Bearer token -> DB credential lookup)
+API Authentication (Bearer token)
+  - Google OIDC exchange -> app session token, or
+  - DB API credential lookup
   ↓
 Rate limiting / abuse throttling
   ↓
@@ -49,9 +51,16 @@ No single layer is relied on as the only tenant-protection mechanism.
 ## 4) Authentication Model
 Runtime authentication path:
 1. Client sends `Authorization: Bearer <token>`.
-2. Token is hashed and matched against persisted `api_credentials`.
-3. Credential must be active and non-revoked.
-4. Bound principal must be active.
+2. Token is resolved through one of two runtime paths:
+   - app session token issued by `POST /api/auth/google/exchange`, or
+   - DB-backed `api_credentials` token hash lookup.
+3. For Google exchange:
+   - Google ID token is verified (`iss`, `aud`, `sub`) using tokeninfo.
+   - `principal_identities` mapping (`provider=google`, `provider_subject=sub`) is resolved.
+   - mapped principal must be active.
+4. For DB credentials:
+   - credential must be active and non-revoked.
+   - bound principal must be active.
 5. `TenantContext` is produced from credential/principal binding.
 
 `TenantContext` is server-derived and used by routes/services for tenant scoping.
@@ -88,6 +97,8 @@ Current principal fields include:
 - `updated_at`
 
 Principals are bound to businesses and used as the authenticated identity behind API credentials.
+
+`principal_identities` provides provider-subject mapping to principals for human login flows (Google OIDC).
 
 ## 7) Authorization Model
 Current role model is intentionally minimal:
@@ -138,8 +149,7 @@ Rotation creates a new credential and retires the prior credential.
 - `business_id`
 - `principal_id`
 - `auth_source`
-
-It does not currently include principal role; role checks are done via principal lookup/dependencies.
+- `principal_role` (optional, populated when available)
 
 ## 11) Audit Logging
 Work Boots Console now persists lightweight auth/admin audit events for high-value identity/admin actions.
