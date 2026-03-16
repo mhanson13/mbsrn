@@ -52,7 +52,7 @@ def test_session_state_builder_defaults_to_inmemory_when_auto_without_redis(
     assert isinstance(store, InMemorySessionStateStore)
 
 
-def test_session_state_builder_fail_open_falls_back_to_inmemory(
+def test_session_state_builder_production_rejects_fail_open_redis_security_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SESSION_STATE_BACKEND", "auto")
@@ -60,6 +60,20 @@ def test_session_state_builder_fail_open_falls_back_to_inmemory(
     monkeypatch.setenv("SESSION_STATE_FAIL_OPEN", "true")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("API_TOKEN_HASH_PEPPER", "prod-pepper")
+    monkeypatch.setattr(session_state_module, "Redis", _RedisFactory)
+    get_settings.cache_clear()
+    _clear_session_store_cache()
+    with pytest.raises(RuntimeError, match="must be fail-closed"):
+        session_state_module._build_store()
+
+
+def test_session_state_builder_fail_open_falls_back_to_inmemory_for_local_dev(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SESSION_STATE_BACKEND", "auto")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("SESSION_STATE_FAIL_OPEN", "true")
+    monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setattr(session_state_module, "Redis", _RedisFactory)
     get_settings.cache_clear()
     _clear_session_store_cache()

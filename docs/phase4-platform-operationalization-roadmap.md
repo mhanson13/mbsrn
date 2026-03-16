@@ -39,8 +39,22 @@ Completed:
 - Redis-capable session state backend with in-memory fallback path for local/dev
 - Redis-capable distributed rate limiting with in-memory fallback path for local/dev
 - replay/logout auth audit event coverage
+- production/staging guardrails for Redis-backed security controls:
+  - `RATE_LIMIT_FAIL_OPEN=false`
+  - `SESSION_STATE_FAIL_OPEN=false`
 
-### 4) CI/CD + GKE Deployment Path
+### 4) API Edge Posture (CORS + Security Headers)
+Completed:
+- restrictive, config-driven API CORS policy (`API_CORS_ALLOWED_ORIGINS`)
+- local/dev default origins for operator UI local workflows only
+- wildcard CORS origin rejected for production/staging configuration
+- baseline API security response headers:
+  - `X-Content-Type-Options`
+  - `X-Frame-Options`
+  - `Referrer-Policy`
+  - API-scoped `Content-Security-Policy`
+- configurable HSTS with production/pilot defaults enabled
+### 5) CI/CD + GKE Deployment Path
 Completed:
 - GitHub Actions CI and deploy workflows
 - Workload Identity Federation-based Google auth in CI/CD
@@ -48,7 +62,15 @@ Completed:
 - GKE deploy path with rollout gating
 - OCI-compatible image build path for containerd runtime
 
-### 5) Alembic-First Migration Discipline
+### 6) Backend CI Quality + Coverage Visibility
+Completed:
+- scoped backend quality gates in CI:
+  - `ruff`
+  - `black --check`
+  - scoped `mypy`
+- backend coverage reporting in CI (`pytest --cov=app`) with XML artifact output
+
+### 7) Alembic-First Migration Discipline
 Completed:
 - startup schema auto-create guarded to local/dev/test behavior only
 - CI and deploy flows treat Alembic migrations as authoritative
@@ -74,18 +96,22 @@ Remaining:
 
 ### C) CSP/Security Header Implementation Or Verification
 Remaining:
-- verify effective CSP and security header posture across API ingress and operator UI delivery path
-- add or tighten headers where currently missing, without changing auth architecture
+- validate effective header behavior end-to-end through ingress and UI hosting (not only app responses)
+- confirm ingress/proxy layers preserve or intentionally override app-level security headers
 
-### D) Production Config Enforcement For Fail-Closed Security Defaults
+### D) Production Config Verification For Fail-Closed Security Defaults
 Remaining:
-- enforce production environment configuration so session-state and rate-limit failure behavior is explicitly fail-closed unless intentionally overridden
+- validate deployed environment wiring for:
+  - `RATE_LIMIT_BACKEND=redis`
+  - `SESSION_STATE_BACKEND=redis`
+  - `RATE_LIMIT_FAIL_OPEN=false`
+  - `SESSION_STATE_FAIL_OPEN=false`
 - validate deployment manifests/secrets/config include required auth/session/pepper settings
 
 ### E) Image Existence And Deploy Verification Checks
 Remaining:
-- confirm release/deploy pipeline always rolls out exact built image references
-- confirm deploy fails clearly if expected image references are missing
+- confirm release/deploy pipeline behavior in target environments always rolls out exact built image references
+- confirm deploy failures are operator-visible when expected image references are missing
 - confirm post-rollout verification surfaces image digest/tag used per workload
 
 ### F) Pilot Operational Checklist

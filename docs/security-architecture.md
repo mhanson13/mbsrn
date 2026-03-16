@@ -97,6 +97,12 @@ Implemented in `app/core/rate_limit.py`:
 - Redis-backed distributed mode with in-memory fallback path
 - explicit fail-open/fail-closed behavior controls
 
+Production/staging posture:
+- Redis-backed security controls are expected (`RATE_LIMIT_BACKEND=redis`, `SESSION_STATE_BACKEND=redis`).
+- Fail-open is not allowed for Redis-backed production/staging usage:
+  - `RATE_LIMIT_FAIL_OPEN=false`
+  - `SESSION_STATE_FAIL_OPEN=false`
+
 ### Logout and replay visibility
 Implemented in auth service flow:
 - `POST /api/auth/logout` revokes active session token(s)
@@ -109,6 +115,18 @@ Current operator UI behavior:
 - refresh token: in-memory only (non-persistent)
 - sign-out calls `/api/auth/logout`
 
+### API edge posture (CORS + security headers)
+Implemented baseline controls:
+- explicit CORS allowlist via `API_CORS_ALLOWED_ORIGINS`
+- local/dev default origins only for local operator UI workflows
+- wildcard CORS origin rejected for production/staging config
+- default API security response headers:
+  - `X-Content-Type-Options: nosniff`
+  - `X-Frame-Options: DENY`
+  - `Referrer-Policy: strict-origin-when-cross-origin`
+  - API-scoped `Content-Security-Policy`
+- configurable HSTS (`SECURITY_HEADERS_HSTS_ENABLED`, `SECURITY_HEADERS_HSTS_MAX_AGE_SECONDS`)
+
 Known risk posture (deferred to Phase 5):
 - token handling can be further hardened with secure `httpOnly` cookie-based refresh model + CSRF controls.
 
@@ -117,8 +135,9 @@ Known risk posture (deferred to Phase 5):
 ### Build and release path
 - `backend-ci.yml`:
   - dependency install
+  - scoped quality gates (`ruff`, `black --check`, `mypy`)
   - Alembic migration-chain validation
-  - backend tests
+  - backend tests with coverage reporting (`--cov=app`, term + XML)
 - `frontend-ci.yml`:
   - deterministic install (`npm ci`)
   - lint/typecheck/build

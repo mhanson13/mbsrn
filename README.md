@@ -64,6 +64,14 @@ python -m pip install -r requirements-dev.txt
 pytest
 ```
 
+Local backend quality checks (matches CI scope):
+```powershell
+ruff check app/main.py app/core/config.py app/core/rate_limit.py app/core/session_state.py app/core/session_token.py app/integrations/google_auth.py
+black --check app/main.py app/core/config.py app/core/rate_limit.py app/core/session_state.py app/core/session_token.py app/integrations/google_auth.py
+mypy app/core/config.py
+pytest --cov=app --cov-report=term-missing --cov-report=xml
+```
+
 Optional local migration check:
 ```powershell
 alembic upgrade head
@@ -317,7 +325,7 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `RATE_LIMIT_BACKEND=auto|inmemory|redis`
   - `SESSION_STATE_BACKEND=auto|inmemory|redis`
   - `RATE_LIMIT_FAIL_OPEN` and `SESSION_STATE_FAIL_OPEN` control Redis failure behavior explicitly
-    (production-safe default is fail-closed unless explicitly overridden)
+    (production/staging Redis-backed mode is enforced fail-closed in config validation)
 - Rate limits are configurable via:
   - `RATE_LIMIT_ENABLED`
   - `RATE_LIMIT_BACKEND`
@@ -337,6 +345,21 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 - Legacy unpeppered hash verification is off by default and can be enabled temporarily with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true`.
 - Legacy shared-token auth (`API_AUTH_TOKEN` / `API_AUTH_BUSINESS_ID`) is no longer part of runtime auth resolution.
 
+## API CORS And Security Headers
+- CORS is explicit and origin-scoped via `API_CORS_ALLOWED_ORIGINS` (comma-separated).
+- Local/dev/test defaults permit operator UI local origins:
+  - `http://localhost:3000`
+  - `http://127.0.0.1:3000`
+- `*` is rejected for production/staging environments.
+- API security headers are enabled by default:
+  - `X-Content-Type-Options: nosniff`
+  - `X-Frame-Options: DENY`
+  - `Referrer-Policy: strict-origin-when-cross-origin`
+  - `Content-Security-Policy` on API/health responses
+- HSTS is configurable:
+  - `SECURITY_HEADERS_HSTS_ENABLED`
+  - `SECURITY_HEADERS_HSTS_MAX_AGE_SECONDS`
+
 ## Deployment And CI/CD
 - Kubernetes manifests are under `infra/k8s` (kustomize base + `dev`/`prod` overlays).
 - Kustomize base is namespace-neutral; overlays own namespaces:
@@ -346,8 +369,14 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `backend-ci.yml`
   - `frontend-ci.yml`
   - `deploy-gke.yml`
-- `backend-ci.yml` runs backend validation (dependency install + pytest).
-  - includes Alembic migration-chain validation (`alembic upgrade head`) against CI Postgres before tests
+- `backend-ci.yml` runs backend validation:
+  - dependency install
+  - `ruff` (scoped)
+  - `black --check` (scoped)
+  - `mypy` (scoped)
+  - Alembic migration-chain validation (`alembic upgrade head`) against CI Postgres
+  - `pytest` with coverage (`--cov=app --cov-report=term-missing --cov-report=xml`)
+  - coverage XML artifact upload
 - `frontend-ci.yml` runs frontend validation (`npm ci`, lint, typecheck, build).
 - `deploy-gke.yml` is the release pipeline:
   - builds/pushes backend and frontend images with Cloud Buildpacks
@@ -359,6 +388,12 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `us-central1-docker.pkg.dev/<project>/<repository>/api:<tag>`
   - `us-central1-docker.pkg.dev/<project>/<repository>/ui:<tag>`
 - Google Cloud authentication in GitHub Actions uses Workload Identity Federation (no long-lived key files).
+- Pilot/production Redis expectations:
+  - `REDIS_URL` configured and reachable from workloads
+  - `RATE_LIMIT_BACKEND=redis`
+  - `SESSION_STATE_BACKEND=redis`
+  - `RATE_LIMIT_FAIL_OPEN=false`
+  - `SESSION_STATE_FAIL_OPEN=false`
 
 ## Operator UI Session Handling
 - Operator UI exchanges Google ID tokens with `POST /api/auth/google/exchange`.

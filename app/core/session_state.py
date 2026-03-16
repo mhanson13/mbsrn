@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - redis optional for local/test
     class RedisError(Exception):
         pass
 
+
 logger = logging.getLogger(__name__)
 
 

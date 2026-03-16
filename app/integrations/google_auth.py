@@ -12,6 +12,7 @@ from jwt import InvalidTokenError
 try:
     from jwt.algorithms import RSAAlgorithm
 except ImportError:  # pragma: no cover - optional crypto dependency may be missing in some local environments
+
     class RSAAlgorithm:  # type: ignore[override]
         @staticmethod
         def from_jwk(_jwk: str):

@@ -49,6 +49,10 @@ class Settings:
     auth_rate_limit_window_seconds: int
     admin_rate_limit_requests: int
     admin_rate_limit_window_seconds: int
+    api_cors_allowed_origins: tuple[str, ...]
+    security_headers_enabled: bool
+    security_headers_hsts_enabled: bool
+    security_headers_hsts_max_age_seconds: int
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -56,6 +60,11 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_csv(name: str) -> tuple[str, ...]:
+    raw = os.getenv(name, "")
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
 @lru_cache(maxsize=1)
@@ -68,6 +77,12 @@ def get_settings() -> Settings:
     app_session_secret = os.getenv("APP_SESSION_SECRET")
     redis_url = os.getenv("REDIS_URL")
     api_token_hash_pepper = os.getenv("API_TOKEN_HASH_PEPPER")
+    cors_allowed_origins = _env_csv("API_CORS_ALLOWED_ORIGINS")
+    if not cors_allowed_origins and app_env in {"local", "development", "dev", "test"}:
+        cors_allowed_origins = ("http://localhost:3000", "http://127.0.0.1:3000")
+
+    if env_normalized in {"production", "staging"} and "*" in cors_allowed_origins:
+        raise RuntimeError("API_CORS_ALLOWED_ORIGINS cannot include '*' in production/staging environments.")
     if env_normalized == "production" and not api_token_hash_pepper:
         raise RuntimeError("API_TOKEN_HASH_PEPPER is required when ENVIRONMENT=production.")
     if env_normalized == "production" and google_auth_enabled:
@@ -75,6 +90,26 @@ def get_settings() -> Settings:
             raise RuntimeError("GOOGLE_OIDC_CLIENT_ID is required when GOOGLE_AUTH_ENABLED=true in production.")
         if not app_session_secret:
             raise RuntimeError("APP_SESSION_SECRET is required when GOOGLE_AUTH_ENABLED=true in production.")
+    session_state_backend = os.getenv("SESSION_STATE_BACKEND", "auto").strip().lower()
+    rate_limit_backend = os.getenv("RATE_LIMIT_BACKEND", "auto").strip().lower()
+    session_state_fail_open = _env_bool(
+        "SESSION_STATE_FAIL_OPEN",
+        env_normalized in {"development", "dev", "test", "local"},
+    )
+    rate_limit_fail_open = _env_bool(
+        "RATE_LIMIT_FAIL_OPEN",
+        env_normalized in {"development", "dev", "test", "local"},
+    )
+
+    if env_normalized in {"production", "staging"}:
+        redis_security_required = bool(redis_url) and (
+            session_state_backend in {"auto", "redis"} or rate_limit_backend in {"auto", "redis"}
+        )
+        if redis_security_required and (session_state_fail_open or rate_limit_fail_open):
+            raise RuntimeError(
+                "Production/staging Redis-backed security controls must be fail-closed "
+                "(SESSION_STATE_FAIL_OPEN=false and RATE_LIMIT_FAIL_OPEN=false)."
+            )
 
     return Settings(
         app_name=os.getenv("APP_NAME", "Work Boots Console Lead Intake"),
@@ -107,11 +142,8 @@ def get_settings() -> Settings:
         api_token_hash_pepper=api_token_hash_pepper,
         allow_legacy_token_hash_fallback=_env_bool("ALLOW_LEGACY_TOKEN_HASH_FALLBACK", False),
         redis_url=redis_url,
-        session_state_backend=os.getenv("SESSION_STATE_BACKEND", "auto").strip().lower(),
-        session_state_fail_open=_env_bool(
-            "SESSION_STATE_FAIL_OPEN",
-            env_normalized in {"development", "dev", "test", "local"},
-        ),
+        session_state_backend=session_state_backend,
+        session_state_fail_open=session_state_fail_open,
         sms_provider=os.getenv("SMS_PROVIDER", "mock").strip().lower(),
         email_provider=os.getenv("EMAIL_PROVIDER", "mock").strip().lower(),
         twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
@@ -125,13 +157,17 @@ def get_settings() -> Settings:
         smtp_use_tls=_env_bool("SMTP_USE_TLS", True),
         notification_timeout_seconds=int(os.getenv("NOTIFICATION_TIMEOUT_SECONDS", "10")),
         rate_limit_enabled=_env_bool("RATE_LIMIT_ENABLED", True),
-        rate_limit_backend=os.getenv("RATE_LIMIT_BACKEND", "auto").strip().lower(),
-        rate_limit_fail_open=_env_bool(
-            "RATE_LIMIT_FAIL_OPEN",
-            env_normalized in {"development", "dev", "test", "local"},
-        ),
+        rate_limit_backend=rate_limit_backend,
+        rate_limit_fail_open=rate_limit_fail_open,
         auth_rate_limit_requests=int(os.getenv("AUTH_RATE_LIMIT_REQUESTS", "60")),
         auth_rate_limit_window_seconds=int(os.getenv("AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")),
         admin_rate_limit_requests=int(os.getenv("ADMIN_RATE_LIMIT_REQUESTS", "20")),
         admin_rate_limit_window_seconds=int(os.getenv("ADMIN_RATE_LIMIT_WINDOW_SECONDS", "60")),
+        api_cors_allowed_origins=cors_allowed_origins,
+        security_headers_enabled=_env_bool("SECURITY_HEADERS_ENABLED", True),
+        security_headers_hsts_enabled=_env_bool(
+            "SECURITY_HEADERS_HSTS_ENABLED",
+            env_normalized in {"production", "staging"},
+        ),
+        security_headers_hsts_max_age_seconds=int(os.getenv("SECURITY_HEADERS_HSTS_MAX_AGE_SECONDS", "31536000")),
     )

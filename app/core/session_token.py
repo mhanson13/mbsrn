@@ -163,7 +163,9 @@ class AppSessionTokenService:
     def revoke_token(self, *, claims: AppSessionClaims) -> None:
         self._state_store.revoke_jti(jti=claims.jti, expires_at_epoch=dt_to_epoch_seconds(claims.expires_at))
 
-    def revoke_principal_sessions(self, *, business_id: str, principal_id: str, revoked_after: datetime | None = None) -> None:
+    def revoke_principal_sessions(
+        self, *, business_id: str, principal_id: str, revoked_after: datetime | None = None
+    ) -> None:
         cutoff = revoked_after or datetime.now(timezone.utc)
         self._state_store.set_principal_revoked_after(
             business_id=business_id,

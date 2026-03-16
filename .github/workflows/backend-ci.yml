@@ -57,9 +57,41 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
+      - name: Run ruff checks (scoped)
+        run: |
+          # Initial hardening scope: security/session/runtime entrypoints.
+          ruff check \
+            app/main.py \
+            app/core/config.py \
+            app/core/rate_limit.py \
+            app/core/session_state.py \
+            app/core/session_token.py \
+            app/integrations/google_auth.py
+
+      - name: Run black format check (scoped)
+        run: |
+          black --check \
+            app/main.py \
+            app/core/config.py \
+            app/core/rate_limit.py \
+            app/core/session_state.py \
+            app/core/session_token.py \
+            app/integrations/google_auth.py
+
+      - name: Run mypy type checks (scoped)
+        run: |
+          # Keep initial mypy scope narrow and maintainable; expand incrementally.
+          mypy app/core/config.py
+
       - name: Validate Alembic migration chain
         run: |
           alembic upgrade head
 
       - name: Run tests
-        run: pytest
+        run: pytest --cov=app --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-xml
+          path: coverage.xml
