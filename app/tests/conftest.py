@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.rate_limit import get_rate_limiter
+from app.core.session_state import get_session_state_store
 from app.core.time import utc_now
 from app.db.base import Base
 from app.models.api_credential import APICredential  # noqa: F401
@@ -55,6 +56,11 @@ def db_session() -> Session:
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter_state() -> None:
     get_rate_limiter().clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_session_state_store() -> None:
+    get_session_state_store().clear()
 
 
 @pytest.fixture()

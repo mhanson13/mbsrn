@@ -36,6 +36,7 @@ This produces OCI-compatible images suitable for containerd on GKE.
 
 - `backend-ci.yml`
   - Python dependency install
+  - Alembic migration-chain validation (`alembic upgrade head`) against CI Postgres
   - pytest
 
 - `frontend-ci.yml`
@@ -72,6 +73,11 @@ This produces OCI-compatible images suitable for containerd on GKE.
 ## Runtime Configuration
 
 Kubernetes ConfigMap handles non-secret environment values.
+
+Schema management policy:
+- Application startup does not manage production schema evolution.
+- `DB_AUTO_CREATE_LOCAL` is a local/dev/test convenience guard only.
+- CI and GKE deploy pipeline run Alembic migrations (`alembic upgrade head`) before rollout.
 
 Kubernetes Secret handles sensitive values including:
 - `API_TOKEN_HASH_PEPPER`

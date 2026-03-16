@@ -41,6 +41,7 @@ def _set_env(
     monkeypatch.setenv("API_TOKEN_HASH_PEPPER", PROD_PEPPER)
     monkeypatch.setenv("ALLOW_LEGACY_TOKEN_HASH_FALLBACK", "false")
     monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMIT_BACKEND", "inmemory")
     monkeypatch.setenv("AUTH_RATE_LIMIT_REQUESTS", str(auth_limit))
     monkeypatch.setenv("AUTH_RATE_LIMIT_WINDOW_SECONDS", str(auth_window_seconds))
     monkeypatch.setenv("ADMIN_RATE_LIMIT_REQUESTS", str(admin_limit))
@@ -177,6 +178,11 @@ def test_admin_routes_are_stricter_than_authenticated_lead_reads(
 
     lead_read = client.get("/api/leads", headers=headers)
     assert lead_read.status_code == 200
+
+    audit_read = client.get(f"/api/businesses/{seeded_business.id}/auth-audit-events", headers=headers)
+    assert audit_read.status_code == 200
+    events = audit_read.json()["items"]
+    assert any(event["event_type"] == "admin_rate_limit_denied" for event in events)
 
 
 def test_admin_audit_read_endpoint_is_rate_limited(

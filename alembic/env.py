@@ -6,6 +6,7 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
+import sqlalchemy as sa
 from alembic import context
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
@@ -51,6 +52,7 @@ if config.config_file_name is not None:
 
 logger = logging.getLogger("alembic.env")
 target_metadata = Base.metadata
+ALEMBIC_VERSION_COLUMN_LEN = 64
 
 
 def _resolve_sqlalchemy_url() -> str:
@@ -90,6 +92,55 @@ def _connect_args_for_url(url: str) -> dict[str, object]:
     return {"connect_timeout": timeout_seconds}
 
 
+def _ensure_alembic_version_column_capacity(connection: sa.engine.Connection) -> None:
+    inspector = sa.inspect(connection)
+    table_names = set(inspector.get_table_names())
+    if "alembic_version" not in table_names:
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                sa.text(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS alembic_version (
+                        version_num VARCHAR({ALEMBIC_VERSION_COLUMN_LEN}) NOT NULL PRIMARY KEY
+                    )
+                    """
+                )
+            )
+            logger.info(
+                "Ensured alembic_version table exists with version_num length=%s.",
+                ALEMBIC_VERSION_COLUMN_LEN,
+            )
+        return
+
+    version_columns = {
+        column.get("name"): column for column in inspector.get_columns("alembic_version")
+    }
+    version_num = version_columns.get("version_num")
+    if not version_num:
+        return
+
+    if connection.dialect.name != "postgresql":
+        return
+
+    current_length = getattr(version_num.get("type"), "length", None)
+    if current_length is None or current_length >= ALEMBIC_VERSION_COLUMN_LEN:
+        return
+
+    connection.execute(
+        sa.text(
+            f"""
+            ALTER TABLE alembic_version
+            ALTER COLUMN version_num TYPE VARCHAR({ALEMBIC_VERSION_COLUMN_LEN})
+            """
+        )
+    )
+    logger.info(
+        "Expanded alembic_version.version_num from length=%s to length=%s for compatibility.",
+        current_length,
+        ALEMBIC_VERSION_COLUMN_LEN,
+    )
+
+
 def run_migrations_offline() -> None:
     url = _resolve_sqlalchemy_url()
     logger.info("Alembic offline migration context using database URL: %s", _render_url(url))
@@ -122,6 +173,9 @@ def run_migrations_online() -> None:
     try:
         with connectable.connect() as connection:
             logger.info("Alembic database connection established.")
+            _ensure_alembic_version_column_capacity(connection)
+            if connection.in_transaction():
+                connection.commit()
             context.configure(connection=connection, target_metadata=target_metadata)
 
             with context.begin_transaction():

@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from dataclasses import dataclass
+import hashlib
 import logging
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.rate_limit import InMemoryRateLimiter, get_rate_limiter
+from app.core.rate_limit import RateLimiter, get_rate_limiter
+from app.core.session_state import get_session_state_store
 from app.core.session_token import AppSessionTokenError, AppSessionTokenService
 from app.db.session import get_db_session
 from app.integrations import (
@@ -23,7 +25,7 @@ from app.integrations import (
     SEORecommendationNarrativeProvider,
     SEOCompetitorComparisonSummaryProvider,
     SEOAuditSummaryProvider,
-    GoogleOIDCTokenInfoVerifier,
+    GoogleOIDCJWKSVerifier,
     SMTPEmailProvider,
     SMSProvider,
     TwilioSMSProvider,
@@ -355,7 +357,7 @@ def get_seo_recommendation_narrative_provider() -> SEORecommendationNarrativePro
     return MockSEORecommendationNarrativeProvider()
 
 
-def get_google_oidc_verifier() -> GoogleOIDCTokenInfoVerifier:
+def get_google_oidc_verifier() -> GoogleOIDCJWKSVerifier:
     settings = get_settings()
     client_id = (settings.google_oidc_client_id or "").strip()
     if not settings.google_auth_enabled or not client_id:
@@ -363,9 +365,11 @@ def get_google_oidc_verifier() -> GoogleOIDCTokenInfoVerifier:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Google authentication is not configured.",
         )
-    return GoogleOIDCTokenInfoVerifier(
+    return GoogleOIDCJWKSVerifier(
         client_id=client_id,
-        tokeninfo_url=settings.google_oidc_tokeninfo_url,
+        jwks_url=settings.google_oidc_jwks_url,
+        allowed_issuers=settings.google_oidc_allowed_issuers,
+        require_email_verified=settings.google_oidc_require_email_verified,
         timeout_seconds=settings.google_oidc_timeout_seconds,
     )
 
@@ -375,7 +379,15 @@ def get_session_token_service() -> AppSessionTokenService | None:
     secret = (settings.app_session_secret or "").strip()
     if not secret:
         return None
-    return AppSessionTokenService(secret=secret, ttl_seconds=settings.app_session_ttl_seconds)
+    return AppSessionTokenService(
+        secret=secret,
+        issuer=settings.app_session_issuer,
+        audience=settings.app_session_audience,
+        algorithm=settings.app_session_algorithm,
+        access_ttl_seconds=settings.app_session_ttl_seconds,
+        refresh_ttl_seconds=settings.app_session_refresh_ttl_seconds,
+        state_store=get_session_state_store(),
+    )
 
 
 def get_seo_summary_service(
@@ -545,12 +557,14 @@ def get_principal_service(
     business_repository: BusinessRepository = Depends(get_business_repository),
     principal_repository: PrincipalRepository = Depends(get_principal_repository),
     auth_audit_service: AuthAuditService = Depends(get_auth_audit_service),
+    session_token_service: AppSessionTokenService | None = Depends(get_session_token_service),
 ) -> PrincipalService:
     return PrincipalService(
         session=db,
         business_repository=business_repository,
         principal_repository=principal_repository,
         auth_audit_service=auth_audit_service,
+        session_token_service=session_token_service,
     )
 
 
@@ -560,6 +574,7 @@ def get_principal_identity_service(
     principal_repository: PrincipalRepository = Depends(get_principal_repository),
     principal_identity_repository: PrincipalIdentityRepository = Depends(get_principal_identity_repository),
     auth_audit_service: AuthAuditService = Depends(get_auth_audit_service),
+    session_token_service: AppSessionTokenService | None = Depends(get_session_token_service),
 ) -> PrincipalIdentityService:
     return PrincipalIdentityService(
         session=db,
@@ -567,6 +582,7 @@ def get_principal_identity_service(
         principal_repository=principal_repository,
         principal_identity_repository=principal_identity_repository,
         auth_audit_service=auth_audit_service,
+        session_token_service=session_token_service,
     )
 
 
@@ -574,8 +590,9 @@ def get_auth_identity_service(
     db: Session = Depends(get_db),
     principal_repository: PrincipalRepository = Depends(get_principal_repository),
     principal_identity_repository: PrincipalIdentityRepository = Depends(get_principal_identity_repository),
-    oidc_verifier: GoogleOIDCTokenInfoVerifier = Depends(get_google_oidc_verifier),
+    oidc_verifier: GoogleOIDCJWKSVerifier = Depends(get_google_oidc_verifier),
     session_token_service: AppSessionTokenService | None = Depends(get_session_token_service),
+    auth_audit_service: AuthAuditService = Depends(get_auth_audit_service),
 ) -> AuthIdentityService:
     if session_token_service is None:
         raise HTTPException(
@@ -588,6 +605,7 @@ def get_auth_identity_service(
         principal_identity_repository=principal_identity_repository,
         oidc_verifier=oidc_verifier,
         session_token_service=session_token_service,
+        auth_audit_service=auth_audit_service,
     )
 
 
@@ -597,11 +615,38 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _normalized_user_agent(request: Request) -> str:
+    raw = (request.headers.get("User-Agent") or "unknown").strip().lower()
+    if not raw:
+        raw = "unknown"
+    # Keep cardinality bounded while still bucketing distinct clients.
+    return raw[:256]
+
+
+def _bucket_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
 def _raise_rate_limit(*, category: str, retry_after_seconds: int) -> None:
     raise HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         detail="Rate limit exceeded. Retry later.",
         headers={"Retry-After": str(retry_after_seconds), "X-RateLimit-Category": category},
+    )
+
+
+def _log_auth_failure(
+    *,
+    request: Request,
+    reason: str,
+    auth_kind: str,
+) -> None:
+    logger.warning(
+        "auth_failure reason=%s auth_kind=%s client_ip=%s user_agent_bucket=%s",
+        reason,
+        auth_kind,
+        _client_ip(request),
+        _bucket_hash(_normalized_user_agent(request)),
     )
 
 
@@ -623,8 +668,9 @@ def get_tenant_context(
     authorization: str | None = Header(default=None),
     api_credential_repository: APICredentialRepository = Depends(get_api_credential_repository),
     principal_repository: PrincipalRepository = Depends(get_principal_repository),
+    principal_identity_repository: PrincipalIdentityRepository = Depends(get_principal_identity_repository),
     session_token_service: AppSessionTokenService | None = Depends(get_session_token_service),
-    rate_limiter: InMemoryRateLimiter = Depends(get_rate_limiter),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> TenantContext:
     """Resolve tenant scope from server-side auth context (not request business_id fields)."""
     settings = get_settings()
@@ -633,30 +679,43 @@ def get_tenant_context(
     if token is not None:
         if settings.rate_limit_enabled:
             ip = _client_ip(request)
+            ua_bucket = _bucket_hash(_normalized_user_agent(request))
             decision = rate_limiter.check(
-                key=f"auth:{ip}",
+                key=f"auth:bearer:{ip}:{ua_bucket}",
                 limit=settings.auth_rate_limit_requests,
                 window_seconds=settings.auth_rate_limit_window_seconds,
             )
             if not decision.allowed:
                 logger.warning(
-                    "Auth rate limit exceeded client_ip=%s retry_after=%s",
+                    "auth_rate_limit_denied category=auth client_ip=%s user_agent_bucket=%s retry_after=%s",
                     ip,
+                    ua_bucket,
                     decision.retry_after_seconds,
                 )
                 _raise_rate_limit(category="auth", retry_after_seconds=decision.retry_after_seconds)
 
-        if token.startswith("wb1."):
+        if token.count(".") == 2:
             if session_token_service is None:
+                _log_auth_failure(request=request, reason="session_service_unavailable", auth_kind="jwt")
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.")
             try:
-                claims = session_token_service.verify(token)
+                claims = session_token_service.verify_access_token(token)
             except AppSessionTokenError as exc:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+                _log_auth_failure(request=request, reason="invalid_access_token", auth_kind="jwt")
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.") from exc
 
             principal = principal_repository.get_for_business(claims.business_id, claims.principal_id)
             if principal is None or not principal.is_active:
+                _log_auth_failure(request=request, reason="principal_not_active_or_missing", auth_kind="jwt")
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.")
+            if claims.principal_identity_id:
+                identity = principal_identity_repository.get_for_business(
+                    business_id=claims.business_id,
+                    identity_id=claims.principal_identity_id,
+                )
+                if identity is None or not identity.is_active:
+                    _log_auth_failure(request=request, reason="identity_not_active_or_missing", auth_kind="jwt")
+                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.")
             return TenantContext(
                 business_id=claims.business_id,
                 principal_id=claims.principal_id,
@@ -687,6 +746,7 @@ def get_tenant_context(
                 principal_role=db_credential.principal_role,
             )
 
+        _log_auth_failure(request=request, reason="credential_not_found_or_inactive", auth_kind="api_credential")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthorized.",
@@ -694,6 +754,7 @@ def get_tenant_context(
 
     # Dev/test fallback only: keep local workflows operational without auth setup.
     if settings.environment.strip().lower() not in {"development", "dev", "test"}:
+        _log_auth_failure(request=request, reason="missing_bearer_token", auth_kind="none")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthorized.",
@@ -747,14 +808,16 @@ def require_admin_rate_limit(action: str):
         request: Request,
         tenant_context: TenantContext = Depends(get_tenant_context),
         principal: Principal = Depends(get_authenticated_principal),
-        rate_limiter: InMemoryRateLimiter = Depends(get_rate_limiter),
+        rate_limiter: RateLimiter = Depends(get_rate_limiter),
+        auth_audit_service: AuthAuditService = Depends(get_auth_audit_service),
     ) -> None:
         settings = get_settings()
         if not settings.rate_limit_enabled:
             return
 
         ip = _client_ip(request)
-        key = f"admin:{action}:{tenant_context.business_id}:{principal.id}:{ip}"
+        ua_bucket = _bucket_hash(_normalized_user_agent(request))
+        key = f"admin:{action}:{tenant_context.business_id}:{principal.id}:{ip}:{ua_bucket}"
         decision = rate_limiter.check(
             key=key,
             limit=settings.admin_rate_limit_requests,
@@ -764,13 +827,40 @@ def require_admin_rate_limit(action: str):
             return
 
         logger.warning(
-            "Admin rate limit exceeded action=%s business_id=%s principal_id=%s client_ip=%s retry_after=%s",
+            (
+                "admin_rate_limit_denied action=%s business_id=%s principal_id=%s "
+                "client_ip=%s user_agent_bucket=%s retry_after=%s"
+            ),
             action,
             tenant_context.business_id,
             principal.id,
             ip,
+            ua_bucket,
             decision.retry_after_seconds,
         )
+        try:
+            auth_audit_service.record_event(
+                business_id=tenant_context.business_id,
+                actor_principal_id=principal.id,
+                target_type="rate_limit",
+                target_id=f"admin:{action}",
+                event_type="admin_rate_limit_denied",
+                details={
+                    "action": action,
+                    "client_ip": ip,
+                    "user_agent_bucket": ua_bucket,
+                    "retry_after_seconds": decision.retry_after_seconds,
+                },
+            )
+            auth_audit_service.session.commit()
+        except Exception:  # noqa: BLE001
+            auth_audit_service.session.rollback()
+            logger.warning(
+                "Failed to persist admin rate-limit audit event for business_id=%s principal_id=%s action=%s",
+                tenant_context.business_id,
+                principal.id,
+                action,
+            )
         _raise_rate_limit(category=f"admin:{action}", retry_after_seconds=decision.retry_after_seconds)
 
     return _enforce

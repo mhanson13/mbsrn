@@ -9,10 +9,10 @@ The FastAPI monolith remains the system of record. The UI consumes existing busi
 
 1. User authenticates with Google (OIDC ID token).
 2. UI calls `POST /api/auth/google/exchange`.
-3. Backend verifies Google token (`sub`, issuer, audience).
+3. Backend verifies Google token via JWKS signature + claim validation (`sub`, issuer, audience, email_verified policy).
 4. Backend resolves `principal_identities` mapping (`provider=google`, `provider_subject=sub`).
 5. Backend validates mapped internal principal is active.
-6. Backend issues signed app bearer token.
+6. Backend issues signed app JWT access + refresh tokens.
 7. API authorization remains internal and business-scoped via principal/business role checks.
 
 Key boundary:
@@ -29,6 +29,8 @@ Key boundary:
 ## Auth Endpoints
 
 - `POST /api/auth/google/exchange`
+- `POST /api/auth/refresh`
+- `POST /api/auth/logout`
 - `GET /api/auth/me`
 
 Business admin identity mapping endpoints:
@@ -58,3 +60,8 @@ The UI uses a typed API client and environment-based API configuration:
 - Inactive principal identities are rejected.
 - Inactive principals are rejected.
 - Tenant/business scope enforcement remains in existing `TenantContext` + repository/service lineage protections.
+- Operator UI session storage policy:
+  - access token: `sessionStorage`
+  - refresh token: in-memory only (not browser-persistent)
+  - principal metadata: `sessionStorage`
+  - sign-out calls `/api/auth/logout` and clears local session state

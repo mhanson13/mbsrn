@@ -27,10 +27,40 @@ class AuthPrincipalRead(BaseModel):
 
 class AuthExchangeResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     expires_at: str
+    refresh_expires_at: str
     auth_source: str
     principal: AuthPrincipalRead
+
+
+class AuthRefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=1)
+
+    @field_validator("refresh_token", mode="before")
+    @classmethod
+    def normalize_refresh_token(cls, value: str) -> str:
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("refresh_token is required.")
+        return normalized
+
+
+class AuthRefreshResponse(AuthExchangeResponse):
+    pass
+
+
+class AuthLogoutRequest(BaseModel):
+    refresh_token: str | None = None
+
+    @field_validator("refresh_token", mode="before")
+    @classmethod
+    def normalize_refresh_token(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
 
 class AuthMeResponse(BaseModel):

@@ -25,6 +25,7 @@ from app.integrations.seo_summary_provider import (
 )
 from app.integrations.google_auth import (
     GoogleIdentityClaims,
+    GoogleOIDCJWKSVerifier,
     GoogleOIDCTokenInfoVerifier,
     GoogleOIDCVerificationError,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "SEOAuditSummaryOutput",
     "SEOAuditSummaryProvider",
     "GoogleIdentityClaims",
+    "GoogleOIDCJWKSVerifier",
     "GoogleOIDCTokenInfoVerifier",
     "GoogleOIDCVerificationError",
     "TwilioSMSProvider",

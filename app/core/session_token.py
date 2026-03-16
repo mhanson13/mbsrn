@@ -2,10 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import base64
-import hashlib
-import hmac
-import json
+from typing import Any
+from uuid import uuid4
+
+import jwt
+from jwt import InvalidTokenError
+
+from app.core.session_state import (
+    ConsumeRefreshStatus,
+    RefreshTokenState,
+    SessionStateStore,
+    dt_to_epoch_seconds,
+)
 
 
 class AppSessionTokenError(ValueError):
@@ -14,31 +22,60 @@ class AppSessionTokenError(ValueError):
 
 @dataclass(frozen=True)
 class AppSessionClaims:
+    token_type: str
+    jti: str
     business_id: str
     principal_id: str
     principal_role: str
     auth_source: str
+    principal_identity_id: str | None
     issued_at: datetime
+    not_before: datetime
     expires_at: datetime
+    issuer: str
+    audience: str
 
 
 @dataclass(frozen=True)
-class IssuedAppSessionToken:
-    token: str
-    expires_at: datetime
+class IssuedAppSessionTokens:
+    access_token: str
+    refresh_token: str
+    access_expires_at: datetime
+    refresh_expires_at: datetime
+
+
+@dataclass(frozen=True)
+class RefreshRotationResult:
+    status: ConsumeRefreshStatus
+    claims: AppSessionClaims | None = None
 
 
 class AppSessionTokenService:
-    _VERSION_PREFIX = "wb1"
-
-    def __init__(self, *, secret: str, ttl_seconds: int) -> None:
+    def __init__(
+        self,
+        *,
+        secret: str,
+        issuer: str,
+        audience: str,
+        algorithm: str,
+        access_ttl_seconds: int,
+        refresh_ttl_seconds: int,
+        state_store: SessionStateStore,
+    ) -> None:
         normalized_secret = secret.strip()
         if not normalized_secret:
             raise AppSessionTokenError("APP_SESSION_SECRET is required for app session token operations.")
-        if ttl_seconds <= 0:
+        if access_ttl_seconds <= 0:
             raise AppSessionTokenError("APP_SESSION_TTL_SECONDS must be greater than zero.")
-        self._secret = normalized_secret.encode("utf-8")
-        self._ttl_seconds = ttl_seconds
+        if refresh_ttl_seconds <= 0:
+            raise AppSessionTokenError("APP_SESSION_REFRESH_TTL_SECONDS must be greater than zero.")
+        self._secret = normalized_secret
+        self._issuer = issuer.strip()
+        self._audience = audience.strip()
+        self._algorithm = algorithm.strip().upper()
+        self._access_ttl_seconds = access_ttl_seconds
+        self._refresh_ttl_seconds = refresh_ttl_seconds
+        self._state_store = state_store
 
     def issue(
         self,
@@ -47,83 +84,186 @@ class AppSessionTokenService:
         principal_id: str,
         principal_role: str,
         auth_source: str,
-    ) -> IssuedAppSessionToken:
+        principal_identity_id: str | None = None,
+    ) -> IssuedAppSessionTokens:
         now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(seconds=self._ttl_seconds)
-        payload = {
-            "bid": business_id,
+        access_expires_at = now + timedelta(seconds=self._access_ttl_seconds)
+        refresh_expires_at = now + timedelta(seconds=self._refresh_ttl_seconds)
+
+        access_jti = str(uuid4())
+        refresh_jti = str(uuid4())
+        subject = self._build_subject(business_id=business_id, principal_id=principal_id)
+
+        base_payload = {
+            "iss": self._issuer,
+            "aud": self._audience,
+            "sub": subject,
             "pid": principal_id,
+            "bid": business_id,
             "role": principal_role,
             "src": auth_source,
-            "iat": int(now.timestamp()),
-            "exp": int(expires_at.timestamp()),
+            "iat": dt_to_epoch_seconds(now),
+            "nbf": dt_to_epoch_seconds(now),
         }
-        payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-        payload_b64 = self._b64_encode(payload_bytes)
-        signature_b64 = self._sign(payload_b64)
-        token = f"{self._VERSION_PREFIX}.{payload_b64}.{signature_b64}"
-        return IssuedAppSessionToken(token=token, expires_at=expires_at)
+        if principal_identity_id:
+            base_payload["iid"] = principal_identity_id
 
-    def verify(self, token: str) -> AppSessionClaims:
-        version, payload_b64, signature_b64 = self._split(token)
-        if version != self._VERSION_PREFIX:
-            raise AppSessionTokenError("Unsupported app session token version.")
-        expected_signature = self._sign(payload_b64)
-        if not hmac.compare_digest(signature_b64, expected_signature):
-            raise AppSessionTokenError("Invalid app session token signature.")
-        payload = self._decode_payload(payload_b64)
+        access_payload = {
+            **base_payload,
+            "jti": access_jti,
+            "typ": "access",
+            "exp": dt_to_epoch_seconds(access_expires_at),
+        }
+        refresh_payload = {
+            **base_payload,
+            "jti": refresh_jti,
+            "typ": "refresh",
+            "exp": dt_to_epoch_seconds(refresh_expires_at),
+        }
 
-        business_id = str(payload.get("bid") or "").strip()
-        principal_id = str(payload.get("pid") or "").strip()
-        principal_role = str(payload.get("role") or "").strip()
-        auth_source = str(payload.get("src") or "").strip()
-        iat = payload.get("iat")
-        exp = payload.get("exp")
-
-        if not business_id or not principal_id or not principal_role or not auth_source:
-            raise AppSessionTokenError("Invalid app session token payload.")
-        if not isinstance(iat, int) or not isinstance(exp, int):
-            raise AppSessionTokenError("Invalid app session token timestamps.")
-
-        now_ts = int(datetime.now(timezone.utc).timestamp())
-        if exp <= now_ts:
-            raise AppSessionTokenError("App session token expired.")
-
-        return AppSessionClaims(
-            business_id=business_id,
-            principal_id=principal_id,
-            principal_role=principal_role,
-            auth_source=auth_source,
-            issued_at=datetime.fromtimestamp(iat, tz=timezone.utc),
-            expires_at=datetime.fromtimestamp(exp, tz=timezone.utc),
+        access_token = jwt.encode(access_payload, self._secret, algorithm=self._algorithm)
+        refresh_token = jwt.encode(refresh_payload, self._secret, algorithm=self._algorithm)
+        self._state_store.put_refresh_state(
+            RefreshTokenState(
+                jti=refresh_jti,
+                business_id=business_id,
+                principal_id=principal_id,
+                principal_identity_id=principal_identity_id,
+                expires_at_epoch=dt_to_epoch_seconds(refresh_expires_at),
+            )
+        )
+        return IssuedAppSessionTokens(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            access_expires_at=access_expires_at,
+            refresh_expires_at=refresh_expires_at,
         )
 
-    def _split(self, token: str) -> tuple[str, str, str]:
+    def verify_access_token(self, token: str) -> AppSessionClaims:
+        claims = self._verify(token=token, expected_type="access")
+        self._ensure_not_revoked(claims=claims)
+        return claims
+
+    def verify_refresh_token(self, token: str) -> AppSessionClaims:
+        claims = self._verify(token=token, expected_type="refresh")
+        self._ensure_not_revoked(claims=claims)
+        return claims
+
+    def rotate_refresh_token(self, refresh_token: str) -> RefreshRotationResult:
+        claims = self._verify(token=refresh_token, expected_type="refresh")
+        self._ensure_subject_not_revoked(claims=claims)
+        if self._state_store.is_jti_revoked(jti=claims.jti):
+            return RefreshRotationResult(status="reused", claims=claims)
+        consume = self._state_store.consume_refresh_state(
+            jti=claims.jti,
+            revoke_until_epoch=dt_to_epoch_seconds(claims.expires_at),
+        )
+        return RefreshRotationResult(status=consume.status, claims=claims)
+
+    def revoke_token(self, *, claims: AppSessionClaims) -> None:
+        self._state_store.revoke_jti(jti=claims.jti, expires_at_epoch=dt_to_epoch_seconds(claims.expires_at))
+
+    def revoke_principal_sessions(self, *, business_id: str, principal_id: str, revoked_after: datetime | None = None) -> None:
+        cutoff = revoked_after or datetime.now(timezone.utc)
+        self._state_store.set_principal_revoked_after(
+            business_id=business_id,
+            principal_id=principal_id,
+            issued_after_epoch=dt_to_epoch_seconds(cutoff),
+        )
+
+    def revoke_identity_sessions(self, *, identity_id: str, revoked_after: datetime | None = None) -> None:
+        cutoff = revoked_after or datetime.now(timezone.utc)
+        self._state_store.set_identity_revoked_after(
+            identity_id=identity_id,
+            issued_after_epoch=dt_to_epoch_seconds(cutoff),
+        )
+
+    def issue_from_refresh(
+        self,
+        *,
+        refresh_claims: AppSessionClaims,
+        principal_role: str,
+        auth_source: str,
+    ) -> IssuedAppSessionTokens:
+        return self.issue(
+            business_id=refresh_claims.business_id,
+            principal_id=refresh_claims.principal_id,
+            principal_role=principal_role,
+            auth_source=auth_source,
+            principal_identity_id=refresh_claims.principal_identity_id,
+        )
+
+    def _verify(self, *, token: str, expected_type: str) -> AppSessionClaims:
         raw = token.strip()
         if not raw:
             raise AppSessionTokenError("App session token is required.")
-        parts = raw.split(".")
-        if len(parts) != 3:
-            raise AppSessionTokenError("Invalid app session token format.")
-        return parts[0], parts[1], parts[2]
-
-    def _decode_payload(self, payload_b64: str) -> dict:
         try:
-            payload_bytes = self._b64_decode(payload_b64)
-            payload = json.loads(payload_bytes.decode("utf-8"))
+            payload = jwt.decode(
+                raw,
+                self._secret,
+                algorithms=[self._algorithm],
+                audience=self._audience,
+                issuer=self._issuer,
+                options={
+                    "require": ["iss", "aud", "sub", "iat", "nbf", "exp", "jti", "typ", "pid", "bid", "role", "src"],
+                },
+            )
+        except InvalidTokenError as exc:
+            raise AppSessionTokenError("Invalid app session token.") from exc
+
+        token_type = str(payload.get("typ") or "").strip().lower()
+        if token_type != expected_type:
+            raise AppSessionTokenError("Invalid app session token type.")
+
+        principal_identity_id_raw = payload.get("iid")
+        principal_identity_id = (
+            str(principal_identity_id_raw).strip()
+            if principal_identity_id_raw is not None and str(principal_identity_id_raw).strip()
+            else None
+        )
+
+        try:
+            return AppSessionClaims(
+                token_type=token_type,
+                jti=str(payload["jti"]),
+                business_id=str(payload["bid"]),
+                principal_id=str(payload["pid"]),
+                principal_role=str(payload["role"]),
+                auth_source=str(payload["src"]),
+                principal_identity_id=principal_identity_id,
+                issued_at=_epoch_to_dt(payload["iat"]),
+                not_before=_epoch_to_dt(payload["nbf"]),
+                expires_at=_epoch_to_dt(payload["exp"]),
+                issuer=str(payload["iss"]),
+                audience=str(payload["aud"]),
+            )
         except Exception as exc:  # noqa: BLE001
-            raise AppSessionTokenError("Invalid app session token payload encoding.") from exc
-        if not isinstance(payload, dict):
-            raise AppSessionTokenError("Invalid app session token payload.")
-        return payload
+            raise AppSessionTokenError("Invalid app session token payload.") from exc
 
-    def _sign(self, payload_b64: str) -> str:
-        digest = hmac.new(self._secret, payload_b64.encode("utf-8"), hashlib.sha256).digest()
-        return self._b64_encode(digest)
+    def _ensure_not_revoked(self, *, claims: AppSessionClaims) -> None:
+        if self._state_store.is_jti_revoked(jti=claims.jti):
+            raise AppSessionTokenError("App session token revoked.")
 
-    def _b64_encode(self, payload: bytes) -> str:
-        return base64.urlsafe_b64encode(payload).decode("utf-8").rstrip("=")
+        self._ensure_subject_not_revoked(claims=claims)
 
-    def _b64_decode(self, payload: str) -> bytes:
-        pad_len = (4 - (len(payload) % 4)) % 4
-        return base64.urlsafe_b64decode(payload + ("=" * pad_len))
+    def _ensure_subject_not_revoked(self, *, claims: AppSessionClaims) -> None:
+        principal_cutoff = self._state_store.get_principal_revoked_after(
+            business_id=claims.business_id,
+            principal_id=claims.principal_id,
+        )
+        if principal_cutoff is not None and dt_to_epoch_seconds(claims.issued_at) <= principal_cutoff:
+            raise AppSessionTokenError("App session token revoked.")
+
+        if claims.principal_identity_id:
+            identity_cutoff = self._state_store.get_identity_revoked_after(identity_id=claims.principal_identity_id)
+            if identity_cutoff is not None and dt_to_epoch_seconds(claims.issued_at) <= identity_cutoff:
+                raise AppSessionTokenError("App session token revoked.")
+
+    def _build_subject(self, *, business_id: str, principal_id: str) -> str:
+        return f"{business_id}:{principal_id}"
+
+
+def _epoch_to_dt(value: Any) -> datetime:
+    if not isinstance(value, int):
+        raise AppSessionTokenError("Invalid app session token timestamp.")
+    return datetime.fromtimestamp(value, tz=timezone.utc)

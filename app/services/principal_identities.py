@@ -6,6 +6,7 @@ from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.session_token import AppSessionTokenService
 from app.models.principal_identity import PrincipalIdentity
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.principal_identity_repository import PrincipalIdentityRepository
@@ -46,12 +47,14 @@ class PrincipalIdentityService:
         principal_repository: PrincipalRepository,
         principal_identity_repository: PrincipalIdentityRepository,
         auth_audit_service: AuthAuditService,
+        session_token_service: AppSessionTokenService | None = None,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
         self.principal_repository = principal_repository
         self.principal_identity_repository = principal_identity_repository
         self.auth_audit_service = auth_audit_service
+        self.session_token_service = session_token_service
 
     def list_for_business(self, *, business_id: str) -> list[PrincipalIdentity]:
         self._ensure_business_exists(business_id)
@@ -89,6 +92,8 @@ class PrincipalIdentityService:
             existing.email = email
             existing.email_verified = payload.email_verified
             existing.is_active = payload.is_active
+            if not existing.is_active and self.session_token_service is not None:
+                self.session_token_service.revoke_identity_sessions(identity_id=existing.id)
             self.principal_identity_repository.save(existing)
             self.auth_audit_service.record_event(
                 business_id=business_id,
@@ -175,6 +180,8 @@ class PrincipalIdentityService:
     ) -> PrincipalIdentity:
         identity = self._get_for_business(business_id=business_id, identity_id=identity_id)
         identity.is_active = False
+        if self.session_token_service is not None:
+            self.session_token_service.revoke_identity_sessions(identity_id=identity.id)
         self.principal_identity_repository.save(identity)
         self.auth_audit_service.record_event(
             business_id=business_id,

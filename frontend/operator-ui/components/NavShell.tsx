@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "./AuthProvider";
+import { logoutSession } from "../lib/api/client";
 
 const links = [
   { href: "/dashboard", label: "Dashboard" },
@@ -15,7 +16,19 @@ const links = [
 
 export function NavShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { principal, clearSession } = useAuth();
+  const { token, refreshToken, principal, clearSession } = useAuth();
+
+  async function handleSignOut() {
+    try {
+      if (token) {
+        await logoutSession(token, refreshToken || undefined);
+      }
+    } catch {
+      // Clear local session state even when backend logout fails.
+    } finally {
+      clearSession();
+    }
+  }
 
   return (
     <>
@@ -37,7 +50,7 @@ export function NavShell({ children }: { children: React.ReactNode }) {
                 <small>
                   {principal.display_name} ({principal.role})
                 </small>
-                <button onClick={clearSession}>Sign out</button>
+                <button onClick={() => void handleSignOut()}>Sign out</button>
               </>
             ) : (
               <Link href="/">Sign in</Link>

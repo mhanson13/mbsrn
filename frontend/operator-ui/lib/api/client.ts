@@ -41,6 +41,9 @@ async function apiRequest<T>(
     throw new Error(detail);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return (await response.json()) as T;
 }
 
@@ -48,6 +51,14 @@ export async function exchangeGoogleIdToken(idToken: string): Promise<AuthExchan
   return apiRequest<AuthExchangeResponse>("/api/auth/google/exchange", {
     method: "POST",
     body: JSON.stringify({ id_token: idToken }),
+  });
+}
+
+export async function logoutSession(token: string, refreshToken?: string): Promise<void> {
+  await apiRequest<void>("/api/auth/logout", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ refresh_token: refreshToken ?? null }),
   });
 }
 

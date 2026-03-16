@@ -55,9 +55,11 @@ Runtime authentication path:
    - app session token issued by `POST /api/auth/google/exchange`, or
    - DB-backed `api_credentials` token hash lookup.
 3. For Google exchange:
-   - Google ID token is verified (`iss`, `aud`, `sub`) using tokeninfo.
+   - Google ID token is verified with JWKS signature validation (`iss`, `aud`, `sub`) and email verification policy.
    - `principal_identities` mapping (`provider=google`, `provider_subject=sub`) is resolved.
    - mapped principal must be active.
+   - internal JWT access/refresh tokens are issued with claims: `iss`, `aud`, `iat`, `nbf`, `exp`, `sub`, `jti`.
+   - explicit logout is supported via `POST /api/auth/logout`, revoking the active access token and optionally the current refresh token.
 4. For DB credentials:
    - credential must be active and non-revoked.
    - bound principal must be active.
@@ -70,9 +72,14 @@ Current runtime behavior notes:
 - Legacy shared-token auth is not part of runtime auth resolution.
 - A dev/test fallback exists when no bearer token is supplied: non-production environments can fall back to `DEFAULT_BUSINESS_ID` for local workflows.
 - Application-level rate limiting is enabled by default:
-  - auth request throttling keyed by client IP
-  - stricter admin-route throttling keyed by action + business + principal + client IP
+  - auth request throttling keyed by client IP + normalized user-agent bucket
+  - stricter admin-route throttling keyed by action + business + principal + client IP + user-agent bucket
   - throttled requests return HTTP 429
+- Rate limiting and token/session revocation state support Redis-backed distributed enforcement for multi-pod deployments (with local in-memory fallback for dev/test).
+- Redis failure behavior is explicit and configurable:
+  - `RATE_LIMIT_FAIL_OPEN`
+  - `SESSION_STATE_FAIL_OPEN`
+  Production default is fail-closed unless explicitly overridden.
 
 ## 5) Credential Security
 - Plaintext tokens are not stored in the database.
@@ -167,6 +174,9 @@ Current audit model (`auth_audit_events`) includes:
 Captured event coverage includes:
 - principal: create/update/activate/deactivate
 - credentials: create/disable/revoke/rotate
+- session security:
+  - refresh replay detection (`session_refresh_replay_detected`)
+  - explicit logout (`session_logout`)
 
 Admin read path:
 - `GET /api/businesses/{business_id}/auth-audit-events`

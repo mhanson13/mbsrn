@@ -42,6 +42,11 @@ Direct command:
 python -m uvicorn app.main:app --reload
 ```
 
+Schema initialization policy:
+- Local/dev/test convenience: startup `create_all()` is allowed only when `APP_ENV` is local-like and `DB_AUTO_CREATE_LOCAL=true`.
+- CI/staging/production/GKE: set `DB_AUTO_CREATE_LOCAL=false`; Alembic migrations are authoritative.
+- Deploy path runs `alembic upgrade head` before rollout.
+
 Health check:
 ```powershell
 curl.exe http://127.0.0.1:8000/health
@@ -57,6 +62,11 @@ Direct command:
 ```powershell
 python -m pip install -r requirements-dev.txt
 pytest
+```
+
+Optional local migration check:
+```powershell
+alembic upgrade head
 ```
 
 ## Run Operator UI
@@ -257,10 +267,12 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 ## API Credential Auth
 - Runtime auth supports two bearer-token paths:
   - DB API credentials (`api_credentials`) for service-to-service and operator-issued keys.
-  - Google OIDC exchange -> internal signed app session token for human operator UI sessions.
+  - Google OIDC exchange -> internal signed JWT access/refresh app session tokens for human operator UI sessions.
 - Google remains identity-only; authorization is enforced by internal principal/business/role mappings.
 - Google auth endpoints:
   - `POST /api/auth/google/exchange` (exchange Google ID token for app bearer token)
+  - `POST /api/auth/refresh` (rotate refresh token and mint a new access/refresh pair)
+  - `POST /api/auth/logout` (revoke current access token and optionally the presented refresh token)
   - `GET /api/auth/me` (current principal context)
 - Principal identity mapping endpoints (admin only):
   - `GET /api/businesses/{business_id}/principal-identities`
@@ -295,13 +307,30 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 - Auth/admin audit events are persisted for principal and credential lifecycle actions with business scope and actor/target context.
 - Audit payloads exclude secret fields (`token`, `token_hash`).
 - Application-level abuse protections are enabled by default:
-  - bearer-auth request throttling (client IP keyed)
-  - stricter admin-route throttling for principal/credential/audit management actions
+  - bearer-auth request throttling (client IP + normalized user-agent bucket)
+  - stricter admin-route throttling for principal/credential/audit management actions (principal-aware)
   - throttled requests return `429 Rate limit exceeded. Retry later.`
+- Rate-limit and token-state backends support Redis for distributed GKE enforcement with in-memory local fallback:
+  - `REDIS_URL`
+  - `RATE_LIMIT_BACKEND=auto|inmemory|redis`
+  - `SESSION_STATE_BACKEND=auto|inmemory|redis`
+  - `RATE_LIMIT_FAIL_OPEN` and `SESSION_STATE_FAIL_OPEN` control Redis failure behavior explicitly
+    (production-safe default is fail-closed unless explicitly overridden)
 - Rate limits are configurable via:
   - `RATE_LIMIT_ENABLED`
+  - `RATE_LIMIT_BACKEND`
+  - `RATE_LIMIT_FAIL_OPEN`
   - `AUTH_RATE_LIMIT_REQUESTS` / `AUTH_RATE_LIMIT_WINDOW_SECONDS`
   - `ADMIN_RATE_LIMIT_REQUESTS` / `ADMIN_RATE_LIMIT_WINDOW_SECONDS`
+- App session JWT config:
+  - `APP_SESSION_ISSUER`
+  - `APP_SESSION_AUDIENCE`
+  - `APP_SESSION_ALGORITHM`
+  - `APP_SESSION_TTL_SECONDS`
+  - `APP_SESSION_REFRESH_TTL_SECONDS`
+- Google ID token validation uses JWKS signature verification:
+  - `GOOGLE_OIDC_JWKS_URL`
+  - `GOOGLE_OIDC_REQUIRE_EMAIL_VERIFIED`
 - `API_TOKEN_HASH_PEPPER` is required in production.
 - Legacy unpeppered hash verification is off by default and can be enabled temporarily with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true`.
 - Legacy shared-token auth (`API_AUTH_TOKEN` / `API_AUTH_BUSINESS_ID`) is no longer part of runtime auth resolution.
@@ -316,6 +345,7 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `frontend-ci.yml`
   - `deploy-gke.yml`
 - `backend-ci.yml` runs backend validation (dependency install + pytest).
+  - includes Alembic migration-chain validation (`alembic upgrade head`) against CI Postgres before tests
 - `frontend-ci.yml` runs frontend validation (`npm ci`, lint, typecheck, build).
 - `deploy-gke.yml` is the release pipeline:
   - builds/pushes backend and frontend images with Cloud Buildpacks
@@ -327,6 +357,12 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `us-central1-docker.pkg.dev/<project>/<repository>/api:<tag>`
   - `us-central1-docker.pkg.dev/<project>/<repository>/ui:<tag>`
 - Google Cloud authentication in GitHub Actions uses Workload Identity Federation (no long-lived key files).
+
+## Operator UI Session Handling
+- Operator UI exchanges Google ID tokens with `POST /api/auth/google/exchange`.
+- Access tokens are stored in browser `sessionStorage` (not `localStorage`) for reduced persistence.
+- Refresh tokens are kept in memory only for the active UI session and are not persisted across reloads.
+- Sign out calls `POST /api/auth/logout`, then clears local session state.
 
 Out of scope in this pass: full IAM/user-role management and enterprise-grade audit retention/compliance tooling.
 

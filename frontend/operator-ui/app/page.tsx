@@ -20,7 +20,7 @@ export default function LoginPage() {
       setError(null);
       try {
         const result = await exchangeGoogleIdToken(tokenValue);
-        setSession(result.access_token, result.principal);
+        setSession(result.access_token, result.principal, result.refresh_token);
         router.push("/dashboard");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Authentication failed.");

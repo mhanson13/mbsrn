@@ -5,7 +5,15 @@ from app.schemas.api_credential import (
     APICredentialRead,
     APICredentialRotateResponse,
 )
-from app.schemas.auth import AuthExchangeResponse, AuthMeResponse, AuthPrincipalRead, GoogleAuthExchangeRequest
+from app.schemas.auth import (
+    AuthExchangeResponse,
+    AuthLogoutRequest,
+    AuthMeResponse,
+    AuthPrincipalRead,
+    AuthRefreshRequest,
+    AuthRefreshResponse,
+    GoogleAuthExchangeRequest,
+)
 from app.schemas.auth_audit import AuthAuditEventListResponse, AuthAuditEventRead
 from app.schemas.business import BusinessSettingsRead, BusinessSettingsUpdateRequest
 from app.schemas.principal import (
@@ -100,7 +108,10 @@ __all__ = [
     "APICredentialRead",
     "APICredentialRotateResponse",
     "AuthExchangeResponse",
+    "AuthLogoutRequest",
     "AuthMeResponse",
+    "AuthRefreshRequest",
+    "AuthRefreshResponse",
     "AuthAuditEventListResponse",
     "AuthAuditEventRead",
     "AuthPrincipalRead",

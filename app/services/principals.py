@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.core.session_token import AppSessionTokenService
 from app.models.principal import Principal, PrincipalRole
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.principal_repository import PrincipalRepository
@@ -31,11 +32,13 @@ class PrincipalService:
         business_repository: BusinessRepository,
         principal_repository: PrincipalRepository,
         auth_audit_service: AuthAuditService,
+        session_token_service: AppSessionTokenService | None = None,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
         self.principal_repository = principal_repository
         self.auth_audit_service = auth_audit_service
+        self.session_token_service = session_token_service
 
     def list_for_business(self, *, business_id: str) -> list[Principal]:
         self._ensure_business_exists(business_id)
@@ -111,6 +114,11 @@ class PrincipalService:
             principal.role = updates["role"]
         if "is_active" in updates:
             principal.is_active = bool(updates["is_active"])
+            if not principal.is_active and self.session_token_service is not None:
+                self.session_token_service.revoke_principal_sessions(
+                    business_id=business_id,
+                    principal_id=principal.id,
+                )
         if normalized_actor_principal_id is not None:
             principal.updated_by_principal_id = normalized_actor_principal_id
 
@@ -176,6 +184,11 @@ class PrincipalService:
         if not principal.is_active:
             return principal
         principal.is_active = False
+        if self.session_token_service is not None:
+            self.session_token_service.revoke_principal_sessions(
+                business_id=business_id,
+                principal_id=principal.id,
+            )
         if normalized_actor_principal_id is not None:
             principal.updated_by_principal_id = normalized_actor_principal_id
         self.principal_repository.save(principal)

@@ -22,6 +22,25 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: work_boots_console_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d work_boots_console_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: ci
+      ENVIRONMENT: ci
+      DB_AUTO_CREATE_LOCAL: "false"
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/work_boots_console_ci
 
     steps:
       - name: Checkout
@@ -37,6 +56,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
+
+      - name: Validate Alembic migration chain
+        run: |
+          alembic upgrade head
 
       - name: Run tests
         run: pytest

@@ -50,7 +50,13 @@ export function useOperatorContext(): OperatorContextResult {
         });
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load SEO sites.");
+          const message = err instanceof Error ? err.message : "Failed to load SEO sites.";
+          if (message.includes("Unauthorized") || message.includes("HTTP 401")) {
+            clearSession();
+            router.push("/");
+            return;
+          }
+          setError(message);
         }
       } finally {
         if (!cancelled) {

@@ -10,8 +10,10 @@ export interface AuthPrincipal {
 
 export interface AuthExchangeResponse {
   access_token: string;
+  refresh_token: string;
   token_type: "bearer";
   expires_at: string;
+  refresh_expires_at: string;
   auth_source: string;
   principal: AuthPrincipal;
 }
