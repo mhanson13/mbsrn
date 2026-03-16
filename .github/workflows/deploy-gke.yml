@@ -17,17 +17,132 @@ on:
       - "infra/k8s/**"
       - ".github/workflows/deploy-gke.yml"
 
+concurrency:
+  group: deploy-gke-${{ github.event.inputs.environment || 'prod' }}
+  cancel-in-progress: false
+
 jobs:
+  backend-build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_uri: ${{ steps.publish.outputs.image_uri }}
+    env:
+      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
+      GAR_REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run backend tests
+        run: pytest
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push API image (Cloud Buildpacks)
+        id: publish
+        run: |
+          IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPOSITORY}/api:${GITHUB_SHA}"
+          gcloud builds submit --project="${PROJECT_ID}" --pack image="${IMAGE_URI}" .
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_uri: ${{ steps.publish.outputs.image_uri }}
+    env:
+      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
+      GAR_REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "frontend/operator-ui/package.json"
+
+      - name: Ensure lockfile for npm ci
+        working-directory: frontend/operator-ui
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "::warning::package-lock.json missing. Generating ephemeral lockfile for CI. Commit the lockfile for fully reproducible local installs."
+            npm install --package-lock-only --ignore-scripts
+          fi
+
+      - name: Install frontend dependencies (deterministic)
+        working-directory: frontend/operator-ui
+        run: npm ci
+
+      - name: Run frontend lint
+        working-directory: frontend/operator-ui
+        run: npm run lint
+
+      - name: Run frontend typecheck
+        working-directory: frontend/operator-ui
+        run: npm run typecheck
+
+      - name: Run frontend build
+        working-directory: frontend/operator-ui
+        run: npm run build
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push UI image (Cloud Buildpacks)
+        id: publish
+        run: |
+          IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPOSITORY}/ui:${GITHUB_SHA}"
+          gcloud builds submit --project="${PROJECT_ID}" --pack image="${IMAGE_URI}" frontend/operator-ui
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
   deploy:
+    needs:
+      - backend-build
+      - frontend-build
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
 
     env:
+      TARGET_OVERLAY: ${{ github.event.inputs.environment || 'prod' }}
       PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-      GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
-      GAR_REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
       GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
       GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
 
@@ -51,33 +166,70 @@ jobs:
         run: |
           gcloud container clusters get-credentials "${GKE_CLUSTER}" --region "${GKE_LOCATION}" --project "${PROJECT_ID}"
 
-      - name: Apply kustomize overlay
-        env:
-          OVERLAY: ${{ github.event.inputs.environment || 'prod' }}
+      - name: Resolve deployment namespace
+        id: target
         run: |
-          kubectl apply -k "infra/k8s/overlays/${OVERLAY}"
-
-      - name: Update deployment images
-        env:
-          OVERLAY: ${{ github.event.inputs.environment || 'prod' }}
-        run: |
-          API_IMAGE="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPOSITORY}/api:${GITHUB_SHA}"
-          UI_IMAGE="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPOSITORY}/ui:${GITHUB_SHA}"
           NAMESPACE="work-boots"
-          if [ "${OVERLAY}" = "dev" ]; then
+          if [ "${TARGET_OVERLAY}" = "dev" ]; then
             NAMESPACE="work-boots-dev"
           fi
+          echo "namespace=${NAMESPACE}" >> "$GITHUB_OUTPUT"
 
+      - name: Apply kustomize overlay
+        run: |
+          kubectl apply -k "infra/k8s/overlays/${TARGET_OVERLAY}"
+
+      - name: Run Alembic migrations (pre-rollout gate)
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
+          API_IMAGE: ${{ needs.backend-build.outputs.image_uri }}
+        run: |
+          MIGRATION_JOB="work-boots-migrate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cat <<EOF | kubectl -n "${NAMESPACE}" apply -f -
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${MIGRATION_JOB}
+          spec:
+            ttlSecondsAfterFinished: 600
+            backoffLimit: 0
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: migrate
+                    image: ${API_IMAGE}
+                    command: ["alembic", "upgrade", "head"]
+                    envFrom:
+                      - configMapRef:
+                          name: work-boots-config
+                      - secretRef:
+                          name: work-boots-secrets
+          EOF
+
+          if ! kubectl -n "${NAMESPACE}" wait --for=condition=complete --timeout=10m "job/${MIGRATION_JOB}"; then
+            kubectl -n "${NAMESPACE}" logs "job/${MIGRATION_JOB}" --all-containers=true || true
+            exit 1
+          fi
+
+      - name: Cleanup migration job
+        if: always()
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
+        run: |
+          MIGRATION_JOB="work-boots-migrate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          kubectl -n "${NAMESPACE}" delete job "${MIGRATION_JOB}" --ignore-not-found
+
+      - name: Update deployment images
+        run: |
+          NAMESPACE="${{ steps.target.outputs.namespace }}"
+          API_IMAGE="${{ needs.backend-build.outputs.image_uri }}"
+          UI_IMAGE="${{ needs.frontend-build.outputs.image_uri }}"
           kubectl -n "${NAMESPACE}" set image deployment/work-boots-api api="${API_IMAGE}"
           kubectl -n "${NAMESPACE}" set image deployment/work-boots-ui ui="${UI_IMAGE}"
 
       - name: Verify rollout
-        env:
-          OVERLAY: ${{ github.event.inputs.environment || 'prod' }}
         run: |
-          NAMESPACE="work-boots"
-          if [ "${OVERLAY}" = "dev" ]; then
-            NAMESPACE="work-boots-dev"
-          fi
+          NAMESPACE="${{ steps.target.outputs.namespace }}"
           kubectl -n "${NAMESPACE}" rollout status deployment/work-boots-api --timeout=5m
           kubectl -n "${NAMESPACE}" rollout status deployment/work-boots-ui --timeout=5m

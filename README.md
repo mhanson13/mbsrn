@@ -308,10 +308,20 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 
 ## Deployment And CI/CD
 - Kubernetes manifests are under `infra/k8s` (kustomize base + `dev`/`prod` overlays).
+- Kustomize base is namespace-neutral; overlays own namespaces:
+  - `dev` -> `work-boots-dev`
+  - `prod` -> `work-boots`
 - CI/CD workflows are under `.github/workflows`:
   - `backend-ci.yml`
   - `frontend-ci.yml`
   - `deploy-gke.yml`
+- `backend-ci.yml` runs backend validation (dependency install + pytest).
+- `frontend-ci.yml` runs frontend validation (`npm ci`, lint, typecheck, build).
+- `deploy-gke.yml` is the release pipeline:
+  - builds/pushes backend and frontend images with Cloud Buildpacks
+  - runs Alembic migrations as a pre-rollout gate
+  - deploys only after successful upstream build gates
+  - rolls out exact built image refs (no implicit SHA image assumptions)
 - Image builds use Google Cloud Buildpacks (`gcloud builds submit --pack`) and produce OCI images for containerd/GKE.
 - Artifact Registry image naming convention:
   - `us-central1-docker.pkg.dev/<project>/<repository>/api:<tag>`

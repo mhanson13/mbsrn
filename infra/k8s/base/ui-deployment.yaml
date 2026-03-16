@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: work-boots-ui
-  namespace: work-boots
 spec:
   replicas: 2
   selector:

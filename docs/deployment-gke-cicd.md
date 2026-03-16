@@ -12,12 +12,15 @@ Kustomize manifests live under:
 - `infra/k8s/overlays/dev`
 - `infra/k8s/overlays/prod`
 
-Base resources include:
+Base resources are namespace-neutral and include:
 - API deployment + service
 - Operator UI deployment + service
 - Ingress (API + UI paths)
 - ConfigMap
-- Namespace
+
+Each overlay owns its namespace resource:
+- `infra/k8s/overlays/dev/namespace.yaml` (`work-boots-dev`)
+- `infra/k8s/overlays/prod/namespace.yaml` (`work-boots`)
 
 A secret template is provided at:
 - `infra/k8s/base/secrets.template.yaml`
@@ -34,18 +37,26 @@ This produces OCI-compatible images suitable for containerd on GKE.
 - `backend-ci.yml`
   - Python dependency install
   - pytest
-  - build/push API image on `main`
 
 - `frontend-ci.yml`
-  - Node install
-  - UI lint/build
-  - build/push UI image on `main`
+  - deterministic install (`npm ci`)
+  - UI lint, typecheck, and production build
+  - frontend test script execution only when a test script exists (none is currently defined)
 
 - `deploy-gke.yml`
+  - backend build gate:
+    - install dependencies
+    - pytest
+    - build/push API image with Cloud Buildpacks
+  - frontend build gate:
+    - deterministic install (`npm ci`)
+    - lint, typecheck, build
+    - build/push UI image with Cloud Buildpacks
   - WIF auth to GCP
   - cluster credential retrieval
   - kustomize apply
-  - deployment image updates to current SHA
+  - Alembic migration gate (`alembic upgrade head`) before rollout
+  - deployment image updates to exact image refs produced by build jobs
   - rollout verification
 
 ## Required GitHub Secrets
@@ -73,4 +84,6 @@ Kubernetes Secret handles sensitive values including:
 
 - API health endpoint: `/health`
 - Deployments include readiness/liveness probes.
+- Deploy runs are gated on successful backend and frontend image builds.
+- Migrations must succeed before workload rollout proceeds.
 - Rollback is available using standard Kubernetes rollout history commands.
