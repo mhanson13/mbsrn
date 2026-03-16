@@ -1,222 +1,192 @@
-# Work Boots Console – Security Architecture Snapshot
+# Work Boots Platform And Security Architecture
 
-## 1) Overview
-Work Boots Console implements a multi-tenant SaaS security model centered on `business_id` as the tenant boundary.
+## 1) System Overview
+Work Boots is implemented as a FastAPI monolith with a standalone operator UI and Kubernetes-based deployment.
 
-The current implementation uses layered protections across:
-- API authentication
-- request-rate abuse protections
-- tenant-scoped authorization
-- service-layer validation
-- repository scoping
-- database integrity constraints
-- persisted audit visibility for high-value identity/admin actions
+Current runtime components:
+- API/backend: `app/` (FastAPI + repository/service pattern)
+- Operator UI: `frontend/operator-ui` (Next.js + TypeScript)
+- Kubernetes manifests: `infra/k8s` (kustomize base + `dev`/`prod` overlays)
+- CI/CD: `.github/workflows` (`backend-ci.yml`, `frontend-ci.yml`, `deploy-gke.yml`)
 
-This document is a current-state implementation snapshot after Issue #17, not a future-state IAM design.
-
-## 2) Security Layers
-Defense in depth is applied from request entry to persistence:
+High-level runtime flow:
 
 ```text
-Client
-  ↓
-API Authentication (Bearer token)
-  - Google OIDC exchange -> app session token, or
-  - DB API credential lookup
-  ↓
-Rate limiting / abuse throttling
-  ↓
-TenantContext resolution (business_id + principal_id + auth_source)
-  ↓
-Authorization checks (principal role / active state)
-  ↓
-Service validation (business ownership + business rules)
-  ↓
-Repository scoping (business-scoped queries)
-  ↓
-Database constraints (FK/composite constraints)
+Operator Browser (Next.js UI)
+  -> /api/auth/google/exchange (Google ID token exchange)
+  -> App JWT access/refresh session
+  -> Business-scoped API routes
+  -> Services/Repositories (tenant-scoped)
+  -> Postgres (Alembic-managed schema)
 ```
 
-No single layer is relied on as the only tenant-protection mechanism.
+Deployment flow:
+- GitHub Actions builds OCI images (Cloud Buildpacks).
+- Images are pushed to Artifact Registry.
+- `deploy-gke.yml` applies kustomize overlays to GKE and runs Alembic migration gate before rollout.
 
-## 3) Tenant Isolation Model
-- All tenant-sensitive entities are business-scoped.
-- `business_id` is the canonical tenant boundary.
-- API handlers enforce tenant scope via `TenantContext` and reject mismatched requested `business_id`.
-- Service and repository methods use business-scoped access patterns (`get_for_business`, scoped list methods).
-- Database integrity constraints reinforce ownership:
-  - `lead_events` includes `business_id` and composite ownership enforcement for lead/event consistency.
-  - `api_credentials` binds to principals with composite ownership (`business_id`, `principal_id`).
+## 2) Core Architectural Invariants
+These invariants are fixed and intentional:
+- FastAPI monolith remains the system of record.
+- Repository/service pattern with thin route handlers.
+- Tenant isolation is business-scoped and enforced via `TenantContext` + scoped repository/service access.
+- Internal principal/business membership and role checks are authoritative for authorization.
+- Google identity is only identity proofing, not authorization.
+- SEO/recommendation pipeline remains deterministic-first.
+- AI is limited to summaries/narratives of persisted deterministic outputs.
+- No microservice split and no distributed orchestration redesign.
 
-## 4) Authentication Model
-Runtime authentication path:
-1. Client sends `Authorization: Bearer <token>`.
-2. Token is resolved through one of two runtime paths:
-   - app session token issued by `POST /api/auth/google/exchange`, or
-   - DB-backed `api_credentials` token hash lookup.
-3. For Google exchange:
-   - Google ID token is verified with JWKS signature validation (`iss`, `aud`, `sub`) and email verification policy.
-   - `principal_identities` mapping (`provider=google`, `provider_subject=sub`) is resolved.
-   - mapped principal must be active.
-   - internal JWT access/refresh tokens are issued with claims: `iss`, `aud`, `iat`, `nbf`, `exp`, `sub`, `jti`.
-   - explicit logout is supported via `POST /api/auth/logout`, revoking the active access token and optionally the current refresh token.
-4. For DB credentials:
-   - credential must be active and non-revoked.
-   - bound principal must be active.
-5. `TenantContext` is produced from credential/principal binding.
+## 3) Authentication And Authorization Flow
 
-`TenantContext` is server-derived and used by routes/services for tenant scoping.
+### Supported auth entry paths
+Runtime bearer auth is resolved from:
+1. App session JWT (human operator path)
+2. DB-backed API credential (service/admin key path)
 
-Current runtime behavior notes:
-- Env-based principal mapping is not part of runtime auth resolution.
-- Legacy shared-token auth is not part of runtime auth resolution.
-- A dev/test fallback exists when no bearer token is supplied: non-production environments can fall back to `DEFAULT_BUSINESS_ID` for local workflows.
-- Application-level rate limiting is enabled by default:
-  - auth request throttling keyed by client IP + normalized user-agent bucket
-  - stricter admin-route throttling keyed by action + business + principal + client IP + user-agent bucket
-  - throttled requests return HTTP 429
-- Rate limiting and token/session revocation state support Redis-backed distributed enforcement for multi-pod deployments (with local in-memory fallback for dev/test).
-- Redis failure behavior is explicit and configurable:
-  - `RATE_LIMIT_FAIL_OPEN`
-  - `SESSION_STATE_FAIL_OPEN`
-  Production default is fail-closed unless explicitly overridden.
+Key routes:
+- `POST /api/auth/google/exchange`
+- `POST /api/auth/refresh`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
 
-## 5) Credential Security
-- Plaintext tokens are not stored in the database.
-- `api_credentials.token_hash` is stored; plaintext token is returned only at issuance/rotation response time.
-- Normal credential list/read responses do not expose `token_hash`.
-- Production requires `API_TOKEN_HASH_PEPPER`; token verification uses peppered hashing.
-- Optional legacy unpeppered hash verification exists behind explicit config (`ALLOW_LEGACY_TOKEN_HASH_FALLBACK`) for migration compatibility.
+### Google exchange path
+1. UI/user obtains Google ID token.
+2. API verifies token via JWKS (`app/integrations/google_auth.py`), including:
+   - signature
+   - issuer
+   - audience
+   - subject (`sub`)
+   - email verification policy
+3. API resolves internal mapping in `principal_identities` using:
+   - `provider=google`
+   - `provider_subject=<sub>`
+4. API validates principal + identity active state.
+5. API issues app JWT access/refresh tokens (`app/core/session_token.py`).
+6. `TenantContext` is derived from internal claims and used for business scoping.
 
-## 6) Principals
-Principals are persisted and business-scoped.
+### Authorization boundary
+- Google answers identity (`who is the user`).
+- Work Boots answers authorization (`what can they do`) via principal/business/role checks.
+- Authorization is never granted solely by Google email/domain.
 
-Current principal fields include:
-- `business_id`
-- `id`
-- `display_name`
-- `role` (`admin` or `operator`)
-- `is_active`
-- `created_by_principal_id`
-- `updated_by_principal_id`
-- `last_authenticated_at`
-- `created_at`
-- `updated_at`
+### DB API credential path
+- DB token hash lookup remains supported in `get_tenant_context`.
+- Credential must be active and principal must be active.
+- Resulting context is still internal and business-scoped.
 
-Principals are bound to businesses and used as the authenticated identity behind API credentials.
+## 4) Session And Security Controls
 
-`principal_identities` provides provider-subject mapping to principals for human login flows (Google OIDC).
+### JWT/session model
+Implemented in `app/core/session_token.py`:
+- access + refresh JWTs
+- standard claims (`iss`, `aud`, `iat`, `nbf`, `exp`, `sub`, `jti`)
+- rotation/replay handling for refresh tokens
+- explicit revocation checks
 
-## 7) Authorization Model
-Current role model is intentionally minimal:
-- `admin`
-- `operator`
+### Session state + revocation
+Implemented in `app/core/session_state.py`:
+- session revocation/session-state backend abstraction
+- Redis-backed distributed mode
+- in-memory fallback mode for local/dev
+- principal-level and identity-level revocation cutoffs
 
-`admin` is required for business-scoped management operations, including:
-- business settings updates
-- credential management (create/list/disable/revoke/rotate)
-- principal management (list/create/update/activate/deactivate)
-- auth/admin audit event read endpoint
+### Rate limiting
+Implemented in `app/core/rate_limit.py`:
+- auth route throttling (IP + user-agent bucket)
+- stricter admin route throttling
+- Redis-backed distributed mode with in-memory fallback path
+- explicit fail-open/fail-closed behavior controls
 
-`operator` principals are authenticated for normal tenant-scoped operations but are blocked from admin-only management routes.
+### Logout and replay visibility
+Implemented in auth service flow:
+- `POST /api/auth/logout` revokes active session token(s)
+- refresh replay detection emits security audit events
+- audit payloads are structured and secret-safe
 
-## 8) Principal Lifecycle
-Implemented principal lifecycle operations:
-- create principal
-- update principal (display/role/active-state changes)
-- activate principal
-- deactivate principal
+### Current browser token posture
+Current operator UI behavior:
+- access token: `sessionStorage`
+- refresh token: in-memory only (non-persistent)
+- sign-out calls `/api/auth/logout`
 
-Behavior:
-- Inactive principals are rejected during authentication.
-- Inactive principals cannot perform admin actions.
-- Role changes apply immediately.
-- Last active admin protection is enforced: deactivating/demoting the final active admin principal is rejected.
+Known risk posture (deferred to Phase 5):
+- token handling can be further hardened with secure `httpOnly` cookie-based refresh model + CSRF controls.
 
-## 9) Credential Lifecycle
-Implemented credential lifecycle operations:
-- create credential
-- list credentials
-- disable credential
-- revoke credential
-- rotate credential
+## 5) Deployment Architecture
 
-Credential metadata currently includes:
-- `label`
-- `last_used_at`
-- `rotated_from_credential_id`
-- `is_active`
-- `revoked_at`
-- timestamps
+### Build and release path
+- `backend-ci.yml`:
+  - dependency install
+  - Alembic migration-chain validation
+  - backend tests
+- `frontend-ci.yml`:
+  - deterministic install (`npm ci`)
+  - lint/typecheck/build
+- `deploy-gke.yml`:
+  - build + push backend/UI OCI images
+  - authenticate with GCP using Workload Identity Federation
+  - apply kustomize overlay to GKE
+  - run Alembic migration gate before rollout
+  - rollout exact built image refs
 
-Rotation creates a new credential and retires the prior credential.
+### Kubernetes model
+- Base manifests: namespace-neutral in `infra/k8s/base`
+- Overlays own namespaces:
+  - `infra/k8s/overlays/dev` -> `work-boots-dev`
+  - `infra/k8s/overlays/prod` -> `work-boots`
+- API and UI deployments/services are both included.
 
-## 10) TenantContext
-`TenantContext` currently contains:
-- `business_id`
-- `principal_id`
-- `auth_source`
-- `principal_role` (optional, populated when available)
+### Schema discipline
+- Alembic is authoritative for CI/staging/prod/GKE.
+- Startup `create_all()` is guarded for local/dev/test convenience only (`DB_AUTO_CREATE_LOCAL` + local-like env).
 
-## 11) Audit Logging
-Work Boots Console now persists lightweight auth/admin audit events for high-value identity/admin actions.
+### Production config expectations
+- Secrets/config are externalized (Kubernetes Secret/ConfigMap and CI secrets).
+- Production should enforce explicit fail-closed behavior for security controls unless intentionally overridden.
 
-Current audit model (`auth_audit_events`) includes:
-- `id`
-- `business_id`
-- `actor_principal_id` (nullable)
-- `target_type` (for example `principal`, `api_credential`)
-- `target_id`
-- `event_type`
-- `details_json` (small non-secret context)
-- `created_at`
+## 6) Phase Boundary View (Phase 4 -> Phase 5)
 
-Captured event coverage includes:
-- principal: create/update/activate/deactivate
-- credentials: create/disable/revoke/rotate
-- session security:
-  - refresh replay detection (`session_refresh_replay_detected`)
-  - explicit logout (`session_logout`)
+### What Phase 4 completes
+Phase 4 operationalization delivers:
+- deployable operator UI + API stack
+- Google identity proofing integrated with internal principal mapping
+- JWT session lifecycle with rotation/replay handling
+- Redis-capable session-state and rate-limit controls
+- deterministic CI/CD + GKE rollout path
+- Alembic-first migration discipline
 
-Admin read path:
-- `GET /api/businesses/{business_id}/auth-audit-events`
-- supports simple filters (`target_type`, `event_type`) and bounded `limit`
+### What moves to Phase 5
+Phase 5 is security-maturity and production-posture hardening:
+- browser/session hardening (cookie + CSRF model)
+- CSP/security header hardening
+- stronger security observability and incident-response controls
+- Redis production posture enforcement and validation
+- adversarial validation/pen-testing loops
 
-Audit records are business-scoped and tenant-protected via the same route scoping/authorization model.
+Roadmaps:
+- Phase 4 operationalization roadmap: `docs/phase4-platform-operationalization-roadmap.md`
+- Phase 5 security maturity roadmap: `docs/phase5-security-maturity-roadmap.md`
 
-## 12) Secret Safety
-Current guarantees:
-- Plaintext tokens are never persisted.
-- `token_hash` is not exposed by normal list/read APIs.
-- Plaintext tokens are returned only at issuance/rotation time.
-- Audit payload sanitization removes secret-like keys (token/hash/authorization patterns).
-- Audit trail is designed for operational context, not secret material.
+## 7) Known Gaps / Future Hardening
+Planned hardening areas after current baseline:
+- cookie-based refresh token model with CSRF-safe flow
+- CSP and security-header enforcement verification across UI/API delivery path
+- expanded security observability (auth anomaly visibility, SIEM-ready event pipeline)
+- incident-response controls:
+  - revoke all sessions for principal
+  - revoke all sessions for business
+- Redis production hardening:
+  - network boundary restrictions
+  - auth/TLS expectations
+  - explicit fail-mode enforcement by environment
+- penetration and abuse testing:
+  - replay/token theft simulation
+  - tenant-isolation negative-path validation
+  - rate-limit bypass validation
 
-## 13) Test Coverage
-Current automated tests cover:
-- tenant isolation and cross-tenant rejection paths
-- DB-backed credential authentication behavior
-- principal lifecycle and admin/operator authorization boundaries
-- credential lifecycle behavior (including rotation/revocation/disable paths)
-- inactive principal authentication rejection
-- auth/admin audit event persistence and business scoping
-- secret-safe API responses and audit payload sanitization
-
-Coverage is focused and regression-oriented, not a formal security certification suite.
-
-## 14) Out of Scope
-Intentionally out of scope at this stage:
-- full IAM platform
-- users/sessions/invites/onboarding
-- rich permission matrix / full RBAC
-- enterprise audit platform features (retention policies, external sinks, compliance workflows)
-
-## 15) Summary
-The current architecture provides a secure incremental identity model for a multi-tenant SaaS backend:
-- tenant scope is derived server-side
-- authorization is enforced with a minimal, explicit role model
-- principal and credential lifecycle operations are operationally manageable
-- high-value identity/admin actions are auditable
-- data protections are enforced across API, service, repository, and database layers
-
-This is a practical foundation for future IAM evolution without overreaching beyond MVP scope.
+## Out Of Scope
+Out of scope for this architecture baseline:
+- replacing monolith architecture
+- replacing principal/business authorization model
+- changing deterministic/AI boundaries in SEO.ai pipeline
+- broad platform re-architecture or microservice migration

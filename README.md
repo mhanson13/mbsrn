@@ -112,11 +112,13 @@ Project docs live under [`docs/`](docs):
 - `seo-ai-phase4-automation-and-operationalization.md` (implemented monolith-safe orchestration over persisted SEO pipeline artifacts)
 - `seo-ai-phase4-data-model.md` (implemented automation config/run persistence model)
 - `seo-ai-phase4-api.md` (implemented automation config/run API contract)
+- `phase4-platform-operationalization-roadmap.md` (current Phase 4 operationalization status, remaining pilot hardening tasks, and completion criteria)
+- `phase5-security-maturity-roadmap.md` (next-phase security maturity plan for browser/session hardening, observability, and production posture validation)
 - `operator-ui-and-google-auth.md` (implemented operator UI + Google identity exchange to internal principal authorization)
 - `deployment-gke-cicd.md` (implemented GKE deployment, Artifact Registry image flow, and GitHub Actions CI/CD)
 - `phase3-response-and-reminders.md`
 - `phase4-notifications-and-hardening.md`
-- `security-architecture.md`
+- `security-architecture.md` (current platform and security architecture baseline with explicit Phase 4 -> Phase 5 transition)
 
 ## SEO.ai Implementation Status
 Implemented today:
