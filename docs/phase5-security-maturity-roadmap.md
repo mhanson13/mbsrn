@@ -27,6 +27,8 @@ Current implemented baseline:
 - JWKS-based Google ID token verification (issuer/audience/subject validation)
 - internal principal/business authorization remains authoritative
 - persisted auth/admin audit events (including refresh replay detection and logout events)
+- API CORS allowlist + baseline security response headers (with configurable HSTS)
+- CI baseline includes backend quality gates + coverage visibility and frontend lint/typecheck/build gates
 
 ## Phase 5 Workstreams
 

@@ -82,6 +82,13 @@ Implemented in `app/core/session_token.py`:
 - standard claims (`iss`, `aud`, `iat`, `nbf`, `exp`, `sub`, `jti`)
 - rotation/replay handling for refresh tokens
 - explicit revocation checks
+- explicit token-type enforcement (`access` vs `refresh`)
+
+Current revocation semantics:
+- per-token revocation by `jti`
+- refresh rotation uses one-time consume semantics and revokes consumed refresh JTIs
+- replay/reuse detection is explicit on the refresh path (`reused` state)
+- principal-level and identity-level revoked-after cutoffs invalidate older issued tokens
 
 ### Session state + revocation
 Implemented in `app/core/session_state.py`:
@@ -105,7 +112,7 @@ Production/staging posture:
 
 ### Logout and replay visibility
 Implemented in auth service flow:
-- `POST /api/auth/logout` revokes active session token(s)
+- `POST /api/auth/logout` revokes the presented access token and optionally the presented refresh token
 - refresh replay detection emits security audit events
 - audit payloads are structured and secret-safe
 
@@ -135,12 +142,14 @@ Known risk posture (deferred to Phase 5):
 ### Build and release path
 - `backend-ci.yml`:
   - dependency install
-  - scoped quality gates (`ruff`, `black --check`, `mypy`)
+  - scoped quality gates (`ruff`, `black --check`)
+  - narrow mypy gate (`app/core/config.py`) for incremental adoption
   - Alembic migration-chain validation
   - backend tests with coverage reporting (`--cov=app`, term + XML)
 - `frontend-ci.yml`:
   - deterministic install (`npm ci`)
   - lint/typecheck/build
+  - runs frontend tests only when a `test` script exists; otherwise logs explicit no-tests status
 - `deploy-gke.yml`:
   - build + push backend/UI OCI images
   - authenticate with GCP using Workload Identity Federation
@@ -161,7 +170,7 @@ Known risk posture (deferred to Phase 5):
 
 ### Production config expectations
 - Secrets/config are externalized (Kubernetes Secret/ConfigMap and CI secrets).
-- Production should enforce explicit fail-closed behavior for security controls unless intentionally overridden.
+- Production/staging config enforces fail-closed behavior for Redis-backed security controls.
 
 ## 6) Phase Boundary View (Phase 4 -> Phase 5)
 

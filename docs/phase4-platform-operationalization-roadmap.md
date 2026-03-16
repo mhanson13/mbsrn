@@ -54,6 +54,7 @@ Completed:
   - `Referrer-Policy`
   - API-scoped `Content-Security-Policy`
 - configurable HSTS with production/pilot defaults enabled
+
 ### 5) CI/CD + GKE Deployment Path
 Completed:
 - GitHub Actions CI and deploy workflows
@@ -67,10 +68,16 @@ Completed:
 - scoped backend quality gates in CI:
   - `ruff`
   - `black --check`
-  - scoped `mypy`
+  - scoped `mypy` (currently narrow scope for incremental adoption)
 - backend coverage reporting in CI (`pytest --cov=app`) with XML artifact output
 
-### 7) Alembic-First Migration Discipline
+### 7) Frontend CI Validation Baseline
+Completed:
+- deterministic install (`npm ci`)
+- lint + typecheck + build gates
+- frontend tests run in CI only when a `test` script exists; otherwise explicit no-tests status is logged
+
+### 8) Alembic-First Migration Discipline
 Completed:
 - startup schema auto-create guarded to local/dev/test behavior only
 - CI and deploy flows treat Alembic migrations as authoritative

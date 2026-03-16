@@ -373,11 +373,12 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - dependency install
   - `ruff` (scoped)
   - `black --check` (scoped)
-  - `mypy` (scoped)
+  - `mypy` (currently scoped to `app/core/config.py`)
   - Alembic migration-chain validation (`alembic upgrade head`) against CI Postgres
   - `pytest` with coverage (`--cov=app --cov-report=term-missing --cov-report=xml`)
   - coverage XML artifact upload
 - `frontend-ci.yml` runs frontend validation (`npm ci`, lint, typecheck, build).
+  - runs frontend tests only when a `test` script exists; otherwise logs explicit no-tests status
 - `deploy-gke.yml` is the release pipeline:
   - builds/pushes backend and frontend images with Cloud Buildpacks
   - runs Alembic migrations as a pre-rollout gate
