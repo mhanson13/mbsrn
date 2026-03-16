@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.seo_site import SEOSite
@@ -52,6 +53,10 @@ class SEOSiteService:
     def create_site(self, *, business_id: str, payload: SEOSiteCreateRequest) -> SEOSite:
         self._require_business(business_id)
         normalized = self._normalize_base_url(payload.base_url)
+        self._ensure_unique_domain(
+            business_id=business_id,
+            normalized_domain=normalized.domain,
+        )
 
         existing_sites = self.seo_site_repository.list_for_business(business_id)
         is_primary = payload.is_primary or len(existing_sites) == 0
@@ -71,7 +76,7 @@ class SEOSiteService:
             is_primary=is_primary,
         )
         self.seo_site_repository.create(site)
-        self.session.commit()
+        self._commit_with_constraint_handling()
         self.session.refresh(site)
         return site
 
@@ -92,6 +97,11 @@ class SEOSiteService:
             site.display_name = changes["display_name"].strip()
         if "base_url" in changes:
             normalized = self._normalize_base_url(changes["base_url"])
+            self._ensure_unique_domain(
+                business_id=business_id,
+                normalized_domain=normalized.domain,
+                excluding_site_id=site.id,
+            )
             site.base_url = normalized.url
             site.normalized_domain = normalized.domain
         if "industry" in changes:
@@ -110,7 +120,7 @@ class SEOSiteService:
                 site.is_primary = False
 
         self.seo_site_repository.save(site)
-        self.session.commit()
+        self._commit_with_constraint_handling()
         self.session.refresh(site)
         return site
 
@@ -144,3 +154,32 @@ class SEOSiteService:
             return None
         cleaned = value.strip()
         return cleaned or None
+
+    def _ensure_unique_domain(
+        self,
+        *,
+        business_id: str,
+        normalized_domain: str,
+        excluding_site_id: str | None = None,
+    ) -> None:
+        existing = self.seo_site_repository.get_for_business_domain(
+            business_id=business_id,
+            normalized_domain=normalized_domain,
+        )
+        if existing is None:
+            return
+        if excluding_site_id and existing.id == excluding_site_id:
+            return
+        raise SEOSiteValidationError("A site for this domain already exists for the business")
+
+    def _commit_with_constraint_handling(self) -> None:
+        try:
+            self.session.commit()
+        except IntegrityError as exc:
+            self.session.rollback()
+            error_text = str(exc).lower()
+            if "uq_seo_sites_business_normalized_domain" in error_text:
+                raise SEOSiteValidationError("A site for this domain already exists for the business") from exc
+            if "uq_seo_sites_one_primary_per_business" in error_text:
+                raise SEOSiteValidationError("Only one primary SEO site is allowed per business") from exc
+            raise SEOSiteValidationError("SEO site update violated a database constraint") from exc

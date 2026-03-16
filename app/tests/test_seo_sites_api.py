@@ -103,3 +103,25 @@ def test_seo_site_invalid_url_rejected(db_session, seeded_business) -> None:
         },
     )
     assert response.status_code == 422
+
+
+def test_seo_site_duplicate_domain_rejected_for_business(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    first = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={
+            "display_name": "Main Site",
+            "base_url": "https://example.com/",
+        },
+    )
+    assert first.status_code == 201
+
+    duplicate = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={
+            "display_name": "Duplicate Domain",
+            "base_url": "https://EXAMPLE.com/services",
+        },
+    )
+    assert duplicate.status_code == 422
+    assert "already exists" in duplicate.json()["detail"].lower()

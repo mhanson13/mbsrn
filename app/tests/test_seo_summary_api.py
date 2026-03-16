@@ -199,3 +199,42 @@ def test_summary_generation_is_stable_with_zero_findings(db_session, seeded_busi
     assert payload["status"] == "completed"
     assert payload["top_issues_json"] == []
     assert len(payload["top_priorities_json"]) == 3
+
+
+def test_summary_failure_persists_failed_version_after_previous_success(db_session, seeded_business) -> None:
+    success_client = _make_client(db_session, business_id=seeded_business.id)
+    create_site = success_client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Main", "base_url": "https://example.com/"},
+    )
+    assert create_site.status_code == 201
+    site_id = create_site.json()["id"]
+
+    run_response = success_client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/audit-runs",
+        json={"max_pages": 10, "max_depth": 2},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    first_summary = success_client.post(f"/api/businesses/{seeded_business.id}/seo/audit-runs/{run_id}/summarize")
+    assert first_summary.status_code == 201
+    assert first_summary.json()["version"] == 1
+
+    failing_client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        summary_provider=_FailingSummaryProvider(),
+    )
+    failed_summary = failing_client.post(f"/api/businesses/{seeded_business.id}/seo/audit-runs/{run_id}/summarize")
+    assert failed_summary.status_code == 422
+
+    summaries = (
+        db_session.query(SEOAuditSummary)
+        .filter(SEOAuditSummary.audit_run_id == run_id)
+        .order_by(SEOAuditSummary.version.asc())
+        .all()
+    )
+    assert [item.version for item in summaries] == [1, 2]
+    assert [item.status for item in summaries] == ["completed", "failed"]
+    assert summaries[1].error_summary is not None

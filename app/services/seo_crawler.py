@@ -341,6 +341,8 @@ class SEOCrawler:
 
     def _validate_resolvable_host(self, url: str) -> None:
         parsed = urlsplit(url)
+        if parsed.scheme.lower() not in HTTP_SCHEMES:
+            raise SEOCrawlerValidationError("Only http/https URLs are allowed")
         host = parsed.hostname or ""
         host_lower = host.lower()
         if not host_lower:
@@ -350,22 +352,25 @@ class SEOCrawler:
 
         try:
             addresses = socket.getaddrinfo(host, None)
-        except socket.gaierror:
-            return
+        except (socket.gaierror, UnicodeError) as exc:
+            raise SEOCrawlerValidationError("Blocked unresolved host") from exc
+
+        if not addresses:
+            raise SEOCrawlerValidationError("Blocked unresolved host")
 
         for entry in addresses:
             address = entry[4][0]
+            if "%" in address:
+                address = address.split("%", 1)[0]
             try:
                 parsed_ip = ip_address(address)
             except ValueError:
                 continue
 
-            if parsed_ip.is_loopback:
-                raise SEOCrawlerValidationError("Blocked loopback host")
-            if parsed_ip.is_private:
-                raise SEOCrawlerValidationError("Blocked private network host")
-            if parsed_ip.is_link_local:
-                raise SEOCrawlerValidationError("Blocked link-local host")
+            # Fail closed for any non-public target (loopback, private, link-local,
+            # reserved, unspecified, documentation ranges, etc.) and multicast.
+            if not parsed_ip.is_global or parsed_ip.is_multicast:
+                raise SEOCrawlerValidationError("Blocked non-public network host")
 
     def _extract_links(self, html: str, page_url: str) -> list[str]:
         href_pattern = re.compile(r"""href=["']([^"'#]+)["']""", re.IGNORECASE)

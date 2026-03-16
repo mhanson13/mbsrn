@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, JSON, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import utc_now
@@ -11,6 +11,16 @@ from app.db.base import Base
 
 class SEOSite(Base):
     __tablename__ = "seo_sites"
+    __table_args__ = (
+        UniqueConstraint("business_id", "normalized_domain", name="uq_seo_sites_business_normalized_domain"),
+        Index(
+            "uq_seo_sites_one_primary_per_business",
+            "business_id",
+            unique=True,
+            sqlite_where=text("is_primary = 1"),
+            postgresql_where=text("is_primary = true"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     business_id: Mapped[str] = mapped_column(

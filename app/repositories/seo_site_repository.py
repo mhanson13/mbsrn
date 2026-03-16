@@ -21,6 +21,14 @@ class SEOSiteRepository:
         )
         return self.session.scalar(stmt)
 
+    def get_for_business_domain(self, business_id: str, normalized_domain: str) -> SEOSite | None:
+        stmt: Select[tuple[SEOSite]] = (
+            select(SEOSite)
+            .where(SEOSite.business_id == business_id)
+            .where(SEOSite.normalized_domain == normalized_domain)
+        )
+        return self.session.scalar(stmt)
+
     def list_for_business(self, business_id: str) -> list[SEOSite]:
         stmt: Select[tuple[SEOSite]] = (
             select(SEOSite)

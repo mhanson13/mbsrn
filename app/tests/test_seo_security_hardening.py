@@ -29,6 +29,10 @@ def test_ssrf_block_matrix_for_local_and_private_hosts(monkeypatch: pytest.Monke
             "private192.example": [("x", "y", "z", "w", ("192.168.1.20", 0))],
             "private172.example": [("x", "y", "z", "w", ("172.16.5.8", 0))],
             "linklocalv6.example": [("x", "y", "z", "w", ("fe80::1", 0))],
+            "carriergrade.example": [("x", "y", "z", "w", ("100.64.1.20", 0))],
+            "multicast.example": [("x", "y", "z", "w", ("224.0.0.5", 0))],
+            "unspecified.example": [("x", "y", "z", "w", ("0.0.0.0", 0))],
+            "documentation.example": [("x", "y", "z", "w", ("198.51.100.20", 0))],
         }
         return mapping[host]
 
@@ -40,9 +44,25 @@ def test_ssrf_block_matrix_for_local_and_private_hosts(monkeypatch: pytest.Monke
         "private192.example",
         "private172.example",
         "linklocalv6.example",
+        "carriergrade.example",
+        "multicast.example",
+        "unspecified.example",
+        "documentation.example",
     ]:
         with pytest.raises(SEOCrawlerValidationError):
             crawler._validate_resolvable_host(f"https://{host}/")
+
+
+def test_unresolvable_hosts_are_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    crawler = SEOCrawler()
+
+    def _raise_gaierror(host, port):  # noqa: ANN001, ANN202
+        raise seo_crawler_module.socket.gaierror("name resolution failed")
+
+    monkeypatch.setattr(seo_crawler_module.socket, "getaddrinfo", _raise_gaierror)
+
+    with pytest.raises(SEOCrawlerValidationError):
+        crawler._validate_resolvable_host("https://does-not-resolve.invalid/")
 
 
 def test_redirects_cannot_bypass_ssrf_protection(monkeypatch: pytest.MonkeyPatch) -> None:
