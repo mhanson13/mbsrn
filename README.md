@@ -77,12 +77,26 @@ Project docs live under [`docs/`](docs):
 - `seo-ai-phase2c-deterministic-comparison-enrichment-summary.md`
 - `seo-ai-phase2d-manual-competitor-summaries.md`
 - `seo-ai-phase2e-summary-contract-hardening.md`
+- `seo-ai-phase3a-deterministic-recommendations.md` (implemented deterministic recommendation generation)
+- `seo-ai-phase3a-data-model.md` (implemented recommendation run/recommendation schema)
+- `seo-ai-phase3a-api.md` (implemented recommendation endpoint contract)
 - `phase3-response-and-reminders.md`
 - `phase4-notifications-and-hardening.md`
 - `security-architecture.md`
 
-## SEO.ai Phase 1
-Current SEO.ai Phase 1 endpoints (business-scoped):
+## SEO.ai Implementation Status
+Implemented today:
+- Phase 1: deterministic site audit + findings + manual-trigger audit summaries
+- Phase 1.5: hardening/usability improvements for audit diagnostics and contracts
+- Phase 2: competitor foundations, snapshotting, deterministic comparison runs/reports, and manual-trigger competitor summaries
+- Phase 3A: deterministic recommendation runs generated from persisted audit/comparison evidence
+
+Not implemented yet:
+- Phase 3B/3C workflow + AI recommendation narratives
+- Phase 4 automation/operationalization work
+
+## SEO.ai Phase 1 (Implemented)
+Current Phase 1 endpoints (business-scoped):
 - Sites:
   - `GET /api/businesses/{business_id}/seo/sites`
   - `POST /api/businesses/{business_id}/seo/sites`
@@ -98,8 +112,8 @@ Current SEO.ai Phase 1 endpoints (business-scoped):
 - Audit summary (manual trigger only):
   - `POST /api/businesses/{business_id}/seo/audit-runs/{run_id}/summarize`
 
-## SEO.ai Phase 2 (Current)
-Current competitor-intelligence endpoints (business-scoped).
+## SEO.ai Phase 2 (Implemented)
+Current competitor-intelligence endpoints (business-scoped):
 Architecture notes:
 - deterministic comparison findings and rollups are persisted first
 - AI is used only for manual-trigger comparison summaries from persisted comparison outputs
@@ -130,6 +144,26 @@ Endpoint inventory:
   - `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summaries`
   - `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summaries/latest`
   - `GET /api/businesses/{business_id}/seo/comparison-summaries/{summary_id}`
+
+Compatibility site-scoped Phase 2 paths are also mounted at:
+- `/api/v1/businesses/{business_id}/seo/sites/{site_id}/...`
+
+## SEO.ai Phase 3A (Implemented)
+Deterministic recommendations are derived from persisted SEO audit findings and persisted competitor comparison findings/rollups.
+
+Endpoint inventory (business-scoped):
+- Recommendation runs:
+  - `POST /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}`
+- Recommendations:
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/recommendations`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/recommendations/{recommendation_id}`
+- Deterministic recommendation report:
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/report`
+
+Compatibility site-scoped Phase 3A paths are also mounted at:
+- `/api/v1/businesses/{business_id}/seo/sites/{site_id}/...`
 
 ## Notification Provider Modes
 Set provider selection in `.env`:
