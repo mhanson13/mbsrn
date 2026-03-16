@@ -114,6 +114,7 @@ def _seed_snapshot_page(
     h1_count: int,
     word_count: int,
     canonical_url: str | None,
+    internal_link_count: int = 2,
 ) -> SEOCompetitorSnapshotPage:
     page = SEOCompetitorSnapshotPage(
         id=str(uuid4()),
@@ -130,7 +131,7 @@ def _seed_snapshot_page(
         h1_json=["H1"] * h1_count,
         h2_json=["H2"],
         word_count=word_count,
-        internal_link_count=2,
+        internal_link_count=internal_link_count,
     )
     db_session.add(page)
     db_session.flush()
@@ -237,6 +238,7 @@ def test_deterministic_comparison_run_outputs_expected_metrics(db_session, seede
         h1_count=1,
         word_count=250,
         canonical_url="https://competitor.example/services",
+        internal_link_count=0,
     )
     _seed_snapshot_page(
         db_session,
@@ -265,6 +267,20 @@ def test_deterministic_comparison_run_outputs_expected_metrics(db_session, seede
             "missing_canonical": 1,
         },
     )
+    baseline_pages = (
+        db_session.query(SEOAuditPage)
+        .filter(SEOAuditPage.audit_run_id == baseline_run.id)
+        .order_by(SEOAuditPage.url.asc())
+        .all()
+    )
+    assert len(baseline_pages) == 2
+    baseline_pages[0].title = None
+    baseline_pages[0].meta_description = None
+    baseline_pages[0].h1_json = []
+    baseline_pages[0].word_count = 80
+    baseline_pages[0].canonical_url = None
+    baseline_pages[0].internal_link_count = 0
+    baseline_pages[1].title = None
     db_session.commit()
 
     create_comparison = client.post(
@@ -274,12 +290,16 @@ def test_deterministic_comparison_run_outputs_expected_metrics(db_session, seede
     assert create_comparison.status_code == 201
     run_payload = create_comparison.json()
     assert run_payload["status"] == "completed"
+    assert run_payload["client_pages_analyzed"] == 2
+    assert run_payload["competitor_pages_analyzed"] == 3
+    assert run_payload["severity_counts_json"]["CRITICAL"] >= 1
+    assert "page_count_gap" in run_payload["finding_type_counts_json"]
     run_id = run_payload["id"]
 
     findings_response = client.get(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/findings")
     assert findings_response.status_code == 200
     payload = findings_response.json()
-    assert payload["total"] >= 6
+    assert payload["total"] >= 10
     assert payload["by_severity"]["WARNING"] >= 1
 
     findings_by_type = {item["finding_type"]: item for item in payload["items"]}
@@ -287,9 +307,12 @@ def test_deterministic_comparison_run_outputs_expected_metrics(db_session, seede
     assert findings_by_type["page_count_gap"]["competitor_value"] == "3"
     assert findings_by_type["page_count_gap"]["gap_direction"] == "client_trails"
 
-    assert findings_by_type["missing_title_gap"]["client_value"] == "2"
-    assert findings_by_type["missing_title_gap"]["competitor_value"] == "1"
-    assert findings_by_type["missing_title_gap"]["gap_direction"] == "client_trails"
+    assert findings_by_type["missing_title_count_gap"]["client_value"] == "2"
+    assert findings_by_type["missing_title_count_gap"]["competitor_value"] == "1"
+    assert findings_by_type["missing_title_count_gap"]["gap_direction"] == "client_trails"
+    assert findings_by_type["meta_description_coverage_percent_gap"]["rule_key"] == (
+        "comparison_meta_description_coverage_percent"
+    )
 
 
 def test_comparison_run_rejects_invalid_lineage_references(db_session, seeded_business) -> None:
@@ -335,13 +358,22 @@ def test_comparison_handles_missing_baseline_and_empty_snapshot(db_session, seed
         json={"snapshot_run_id": snapshot_run.id},
     )
     assert create_without_baseline.status_code == 201
-    run_id = create_without_baseline.json()["id"]
+    run_payload = create_without_baseline.json()
+    run_id = run_payload["id"]
+    assert run_payload["client_pages_analyzed"] == 0
+    assert run_payload["competitor_pages_analyzed"] == 0
 
     findings_response = client.get(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/findings")
     assert findings_response.status_code == 200
     finding_types = {item["finding_type"] for item in findings_response.json()["items"]}
     assert "missing_client_baseline" in finding_types
     assert "empty_competitor_snapshot" in finding_types
+
+    first_report = client.get(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/report")
+    assert first_report.status_code == 200
+    first_rollups = first_report.json()["rollups"]
+    assert first_rollups["metric_rollups"] == []
+    assert first_rollups["findings_by_type"]["missing_client_baseline"] == 1
 
     # Now add competitor snapshot pages but no baseline; ensure run still succeeds deterministically.
     _seed_snapshot_page(
@@ -421,6 +453,12 @@ def test_comparison_report_endpoint_returns_run_and_findings(db_session, seeded_
     report = report_response.json()
     assert report["run"]["id"] == run_id
     assert report["findings"]["total"] >= 1
+    assert report["rollups"]["client_pages_analyzed"] >= 0
+    assert report["rollups"]["competitor_pages_analyzed"] >= 1
+    assert report["rollups"]["findings_by_category"]
+    assert report["rollups"]["findings_by_severity"]
+    assert isinstance(report["rollups"]["metric_rollups"], list)
+    assert report["rollups"]["findings_by_type"]["missing_client_baseline"] == 1
 
     cross_tenant_report = client.get(f"/api/businesses/{other_business.id}/seo/comparison-runs/{run_id}/report")
     assert cross_tenant_report.status_code == 404

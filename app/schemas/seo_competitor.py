@@ -135,6 +135,11 @@ class SEOCompetitorComparisonRunRead(BaseModel):
     critical_findings: int
     warning_findings: int
     info_findings: int
+    client_pages_analyzed: int
+    competitor_pages_analyzed: int
+    finding_type_counts_json: dict[str, int] | None = None
+    category_counts_json: dict[str, int] | None = None
+    severity_counts_json: dict[str, int] | None = None
     started_at: datetime | None
     completed_at: datetime | None
     duration_ms: int | None
@@ -177,6 +182,29 @@ class SEOCompetitorComparisonFindingListResponse(BaseModel):
     by_severity: dict[str, int] = Field(default_factory=dict)
 
 
+class SEOCompetitorComparisonMetricRollupRead(BaseModel):
+    key: str
+    title: str
+    category: str
+    unit: str
+    higher_is_better: bool
+    client_value: int
+    competitor_value: int
+    delta: int
+    severity: str
+    gap_direction: str
+
+
+class SEOCompetitorComparisonRunRollupsRead(BaseModel):
+    client_pages_analyzed: int
+    competitor_pages_analyzed: int
+    findings_by_type: dict[str, int] = Field(default_factory=dict)
+    findings_by_category: dict[str, int] = Field(default_factory=dict)
+    findings_by_severity: dict[str, int] = Field(default_factory=dict)
+    metric_rollups: list[SEOCompetitorComparisonMetricRollupRead] = Field(default_factory=list)
+
+
 class SEOCompetitorComparisonReportRead(BaseModel):
     run: SEOCompetitorComparisonRunRead
+    rollups: SEOCompetitorComparisonRunRollupsRead
     findings: SEOCompetitorComparisonFindingListResponse

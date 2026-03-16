@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import utc_now
@@ -58,6 +58,12 @@ class SEOCompetitorComparisonRun(Base):
     critical_findings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     warning_findings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     info_findings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    client_pages_analyzed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    competitor_pages_analyzed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metric_rollups_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    finding_type_counts_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    category_counts_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    severity_counts_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)

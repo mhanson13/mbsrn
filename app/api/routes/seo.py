@@ -31,7 +31,9 @@ from app.schemas.seo_site import (
 from app.schemas.seo_competitor import (
     SEOCompetitorComparisonFindingListResponse,
     SEOCompetitorComparisonFindingRead,
+    SEOCompetitorComparisonMetricRollupRead,
     SEOCompetitorComparisonReportRead,
+    SEOCompetitorComparisonRunRollupsRead,
     SEOCompetitorComparisonRunCreateRequest,
     SEOCompetitorComparisonRunListResponse,
     SEOCompetitorComparisonRunRead,
@@ -693,23 +695,43 @@ def get_competitor_comparison_report(
         requested_business_id=business_id,
     )
     try:
-        run = comparison_service.get_run(
-            business_id=scoped_business_id,
-            comparison_run_id=run_id,
-        )
-        findings = comparison_service.list_findings(
+        report = comparison_service.get_report(
             business_id=scoped_business_id,
             comparison_run_id=run_id,
         )
     except SEOCompetitorComparisonNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    by_category, by_severity = comparison_service.summarize_findings(findings=findings)
+    metric_rollups = []
+    for metric_key in sorted(report.metric_rollups):
+        metric = report.metric_rollups[metric_key]
+        metric_rollups.append(
+            SEOCompetitorComparisonMetricRollupRead(
+                key=metric_key,
+                title=str(metric.get("title", metric_key)),
+                category=str(metric.get("category", "TECHNICAL")),
+                unit=str(metric.get("unit", "count")),
+                higher_is_better=bool(metric.get("higher_is_better", False)),
+                client_value=int(metric.get("client_value", 0)),
+                competitor_value=int(metric.get("competitor_value", 0)),
+                delta=int(metric.get("delta", 0)),
+                severity=str(metric.get("severity", "INFO")),
+                gap_direction=str(metric.get("gap_direction", "unknown")),
+            )
+        )
     return SEOCompetitorComparisonReportRead(
-        run=SEOCompetitorComparisonRunRead.model_validate(run),
+        run=SEOCompetitorComparisonRunRead.model_validate(report.run),
+        rollups=SEOCompetitorComparisonRunRollupsRead(
+            client_pages_analyzed=report.run.client_pages_analyzed,
+            competitor_pages_analyzed=report.run.competitor_pages_analyzed,
+            findings_by_type=report.findings_by_type,
+            findings_by_category=report.findings_by_category,
+            findings_by_severity=report.findings_by_severity,
+            metric_rollups=metric_rollups,
+        ),
         findings=SEOCompetitorComparisonFindingListResponse(
-            items=[SEOCompetitorComparisonFindingRead.model_validate(item) for item in findings],
-            total=len(findings),
-            by_category=by_category,
-            by_severity=by_severity,
+            items=[SEOCompetitorComparisonFindingRead.model_validate(item) for item in report.findings],
+            total=len(report.findings),
+            by_category=report.findings_by_category,
+            by_severity=report.findings_by_severity,
         ),
     )

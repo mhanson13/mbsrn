@@ -74,6 +74,7 @@ Project docs live under [`docs/`](docs):
 - `seo-ai-phase2-api.md`
 - `seo-ai-phase2a-foundations-summary.md`
 - `seo-ai-phase2b-deterministic-comparison-summary.md`
+- `seo-ai-phase2c-deterministic-comparison-enrichment-summary.md`
 - `phase3-response-and-reminders.md`
 - `phase4-notifications-and-hardening.md`
 - `security-architecture.md`
