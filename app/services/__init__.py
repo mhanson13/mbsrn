@@ -16,6 +16,13 @@ from app.services.principals import PrincipalNotFoundError, PrincipalService, Pr
 from app.services.reminder_engine import ReminderEngineService
 from app.services.response_metrics import ResponseMetricsService
 from app.services.seo_audit import SEOAuditNotFoundError, SEOAuditService, SEOAuditValidationError
+from app.services.seo_automation import (
+    SEOAutomationConflictError,
+    SEOAutomationDueRunSummary,
+    SEOAutomationNotFoundError,
+    SEOAutomationService,
+    SEOAutomationValidationError,
+)
 from app.services.seo_competitor_comparison import (
     SEOCompetitorComparisonNotFoundError,
     SEOCompetitorComparisonService,
@@ -59,6 +66,11 @@ __all__ = [
     "SEOAuditNotFoundError",
     "SEOAuditService",
     "SEOAuditValidationError",
+    "SEOAutomationConflictError",
+    "SEOAutomationDueRunSummary",
+    "SEOAutomationNotFoundError",
+    "SEOAutomationService",
+    "SEOAutomationValidationError",
     "SEOCompetitorComparisonNotFoundError",
     "SEOCompetitorComparisonService",
     "SEOCompetitorComparisonValidationError",

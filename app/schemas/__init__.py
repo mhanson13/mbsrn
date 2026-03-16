@@ -58,6 +58,16 @@ from app.schemas.seo_recommendation import (
     SEORecommendationRunRead,
     SEORecommendationRunReportRead,
 )
+from app.schemas.seo_automation import (
+    SEOAutomationConfigPatchRequest,
+    SEOAutomationConfigRead,
+    SEOAutomationConfigUpsertRequest,
+    SEOAutomationDueRunRequest,
+    SEOAutomationDueRunSummaryRead,
+    SEOAutomationRunListResponse,
+    SEOAutomationRunRead,
+    SEOAutomationStatusRead,
+)
 from app.schemas.lead import (
     EmailIntakeRequest,
     EmailIntakeResponse,
@@ -143,5 +153,13 @@ __all__ = [
     "SEORecommendationRunListResponse",
     "SEORecommendationRunRead",
     "SEORecommendationRunReportRead",
+    "SEOAutomationConfigPatchRequest",
+    "SEOAutomationConfigRead",
+    "SEOAutomationConfigUpsertRequest",
+    "SEOAutomationDueRunRequest",
+    "SEOAutomationDueRunSummaryRead",
+    "SEOAutomationRunListResponse",
+    "SEOAutomationRunRead",
+    "SEOAutomationStatusRead",
     "StatusPatchResponse",
 ]

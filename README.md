@@ -86,6 +86,9 @@ Project docs live under [`docs/`](docs):
 - `seo-ai-phase3c-recommendation-narratives.md` (implemented AI narrative layer over persisted deterministic recommendations)
 - `seo-ai-phase3c-data-model.md` (implemented recommendation narrative persistence schema)
 - `seo-ai-phase3c-api.md` (implemented narrative endpoint contract)
+- `seo-ai-phase4-automation-and-operationalization.md` (implemented monolith-safe orchestration over persisted SEO pipeline artifacts)
+- `seo-ai-phase4-data-model.md` (implemented automation config/run persistence model)
+- `seo-ai-phase4-api.md` (implemented automation config/run API contract)
 - `phase3-response-and-reminders.md`
 - `phase4-notifications-and-hardening.md`
 - `security-architecture.md`
@@ -98,9 +101,7 @@ Implemented today:
 - Phase 3A: deterministic recommendation runs generated from persisted audit/comparison evidence
 - Phase 3B: deterministic recommendation workflow state, prioritization views, and operator update APIs
 - Phase 3C: manual-trigger AI recommendation narratives grounded in persisted deterministic recommendation data
-
-Not implemented yet:
-- Phase 4 automation/operationalization work
+- Phase 4: persisted SEO automation config/run orchestration with manual trigger and scheduler-ready due execution
 
 ## SEO.ai Phase 1 (Implemented)
 Current Phase 1 endpoints (business-scoped):
@@ -203,6 +204,32 @@ Compatibility site-scoped Phase 3C paths are also mounted at:
 Phase 3C boundary:
 - AI narratives explain persisted deterministic recommendation artifacts only.
 - AI does not generate recommendation items, findings, priorities, or workflow decisions.
+
+## SEO.ai Phase 4 (Implemented)
+Phase 4 operationalizes the existing deterministic + grounded-summary pipeline with persisted configuration, run history, and step tracking.
+
+Endpoint inventory (business-scoped):
+- Automation config:
+  - `POST /api/businesses/{business_id}/seo/sites/{site_id}/automation-config`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/automation-config`
+  - `PATCH /api/businesses/{business_id}/seo/sites/{site_id}/automation-config`
+  - `POST /api/businesses/{business_id}/seo/sites/{site_id}/automation-config/enable`
+  - `POST /api/businesses/{business_id}/seo/sites/{site_id}/automation-config/disable`
+- Automation runs:
+  - `POST /api/businesses/{business_id}/seo/sites/{site_id}/automation-runs`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/automation-runs`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/automation-runs/{automation_run_id}`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/automation-status`
+- Scheduler-ready due execution:
+  - `POST /api/jobs/seo-automation/run-due`
+
+Compatibility site-scoped Phase 4 paths are also mounted at:
+- `/api/v1/businesses/{business_id}/seo/sites/{site_id}/...`
+
+Phase 4 boundary:
+- Automation orchestrates existing deterministic and grounded-AI services only.
+- Automation does not generate findings or recommendations autonomously.
+- No distributed orchestration framework was introduced.
 
 ## Notification Provider Modes
 Set provider selection in `.env`:

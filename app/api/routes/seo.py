@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.api.deps import (
     TenantContext,
     get_seo_audit_service,
+    get_seo_automation_service,
     get_seo_competitor_comparison_service,
     get_seo_competitor_summary_service,
     get_seo_recommendation_narrative_service,
@@ -68,7 +69,21 @@ from app.schemas.seo_recommendation import (
     SEORecommendationRunReportRead,
     SEORecommendationWorkflowUpdateRequest,
 )
+from app.schemas.seo_automation import (
+    SEOAutomationConfigPatchRequest,
+    SEOAutomationConfigRead,
+    SEOAutomationConfigUpsertRequest,
+    SEOAutomationRunListResponse,
+    SEOAutomationRunRead,
+    SEOAutomationStatusRead,
+)
 from app.services.seo_audit import SEOAuditNotFoundError, SEOAuditService, SEOAuditValidationError
+from app.services.seo_automation import (
+    SEOAutomationConflictError,
+    SEOAutomationNotFoundError,
+    SEOAutomationService,
+    SEOAutomationValidationError,
+)
 from app.services.seo_competitor_comparison import (
     SEOCompetitorComparisonNotFoundError,
     SEOCompetitorComparisonService,
@@ -946,6 +961,267 @@ def get_seo_recommendation_narrative(
     ) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return SEORecommendationNarrativeRead.model_validate(narrative)
+
+
+@router.post(
+    "/sites/{site_id}/automation-config",
+    response_model=SEOAutomationConfigRead,
+    status_code=status.HTTP_201_CREATED,
+)
+@router_v1.post(
+    "/sites/{site_id}/automation-config",
+    response_model=SEOAutomationConfigRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_or_replace_seo_automation_config(
+    business_id: str,
+    site_id: str,
+    payload: SEOAutomationConfigUpsertRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> SEOAutomationConfigRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        config = automation_service.create_or_replace_config(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            payload=payload,
+        )
+    except (SEOSiteNotFoundError, SEOAutomationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOAutomationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOAutomationConfigRead.model_validate(config)
+
+
+@router.get("/sites/{site_id}/automation-config", response_model=SEOAutomationConfigRead)
+@router_v1.get("/sites/{site_id}/automation-config", response_model=SEOAutomationConfigRead)
+def get_seo_automation_config(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> SEOAutomationConfigRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        config = automation_service.get_config(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    except (SEOSiteNotFoundError, SEOAutomationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOAutomationConfigRead.model_validate(config)
+
+
+@router.patch("/sites/{site_id}/automation-config", response_model=SEOAutomationConfigRead)
+@router_v1.patch("/sites/{site_id}/automation-config", response_model=SEOAutomationConfigRead)
+def patch_seo_automation_config(
+    business_id: str,
+    site_id: str,
+    payload: SEOAutomationConfigPatchRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> SEOAutomationConfigRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        config = automation_service.update_config(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            payload=payload,
+        )
+    except (SEOSiteNotFoundError, SEOAutomationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOAutomationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOAutomationConfigRead.model_validate(config)
+
+
+@router.post("/sites/{site_id}/automation-config/enable", response_model=SEOAutomationConfigRead)
+@router_v1.post("/sites/{site_id}/automation-config/enable", response_model=SEOAutomationConfigRead)
+def enable_seo_automation_config(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> SEOAutomationConfigRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        config = automation_service.set_config_enabled(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            is_enabled=True,
+        )
+    except (SEOSiteNotFoundError, SEOAutomationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOAutomationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOAutomationConfigRead.model_validate(config)
+
+
+@router.post("/sites/{site_id}/automation-config/disable", response_model=SEOAutomationConfigRead)
+@router_v1.post("/sites/{site_id}/automation-config/disable", response_model=SEOAutomationConfigRead)
+def disable_seo_automation_config(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> SEOAutomationConfigRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        config = automation_service.set_config_enabled(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            is_enabled=False,
+        )
+    except (SEOSiteNotFoundError, SEOAutomationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOAutomationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOAutomationConfigRead.model_validate(config)
+
+
+@router.post(
+    "/sites/{site_id}/automation-runs",
+    response_model=SEOAutomationRunRead,
+    status_code=status.HTTP_201_CREATED,
+)
+@router_v1.post(
+    "/sites/{site_id}/automation-runs",
+    response_model=SEOAutomationRunRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def trigger_seo_automation_run(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> SEOAutomationRunRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        run = automation_service.trigger_manual_run(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            created_by_principal_id=tenant_context.principal_id,
+        )
+    except (SEOSiteNotFoundError, SEOAutomationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOAutomationConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SEOAutomationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOAutomationRunRead.model_validate(run)
+
+
+@router.get("/sites/{site_id}/automation-runs", response_model=SEOAutomationRunListResponse)
+@router_v1.get("/sites/{site_id}/automation-runs", response_model=SEOAutomationRunListResponse)
+def list_seo_automation_runs(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> SEOAutomationRunListResponse:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        items = automation_service.list_runs(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    except (SEOSiteNotFoundError, SEOAutomationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOAutomationRunListResponse(
+        items=[SEOAutomationRunRead.model_validate(item) for item in items],
+        total=len(items),
+    )
+
+
+@router.get("/sites/{site_id}/automation-runs/{automation_run_id}", response_model=SEOAutomationRunRead)
+@router_v1.get("/sites/{site_id}/automation-runs/{automation_run_id}", response_model=SEOAutomationRunRead)
+def get_seo_automation_run(
+    business_id: str,
+    site_id: str,
+    automation_run_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> SEOAutomationRunRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        run = automation_service.get_run(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            automation_run_id=automation_run_id,
+        )
+    except (SEOSiteNotFoundError, SEOAutomationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOAutomationRunRead.model_validate(run)
+
+
+@router.get("/sites/{site_id}/automation-status", response_model=SEOAutomationStatusRead)
+@router_v1.get("/sites/{site_id}/automation-status", response_model=SEOAutomationStatusRead)
+def get_seo_automation_status(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> SEOAutomationStatusRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        config, latest_run = automation_service.get_status(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    except (SEOSiteNotFoundError, SEOAutomationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOAutomationStatusRead(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        config=SEOAutomationConfigRead.model_validate(config),
+        latest_run=SEOAutomationRunRead.model_validate(latest_run) if latest_run is not None else None,
+    )
 
 
 @router.get("/sites/{site_id}/competitor-sets", response_model=SEOCompetitorSetListResponse)

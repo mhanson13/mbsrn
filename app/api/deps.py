@@ -27,6 +27,7 @@ from app.integrations import (
     TwilioSMSProvider,
 )
 from app.jobs.lead_reminders import LeadReminderJob
+from app.jobs.seo_automation import SEOAutomationJob
 from app.models.principal import Principal, PrincipalRole
 from app.repositories.api_credential_repository import APICredentialRepository
 from app.repositories.auth_audit_repository import AuthAuditRepository
@@ -35,6 +36,7 @@ from app.repositories.lead_repository import LeadRepository
 from app.repositories.principal_repository import PrincipalRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.repositories.seo_audit_summary_repository import SEOAuditSummaryRepository
+from app.repositories.seo_automation_repository import SEOAutomationRepository
 from app.repositories.seo_competitor_repository import SEOCompetitorRepository
 from app.repositories.seo_competitor_summary_repository import SEOCompetitorSummaryRepository
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
@@ -53,6 +55,7 @@ from app.services.principals import PrincipalService
 from app.services.reminder_engine import ReminderEngineService
 from app.services.response_metrics import ResponseMetricsService
 from app.services.seo_audit import SEOAuditService
+from app.services.seo_automation import SEOAutomationService
 from app.services.seo_competitor_comparison import SEOCompetitorComparisonService
 from app.services.seo_competitors import SEOCompetitorService
 from app.services.seo_competitor_summary import SEOCompetitorSummaryService
@@ -117,6 +120,10 @@ def get_seo_audit_repository(db: Session = Depends(get_db)) -> SEOAuditRepositor
 
 def get_seo_audit_summary_repository(db: Session = Depends(get_db)) -> SEOAuditSummaryRepository:
     return SEOAuditSummaryRepository(db)
+
+
+def get_seo_automation_repository(db: Session = Depends(get_db)) -> SEOAutomationRepository:
+    return SEOAutomationRepository(db)
 
 
 def get_seo_competitor_repository(db: Session = Depends(get_db)) -> SEOCompetitorRepository:
@@ -434,6 +441,42 @@ def get_seo_recommendation_narrative_service(
         seo_recommendation_narrative_repository=seo_recommendation_narrative_repository,
         provider=provider,
     )
+
+
+def get_seo_automation_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
+    seo_automation_repository: SEOAutomationRepository = Depends(get_seo_automation_repository),
+    seo_audit_service: SEOAuditService = Depends(get_seo_audit_service),
+    seo_summary_service: SEOSummaryService = Depends(get_seo_summary_service),
+    seo_competitor_service: SEOCompetitorService = Depends(get_seo_competitor_service),
+    seo_competitor_comparison_service: SEOCompetitorComparisonService = Depends(get_seo_competitor_comparison_service),
+    seo_competitor_summary_service: SEOCompetitorSummaryService = Depends(get_seo_competitor_summary_service),
+    seo_recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    seo_recommendation_narrative_service: SEORecommendationNarrativeService = Depends(
+        get_seo_recommendation_narrative_service
+    ),
+) -> SEOAutomationService:
+    return SEOAutomationService(
+        session=db,
+        business_repository=business_repository,
+        seo_site_repository=seo_site_repository,
+        seo_automation_repository=seo_automation_repository,
+        seo_audit_service=seo_audit_service,
+        seo_summary_service=seo_summary_service,
+        seo_competitor_service=seo_competitor_service,
+        seo_competitor_comparison_service=seo_competitor_comparison_service,
+        seo_competitor_summary_service=seo_competitor_summary_service,
+        seo_recommendation_service=seo_recommendation_service,
+        seo_recommendation_narrative_service=seo_recommendation_narrative_service,
+    )
+
+
+def get_seo_automation_job(
+    seo_automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> SEOAutomationJob:
+    return SEOAutomationJob(automation_service=seo_automation_service)
 
 
 def get_auth_audit_service(
