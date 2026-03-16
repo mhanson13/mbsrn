@@ -30,6 +30,7 @@ def upgrade() -> None:
         sa.Column("overall_gap_summary", sa.Text(), nullable=True),
         sa.Column("top_gaps_json", sa.JSON(), nullable=True),
         sa.Column("plain_english_explanation", sa.Text(), nullable=True),
+        sa.Column("provider_name", sa.String(length=64), nullable=False),
         sa.Column("model_name", sa.String(length=128), nullable=False),
         sa.Column("prompt_version", sa.String(length=64), nullable=False),
         sa.Column("error_summary", sa.Text(), nullable=True),

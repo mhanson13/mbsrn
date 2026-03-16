@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -219,10 +220,11 @@ class SEOCompetitorComparisonSummaryRead(BaseModel):
     competitor_set_id: str
     comparison_run_id: str
     version: int
-    status: str
+    status: Literal["completed", "failed"]
     overall_gap_summary: str | None
     top_gaps_json: list[str] | None
     plain_english_explanation: str | None
+    provider_name: str
     model_name: str
     prompt_version: str
     error_summary: str | None

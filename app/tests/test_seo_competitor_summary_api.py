@@ -12,19 +12,83 @@ from app.api.deps import (
     get_tenant_context,
 )
 from app.api.routes.seo import router as seo_router
-from app.integrations.seo_summary_provider import SEOCompetitorComparisonSummaryProvider
+from app.integrations.seo_summary_provider import (
+    SEOCompetitorComparisonSummaryOutput,
+    SEOCompetitorComparisonSummaryProvider,
+)
 from app.models.business import Business
 from app.models.seo_audit_finding import SEOAuditFinding
 from app.models.seo_audit_page import SEOAuditPage
 from app.models.seo_audit_run import SEOAuditRun
+from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_comparison_summary import SEOCompetitorComparisonSummary
 from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
 
 
+SUMMARY_RESPONSE_KEYS = {
+    "id",
+    "business_id",
+    "site_id",
+    "competitor_set_id",
+    "comparison_run_id",
+    "version",
+    "status",
+    "overall_gap_summary",
+    "top_gaps_json",
+    "plain_english_explanation",
+    "provider_name",
+    "model_name",
+    "prompt_version",
+    "error_summary",
+    "created_by_principal_id",
+    "created_at",
+    "updated_at",
+}
+
+
 class _FailingCompetitorSummaryProvider:
     def generate_summary(self, **kwargs):  # noqa: ANN003, ANN201
         raise RuntimeError("provider unavailable")
+
+
+class _CapturingCompetitorSummaryProvider:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def generate_summary(
+        self,
+        *,
+        run,
+        findings,
+        metric_rollups,
+        findings_by_type,
+        findings_by_category,
+        findings_by_severity,
+    ) -> SEOCompetitorComparisonSummaryOutput:
+        self.calls.append(
+            {
+                "run_id": run.id,
+                "competitor_pages_analyzed": run.competitor_pages_analyzed,
+                "metric_rollups": metric_rollups,
+                "findings_count": len(findings),
+                "findings_by_type": findings_by_type,
+                "findings_by_category": findings_by_category,
+                "findings_by_severity": findings_by_severity,
+            }
+        )
+        sentinel_metric_count = len(metric_rollups)
+        sentinel_pages = run.competitor_pages_analyzed
+        return SEOCompetitorComparisonSummaryOutput(
+            overall_gap_summary=(
+                f"grounded metric_count={sentinel_metric_count} competitor_pages={sentinel_pages}"
+            ),
+            top_gaps=["grounded_gap_a", "grounded_gap_b"],
+            plain_english_explanation="grounded deterministic summary",
+            provider_name="capturing-test-provider",
+            model_name="capturing-test-model",
+            prompt_version="seo-competitor-summary-v1",
+        )
 
 
 def _override_tenant_context(business_id: str):
@@ -269,25 +333,36 @@ def test_competitor_summary_manual_trigger_success_and_retrieval(db_session, see
     create_summary = client.post(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summarize")
     assert create_summary.status_code == 201
     summary = create_summary.json()
+    assert set(summary.keys()) == SUMMARY_RESPONSE_KEYS
     assert summary["status"] == "completed"
     assert summary["version"] == 1
     assert f"across {metric_count} deterministic metrics" in summary["overall_gap_summary"]
     assert isinstance(summary["top_gaps_json"], list)
     assert summary["comparison_run_id"] == run_id
+    assert summary["provider_name"] == "mock"
+    assert summary["model_name"]
+    assert summary["prompt_version"]
+    assert summary["error_summary"] is None
 
     list_response = client.get(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summaries")
     assert list_response.status_code == 200
-    assert list_response.json()["total"] == 1
+    list_payload = list_response.json()
+    assert list_payload["total"] == 1
+    assert set(list_payload["items"][0].keys()) == SUMMARY_RESPONSE_KEYS
 
     latest_response = client.get(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summaries/latest")
     assert latest_response.status_code == 200
-    assert latest_response.json()["id"] == summary["id"]
+    latest_payload = latest_response.json()
+    assert latest_payload["id"] == summary["id"]
+    assert set(latest_payload.keys()) == SUMMARY_RESPONSE_KEYS
 
     by_id = client.get(
         f"/api/businesses/{seeded_business.id}/seo/comparison-summaries/{summary['id']}"
     )
     assert by_id.status_code == 200
-    assert by_id.json()["id"] == summary["id"]
+    by_id_payload = by_id.json()
+    assert by_id_payload["id"] == summary["id"]
+    assert set(by_id_payload.keys()) == SUMMARY_RESPONSE_KEYS
 
 
 def test_competitor_summary_failure_is_isolated_and_persisted(db_session, seeded_business) -> None:
@@ -328,6 +403,23 @@ def test_competitor_summary_failure_is_isolated_and_persisted(db_session, seeded
     assert [item.status for item in summaries] == ["completed", "failed"]
     assert summaries[1].error_summary is not None
 
+    list_response = success_client.get(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summaries")
+    assert list_response.status_code == 200
+    list_payload = list_response.json()
+    versions = [item["version"] for item in list_payload["items"]]
+    statuses = [item["status"] for item in list_payload["items"]]
+    assert versions == [1, 2]
+    assert statuses == ["completed", "failed"]
+
+    latest_response = success_client.get(
+        f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summaries/latest"
+    )
+    assert latest_response.status_code == 200
+    latest_payload = latest_response.json()
+    assert latest_payload["version"] == 2
+    assert latest_payload["status"] == "failed"
+    assert latest_payload["error_summary"] is not None
+
 
 def test_competitor_summary_business_isolation_and_invalid_lineage(db_session, seeded_business) -> None:
     other_business = _seed_other_business(db_session)
@@ -355,3 +447,54 @@ def test_competitor_summary_business_isolation_and_invalid_lineage(db_session, s
         f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{uuid4()}/summarize"
     )
     assert invalid_run.status_code == 404
+
+
+def test_competitor_summary_is_grounded_in_persisted_comparison_outputs_only(db_session, seeded_business) -> None:
+    capturing_provider = _CapturingCompetitorSummaryProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        summary_provider=capturing_provider,
+    )
+    run_id, _ = _create_completed_comparison_run(client, db_session, seeded_business.id)
+
+    run = db_session.get(SEOCompetitorComparisonRun, run_id)
+    assert run is not None
+    run.metric_rollups_json = {
+        "sentinel_metric": {
+            "title": "Sentinel metric",
+            "category": "TECHNICAL",
+            "unit": "count",
+            "higher_is_better": True,
+            "client_value": 9,
+            "competitor_value": 3,
+            "delta": 6,
+            "severity": "INFO",
+            "gap_direction": "client_leads",
+        }
+    }
+    run.finding_type_counts_json = {"sentinel_gap": 7}
+    run.category_counts_json = {"TECHNICAL": 7}
+    run.severity_counts_json = {"INFO": 7}
+    run.competitor_pages_analyzed = 77
+    db_session.add(run)
+    db_session.commit()
+
+    summary_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summarize"
+    )
+    assert summary_response.status_code == 201
+    payload = summary_response.json()
+    assert payload["status"] == "completed"
+    assert payload["provider_name"] == "capturing-test-provider"
+    assert "metric_count=1" in payload["overall_gap_summary"]
+    assert "competitor_pages=77" in payload["overall_gap_summary"]
+
+    assert len(capturing_provider.calls) == 1
+    call = capturing_provider.calls[0]
+    assert call["run_id"] == run_id
+    assert call["competitor_pages_analyzed"] == 77
+    assert call["metric_rollups"] == run.metric_rollups_json
+    assert call["findings_by_type"] == {"sentinel_gap": 7}
+    assert call["findings_by_category"] == {"TECHNICAL": 7}
+    assert call["findings_by_severity"] == {"INFO": 7}

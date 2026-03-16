@@ -76,6 +76,7 @@ Project docs live under [`docs/`](docs):
 - `seo-ai-phase2b-deterministic-comparison-summary.md`
 - `seo-ai-phase2c-deterministic-comparison-enrichment-summary.md`
 - `seo-ai-phase2d-manual-competitor-summaries.md`
+- `seo-ai-phase2e-summary-contract-hardening.md`
 - `phase3-response-and-reminders.md`
 - `phase4-notifications-and-hardening.md`
 - `security-architecture.md`
@@ -96,6 +97,13 @@ Current SEO.ai Phase 1 endpoints (business-scoped):
   - `GET /api/businesses/{business_id}/seo/audit-runs/{run_id}/report`
 - Audit summary (manual trigger only):
   - `POST /api/businesses/{business_id}/seo/audit-runs/{run_id}/summarize`
+
+## SEO.ai Phase 2 (Current)
+Competitor comparison summary endpoints (manual trigger only):
+- `POST /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summarize`
+- `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summaries`
+- `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summaries/latest`
+- `GET /api/businesses/{business_id}/seo/comparison-summaries/{summary_id}`
 
 ## Notification Provider Modes
 Set provider selection in `.env`:

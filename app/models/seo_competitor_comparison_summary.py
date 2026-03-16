@@ -61,6 +61,7 @@ class SEOCompetitorComparisonSummary(Base):
     overall_gap_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     top_gaps_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     plain_english_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_name: Mapped[str] = mapped_column(String(64), nullable=False)
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)

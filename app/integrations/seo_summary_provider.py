@@ -29,6 +29,7 @@ class SEOCompetitorComparisonSummaryOutput:
     overall_gap_summary: str
     top_gaps: list[str]
     plain_english_explanation: str
+    provider_name: str
     model_name: str
     prompt_version: str
 
@@ -89,9 +90,11 @@ class MockSEOCompetitorComparisonSummaryProvider:
     def __init__(
         self,
         *,
+        provider_name: str = "mock",
         model_name: str = "mock-seo-competitor-summary-v1",
         prompt_version: str = "seo-competitor-summary-v1",
     ) -> None:
+        self.provider_name = provider_name
         self.model_name = model_name
         self.prompt_version = prompt_version
 
@@ -130,6 +133,7 @@ class MockSEOCompetitorComparisonSummaryProvider:
             overall_gap_summary=overall,
             top_gaps=top_gaps,
             plain_english_explanation=plain_english,
+            provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,
         )

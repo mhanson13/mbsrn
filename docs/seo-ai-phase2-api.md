@@ -139,7 +139,9 @@ Generate AI summary for completed comparison run.
 
 Rules:
 - run must be `completed`
-- summary must be grounded in stored deterministic findings only
+- summary must be grounded in stored deterministic comparison outputs only
+  - persisted comparison findings
+  - persisted comparison run rollups
 - failures persist as failed summary records without invalidating comparison run
 
 ### `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summaries`
@@ -147,6 +149,9 @@ List summary history by version.
 
 ### `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summaries/latest`
 Get latest summary snapshot.
+
+### `GET /api/businesses/{business_id}/seo/comparison-summaries/{summary_id}`
+Get one summary version by summary id.
 
 Out of scope:
 - recommendation/content generation endpoints
@@ -173,7 +178,7 @@ Out of scope:
 - `created_at`
 
 ## 3.2 Comparison run summary
-- `run_id`
+- `id`
 - `business_id`
 - `site_id`
 - `competitor_set_id`
@@ -187,16 +192,22 @@ Out of scope:
 
 ## 3.3 Gap summary
 - `id`
+- `business_id`
+- `site_id`
+- `competitor_set_id`
 - `comparison_run_id`
 - `version`
 - `status`
 - `overall_gap_summary`
-- `top_opportunities_json`
+- `top_gaps_json`
 - `plain_english_explanation`
+- `provider_name`
 - `model_name`
 - `prompt_version`
 - `error_summary` nullable
+- `created_by_principal_id` nullable
 - `created_at`
+- `updated_at`
 
 ---
 
@@ -225,4 +236,3 @@ Out of scope:
 - backlink endpoints
 - content generation endpoints
 - publishing endpoints
-
