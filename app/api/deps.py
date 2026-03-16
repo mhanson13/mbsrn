@@ -15,9 +15,11 @@ from app.integrations import (
     DevSMSProvider,
     EmailProvider,
     MockSEOCompetitorComparisonSummaryProvider,
+    MockSEORecommendationNarrativeProvider,
     MockSEOAuditSummaryProvider,
     MockEmailProvider,
     MockSMSProvider,
+    SEORecommendationNarrativeProvider,
     SEOCompetitorComparisonSummaryProvider,
     SEOAuditSummaryProvider,
     SMTPEmailProvider,
@@ -35,6 +37,7 @@ from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.repositories.seo_audit_summary_repository import SEOAuditSummaryRepository
 from app.repositories.seo_competitor_repository import SEOCompetitorRepository
 from app.repositories.seo_competitor_summary_repository import SEOCompetitorSummaryRepository
+from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.services.business_settings import BusinessSettingsService
@@ -56,6 +59,7 @@ from app.services.seo_competitor_summary import SEOCompetitorSummaryService
 from app.services.seo_crawler import SEOCrawler
 from app.services.seo_extractor import SEOExtractor
 from app.services.seo_finding_rules import SEOFindingRules
+from app.services.seo_recommendation_narratives import SEORecommendationNarrativeService
 from app.services.seo_recommendations import SEORecommendationService
 from app.services.seo_sites import SEOSiteService
 from app.services.seo_summary import SEOSummaryService
@@ -125,6 +129,12 @@ def get_seo_competitor_summary_repository(db: Session = Depends(get_db)) -> SEOC
 
 def get_seo_recommendation_repository(db: Session = Depends(get_db)) -> SEORecommendationRepository:
     return SEORecommendationRepository(db)
+
+
+def get_seo_recommendation_narrative_repository(
+    db: Session = Depends(get_db),
+) -> SEORecommendationNarrativeRepository:
+    return SEORecommendationNarrativeRepository(db)
 
 
 def get_parser_service() -> LeadParserService:
@@ -324,6 +334,10 @@ def get_seo_competitor_summary_provider() -> SEOCompetitorComparisonSummaryProvi
     return MockSEOCompetitorComparisonSummaryProvider()
 
 
+def get_seo_recommendation_narrative_provider() -> SEORecommendationNarrativeProvider:
+    return MockSEORecommendationNarrativeProvider()
+
+
 def get_seo_summary_service(
     db: Session = Depends(get_db),
     business_repository: BusinessRepository = Depends(get_business_repository),
@@ -401,6 +415,24 @@ def get_seo_recommendation_service(
         seo_audit_repository=seo_audit_repository,
         seo_competitor_repository=seo_competitor_repository,
         seo_recommendation_repository=seo_recommendation_repository,
+    )
+
+
+def get_seo_recommendation_narrative_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    seo_recommendation_repository: SEORecommendationRepository = Depends(get_seo_recommendation_repository),
+    seo_recommendation_narrative_repository: SEORecommendationNarrativeRepository = Depends(
+        get_seo_recommendation_narrative_repository
+    ),
+    provider: SEORecommendationNarrativeProvider = Depends(get_seo_recommendation_narrative_provider),
+) -> SEORecommendationNarrativeService:
+    return SEORecommendationNarrativeService(
+        session=db,
+        business_repository=business_repository,
+        seo_recommendation_repository=seo_recommendation_repository,
+        seo_recommendation_narrative_repository=seo_recommendation_narrative_repository,
+        provider=provider,
     )
 
 

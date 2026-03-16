@@ -61,6 +61,15 @@ def test_main_app_mounts_seo_routes() -> None:
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/recommendations/prioritized-report"] >= {
         "GET"
     }
+    assert route_methods[
+        "/api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives"
+    ] >= {"GET", "POST"}
+    assert route_methods[
+        "/api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives/latest"
+    ] >= {"GET"}
+    assert route_methods[
+        "/api/businesses/{business_id}/seo/sites/{site_id}/recommendation-narratives/{narrative_id}"
+    ] >= {"GET"}
 
     # Phase 2 v1 site-scoped compatibility surface.
     assert route_methods["/api/v1/businesses/{business_id}/seo/sites/{site_id}/competitor-sets"] >= {"GET", "POST"}
@@ -119,4 +128,13 @@ def test_main_app_mounts_seo_routes() -> None:
     assert route_methods["/api/v1/businesses/{business_id}/seo/sites/{site_id}/recommendations/backlog"] >= {"GET"}
     assert route_methods[
         "/api/v1/businesses/{business_id}/seo/sites/{site_id}/recommendations/prioritized-report"
+    ] >= {"GET"}
+    assert route_methods[
+        "/api/v1/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives"
+    ] >= {"GET", "POST"}
+    assert route_methods[
+        "/api/v1/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives/latest"
+    ] >= {"GET"}
+    assert route_methods[
+        "/api/v1/businesses/{business_id}/seo/sites/{site_id}/recommendation-narratives/{narrative_id}"
     ] >= {"GET"}

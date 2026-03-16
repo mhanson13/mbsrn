@@ -14,9 +14,12 @@ from app.integrations.sms_provider import (
 )
 from app.integrations.seo_summary_provider import (
     MockSEOCompetitorComparisonSummaryProvider,
+    MockSEORecommendationNarrativeProvider,
     MockSEOAuditSummaryProvider,
     SEOCompetitorComparisonSummaryOutput,
     SEOCompetitorComparisonSummaryProvider,
+    SEORecommendationNarrativeOutput,
+    SEORecommendationNarrativeProvider,
     SEOAuditSummaryOutput,
     SEOAuditSummaryProvider,
 )
@@ -32,9 +35,12 @@ __all__ = [
     "SMSDispatchResult",
     "SMSProvider",
     "MockSEOCompetitorComparisonSummaryProvider",
+    "MockSEORecommendationNarrativeProvider",
     "MockSEOAuditSummaryProvider",
     "SEOCompetitorComparisonSummaryOutput",
     "SEOCompetitorComparisonSummaryProvider",
+    "SEORecommendationNarrativeOutput",
+    "SEORecommendationNarrativeProvider",
     "SEOAuditSummaryOutput",
     "SEOAuditSummaryProvider",
     "TwilioSMSProvider",

@@ -7,6 +7,8 @@ from app.models.seo_audit_finding import SEOAuditFinding
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_finding import SEOCompetitorComparisonFinding
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
+from app.models.seo_recommendation import SEORecommendation
+from app.models.seo_recommendation_run import SEORecommendationRun
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,32 @@ class SEOCompetitorComparisonSummaryProvider(Protocol):
         findings_by_category: dict[str, int],
         findings_by_severity: dict[str, int],
     ) -> SEOCompetitorComparisonSummaryOutput:
+        ...
+
+
+@dataclass(frozen=True)
+class SEORecommendationNarrativeOutput:
+    narrative_text: str
+    top_themes: list[str]
+    sections: dict[str, object] | None
+    provider_name: str
+    model_name: str
+    prompt_version: str
+
+
+class SEORecommendationNarrativeProvider(Protocol):
+    def generate_narrative(
+        self,
+        *,
+        run: SEORecommendationRun,
+        recommendations: list[SEORecommendation],
+        by_status: dict[str, int],
+        by_category: dict[str, int],
+        by_severity: dict[str, int],
+        by_effort_bucket: dict[str, int],
+        by_priority_band: dict[str, int],
+        backlog: list[SEORecommendation],
+    ) -> SEORecommendationNarrativeOutput:
         ...
 
 
@@ -133,6 +161,65 @@ class MockSEOCompetitorComparisonSummaryProvider:
             overall_gap_summary=overall,
             top_gaps=top_gaps,
             plain_english_explanation=plain_english,
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+        )
+
+
+class MockSEORecommendationNarrativeProvider:
+    def __init__(
+        self,
+        *,
+        provider_name: str = "mock",
+        model_name: str = "mock-seo-recommendation-narrative-v1",
+        prompt_version: str = "seo-recommendation-narrative-v1",
+    ) -> None:
+        self.provider_name = provider_name
+        self.model_name = model_name
+        self.prompt_version = prompt_version
+
+    def generate_narrative(
+        self,
+        *,
+        run: SEORecommendationRun,
+        recommendations: list[SEORecommendation],
+        by_status: dict[str, int],
+        by_category: dict[str, int],
+        by_severity: dict[str, int],
+        by_effort_bucket: dict[str, int],
+        by_priority_band: dict[str, int],
+        backlog: list[SEORecommendation],
+    ) -> SEORecommendationNarrativeOutput:
+        total = len(recommendations)
+        backlog_total = len(backlog)
+        dominant_category = max(by_category.items(), key=lambda item: item[1])[0] if by_category else "TECHNICAL"
+        dominant_severity = max(by_severity.items(), key=lambda item: item[1])[0] if by_severity else "INFO"
+        highest_priority_open = backlog[0].title if backlog else "No actionable recommendations currently open."
+
+        narrative = (
+            f"Recommendation run {run.id} contains {total} deterministic recommendations. "
+            f"Current actionable backlog is {backlog_total}. "
+            f"Most concentrated category is {dominant_category} and most common severity is {dominant_severity}. "
+            f"Top backlog focus: {highest_priority_open}"
+        )
+        top_themes = [
+            f"Backlog items: {backlog_total}",
+            f"Dominant category: {dominant_category}",
+            f"Dominant severity: {dominant_severity}",
+        ]
+        sections: dict[str, object] = {
+            "status_rollup": by_status,
+            "category_rollup": by_category,
+            "severity_rollup": by_severity,
+            "effort_rollup": by_effort_bucket,
+            "priority_band_rollup": by_priority_band,
+            "backlog_rule_keys": [item.rule_key for item in backlog[:10]],
+        }
+        return SEORecommendationNarrativeOutput(
+            narrative_text=narrative,
+            top_themes=top_themes,
+            sections=sections,
             provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,

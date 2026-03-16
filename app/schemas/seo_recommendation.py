@@ -9,6 +9,7 @@ SEORecommendationRunStatus = Literal["queued", "running", "completed", "failed"]
 SEORecommendationCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
 SEORecommendationSeverity = Literal["INFO", "WARNING", "CRITICAL"]
 SEORecommendationEffort = Literal["LOW", "MEDIUM", "HIGH"]
+SEORecommendationNarrativeStatus = Literal["completed", "failed"]
 SEORecommendationPriorityBand = Literal["low", "medium", "high", "critical"]
 SEORecommendationStatus = Literal["open", "in_progress", "accepted", "dismissed", "snoozed", "resolved"]
 SEORecommendationDecision = Literal["accept", "dismiss", "snooze", "resolve", "reopen", "start"]
@@ -308,6 +309,41 @@ class SEORecommendationPrioritizedReportRead(BaseModel):
     by_effort_bucket: dict[str, int]
     by_priority_band: dict[str, int]
     backlog: SEORecommendationListResponse
+
+
+class SEORecommendationNarrativeRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    business_id: str
+    site_id: str
+    recommendation_run_id: str
+    version: int
+    status: SEORecommendationNarrativeStatus
+    narrative_text: str | None
+    top_themes_json: list[str] = Field(default_factory=list)
+    sections_json: dict[str, object] | None
+    provider_name: str
+    model_name: str
+    prompt_version: str
+    error_message: str | None
+    created_by_principal_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("top_themes_json", mode="before")
+    @classmethod
+    def normalize_top_themes(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        raise TypeError("top_themes_json must be a list")
+
+
+class SEORecommendationNarrativeListResponse(BaseModel):
+    items: list[SEORecommendationNarrativeRead]
+    total: int
 
 
 class SEORecommendationListQuery(BaseModel):

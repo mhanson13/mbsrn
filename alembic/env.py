@@ -36,6 +36,7 @@ from app.models import (
     seo_competitor_snapshot_page,
     seo_competitor_snapshot_run,
     seo_recommendation,
+    seo_recommendation_narrative,
     seo_recommendation_run,
     seo_site,
 )

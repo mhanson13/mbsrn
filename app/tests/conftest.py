@@ -28,6 +28,7 @@ from app.models.seo_competitor_set import SEOCompetitorSet  # noqa: F401
 from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage  # noqa: F401
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun  # noqa: F401
 from app.models.seo_recommendation import SEORecommendation  # noqa: F401
+from app.models.seo_recommendation_narrative import SEORecommendationNarrative  # noqa: F401
 from app.models.seo_recommendation_run import SEORecommendationRun  # noqa: F401
 from app.models.seo_site import SEOSite  # noqa: F401
 

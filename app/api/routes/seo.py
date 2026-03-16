@@ -7,6 +7,7 @@ from app.api.deps import (
     get_seo_audit_service,
     get_seo_competitor_comparison_service,
     get_seo_competitor_summary_service,
+    get_seo_recommendation_narrative_service,
     get_seo_competitor_service,
     get_seo_recommendation_service,
     get_seo_site_service,
@@ -59,6 +60,8 @@ from app.schemas.seo_recommendation import (
     SEORecommendationListResponse,
     SEORecommendationPrioritizedReportRead,
     SEORecommendationRead,
+    SEORecommendationNarrativeListResponse,
+    SEORecommendationNarrativeRead,
     SEORecommendationRunCreateRequest,
     SEORecommendationRunListResponse,
     SEORecommendationRunRead,
@@ -80,6 +83,11 @@ from app.services.seo_recommendations import (
     SEORecommendationNotFoundError,
     SEORecommendationService,
     SEORecommendationValidationError,
+)
+from app.services.seo_recommendation_narratives import (
+    SEORecommendationNarrativeNotFoundError,
+    SEORecommendationNarrativeService,
+    SEORecommendationNarrativeValidationError,
 )
 from app.services.seo_competitors import (
     SEOCompetitorNotFoundError,
@@ -782,6 +790,162 @@ def get_seo_recommendation_run_report(
             by_priority_band=by_priority_band,
         ),
     )
+
+
+@router.post(
+    "/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives",
+    response_model=SEORecommendationNarrativeRead,
+    status_code=status.HTTP_201_CREATED,
+)
+@router_v1.post(
+    "/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives",
+    response_model=SEORecommendationNarrativeRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_seo_recommendation_narrative(
+    business_id: str,
+    site_id: str,
+    recommendation_run_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    recommendation_narrative_service: SEORecommendationNarrativeService = Depends(
+        get_seo_recommendation_narrative_service
+    ),
+) -> SEORecommendationNarrativeRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        result = recommendation_narrative_service.summarize_run(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            recommendation_run_id=recommendation_run_id,
+            created_by_principal_id=tenant_context.principal_id,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEORecommendationNarrativeNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEORecommendationNarrativeValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEORecommendationNarrativeRead.model_validate(result.narrative)
+
+
+@router.get(
+    "/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives",
+    response_model=SEORecommendationNarrativeListResponse,
+)
+@router_v1.get(
+    "/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives",
+    response_model=SEORecommendationNarrativeListResponse,
+)
+def list_seo_recommendation_narratives(
+    business_id: str,
+    site_id: str,
+    recommendation_run_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    recommendation_narrative_service: SEORecommendationNarrativeService = Depends(
+        get_seo_recommendation_narrative_service
+    ),
+) -> SEORecommendationNarrativeListResponse:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        items = recommendation_narrative_service.list_narratives(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            recommendation_run_id=recommendation_run_id,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEORecommendationNarrativeNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEORecommendationNarrativeListResponse(
+        items=[SEORecommendationNarrativeRead.model_validate(item) for item in items],
+        total=len(items),
+    )
+
+
+@router.get(
+    "/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives/latest",
+    response_model=SEORecommendationNarrativeRead,
+)
+@router_v1.get(
+    "/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives/latest",
+    response_model=SEORecommendationNarrativeRead,
+)
+def get_latest_seo_recommendation_narrative(
+    business_id: str,
+    site_id: str,
+    recommendation_run_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    recommendation_narrative_service: SEORecommendationNarrativeService = Depends(
+        get_seo_recommendation_narrative_service
+    ),
+) -> SEORecommendationNarrativeRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        narrative = recommendation_narrative_service.get_latest_narrative(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            recommendation_run_id=recommendation_run_id,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEORecommendationNarrativeNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEORecommendationNarrativeRead.model_validate(narrative)
+
+
+@router.get(
+    "/sites/{site_id}/recommendation-narratives/{narrative_id}",
+    response_model=SEORecommendationNarrativeRead,
+)
+@router_v1.get(
+    "/sites/{site_id}/recommendation-narratives/{narrative_id}",
+    response_model=SEORecommendationNarrativeRead,
+)
+def get_seo_recommendation_narrative(
+    business_id: str,
+    site_id: str,
+    narrative_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    recommendation_narrative_service: SEORecommendationNarrativeService = Depends(
+        get_seo_recommendation_narrative_service
+    ),
+) -> SEORecommendationNarrativeRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        narrative = recommendation_narrative_service.get_narrative(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            narrative_id=narrative_id,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEORecommendationNarrativeNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEORecommendationNarrativeRead.model_validate(narrative)
 
 
 @router.get("/sites/{site_id}/competitor-sets", response_model=SEOCompetitorSetListResponse)

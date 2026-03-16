@@ -83,6 +83,9 @@ Project docs live under [`docs/`](docs):
 - `seo-ai-phase3b-workflow-and-prioritization.md` (implemented deterministic recommendation workflow management)
 - `seo-ai-phase3b-data-model.md` (implemented recommendation workflow/prioritization schema updates)
 - `seo-ai-phase3b-api.md` (implemented workflow list/update/backlog/report API contract)
+- `seo-ai-phase3c-recommendation-narratives.md` (implemented AI narrative layer over persisted deterministic recommendations)
+- `seo-ai-phase3c-data-model.md` (implemented recommendation narrative persistence schema)
+- `seo-ai-phase3c-api.md` (implemented narrative endpoint contract)
 - `phase3-response-and-reminders.md`
 - `phase4-notifications-and-hardening.md`
 - `security-architecture.md`
@@ -94,9 +97,9 @@ Implemented today:
 - Phase 2: competitor foundations, snapshotting, deterministic comparison runs/reports, and manual-trigger competitor summaries
 - Phase 3A: deterministic recommendation runs generated from persisted audit/comparison evidence
 - Phase 3B: deterministic recommendation workflow state, prioritization views, and operator update APIs
+- Phase 3C: manual-trigger AI recommendation narratives grounded in persisted deterministic recommendation data
 
 Not implemented yet:
-- Phase 3C AI recommendation narratives
 - Phase 4 automation/operationalization work
 
 ## SEO.ai Phase 1 (Implemented)
@@ -183,6 +186,23 @@ Endpoint inventory (business-scoped):
 
 Compatibility site-scoped Phase 3B paths are also mounted at:
 - `/api/v1/businesses/{business_id}/seo/sites/{site_id}/...`
+
+## SEO.ai Phase 3C (Implemented)
+Phase 3C adds manual-trigger AI narratives that explain persisted deterministic recommendations and workflow state.
+
+Endpoint inventory (business-scoped):
+- Recommendation narratives:
+  - `POST /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives/latest`
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-narratives/{narrative_id}`
+
+Compatibility site-scoped Phase 3C paths are also mounted at:
+- `/api/v1/businesses/{business_id}/seo/sites/{site_id}/...`
+
+Phase 3C boundary:
+- AI narratives explain persisted deterministic recommendation artifacts only.
+- AI does not generate recommendation items, findings, priorities, or workflow decisions.
 
 ## Notification Provider Modes
 Set provider selection in `.env`:
