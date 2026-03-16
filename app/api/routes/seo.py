@@ -6,6 +6,7 @@ from app.api.deps import (
     TenantContext,
     get_seo_audit_service,
     get_seo_competitor_comparison_service,
+    get_seo_competitor_summary_service,
     get_seo_competitor_service,
     get_seo_site_service,
     get_seo_summary_service,
@@ -33,6 +34,8 @@ from app.schemas.seo_competitor import (
     SEOCompetitorComparisonFindingRead,
     SEOCompetitorComparisonMetricRollupRead,
     SEOCompetitorComparisonReportRead,
+    SEOCompetitorComparisonSummaryListResponse,
+    SEOCompetitorComparisonSummaryRead,
     SEOCompetitorComparisonRunRollupsRead,
     SEOCompetitorComparisonRunCreateRequest,
     SEOCompetitorComparisonRunListResponse,
@@ -53,6 +56,11 @@ from app.services.seo_competitor_comparison import (
     SEOCompetitorComparisonNotFoundError,
     SEOCompetitorComparisonService,
     SEOCompetitorComparisonValidationError,
+)
+from app.services.seo_competitor_summary import (
+    SEOCompetitorSummaryNotFoundError,
+    SEOCompetitorSummaryService,
+    SEOCompetitorSummaryValidationError,
 )
 from app.services.seo_competitors import (
     SEOCompetitorNotFoundError,
@@ -735,3 +743,106 @@ def get_competitor_comparison_report(
             by_severity=report.findings_by_severity,
         ),
     )
+
+
+@router.post(
+    "/comparison-runs/{run_id}/summarize",
+    response_model=SEOCompetitorComparisonSummaryRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def summarize_competitor_comparison_run(
+    business_id: str,
+    run_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    summary_service: SEOCompetitorSummaryService = Depends(get_seo_competitor_summary_service),
+) -> SEOCompetitorComparisonSummaryRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        result = summary_service.summarize_run(
+            business_id=scoped_business_id,
+            comparison_run_id=run_id,
+            created_by_principal_id=tenant_context.principal_id,
+        )
+    except SEOCompetitorSummaryNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOCompetitorSummaryValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOCompetitorComparisonSummaryRead.model_validate(result.summary)
+
+
+@router.get(
+    "/comparison-runs/{run_id}/summaries",
+    response_model=SEOCompetitorComparisonSummaryListResponse,
+)
+def list_competitor_comparison_summaries(
+    business_id: str,
+    run_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    summary_service: SEOCompetitorSummaryService = Depends(get_seo_competitor_summary_service),
+) -> SEOCompetitorComparisonSummaryListResponse:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        items = summary_service.list_summaries(
+            business_id=scoped_business_id,
+            comparison_run_id=run_id,
+        )
+    except SEOCompetitorSummaryNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOCompetitorComparisonSummaryListResponse(
+        items=[SEOCompetitorComparisonSummaryRead.model_validate(item) for item in items],
+        total=len(items),
+    )
+
+
+@router.get(
+    "/comparison-runs/{run_id}/summaries/latest",
+    response_model=SEOCompetitorComparisonSummaryRead,
+)
+def get_latest_competitor_comparison_summary(
+    business_id: str,
+    run_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    summary_service: SEOCompetitorSummaryService = Depends(get_seo_competitor_summary_service),
+) -> SEOCompetitorComparisonSummaryRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        summary = summary_service.get_latest_summary(
+            business_id=scoped_business_id,
+            comparison_run_id=run_id,
+        )
+    except SEOCompetitorSummaryNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOCompetitorComparisonSummaryRead.model_validate(summary)
+
+
+@router.get(
+    "/comparison-summaries/{summary_id}",
+    response_model=SEOCompetitorComparisonSummaryRead,
+)
+def get_competitor_comparison_summary(
+    business_id: str,
+    summary_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    summary_service: SEOCompetitorSummaryService = Depends(get_seo_competitor_summary_service),
+) -> SEOCompetitorComparisonSummaryRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        summary = summary_service.get_summary(
+            business_id=scoped_business_id,
+            summary_id=summary_id,
+        )
+    except SEOCompetitorSummaryNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOCompetitorComparisonSummaryRead.model_validate(summary)

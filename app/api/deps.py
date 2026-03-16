@@ -14,9 +14,11 @@ from app.integrations import (
     DevEmailProvider,
     DevSMSProvider,
     EmailProvider,
+    MockSEOCompetitorComparisonSummaryProvider,
     MockSEOAuditSummaryProvider,
     MockEmailProvider,
     MockSMSProvider,
+    SEOCompetitorComparisonSummaryProvider,
     SEOAuditSummaryProvider,
     SMTPEmailProvider,
     SMSProvider,
@@ -32,6 +34,7 @@ from app.repositories.principal_repository import PrincipalRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.repositories.seo_audit_summary_repository import SEOAuditSummaryRepository
 from app.repositories.seo_competitor_repository import SEOCompetitorRepository
+from app.repositories.seo_competitor_summary_repository import SEOCompetitorSummaryRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.services.business_settings import BusinessSettingsService
 from app.services.api_credentials import APICredentialService
@@ -48,6 +51,7 @@ from app.services.response_metrics import ResponseMetricsService
 from app.services.seo_audit import SEOAuditService
 from app.services.seo_competitor_comparison import SEOCompetitorComparisonService
 from app.services.seo_competitors import SEOCompetitorService
+from app.services.seo_competitor_summary import SEOCompetitorSummaryService
 from app.services.seo_crawler import SEOCrawler
 from app.services.seo_extractor import SEOExtractor
 from app.services.seo_finding_rules import SEOFindingRules
@@ -111,6 +115,10 @@ def get_seo_audit_summary_repository(db: Session = Depends(get_db)) -> SEOAuditS
 
 def get_seo_competitor_repository(db: Session = Depends(get_db)) -> SEOCompetitorRepository:
     return SEOCompetitorRepository(db)
+
+
+def get_seo_competitor_summary_repository(db: Session = Depends(get_db)) -> SEOCompetitorSummaryRepository:
+    return SEOCompetitorSummaryRepository(db)
 
 
 def get_parser_service() -> LeadParserService:
@@ -306,6 +314,10 @@ def get_seo_summary_provider() -> SEOAuditSummaryProvider:
     return MockSEOAuditSummaryProvider()
 
 
+def get_seo_competitor_summary_provider() -> SEOCompetitorComparisonSummaryProvider:
+    return MockSEOCompetitorComparisonSummaryProvider()
+
+
 def get_seo_summary_service(
     db: Session = Depends(get_db),
     business_repository: BusinessRepository = Depends(get_business_repository),
@@ -318,6 +330,22 @@ def get_seo_summary_service(
         business_repository=business_repository,
         seo_audit_repository=seo_audit_repository,
         seo_audit_summary_repository=seo_audit_summary_repository,
+        provider=provider,
+    )
+
+
+def get_seo_competitor_summary_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
+    seo_competitor_summary_repository: SEOCompetitorSummaryRepository = Depends(get_seo_competitor_summary_repository),
+    provider: SEOCompetitorComparisonSummaryProvider = Depends(get_seo_competitor_summary_provider),
+) -> SEOCompetitorSummaryService:
+    return SEOCompetitorSummaryService(
+        session=db,
+        business_repository=business_repository,
+        seo_competitor_repository=seo_competitor_repository,
+        seo_competitor_summary_repository=seo_competitor_summary_repository,
         provider=provider,
     )
 

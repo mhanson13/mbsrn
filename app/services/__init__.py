@@ -26,6 +26,11 @@ from app.services.seo_competitors import (
     SEOCompetitorService,
     SEOCompetitorValidationError,
 )
+from app.services.seo_competitor_summary import (
+    SEOCompetitorSummaryNotFoundError,
+    SEOCompetitorSummaryService,
+    SEOCompetitorSummaryValidationError,
+)
 from app.services.seo_crawler import SEOCrawler, SEOCrawlerValidationError
 from app.services.seo_extractor import SEOExtractor
 from app.services.seo_finding_rules import SEOFindingRules
@@ -59,6 +64,9 @@ __all__ = [
     "SEOCompetitorComparisonValidationError",
     "SEOCompetitorNotFoundError",
     "SEOCompetitorService",
+    "SEOCompetitorSummaryNotFoundError",
+    "SEOCompetitorSummaryService",
+    "SEOCompetitorSummaryValidationError",
     "SEOCompetitorValidationError",
     "SEOCrawler",
     "SEOCrawlerValidationError",

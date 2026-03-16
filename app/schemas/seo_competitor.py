@@ -208,3 +208,29 @@ class SEOCompetitorComparisonReportRead(BaseModel):
     run: SEOCompetitorComparisonRunRead
     rollups: SEOCompetitorComparisonRunRollupsRead
     findings: SEOCompetitorComparisonFindingListResponse
+
+
+class SEOCompetitorComparisonSummaryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    business_id: str
+    site_id: str
+    competitor_set_id: str
+    comparison_run_id: str
+    version: int
+    status: str
+    overall_gap_summary: str | None
+    top_gaps_json: list[str] | None
+    plain_english_explanation: str | None
+    model_name: str
+    prompt_version: str
+    error_summary: str | None
+    created_by_principal_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SEOCompetitorComparisonSummaryListResponse(BaseModel):
+    items: list[SEOCompetitorComparisonSummaryRead]
+    total: int

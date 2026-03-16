@@ -10,6 +10,7 @@ from app.models.seo_audit_run import SEOAuditRun, SEOAuditRunStatus
 from app.models.seo_audit_summary import SEOAuditSummary
 from app.models.seo_competitor_comparison_finding import SEOCompetitorComparisonFinding
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
+from app.models.seo_competitor_comparison_summary import SEOCompetitorComparisonSummary
 from app.models.seo_competitor_domain import SEOCompetitorDomain
 from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage
@@ -35,6 +36,7 @@ __all__ = [
     "SEOAuditSummary",
     "SEOCompetitorComparisonFinding",
     "SEOCompetitorComparisonRun",
+    "SEOCompetitorComparisonSummary",
     "SEOCompetitorDomain",
     "SEOCompetitorSet",
     "SEOCompetitorSnapshotPage",

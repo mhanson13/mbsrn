@@ -22,6 +22,7 @@ from app.models.seo_audit_run import SEOAuditRun  # noqa: F401
 from app.models.seo_audit_summary import SEOAuditSummary  # noqa: F401
 from app.models.seo_competitor_comparison_finding import SEOCompetitorComparisonFinding  # noqa: F401
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun  # noqa: F401
+from app.models.seo_competitor_comparison_summary import SEOCompetitorComparisonSummary  # noqa: F401
 from app.models.seo_competitor_domain import SEOCompetitorDomain  # noqa: F401
 from app.models.seo_competitor_set import SEOCompetitorSet  # noqa: F401
 from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage  # noqa: F401
