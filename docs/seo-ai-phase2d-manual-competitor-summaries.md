@@ -8,7 +8,7 @@
   - run lineage (`comparison_run_id`)
   - status (`completed` / `failed`)
   - version history per run
-  - provider metadata (`model_name`, `prompt_version`)
+  - provider metadata (`provider_name`, `model_name`, `prompt_version`)
   - summary content (`overall_gap_summary`, `top_gaps_json`, `plain_english_explanation`)
   - failure details (`error_summary`)
 - Retrieval endpoints:

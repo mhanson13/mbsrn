@@ -99,11 +99,31 @@ Current SEO.ai Phase 1 endpoints (business-scoped):
   - `POST /api/businesses/{business_id}/seo/audit-runs/{run_id}/summarize`
 
 ## SEO.ai Phase 2 (Current)
-Competitor comparison summary endpoints (manual trigger only):
-- `POST /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summarize`
-- `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summaries`
-- `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summaries/latest`
-- `GET /api/businesses/{business_id}/seo/comparison-summaries/{summary_id}`
+Current competitor-intelligence endpoints (business-scoped):
+- Competitor sets:
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/competitor-sets`
+  - `POST /api/businesses/{business_id}/seo/sites/{site_id}/competitor-sets`
+  - `GET /api/businesses/{business_id}/seo/competitor-sets/{set_id}`
+  - `PATCH /api/businesses/{business_id}/seo/competitor-sets/{set_id}`
+- Competitor domains:
+  - `GET /api/businesses/{business_id}/seo/competitor-sets/{set_id}/domains`
+  - `POST /api/businesses/{business_id}/seo/competitor-sets/{set_id}/domains`
+  - `DELETE /api/businesses/{business_id}/seo/competitor-sets/{set_id}/domains/{domain_id}`
+- Snapshot runs:
+  - `POST /api/businesses/{business_id}/seo/competitor-sets/{set_id}/snapshot-runs`
+  - `GET /api/businesses/{business_id}/seo/competitor-sets/{set_id}/snapshot-runs`
+  - `GET /api/businesses/{business_id}/seo/snapshot-runs/{run_id}`
+- Deterministic comparison runs:
+  - `POST /api/businesses/{business_id}/seo/competitor-sets/{set_id}/comparison-runs`
+  - `GET /api/businesses/{business_id}/seo/competitor-sets/{set_id}/comparison-runs`
+  - `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}`
+  - `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/findings`
+  - `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/report`
+- Competitor summaries (manual trigger only):
+  - `POST /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summarize`
+  - `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summaries`
+  - `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/summaries/latest`
+  - `GET /api/businesses/{business_id}/seo/comparison-summaries/{summary_id}`
 
 ## Notification Provider Modes
 Set provider selection in `.env`:

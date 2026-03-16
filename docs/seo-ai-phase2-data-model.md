@@ -119,8 +119,8 @@ Minimum fields:
 - `h2_json` nullable
 - `word_count` nullable
 - `internal_link_count` nullable
-- `detected_page_type` nullable (`home|service|faq|process|about|contact|reviews|other`)
 - `fetched_at`
+- `error_summary` nullable
 - `created_at`
 - `updated_at`
 
@@ -130,7 +130,6 @@ Constraints:
 Indexes:
 - `(business_id, snapshot_run_id)`
 - `(business_id, competitor_domain_id)`
-- `(business_id, detected_page_type)`
 
 ---
 
@@ -144,11 +143,18 @@ Minimum fields:
 - `site_id`
 - `competitor_set_id`
 - `snapshot_run_id`
+- `baseline_audit_run_id` nullable
 - `status` (`queued|running|completed|failed`)
 - `total_findings`
 - `critical_findings`
 - `warning_findings`
 - `info_findings`
+- `client_pages_analyzed`
+- `competitor_pages_analyzed`
+- `metric_rollups_json` nullable
+- `finding_type_counts_json` nullable
+- `category_counts_json` nullable
+- `severity_counts_json` nullable
 - `started_at` nullable
 - `completed_at` nullable
 - `duration_ms` nullable
@@ -160,6 +166,7 @@ Minimum fields:
 Indexes:
 - `(business_id, competitor_set_id, created_at desc)`
 - `(business_id, snapshot_run_id)`
+- `(business_id, status)`
 
 ---
 
@@ -194,7 +201,7 @@ Indexes:
 
 ---
 
-## 2.7 `seo_competitor_gap_summaries`
+## 2.7 `seo_competitor_comparison_summaries`
 
 Purpose: AI summaries for completed comparison runs (versioned).
 
@@ -207,8 +214,9 @@ Minimum fields:
 - `version`
 - `status` (`completed|failed`)
 - `overall_gap_summary` nullable
-- `top_opportunities_json` nullable
+- `top_gaps_json` nullable
 - `plain_english_explanation` nullable
+- `provider_name`
 - `model_name`
 - `prompt_version`
 - `error_summary` nullable
@@ -220,8 +228,8 @@ Constraints:
 - unique `(business_id, comparison_run_id, version)`
 
 Indexes:
-- `(business_id, comparison_run_id)`
-- `(business_id, competitor_set_id, created_at desc)`
+- `(business_id, comparison_run_id, created_at)`
+- `(business_id, status)`
 
 ---
 
@@ -233,7 +241,7 @@ Indexes:
 - `seo_competitor_snapshot_runs 1 -> many seo_competitor_snapshot_pages`
 - `seo_competitor_snapshot_runs 1 -> many seo_competitor_comparison_runs`
 - `seo_competitor_comparison_runs 1 -> many seo_competitor_comparison_findings`
-- `seo_competitor_comparison_runs 1 -> many seo_competitor_gap_summaries`
+- `seo_competitor_comparison_runs 1 -> many seo_competitor_comparison_summaries`
 
 All child rows include `business_id` and must match parent business ownership.
 
@@ -254,4 +262,3 @@ All child rows include `business_id` and must match parent business ownership.
 - No backlink graph tables
 - No content generation asset tables for this phase
 - No queue/job orchestration tables
-

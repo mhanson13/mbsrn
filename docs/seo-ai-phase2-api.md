@@ -67,8 +67,8 @@ Validation:
 - `http|https` only
 - normalized domain uniqueness within set
 
-### `PATCH /api/businesses/{business_id}/seo/competitor-sets/{set_id}/domains/{domain_id}`
-Partial update for metadata/active state.
+### `DELETE /api/businesses/{business_id}/seo/competitor-sets/{set_id}/domains/{domain_id}`
+Remove a domain from a set.
 
 Out of scope:
 - automatic competitor discovery
@@ -96,11 +96,9 @@ List snapshot runs for a set.
 ### `GET /api/businesses/{business_id}/seo/snapshot-runs/{run_id}`
 Get run status/diagnostics.
 
-### `GET /api/businesses/{business_id}/seo/snapshot-runs/{run_id}/pages`
-List captured snapshot pages for a run.
-
 Out of scope:
 - background worker orchestration (phase may run synchronously first)
+- snapshot page listing endpoint (not implemented in current runtime surface)
 
 ---
 
@@ -129,6 +127,12 @@ Response includes:
 
 Out of scope:
 - AI-generated finding creation
+
+### `GET /api/businesses/{business_id}/seo/comparison-runs/{run_id}/report`
+Get a deterministic comparison report shape:
+- `run`
+- `rollups`
+- `findings`
 
 ---
 
@@ -182,11 +186,18 @@ Out of scope:
 - `business_id`
 - `site_id`
 - `competitor_set_id`
+- `snapshot_run_id`
+- `baseline_audit_run_id` nullable
 - `status`
 - `total_findings`
 - `critical_findings`
 - `warning_findings`
 - `info_findings`
+- `client_pages_analyzed`
+- `competitor_pages_analyzed`
+- `finding_type_counts_json` nullable
+- `category_counts_json` nullable
+- `severity_counts_json` nullable
 - `duration_ms` nullable
 - `error_summary` nullable
 
