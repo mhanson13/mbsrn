@@ -90,6 +90,8 @@ def upgrade() -> None:
         sa.Column("business_id", sa.String(length=36), nullable=False),
         sa.Column("principal_id", sa.String(length=64), nullable=False),
         sa.Column("state_hash", sa.String(length=64), nullable=False),
+        sa.Column("code_verifier_encrypted", sa.Text(), nullable=True),
+        sa.Column("code_verifier_key_version", sa.String(length=32), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("consumed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(

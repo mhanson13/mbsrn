@@ -134,4 +134,6 @@ def _to_connection_response(
         connected_at=result.connected_at,
         last_refreshed_at=result.last_refreshed_at,
         reconnect_required=result.reconnect_required,
+        required_scopes_satisfied=result.required_scopes_satisfied,
+        token_status=result.token_status,
     )

@@ -61,6 +61,8 @@ class GoogleOAuthWebClient:
         access_type: str = "offline",
         include_granted_scopes: bool = True,
         prompt: str = "consent",
+        code_challenge: str | None = None,
+        code_challenge_method: str | None = None,
     ) -> str:
         normalized_redirect_uri = redirect_uri.strip()
         normalized_state = state.strip()
@@ -73,18 +75,22 @@ class GoogleOAuthWebClient:
         if not normalized_scopes:
             raise GoogleOAuthError("At least one OAuth scope is required.")
 
-        query = urlencode(
-            {
-                "client_id": self.client_id,
-                "redirect_uri": normalized_redirect_uri,
-                "response_type": "code",
-                "scope": " ".join(normalized_scopes),
-                "state": normalized_state,
-                "access_type": access_type,
-                "include_granted_scopes": "true" if include_granted_scopes else "false",
-                "prompt": prompt,
-            }
-        )
+        query_params: dict[str, str] = {
+            "client_id": self.client_id,
+            "redirect_uri": normalized_redirect_uri,
+            "response_type": "code",
+            "scope": " ".join(normalized_scopes),
+            "state": normalized_state,
+            "access_type": access_type,
+            "include_granted_scopes": "true" if include_granted_scopes else "false",
+            "prompt": prompt,
+        }
+        normalized_code_challenge = (code_challenge or "").strip()
+        normalized_code_challenge_method = (code_challenge_method or "").strip()
+        if normalized_code_challenge:
+            query_params["code_challenge"] = normalized_code_challenge
+            query_params["code_challenge_method"] = normalized_code_challenge_method or "S256"
+        query = urlencode(query_params)
         return f"{self.authorization_url}?{query}"
 
     def exchange_code_for_tokens(
@@ -92,6 +98,7 @@ class GoogleOAuthWebClient:
         *,
         code: str,
         redirect_uri: str,
+        code_verifier: str | None = None,
     ) -> GoogleOAuthTokenResponse:
         normalized_code = code.strip()
         normalized_redirect_uri = redirect_uri.strip()
@@ -100,15 +107,20 @@ class GoogleOAuthWebClient:
         if not normalized_redirect_uri:
             raise GoogleOAuthError("redirect_uri is required.")
 
+        form: dict[str, str] = {
+            "code": normalized_code,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "redirect_uri": normalized_redirect_uri,
+            "grant_type": "authorization_code",
+        }
+        normalized_code_verifier = (code_verifier or "").strip()
+        if normalized_code_verifier:
+            form["code_verifier"] = normalized_code_verifier
+
         payload = self._post_form(
             self.token_url,
-            {
-                "code": normalized_code,
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "redirect_uri": normalized_redirect_uri,
-                "grant_type": "authorization_code",
-            },
+            form,
         )
         return self._parse_token_response(payload)
 

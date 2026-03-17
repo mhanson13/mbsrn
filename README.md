@@ -303,17 +303,24 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `connected_at`
   - `last_refreshed_at`
   - `reconnect_required`
+  - `required_scopes_satisfied`
+  - `token_status` (`usable | refresh_required | reconnect_required | insufficient_scope`)
 - Business Profile integration requires scope:
   - `https://www.googleapis.com/auth/business.manage`
 - Business Profile OAuth env vars:
   - `GOOGLE_OAUTH_CLIENT_ID`
   - `GOOGLE_OAUTH_CLIENT_SECRET`
   - `GOOGLE_BUSINESS_PROFILE_REDIRECT_URI`
-  - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_SECRET`
   - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_VERSION`
+  - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEYS_JSON`
+  - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_SECRET` (single-key fallback only)
   - `GOOGLE_BUSINESS_PROFILE_STATE_TTL_SECONDS`
+  - `GOOGLE_OAUTH_REFRESH_SKEW_SECONDS`
 - OAuth redirect URI must include:
   - `<API_BASE_URL>/api/integrations/google/business-profile/connect/callback`
+- Business Profile connect flow uses PKCE (`S256`) in addition to one-time state.
+- Token use is server-side only and uses lazy refresh with runtime scope validation.
+- Operator key-rotation/rewrap procedure is documented in `docs/operator-ui-and-google-auth.md`.
 - Business Profile API enablement/access approval is required in Google Cloud; OAuth setup alone is not sufficient.
 - Principal identity mapping endpoints (admin only):
   - `GET /api/businesses/{business_id}/principal-identities`

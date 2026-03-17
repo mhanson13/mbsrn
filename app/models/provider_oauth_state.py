@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -47,6 +48,8 @@ class ProviderOAuthState(Base):
     business_id: Mapped[str] = mapped_column(String(36), ForeignKey("businesses.id"), nullable=False, index=True)
     principal_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     state_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    code_verifier_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    code_verifier_key_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)

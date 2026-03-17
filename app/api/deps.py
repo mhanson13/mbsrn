@@ -411,15 +411,17 @@ def get_google_oauth_client() -> GoogleOAuthWebClient:
 
 def get_google_oauth_token_cipher() -> FernetTokenCipher:
     settings = get_settings()
-    secret = (settings.google_oauth_token_encryption_secret or "").strip()
-    key_version = settings.google_oauth_token_encryption_key_version
-    if not secret:
+    keyring = settings.google_oauth_token_encryption_keys
+    if not keyring:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google OAuth token encryption secret is not configured.",
+            detail="Google OAuth token encryption keyring is not configured.",
         )
     try:
-        return FernetTokenCipher(secret=secret, key_version=key_version)
+        return FernetTokenCipher(
+            active_key_version=settings.google_oauth_token_encryption_key_version,
+            keyring=keyring,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -691,6 +693,7 @@ def get_google_business_profile_connection_service(
             auth_audit_service=auth_audit_service,
             redirect_uri=redirect_uri,
             state_ttl_seconds=settings.google_business_profile_state_ttl_seconds,
+            refresh_skew_seconds=settings.google_oauth_refresh_skew_seconds,
         )
     except GoogleBusinessProfileConnectionConfigurationError as exc:
         raise HTTPException(

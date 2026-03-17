@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -20,6 +22,8 @@ class GoogleBusinessProfileConnectionStatusResponse(BaseModel):
     connected_at: str | None
     last_refreshed_at: str | None
     reconnect_required: bool
+    required_scopes_satisfied: bool
+    token_status: Literal["usable", "refresh_required", "reconnect_required", "insufficient_scope"]
 
 
 class GoogleBusinessProfileDisconnectResponse(BaseModel):

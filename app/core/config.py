@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -29,6 +30,8 @@ class Settings:
     google_business_profile_state_ttl_seconds: int
     google_oauth_token_encryption_secret: str | None
     google_oauth_token_encryption_key_version: str
+    google_oauth_token_encryption_keys: dict[str, str]
+    google_oauth_refresh_skew_seconds: int
     app_session_secret: str | None
     app_session_issuer: str
     app_session_audience: str
@@ -77,6 +80,29 @@ def _env_csv(name: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _env_json_object(name: str) -> dict[str, str]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{name} must be valid JSON object.") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{name} must be a JSON object mapping key versions to key material.")
+
+    normalized: dict[str, str] = {}
+    for key, value in payload.items():
+        normalized_key = str(key).strip()
+        normalized_value = str(value).strip()
+        if not normalized_key:
+            continue
+        if not normalized_value:
+            raise RuntimeError(f"{name} contains empty key material for version '{normalized_key}'.")
+        normalized[normalized_key] = normalized_value
+    return normalized
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     environment = os.getenv("ENVIRONMENT", "development")
@@ -88,6 +114,16 @@ def get_settings() -> Settings:
     google_oauth_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or os.getenv("GOOGLE_OIDC_CLIENT_SECRET")
     app_session_secret = os.getenv("APP_SESSION_SECRET")
     google_oauth_token_encryption_secret = os.getenv("GOOGLE_OAUTH_TOKEN_ENCRYPTION_SECRET") or app_session_secret
+    google_oauth_token_encryption_key_version = os.getenv("GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_VERSION", "v1").strip()
+    google_oauth_token_encryption_keys = _env_json_object("GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEYS_JSON")
+    if not google_oauth_token_encryption_keys and google_oauth_token_encryption_secret:
+        google_oauth_token_encryption_keys = {
+            google_oauth_token_encryption_key_version: google_oauth_token_encryption_secret
+        }
+    if google_oauth_token_encryption_keys and google_oauth_token_encryption_key_version not in google_oauth_token_encryption_keys:
+        raise RuntimeError(
+            "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_VERSION must exist in GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEYS_JSON."
+        )
     redis_url = os.getenv("REDIS_URL")
     api_token_hash_pepper = os.getenv("API_TOKEN_HASH_PEPPER")
     cors_allowed_origins = _env_csv("API_CORS_ALLOWED_ORIGINS")
@@ -158,7 +194,9 @@ def get_settings() -> Settings:
         google_business_profile_redirect_uri=os.getenv("GOOGLE_BUSINESS_PROFILE_REDIRECT_URI"),
         google_business_profile_state_ttl_seconds=int(os.getenv("GOOGLE_BUSINESS_PROFILE_STATE_TTL_SECONDS", "600")),
         google_oauth_token_encryption_secret=google_oauth_token_encryption_secret,
-        google_oauth_token_encryption_key_version=os.getenv("GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_VERSION", "v1"),
+        google_oauth_token_encryption_key_version=google_oauth_token_encryption_key_version,
+        google_oauth_token_encryption_keys=google_oauth_token_encryption_keys,
+        google_oauth_refresh_skew_seconds=int(os.getenv("GOOGLE_OAUTH_REFRESH_SKEW_SECONDS", "120")),
         app_session_secret=app_session_secret,
         app_session_issuer=os.getenv("APP_SESSION_ISSUER", "work-boots-console"),
         app_session_audience=os.getenv("APP_SESSION_AUDIENCE", "work-boots-api"),

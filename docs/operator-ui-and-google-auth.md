@@ -46,6 +46,7 @@ Why this separation matters:
 
 `provider_oauth_states`
 - Stores one-time, expiring OAuth `state` hashes for replay-resistant callback handling.
+- Stores encrypted PKCE `code_verifier` material bound to the same principal/business scope.
 
 `provider_connections`
 - Stores tenant-scoped provider connection metadata and encrypted OAuth tokens for API integrations.
@@ -72,18 +73,20 @@ Business Profile authorization endpoints:
 ## Google Business Profile Connect Flow
 
 1. Authenticated user calls `POST /api/integrations/google/business-profile/connect/start`.
-2. API validates tenant/principal context, generates one-time `state`, and returns Google authorization URL.
+2. API validates tenant/principal context, generates one-time `state`, generates PKCE verifier/challenge, and returns Google authorization URL.
 3. User grants consent for `https://www.googleapis.com/auth/business.manage`.
 4. Google redirects to configured callback URI with `code` + `state`.
-5. API validates `state`, exchanges code server-side, and persists encrypted provider credentials.
+5. API validates `state`, decrypts stored PKCE verifier, exchanges code server-side (with verifier), and persists encrypted provider credentials.
 6. API integration calls can later use stored credentials and refresh tokens server-side.
 
 Security controls in this flow:
 - one-time state hash persistence with TTL and consume-on-callback behavior
+- PKCE (`S256`) challenge on start + verifier replay in callback token exchange
 - fixed, server-configured redirect URI
 - no access/refresh token exposure in browser API responses
 - encrypted token persistence at rest
-- token encryption key version persisted with provider credentials for future key rotation compatibility
+- token encryption key version persisted with provider credentials for key rotation compatibility
+- keyring-based decrypt/encrypt behavior (active encryption key + optional legacy decrypt keys)
 - denial/missing-refresh/replay/refresh-failure handling with auth audit events
 
 ## UI Scope (Initial Operator Surface)
@@ -113,9 +116,11 @@ Business Profile authorization (new integration connect flow):
 - `GOOGLE_OAUTH_CLIENT_ID`
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 - `GOOGLE_BUSINESS_PROFILE_REDIRECT_URI`
-- `GOOGLE_OAUTH_TOKEN_ENCRYPTION_SECRET`
 - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_VERSION`
+- `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEYS_JSON`
+- `GOOGLE_OAUTH_TOKEN_ENCRYPTION_SECRET` (single-key fallback only)
 - `GOOGLE_BUSINESS_PROFILE_STATE_TTL_SECONDS`
+- `GOOGLE_OAUTH_REFRESH_SKEW_SECONDS`
 
 `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` default to the OIDC values when omitted, but dedicated OAuth client credentials are recommended for production clarity.
 
@@ -129,6 +134,75 @@ Before connect flow can succeed in a real environment:
 - Confirm your Google account/project has required Business Profile API access/approval.
 
 If API access is not enabled/approved, OAuth may succeed but downstream Business Profile API calls will fail.
+
+## Token Lifecycle Hardening
+
+### Keyring-Based Token Encryption
+
+- Provider tokens are encrypted with a symmetric keyring abstraction.
+- Config model:
+  - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_VERSION`: active write key version.
+  - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEYS_JSON`: mapping of `key_version -> key_material`.
+- Encryption always uses the active key version.
+- Decryption requires `token_key_version` stored with each credential row and fails closed when that key version is not present.
+- `GOOGLE_OAUTH_TOKEN_ENCRYPTION_SECRET` is a backward-compatible single-key fallback when keyring JSON is not configured.
+
+### PKCE In Connect Flow
+
+- Connect/start generates a PKCE `code_verifier` and derives an `S256` `code_challenge`.
+- Authorization URL includes `code_challenge` and `code_challenge_method=S256`.
+- The verifier is encrypted in `provider_oauth_states` and bound to the one-time state record.
+- Callback decrypts the verifier and includes it in server-side token exchange.
+- Google validates verifier/challenge relationship during token exchange.
+
+### Lazy Refresh On Token Use
+
+- Future Google API calls should use `GoogleBusinessProfileConnectionService.get_access_token_for_use(...)`.
+- Token use behavior:
+  - loads active business-scoped provider connection
+  - validates required scopes
+  - refreshes synchronously when token is expired or within `GOOGLE_OAUTH_REFRESH_SKEW_SECONDS`
+  - persists refreshed token material, expiry, refresh metadata, and active key version
+  - returns deterministic `reconnect_required=true` when refresh fails
+- No background refresh worker is required for this stage.
+
+### Runtime Scope Validation
+
+- Scope checks are normalized and order-insensitive.
+- Required scopes are validated for every provider token-use decision.
+- Missing required scope fails closed with `token_status=insufficient_scope` and `reconnect_required=true`.
+
+### Connection Usability Contract
+
+Internal connection usability payload includes:
+- `connected`
+- `reconnect_required`
+- `refresh_token_present`
+- `expires_at`
+- `granted_scopes`
+- `required_scopes_satisfied`
+- `token_status` (`usable | refresh_required | reconnect_required | insufficient_scope`)
+
+## Operator Key Rotation And Rewrap Procedure
+
+### Rotation Procedure
+
+1. Generate a new key material value.
+2. Update `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEYS_JSON` to include both old and new key versions.
+3. Set `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_VERSION` to the new active version.
+4. Deploy the config change.
+5. Run token rewrap per tenant/business using application service method:
+   - `GoogleBusinessProfileConnectionService.rewrap_tokens_with_active_key(business_id=<...>, actor_principal_id=<admin_principal>)`
+6. Verify each rotated connection row now has `token_key_version=<new_version>`.
+7. After verification window, remove legacy key versions from the keyring JSON.
+
+### Rollback Procedure
+
+1. Keep both key versions available in `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEYS_JSON`.
+2. Revert `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_VERSION` to the previous version.
+3. Redeploy configuration.
+4. Re-run token rewrap back to the previous active version if required.
+5. Do not remove either key version until decryption + token use validates cleanly.
 
 ## Security Notes
 
