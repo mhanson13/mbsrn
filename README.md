@@ -367,6 +367,11 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 - Kustomize base is namespace-neutral; overlays own namespaces:
   - `dev` -> `work-boots-dev`
   - `prod` -> `work-boots`
+- Pilot default workload sizing (current baseline):
+  - API deployment: requests `250m` CPU / `512Mi` memory, limits `750m` CPU / `1Gi` memory
+  - UI deployment: requests `100m` CPU / `256Mi` memory, limits `500m` CPU / `512Mi` memory
+  - pre-rollout Alembic migration Job: requests `100m` CPU / `256Mi` memory, limits `250m` CPU / `512Mi` memory
+- For GKE Autopilot, workload cost is primarily driven by Pod resource requests; keep requests conservative and revisit after pilot usage is observed.
 - CI/CD workflows are under `.github/workflows`:
   - `backend-ci.yml`
   - `frontend-ci.yml`

@@ -83,6 +83,13 @@ Completed:
 - CI and deploy flows treat Alembic migrations as authoritative
 - migration checks executed before rollout
 
+### 9) Pilot Kubernetes Resource Sizing Baseline
+Completed:
+- API/UI deployment resources were right-sized for pilot defaults in `infra/k8s/base` with conservative requests and bounded limits.
+- Pre-rollout Alembic migration Job resources were explicitly set in `deploy-gke.yml` to avoid oversized implicit defaults.
+- Autopilot sizing assumption is explicit: Pod requests are the primary cost driver, so requests should be revisited after real pilot utilization data is available.
+- No autoscaling framework changes were introduced in this pass; revisit HPA only after pilot usage data is collected.
+
 ## Remaining Phase 4 Work Before Pilot
 
 ### A) Redis Runtime Validation In Real Deployment Environments
@@ -146,6 +153,7 @@ Use this checklist as the required signoff gate to mark Phase 4 complete.
 - [ ] API security headers validated through ingress (CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS as configured).
 - [ ] TLS termination and certificate posture validated at ingress.
 - [ ] Deployment flow validated end-to-end (build -> migration gate -> rollout -> rollout status).
+- [ ] API/UI/migration Job resource requests are reviewed against observed pilot Pod usage and adjusted as needed.
 - [ ] Pilot secrets/config populated and reviewed (session secret, Google OIDC client ID, API token hash pepper, Redis URL).
 - [ ] Required GitHub branch protection checks enabled for backend CI, frontend CI, and deploy workflow.
 

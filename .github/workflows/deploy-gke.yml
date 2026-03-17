@@ -200,6 +200,13 @@ jobs:
                   - name: migrate
                     image: ${API_IMAGE}
                     command: ["alembic", "upgrade", "head"]
+                    resources:
+                      requests:
+                        cpu: "100m"
+                        memory: "256Mi"
+                      limits:
+                        cpu: "250m"
+                        memory: "512Mi"
                     envFrom:
                       - configMapRef:
                           name: work-boots-config
