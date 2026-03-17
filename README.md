@@ -371,6 +371,9 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `backend-ci.yml`
   - `frontend-ci.yml`
   - `deploy-gke.yml`
+- JavaScript-based action runtime readiness:
+  - CI workflows (`backend-ci.yml`, `frontend-ci.yml`) opt in to Node 24 action-runtime testing via `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`.
+  - The deploy workflow keeps runtime forcing disabled while `azure/setup-kubectl@v4` remains on a Node 20 action runtime.
 - `backend-ci.yml` runs backend validation:
   - dependency install
   - `ruff` (scoped)
