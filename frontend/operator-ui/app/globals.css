@@ -112,3 +112,54 @@ code {
   border-radius: 999px;
   background: #fff;
 }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.badge-success {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.badge-warn {
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+
+.badge-error {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
+.badge-muted {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.hint.warning {
+  color: #92400e;
+}
+
+.hint.error {
+  color: #991b1b;
+}
+
+.hint.muted {
+  color: #475569;
+}

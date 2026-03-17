@@ -12,6 +12,7 @@ const links = [
   { href: "/competitors", label: "Competitors" },
   { href: "/recommendations", label: "Recommendations" },
   { href: "/automation", label: "Automation" },
+  { href: "/business-profile", label: "Business Profile" },
 ];
 
 export function NavShell({ children }: { children: React.ReactNode }) {

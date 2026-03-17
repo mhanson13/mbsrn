@@ -502,6 +502,41 @@ class GoogleBusinessProfileConnectionService:
         self.session.commit()
         return True
 
+    def rewrap_all_tokens_with_active_key(self) -> int:
+        connections = self.provider_connection_repository.list_for_provider(provider=self.PROVIDER)
+        rewrapped_count = 0
+        for connection in connections:
+            if connection.token_key_version == self.token_cipher.active_key_version:
+                continue
+
+            access_plaintext: str | None = None
+            refresh_plaintext: str | None = None
+            try:
+                if connection.access_token_encrypted:
+                    access_plaintext = self.token_cipher.decrypt(
+                        connection.access_token_encrypted,
+                        key_version=connection.token_key_version,
+                    )
+                if connection.refresh_token_encrypted:
+                    refresh_plaintext = self.token_cipher.decrypt(
+                        connection.refresh_token_encrypted,
+                        key_version=connection.token_key_version,
+                    )
+                if access_plaintext:
+                    connection.access_token_encrypted = self.token_cipher.encrypt(access_plaintext)
+                if refresh_plaintext:
+                    connection.refresh_token_encrypted = self.token_cipher.encrypt(refresh_plaintext)
+            except TokenCipherError as exc:
+                raise GoogleBusinessProfileConnectionConfigurationError(
+                    "Unable to rewrap all stored Google provider credentials with active key version."
+                ) from exc
+
+            connection.token_key_version = self.token_cipher.active_key_version
+            self.provider_connection_repository.save(connection)
+            rewrapped_count += 1
+        self.session.commit()
+        return rewrapped_count
+
     def revoke_or_disconnect_provider(
         self,
         *,

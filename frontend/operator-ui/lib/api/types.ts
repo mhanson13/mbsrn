@@ -103,3 +103,89 @@ export interface AutomationRunListResponse {
   items: AutomationRun[];
   total: number;
 }
+
+export type GoogleBusinessProfileTokenStatus =
+  | "usable"
+  | "refresh_required"
+  | "reconnect_required"
+  | "insufficient_scope";
+
+export interface GoogleBusinessProfileConnectionStatusResponse {
+  provider: string;
+  connected: boolean;
+  business_id: string;
+  granted_scopes: string[];
+  refresh_token_present: boolean;
+  expires_at: string | null;
+  connected_at: string | null;
+  last_refreshed_at: string | null;
+  reconnect_required: boolean;
+  required_scopes_satisfied: boolean;
+  token_status: GoogleBusinessProfileTokenStatus;
+}
+
+export interface GoogleBusinessProfileConnectStartResponse {
+  authorization_url: string;
+  state_expires_at: string;
+  provider: string;
+  required_scope: string;
+}
+
+export interface GoogleBusinessProfileDisconnectResponse {
+  status: string;
+  connection: GoogleBusinessProfileConnectionStatusResponse;
+}
+
+export type GoogleBusinessProfileStateSummary = "verified" | "unverified" | "pending" | "unknown";
+export type GoogleBusinessProfileNextAction =
+  | "none"
+  | "start_verification"
+  | "complete_pending"
+  | "resolve_access"
+  | "reconnect_google";
+
+export interface GoogleBusinessProfileVerificationRecord {
+  name: string | null;
+  method: string | null;
+  state: string | null;
+  create_time: string | null;
+  complete_time: string | null;
+}
+
+export interface GoogleBusinessProfileLocationVerification {
+  has_voice_of_merchant: boolean | null;
+  state_summary: GoogleBusinessProfileStateSummary;
+  verification_methods: string[];
+  verifications: GoogleBusinessProfileVerificationRecord[];
+  recommended_next_action: GoogleBusinessProfileNextAction;
+}
+
+export interface GoogleBusinessProfileLocation {
+  location_id: string;
+  title: string;
+  address: string | null;
+  verification: GoogleBusinessProfileLocationVerification;
+}
+
+export interface GoogleBusinessProfileAccount {
+  account_id: string;
+  account_name: string;
+  locations: GoogleBusinessProfileLocation[];
+}
+
+export interface GoogleBusinessProfileAccountsResponse {
+  accounts: GoogleBusinessProfileAccount[];
+}
+
+export interface GoogleBusinessProfileFlatLocation {
+  account_id: string;
+  account_name: string;
+  location_id: string;
+  title: string;
+  address: string | null;
+  verification: GoogleBusinessProfileLocationVerification;
+}
+
+export interface GoogleBusinessProfileLocationsResponse {
+  locations: GoogleBusinessProfileFlatLocation[];
+}

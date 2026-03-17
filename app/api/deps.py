@@ -18,6 +18,7 @@ from app.integrations import (
     DevEmailProvider,
     DevSMSProvider,
     EmailProvider,
+    GoogleBusinessProfileClient,
     MockSEOCompetitorComparisonSummaryProvider,
     MockSEORecommendationNarrativeProvider,
     MockSEOAuditSummaryProvider,
@@ -61,6 +62,7 @@ from app.services.google_business_profile_connection import (
     GoogleBusinessProfileConnectionConfigurationError,
     GoogleBusinessProfileConnectionService,
 )
+from app.services.google_business_profile_service import GoogleBusinessProfileService
 from app.services.lead_intake import LeadIntakeService
 from app.services.lifecycle import LeadLifecycleService
 from app.services.notifications import NotificationDispatchService
@@ -429,6 +431,16 @@ def get_google_oauth_token_cipher() -> FernetTokenCipher:
         ) from exc
 
 
+def get_google_business_profile_client() -> GoogleBusinessProfileClient:
+    settings = get_settings()
+    return GoogleBusinessProfileClient(
+        account_api_base_url=settings.google_business_profile_account_api_base_url,
+        business_information_api_base_url=settings.google_business_profile_business_information_api_base_url,
+        verifications_api_base_url=settings.google_business_profile_verifications_api_base_url,
+        timeout_seconds=settings.google_business_profile_api_timeout_seconds,
+    )
+
+
 def get_session_token_service() -> AppSessionTokenService | None:
     settings = get_settings()
     secret = (settings.app_session_secret or "").strip()
@@ -700,6 +712,16 @@ def get_google_business_profile_connection_service(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
+
+
+def get_google_business_profile_service(
+    connection_service: GoogleBusinessProfileConnectionService = Depends(get_google_business_profile_connection_service),
+    client: GoogleBusinessProfileClient = Depends(get_google_business_profile_client),
+) -> GoogleBusinessProfileService:
+    return GoogleBusinessProfileService(
+        connection_service=connection_service,
+        client=client,
+    )
 
 
 def _client_ip(request: Request) -> str:

@@ -32,3 +32,14 @@ class ProviderConnectionRepository:
             .where(ProviderConnection.provider == provider)
         )
         return self.session.scalar(stmt)
+
+    def list_for_provider(
+        self,
+        *,
+        provider: str,
+    ) -> list[ProviderConnection]:
+        stmt: Select[tuple[ProviderConnection]] = (
+            select(ProviderConnection)
+            .where(ProviderConnection.provider == provider)
+        )
+        return list(self.session.scalars(stmt))

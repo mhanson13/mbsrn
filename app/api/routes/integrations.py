@@ -6,13 +6,21 @@ from app.api.deps import (
     TenantContext,
     get_authenticated_principal,
     get_google_business_profile_connection_service,
+    get_google_business_profile_service,
     get_tenant_context,
 )
 from app.models.principal import Principal
 from app.schemas.google_business_profile import (
+    GoogleBusinessProfileAccountsResponse,
+    GoogleBusinessProfileAccountResponse,
     GoogleBusinessProfileConnectionStatusResponse,
     GoogleBusinessProfileConnectStartResponse,
     GoogleBusinessProfileDisconnectResponse,
+    GoogleBusinessProfileFlatLocationResponse,
+    GoogleBusinessProfileLocationResponse,
+    GoogleBusinessProfileLocationsResponse,
+    GoogleBusinessProfileLocationVerificationResponse,
+    GoogleBusinessProfileVerificationRecordResponse,
 )
 from app.services.google_business_profile_connection import (
     GoogleBusinessProfileConnectionConfigurationError,
@@ -20,6 +28,17 @@ from app.services.google_business_profile_connection import (
     GoogleBusinessProfileConnectionService,
     GoogleBusinessProfileConnectionStatusResult,
     GoogleBusinessProfileConnectionValidationError,
+)
+from app.services.google_business_profile_service import (
+    GoogleBusinessProfileAccountResult,
+    GoogleBusinessProfileAccountsResult,
+    GoogleBusinessProfileFlatLocationResult,
+    GoogleBusinessProfileLocationResult,
+    GoogleBusinessProfileLocationsResult,
+    GoogleBusinessProfileService,
+    GoogleBusinessProfileServiceError,
+    GoogleBusinessProfileVerificationRecordResult,
+    GoogleBusinessProfileVerificationResult,
 )
 
 router = APIRouter(prefix="/api/integrations/google/business-profile", tags=["integrations"])
@@ -121,6 +140,67 @@ def disconnect_google_business_profile(
     )
 
 
+@router.get("/accounts", response_model=GoogleBusinessProfileAccountsResponse)
+def list_google_business_profile_accounts(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    _: Principal = Depends(get_authenticated_principal),
+    service: GoogleBusinessProfileService = Depends(get_google_business_profile_service),
+) -> GoogleBusinessProfileAccountsResponse:
+    try:
+        result = service.list_accounts(business_id=tenant_context.business_id)
+    except GoogleBusinessProfileServiceError as exc:
+        detail: str | dict[str, object] = str(exc)
+        if exc.reconnect_required:
+            detail = {
+                "message": str(exc),
+                "reconnect_required": True,
+            }
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+    return _to_accounts_response(result)
+
+
+@router.get("/locations", response_model=GoogleBusinessProfileLocationsResponse)
+def list_google_business_profile_locations(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    _: Principal = Depends(get_authenticated_principal),
+    service: GoogleBusinessProfileService = Depends(get_google_business_profile_service),
+) -> GoogleBusinessProfileLocationsResponse:
+    try:
+        result = service.list_locations(business_id=tenant_context.business_id)
+    except GoogleBusinessProfileServiceError as exc:
+        detail: str | dict[str, object] = str(exc)
+        if exc.reconnect_required:
+            detail = {
+                "message": str(exc),
+                "reconnect_required": True,
+            }
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+    return _to_locations_response(result)
+
+
+@router.get("/locations/{location_id}/verification", response_model=GoogleBusinessProfileLocationVerificationResponse)
+def get_google_business_profile_location_verification(
+    location_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    _: Principal = Depends(get_authenticated_principal),
+    service: GoogleBusinessProfileService = Depends(get_google_business_profile_service),
+) -> GoogleBusinessProfileLocationVerificationResponse:
+    try:
+        result = service.get_location_verification(
+            business_id=tenant_context.business_id,
+            location_id=location_id,
+        )
+    except GoogleBusinessProfileServiceError as exc:
+        detail: str | dict[str, object] = str(exc)
+        if exc.reconnect_required:
+            detail = {
+                "message": str(exc),
+                "reconnect_required": True,
+            }
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+    return _to_verification_response(result)
+
+
 def _to_connection_response(
     result: GoogleBusinessProfileConnectionStatusResult,
 ) -> GoogleBusinessProfileConnectionStatusResponse:
@@ -136,4 +216,80 @@ def _to_connection_response(
         reconnect_required=result.reconnect_required,
         required_scopes_satisfied=result.required_scopes_satisfied,
         token_status=result.token_status,
+    )
+
+
+def _to_accounts_response(result: GoogleBusinessProfileAccountsResult) -> GoogleBusinessProfileAccountsResponse:
+    return GoogleBusinessProfileAccountsResponse(
+        accounts=[
+            _to_account_response(account)
+            for account in result.accounts
+        ]
+    )
+
+
+def _to_account_response(result: GoogleBusinessProfileAccountResult) -> GoogleBusinessProfileAccountResponse:
+    return GoogleBusinessProfileAccountResponse(
+        account_id=result.account_id,
+        account_name=result.account_name,
+        locations=[
+            _to_location_response(location)
+            for location in result.locations
+        ],
+    )
+
+
+def _to_location_response(result: GoogleBusinessProfileLocationResult) -> GoogleBusinessProfileLocationResponse:
+    return GoogleBusinessProfileLocationResponse(
+        location_id=result.location_id,
+        title=result.title,
+        address=result.address,
+        verification=_to_verification_response(result.verification),
+    )
+
+
+def _to_locations_response(result: GoogleBusinessProfileLocationsResult) -> GoogleBusinessProfileLocationsResponse:
+    return GoogleBusinessProfileLocationsResponse(
+        locations=[
+            _to_flat_location_response(location)
+            for location in result.locations
+        ]
+    )
+
+
+def _to_flat_location_response(result: GoogleBusinessProfileFlatLocationResult) -> GoogleBusinessProfileFlatLocationResponse:
+    return GoogleBusinessProfileFlatLocationResponse(
+        account_id=result.account_id,
+        account_name=result.account_name,
+        location_id=result.location_id,
+        title=result.title,
+        address=result.address,
+        verification=_to_verification_response(result.verification),
+    )
+
+
+def _to_verification_response(
+    result: GoogleBusinessProfileVerificationResult,
+) -> GoogleBusinessProfileLocationVerificationResponse:
+    return GoogleBusinessProfileLocationVerificationResponse(
+        has_voice_of_merchant=result.has_voice_of_merchant,
+        state_summary=result.state_summary,
+        verification_methods=list(result.verification_methods),
+        verifications=[
+            _to_verification_record_response(item)
+            for item in result.verifications
+        ],
+        recommended_next_action=result.recommended_next_action,
+    )
+
+
+def _to_verification_record_response(
+    result: GoogleBusinessProfileVerificationRecordResult,
+) -> GoogleBusinessProfileVerificationRecordResponse:
+    return GoogleBusinessProfileVerificationRecordResponse(
+        name=result.name,
+        method=result.method,
+        state=result.state,
+        create_time=result.create_time,
+        complete_time=result.complete_time,
     )

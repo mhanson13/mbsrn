@@ -34,6 +34,10 @@ from app.integrations.google_oauth import (
     GoogleOAuthTokenResponse,
     GoogleOAuthWebClient,
 )
+from app.integrations.google_business_profile import (
+    GoogleBusinessProfileAPIError,
+    GoogleBusinessProfileClient,
+)
 
 __all__ = [
     "DevEmailProvider",
@@ -61,5 +65,7 @@ __all__ = [
     "GoogleOAuthError",
     "GoogleOAuthTokenResponse",
     "GoogleOAuthWebClient",
+    "GoogleBusinessProfileAPIError",
+    "GoogleBusinessProfileClient",
     "TwilioSMSProvider",
 ]

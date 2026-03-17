@@ -6,6 +6,12 @@ import type {
   CompetitorSetListResponse,
   RecommendationListResponse,
   AutomationRunListResponse,
+  GoogleBusinessProfileAccountsResponse,
+  GoogleBusinessProfileConnectionStatusResponse,
+  GoogleBusinessProfileConnectStartResponse,
+  GoogleBusinessProfileDisconnectResponse,
+  GoogleBusinessProfileLocationsResponse,
+  GoogleBusinessProfileLocationVerification,
 } from "./types";
 
 async function apiRequest<T>(
@@ -106,6 +112,67 @@ export async function fetchAutomationRuns(
 ): Promise<AutomationRunListResponse> {
   return apiRequest<AutomationRunListResponse>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/automation-runs`,
+    { token },
+  );
+}
+
+export async function fetchGoogleBusinessProfileConnection(
+  token: string,
+): Promise<GoogleBusinessProfileConnectionStatusResponse> {
+  return apiRequest<GoogleBusinessProfileConnectionStatusResponse>(
+    "/api/integrations/google/business-profile/connection",
+    { token },
+  );
+}
+
+export async function startGoogleBusinessProfileConnect(
+  token: string,
+): Promise<GoogleBusinessProfileConnectStartResponse> {
+  return apiRequest<GoogleBusinessProfileConnectStartResponse>(
+    "/api/integrations/google/business-profile/connect/start",
+    {
+      method: "POST",
+      token,
+    },
+  );
+}
+
+export async function disconnectGoogleBusinessProfile(
+  token: string,
+): Promise<GoogleBusinessProfileDisconnectResponse> {
+  return apiRequest<GoogleBusinessProfileDisconnectResponse>(
+    "/api/integrations/google/business-profile/disconnect",
+    {
+      method: "POST",
+      token,
+    },
+  );
+}
+
+export async function fetchGoogleBusinessProfileAccounts(
+  token: string,
+): Promise<GoogleBusinessProfileAccountsResponse> {
+  return apiRequest<GoogleBusinessProfileAccountsResponse>(
+    "/api/integrations/google/business-profile/accounts",
+    { token },
+  );
+}
+
+export async function fetchGoogleBusinessProfileLocations(
+  token: string,
+): Promise<GoogleBusinessProfileLocationsResponse> {
+  return apiRequest<GoogleBusinessProfileLocationsResponse>(
+    "/api/integrations/google/business-profile/locations",
+    { token },
+  );
+}
+
+export async function fetchGoogleBusinessProfileLocationVerification(
+  token: string,
+  locationId: string,
+): Promise<GoogleBusinessProfileLocationVerification> {
+  return apiRequest<GoogleBusinessProfileLocationVerification>(
+    `/api/integrations/google/business-profile/locations/${locationId}/verification`,
     { token },
   );
 }

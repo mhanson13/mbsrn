@@ -293,6 +293,9 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `GET /api/integrations/google/business-profile/connect/callback`
   - `GET /api/integrations/google/business-profile/connection`
   - `POST /api/integrations/google/business-profile/disconnect`
+  - `GET /api/integrations/google/business-profile/accounts`
+  - `GET /api/integrations/google/business-profile/locations`
+  - `GET /api/integrations/google/business-profile/locations/{location_id}/verification`
 - Stable connection status payload:
   - `provider`
   - `connected`
@@ -316,12 +319,20 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_SECRET` (single-key fallback only)
   - `GOOGLE_BUSINESS_PROFILE_STATE_TTL_SECONDS`
   - `GOOGLE_OAUTH_REFRESH_SKEW_SECONDS`
+  - `GOOGLE_BUSINESS_PROFILE_ACCOUNT_API_BASE_URL` (optional override)
+  - `GOOGLE_BUSINESS_PROFILE_BUSINESS_INFORMATION_API_BASE_URL` (optional override)
+  - `GOOGLE_BUSINESS_PROFILE_VERIFICATIONS_API_BASE_URL` (optional override)
+  - `GOOGLE_BUSINESS_PROFILE_API_TIMEOUT_SECONDS` (optional override)
 - OAuth redirect URI must include:
   - `<API_BASE_URL>/api/integrations/google/business-profile/connect/callback`
 - Business Profile connect flow uses PKCE (`S256`) in addition to one-time state.
 - Token use is server-side only and uses lazy refresh with runtime scope validation.
 - Operator key-rotation/rewrap procedure is documented in `docs/operator-ui-and-google-auth.md`.
 - Business Profile API enablement/access approval is required in Google Cloud; OAuth setup alone is not sufficient.
+- Google APIs required for read-only integration:
+  - Business Profile Account Management API
+  - Business Profile Business Information API
+  - Business Profile Verifications API
 - Principal identity mapping endpoints (admin only):
   - `GET /api/businesses/{business_id}/principal-identities`
   - `POST /api/businesses/{business_id}/principal-identities`

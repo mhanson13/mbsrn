@@ -1007,6 +1007,81 @@ def test_google_business_profile_rewrap_tokens_with_active_key_version(
     ) == "legacy-refresh-token"
 
 
+def test_google_business_profile_rewrap_all_tokens_with_active_key_version(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_auth_env(monkeypatch, default_business_id=seeded_business.id)
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="admin-rotate-all-a")
+
+    other_business = Business(
+        id=str(uuid4()),
+        name="Rotate All Business",
+        notification_phone="+13035558888",
+        notification_email="owner@rotate-all.example",
+        sms_enabled=True,
+        email_enabled=True,
+        customer_auto_ack_enabled=True,
+        contractor_alerts_enabled=True,
+    )
+    db_session.add(other_business)
+    db_session.commit()
+    _seed_principal(db_session, business_id=other_business.id, principal_id="admin-rotate-all-b")
+
+    legacy_cipher = FernetTokenCipher(active_key_version="v1", keyring={"v1": "legacy-key"})
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="admin-rotate-all-a",
+        cipher=legacy_cipher,
+        token_key_version="v1",
+        granted_scopes="https://www.googleapis.com/auth/business.manage",
+        access_token="legacy-access-a",
+        refresh_token="legacy-refresh-a",
+        expires_at_offset_seconds=3600,
+    )
+    _seed_provider_connection(
+        db_session,
+        business_id=other_business.id,
+        principal_id="admin-rotate-all-b",
+        cipher=legacy_cipher,
+        token_key_version="v1",
+        granted_scopes="https://www.googleapis.com/auth/business.manage",
+        access_token="legacy-access-b",
+        refresh_token="legacy-refresh-b",
+        expires_at_offset_seconds=3600,
+    )
+
+    active_cipher = FernetTokenCipher(
+        active_key_version="v2",
+        keyring={
+            "v1": "legacy-key",
+            "v2": "active-key",
+        },
+    )
+    service = _make_google_business_profile_service(
+        db_session,
+        oauth_client=_StubGoogleOAuthClient(),
+        token_cipher=active_cipher,
+    )
+
+    rewrapped = service.rewrap_all_tokens_with_active_key()
+    assert rewrapped == 2
+
+    rows = (
+        db_session.query(ProviderConnection)
+        .filter(ProviderConnection.provider == "google_business_profile")
+        .order_by(ProviderConnection.business_id.asc())
+        .all()
+    )
+    assert len(rows) == 2
+    for row in rows:
+        assert row.token_key_version == "v2"
+        assert row.access_token_encrypted is not None
+        assert row.refresh_token_encrypted is not None
+
+
 def test_google_business_profile_get_access_token_for_use_unexpired_token_path(
     db_session,
     seeded_business,

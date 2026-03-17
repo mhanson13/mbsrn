@@ -70,6 +70,11 @@ Business Profile authorization endpoints:
 - `GET /api/integrations/google/business-profile/connection`
 - `POST /api/integrations/google/business-profile/disconnect`
 
+Business Profile read-only integration endpoints:
+- `GET /api/integrations/google/business-profile/accounts`
+- `GET /api/integrations/google/business-profile/locations`
+- `GET /api/integrations/google/business-profile/locations/{location_id}/verification`
+
 ## Google Business Profile Connect Flow
 
 1. Authenticated user calls `POST /api/integrations/google/business-profile/connect/start`.
@@ -98,6 +103,7 @@ Implemented pages:
 - Competitor intelligence sets
 - Recommendations
 - Automation run history
+- Google Business Profile (connection state + verification status badges)
 
 The UI uses a typed API client and environment-based API configuration:
 - `NEXT_PUBLIC_API_BASE_URL`
@@ -121,6 +127,10 @@ Business Profile authorization (new integration connect flow):
 - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_SECRET` (single-key fallback only)
 - `GOOGLE_BUSINESS_PROFILE_STATE_TTL_SECONDS`
 - `GOOGLE_OAUTH_REFRESH_SKEW_SECONDS`
+- `GOOGLE_BUSINESS_PROFILE_ACCOUNT_API_BASE_URL` (optional override)
+- `GOOGLE_BUSINESS_PROFILE_BUSINESS_INFORMATION_API_BASE_URL` (optional override)
+- `GOOGLE_BUSINESS_PROFILE_VERIFICATIONS_API_BASE_URL` (optional override)
+- `GOOGLE_BUSINESS_PROFILE_API_TIMEOUT_SECONDS` (optional override)
 
 `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` default to the OIDC values when omitted, but dedicated OAuth client credentials are recommended for production clarity.
 
@@ -128,6 +138,10 @@ Business Profile authorization (new integration connect flow):
 
 Before connect flow can succeed in a real environment:
 - Enable Business Profile related APIs in the Google Cloud project used by your OAuth client.
+- Required APIs:
+  - Business Profile Account Management API
+  - Business Profile Business Information API
+  - Business Profile Verifications API
 - Configure OAuth consent screen and app publishing/test-user policy as required by your org and Google policy.
 - Ensure OAuth client redirect URI includes:
   - `<API_BASE_URL>/api/integrations/google/business-profile/connect/callback`
@@ -164,6 +178,7 @@ If API access is not enabled/approved, OAuth may succeed but downstream Business
   - refreshes synchronously when token is expired or within `GOOGLE_OAUTH_REFRESH_SKEW_SECONDS`
   - persists refreshed token material, expiry, refresh metadata, and active key version
   - returns deterministic `reconnect_required=true` when refresh fails
+- Phase 5 GBP read-only service calls this accessor before every Google API request.
 - No background refresh worker is required for this stage.
 
 ### Runtime Scope Validation
@@ -183,6 +198,20 @@ Internal connection usability payload includes:
 - `required_scopes_satisfied`
 - `token_status` (`usable | refresh_required | reconnect_required | insufficient_scope`)
 
+### Phase 5 Verification Mapping Contract
+
+- GBP read-only service normalizes Google payloads into account/location objects with verification summary:
+  - `verified` when Voice of Merchant confirms verification
+  - `pending` when verification state is pending/in-progress
+  - `unverified` when no active verification exists
+  - `unknown` when Google API responses are ambiguous or error-prone
+- Next-action hints:
+  - `none`
+  - `start_verification`
+  - `complete_pending`
+  - `resolve_access`
+  - `reconnect_google`
+
 ## Operator Key Rotation And Rewrap Procedure
 
 ### Rotation Procedure
@@ -191,8 +220,11 @@ Internal connection usability payload includes:
 2. Update `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEYS_JSON` to include both old and new key versions.
 3. Set `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_VERSION` to the new active version.
 4. Deploy the config change.
-5. Run token rewrap per tenant/business using application service method:
-   - `GoogleBusinessProfileConnectionService.rewrap_tokens_with_active_key(business_id=<...>, actor_principal_id=<admin_principal>)`
+5. Run token rewrap:
+   - Per business:
+     - `GoogleBusinessProfileConnectionService.rewrap_tokens_with_active_key(business_id=<...>, actor_principal_id=<admin_principal>)`
+   - All stored GBP provider tokens:
+     - `GoogleBusinessProfileConnectionService.rewrap_all_tokens_with_active_key()`
 6. Verify each rotated connection row now has `token_key_version=<new_version>`.
 7. After verification window, remove legacy key versions from the keyring JSON.
 

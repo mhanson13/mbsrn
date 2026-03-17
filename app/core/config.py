@@ -28,6 +28,10 @@ class Settings:
     google_oauth_timeout_seconds: int
     google_business_profile_redirect_uri: str | None
     google_business_profile_state_ttl_seconds: int
+    google_business_profile_account_api_base_url: str
+    google_business_profile_business_information_api_base_url: str
+    google_business_profile_verifications_api_base_url: str
+    google_business_profile_api_timeout_seconds: int
     google_oauth_token_encryption_secret: str | None
     google_oauth_token_encryption_key_version: str
     google_oauth_token_encryption_keys: dict[str, str]
@@ -193,6 +197,21 @@ def get_settings() -> Settings:
         google_oauth_timeout_seconds=int(os.getenv("GOOGLE_OAUTH_TIMEOUT_SECONDS", "10")),
         google_business_profile_redirect_uri=os.getenv("GOOGLE_BUSINESS_PROFILE_REDIRECT_URI"),
         google_business_profile_state_ttl_seconds=int(os.getenv("GOOGLE_BUSINESS_PROFILE_STATE_TTL_SECONDS", "600")),
+        google_business_profile_account_api_base_url=os.getenv(
+            "GOOGLE_BUSINESS_PROFILE_ACCOUNT_API_BASE_URL",
+            "https://mybusinessaccountmanagement.googleapis.com",
+        ),
+        google_business_profile_business_information_api_base_url=os.getenv(
+            "GOOGLE_BUSINESS_PROFILE_BUSINESS_INFORMATION_API_BASE_URL",
+            "https://mybusinessbusinessinformation.googleapis.com",
+        ),
+        google_business_profile_verifications_api_base_url=os.getenv(
+            "GOOGLE_BUSINESS_PROFILE_VERIFICATIONS_API_BASE_URL",
+            "https://mybusinessverifications.googleapis.com",
+        ),
+        google_business_profile_api_timeout_seconds=int(
+            os.getenv("GOOGLE_BUSINESS_PROFILE_API_TIMEOUT_SECONDS", "10")
+        ),
         google_oauth_token_encryption_secret=google_oauth_token_encryption_secret,
         google_oauth_token_encryption_key_version=google_oauth_token_encryption_key_version,
         google_oauth_token_encryption_keys=google_oauth_token_encryption_keys,

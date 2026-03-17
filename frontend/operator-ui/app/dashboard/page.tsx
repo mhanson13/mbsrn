@@ -33,6 +33,7 @@ export default function DashboardPage() {
           <Link href="/competitors">Competitor Intelligence</Link>
           <Link href="/recommendations">Recommendations</Link>
           <Link href="/automation">Automation Runs</Link>
+          <Link href="/business-profile">Google Business Profile</Link>
         </div>
       </div>
     </section>
