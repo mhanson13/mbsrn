@@ -22,6 +22,9 @@ from app.repositories.provider_oauth_state_repository import ProviderOAuthStateR
 from app.services.auth_audit import AuthAuditService
 
 TokenUsabilityStatus = Literal["usable", "refresh_required", "reconnect_required", "insufficient_scope"]
+TokenRewrapMode = Literal["dry_run", "execute"]
+TokenRewrapScope = Literal["business", "all"]
+TokenRewrapFailureReason = Literal["missing_key_version", "decrypt_failed", "unexpected_error"]
 
 
 class GoogleBusinessProfileConnectionNotFoundError(ValueError):
@@ -80,6 +83,50 @@ class GoogleBusinessProfileTokenUseResult:
     required_scopes_satisfied: bool
     token_status: TokenUsabilityStatus
     access_token: str | None
+
+
+@dataclass(frozen=True)
+class GoogleBusinessProfileTokenRewrapFailure:
+    connection_id: str
+    reason: TokenRewrapFailureReason
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "connection_id": self.connection_id,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class GoogleBusinessProfileTokenRewrapSummary:
+    mode: TokenRewrapMode
+    scope: TokenRewrapScope
+    business_id: str | None
+    tenant_id: str | None
+    active_key_version: str
+    scanned: int
+    eligible: int
+    rewrapped: int
+    already_current: int
+    skipped: int
+    failed: int
+    failures: tuple[GoogleBusinessProfileTokenRewrapFailure, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "scope": self.scope,
+            "business_id": self.business_id,
+            "tenant_id": self.tenant_id,
+            "active_key_version": self.active_key_version,
+            "scanned": self.scanned,
+            "eligible": self.eligible,
+            "rewrapped": self.rewrapped,
+            "already_current": self.already_current,
+            "skipped": self.skipped,
+            "failed": self.failed,
+            "failures": [failure.to_dict() for failure in self.failures],
+        }
 
 
 class GoogleBusinessProfileConnectionService:
@@ -155,9 +202,7 @@ class GoogleBusinessProfileConnectionService:
         try:
             code_verifier_encrypted = self.token_cipher.encrypt(code_verifier)
         except TokenCipherError as exc:
-            raise GoogleBusinessProfileConnectionConfigurationError(
-                "Unable to encrypt OAuth PKCE verifier."
-            ) from exc
+            raise GoogleBusinessProfileConnectionConfigurationError("Unable to encrypt OAuth PKCE verifier.") from exc
 
         expires_at = utc_now() + timedelta(seconds=self.state_ttl_seconds)
         oauth_state = ProviderOAuthState(
@@ -463,27 +508,14 @@ class GoogleBusinessProfileConnectionService:
         if connection.token_key_version == self.token_cipher.active_key_version:
             return False
 
-        access_plaintext: str | None = None
-        refresh_plaintext: str | None = None
         try:
-            if connection.access_token_encrypted:
-                access_plaintext = self.token_cipher.decrypt(
-                    connection.access_token_encrypted,
-                    key_version=connection.token_key_version,
-                )
-            if connection.refresh_token_encrypted:
-                refresh_plaintext = self.token_cipher.decrypt(
-                    connection.refresh_token_encrypted,
-                    key_version=connection.token_key_version,
-                )
-            if access_plaintext:
-                connection.access_token_encrypted = self.token_cipher.encrypt(access_plaintext)
-            if refresh_plaintext:
-                connection.refresh_token_encrypted = self.token_cipher.encrypt(refresh_plaintext)
+            changed = self._rewrap_connection_tokens_in_place(connection)
         except TokenCipherError as exc:
             raise GoogleBusinessProfileConnectionConfigurationError(
                 "Unable to rewrap stored Google provider credentials with active key version."
             ) from exc
+        if not changed:
+            return False
 
         connection.token_key_version = self.token_cipher.active_key_version
         connection.updated_by_principal_id = actor_principal_id
@@ -509,23 +541,8 @@ class GoogleBusinessProfileConnectionService:
             if connection.token_key_version == self.token_cipher.active_key_version:
                 continue
 
-            access_plaintext: str | None = None
-            refresh_plaintext: str | None = None
             try:
-                if connection.access_token_encrypted:
-                    access_plaintext = self.token_cipher.decrypt(
-                        connection.access_token_encrypted,
-                        key_version=connection.token_key_version,
-                    )
-                if connection.refresh_token_encrypted:
-                    refresh_plaintext = self.token_cipher.decrypt(
-                        connection.refresh_token_encrypted,
-                        key_version=connection.token_key_version,
-                    )
-                if access_plaintext:
-                    connection.access_token_encrypted = self.token_cipher.encrypt(access_plaintext)
-                if refresh_plaintext:
-                    connection.refresh_token_encrypted = self.token_cipher.encrypt(refresh_plaintext)
+                self._rewrap_connection_tokens_in_place(connection)
             except TokenCipherError as exc:
                 raise GoogleBusinessProfileConnectionConfigurationError(
                     "Unable to rewrap all stored Google provider credentials with active key version."
@@ -536,6 +553,111 @@ class GoogleBusinessProfileConnectionService:
             rewrapped_count += 1
         self.session.commit()
         return rewrapped_count
+
+    def run_token_rewrap_job(
+        self,
+        *,
+        dry_run: bool,
+        business_id: str | None = None,
+        tenant_id: str | None = None,
+        batch_size: int = 100,
+    ) -> GoogleBusinessProfileTokenRewrapSummary:
+        if batch_size <= 0:
+            raise GoogleBusinessProfileConnectionValidationError(
+                "batch_size must be greater than zero.", status_code=400
+            )
+
+        normalized_business_id = (business_id or "").strip() or None
+        normalized_tenant_id = (tenant_id or "").strip() or None
+        if normalized_business_id and normalized_tenant_id and normalized_business_id != normalized_tenant_id:
+            raise GoogleBusinessProfileConnectionValidationError(
+                "business_id and tenant_id must match when both are provided.",
+                status_code=400,
+            )
+        if normalized_business_id is None and normalized_tenant_id is not None:
+            normalized_business_id = normalized_tenant_id
+
+        scope: TokenRewrapScope = "all"
+        if normalized_business_id is not None:
+            self._ensure_business_exists(normalized_business_id)
+            scope = "business"
+
+        mode: TokenRewrapMode = "dry_run" if dry_run else "execute"
+        scanned = 0
+        eligible = 0
+        rewrapped = 0
+        already_current = 0
+        skipped = 0
+        failures: list[GoogleBusinessProfileTokenRewrapFailure] = []
+
+        for batch in self.provider_connection_repository.iter_for_provider_batches(
+            provider=self.PROVIDER,
+            batch_size=batch_size,
+            business_id=normalized_business_id,
+            include_inactive=True,
+        ):
+            for connection in batch:
+                scanned += 1
+                if self._should_skip_rewrap(connection):
+                    skipped += 1
+                    continue
+                if connection.token_key_version == self.token_cipher.active_key_version:
+                    already_current += 1
+                    continue
+
+                eligible += 1
+                if dry_run:
+                    reason = self._dry_run_rewrap_failure_reason(connection)
+                    if reason is not None:
+                        failures.append(
+                            GoogleBusinessProfileTokenRewrapFailure(
+                                connection_id=connection.id,
+                                reason=reason,
+                            )
+                        )
+                    continue
+
+                try:
+                    changed = self._rewrap_connection_tokens_in_place(connection)
+                    if not changed:
+                        skipped += 1
+                        self.session.rollback()
+                        continue
+                    connection.token_key_version = self.token_cipher.active_key_version
+                    self.provider_connection_repository.save(connection)
+                    self.session.commit()
+                    rewrapped += 1
+                except TokenCipherError as exc:
+                    self.session.rollback()
+                    failures.append(
+                        GoogleBusinessProfileTokenRewrapFailure(
+                            connection_id=connection.id,
+                            reason=self._classify_rewrap_cipher_error(connection=connection, error=exc),
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    self.session.rollback()
+                    failures.append(
+                        GoogleBusinessProfileTokenRewrapFailure(
+                            connection_id=connection.id,
+                            reason="unexpected_error",
+                        )
+                    )
+
+        return GoogleBusinessProfileTokenRewrapSummary(
+            mode=mode,
+            scope=scope,
+            business_id=normalized_business_id,
+            tenant_id=normalized_tenant_id,
+            active_key_version=self.token_cipher.active_key_version,
+            scanned=scanned,
+            eligible=eligible,
+            rewrapped=rewrapped,
+            already_current=already_current,
+            skipped=skipped,
+            failed=len(failures),
+            failures=tuple(failures),
+        )
 
     def revoke_or_disconnect_provider(
         self,
@@ -972,6 +1094,62 @@ class GoogleBusinessProfileConnectionService:
         business = self.business_repository.get(business_id)
         if business is None:
             raise GoogleBusinessProfileConnectionNotFoundError("Business not found.")
+
+    def _should_skip_rewrap(self, connection: ProviderConnection) -> bool:
+        if not connection.is_active:
+            return True
+        if connection.disconnected_at is not None:
+            return True
+        if not connection.access_token_encrypted and not connection.refresh_token_encrypted:
+            return True
+        return False
+
+    def _rewrap_connection_tokens_in_place(self, connection: ProviderConnection) -> bool:
+        access_plaintext, refresh_plaintext = self._decrypt_connection_tokens_for_rewrap(connection)
+        if access_plaintext:
+            connection.access_token_encrypted = self.token_cipher.encrypt(access_plaintext)
+        if refresh_plaintext:
+            connection.refresh_token_encrypted = self.token_cipher.encrypt(refresh_plaintext)
+        return bool(access_plaintext or refresh_plaintext)
+
+    def _decrypt_connection_tokens_for_rewrap(self, connection: ProviderConnection) -> tuple[str | None, str | None]:
+        access_plaintext: str | None = None
+        refresh_plaintext: str | None = None
+        if connection.access_token_encrypted:
+            access_plaintext = self.token_cipher.decrypt(
+                connection.access_token_encrypted,
+                key_version=connection.token_key_version,
+            )
+        if connection.refresh_token_encrypted:
+            refresh_plaintext = self.token_cipher.decrypt(
+                connection.refresh_token_encrypted,
+                key_version=connection.token_key_version,
+            )
+        return access_plaintext, refresh_plaintext
+
+    def _dry_run_rewrap_failure_reason(self, connection: ProviderConnection) -> TokenRewrapFailureReason | None:
+        try:
+            self._decrypt_connection_tokens_for_rewrap(connection)
+            return None
+        except TokenCipherError as exc:
+            return self._classify_rewrap_cipher_error(connection=connection, error=exc)
+        except Exception:  # noqa: BLE001
+            return "unexpected_error"
+
+    def _classify_rewrap_cipher_error(
+        self,
+        *,
+        connection: ProviderConnection,
+        error: TokenCipherError,
+    ) -> TokenRewrapFailureReason:
+        normalized_key_version = (connection.token_key_version or "").strip()
+        if not normalized_key_version:
+            return "missing_key_version"
+
+        detail = str(error).lower()
+        if "key version" in detail:
+            return "missing_key_version"
+        return "decrypt_failed"
 
     def _normalize_required_scopes(self, scopes: Sequence[str] | None) -> tuple[str, ...]:
         if scopes is None:

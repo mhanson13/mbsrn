@@ -296,6 +296,11 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `GET /api/integrations/google/business-profile/accounts`
   - `GET /api/integrations/google/business-profile/locations`
   - `GET /api/integrations/google/business-profile/locations/{location_id}/verification`
+- Verification workflow support:
+  - Read endpoints plus `options`, `status`, `start`, `complete`, and `retry` are implemented.
+  - Provider behavior still governs which actions/methods are available per location.
+  - `option_id` values are opaque deterministic tokens that are backend-revalidated against current provider options.
+  - Unknown provider state/method/error values degrade to safe normalized defaults and emit structured warning logs.
 - Stable connection status payload:
   - `provider`
   - `connected`
@@ -327,6 +332,9 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
   - `<API_BASE_URL>/api/integrations/google/business-profile/connect/callback`
 - Business Profile connect flow uses PKCE (`S256`) in addition to one-time state.
 - Token use is server-side only and uses lazy refresh with runtime scope validation.
+- Verification status/options/action responses include a deterministic operator guidance object (plain-language steps, CTA, tips).
+- Guidance generation is rule-based and does not require live LLM access.
+- System guarantees are documented in [`docs/security.md#system-guarantees`](docs/security.md#system-guarantees).
 - Operator key-rotation/rewrap procedure is documented in `docs/operator-ui-and-google-auth.md`.
 - Business Profile API enablement/access approval is required in Google Cloud; OAuth setup alone is not sufficient.
 - Google APIs required for read-only integration:

@@ -143,6 +143,52 @@ export type GoogleBusinessProfileNextAction =
   | "complete_pending"
   | "resolve_access"
   | "reconnect_google";
+export type GoogleBusinessProfileGuidanceVerificationState =
+  | "verified"
+  | "unverified"
+  | "pending"
+  | "unknown"
+  | "in_progress"
+  | "completed"
+  | "failed";
+export type GoogleBusinessProfileGuidanceRecommendedAction =
+  | "verify_business"
+  | "choose_method"
+  | "enter_code"
+  | "wait_for_code"
+  | "retry_verification"
+  | "reconnect_google"
+  | "contact_support"
+  | "no_action_needed"
+  | "check_business_access"
+  | "review_business_details"
+  | "unknown";
+export type GoogleBusinessProfileGuidancePriority = "high" | "medium" | "low" | "info";
+export type GoogleBusinessProfileGuidanceCtaType =
+  | "start_verification"
+  | "choose_method"
+  | "submit_code"
+  | "reconnect"
+  | "retry"
+  | "refresh_status"
+  | "none";
+
+export interface GoogleBusinessProfileVerificationGuidance {
+  verification_state: GoogleBusinessProfileGuidanceVerificationState;
+  recommended_action: GoogleBusinessProfileGuidanceRecommendedAction;
+  priority: GoogleBusinessProfileGuidancePriority;
+  title: string;
+  summary: string;
+  instructions: string[];
+  tips: string[];
+  warnings: string[];
+  troubleshooting: string[];
+  estimated_time: string | null;
+  cta_label: string | null;
+  cta_type: GoogleBusinessProfileGuidanceCtaType;
+  recommended_method: GoogleBusinessProfileVerificationMethod | null;
+  recommendation_reason: string | null;
+}
 
 export interface GoogleBusinessProfileVerificationRecord {
   name: string | null;
@@ -158,6 +204,7 @@ export interface GoogleBusinessProfileLocationVerification {
   verification_methods: string[];
   verifications: GoogleBusinessProfileVerificationRecord[];
   recommended_next_action: GoogleBusinessProfileNextAction;
+  guidance: GoogleBusinessProfileVerificationGuidance;
 }
 
 export interface GoogleBusinessProfileLocation {
@@ -188,4 +235,98 @@ export interface GoogleBusinessProfileFlatLocation {
 
 export interface GoogleBusinessProfileLocationsResponse {
   locations: GoogleBusinessProfileFlatLocation[];
+}
+
+export type GoogleBusinessProfileVerificationWorkflowState =
+  | "unverified"
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "unknown";
+
+export type GoogleBusinessProfileVerificationActionRequired =
+  | "none"
+  | "choose_method"
+  | "enter_code"
+  | "wait"
+  | "retry"
+  | "reconnect_google"
+  | "resolve_access";
+
+export type GoogleBusinessProfileVerificationMethod =
+  | "postcard"
+  | "phone"
+  | "sms"
+  | "email"
+  | "live_call"
+  | "video"
+  | "vetted_partner"
+  | "address"
+  | "other"
+  | "unknown";
+
+export interface GoogleBusinessProfileVerificationMethodOption {
+  option_id: string;
+  method: GoogleBusinessProfileVerificationMethod;
+  provider_method: string;
+  label: string;
+  description: string | null;
+  destination: string | null;
+  requires_code: boolean;
+  eligible: boolean;
+}
+
+export interface GoogleBusinessProfileVerificationStatusCurrent {
+  verification_id: string;
+  provider_state: string | null;
+  method: GoogleBusinessProfileVerificationMethod;
+  provider_method: string;
+  create_time: string | null;
+  complete_time: string | null;
+  expires_at: string | null;
+}
+
+export interface GoogleBusinessProfileVerificationStatusResponse {
+  location_id: string;
+  verification_state: GoogleBusinessProfileVerificationWorkflowState;
+  action_required: GoogleBusinessProfileVerificationActionRequired;
+  message: string;
+  reconnect_required: boolean;
+  current_verification: GoogleBusinessProfileVerificationStatusCurrent | null;
+  available_methods: GoogleBusinessProfileVerificationMethodOption[];
+  guidance: GoogleBusinessProfileVerificationGuidance;
+}
+
+export interface GoogleBusinessProfileVerificationOptionsResponse {
+  location_id: string;
+  current_verification_state: GoogleBusinessProfileVerificationWorkflowState;
+  methods: GoogleBusinessProfileVerificationMethodOption[];
+  guidance: GoogleBusinessProfileVerificationGuidance;
+}
+
+export interface GoogleBusinessProfileStartVerificationRequest {
+  option_id?: string | null;
+  selected_method?: GoogleBusinessProfileVerificationMethod | null;
+  provider_method?: string | null;
+  destination?: string | null;
+  language_code?: string | null;
+  mailer_contact?: string | null;
+  vetted_partner_token?: string | null;
+}
+
+export interface GoogleBusinessProfileVerificationActionResponse {
+  location_id: string;
+  verification_state: GoogleBusinessProfileVerificationWorkflowState;
+  verification_id: string | null;
+  action_required: GoogleBusinessProfileVerificationActionRequired;
+  message: string;
+  expires_at: string | null;
+  status: GoogleBusinessProfileVerificationStatusResponse;
+  guidance: GoogleBusinessProfileVerificationGuidance;
+}
+
+export interface GoogleBusinessProfileCompleteVerificationRequest {
+  verification_id?: string | null;
+  code: string;
 }

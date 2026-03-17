@@ -93,6 +93,38 @@ class GoogleBusinessProfileClient:
             body={},
         )
 
+    def start_verification(
+        self,
+        *,
+        access_token: str,
+        location_resource_name: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_location = _normalize_resource_name(location_resource_name, "locations/")
+        encoded_location = quote(normalized_location, safe="/")
+        return self._request_json(
+            method="POST",
+            url=f"{self.verifications_api_base_url}/v1/{encoded_location}:verify",
+            access_token=access_token,
+            body=body,
+        )
+
+    def complete_verification(
+        self,
+        *,
+        access_token: str,
+        verification_resource_name: str,
+        pin: str,
+    ) -> dict[str, Any]:
+        normalized_verification = _normalize_resource_name(verification_resource_name, "locations/")
+        encoded_verification = quote(normalized_verification, safe="/")
+        return self._request_json(
+            method="POST",
+            url=f"{self.verifications_api_base_url}/v1/{encoded_verification}:complete",
+            access_token=access_token,
+            body={"pin": pin},
+        )
+
     def _request_json(
         self,
         *,
@@ -131,9 +163,7 @@ class GoogleBusinessProfileClient:
                 error_status=detail.error_status,
             ) from exc
         except URLError as exc:
-            raise GoogleBusinessProfileAPIError(
-                f"Google Business Profile endpoint unavailable: {exc.reason}"
-            ) from exc
+            raise GoogleBusinessProfileAPIError(f"Google Business Profile endpoint unavailable: {exc.reason}") from exc
         except Exception as exc:  # noqa: BLE001
             raise GoogleBusinessProfileAPIError("Google Business Profile request failed.") from exc
 
@@ -193,4 +223,3 @@ def _extract_error_detail(exc: HTTPError) -> _GoogleErrorDetail:
         if parsed_message:
             message = parsed_message
     return _GoogleErrorDetail(message=message, status_code=status_code, error_status=error_status)
-

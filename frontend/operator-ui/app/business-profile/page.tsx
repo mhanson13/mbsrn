@@ -4,16 +4,26 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
+  completeGoogleBusinessProfileLocationVerification,
   disconnectGoogleBusinessProfile,
   fetchGoogleBusinessProfileConnection,
   fetchGoogleBusinessProfileLocations,
+  fetchGoogleBusinessProfileVerificationStatus,
+  retryGoogleBusinessProfileLocationVerification,
   startGoogleBusinessProfileConnect,
+  startGoogleBusinessProfileLocationVerification,
 } from "../../lib/api/client";
 import type {
   GoogleBusinessProfileConnectionStatusResponse,
   GoogleBusinessProfileFlatLocation,
-  GoogleBusinessProfileNextAction,
+  GoogleBusinessProfileVerificationStatusResponse,
 } from "../../lib/api/types";
+import {
+  VerificationCodeEntry,
+  VerificationMethodsList,
+  VerificationStartAction,
+  VerificationStatusBadge,
+} from "./components";
 
 type ConnectionUiState = "connected" | "needs_reconnect" | "not_connected";
 
@@ -24,6 +34,13 @@ export default function BusinessProfilePage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [connection, setConnection] = useState<GoogleBusinessProfileConnectionStatusResponse | null>(null);
   const [locations, setLocations] = useState<GoogleBusinessProfileFlatLocation[]>([]);
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
+  const [verificationStatus, setVerificationStatus] = useState<GoogleBusinessProfileVerificationStatusResponse | null>(null);
+  const [verificationLoading, setVerificationLoading] = useState(false);
+  const [verificationActionLoading, setVerificationActionLoading] = useState(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [selectedOptionId, setSelectedOptionId] = useState<string>("");
+  const [verificationCode, setVerificationCode] = useState("");
 
   const loadData = useCallback(async () => {
     if (!context.token) {
@@ -47,6 +64,37 @@ export default function BusinessProfilePage() {
     }
   }, [context.token]);
 
+  const loadVerificationStatus = useCallback(
+    async (locationId: string) => {
+      if (!context.token) {
+        return;
+      }
+      setSelectedLocationId(locationId);
+      setVerificationLoading(true);
+      setVerificationError(null);
+      try {
+        const status = await fetchGoogleBusinessProfileVerificationStatus(context.token, locationId);
+        setVerificationStatus(status);
+        if (!selectedOptionId && status.available_methods.length > 0) {
+          setSelectedOptionId(status.available_methods[0].option_id);
+        }
+      } catch (err) {
+        setVerificationStatus(null);
+        setVerificationError(err instanceof Error ? err.message : "Failed to load verification status.");
+      } finally {
+        setVerificationLoading(false);
+      }
+    },
+    [context.token, selectedOptionId],
+  );
+
+  const refreshSelectedVerificationStatus = useCallback(async () => {
+    if (!selectedLocationId || !context.token) {
+      return;
+    }
+    await loadVerificationStatus(selectedLocationId);
+  }, [context.token, loadVerificationStatus, selectedLocationId]);
+
   useEffect(() => {
     if (context.loading || !context.token) {
       return;
@@ -63,6 +111,11 @@ export default function BusinessProfilePage() {
     }
     return "connected";
   }, [connection]);
+
+  const selectedLocation = useMemo(
+    () => locations.find((location) => location.location_id === selectedLocationId) ?? null,
+    [locations, selectedLocationId],
+  );
 
   async function handleConnect() {
     if (!context.token) {
@@ -89,10 +142,81 @@ export default function BusinessProfilePage() {
       const result = await disconnectGoogleBusinessProfile(context.token);
       setConnection(result.connection);
       setLocations([]);
+      setSelectedLocationId(null);
+      setVerificationStatus(null);
+      setVerificationError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to disconnect Google Business Profile.");
     } finally {
       setActionLoading(false);
+    }
+  }
+
+  async function handleStartVerification() {
+    if (!context.token || !selectedLocationId) {
+      return;
+    }
+    if (!selectedOptionId) {
+      setVerificationError("Select a verification method first.");
+      return;
+    }
+    setVerificationActionLoading(true);
+    setVerificationError(null);
+    try {
+      const action = await startGoogleBusinessProfileLocationVerification(context.token, selectedLocationId, {
+        option_id: selectedOptionId,
+      });
+      setVerificationStatus(action.status);
+      await loadData();
+    } catch (err) {
+      setVerificationError(err instanceof Error ? err.message : "Failed to start verification.");
+    } finally {
+      setVerificationActionLoading(false);
+    }
+  }
+
+  async function handleCompleteVerification() {
+    if (!context.token || !selectedLocationId) {
+      return;
+    }
+    const normalizedCode = verificationCode.trim();
+    if (!normalizedCode) {
+      setVerificationError("Enter the verification code.");
+      return;
+    }
+    setVerificationActionLoading(true);
+    setVerificationError(null);
+    try {
+      const action = await completeGoogleBusinessProfileLocationVerification(context.token, selectedLocationId, {
+        verification_id: verificationStatus?.current_verification?.verification_id ?? null,
+        code: normalizedCode,
+      });
+      setVerificationStatus(action.status);
+      setVerificationCode("");
+      await loadData();
+    } catch (err) {
+      setVerificationError(err instanceof Error ? err.message : "Failed to complete verification.");
+    } finally {
+      setVerificationActionLoading(false);
+    }
+  }
+
+  async function handleRetryVerification() {
+    if (!context.token || !selectedLocationId) {
+      return;
+    }
+    setVerificationActionLoading(true);
+    setVerificationError(null);
+    try {
+      const action = await retryGoogleBusinessProfileLocationVerification(context.token, selectedLocationId, {
+        option_id: selectedOptionId || undefined,
+      });
+      setVerificationStatus(action.status);
+      await loadData();
+    } catch (err) {
+      setVerificationError(err instanceof Error ? err.message : "Failed to retry verification.");
+    } finally {
+      setVerificationActionLoading(false);
     }
   }
 
@@ -155,6 +279,7 @@ export default function BusinessProfilePage() {
                 <th>Account</th>
                 <th>Status</th>
                 <th>Next action</th>
+                <th>Verification</th>
               </tr>
             </thead>
             <tbody>
@@ -172,7 +297,12 @@ export default function BusinessProfilePage() {
                     <td>
                       <span className={`badge ${badge.className}`}>{badge.label}</span>
                     </td>
-                    <td>{nextActionHint(location.verification.recommended_next_action)}</td>
+                    <td>{location.verification.guidance.cta_label ?? location.verification.guidance.title}</td>
+                    <td>
+                      <button onClick={() => void loadVerificationStatus(location.location_id)}>
+                        {selectedLocationId === location.location_id ? "Refresh status" : "Manage verification"}
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -180,6 +310,75 @@ export default function BusinessProfilePage() {
           </table>
         )}
       </div>
+
+      {selectedLocation ? (
+        <div className="panel stack">
+          <h2>Verification Workflow: {selectedLocation.title}</h2>
+          {verificationLoading ? <p className="hint muted">Loading verification workflow...</p> : null}
+          {verificationStatus ? (
+            <>
+              <p>
+                Workflow state: <VerificationStatusBadge state={verificationStatus.verification_state} />
+              </p>
+              <div className="stack" style={{ gap: "0.35rem" }}>
+                <p style={{ fontWeight: 600 }}>{verificationStatus.guidance.title}</p>
+                <p className="hint muted">{verificationStatus.guidance.summary}</p>
+                {verificationStatus.guidance.instructions.length > 0 ? (
+                  <ol style={{ margin: 0, paddingLeft: "1.1rem" }}>
+                    {verificationStatus.guidance.instructions.map((item, index) => (
+                      <li key={`instruction-${index}`}>{item}</li>
+                    ))}
+                  </ol>
+                ) : null}
+                {verificationStatus.guidance.tips.length > 0 ? (
+                  <ul style={{ margin: 0, paddingLeft: "1.1rem" }}>
+                    {verificationStatus.guidance.tips.map((item, index) => (
+                      <li key={`tip-${index}`}>{item}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {verificationStatus.guidance.warnings.length > 0 ? (
+                  <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#991b1b" }}>
+                    {verificationStatus.guidance.warnings.map((item, index) => (
+                      <li key={`warning-${index}`}>{item}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {verificationStatus.guidance.troubleshooting.length > 0 ? (
+                  <ul style={{ margin: 0, paddingLeft: "1.1rem" }}>
+                    {verificationStatus.guidance.troubleshooting.map((item, index) => (
+                      <li key={`troubleshooting-${index}`}>{item}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+              <p className="hint muted">{verificationStatus.message}</p>
+              <VerificationMethodsList
+                methods={verificationStatus.available_methods}
+                selectedOptionId={selectedOptionId}
+                onChange={setSelectedOptionId}
+                disabled={verificationActionLoading}
+              />
+              <VerificationStartAction
+                onStart={() => void handleStartVerification()}
+                onRetry={() => void handleRetryVerification()}
+                onRefresh={() => void refreshSelectedVerificationStatus()}
+                disabledStart={verificationActionLoading || !selectedOptionId}
+                disabledRetry={verificationActionLoading || verificationStatus.available_methods.length === 0}
+                disabledRefresh={verificationActionLoading}
+              />
+              <VerificationCodeEntry
+                code={verificationCode}
+                actionRequired={verificationStatus.action_required}
+                onCodeChange={setVerificationCode}
+                onSubmit={() => void handleCompleteVerification()}
+                disabled={verificationActionLoading}
+              />
+            </>
+          ) : null}
+          {verificationError ? <p className="hint error">{verificationError}</p> : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -221,20 +420,4 @@ function locationBadge(location: GoogleBusinessProfileFlatLocation): { label: st
     return { label: "Not verified", className: "badge-muted" };
   }
   return { label: "Unknown", className: "badge-muted" };
-}
-
-function nextActionHint(action: GoogleBusinessProfileNextAction): string {
-  if (action === "none") {
-    return "No action required";
-  }
-  if (action === "start_verification") {
-    return "Verify your business";
-  }
-  if (action === "complete_pending") {
-    return "Complete verification";
-  }
-  if (action === "reconnect_google") {
-    return "Reconnect Google";
-  }
-  return "Resolve access";
 }

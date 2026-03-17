@@ -1,88 +1,87 @@
-# Work Boots Console Architecture
+# Architecture
 
-## Overview
-Work Boots Console is a single FastAPI monolith focused on contractor lead intake and follow-up operations.
+## System Overview
+Work Boots is a multi-tenant platform with a FastAPI monolith and a standalone Next.js operator UI.
 
-## Repository Structure
+Primary runtime components:
+- Backend API: `app/`
+- Operator UI: `frontend/operator-ui/`
+- Kubernetes manifests: `infra/k8s/`
+- CI/CD workflows: `.github/workflows/`
+
+## API-First Design
+- The API is the system of record for business logic.
+- The operator UI calls business-scoped API endpoints; it does not implement authorization logic.
+- Provider credentials and token operations are backend-only.
+
+## Service Layering
+Work Boots follows a layered backend structure:
+
 ```text
-work-boots/
-  app/
-    api/
-    core/
-    db/
-    integrations/
-    jobs/
-    models/
-    repositories/
-    schemas/
-    services/
-    tests/
-    main.py
-  alembic/
-  docs/
-  frontend/
-  infra/
-  scripts/
-  _archive/
+routes (HTTP contracts, error mapping)
+  -> services (business rules, policy, orchestration)
+    -> repositories (scoped persistence)
+      -> models / database
+
+provider clients (Google/OAuth/GBP HTTP wrappers)
+  <- called by services, never by routes directly
 ```
 
-## Runtime Flow
-1. Intake routes receive manual or email lead payloads.
-2. Services parse/normalize/dedupe and persist leads.
-3. Lead events are appended for auditability and timeline views.
-4. Reminder job scans stale `new` leads and triggers mock notifications.
-5. Summary endpoints expose pipeline and response metrics.
+Examples:
+- GBP routes: `app/api/routes/integrations.py`
+- GBP connection service: `app/services/google_business_profile_connection.py`
+- GBP read service: `app/services/google_business_profile_service.py`
+- GBP verification guidance service: `app/services/verification_guidance_service.py`
+- GBP API client: `app/integrations/google_business_profile.py`
 
-## Tenant Context
-- Tenant scope is resolved at the API boundary via server-side request context dependency (`get_tenant_context`).
-- Primary auth path is persisted API credentials: bearer token -> `api_credentials` lookup -> `principal_id` + `business_id`.
-- Credentials now bind to persisted principals in `principals` via `(business_id, principal_id)` ownership constraints.
-- Principals carry a minimal business-scoped authorization role: `admin` or `operator`.
-- API credentials are operationally managed via business-scoped endpoints:
-  - `POST /api/businesses/{business_id}/credentials` (issue new token)
-  - `POST /api/businesses/{business_id}/credentials/{credential_id}/disable`
-  - `POST /api/businesses/{business_id}/credentials/{credential_id}/revoke`
-  - `POST /api/businesses/{business_id}/credentials/{credential_id}/rotate`
-- Principals are now first-class business-scoped entities with admin-only lifecycle endpoints:
-  - `GET /api/businesses/{business_id}/principals`
-  - `POST /api/businesses/{business_id}/principals`
-  - `PATCH /api/businesses/{business_id}/principals/{principal_id}`
-  - `POST /api/businesses/{business_id}/principals/{principal_id}/activate`
-  - `POST /api/businesses/{business_id}/principals/{principal_id}/deactivate`
-- Lightweight auth/admin audit history is available via:
-  - `GET /api/businesses/{business_id}/auth-audit-events`
-- Credential tokens are only returned at issue/rotate time; database stores `token_hash` only.
-- Credential metadata includes `label`, `last_used_at`, and `rotated_from_credential_id` for operational auditability.
-- Principal metadata includes `created_by_principal_id`, `updated_by_principal_id`, and `last_authenticated_at` for lightweight admin-action visibility.
-- Successful DB credential authentication updates `last_used_at`.
-- Successful DB credential authentication also updates principal `last_authenticated_at`.
-- Auth/admin audit events persist business-scoped actor/target/event context for high-value principal and credential actions.
-- Audit payloads intentionally exclude secret values (for example `token` and `token_hash`).
-- Tenant-sensitive routes pass only auth-derived tenant `business_id` into services/repositories.
-- Client-supplied `business_id` fields/query params are compatibility-only and are not trusted; mismatches are rejected.
-- Application-level abuse protections are enabled by default:
-  - auth attempt throttling (client IP keyed)
-  - stricter admin-route throttling (principal + business + action + client IP keyed)
-  - throttled responses return HTTP 429
-- `API_TOKEN_HASH_PEPPER` is required in production so token verification uses keyed hashing.
-- Legacy unpeppered SHA-256 verification is disabled by default and only enabled temporarily with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true` during migration.
-- Legacy shared-token auth (`API_AUTH_TOKEN` / `API_AUTH_BUSINESS_ID`) is no longer used for runtime tenant auth.
-- Dev/test-only fallback uses `DEFAULT_BUSINESS_ID` only when no auth config is present.
-- Inactive credentials (`is_active=false`) and revoked credentials (`revoked_at` set) are rejected.
-- Inactive principals are rejected during auth even when credentials are active.
-- Credential-management and principal-management routes require an `admin` principal role.
-- Service/repository/database tenant checks remain in place as defense in depth.
+## Multi-Tenant / Business Scoping Model
+- Request scope is resolved server-side by `TenantContext` (`app/api/deps.py`).
+- Authenticated context carries `business_id` + `principal_id`.
+- Services and repositories use this scope for data access and mutation.
+- Cross-business access is rejected.
 
-## Current Out Of Scope
-- Full IAM model (users, roles, memberships, session lifecycle).
-- Full enterprise audit platform (retention policy engine, external sinks, compliance workflows).
+Primary scoped entities:
+- `principals`
+- `principal_identities`
+- `provider_connections`
+- `provider_oauth_states`
 
-## Design Principles
-- One deployable backend process.
-- Explicit service/repository boundaries.
-- Thin route handlers.
-- Rules-based parsing and reminder logic.
-- Mocks behind provider interfaces for external integrations.
+## Security Boundaries
+- Google OIDC login is identity proofing only.
+- Internal principal/business checks are the authorization boundary.
+- Google Business Profile authorization is a separate OAuth flow.
+- Long-lived provider credentials remain server-side and encrypted at rest.
 
-## Archived Components
-Legacy TypeScript backend scaffolding and deprecated scripts are preserved under `_archive/`.
+## Normalization Boundary
+- Provider-specific payload and transport details stay in provider clients.
+- Service layer is the normalization boundary that maps provider data into stable application/domain contracts.
+- Route handlers return service-normalized models; frontend code must not depend on raw provider response shapes.
+- If raw or semi-raw provider fields must be exposed, that exposure must be explicit, controlled, and documented.
+
+Why this matters:
+- UI stability when provider payload shapes change.
+- Deterministic service-layer tests for business behavior.
+- Future provider portability without frontend rewrites.
+- Prevention of accidental Google API shape leakage across app boundaries.
+
+## Provider-Specific Logic Placement
+Provider-specific behavior belongs in the GBP service/client path:
+- HTTP transport and provider error parsing: `app/integrations/google_business_profile.py`
+- token-use policy checks and reconnect/scope decisions: `app/services/google_business_profile_connection.py`
+- canonical provider->domain verification mapping tables/helpers: `app/services/google_business_profile_verification_mapping.py`
+- business-level mapping/normalization: `app/services/google_business_profile_service.py`
+- deterministic operator guidance from normalized state: `app/services/verification_guidance_service.py`
+
+Routes should only:
+- call services
+- map service exceptions to HTTP responses
+- return schema-conformant payloads
+
+Observability note:
+- Unknown provider values (state/method/error) degrade to safe normalized defaults and are logged with structured warning events for follow-up mapping updates.
+
+## Testing Philosophy
+- Mock provider APIs in backend tests; do not depend on live Google services.
+- Prefer service-layer tests for normalization, policy, and business behavior.
+- Verify token usability and scope enforcement before provider-call paths.
+- Keep tests deterministic (fixed fixtures, explicit error mapping expectations).

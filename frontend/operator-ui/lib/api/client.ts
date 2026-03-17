@@ -8,10 +8,15 @@ import type {
   AutomationRunListResponse,
   GoogleBusinessProfileAccountsResponse,
   GoogleBusinessProfileConnectionStatusResponse,
+  GoogleBusinessProfileVerificationActionResponse,
+  GoogleBusinessProfileVerificationOptionsResponse,
+  GoogleBusinessProfileVerificationStatusResponse,
   GoogleBusinessProfileConnectStartResponse,
+  GoogleBusinessProfileCompleteVerificationRequest,
   GoogleBusinessProfileDisconnectResponse,
   GoogleBusinessProfileLocationsResponse,
   GoogleBusinessProfileLocationVerification,
+  GoogleBusinessProfileStartVerificationRequest,
 } from "./types";
 
 async function apiRequest<T>(
@@ -40,7 +45,7 @@ async function apiRequest<T>(
     let detail = `HTTP ${response.status}`;
     try {
       const payload = await response.json();
-      detail = payload.detail || JSON.stringify(payload);
+      detail = formatErrorDetail(payload);
     } catch {
       // ignore parse failures
     }
@@ -175,4 +180,89 @@ export async function fetchGoogleBusinessProfileLocationVerification(
     `/api/integrations/google/business-profile/locations/${locationId}/verification`,
     { token },
   );
+}
+
+export async function fetchGoogleBusinessProfileVerificationOptions(
+  token: string,
+  locationId: string,
+): Promise<GoogleBusinessProfileVerificationOptionsResponse> {
+  return apiRequest<GoogleBusinessProfileVerificationOptionsResponse>(
+    `/api/integrations/google/business-profile/locations/${locationId}/verification/options`,
+    { token },
+  );
+}
+
+export async function fetchGoogleBusinessProfileVerificationStatus(
+  token: string,
+  locationId: string,
+): Promise<GoogleBusinessProfileVerificationStatusResponse> {
+  return apiRequest<GoogleBusinessProfileVerificationStatusResponse>(
+    `/api/integrations/google/business-profile/locations/${locationId}/verification/status`,
+    { token },
+  );
+}
+
+export async function startGoogleBusinessProfileLocationVerification(
+  token: string,
+  locationId: string,
+  payload: GoogleBusinessProfileStartVerificationRequest,
+): Promise<GoogleBusinessProfileVerificationActionResponse> {
+  return apiRequest<GoogleBusinessProfileVerificationActionResponse>(
+    `/api/integrations/google/business-profile/locations/${locationId}/verification/start`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function completeGoogleBusinessProfileLocationVerification(
+  token: string,
+  locationId: string,
+  payload: GoogleBusinessProfileCompleteVerificationRequest,
+): Promise<GoogleBusinessProfileVerificationActionResponse> {
+  return apiRequest<GoogleBusinessProfileVerificationActionResponse>(
+    `/api/integrations/google/business-profile/locations/${locationId}/verification/complete`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function retryGoogleBusinessProfileLocationVerification(
+  token: string,
+  locationId: string,
+  payload: GoogleBusinessProfileStartVerificationRequest = {},
+): Promise<GoogleBusinessProfileVerificationActionResponse> {
+  return apiRequest<GoogleBusinessProfileVerificationActionResponse>(
+    `/api/integrations/google/business-profile/locations/${locationId}/verification/retry`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+function formatErrorDetail(payload: unknown): string {
+  if (!payload || typeof payload !== "object") {
+    return JSON.stringify(payload);
+  }
+  const asRecord = payload as Record<string, unknown>;
+  const detail = asRecord.detail;
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (detail && typeof detail === "object") {
+    const detailRecord = detail as Record<string, unknown>;
+    const message = detailRecord.message;
+    if (typeof message === "string" && message.trim()) {
+      return message;
+    }
+    return JSON.stringify(detailRecord);
+  }
+  return JSON.stringify(asRecord);
 }

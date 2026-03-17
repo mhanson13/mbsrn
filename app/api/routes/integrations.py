@@ -13,14 +13,25 @@ from app.models.principal import Principal
 from app.schemas.google_business_profile import (
     GoogleBusinessProfileAccountsResponse,
     GoogleBusinessProfileAccountResponse,
+    GoogleBusinessProfileCompleteVerificationRequest,
+    GoogleBusinessProfileCompleteVerificationResponse,
     GoogleBusinessProfileConnectionStatusResponse,
     GoogleBusinessProfileConnectStartResponse,
     GoogleBusinessProfileDisconnectResponse,
     GoogleBusinessProfileFlatLocationResponse,
     GoogleBusinessProfileLocationResponse,
     GoogleBusinessProfileLocationsResponse,
+    GoogleBusinessProfileRetryVerificationRequest,
+    GoogleBusinessProfileRetryVerificationResponse,
+    GoogleBusinessProfileStartVerificationRequest,
+    GoogleBusinessProfileStartVerificationResponse,
     GoogleBusinessProfileLocationVerificationResponse,
+    GoogleBusinessProfileVerificationMethodOptionResponse,
+    GoogleBusinessProfileVerificationOptionsResponse,
     GoogleBusinessProfileVerificationRecordResponse,
+    GoogleBusinessProfileVerificationGuidanceResponse,
+    GoogleBusinessProfileVerificationStatusCurrentResponse,
+    GoogleBusinessProfileVerificationStatusResponse,
 )
 from app.services.google_business_profile_connection import (
     GoogleBusinessProfileConnectionConfigurationError,
@@ -31,6 +42,11 @@ from app.services.google_business_profile_connection import (
 )
 from app.services.google_business_profile_service import (
     GoogleBusinessProfileAccountResult,
+    GoogleBusinessProfileVerificationActionResult,
+    GoogleBusinessProfileVerificationMethodOptionResult,
+    GoogleBusinessProfileVerificationOptionsResult,
+    GoogleBusinessProfileVerificationStatusCurrentResult,
+    GoogleBusinessProfileVerificationStatusResult,
     GoogleBusinessProfileAccountsResult,
     GoogleBusinessProfileFlatLocationResult,
     GoogleBusinessProfileLocationResult,
@@ -39,6 +55,7 @@ from app.services.google_business_profile_service import (
     GoogleBusinessProfileServiceError,
     GoogleBusinessProfileVerificationRecordResult,
     GoogleBusinessProfileVerificationResult,
+    VerificationGuidanceResult,
 )
 
 router = APIRouter(prefix="/api/integrations/google/business-profile", tags=["integrations"])
@@ -201,6 +218,120 @@ def get_google_business_profile_location_verification(
     return _to_verification_response(result)
 
 
+@router.get(
+    "/locations/{location_id}/verification/options", response_model=GoogleBusinessProfileVerificationOptionsResponse
+)
+def get_google_business_profile_location_verification_options(
+    location_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    _: Principal = Depends(get_authenticated_principal),
+    service: GoogleBusinessProfileService = Depends(get_google_business_profile_service),
+) -> GoogleBusinessProfileVerificationOptionsResponse:
+    try:
+        result = service.get_location_verification_options(
+            business_id=tenant_context.business_id,
+            location_id=location_id,
+        )
+    except GoogleBusinessProfileServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_service_error_detail(exc)) from exc
+    return _to_verification_options_response(result)
+
+
+@router.get(
+    "/locations/{location_id}/verification/status", response_model=GoogleBusinessProfileVerificationStatusResponse
+)
+def get_google_business_profile_location_verification_status(
+    location_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    _: Principal = Depends(get_authenticated_principal),
+    service: GoogleBusinessProfileService = Depends(get_google_business_profile_service),
+) -> GoogleBusinessProfileVerificationStatusResponse:
+    try:
+        result = service.get_location_verification_status(
+            business_id=tenant_context.business_id,
+            location_id=location_id,
+        )
+    except GoogleBusinessProfileServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_service_error_detail(exc)) from exc
+    return _to_verification_status_response(result)
+
+
+@router.post(
+    "/locations/{location_id}/verification/start", response_model=GoogleBusinessProfileStartVerificationResponse
+)
+def start_google_business_profile_location_verification(
+    location_id: str,
+    payload: GoogleBusinessProfileStartVerificationRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    _: Principal = Depends(get_authenticated_principal),
+    service: GoogleBusinessProfileService = Depends(get_google_business_profile_service),
+) -> GoogleBusinessProfileStartVerificationResponse:
+    try:
+        result = service.start_location_verification(
+            business_id=tenant_context.business_id,
+            location_id=location_id,
+            option_id=payload.option_id,
+            selected_method=payload.selected_method,
+            provider_method=payload.provider_method,
+            destination=payload.destination,
+            language_code=payload.language_code,
+            mailer_contact=payload.mailer_contact,
+            vetted_partner_token=payload.vetted_partner_token,
+        )
+    except GoogleBusinessProfileServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_service_error_detail(exc)) from exc
+    return _to_start_verification_response(result)
+
+
+@router.post(
+    "/locations/{location_id}/verification/complete", response_model=GoogleBusinessProfileCompleteVerificationResponse
+)
+def complete_google_business_profile_location_verification(
+    location_id: str,
+    payload: GoogleBusinessProfileCompleteVerificationRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    _: Principal = Depends(get_authenticated_principal),
+    service: GoogleBusinessProfileService = Depends(get_google_business_profile_service),
+) -> GoogleBusinessProfileCompleteVerificationResponse:
+    try:
+        result = service.complete_location_verification(
+            business_id=tenant_context.business_id,
+            location_id=location_id,
+            verification_id=payload.verification_id,
+            code=payload.code,
+        )
+    except GoogleBusinessProfileServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_service_error_detail(exc)) from exc
+    return _to_complete_verification_response(result)
+
+
+@router.post(
+    "/locations/{location_id}/verification/retry", response_model=GoogleBusinessProfileRetryVerificationResponse
+)
+def retry_google_business_profile_location_verification(
+    location_id: str,
+    payload: GoogleBusinessProfileRetryVerificationRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    _: Principal = Depends(get_authenticated_principal),
+    service: GoogleBusinessProfileService = Depends(get_google_business_profile_service),
+) -> GoogleBusinessProfileRetryVerificationResponse:
+    try:
+        result = service.retry_location_verification(
+            business_id=tenant_context.business_id,
+            location_id=location_id,
+            option_id=payload.option_id,
+            selected_method=payload.selected_method,
+            provider_method=payload.provider_method,
+            destination=payload.destination,
+            language_code=payload.language_code,
+            mailer_contact=payload.mailer_contact,
+            vetted_partner_token=payload.vetted_partner_token,
+        )
+    except GoogleBusinessProfileServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_service_error_detail(exc)) from exc
+    return _to_retry_verification_response(result)
+
+
 def _to_connection_response(
     result: GoogleBusinessProfileConnectionStatusResult,
 ) -> GoogleBusinessProfileConnectionStatusResponse:
@@ -221,10 +352,7 @@ def _to_connection_response(
 
 def _to_accounts_response(result: GoogleBusinessProfileAccountsResult) -> GoogleBusinessProfileAccountsResponse:
     return GoogleBusinessProfileAccountsResponse(
-        accounts=[
-            _to_account_response(account)
-            for account in result.accounts
-        ]
+        accounts=[_to_account_response(account) for account in result.accounts]
     )
 
 
@@ -232,10 +360,7 @@ def _to_account_response(result: GoogleBusinessProfileAccountResult) -> GoogleBu
     return GoogleBusinessProfileAccountResponse(
         account_id=result.account_id,
         account_name=result.account_name,
-        locations=[
-            _to_location_response(location)
-            for location in result.locations
-        ],
+        locations=[_to_location_response(location) for location in result.locations],
     )
 
 
@@ -250,14 +375,13 @@ def _to_location_response(result: GoogleBusinessProfileLocationResult) -> Google
 
 def _to_locations_response(result: GoogleBusinessProfileLocationsResult) -> GoogleBusinessProfileLocationsResponse:
     return GoogleBusinessProfileLocationsResponse(
-        locations=[
-            _to_flat_location_response(location)
-            for location in result.locations
-        ]
+        locations=[_to_flat_location_response(location) for location in result.locations]
     )
 
 
-def _to_flat_location_response(result: GoogleBusinessProfileFlatLocationResult) -> GoogleBusinessProfileFlatLocationResponse:
+def _to_flat_location_response(
+    result: GoogleBusinessProfileFlatLocationResult,
+) -> GoogleBusinessProfileFlatLocationResponse:
     return GoogleBusinessProfileFlatLocationResponse(
         account_id=result.account_id,
         account_name=result.account_name,
@@ -275,11 +399,9 @@ def _to_verification_response(
         has_voice_of_merchant=result.has_voice_of_merchant,
         state_summary=result.state_summary,
         verification_methods=list(result.verification_methods),
-        verifications=[
-            _to_verification_record_response(item)
-            for item in result.verifications
-        ],
+        verifications=[_to_verification_record_response(item) for item in result.verifications],
         recommended_next_action=result.recommended_next_action,
+        guidance=_to_verification_guidance_response(result.guidance),
     )
 
 
@@ -293,3 +415,136 @@ def _to_verification_record_response(
         create_time=result.create_time,
         complete_time=result.complete_time,
     )
+
+
+def _to_verification_options_response(
+    result: GoogleBusinessProfileVerificationOptionsResult,
+) -> GoogleBusinessProfileVerificationOptionsResponse:
+    return GoogleBusinessProfileVerificationOptionsResponse(
+        location_id=result.location_id,
+        current_verification_state=result.current_verification_state,
+        methods=[_to_verification_method_option_response(item) for item in result.methods],
+        guidance=_to_verification_guidance_response(result.guidance),
+    )
+
+
+def _to_verification_status_response(
+    result: GoogleBusinessProfileVerificationStatusResult,
+) -> GoogleBusinessProfileVerificationStatusResponse:
+    return GoogleBusinessProfileVerificationStatusResponse(
+        location_id=result.location_id,
+        verification_state=result.verification_state,
+        action_required=result.action_required,
+        message=result.message,
+        reconnect_required=result.reconnect_required,
+        current_verification=(
+            _to_verification_status_current_response(result.current_verification)
+            if result.current_verification is not None
+            else None
+        ),
+        available_methods=[_to_verification_method_option_response(item) for item in result.available_methods],
+        guidance=_to_verification_guidance_response(result.guidance),
+    )
+
+
+def _to_start_verification_response(
+    result: GoogleBusinessProfileVerificationActionResult,
+) -> GoogleBusinessProfileStartVerificationResponse:
+    return GoogleBusinessProfileStartVerificationResponse(
+        location_id=result.location_id,
+        verification_state=result.verification_state,
+        verification_id=result.verification_id,
+        action_required=result.action_required,
+        message=result.message,
+        expires_at=result.expires_at,
+        status=_to_verification_status_response(result.status),
+        guidance=_to_verification_guidance_response(result.guidance),
+    )
+
+
+def _to_complete_verification_response(
+    result: GoogleBusinessProfileVerificationActionResult,
+) -> GoogleBusinessProfileCompleteVerificationResponse:
+    return GoogleBusinessProfileCompleteVerificationResponse(
+        location_id=result.location_id,
+        verification_state=result.verification_state,
+        verification_id=result.verification_id,
+        action_required=result.action_required,
+        message=result.message,
+        expires_at=result.expires_at,
+        status=_to_verification_status_response(result.status),
+        guidance=_to_verification_guidance_response(result.guidance),
+    )
+
+
+def _to_retry_verification_response(
+    result: GoogleBusinessProfileVerificationActionResult,
+) -> GoogleBusinessProfileRetryVerificationResponse:
+    return GoogleBusinessProfileRetryVerificationResponse(
+        location_id=result.location_id,
+        verification_state=result.verification_state,
+        verification_id=result.verification_id,
+        action_required=result.action_required,
+        message=result.message,
+        expires_at=result.expires_at,
+        status=_to_verification_status_response(result.status),
+        guidance=_to_verification_guidance_response(result.guidance),
+    )
+
+
+def _to_verification_method_option_response(
+    result: GoogleBusinessProfileVerificationMethodOptionResult,
+) -> GoogleBusinessProfileVerificationMethodOptionResponse:
+    return GoogleBusinessProfileVerificationMethodOptionResponse(
+        option_id=result.option_id,
+        method=result.method,
+        provider_method=result.provider_method,
+        label=result.label,
+        description=result.description,
+        destination=result.destination,
+        requires_code=result.requires_code,
+        eligible=result.eligible,
+    )
+
+
+def _to_verification_status_current_response(
+    result: GoogleBusinessProfileVerificationStatusCurrentResult,
+) -> GoogleBusinessProfileVerificationStatusCurrentResponse:
+    return GoogleBusinessProfileVerificationStatusCurrentResponse(
+        verification_id=result.verification_id,
+        provider_state=result.provider_state,
+        method=result.method,
+        provider_method=result.provider_method,
+        create_time=result.create_time,
+        complete_time=result.complete_time,
+        expires_at=result.expires_at,
+    )
+
+
+def _to_verification_guidance_response(
+    result: VerificationGuidanceResult,
+) -> GoogleBusinessProfileVerificationGuidanceResponse:
+    return GoogleBusinessProfileVerificationGuidanceResponse(
+        verification_state=result.verification_state,
+        recommended_action=result.recommended_action,
+        priority=result.priority,
+        title=result.title,
+        summary=result.summary,
+        instructions=list(result.instructions),
+        tips=list(result.tips),
+        warnings=list(result.warnings),
+        troubleshooting=list(result.troubleshooting),
+        estimated_time=result.estimated_time,
+        cta_label=result.cta_label,
+        cta_type=result.cta_type,
+        recommended_method=result.recommended_method,
+        recommendation_reason=result.recommendation_reason,
+    )
+
+
+def _service_error_detail(exc: GoogleBusinessProfileServiceError) -> dict[str, object]:
+    return {
+        "code": exc.error_code,
+        "message": str(exc),
+        "reconnect_required": exc.reconnect_required,
+    }
