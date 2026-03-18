@@ -103,6 +103,8 @@ jobs:
 
       - name: Build and push images
         shell: bash
+        env:
+          GCS_LOGS_BUCKET: ${{ vars.GCS_LOGS_BUCKET }}
         run: |
           set -euo pipefail
 
@@ -115,12 +117,14 @@ jobs:
           gcloud builds submit \
             --project "${GCP_PROJECT_ID}" \
             --gcs-source-staging-dir "gs://mbsrn-build-source/source" \
+            --gcs-log-dir "${GCS_LOGS_BUCKET}" \
             --pack image="${API_IMAGE}" \
             .
 
           gcloud builds submit \
             --project "${GCP_PROJECT_ID}" \
             --gcs-source-staging-dir "gs://mbsrn-build-source/source" \
+            --gcs-log-dir "${GCS_LOGS_BUCKET}" \
             --pack image="${UI_IMAGE}" \
             frontend/operator-ui
 
