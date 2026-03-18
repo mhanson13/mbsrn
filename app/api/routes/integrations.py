@@ -30,6 +30,7 @@ from app.schemas.google_business_profile import (
     GoogleBusinessProfileVerificationOptionsResponse,
     GoogleBusinessProfileVerificationRecordResponse,
     GoogleBusinessProfileVerificationGuidanceResponse,
+    GoogleBusinessProfileVerificationErrorDetailResponse,
     GoogleBusinessProfileVerificationStatusCurrentResponse,
     GoogleBusinessProfileVerificationStatusResponse,
 )
@@ -57,8 +58,10 @@ from app.services.google_business_profile_service import (
     GoogleBusinessProfileVerificationResult,
     VerificationGuidanceResult,
 )
+from app.services.verification_guidance_service import VerificationGuidanceService
 
 router = APIRouter(prefix="/api/integrations/google/business-profile", tags=["integrations"])
+_verification_guidance_service = VerificationGuidanceService()
 
 
 @router.post("/connect/start", response_model=GoogleBusinessProfileConnectStartResponse)
@@ -208,13 +211,7 @@ def get_google_business_profile_location_verification(
             location_id=location_id,
         )
     except GoogleBusinessProfileServiceError as exc:
-        detail: str | dict[str, object] = str(exc)
-        if exc.reconnect_required:
-            detail = {
-                "message": str(exc),
-                "reconnect_required": True,
-            }
-        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+        raise HTTPException(status_code=exc.status_code, detail=_service_error_detail(exc)) from exc
     return _to_verification_response(result)
 
 
@@ -456,6 +453,7 @@ def _to_start_verification_response(
         verification_id=result.verification_id,
         action_required=result.action_required,
         message=result.message,
+        reconnect_required=result.status.reconnect_required,
         expires_at=result.expires_at,
         status=_to_verification_status_response(result.status),
         guidance=_to_verification_guidance_response(result.guidance),
@@ -471,6 +469,7 @@ def _to_complete_verification_response(
         verification_id=result.verification_id,
         action_required=result.action_required,
         message=result.message,
+        reconnect_required=result.status.reconnect_required,
         expires_at=result.expires_at,
         status=_to_verification_status_response(result.status),
         guidance=_to_verification_guidance_response(result.guidance),
@@ -486,6 +485,7 @@ def _to_retry_verification_response(
         verification_id=result.verification_id,
         action_required=result.action_required,
         message=result.message,
+        reconnect_required=result.status.reconnect_required,
         expires_at=result.expires_at,
         status=_to_verification_status_response(result.status),
         guidance=_to_verification_guidance_response(result.guidance),
@@ -543,8 +543,44 @@ def _to_verification_guidance_response(
 
 
 def _service_error_detail(exc: GoogleBusinessProfileServiceError) -> dict[str, object]:
-    return {
-        "code": exc.error_code,
-        "message": str(exc),
-        "reconnect_required": exc.reconnect_required,
-    }
+    guidance = _error_guidance_for_service_error(exc)
+    detail = GoogleBusinessProfileVerificationErrorDetailResponse(
+        code=exc.error_code,
+        message=str(exc),
+        reconnect_required=exc.reconnect_required,
+        guidance=(_to_verification_guidance_response(guidance) if guidance is not None else None),
+    )
+    return detail.model_dump()
+
+
+def _error_guidance_for_service_error(exc: GoogleBusinessProfileServiceError) -> VerificationGuidanceResult | None:
+    verification_state = "unknown"
+    action_required = "resolve_access"
+    guidance_error_code = exc.error_code
+    reconnect_required = exc.reconnect_required
+
+    if exc.error_code == "method_not_available":
+        verification_state = "unverified"
+        action_required = "choose_method"
+        guidance_error_code = None
+    elif exc.error_code == "invalid_code":
+        verification_state = "pending"
+        action_required = "enter_code"
+        guidance_error_code = None
+    elif exc.error_code == "verification_not_supported":
+        verification_state = "unverified"
+        action_required = "resolve_access"
+    elif exc.error_code == "invalid_verification_state":
+        verification_state = "unknown"
+        action_required = "resolve_access"
+    elif exc.error_code == "reconnect_required":
+        verification_state = "unknown"
+        action_required = "reconnect_google"
+        reconnect_required = True
+
+    return _verification_guidance_service.generate_guidance(
+        verification_state=verification_state,
+        action_required=action_required,
+        reconnect_required=reconnect_required,
+        error_code=guidance_error_code,
+    )

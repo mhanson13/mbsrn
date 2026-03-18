@@ -334,6 +334,9 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 - Token use is server-side only and uses lazy refresh with runtime scope validation.
 - Verification status/options/action responses include a deterministic operator guidance object (plain-language steps, CTA, tips).
 - Guidance generation is rule-based and does not require live LLM access.
+- Verification workflow responses use a stable backend-defined contract (shared workflow fields + guidance) across `status`, `start`, `complete`, and `retry`.
+- Verification endpoint error details include normalized `code`, `message`, `reconnect_required`, and additive renderable `guidance` for consistent frontend handling.
+- GBP verification normalization/guidance fallback paths are tracked with lightweight in-process counters plus structured logs.
 - System guarantees are documented in [`docs/security.md#system-guarantees`](docs/security.md#system-guarantees).
 - Operator key-rotation/rewrap procedure is documented in `docs/operator-ui-and-google-auth.md`.
 - Business Profile API enablement/access approval is required in Google Cloud; OAuth setup alone is not sufficient.

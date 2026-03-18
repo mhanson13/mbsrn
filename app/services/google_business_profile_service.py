@@ -8,6 +8,9 @@ from app.integrations.google_business_profile import GoogleBusinessProfileAPIErr
 from app.services.google_business_profile_connection import (
     GoogleBusinessProfileConnectionService,
 )
+from app.services.google_business_profile_verification_observability import (
+    record_gbp_verification_observation,
+)
 from app.services.google_business_profile_verification_mapping import (
     VerificationActionRequired,
     VerificationErrorCode,
@@ -948,6 +951,7 @@ class GoogleBusinessProfileService:
                 normalized_option_id,
                 len(options),
             )
+            record_gbp_verification_observation("option_token_invalid")
 
         normalized_provider_method = (provider_method or "").strip().upper()
         if normalized_provider_method:
@@ -960,6 +964,7 @@ class GoogleBusinessProfileService:
                 normalized_provider_method,
                 len(options),
             )
+            record_gbp_verification_observation("option_provider_method_unavailable")
 
         normalized_destination = (destination or "").strip().lower()
         if selected_method is not None:
@@ -975,6 +980,7 @@ class GoogleBusinessProfileService:
                     normalized_destination,
                     len(candidates),
                 )
+                record_gbp_verification_observation("option_destination_unavailable")
             if candidates:
                 return candidates[0]
             logger.warning(
@@ -983,6 +989,7 @@ class GoogleBusinessProfileService:
                 selected_method,
                 len(options),
             )
+            record_gbp_verification_observation("option_selected_method_unavailable")
 
         if (
             fallback_to_first_single_option
@@ -1253,6 +1260,7 @@ def _normalize_single_verification_record(
     state = _none_if_empty(payload.get("state") or payload.get("verificationState"))
     if not any((name, method, state)):
         logger.warning("gbp_verification_record_missing_expected_fields context=%s", context)
+        record_gbp_verification_observation("verification_record_missing_fields")
         return None
     return GoogleBusinessProfileVerificationRecordResult(
         name=name,

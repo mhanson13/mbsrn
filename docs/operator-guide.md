@@ -7,6 +7,7 @@ Audience: operators and admins using the UI.
 - Guidance includes a title, short summary, concrete next steps, and a primary CTA.
 - Guidance is rule-based today; no live AI service is required for this feature.
 - If Google returns an unexpected status or method, Work Boots falls back to safe guidance and may ask you to refresh or reconnect.
+- Verification workflow errors also include normalized guidance so the UI can show the same style of next steps in failure states.
 
 ## Connection Status Meanings
 

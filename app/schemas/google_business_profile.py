@@ -203,15 +203,18 @@ class GoogleBusinessProfileVerificationStatusCurrentResponse(BaseModel):
     expires_at: str | None
 
 
-class GoogleBusinessProfileVerificationStatusResponse(BaseModel):
+class GoogleBusinessProfileVerificationWorkflowContractResponse(BaseModel):
     location_id: str
     verification_state: GoogleBusinessProfileVerificationWorkflowState
     action_required: GoogleBusinessProfileVerificationActionRequired
     message: str
     reconnect_required: bool
+    guidance: GoogleBusinessProfileVerificationGuidanceResponse
+
+
+class GoogleBusinessProfileVerificationStatusResponse(GoogleBusinessProfileVerificationWorkflowContractResponse):
     current_verification: GoogleBusinessProfileVerificationStatusCurrentResponse | None
     available_methods: list[GoogleBusinessProfileVerificationMethodOptionResponse]
-    guidance: GoogleBusinessProfileVerificationGuidanceResponse
 
 
 class GoogleBusinessProfileVerificationOptionsResponse(BaseModel):
@@ -231,15 +234,16 @@ class GoogleBusinessProfileStartVerificationRequest(BaseModel):
     vetted_partner_token: str | None = None
 
 
-class GoogleBusinessProfileStartVerificationResponse(BaseModel):
-    location_id: str
-    verification_state: GoogleBusinessProfileVerificationWorkflowState
+class GoogleBusinessProfileVerificationActionContractResponse(
+    GoogleBusinessProfileVerificationWorkflowContractResponse
+):
     verification_id: str | None
-    action_required: GoogleBusinessProfileVerificationActionRequired
-    message: str
     expires_at: str | None
     status: GoogleBusinessProfileVerificationStatusResponse
-    guidance: GoogleBusinessProfileVerificationGuidanceResponse
+
+
+class GoogleBusinessProfileStartVerificationResponse(GoogleBusinessProfileVerificationActionContractResponse):
+    pass
 
 
 class GoogleBusinessProfileCompleteVerificationRequest(BaseModel):
@@ -247,15 +251,8 @@ class GoogleBusinessProfileCompleteVerificationRequest(BaseModel):
     code: str = Field(min_length=1, max_length=64)
 
 
-class GoogleBusinessProfileCompleteVerificationResponse(BaseModel):
-    location_id: str
-    verification_state: GoogleBusinessProfileVerificationWorkflowState
-    verification_id: str | None
-    action_required: GoogleBusinessProfileVerificationActionRequired
-    message: str
-    expires_at: str | None
-    status: GoogleBusinessProfileVerificationStatusResponse
-    guidance: GoogleBusinessProfileVerificationGuidanceResponse
+class GoogleBusinessProfileCompleteVerificationResponse(GoogleBusinessProfileVerificationActionContractResponse):
+    pass
 
 
 class GoogleBusinessProfileRetryVerificationRequest(BaseModel):
@@ -268,12 +265,12 @@ class GoogleBusinessProfileRetryVerificationRequest(BaseModel):
     vetted_partner_token: str | None = None
 
 
-class GoogleBusinessProfileRetryVerificationResponse(BaseModel):
-    location_id: str
-    verification_state: GoogleBusinessProfileVerificationWorkflowState
-    verification_id: str | None
-    action_required: GoogleBusinessProfileVerificationActionRequired
+class GoogleBusinessProfileRetryVerificationResponse(GoogleBusinessProfileVerificationActionContractResponse):
+    pass
+
+
+class GoogleBusinessProfileVerificationErrorDetailResponse(BaseModel):
+    code: GoogleBusinessProfileVerificationErrorCode
     message: str
-    expires_at: str | None
-    status: GoogleBusinessProfileVerificationStatusResponse
-    guidance: GoogleBusinessProfileVerificationGuidanceResponse
+    reconnect_required: bool
+    guidance: GoogleBusinessProfileVerificationGuidanceResponse | None = None

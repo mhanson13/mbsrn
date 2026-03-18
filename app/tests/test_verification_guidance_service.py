@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import pytest
+
+from app.services.google_business_profile_verification_observability import (
+    verification_observability,
+)
 from app.services.verification_guidance_service import (
     VerificationGuidanceMethodOptionInput,
     VerificationGuidanceService,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_observability() -> None:
+    verification_observability.reset()
+    yield
+    verification_observability.reset()
 
 
 def test_guidance_verified_no_action_needed() -> None:
@@ -177,3 +189,4 @@ def test_guidance_unknown_state_safe_fallback() -> None:
     )
     assert result.recommended_action == "unknown"
     assert result.cta_type == "refresh_status"
+    assert verification_observability.snapshot().get("guidance_fallback_unknown", 0) == 1

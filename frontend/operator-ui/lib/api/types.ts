@@ -266,6 +266,18 @@ export type GoogleBusinessProfileVerificationMethod =
   | "other"
   | "unknown";
 
+export type GoogleBusinessProfileVerificationErrorCode =
+  | "reconnect_required"
+  | "insufficient_scope"
+  | "permission_denied"
+  | "verification_not_supported"
+  | "method_not_available"
+  | "invalid_verification_state"
+  | "invalid_code"
+  | "provider_conflict"
+  | "provider_error"
+  | "not_found";
+
 export interface GoogleBusinessProfileVerificationMethodOption {
   option_id: string;
   method: GoogleBusinessProfileVerificationMethod;
@@ -287,15 +299,19 @@ export interface GoogleBusinessProfileVerificationStatusCurrent {
   expires_at: string | null;
 }
 
-export interface GoogleBusinessProfileVerificationStatusResponse {
+export interface GoogleBusinessProfileVerificationWorkflowContract {
   location_id: string;
   verification_state: GoogleBusinessProfileVerificationWorkflowState;
   action_required: GoogleBusinessProfileVerificationActionRequired;
   message: string;
   reconnect_required: boolean;
+  guidance: GoogleBusinessProfileVerificationGuidance;
+}
+
+export interface GoogleBusinessProfileVerificationStatusResponse
+  extends GoogleBusinessProfileVerificationWorkflowContract {
   current_verification: GoogleBusinessProfileVerificationStatusCurrent | null;
   available_methods: GoogleBusinessProfileVerificationMethodOption[];
-  guidance: GoogleBusinessProfileVerificationGuidance;
 }
 
 export interface GoogleBusinessProfileVerificationOptionsResponse {
@@ -315,18 +331,21 @@ export interface GoogleBusinessProfileStartVerificationRequest {
   vetted_partner_token?: string | null;
 }
 
-export interface GoogleBusinessProfileVerificationActionResponse {
-  location_id: string;
-  verification_state: GoogleBusinessProfileVerificationWorkflowState;
+export interface GoogleBusinessProfileVerificationActionResponse
+  extends GoogleBusinessProfileVerificationWorkflowContract {
   verification_id: string | null;
-  action_required: GoogleBusinessProfileVerificationActionRequired;
-  message: string;
   expires_at: string | null;
   status: GoogleBusinessProfileVerificationStatusResponse;
-  guidance: GoogleBusinessProfileVerificationGuidance;
 }
 
 export interface GoogleBusinessProfileCompleteVerificationRequest {
   verification_id?: string | null;
   code: string;
+}
+
+export interface GoogleBusinessProfileVerificationErrorDetail {
+  code: GoogleBusinessProfileVerificationErrorCode;
+  message: string;
+  reconnect_required: boolean;
+  guidance?: GoogleBusinessProfileVerificationGuidance | null;
 }

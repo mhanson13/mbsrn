@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
+from app.services.google_business_profile_verification_observability import (
+    verification_observability,
+)
 from app.services.google_business_profile_verification_mapping import (
     build_method_option_token,
     determine_state_summary,
@@ -11,6 +16,13 @@ from app.services.google_business_profile_verification_mapping import (
     map_provider_verification_state,
     normalize_provider_method,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_observability() -> None:
+    verification_observability.reset()
+    yield
+    verification_observability.reset()
 
 
 def test_map_provider_verification_state_exact_and_marker_cases() -> None:
@@ -26,6 +38,7 @@ def test_map_provider_verification_state_unknown_logs_warning(caplog) -> None:
     assert mapped == "unknown"
     assert "gbp_verification_state_unmapped" in caplog.text
     assert "SOMETHING_NEW" in caplog.text
+    assert verification_observability.snapshot().get("provider_state_unmapped", 0) == 1
 
 
 def test_normalize_provider_method_known_and_unknown(caplog) -> None:
@@ -38,6 +51,7 @@ def test_normalize_provider_method_known_and_unknown(caplog) -> None:
     assert unknown_method == "other"
     assert unknown_provider_method == "FAX_MACHINE"
     assert "gbp_verification_method_unmapped" in caplog.text
+    assert verification_observability.snapshot().get("provider_method_unmapped", 0) == 1
 
 
 def test_workflow_and_summary_degrade_safely_for_unknown_states() -> None:
@@ -88,6 +102,7 @@ def test_map_provider_api_error_fallback_logs_warning(caplog) -> None:
     assert mapped.status_code == 502
     assert mapped.error_code == "provider_error"
     assert "gbp_provider_error_fallback" in caplog.text
+    assert verification_observability.snapshot().get("provider_error_fallback", 0) == 1
 
 
 def test_build_method_option_token_is_deterministic_and_sensitive_to_identity_fields() -> None:
@@ -112,4 +127,3 @@ def test_build_method_option_token_is_deterministic_and_sensitive_to_identity_fi
     assert token_a == token_b
     assert token_a.startswith("method_")
     assert token_a != token_c
-

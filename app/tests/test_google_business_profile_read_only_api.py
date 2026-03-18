@@ -614,3 +614,7 @@ def test_google_business_profile_location_verification_not_found(
     )
     response = client.get("/api/integrations/google/business-profile/locations/missing-location/verification")
     assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert detail["code"] == "not_found"
+    assert detail["reconnect_required"] is False
+    assert isinstance(detail["guidance"], dict)

@@ -26,6 +26,9 @@ from app.integrations.google_oauth import GoogleOAuthError, GoogleOAuthTokenResp
 from app.models.business import Business
 from app.models.principal import Principal, PrincipalRole
 from app.models.provider_connection import ProviderConnection
+from app.services.google_business_profile_verification_observability import (
+    verification_observability,
+)
 
 
 class _StubGoogleOAuthClient:
@@ -145,6 +148,23 @@ def _clear_settings_cache() -> None:
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_verification_observability() -> None:
+    verification_observability.reset()
+    yield
+    verification_observability.reset()
+
+
+def _assert_guidance_contract(guidance: dict[str, object]) -> None:
+    assert isinstance(guidance.get("title"), str)
+    assert isinstance(guidance.get("summary"), str)
+    assert isinstance(guidance.get("instructions"), list)
+    assert isinstance(guidance.get("tips"), list)
+    assert isinstance(guidance.get("warnings"), list)
+    assert isinstance(guidance.get("troubleshooting"), list)
+    assert isinstance(guidance.get("cta_type"), str)
 
 
 def _set_auth_env(monkeypatch: pytest.MonkeyPatch, *, default_business_id: str) -> None:
@@ -320,6 +340,139 @@ def test_verification_options_returns_normalized_methods(
     assert payload["methods"][0]["method"] == "email"
     assert payload["methods"][1]["method"] == "sms"
     assert payload["guidance"]["recommended_action"] == "choose_method"
+    _assert_guidance_contract(payload["guidance"])
+
+
+def test_verification_summary_response_includes_guidance_contract(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_auth_env(monkeypatch, default_business_id=seeded_business.id)
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="verify-summary-admin")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="verify-summary-admin",
+        access_token="verify-summary-token",
+        refresh_token="verify-summary-refresh",
+        expires_in_seconds=3600,
+    )
+
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    _seed_location_catalog(gbp_client, account_id="1", location_id="location-summary")
+    gbp_client.options_by_location["locations/location-summary"] = {
+        "verificationOptions": [{"verificationMethod": "EMAIL", "emailAddress": "owner@example.com"}]
+    }
+
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="verify-summary-admin",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/locations/location-summary/verification")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["state_summary"] == "unverified"
+    _assert_guidance_contract(payload["guidance"])
+
+
+def test_verification_status_response_includes_guidance_contract(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_auth_env(monkeypatch, default_business_id=seeded_business.id)
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="verify-status-admin")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="verify-status-admin",
+        access_token="verify-status-token",
+        refresh_token="verify-status-refresh",
+        expires_in_seconds=3600,
+    )
+
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    _seed_location_catalog(gbp_client, account_id="1", location_id="location-status")
+    gbp_client.verifications_by_location["locations/location-status"] = {
+        "verifications": [
+            {
+                "name": "locations/location-status/verifications/attempt-1",
+                "verificationMethod": "EMAIL",
+                "state": "PENDING",
+            }
+        ]
+    }
+    gbp_client.options_by_location["locations/location-status"] = {
+        "verificationOptions": [{"verificationMethod": "EMAIL", "emailAddress": "owner@example.com"}]
+    }
+
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="verify-status-admin",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/locations/location-status/verification/status")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["verification_state"] in {"pending", "in_progress"}
+    _assert_guidance_contract(payload["guidance"])
+
+
+def test_verification_status_unknown_provider_state_increments_observability_counter(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_auth_env(monkeypatch, default_business_id=seeded_business.id)
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="verify-unknown-state-admin")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="verify-unknown-state-admin",
+        access_token="verify-unknown-state-token",
+        refresh_token="verify-unknown-state-refresh",
+        expires_in_seconds=3600,
+    )
+
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    _seed_location_catalog(gbp_client, account_id="1", location_id="location-unknown-state")
+    gbp_client.verifications_by_location["locations/location-unknown-state"] = {
+        "verifications": [
+            {
+                "name": "locations/location-unknown-state/verifications/attempt-1",
+                "verificationMethod": "EMAIL",
+                "state": "SOMETHING_NEW",
+            }
+        ]
+    }
+    gbp_client.options_by_location["locations/location-unknown-state"] = {
+        "verificationOptions": [{"verificationMethod": "EMAIL", "emailAddress": "owner@example.com"}]
+    }
+
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="verify-unknown-state-admin",
+    )
+
+    response = client.get(
+        "/api/integrations/google/business-profile/locations/location-unknown-state/verification/status"
+    )
+    assert response.status_code == 200, response.text
+    assert verification_observability.snapshot().get("provider_state_unmapped", 0) >= 1
 
 
 def test_start_verification_success_path(
@@ -366,8 +519,11 @@ def test_start_verification_success_path(
     payload = response.json()
     assert payload["location_id"] == "location-start"
     assert payload["verification_id"] == "attempt-1"
+    assert payload["reconnect_required"] is False
     assert payload["status"]["verification_state"] in {"pending", "in_progress"}
     assert payload["guidance"]["recommended_action"] in {"enter_code", "wait_for_code"}
+    _assert_guidance_contract(payload["guidance"])
+    _assert_guidance_contract(payload["status"]["guidance"])
     assert gbp_client.start_calls
 
 
@@ -414,6 +570,9 @@ def test_start_verification_with_option_id_uses_backend_revalidation(
         json={"option_id": option_id},
     )
     assert start_response.status_code == 200, start_response.text
+    start_payload_body = start_response.json()
+    _assert_guidance_contract(start_payload_body["guidance"])
+    _assert_guidance_contract(start_payload_body["status"]["guidance"])
     assert gbp_client.start_calls
     _, start_payload = gbp_client.start_calls[-1]
     assert start_payload["method"] == "EMAIL"
@@ -459,7 +618,9 @@ def test_start_verification_invalid_option_id_is_rejected_and_logged(
     assert response.status_code == 409
     detail = response.json()["detail"]
     assert detail["code"] == "method_not_available"
+    _assert_guidance_contract(detail["guidance"])
     assert "gbp_verification_option_token_invalid" in caplog.text
+    assert verification_observability.snapshot().get("option_token_invalid", 0) == 1
 
 
 def test_complete_verification_success_path(
@@ -513,8 +674,11 @@ def test_complete_verification_success_path(
     )
     assert response.status_code == 200, response.text
     payload = response.json()
+    assert payload["reconnect_required"] is False
     assert payload["status"]["verification_state"] == "completed"
     assert payload["status"]["action_required"] == "none"
+    _assert_guidance_contract(payload["guidance"])
+    _assert_guidance_contract(payload["status"]["guidance"])
     assert gbp_client.complete_calls == [("locations/location-complete/verifications/attempt-1", "123456")]
 
 
@@ -569,6 +733,7 @@ def test_complete_verification_invalid_code_maps_error(
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert detail["code"] == "invalid_code"
+    _assert_guidance_contract(detail["guidance"])
 
 
 def test_start_verification_method_not_available_maps_error(
@@ -656,6 +821,10 @@ def test_retry_verification_uses_existing_attempt_method_when_not_specified(
         json={},
     )
     assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["reconnect_required"] is False
+    _assert_guidance_contract(payload["guidance"])
+    _assert_guidance_contract(payload["status"]["guidance"])
     assert gbp_client.start_calls
     location, body = gbp_client.start_calls[0]
     assert location == "locations/location-retry"
@@ -775,6 +944,7 @@ def test_verification_start_fails_closed_when_refresh_fails(
     detail = response.json()["detail"]
     assert detail["code"] == "reconnect_required"
     assert detail["reconnect_required"] is True
+    _assert_guidance_contract(detail["guidance"])
 
 
 def test_verification_options_reports_insufficient_scope(
@@ -811,3 +981,4 @@ def test_verification_options_reports_insufficient_scope(
     detail = response.json()["detail"]
     assert detail["code"] == "insufficient_scope"
     assert detail["reconnect_required"] is True
+    _assert_guidance_contract(detail["guidance"])

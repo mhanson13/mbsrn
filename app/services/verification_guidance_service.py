@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Sequence
 
+from app.services.google_business_profile_verification_observability import (
+    record_gbp_verification_observation,
+)
+
 VerificationGuidanceState = Literal[
     "verified",
     "unverified",
@@ -345,6 +349,7 @@ class VerificationGuidanceService:
                 cta_type="refresh_status",
             )
 
+        record_gbp_verification_observation("guidance_fallback_unknown")
         return VerificationGuidanceResult(
             verification_state=verification_state,
             recommended_action="unknown",

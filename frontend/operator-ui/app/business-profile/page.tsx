@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
+  ApiRequestError,
+  asVerificationErrorDetail,
   completeGoogleBusinessProfileLocationVerification,
   disconnectGoogleBusinessProfile,
   fetchGoogleBusinessProfileConnection,
@@ -16,6 +18,7 @@ import {
 import type {
   GoogleBusinessProfileConnectionStatusResponse,
   GoogleBusinessProfileFlatLocation,
+  GoogleBusinessProfileVerificationGuidance,
   GoogleBusinessProfileVerificationStatusResponse,
 } from "../../lib/api/types";
 import {
@@ -39,6 +42,7 @@ export default function BusinessProfilePage() {
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verificationActionLoading, setVerificationActionLoading] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [verificationErrorGuidance, setVerificationErrorGuidance] = useState<GoogleBusinessProfileVerificationGuidance | null>(null);
   const [selectedOptionId, setSelectedOptionId] = useState<string>("");
   const [verificationCode, setVerificationCode] = useState("");
 
@@ -72,6 +76,7 @@ export default function BusinessProfilePage() {
       setSelectedLocationId(locationId);
       setVerificationLoading(true);
       setVerificationError(null);
+      setVerificationErrorGuidance(null);
       try {
         const status = await fetchGoogleBusinessProfileVerificationStatus(context.token, locationId);
         setVerificationStatus(status);
@@ -80,7 +85,9 @@ export default function BusinessProfilePage() {
         }
       } catch (err) {
         setVerificationStatus(null);
-        setVerificationError(err instanceof Error ? err.message : "Failed to load verification status.");
+        const normalized = normalizeVerificationError(err, "Failed to load verification status.");
+        setVerificationError(normalized.message);
+        setVerificationErrorGuidance(normalized.guidance);
       } finally {
         setVerificationLoading(false);
       }
@@ -145,6 +152,7 @@ export default function BusinessProfilePage() {
       setSelectedLocationId(null);
       setVerificationStatus(null);
       setVerificationError(null);
+      setVerificationErrorGuidance(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to disconnect Google Business Profile.");
     } finally {
@@ -158,10 +166,12 @@ export default function BusinessProfilePage() {
     }
     if (!selectedOptionId) {
       setVerificationError("Select a verification method first.");
+      setVerificationErrorGuidance(null);
       return;
     }
     setVerificationActionLoading(true);
     setVerificationError(null);
+    setVerificationErrorGuidance(null);
     try {
       const action = await startGoogleBusinessProfileLocationVerification(context.token, selectedLocationId, {
         option_id: selectedOptionId,
@@ -169,7 +179,9 @@ export default function BusinessProfilePage() {
       setVerificationStatus(action.status);
       await loadData();
     } catch (err) {
-      setVerificationError(err instanceof Error ? err.message : "Failed to start verification.");
+      const normalized = normalizeVerificationError(err, "Failed to start verification.");
+      setVerificationError(normalized.message);
+      setVerificationErrorGuidance(normalized.guidance);
     } finally {
       setVerificationActionLoading(false);
     }
@@ -182,10 +194,12 @@ export default function BusinessProfilePage() {
     const normalizedCode = verificationCode.trim();
     if (!normalizedCode) {
       setVerificationError("Enter the verification code.");
+      setVerificationErrorGuidance(null);
       return;
     }
     setVerificationActionLoading(true);
     setVerificationError(null);
+    setVerificationErrorGuidance(null);
     try {
       const action = await completeGoogleBusinessProfileLocationVerification(context.token, selectedLocationId, {
         verification_id: verificationStatus?.current_verification?.verification_id ?? null,
@@ -195,7 +209,9 @@ export default function BusinessProfilePage() {
       setVerificationCode("");
       await loadData();
     } catch (err) {
-      setVerificationError(err instanceof Error ? err.message : "Failed to complete verification.");
+      const normalized = normalizeVerificationError(err, "Failed to complete verification.");
+      setVerificationError(normalized.message);
+      setVerificationErrorGuidance(normalized.guidance);
     } finally {
       setVerificationActionLoading(false);
     }
@@ -207,6 +223,7 @@ export default function BusinessProfilePage() {
     }
     setVerificationActionLoading(true);
     setVerificationError(null);
+    setVerificationErrorGuidance(null);
     try {
       const action = await retryGoogleBusinessProfileLocationVerification(context.token, selectedLocationId, {
         option_id: selectedOptionId || undefined,
@@ -214,7 +231,9 @@ export default function BusinessProfilePage() {
       setVerificationStatus(action.status);
       await loadData();
     } catch (err) {
-      setVerificationError(err instanceof Error ? err.message : "Failed to retry verification.");
+      const normalized = normalizeVerificationError(err, "Failed to retry verification.");
+      setVerificationError(normalized.message);
+      setVerificationErrorGuidance(normalized.guidance);
     } finally {
       setVerificationActionLoading(false);
     }
@@ -377,6 +396,19 @@ export default function BusinessProfilePage() {
             </>
           ) : null}
           {verificationError ? <p className="hint error">{verificationError}</p> : null}
+          {verificationErrorGuidance ? (
+            <div className="stack" style={{ gap: "0.35rem" }}>
+              <p style={{ fontWeight: 600 }}>{verificationErrorGuidance.title}</p>
+              <p className="hint muted">{verificationErrorGuidance.summary}</p>
+              {verificationErrorGuidance.instructions.length > 0 ? (
+                <ol style={{ margin: 0, paddingLeft: "1.1rem" }}>
+                  {verificationErrorGuidance.instructions.map((item, index) => (
+                    <li key={`error-instruction-${index}`}>{item}</li>
+                  ))}
+                </ol>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -420,4 +452,24 @@ function locationBadge(location: GoogleBusinessProfileFlatLocation): { label: st
     return { label: "Not verified", className: "badge-muted" };
   }
   return { label: "Unknown", className: "badge-muted" };
+}
+
+function normalizeVerificationError(
+  error: unknown,
+  fallbackMessage: string,
+): { message: string; guidance: GoogleBusinessProfileVerificationGuidance | null } {
+  if (error instanceof ApiRequestError) {
+    const parsed = asVerificationErrorDetail(error.detail);
+    if (parsed) {
+      return {
+        message: parsed.message,
+        guidance: parsed.guidance ?? null,
+      };
+    }
+    return { message: error.message, guidance: null };
+  }
+  if (error instanceof Error) {
+    return { message: error.message, guidance: null };
+  }
+  return { message: fallbackMessage, guidance: null };
 }

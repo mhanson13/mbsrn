@@ -79,6 +79,10 @@ Routes should only:
 
 Observability note:
 - Unknown provider values (state/method/error) degrade to safe normalized defaults and are logged with structured warning events for follow-up mapping updates.
+- GBP verification hardening also tracks lightweight in-process counters for unknown/fallback events in `app/services/google_business_profile_verification_observability.py`.
+
+Frontend contract note:
+- Operator UI is expected to render backend guidance contracts (`guidance` on success and normalized verification errors) rather than rebuilding guidance logic locally.
 
 ## Testing Philosophy
 - Mock provider APIs in backend tests; do not depend on live Google services.

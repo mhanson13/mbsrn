@@ -14,6 +14,23 @@ This document covers currently implemented Google Business Profile API routes.
 
 All routes require authenticated tenant context and are business-scoped server-side.
 
+## Verification Contract
+
+Verification workflow endpoints use a backend-defined contract with deterministic guidance.
+
+Shared workflow fields (`status`, `start`, `complete`, `retry`):
+- `location_id`
+- `verification_state`
+- `action_required`
+- `message`
+- `reconnect_required`
+- `guidance`
+
+Action responses (`start`, `complete`, `retry`) additionally include:
+- `verification_id`
+- `expires_at`
+- `status` (full workflow status contract)
+
 ## Auth And Business Scoping
 - Caller must be authenticated (`get_tenant_context`, `get_authenticated_principal`).
 - Business scope comes from resolved tenant context, not caller-provided business IDs.
@@ -148,6 +165,7 @@ The backend revalidates client-submitted option tokens against current provider 
 
 Response shape:
 - returns action result with `verification_state`, `verification_id`, `action_required`, top-level `guidance`, and nested refreshed `status`.
+- includes `reconnect_required` (expected `false` on successful action responses).
 
 ### `POST /locations/{location_id}/verification/complete`
 Purpose:
@@ -163,6 +181,7 @@ Request shape:
 
 Response shape:
 - returns action result with updated workflow state, top-level `guidance`, and nested refreshed `status`.
+- includes `reconnect_required` (expected `false` on successful action responses).
 
 ### `POST /locations/{location_id}/verification/retry`
 Purpose:
@@ -178,6 +197,7 @@ Request shape:
 Response shape:
 - same action result contract as `start`.
 - `retry` is an app-level workflow convenience that reuses provider-supported start semantics when state allows it.
+- includes `reconnect_required` (expected `false` on successful action responses).
 
 ## Structured Error Model (Workflow Routes)
 
@@ -187,10 +207,18 @@ Workflow routes return object-style `detail`:
   "detail": {
     "code": "method_not_available",
     "message": "Selected verification method is not available for this location.",
-    "reconnect_required": false
+    "reconnect_required": false,
+    "guidance": {
+      "recommended_action": "choose_method",
+      "title": "Choose how to get your verification code"
+    }
   }
 }
 ```
+
+Notes:
+- `guidance` in error detail is additive and backend-generated.
+- Consumers can render error guidance directly instead of reconstructing local messaging.
 
 Implemented `code` values:
 - `reconnect_required`
@@ -210,3 +238,4 @@ Implemented `code` values:
 - Provider transport details remain in the GBP client layer; API contracts stay normalized.
 - Operator guidance is generated server-side from normalized state using deterministic rules (no live LLM dependency).
 - Unknown/unmapped provider states, methods, and fallback error mappings degrade safely and emit structured observability logs.
+- Unknown/fallback normalization and guidance events are also counted via lightweight in-process GBP verification observability counters.

@@ -14,10 +14,26 @@ import type {
   GoogleBusinessProfileConnectStartResponse,
   GoogleBusinessProfileCompleteVerificationRequest,
   GoogleBusinessProfileDisconnectResponse,
+  GoogleBusinessProfileVerificationErrorDetail,
   GoogleBusinessProfileLocationsResponse,
   GoogleBusinessProfileLocationVerification,
   GoogleBusinessProfileStartVerificationRequest,
 } from "./types";
+
+export class ApiRequestError extends Error {
+  status: number;
+  detail: Record<string, unknown> | null;
+
+  constructor(
+    message: string,
+    options: { status: number; detail: Record<string, unknown> | null },
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = options.status;
+    this.detail = options.detail;
+  }
+}
 
 async function apiRequest<T>(
   path: string,
@@ -42,14 +58,17 @@ async function apiRequest<T>(
   });
 
   if (!response.ok) {
-    let detail = `HTTP ${response.status}`;
+    let message = `HTTP ${response.status}`;
+    let detailObject: Record<string, unknown> | null = null;
     try {
       const payload = await response.json();
-      detail = formatErrorDetail(payload);
+      const parsed = parseErrorDetail(payload);
+      message = parsed.message;
+      detailObject = parsed.detail;
     } catch {
       // ignore parse failures
     }
-    throw new Error(detail);
+    throw new ApiRequestError(message, { status: response.status, detail: detailObject });
   }
 
   if (response.status === 204) {
@@ -247,22 +266,70 @@ export async function retryGoogleBusinessProfileLocationVerification(
   );
 }
 
-function formatErrorDetail(payload: unknown): string {
+function parseErrorDetail(payload: unknown): {
+  message: string;
+  detail: Record<string, unknown> | null;
+} {
   if (!payload || typeof payload !== "object") {
-    return JSON.stringify(payload);
+    return { message: JSON.stringify(payload), detail: null };
   }
   const asRecord = payload as Record<string, unknown>;
   const detail = asRecord.detail;
   if (typeof detail === "string") {
-    return detail;
+    return { message: detail, detail: null };
   }
   if (detail && typeof detail === "object") {
     const detailRecord = detail as Record<string, unknown>;
     const message = detailRecord.message;
     if (typeof message === "string" && message.trim()) {
-      return message;
+      return { message, detail: detailRecord };
     }
-    return JSON.stringify(detailRecord);
+    return { message: JSON.stringify(detailRecord), detail: detailRecord };
   }
-  return JSON.stringify(asRecord);
+  return { message: JSON.stringify(asRecord), detail: null };
+}
+
+export function asVerificationErrorDetail(
+  detail: Record<string, unknown> | null,
+): GoogleBusinessProfileVerificationErrorDetail | null {
+  if (!detail) {
+    return null;
+  }
+  const code = detail.code;
+  const message = detail.message;
+  const reconnectRequired = detail.reconnect_required;
+  if (
+    typeof code !== "string" ||
+    typeof message !== "string" ||
+    typeof reconnectRequired !== "boolean"
+  ) {
+    return null;
+  }
+
+  const allowedCodes = new Set<GoogleBusinessProfileVerificationErrorDetail["code"]>([
+    "reconnect_required",
+    "insufficient_scope",
+    "permission_denied",
+    "verification_not_supported",
+    "method_not_available",
+    "invalid_verification_state",
+    "invalid_code",
+    "provider_conflict",
+    "provider_error",
+    "not_found",
+  ]);
+  if (!allowedCodes.has(code as GoogleBusinessProfileVerificationErrorDetail["code"])) {
+    return null;
+  }
+
+  const guidance = detail.guidance;
+  return {
+    code: code as GoogleBusinessProfileVerificationErrorDetail["code"],
+    message,
+    reconnect_required: reconnectRequired,
+    guidance:
+      guidance && typeof guidance === "object"
+        ? (guidance as GoogleBusinessProfileVerificationErrorDetail["guidance"])
+        : null,
+  };
 }

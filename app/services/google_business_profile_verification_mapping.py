@@ -6,6 +6,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal, Sequence
 
+from app.services.google_business_profile_verification_observability import (
+    record_gbp_verification_observation,
+)
+
 VerificationStateSummary = Literal["verified", "unverified", "pending", "unknown"]
 VerificationNextAction = Literal["none", "start_verification", "complete_pending", "resolve_access", "reconnect_google"]
 VerificationWorkflowState = Literal["unverified", "pending", "in_progress", "completed", "failed", "unknown"]
@@ -138,6 +142,7 @@ def normalize_provider_method(
 ) -> tuple[VerificationMethod, str]:
     normalized_provider_method = _normalized_str(provider_method).upper()
     if not normalized_provider_method:
+        record_gbp_verification_observation("provider_method_missing")
         logger.warning("gbp_verification_method_missing context=%s", context)
         return "unknown", "UNKNOWN"
 
@@ -145,6 +150,7 @@ def normalize_provider_method(
     if method is not None:
         return method, normalized_provider_method
 
+    record_gbp_verification_observation("provider_method_unmapped")
     logger.warning(
         "gbp_verification_method_unmapped context=%s provider_method=%s",
         context,
@@ -184,6 +190,7 @@ def map_provider_verification_state(
     if any(marker in normalized_state for marker in _PROVIDER_STATE_FAILED_MARKERS):
         return "failed"
 
+    record_gbp_verification_observation("provider_state_unmapped")
     logger.warning(
         "gbp_verification_state_unmapped context=%s provider_state=%s",
         context,
@@ -427,6 +434,7 @@ def map_provider_api_error(
             message="Google reported a verification state conflict. Refresh status and retry if appropriate.",
         )
 
+    record_gbp_verification_observation("provider_error_fallback")
     logger.warning(
         "gbp_provider_error_fallback action=%s status_code=%s error_status=%s",
         action,
