@@ -7,14 +7,15 @@
 > `docs/deployment-configuration-contract.md`.
 >
 > `deploy-gke.yml` currently uses:
-> - `GCP_PROJECT_ID=work-boots` (literal in workflow)
+> - `GCP_PROJECT_ID` from GitHub variable `GCP_PROJECT_ID` (required)
 > - `OIDC_WORKLOAD_IDENTITY_PROVIDER`
 > - `DEPLOY_SERVICE_ACCOUNT`
 > - `CONTAINER_REGISTRY_REGION`
 > - `CONTAINER_REGISTRY_REPOSITORY`
 > - `BUILD_SOURCE_DIR`
 > - `KUBERNETES_CLUSTER_NAME`
-> - `KUBERNETES_CLUSTER_REGION`
+> - `KUBERNETES_CLUSTER_LOCATION`
+> - `KUBERNETES_CLUSTER_LOCATION_TYPE` (`region` or `zone`)
 
 ## 1) Purpose And Scope
 This guide is a prerequisite/setup runbook for deploying Work Boots to GKE from GitHub Actions.
@@ -34,6 +35,7 @@ Current deployment model in this repo:
 - GitHub Actions orchestrates CI + deploy (`.github/workflows/deploy-gke.yml`)
 - GKE runs API/UI workloads (`infra/k8s/base/`, `infra/k8s/overlays/*`)
 - Cloud Buildpacks are used only to build/push images from the workflow (`gcloud builds submit --pack ...`)
+- GKE cluster creation is currently manual/out-of-band; deploy only validates and targets an existing cluster
 
 ## 2) High-Level Deployment Flow
 End-to-end flow used by this repo:
@@ -43,6 +45,7 @@ GitHub push/workflow_dispatch
   -> GitHub Actions workflow (deploy-gke.yml)
   -> Workload Identity Federation auth to GCP
   -> Build/push API and UI images to Artifact Registry
+  -> preflight check target cluster exists (fail-fast)
   -> Get GKE credentials
   -> kubectl apply overlay (dev/prod)
   -> run Alembic migration Job gate
@@ -73,7 +76,7 @@ Google Cloud Console -> top project selector -> `New Project`
 - Project Number: `123456789012` (example)
 
 **Used In:**
-- deterministic `GCP_PROJECT_ID` in `.github/workflows/deploy-gke.yml` (`work-boots` by current default)
+- deploy workflow variable `GCP_PROJECT_ID` in `.github/workflows/deploy-gke.yml`
 - Workload Identity Provider resource string (uses Project Number)
 - Artifact Registry path (`<LOCATION>-docker.pkg.dev/<GCP_PROJECT_ID>/<REPO>`)
 
@@ -139,7 +142,8 @@ Google Cloud Console -> Kubernetes Engine -> Clusters -> `Create` -> `Switch to 
 **Used In:**
 - GitHub secrets:
   - `KUBERNETES_CLUSTER_NAME` = cluster name
-  - `KUBERNETES_CLUSTER_REGION` = region
+  - `KUBERNETES_CLUSTER_LOCATION` = region or zone
+  - `KUBERNETES_CLUSTER_LOCATION_TYPE` = `region` or `zone`
 - Used by `gcloud container clusters get-credentials` in `.github/workflows/deploy-gke.yml`
 
 ### 3.5 Create Workload Identity Pool
@@ -287,8 +291,17 @@ Ingress hosts are defined in overlays:
 - dev: `dev.workboots.example.com` (`infra/k8s/overlays/dev/kustomization.yaml`)
 - prod: `workboots.example.com` (`infra/k8s/overlays/prod/kustomization.yaml`)
 
-The base ingress currently defines host routing but no TLS block (`infra/k8s/base/ingress.yaml`).
-Configure TLS before production traffic.
+Ingress/TLS resources in base manifests:
+- `infra/k8s/base/ingress.yaml`:
+  - `/` -> `work-boots-ui`
+  - `/api` -> `work-boots-api`
+  - annotations for global static IP name, managed certificate, and frontend config
+- `infra/k8s/base/managed-certificate.yaml`:
+  - Google-managed certificate resource (domain patched by overlays)
+- `infra/k8s/base/frontend-config.yaml`:
+  - HTTPS redirect enabled (`redirectToHttps.enabled: true`)
+
+Before production traffic, patch overlay placeholders for host, static IP name, and managed certificate domain to your real values.
 
 **Console Path:**
 Google Cloud Console -> Network Services -> Load balancing (certificate visibility)  
@@ -305,7 +318,7 @@ and optionally Certificate Manager (if using Google-managed certs outside Kubern
 - Certificate resource or TLS secret name
 
 **Used In:**
-- Ingress serving API/UI over HTTPS
+- Ingress serving API/UI over HTTPS on one hostname (`/` UI, `/api` API)
 - HSTS expectations from runtime docs and `SECURITY_HEADERS_HSTS_*` settings
 
 ### 3.12 Create Google OAuth Client (For Operator Login)
@@ -475,23 +488,26 @@ Add secrets in GitHub:
 **Console Path:**
 GitHub -> `mhanson13/work-boots` -> `Settings` -> `Secrets and variables` -> `Actions` -> `New repository secret`
 
-Create these repository secrets (exact names from `.github/workflows/deploy-gke.yml`):
+Create these repository secrets/variables (exact names from `.github/workflows/deploy-gke.yml`):
 
 | Name | Type | Example | Where to get it | Used in |
 |---|---|---|---|---|
+| `GCP_PROJECT_ID` | Variable | `work-boots` | Google Cloud project ID selection | deploy workflow `gcloud` project + image URI construction |
 | `CONTAINER_REGISTRY_REGION` | Secret | `us-central1` | Artifact Registry repository region | image URI build/push paths |
 | `CONTAINER_REGISTRY_REPOSITORY` | Secret | `work-boots` | Artifact Registry repository name | image URI build/push paths |
 | `BUILD_SOURCE_DIR` | Secret | `gs://work-boots-build-source/source` | bootstrap script output or GCS bucket design | `gcloud builds submit --gcs-source-staging-dir=...` |
 | `OIDC_WORKLOAD_IDENTITY_PROVIDER` | Secret | `projects/123456789012/locations/global/workloadIdentityPools/github-pool/providers/github-provider` | WIF provider details | `google-github-actions/auth@v3` |
 | `DEPLOY_SERVICE_ACCOUNT` | Secret | `work-boots-github-deployer@my-work-boots-prod.iam.gserviceaccount.com` | IAM Service Accounts | `google-github-actions/auth@v3` |
 | `KUBERNETES_CLUSTER_NAME` | Secret | `work-boots-cluster` | GKE cluster details | `gcloud container clusters get-credentials` |
-| `KUBERNETES_CLUSTER_REGION` | Secret | `us-central1` | GKE cluster region | `gcloud container clusters get-credentials --region` |
+| `KUBERNETES_CLUSTER_LOCATION` | Secret | `us-central1` | GKE cluster location (region or zone) | `gcloud container clusters get-credentials --region/--zone` |
+| `KUBERNETES_CLUSTER_LOCATION_TYPE` | Secret | `region` | GKE cluster location selector | controls `--region` vs `--zone` in deploy workflow |
 
 Notes:
-- `GCP_PROJECT_ID` is deterministic in current deploy workflow (`work-boots`) and not secret-backed.
+- Set GitHub variable `GCP_PROJECT_ID` explicitly for each repository/environment.
 - Deploy workflow runs on `push` to `main` and `workflow_dispatch`.
 - Secrets are not available to workflows triggered from untrusted forks.
 - Keep `permissions.id-token: write` in deploy jobs; WIF fails without it.
+- Deploy will fail fast if cluster inputs are missing/invalid or cluster does not exist.
 
 ## 7) Application Runtime Configuration
 ### 7.1 How Config Is Injected
@@ -677,7 +693,8 @@ Fix:
 
 ### 11.3 Wrong Cluster Name Or Region
 Cause:
-- `KUBERNETES_CLUSTER_NAME`/`KUBERNETES_CLUSTER_REGION` secret mismatch.
+- `KUBERNETES_CLUSTER_NAME`/`KUBERNETES_CLUSTER_LOCATION` mismatch.
+- `KUBERNETES_CLUSTER_LOCATION_TYPE` set incorrectly (`region` vs `zone`).
 
 Fix:
 1. Open GKE cluster details.

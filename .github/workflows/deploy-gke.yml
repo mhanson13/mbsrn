@@ -31,10 +31,12 @@ jobs:
     outputs:
       image_uri: ${{ steps.publish.outputs.image_uri }}
     env:
-      GCP_PROJECT_ID: work-boots
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       CONTAINER_REGISTRY_REGION: ${{ secrets.CONTAINER_REGISTRY_REGION }}
       CONTAINER_REGISTRY_REPOSITORY: ${{ secrets.CONTAINER_REGISTRY_REPOSITORY }}
       BUILD_SOURCE_DIR: ${{ secrets.BUILD_SOURCE_DIR }}
+      OIDC_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.OIDC_WORKLOAD_IDENTITY_PROVIDER }}
+      DEPLOY_SERVICE_ACCOUNT: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}
 
     steps:
       - name: Checkout
@@ -62,8 +64,10 @@ jobs:
           echo "CONTAINER_REGISTRY_REGION_SET=$([ -n \"${CONTAINER_REGISTRY_REGION//[[:space:]]/}\" ] && echo true || echo false)"
           echo "CONTAINER_REGISTRY_REPOSITORY_SET=$([ -n \"${CONTAINER_REGISTRY_REPOSITORY//[[:space:]]/}\" ] && echo true || echo false)"
           echo "BUILD_SOURCE_DIR_SET=$([ -n \"${BUILD_SOURCE_DIR//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "OIDC_WORKLOAD_IDENTITY_PROVIDER_SET=$([ -n \"${OIDC_WORKLOAD_IDENTITY_PROVIDER//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "DEPLOY_SERVICE_ACCOUNT_SET=$([ -n \"${DEPLOY_SERVICE_ACCOUNT//[[:space:]]/}\" ] && echo true || echo false)"
           if [ -z "${GCP_PROJECT_ID//[[:space:]]/}" ]; then
-            echo "::error::GCP_PROJECT_ID is empty."
+            echo "::error::GCP_PROJECT_ID is empty. Set GitHub variable GCP_PROJECT_ID."
             exit 1
           fi
           if [ -z "${CONTAINER_REGISTRY_REGION//[[:space:]]/}" ]; then
@@ -76,6 +80,14 @@ jobs:
           fi
           if [ -z "${BUILD_SOURCE_DIR//[[:space:]]/}" ]; then
             echo "::error::BUILD_SOURCE_DIR is empty. Set GitHub secret BUILD_SOURCE_DIR."
+            exit 1
+          fi
+          if [ -z "${OIDC_WORKLOAD_IDENTITY_PROVIDER//[[:space:]]/}" ]; then
+            echo "::error::OIDC_WORKLOAD_IDENTITY_PROVIDER is empty. Set GitHub secret OIDC_WORKLOAD_IDENTITY_PROVIDER."
+            exit 1
+          fi
+          if [ -z "${DEPLOY_SERVICE_ACCOUNT//[[:space:]]/}" ]; then
+            echo "::error::DEPLOY_SERVICE_ACCOUNT is empty. Set GitHub secret DEPLOY_SERVICE_ACCOUNT."
             exit 1
           fi
 
@@ -104,10 +116,12 @@ jobs:
     outputs:
       image_uri: ${{ steps.publish.outputs.image_uri }}
     env:
-      GCP_PROJECT_ID: work-boots
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       CONTAINER_REGISTRY_REGION: ${{ secrets.CONTAINER_REGISTRY_REGION }}
       CONTAINER_REGISTRY_REPOSITORY: ${{ secrets.CONTAINER_REGISTRY_REPOSITORY }}
       BUILD_SOURCE_DIR: ${{ secrets.BUILD_SOURCE_DIR }}
+      OIDC_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.OIDC_WORKLOAD_IDENTITY_PROVIDER }}
+      DEPLOY_SERVICE_ACCOUNT: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}
 
     steps:
       - name: Checkout
@@ -152,8 +166,10 @@ jobs:
           echo "CONTAINER_REGISTRY_REGION_SET=$([ -n \"${CONTAINER_REGISTRY_REGION//[[:space:]]/}\" ] && echo true || echo false)"
           echo "CONTAINER_REGISTRY_REPOSITORY_SET=$([ -n \"${CONTAINER_REGISTRY_REPOSITORY//[[:space:]]/}\" ] && echo true || echo false)"
           echo "BUILD_SOURCE_DIR_SET=$([ -n \"${BUILD_SOURCE_DIR//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "OIDC_WORKLOAD_IDENTITY_PROVIDER_SET=$([ -n \"${OIDC_WORKLOAD_IDENTITY_PROVIDER//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "DEPLOY_SERVICE_ACCOUNT_SET=$([ -n \"${DEPLOY_SERVICE_ACCOUNT//[[:space:]]/}\" ] && echo true || echo false)"
           if [ -z "${GCP_PROJECT_ID//[[:space:]]/}" ]; then
-            echo "::error::GCP_PROJECT_ID is empty."
+            echo "::error::GCP_PROJECT_ID is empty. Set GitHub variable GCP_PROJECT_ID."
             exit 1
           fi
           if [ -z "${CONTAINER_REGISTRY_REGION//[[:space:]]/}" ]; then
@@ -166,6 +182,14 @@ jobs:
           fi
           if [ -z "${BUILD_SOURCE_DIR//[[:space:]]/}" ]; then
             echo "::error::BUILD_SOURCE_DIR is empty. Set GitHub secret BUILD_SOURCE_DIR."
+            exit 1
+          fi
+          if [ -z "${OIDC_WORKLOAD_IDENTITY_PROVIDER//[[:space:]]/}" ]; then
+            echo "::error::OIDC_WORKLOAD_IDENTITY_PROVIDER is empty. Set GitHub secret OIDC_WORKLOAD_IDENTITY_PROVIDER."
+            exit 1
+          fi
+          if [ -z "${DEPLOY_SERVICE_ACCOUNT//[[:space:]]/}" ]; then
+            echo "::error::DEPLOY_SERVICE_ACCOUNT is empty. Set GitHub secret DEPLOY_SERVICE_ACCOUNT."
             exit 1
           fi
 
@@ -197,9 +221,12 @@ jobs:
 
     env:
       TARGET_OVERLAY: ${{ github.event.inputs.environment || 'prod' }}
-      GCP_PROJECT_ID: work-boots
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       KUBERNETES_CLUSTER_NAME: ${{ secrets.KUBERNETES_CLUSTER_NAME }}
-      KUBERNETES_CLUSTER_REGION: ${{ secrets.KUBERNETES_CLUSTER_REGION }}
+      KUBERNETES_CLUSTER_LOCATION: ${{ secrets.KUBERNETES_CLUSTER_LOCATION }}
+      KUBERNETES_CLUSTER_LOCATION_TYPE: ${{ secrets.KUBERNETES_CLUSTER_LOCATION_TYPE }}
+      OIDC_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.OIDC_WORKLOAD_IDENTITY_PROVIDER }}
+      DEPLOY_SERVICE_ACCOUNT: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}
 
     steps:
       - name: Checkout
@@ -211,17 +238,37 @@ jobs:
           set -euo pipefail
           echo "GCP_PROJECT_ID=${GCP_PROJECT_ID:-<empty>}"
           echo "KUBERNETES_CLUSTER_NAME_SET=$([ -n \"${KUBERNETES_CLUSTER_NAME//[[:space:]]/}\" ] && echo true || echo false)"
-          echo "KUBERNETES_CLUSTER_REGION_SET=$([ -n \"${KUBERNETES_CLUSTER_REGION//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "KUBERNETES_CLUSTER_LOCATION_SET=$([ -n \"${KUBERNETES_CLUSTER_LOCATION//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "KUBERNETES_CLUSTER_LOCATION_TYPE_SET=$([ -n \"${KUBERNETES_CLUSTER_LOCATION_TYPE//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "OIDC_WORKLOAD_IDENTITY_PROVIDER_SET=$([ -n \"${OIDC_WORKLOAD_IDENTITY_PROVIDER//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "DEPLOY_SERVICE_ACCOUNT_SET=$([ -n \"${DEPLOY_SERVICE_ACCOUNT//[[:space:]]/}\" ] && echo true || echo false)"
           if [ -z "${GCP_PROJECT_ID//[[:space:]]/}" ]; then
-            echo "::error::GCP_PROJECT_ID is empty."
+            echo "::error::GCP_PROJECT_ID is empty. Set GitHub variable GCP_PROJECT_ID."
             exit 1
           fi
           if [ -z "${KUBERNETES_CLUSTER_NAME//[[:space:]]/}" ]; then
             echo "::error::KUBERNETES_CLUSTER_NAME is empty. Set GitHub secret KUBERNETES_CLUSTER_NAME."
             exit 1
           fi
-          if [ -z "${KUBERNETES_CLUSTER_REGION//[[:space:]]/}" ]; then
-            echo "::error::KUBERNETES_CLUSTER_REGION is empty. Set GitHub secret KUBERNETES_CLUSTER_REGION."
+          if [ -z "${KUBERNETES_CLUSTER_LOCATION//[[:space:]]/}" ]; then
+            echo "::error::KUBERNETES_CLUSTER_LOCATION is empty. Set GitHub secret KUBERNETES_CLUSTER_LOCATION."
+            exit 1
+          fi
+          if [ -z "${KUBERNETES_CLUSTER_LOCATION_TYPE//[[:space:]]/}" ]; then
+            echo "::error::KUBERNETES_CLUSTER_LOCATION_TYPE is empty. Set GitHub secret KUBERNETES_CLUSTER_LOCATION_TYPE to region or zone."
+            exit 1
+          fi
+          if [ -z "${OIDC_WORKLOAD_IDENTITY_PROVIDER//[[:space:]]/}" ]; then
+            echo "::error::OIDC_WORKLOAD_IDENTITY_PROVIDER is empty. Set GitHub secret OIDC_WORKLOAD_IDENTITY_PROVIDER."
+            exit 1
+          fi
+          if [ -z "${DEPLOY_SERVICE_ACCOUNT//[[:space:]]/}" ]; then
+            echo "::error::DEPLOY_SERVICE_ACCOUNT is empty. Set GitHub secret DEPLOY_SERVICE_ACCOUNT."
+            exit 1
+          fi
+          LOCATION_TYPE="$(echo "${KUBERNETES_CLUSTER_LOCATION_TYPE}" | tr '[:upper:]' '[:lower:]')"
+          if [ "${LOCATION_TYPE}" != "region" ] && [ "${LOCATION_TYPE}" != "zone" ]; then
+            echo "::error::KUBERNETES_CLUSTER_LOCATION_TYPE must be 'region' or 'zone'. Got: ${KUBERNETES_CLUSTER_LOCATION_TYPE}"
             exit 1
           fi
 
@@ -234,12 +281,56 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
 
+      - name: Resolve deployment target
+        id: deploy_target
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOCATION_TYPE="$(echo "${KUBERNETES_CLUSTER_LOCATION_TYPE}" | tr '[:upper:]' '[:lower:]')"
+          echo "cluster_name=${KUBERNETES_CLUSTER_NAME}" >> "$GITHUB_OUTPUT"
+          echo "cluster_location=${KUBERNETES_CLUSTER_LOCATION}" >> "$GITHUB_OUTPUT"
+          echo "cluster_location_type=${LOCATION_TYPE}" >> "$GITHUB_OUTPUT"
+          echo "Resolved deployment target:"
+          echo "  project=${GCP_PROJECT_ID}"
+          echo "  overlay=${TARGET_OVERLAY}"
+          echo "  cluster_name=${KUBERNETES_CLUSTER_NAME}"
+          echo "  cluster_location=${KUBERNETES_CLUSTER_LOCATION}"
+          echo "  cluster_location_type=${LOCATION_TYPE}"
+
+      - name: Preflight check cluster exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLUSTER_NAME="${{ steps.deploy_target.outputs.cluster_name }}"
+          CLUSTER_LOCATION="${{ steps.deploy_target.outputs.cluster_location }}"
+          CLUSTER_LOCATION_TYPE="${{ steps.deploy_target.outputs.cluster_location_type }}"
+          if [ "${CLUSTER_LOCATION_TYPE}" = "zone" ]; then
+            if ! gcloud container clusters describe "${CLUSTER_NAME}" --zone "${CLUSTER_LOCATION}" --project "${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+              echo "::error::Target cluster not found: name=${CLUSTER_NAME}, location_type=zone, location=${CLUSTER_LOCATION}, project=${GCP_PROJECT_ID}. Create or fix this cluster in GCP, verify secret values, then retry deploy."
+              exit 1
+            fi
+          else
+            if ! gcloud container clusters describe "${CLUSTER_NAME}" --region "${CLUSTER_LOCATION}" --project "${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+              echo "::error::Target cluster not found: name=${CLUSTER_NAME}, location_type=region, location=${CLUSTER_LOCATION}, project=${GCP_PROJECT_ID}. Create or fix this cluster in GCP, verify secret values, then retry deploy."
+              exit 1
+            fi
+          fi
+
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
 
       - name: Configure kubectl for GKE
+        shell: bash
         run: |
-          gcloud container clusters get-credentials "${KUBERNETES_CLUSTER_NAME}" --region "${KUBERNETES_CLUSTER_REGION}" --project "${GCP_PROJECT_ID}"
+          set -euo pipefail
+          CLUSTER_NAME="${{ steps.deploy_target.outputs.cluster_name }}"
+          CLUSTER_LOCATION="${{ steps.deploy_target.outputs.cluster_location }}"
+          CLUSTER_LOCATION_TYPE="${{ steps.deploy_target.outputs.cluster_location_type }}"
+          if [ "${CLUSTER_LOCATION_TYPE}" = "zone" ]; then
+            gcloud container clusters get-credentials "${CLUSTER_NAME}" --zone "${CLUSTER_LOCATION}" --project "${GCP_PROJECT_ID}"
+          else
+            gcloud container clusters get-credentials "${CLUSTER_NAME}" --region "${CLUSTER_LOCATION}" --project "${GCP_PROJECT_ID}"
+          fi
 
       - name: Resolve deployment namespace
         id: target

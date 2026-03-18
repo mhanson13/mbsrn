@@ -25,6 +25,16 @@ patches:
       - op: replace
         path: /spec/rules/0/host
         value: dev.workboots.example.com
+      - op: replace
+        path: /metadata/annotations/kubernetes.io~1ingress.global-static-ip-name
+        value: work-boots-dev-static-ip
+  - target:
+      kind: ManagedCertificate
+      name: work-boots-managed-cert
+    patch: |-
+      - op: replace
+        path: /spec/domains/0
+        value: dev.workboots.example.com
   - target:
       kind: Deployment
       name: work-boots-api

@@ -4,6 +4,11 @@ metadata:
   name: work-boots-ingress
   annotations:
     kubernetes.io/ingress.class: gce
+    # Placeholder/example static IP name. Overlays should patch this per environment.
+    kubernetes.io/ingress.global-static-ip-name: work-boots-static-ip
+    # Placeholder/example managed certificate resource name.
+    networking.gke.io/managed-certificates: work-boots-managed-cert
+    networking.gke.io/v1beta1.FrontendConfig: work-boots-frontend-config
 spec:
   rules:
     - host: workboots.example.com

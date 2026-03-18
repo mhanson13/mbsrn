@@ -3,6 +3,7 @@ kind: Service
 metadata:
   name: work-boots-ui
 spec:
+  type: ClusterIP
   selector:
     app: work-boots-ui
   ports:

@@ -19,17 +19,18 @@ Options:
   --container-registry-repository <name>      Artifact Registry repository name (required)
   --build-source-dir <gs://...>  Cloud Build source staging dir (default: gs://<GCP_PROJECT_ID>-build-source/source)
   --kubernetes-cluster-name <name>         Optional: cluster name for create/reuse
-  --kubernetes-cluster-region <region>      Optional: cluster region for create/reuse
+  --kubernetes-cluster-location <location> Optional: cluster location (region or zone) for create/reuse
+  --kubernetes-cluster-location-type <type> Optional: cluster location type (region|zone, default: region)
   --kubernetes-cluster-mode <mode>          Optional: cluster provisioning mode (autopilot|standard, default: autopilot)
   --help                       Show help
 
 Environment variables are also supported:
   GCP_PROJECT_ID, REPO, POOL_ID, PROVIDER_ID, SERVICE_ACCOUNT_ID,
   CONTAINER_REGISTRY_REGION, CONTAINER_REGISTRY_REPOSITORY, BUILD_SOURCE_DIR,
-  KUBERNETES_CLUSTER_NAME, KUBERNETES_CLUSTER_REGION, KUBERNETES_CLUSTER_MODE
+  KUBERNETES_CLUSTER_NAME, KUBERNETES_CLUSTER_LOCATION, KUBERNETES_CLUSTER_LOCATION_TYPE, KUBERNETES_CLUSTER_MODE
 
 Deprecated aliases (still accepted for transition):
-  PROJECT_ID, GAR_LOCATION, GAR_REPOSITORY, BUILD_SOURCE_BUCKET, GKE_CLUSTER, GKE_LOCATION
+  PROJECT_ID, GAR_LOCATION, GAR_REPOSITORY, BUILD_SOURCE_BUCKET, GKE_CLUSTER, GKE_LOCATION, KUBERNETES_CLUSTER_REGION
 
 Example:
   GCP_PROJECT_ID=work-boots CONTAINER_REGISTRY_REGION=us-central1 CONTAINER_REGISTRY_REPOSITORY=work-boots \
@@ -59,7 +60,8 @@ CONTAINER_REGISTRY_REGION="${CONTAINER_REGISTRY_REGION:-${GAR_LOCATION:-}}"
 CONTAINER_REGISTRY_REPOSITORY="${CONTAINER_REGISTRY_REPOSITORY:-${GAR_REPOSITORY:-}}"
 BUILD_SOURCE_DIR="${BUILD_SOURCE_DIR:-${BUILD_SOURCE_BUCKET:-}}"
 KUBERNETES_CLUSTER_NAME="${KUBERNETES_CLUSTER_NAME:-${GKE_CLUSTER:-}}"
-KUBERNETES_CLUSTER_REGION="${KUBERNETES_CLUSTER_REGION:-${GKE_LOCATION:-}}"
+KUBERNETES_CLUSTER_LOCATION="${KUBERNETES_CLUSTER_LOCATION:-${KUBERNETES_CLUSTER_REGION:-${GKE_LOCATION:-}}}"
+KUBERNETES_CLUSTER_LOCATION_TYPE="${KUBERNETES_CLUSTER_LOCATION_TYPE:-region}"
 KUBERNETES_CLUSTER_MODE="${KUBERNETES_CLUSTER_MODE:-autopilot}"
 
 while [[ $# -gt 0 ]]; do
@@ -121,11 +123,21 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --gke-location)
-      KUBERNETES_CLUSTER_REGION="$2"
+      KUBERNETES_CLUSTER_LOCATION="$2"
+      KUBERNETES_CLUSTER_LOCATION_TYPE="region"
       shift 2
       ;;
     --kubernetes-cluster-region)
-      KUBERNETES_CLUSTER_REGION="$2"
+      KUBERNETES_CLUSTER_LOCATION="$2"
+      KUBERNETES_CLUSTER_LOCATION_TYPE="region"
+      shift 2
+      ;;
+    --kubernetes-cluster-location)
+      KUBERNETES_CLUSTER_LOCATION="$2"
+      shift 2
+      ;;
+    --kubernetes-cluster-location-type)
+      KUBERNETES_CLUSTER_LOCATION_TYPE="$2"
       shift 2
       ;;
     --kubernetes-cluster-mode)
@@ -172,12 +184,21 @@ if [[ "${KUBERNETES_CLUSTER_MODE}" != "autopilot" && "${KUBERNETES_CLUSTER_MODE}
   echo "ERROR: KUBERNETES_CLUSTER_MODE must be one of: autopilot, standard. Got: ${KUBERNETES_CLUSTER_MODE}" >&2
   exit 1
 fi
-if trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}" && ! trimmed_nonempty "${KUBERNETES_CLUSTER_REGION}"; then
-  echo "ERROR: KUBERNETES_CLUSTER_REGION is required when KUBERNETES_CLUSTER_NAME is set." >&2
+KUBERNETES_CLUSTER_LOCATION_TYPE="$(echo "${KUBERNETES_CLUSTER_LOCATION_TYPE}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${KUBERNETES_CLUSTER_LOCATION_TYPE}" != "region" && "${KUBERNETES_CLUSTER_LOCATION_TYPE}" != "zone" ]]; then
+  echo "ERROR: KUBERNETES_CLUSTER_LOCATION_TYPE must be one of: region, zone. Got: ${KUBERNETES_CLUSTER_LOCATION_TYPE}" >&2
   exit 1
 fi
-if ! trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}" && trimmed_nonempty "${KUBERNETES_CLUSTER_REGION}"; then
-  echo "ERROR: KUBERNETES_CLUSTER_NAME is required when KUBERNETES_CLUSTER_REGION is set." >&2
+if trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}" && ! trimmed_nonempty "${KUBERNETES_CLUSTER_LOCATION}"; then
+  echo "ERROR: KUBERNETES_CLUSTER_LOCATION is required when KUBERNETES_CLUSTER_NAME is set." >&2
+  exit 1
+fi
+if ! trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}" && trimmed_nonempty "${KUBERNETES_CLUSTER_LOCATION}"; then
+  echo "ERROR: KUBERNETES_CLUSTER_NAME is required when KUBERNETES_CLUSTER_LOCATION is set." >&2
+  exit 1
+fi
+if [[ "${KUBERNETES_CLUSTER_MODE}" == "autopilot" && "${KUBERNETES_CLUSTER_LOCATION_TYPE}" != "region" ]]; then
+  echo "ERROR: KUBERNETES_CLUSTER_MODE=autopilot requires KUBERNETES_CLUSTER_LOCATION_TYPE=region." >&2
   exit 1
 fi
 
@@ -221,9 +242,10 @@ echo "BUILD_SOURCE_DIR=${BUILD_SOURCE_DIR}"
 if trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}"; then
   echo "KUBERNETES_CLUSTER_NAME=${KUBERNETES_CLUSTER_NAME}"
 fi
-if trimmed_nonempty "${KUBERNETES_CLUSTER_REGION}"; then
-  echo "KUBERNETES_CLUSTER_REGION=${KUBERNETES_CLUSTER_REGION}"
+if trimmed_nonempty "${KUBERNETES_CLUSTER_LOCATION}"; then
+  echo "KUBERNETES_CLUSTER_LOCATION=${KUBERNETES_CLUSTER_LOCATION}"
 fi
+echo "KUBERNETES_CLUSTER_LOCATION_TYPE=${KUBERNETES_CLUSTER_LOCATION_TYPE}"
 echo "KUBERNETES_CLUSTER_MODE=${KUBERNETES_CLUSTER_MODE}"
 
 echo "==> Enabling required APIs"
@@ -239,25 +261,45 @@ gcloud services enable \
   cloudresourcemanager.googleapis.com \
   --project "${GCP_PROJECT_ID}" >/dev/null
 
-if trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}" && trimmed_nonempty "${KUBERNETES_CLUSTER_REGION}"; then
+if trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}" && trimmed_nonempty "${KUBERNETES_CLUSTER_LOCATION}"; then
   echo "==> Ensuring Kubernetes cluster exists"
-  if gcloud container clusters describe "${KUBERNETES_CLUSTER_NAME}" \
-    --region "${KUBERNETES_CLUSTER_REGION}" \
-    --project "${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+  CLUSTER_EXISTS=false
+  if [[ "${KUBERNETES_CLUSTER_LOCATION_TYPE}" == "zone" ]]; then
+    if gcloud container clusters describe "${KUBERNETES_CLUSTER_NAME}" \
+      --zone "${KUBERNETES_CLUSTER_LOCATION}" \
+      --project "${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+      CLUSTER_EXISTS=true
+    fi
+  else
+    if gcloud container clusters describe "${KUBERNETES_CLUSTER_NAME}" \
+      --region "${KUBERNETES_CLUSTER_LOCATION}" \
+      --project "${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+      CLUSTER_EXISTS=true
+    fi
+  fi
+
+  if [[ "${CLUSTER_EXISTS}" == "true" ]]; then
     echo "Kubernetes cluster already exists: ${KUBERNETES_CLUSTER_NAME}"
   else
     if [[ "${KUBERNETES_CLUSTER_MODE}" == "autopilot" ]]; then
       gcloud container clusters create-auto "${KUBERNETES_CLUSTER_NAME}" \
-        --region "${KUBERNETES_CLUSTER_REGION}" \
+        --region "${KUBERNETES_CLUSTER_LOCATION}" \
         --project "${GCP_PROJECT_ID}" \
         --quiet >/dev/null
     else
-      gcloud container clusters create "${KUBERNETES_CLUSTER_NAME}" \
-        --region "${KUBERNETES_CLUSTER_REGION}" \
-        --project "${GCP_PROJECT_ID}" \
-        --quiet >/dev/null
+      if [[ "${KUBERNETES_CLUSTER_LOCATION_TYPE}" == "zone" ]]; then
+        gcloud container clusters create "${KUBERNETES_CLUSTER_NAME}" \
+          --zone "${KUBERNETES_CLUSTER_LOCATION}" \
+          --project "${GCP_PROJECT_ID}" \
+          --quiet >/dev/null
+      else
+        gcloud container clusters create "${KUBERNETES_CLUSTER_NAME}" \
+          --region "${KUBERNETES_CLUSTER_LOCATION}" \
+          --project "${GCP_PROJECT_ID}" \
+          --quiet >/dev/null
+      fi
     fi
-    echo "Created Kubernetes cluster: ${KUBERNETES_CLUSTER_NAME} (${KUBERNETES_CLUSTER_MODE})"
+    echo "Created Kubernetes cluster: ${KUBERNETES_CLUSTER_NAME} (${KUBERNETES_CLUSTER_MODE}, ${KUBERNETES_CLUSTER_LOCATION_TYPE}:${KUBERNETES_CLUSTER_LOCATION})"
   fi
 fi
 
@@ -375,7 +417,8 @@ gcloud iam service-accounts add-iam-policy-binding "${SERVICE_ACCOUNT_EMAIL}" \
 echo
 echo "Bootstrap complete."
 echo
-echo "Add/update these GitHub repository secrets:"
+echo "Add/update these GitHub repository variables/secrets:"
+echo "  GCP_PROJECT_ID=${GCP_PROJECT_ID}"
 echo "  OIDC_WORKLOAD_IDENTITY_PROVIDER=${WIF_PROVIDER_RESOURCE}"
 echo "  DEPLOY_SERVICE_ACCOUNT=${SERVICE_ACCOUNT_EMAIL}"
 echo "  CONTAINER_REGISTRY_REGION=${CONTAINER_REGISTRY_REGION}"
@@ -384,9 +427,10 @@ echo "  BUILD_SOURCE_DIR=${BUILD_SOURCE_DIR}"
 if trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}"; then
   echo "  KUBERNETES_CLUSTER_NAME=${KUBERNETES_CLUSTER_NAME}"
 fi
-if trimmed_nonempty "${KUBERNETES_CLUSTER_REGION}"; then
-  echo "  KUBERNETES_CLUSTER_REGION=${KUBERNETES_CLUSTER_REGION}"
+if trimmed_nonempty "${KUBERNETES_CLUSTER_LOCATION}"; then
+  echo "  KUBERNETES_CLUSTER_LOCATION=${KUBERNETES_CLUSTER_LOCATION}"
 fi
+echo "  KUBERNETES_CLUSTER_LOCATION_TYPE=${KUBERNETES_CLUSTER_LOCATION_TYPE}"
 
 echo
 echo "Post-bootstrap validation commands:"
@@ -394,9 +438,16 @@ echo "  gcloud iam workload-identity-pools providers describe ${PROVIDER_ID} --w
 echo "  gcloud iam service-accounts get-iam-policy ${SERVICE_ACCOUNT_EMAIL} --project ${GCP_PROJECT_ID}"
 echo "  gcloud artifacts repositories describe ${CONTAINER_REGISTRY_REPOSITORY} --location ${CONTAINER_REGISTRY_REGION} --project ${GCP_PROJECT_ID}"
 echo "  gcloud storage buckets describe ${SOURCE_BUCKET_URI} --project ${GCP_PROJECT_ID}"
+if trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}" && trimmed_nonempty "${KUBERNETES_CLUSTER_LOCATION}"; then
+  if [[ "${KUBERNETES_CLUSTER_LOCATION_TYPE}" == "zone" ]]; then
+    echo "  gcloud container clusters describe ${KUBERNETES_CLUSTER_NAME} --zone ${KUBERNETES_CLUSTER_LOCATION} --project ${GCP_PROJECT_ID}"
+  else
+    echo "  gcloud container clusters describe ${KUBERNETES_CLUSTER_NAME} --region ${KUBERNETES_CLUSTER_LOCATION} --project ${GCP_PROJECT_ID}"
+  fi
+fi
 echo
 echo "Manual steps not automated by this script:"
-if ! trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}" || ! trimmed_nonempty "${KUBERNETES_CLUSTER_REGION}"; then
-  echo "  - Ensure GKE cluster exists and set KUBERNETES_CLUSTER_NAME/KUBERNETES_CLUSTER_REGION GitHub secrets."
+if ! trimmed_nonempty "${KUBERNETES_CLUSTER_NAME}" || ! trimmed_nonempty "${KUBERNETES_CLUSTER_LOCATION}"; then
+  echo "  - Ensure GKE cluster exists and set KUBERNETES_CLUSTER_NAME/KUBERNETES_CLUSTER_LOCATION GitHub secrets."
 fi
 echo "  - Ensure Kubernetes RBAC in cluster permits this service account identity to apply manifests and update deployments."

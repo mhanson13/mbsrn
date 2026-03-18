@@ -27,9 +27,9 @@ Before starting runtime validation, confirm all of the following:
   - `CONTAINER_REGISTRY_REGION`
   - `CONTAINER_REGISTRY_REPOSITORY`
   - `KUBERNETES_CLUSTER_NAME`
-  - `KUBERNETES_CLUSTER_REGION`
-- Deploy workflow uses deterministic project setting:
-  - `GCP_PROJECT_ID=work-boots`
+  - `KUBERNETES_CLUSTER_LOCATION`
+  - `KUBERNETES_CLUSTER_LOCATION_TYPE` (`region` or `zone`)
+- Deploy workflow uses required GitHub variable `GCP_PROJECT_ID`.
 - Target namespace exists:
   - dev: `work-boots-dev`
   - prod: `work-boots`
