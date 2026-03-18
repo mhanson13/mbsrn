@@ -13,6 +13,7 @@ spec:
       labels:
         app: mbsrn-ui
     spec:
+      serviceAccountName: mbsrn-ui
       containers:
         - name: mbsrn-ui
           image: __UI_IMAGE__

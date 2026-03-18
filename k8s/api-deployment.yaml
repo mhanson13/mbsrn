@@ -13,6 +13,7 @@ spec:
       labels:
         app: mbsrn-api
     spec:
+      serviceAccountName: mbsrn-api
       containers:
         - name: mbsrn-api
           image: __API_IMAGE__
