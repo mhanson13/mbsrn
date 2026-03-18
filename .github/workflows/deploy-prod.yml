@@ -112,11 +112,15 @@ jobs:
           echo "UI_IMAGE=${UI_IMAGE}" >> "${GITHUB_ENV}"
           echo "API_IMAGE=${API_IMAGE}" >> "${GITHUB_ENV}"
 
-          docker build -t "${UI_IMAGE}" ./ui
-          docker push "${UI_IMAGE}"
+          gcloud builds submit \
+            --project "${GCP_PROJECT_ID}" \
+            --pack image="${API_IMAGE}" \
+            .
 
-          docker build -t "${API_IMAGE}" ./api
-          docker push "${API_IMAGE}"
+          gcloud builds submit \
+            --project "${GCP_PROJECT_ID}" \
+            --pack image="${UI_IMAGE}" \
+            frontend/operator-ui
 
       - name: Get GKE credentials
         uses: google-github-actions/get-gke-credentials@v3
