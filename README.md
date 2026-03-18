@@ -166,7 +166,7 @@ Architecture notes:
 - no AI-generated findings or recommendations
 
 Endpoint inventory:
-- Competitor sets:
+- Competitor sets: 
   - `GET /api/businesses/{business_id}/seo/sites/{site_id}/competitor-sets`
   - `POST /api/businesses/{business_id}/seo/sites/{site_id}/competitor-sets`
   - `GET /api/businesses/{business_id}/seo/competitor-sets/{set_id}`
