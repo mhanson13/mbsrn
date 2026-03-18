@@ -31,7 +31,7 @@ jobs:
     outputs:
       image_uri: ${{ steps.publish.outputs.image_uri }}
     env:
-      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      PROJECT_ID: work-boots
       GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
       GAR_REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
 
@@ -52,6 +52,26 @@ jobs:
 
       - name: Run backend tests
         run: pytest
+
+      - name: Validate build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PROJECT_ID=${PROJECT_ID:-<empty>}"
+          echo "GAR_LOCATION_SET=$([ -n \"${GAR_LOCATION//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "GAR_REPOSITORY_SET=$([ -n \"${GAR_REPOSITORY//[[:space:]]/}\" ] && echo true || echo false)"
+          if [ -z "${PROJECT_ID//[[:space:]]/}" ]; then
+            echo "::error::PROJECT_ID is empty."
+            exit 1
+          fi
+          if [ -z "${GAR_LOCATION//[[:space:]]/}" ]; then
+            echo "::error::GAR_LOCATION is empty. Set GitHub secret GAR_LOCATION."
+            exit 1
+          fi
+          if [ -z "${GAR_REPOSITORY//[[:space:]]/}" ]; then
+            echo "::error::GAR_REPOSITORY is empty. Set GitHub secret GAR_REPOSITORY."
+            exit 1
+          fi
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -78,7 +98,7 @@ jobs:
     outputs:
       image_uri: ${{ steps.publish.outputs.image_uri }}
     env:
-      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      PROJECT_ID: work-boots
       GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
       GAR_REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
 
@@ -117,6 +137,26 @@ jobs:
         working-directory: frontend/operator-ui
         run: npm run build
 
+      - name: Validate build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PROJECT_ID=${PROJECT_ID:-<empty>}"
+          echo "GAR_LOCATION_SET=$([ -n \"${GAR_LOCATION//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "GAR_REPOSITORY_SET=$([ -n \"${GAR_REPOSITORY//[[:space:]]/}\" ] && echo true || echo false)"
+          if [ -z "${PROJECT_ID//[[:space:]]/}" ]; then
+            echo "::error::PROJECT_ID is empty."
+            exit 1
+          fi
+          if [ -z "${GAR_LOCATION//[[:space:]]/}" ]; then
+            echo "::error::GAR_LOCATION is empty. Set GitHub secret GAR_LOCATION."
+            exit 1
+          fi
+          if [ -z "${GAR_REPOSITORY//[[:space:]]/}" ]; then
+            echo "::error::GAR_REPOSITORY is empty. Set GitHub secret GAR_REPOSITORY."
+            exit 1
+          fi
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
@@ -145,7 +185,7 @@ jobs:
 
     env:
       TARGET_OVERLAY: ${{ github.event.inputs.environment || 'prod' }}
-      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      PROJECT_ID: work-boots
       GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
       GKE_LOCATION: ${{ secrets.GKE_LOCATION }}
 
