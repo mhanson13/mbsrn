@@ -34,6 +34,7 @@ jobs:
       PROJECT_ID: work-boots
       GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
       GAR_REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
+      BUILD_SOURCE_BUCKET: ${{ secrets.BUILD_SOURCE_BUCKET }}
 
     steps:
       - name: Checkout
@@ -60,6 +61,7 @@ jobs:
           echo "PROJECT_ID=${PROJECT_ID:-<empty>}"
           echo "GAR_LOCATION_SET=$([ -n \"${GAR_LOCATION//[[:space:]]/}\" ] && echo true || echo false)"
           echo "GAR_REPOSITORY_SET=$([ -n \"${GAR_REPOSITORY//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "BUILD_SOURCE_BUCKET_SET=$([ -n \"${BUILD_SOURCE_BUCKET//[[:space:]]/}\" ] && echo true || echo false)"
           if [ -z "${PROJECT_ID//[[:space:]]/}" ]; then
             echo "::error::PROJECT_ID is empty."
             exit 1
@@ -70,6 +72,10 @@ jobs:
           fi
           if [ -z "${GAR_REPOSITORY//[[:space:]]/}" ]; then
             echo "::error::GAR_REPOSITORY is empty. Set GitHub secret GAR_REPOSITORY."
+            exit 1
+          fi
+          if [ -z "${BUILD_SOURCE_BUCKET//[[:space:]]/}" ]; then
+            echo "::error::BUILD_SOURCE_BUCKET is empty. Set GitHub secret BUILD_SOURCE_BUCKET."
             exit 1
           fi
 
@@ -86,7 +92,7 @@ jobs:
         id: publish
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPOSITORY}/api:${GITHUB_SHA}"
-          gcloud builds submit --project="${PROJECT_ID}" --pack image="${IMAGE_URI}" .
+          gcloud builds submit --project="${PROJECT_ID}" --gcs-source-staging-dir="${BUILD_SOURCE_BUCKET}" --pack image="${IMAGE_URI}" .
           echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
   frontend-build:
@@ -101,6 +107,7 @@ jobs:
       PROJECT_ID: work-boots
       GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
       GAR_REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
+      BUILD_SOURCE_BUCKET: ${{ secrets.BUILD_SOURCE_BUCKET }}
 
     steps:
       - name: Checkout
@@ -144,6 +151,7 @@ jobs:
           echo "PROJECT_ID=${PROJECT_ID:-<empty>}"
           echo "GAR_LOCATION_SET=$([ -n \"${GAR_LOCATION//[[:space:]]/}\" ] && echo true || echo false)"
           echo "GAR_REPOSITORY_SET=$([ -n \"${GAR_REPOSITORY//[[:space:]]/}\" ] && echo true || echo false)"
+          echo "BUILD_SOURCE_BUCKET_SET=$([ -n \"${BUILD_SOURCE_BUCKET//[[:space:]]/}\" ] && echo true || echo false)"
           if [ -z "${PROJECT_ID//[[:space:]]/}" ]; then
             echo "::error::PROJECT_ID is empty."
             exit 1
@@ -154,6 +162,10 @@ jobs:
           fi
           if [ -z "${GAR_REPOSITORY//[[:space:]]/}" ]; then
             echo "::error::GAR_REPOSITORY is empty. Set GitHub secret GAR_REPOSITORY."
+            exit 1
+          fi
+          if [ -z "${BUILD_SOURCE_BUCKET//[[:space:]]/}" ]; then
+            echo "::error::BUILD_SOURCE_BUCKET is empty. Set GitHub secret BUILD_SOURCE_BUCKET."
             exit 1
           fi
 
@@ -170,7 +182,7 @@ jobs:
         id: publish
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPOSITORY}/ui:${GITHUB_SHA}"
-          gcloud builds submit --project="${PROJECT_ID}" --pack image="${IMAGE_URI}" frontend/operator-ui
+          gcloud builds submit --project="${PROJECT_ID}" --gcs-source-staging-dir="${BUILD_SOURCE_BUCKET}" --pack image="${IMAGE_URI}" frontend/operator-ui
           echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
   deploy:

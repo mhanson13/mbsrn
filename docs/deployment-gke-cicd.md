@@ -32,6 +32,8 @@ A secret template is provided at:
 
 Workflows use Google Cloud Buildpacks:
 - `gcloud builds submit --pack image=...`
+- deploy workflow passes explicit source staging dir:
+  - `--gcs-source-staging-dir="${BUILD_SOURCE_BUCKET}"`
 
 This produces OCI-compatible images suitable for containerd on GKE.
 
@@ -67,6 +69,7 @@ This produces OCI-compatible images suitable for containerd on GKE.
 
 - `GAR_LOCATION`
 - `GAR_REPOSITORY`
+- `BUILD_SOURCE_BUCKET`
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `GCP_SERVICE_ACCOUNT_EMAIL`
 - `GKE_CLUSTER`

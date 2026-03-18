@@ -9,6 +9,7 @@
 > - `GCP_SERVICE_ACCOUNT_EMAIL`
 > - `GAR_LOCATION`
 > - `GAR_REPOSITORY`
+> - `BUILD_SOURCE_BUCKET`
 > - `GKE_CLUSTER`
 > - `GKE_LOCATION`
 
@@ -69,7 +70,7 @@ Google Cloud Console -> top project selector -> `New Project`
 - Project Number: `123456789012` (example)
 
 **Used In:**
-- GitHub secret `GCP_PROJECT_ID` in `.github/workflows/deploy-gke.yml`
+- deterministic `PROJECT_ID` in `.github/workflows/deploy-gke.yml` (`work-boots` by current default)
 - Workload Identity Provider resource string (uses Project Number)
 - Artifact Registry path (`<LOCATION>-docker.pkg.dev/<PROJECT_ID>/<REPO>`)
 
@@ -154,7 +155,7 @@ Google Cloud Console -> IAM & Admin -> Workload Identity Federation -> `Create P
 - Pool ID: `github-pool`
 
 **Used In:**
-- Part of provider resource string stored in GitHub secret `GCP_WIF_PROVIDER`.
+- Part of provider resource string stored in GitHub secret `GCP_WORKLOAD_IDENTITY_PROVIDER`.
 
 ### 3.6 Create Workload Identity Provider (GitHub OIDC)
 Full detailed WIF setup is in Section 5; this subsection is the resource creation summary.
@@ -174,7 +175,7 @@ Google Cloud Console -> IAM & Admin -> Workload Identity Federation -> select po
   `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/providers/<PROVIDER_ID>`
 
 **Used In:**
-- GitHub secret `GCP_WIF_PROVIDER`
+- GitHub secret `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `google-github-actions/auth@v3` in `.github/workflows/deploy-gke.yml`
 
 ### 3.7 Create Service Account For GitHub Actions
@@ -194,7 +195,7 @@ Google Cloud Console -> IAM & Admin -> Service Accounts -> `Create Service Accou
   `work-boots-github-deployer@<PROJECT_ID>.iam.gserviceaccount.com`
 
 **Used In:**
-- GitHub secret `GCP_WIF_SERVICE_ACCOUNT`
+- GitHub secret `GCP_SERVICE_ACCOUNT_EMAIL`
 - `google-github-actions/auth@v3` in `.github/workflows/deploy-gke.yml`
 
 ### 3.8 Configure IAM Bindings (WIF + Deploy Permissions)
@@ -382,7 +383,7 @@ Google Cloud Console -> IAM & Admin -> Workload Identity Federation -> `Create P
 - Pool ID: `github-pool`
 
 **Used In:**
-- Provider resource string stored in GitHub secret `GCP_WIF_PROVIDER`.
+- Provider resource string stored in GitHub secret `GCP_WORKLOAD_IDENTITY_PROVIDER`.
 
 ### 5.3 Create Workload Identity Provider
 **Console Path:**
@@ -411,7 +412,7 @@ Google Cloud Console -> IAM & Admin -> Workload Identity Federation -> select `g
   `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool/providers/github-provider`
 
 **Used In:**
-- GitHub secret `GCP_WIF_PROVIDER`
+- GitHub secret `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `workload_identity_provider:` in `.github/workflows/deploy-gke.yml`
 
 ### 5.4 Create/Configure Deployer Service Account
@@ -433,7 +434,7 @@ Google Cloud Console -> IAM & Admin -> Service Accounts -> `Create Service Accou
   `work-boots-github-deployer@<PROJECT_ID>.iam.gserviceaccount.com`
 
 **Used In:**
-- GitHub secret `GCP_WIF_SERVICE_ACCOUNT`
+- GitHub secret `GCP_SERVICE_ACCOUNT_EMAIL`
 - `service_account:` in `.github/workflows/deploy-gke.yml`
 
 ### 5.5 Bind WIF Principal To Service Account
@@ -462,12 +463,8 @@ Required value formats:
   `<SA_NAME>@<PROJECT_ID>.iam.gserviceaccount.com`
 
 Mapping to repository secrets:
-- `GCP_WIF_PROVIDER` <- provider resource string
-- `GCP_WIF_SERVICE_ACCOUNT` <- service account email
-
-If your org uses different generic names:
-- `GCP_WORKLOAD_IDENTITY_PROVIDER` maps to this repo's `GCP_WIF_PROVIDER`
-- `GCP_SERVICE_ACCOUNT_EMAIL` maps to this repo's `GCP_WIF_SERVICE_ACCOUNT`
+- `GCP_WORKLOAD_IDENTITY_PROVIDER` <- provider resource string
+- `GCP_SERVICE_ACCOUNT_EMAIL` <- service account email
 
 ## 6) GitHub Secrets And Variables
 Add secrets in GitHub:
@@ -479,15 +476,16 @@ Create these repository secrets (exact names from `.github/workflows/deploy-gke.
 
 | Name | Type | Example | Where to get it | Used in |
 |---|---|---|---|---|
-| `GCP_PROJECT_ID` | Secret | `my-work-boots-prod` | GCP project details page | `deploy-gke.yml` (`PROJECT_ID`) |
 | `GAR_LOCATION` | Secret | `us-central1` | Artifact Registry repository region | image URI build/push paths |
 | `GAR_REPOSITORY` | Secret | `work-boots` | Artifact Registry repository name | image URI build/push paths |
-| `GCP_WIF_PROVIDER` | Secret | `projects/123456789012/locations/global/workloadIdentityPools/github-pool/providers/github-provider` | WIF provider details | `google-github-actions/auth@v3` |
-| `GCP_WIF_SERVICE_ACCOUNT` | Secret | `work-boots-github-deployer@my-work-boots-prod.iam.gserviceaccount.com` | IAM Service Accounts | `google-github-actions/auth@v3` |
+| `BUILD_SOURCE_BUCKET` | Secret | `gs://work-boots-build-source/source` | bootstrap script output or GCS bucket design | `gcloud builds submit --gcs-source-staging-dir=...` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Secret | `projects/123456789012/locations/global/workloadIdentityPools/github-pool/providers/github-provider` | WIF provider details | `google-github-actions/auth@v3` |
+| `GCP_SERVICE_ACCOUNT_EMAIL` | Secret | `work-boots-github-deployer@my-work-boots-prod.iam.gserviceaccount.com` | IAM Service Accounts | `google-github-actions/auth@v3` |
 | `GKE_CLUSTER` | Secret | `work-boots-cluster` | GKE cluster details | `gcloud container clusters get-credentials` |
 | `GKE_LOCATION` | Secret | `us-central1` | GKE cluster region | `gcloud container clusters get-credentials --region` |
 
 Notes:
+- `PROJECT_ID` is deterministic in current deploy workflow (`work-boots`) and not secret-backed.
 - Deploy workflow runs on `push` to `main` and `workflow_dispatch`.
 - Secrets are not available to workflows triggered from untrusted forks.
 - Keep `permissions.id-token: write` in deploy jobs; WIF fails without it.
@@ -653,7 +651,7 @@ Consequences if misconfigured:
 ## 11) Common Failure Modes (Cause + Fix)
 ### 11.1 Google Auth Failure In Workflow
 Cause:
-- Wrong `GCP_WIF_PROVIDER` or `GCP_WIF_SERVICE_ACCOUNT`
+- Wrong `GCP_WORKLOAD_IDENTITY_PROVIDER` or `GCP_SERVICE_ACCOUNT_EMAIL`
 - Workflow expecting WIF but configured with wrong/unused `credentials_json` mode
 - missing `id-token: write` permission
 - WIF provider attribute condition excludes current branch/repo

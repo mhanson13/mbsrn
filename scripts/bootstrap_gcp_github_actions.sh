@@ -17,13 +17,14 @@ Options:
   --service-account-id <id>    Deployer service account ID (default: work-boots-github-deployer)
   --gar-location <region>      Artifact Registry region (required)
   --gar-repository <name>      Artifact Registry repository name (required)
+  --build-source-bucket <gs://...>  Cloud Build source staging dir (default: gs://<PROJECT_ID>-build-source/source)
   --gke-cluster <name>         Optional: cluster name for output/validation notes
   --gke-location <region>      Optional: cluster region for output/validation notes
   --help                       Show help
 
 Environment variables are also supported:
   PROJECT_ID, REPO, POOL_ID, PROVIDER_ID, SERVICE_ACCOUNT_ID,
-  GAR_LOCATION, GAR_REPOSITORY, GKE_CLUSTER, GKE_LOCATION
+  GAR_LOCATION, GAR_REPOSITORY, BUILD_SOURCE_BUCKET, GKE_CLUSTER, GKE_LOCATION
 
 Example:
   PROJECT_ID=work-boots GAR_LOCATION=us-central1 GAR_REPOSITORY=work-boots \
@@ -51,6 +52,7 @@ PROVIDER_ID="${PROVIDER_ID:-github-provider}"
 SERVICE_ACCOUNT_ID="${SERVICE_ACCOUNT_ID:-work-boots-github-deployer}"
 GAR_LOCATION="${GAR_LOCATION:-}"
 GAR_REPOSITORY="${GAR_REPOSITORY:-}"
+BUILD_SOURCE_BUCKET="${BUILD_SOURCE_BUCKET:-}"
 GKE_CLUSTER="${GKE_CLUSTER:-}"
 GKE_LOCATION="${GKE_LOCATION:-}"
 
@@ -82,6 +84,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --gar-repository)
       GAR_REPOSITORY="$2"
+      shift 2
+      ;;
+    --build-source-bucket)
+      BUILD_SOURCE_BUCKET="$2"
       shift 2
       ;;
     --gke-cluster)
@@ -120,6 +126,13 @@ if [[ ! "${REPO}" =~ ^[^/]+/[^/]+$ ]]; then
   echo "ERROR: REPO must be in owner/name format. Got: ${REPO}" >&2
   exit 1
 fi
+if ! trimmed_nonempty "${BUILD_SOURCE_BUCKET}"; then
+  BUILD_SOURCE_BUCKET="gs://${PROJECT_ID}-build-source/source"
+fi
+if [[ ! "${BUILD_SOURCE_BUCKET}" =~ ^gs://[^/]+(/.*)?$ ]]; then
+  echo "ERROR: BUILD_SOURCE_BUCKET must be a gs:// URI. Got: ${BUILD_SOURCE_BUCKET}" >&2
+  exit 1
+fi
 
 require_cmd gcloud
 
@@ -144,6 +157,9 @@ SERVICE_ACCOUNT_EMAIL="${SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.c
 WIF_PROVIDER_RESOURCE="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
 REPO_PRINCIPAL_SET="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${REPO}"
 CLOUDBUILD_SERVICE_ACCOUNT="${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
+SOURCE_BUCKET_NAME="${BUILD_SOURCE_BUCKET#gs://}"
+SOURCE_BUCKET_NAME="${SOURCE_BUCKET_NAME%%/*}"
+SOURCE_BUCKET_URI="gs://${SOURCE_BUCKET_NAME}"
 
 echo "==> Bootstrap configuration"
 echo "PROJECT_ID=${PROJECT_ID}"
@@ -154,6 +170,7 @@ echo "PROVIDER_ID=${PROVIDER_ID}"
 echo "SERVICE_ACCOUNT_EMAIL=${SERVICE_ACCOUNT_EMAIL}"
 echo "GAR_LOCATION=${GAR_LOCATION}"
 echo "GAR_REPOSITORY=${GAR_REPOSITORY}"
+echo "BUILD_SOURCE_BUCKET=${BUILD_SOURCE_BUCKET}"
 if trimmed_nonempty "${GKE_CLUSTER}"; then
   echo "GKE_CLUSTER=${GKE_CLUSTER}"
 fi
@@ -168,6 +185,7 @@ gcloud services enable \
   container.googleapis.com \
   iam.googleapis.com \
   iamcredentials.googleapis.com \
+  storage.googleapis.com \
   sts.googleapis.com \
   serviceusage.googleapis.com \
   cloudresourcemanager.googleapis.com \
@@ -185,6 +203,17 @@ if ! gcloud artifacts repositories describe "${GAR_REPOSITORY}" \
   echo "Created Artifact Registry repository: ${GAR_REPOSITORY}"
 else
   echo "Artifact Registry repository already exists: ${GAR_REPOSITORY}"
+fi
+
+echo "==> Ensuring Cloud Build source staging bucket exists"
+if ! gcloud storage buckets describe "${SOURCE_BUCKET_URI}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud storage buckets create "${SOURCE_BUCKET_URI}" \
+    --location "${GAR_LOCATION}" \
+    --uniform-bucket-level-access \
+    --project "${PROJECT_ID}" >/dev/null
+  echo "Created GCS bucket: ${SOURCE_BUCKET_URI}"
+else
+  echo "GCS bucket already exists: ${SOURCE_BUCKET_URI}"
 fi
 
 echo "==> Ensuring Workload Identity Pool exists"
@@ -244,6 +273,19 @@ for role in \
   echo "Granted ${role}"
 done
 
+echo "==> Granting GCS source staging bucket access"
+gcloud storage buckets add-iam-policy-binding "${SOURCE_BUCKET_URI}" \
+  --member "serviceAccount:${SERVICE_ACCOUNT_EMAIL}" \
+  --role "roles/storage.objectAdmin" \
+  --project "${PROJECT_ID}" >/dev/null
+echo "Granted roles/storage.objectAdmin to ${SERVICE_ACCOUNT_EMAIL} on ${SOURCE_BUCKET_URI}"
+
+gcloud storage buckets add-iam-policy-binding "${SOURCE_BUCKET_URI}" \
+  --member "serviceAccount:${CLOUDBUILD_SERVICE_ACCOUNT}" \
+  --role "roles/storage.objectViewer" \
+  --project "${PROJECT_ID}" >/dev/null
+echo "Granted roles/storage.objectViewer to ${CLOUDBUILD_SERVICE_ACCOUNT} on ${SOURCE_BUCKET_URI}"
+
 echo "==> Granting repository-level Artifact Registry write to Cloud Build service account"
 gcloud artifacts repositories add-iam-policy-binding "${GAR_REPOSITORY}" \
   --location "${GAR_LOCATION}" \
@@ -268,6 +310,7 @@ echo "  GCP_WORKLOAD_IDENTITY_PROVIDER=${WIF_PROVIDER_RESOURCE}"
 echo "  GCP_SERVICE_ACCOUNT_EMAIL=${SERVICE_ACCOUNT_EMAIL}"
 echo "  GAR_LOCATION=${GAR_LOCATION}"
 echo "  GAR_REPOSITORY=${GAR_REPOSITORY}"
+echo "  BUILD_SOURCE_BUCKET=${BUILD_SOURCE_BUCKET}"
 if trimmed_nonempty "${GKE_CLUSTER}"; then
   echo "  GKE_CLUSTER=${GKE_CLUSTER}"
 fi
@@ -280,6 +323,7 @@ echo "Post-bootstrap validation commands:"
 echo "  gcloud iam workload-identity-pools providers describe ${PROVIDER_ID} --workload-identity-pool ${POOL_ID} --location global --project ${PROJECT_ID}"
 echo "  gcloud iam service-accounts get-iam-policy ${SERVICE_ACCOUNT_EMAIL} --project ${PROJECT_ID}"
 echo "  gcloud artifacts repositories describe ${GAR_REPOSITORY} --location ${GAR_LOCATION} --project ${PROJECT_ID}"
+echo "  gcloud storage buckets describe ${SOURCE_BUCKET_URI} --project ${PROJECT_ID}"
 echo
 echo "Manual steps not automated by this script:"
 echo "  - Ensure GKE cluster exists and set GKE_CLUSTER/GKE_LOCATION GitHub secrets."

@@ -22,6 +22,7 @@ Optional (with defaults):
 - `POOL_ID` (default: `github-pool`)
 - `PROVIDER_ID` (default: `github-provider`)
 - `SERVICE_ACCOUNT_ID` (default: `work-boots-github-deployer`)
+- `BUILD_SOURCE_BUCKET` (default: `gs://<PROJECT_ID>-build-source/source`)
 - `GKE_CLUSTER` (for output/manual checklist only)
 - `GKE_LOCATION` (for output/manual checklist only)
 
@@ -68,9 +69,13 @@ scripts/bootstrap_gcp_github_actions.sh \
    - `roles/cloudbuild.builds.editor`
    - `roles/artifactregistry.writer`
    - `roles/container.developer`
-4. Binds GitHub repo principal set to deploy service account:
+4. Creates or reuses Cloud Build source staging bucket from `BUILD_SOURCE_BUCKET`
+   and grants bucket IAM:
+   - deploy SA: `roles/storage.objectAdmin`
+   - Cloud Build SA: `roles/storage.objectViewer`
+5. Binds GitHub repo principal set to deploy service account:
    - `roles/iam.workloadIdentityUser`
-5. Grants Artifact Registry writer on the target repository to:
+6. Grants Artifact Registry writer on the target repository to:
    - `<PROJECT_NUMBER>@cloudbuild.gserviceaccount.com`
 
 The script is idempotent where practical (create-if-missing, safe re-apply for IAM bindings).
@@ -83,6 +88,7 @@ From `.github/workflows/deploy-gke.yml`:
 - `GCP_SERVICE_ACCOUNT_EMAIL`
 - `GAR_LOCATION`
 - `GAR_REPOSITORY`
+- `BUILD_SOURCE_BUCKET`
 - `GKE_CLUSTER`
 - `GKE_LOCATION`
 
@@ -93,6 +99,7 @@ Notes:
   - `GCP_SERVICE_ACCOUNT_EMAIL`
   - `GAR_LOCATION`
   - `GAR_REPOSITORY`
+  - `BUILD_SOURCE_BUCKET`
 
 ## What Is Still Manual
 
@@ -125,4 +132,3 @@ gcloud artifacts repositories describe <GAR_REPOSITORY> \
 Then run deploy pipeline from GitHub Actions:
 - workflow: `deploy-gke`
 - trusted events: `push` to `main` or `workflow_dispatch`
-
