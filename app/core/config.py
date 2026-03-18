@@ -124,7 +124,10 @@ def get_settings() -> Settings:
         google_oauth_token_encryption_keys = {
             google_oauth_token_encryption_key_version: google_oauth_token_encryption_secret
         }
-    if google_oauth_token_encryption_keys and google_oauth_token_encryption_key_version not in google_oauth_token_encryption_keys:
+    if (
+        google_oauth_token_encryption_keys
+        and google_oauth_token_encryption_key_version not in google_oauth_token_encryption_keys
+    ):
         raise RuntimeError(
             "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_VERSION must exist in GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEYS_JSON."
         )
@@ -209,9 +212,7 @@ def get_settings() -> Settings:
             "GOOGLE_BUSINESS_PROFILE_VERIFICATIONS_API_BASE_URL",
             "https://mybusinessverifications.googleapis.com",
         ),
-        google_business_profile_api_timeout_seconds=int(
-            os.getenv("GOOGLE_BUSINESS_PROFILE_API_TIMEOUT_SECONDS", "10")
-        ),
+        google_business_profile_api_timeout_seconds=int(os.getenv("GOOGLE_BUSINESS_PROFILE_API_TIMEOUT_SECONDS", "10")),
         google_oauth_token_encryption_secret=google_oauth_token_encryption_secret,
         google_oauth_token_encryption_key_version=google_oauth_token_encryption_key_version,
         google_oauth_token_encryption_keys=google_oauth_token_encryption_keys,
