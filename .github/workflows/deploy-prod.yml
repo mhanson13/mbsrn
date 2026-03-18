@@ -1,0 +1,166 @@
+name: deploy-prod
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  GKE_CLUSTER: ${{ vars.GKE_CLUSTER }}
+  K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}
+  AR_REGION: ${{ vars.AR_REGION }}
+  AR_REPOSITORY: ${{ vars.AR_REPOSITORY }}
+  UI_IMAGE_NAME: ${{ vars.UI_IMAGE_NAME }}
+  API_IMAGE_NAME: ${{ vars.API_IMAGE_NAME }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required inputs
+        shell: bash
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        run: |
+          set -euo pipefail
+
+          required=(
+            GCP_PROJECT_ID
+            GCP_REGION
+            GKE_CLUSTER
+            K8S_NAMESPACE
+            AR_REGION
+            AR_REPOSITORY
+            UI_IMAGE_NAME
+            API_IMAGE_NAME
+            GCP_WORKLOAD_IDENTITY_PROVIDER
+            GCP_SERVICE_ACCOUNT_EMAIL
+          )
+
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required input: ${name}" >&2
+              exit 1
+            fi
+          done
+
+          files=(
+            k8s/namespace.yaml
+            k8s/ui-deployment.yaml
+            k8s/ui-service.yaml
+            k8s/api-deployment.yaml
+            k8s/api-service.yaml
+          )
+
+          for path in "${files[@]}"; do
+            if [[ ! -f "${path}" ]]; then
+              echo "Missing required manifest: ${path}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Verify GKE cluster exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud container clusters describe "${GKE_CLUSTER}" \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --format='value(name)' > /dev/null
+
+      - name: Configure Docker auth for Artifact Registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${AR_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          UI_IMAGE="${AR_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPOSITORY}/${UI_IMAGE_NAME}:${GITHUB_SHA}"
+          API_IMAGE="${AR_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPOSITORY}/${API_IMAGE_NAME}:${GITHUB_SHA}"
+
+          echo "UI_IMAGE=${UI_IMAGE}" >> "${GITHUB_ENV}"
+          echo "API_IMAGE=${API_IMAGE}" >> "${GITHUB_ENV}"
+
+          docker build -t "${UI_IMAGE}" ./ui
+          docker push "${UI_IMAGE}"
+
+          docker build -t "${API_IMAGE}" ./api
+          docker push "${API_IMAGE}"
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GCP_REGION }}
+
+      - name: Render manifests to temporary files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          render_dir="${RUNNER_TEMP}/rendered-${GITHUB_SHA}"
+          rm -rf "${render_dir}"
+          mkdir -p "${render_dir}"
+
+          cp k8s/namespace.yaml "${render_dir}/namespace.yaml"
+          cp k8s/ui-service.yaml "${render_dir}/ui-service.yaml"
+          cp k8s/api-service.yaml "${render_dir}/api-service.yaml"
+
+          grep -q "__UI_IMAGE__" k8s/ui-deployment.yaml
+          grep -q "__API_IMAGE__" k8s/api-deployment.yaml
+
+          sed "s|__UI_IMAGE__|${UI_IMAGE}|g" k8s/ui-deployment.yaml > "${render_dir}/ui-deployment.yaml"
+          sed "s|__API_IMAGE__|${API_IMAGE}|g" k8s/api-deployment.yaml > "${render_dir}/api-deployment.yaml"
+
+          echo "RENDER_DIR=${render_dir}" >> "${GITHUB_ENV}"
+
+      - name: Apply workload manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kubectl apply -f "${RENDER_DIR}/namespace.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/ui-deployment.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/ui-service.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-deployment.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-service.yaml"
+
+      - name: Wait for rollouts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kubectl rollout status deployment/mbsrn-ui --namespace "${K8S_NAMESPACE}" --timeout=300s
+          kubectl rollout status deployment/mbsrn-api --namespace "${K8S_NAMESPACE}" --timeout=300s
