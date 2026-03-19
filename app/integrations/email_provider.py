@@ -16,8 +16,7 @@ class EmailDispatchResult:
 
 
 class EmailProvider(Protocol):
-    def send_email(self, *, to_address: str, subject: str, body: str) -> EmailDispatchResult:
-        ...
+    def send_email(self, *, to_address: str, subject: str, body: str) -> EmailDispatchResult: ...
 
 
 class MockEmailProvider:
@@ -40,10 +39,7 @@ class DevEmailProvider:
         self.from_address = from_address
 
     def send_email(self, *, to_address: str, subject: str, body: str) -> EmailDispatchResult:
-        print(
-            f"[dev-email] from={self.from_address} to={to_address} "
-            f"subject={subject} body={body}"
-        )
+        print(f"[dev-email] from={self.from_address} to={to_address} " f"subject={subject} body={body}")
         return EmailDispatchResult(
             provider=self.provider_name,
             recipient=to_address,

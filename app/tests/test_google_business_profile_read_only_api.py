@@ -289,12 +289,8 @@ def test_google_business_profile_accounts_mapping_contract(
         status_code=403,
         error_status="PERMISSION_DENIED",
     )
-    gbp_client.options_by_location["locations/location-pending"] = {
-        "verificationOptions": [{"method": "PHONE_CALL"}]
-    }
-    gbp_client.options_by_location["locations/location-unverified"] = {
-        "verificationOptions": [{"method": "MAIL"}]
-    }
+    gbp_client.options_by_location["locations/location-pending"] = {"verificationOptions": [{"method": "PHONE_CALL"}]}
+    gbp_client.options_by_location["locations/location-unverified"] = {"verificationOptions": [{"method": "MAIL"}]}
     gbp_client.options_by_location["locations/location-access"] = GoogleBusinessProfileAPIError(
         "permission denied",
         status_code=403,

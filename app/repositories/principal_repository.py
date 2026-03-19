@@ -25,9 +25,7 @@ class PrincipalRepository:
 
     def get_for_business(self, business_id: str, principal_id: str) -> Principal | None:
         stmt: Select[tuple[Principal]] = (
-            select(Principal)
-            .where(Principal.business_id == business_id)
-            .where(Principal.id == principal_id)
+            select(Principal).where(Principal.business_id == business_id).where(Principal.id == principal_id)
         )
         return self.session.scalar(stmt)
 

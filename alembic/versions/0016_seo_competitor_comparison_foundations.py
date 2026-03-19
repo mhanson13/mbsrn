@@ -234,8 +234,12 @@ def downgrade() -> None:
     op.drop_index("ix_seo_competitor_comparison_findings_severity", table_name="seo_competitor_comparison_findings")
     op.drop_index("ix_seo_competitor_comparison_findings_category", table_name="seo_competitor_comparison_findings")
     op.drop_index("ix_seo_competitor_comparison_findings_finding_type", table_name="seo_competitor_comparison_findings")
-    op.drop_index("ix_seo_competitor_comparison_findings_comparison_run_id", table_name="seo_competitor_comparison_findings")
-    op.drop_index("ix_seo_competitor_comparison_findings_competitor_set_id", table_name="seo_competitor_comparison_findings")
+    op.drop_index(
+        "ix_seo_competitor_comparison_findings_comparison_run_id", table_name="seo_competitor_comparison_findings"
+    )
+    op.drop_index(
+        "ix_seo_competitor_comparison_findings_competitor_set_id", table_name="seo_competitor_comparison_findings"
+    )
     op.drop_index("ix_seo_competitor_comparison_findings_site_id", table_name="seo_competitor_comparison_findings")
     op.drop_index("ix_seo_competitor_comparison_findings_business_id", table_name="seo_competitor_comparison_findings")
     op.drop_table("seo_competitor_comparison_findings")

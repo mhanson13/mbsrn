@@ -91,13 +91,7 @@ def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
             "expected_revision": EXPECTED_ALEMBIC_HEAD,
         }
 
-    revisions = sorted(
-        {
-            str(row[0]).strip()
-            for row in rows
-            if row and row[0] is not None and str(row[0]).strip()
-        }
-    )
+    revisions = sorted({str(row[0]).strip() for row in rows if row and row[0] is not None and str(row[0]).strip()})
     if len(revisions) != 1:
         logger.warning("Schema readiness found invalid alembic_version state: %s", revisions)
         return False, {

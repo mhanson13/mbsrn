@@ -81,12 +81,8 @@ class PrincipalIdentityService:
             provider=provider,
             provider_subject=provider_subject,
         )
-        if existing is not None and (
-            existing.business_id != business_id or existing.principal_id != principal_id
-        ):
-            raise PrincipalIdentityValidationError(
-                "Identity subject is already mapped to a different principal."
-            )
+        if existing is not None and (existing.business_id != business_id or existing.principal_id != principal_id):
+            raise PrincipalIdentityValidationError("Identity subject is already mapped to a different principal.")
 
         if existing is not None:
             existing.email = email

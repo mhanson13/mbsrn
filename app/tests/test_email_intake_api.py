@@ -121,9 +121,7 @@ def test_email_intake_endpoint_records_parsing_failed_event(db_session, seeded_b
     assert payload["lead"]["customer_acknowledged_at"] is None
 
     event_types = list(
-        db_session.scalars(
-            select(LeadEvent.event_type).where(LeadEvent.lead_id == payload["lead"]["id"])
-        )
+        db_session.scalars(select(LeadEvent.event_type).where(LeadEvent.lead_id == payload["lead"]["id"]))
     )
     assert "email_received" in event_types
     assert "parsing_failed" in event_types
@@ -176,8 +174,6 @@ def test_email_intake_persists_lead_when_notification_delivery_fails(db_session,
     assert payload["lead"]["owner_notified_at"] is None
 
     event_types = list(
-        db_session.scalars(
-            select(LeadEvent.event_type).where(LeadEvent.lead_id == payload["lead"]["id"])
-        )
+        db_session.scalars(select(LeadEvent.event_type).where(LeadEvent.lead_id == payload["lead"]["id"]))
     )
     assert "notification_dispatch_failed" in event_types

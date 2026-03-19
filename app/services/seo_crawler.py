@@ -17,7 +17,16 @@ HTTP_SCHEMES = {"http", "https"}
 PRIVATE_HOSTS = {"localhost", "::1"}
 DEFAULT_INDEX_PATHS = {"/index.html", "/index.htm", "/index.php", "/default.aspx"}
 TRANSIENT_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
-IGNORED_QUERY_PARAMS = {"gclid", "fbclid", "msclkid", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"}
+IGNORED_QUERY_PARAMS = {
+    "gclid",
+    "fbclid",
+    "msclkid",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+}
 
 
 class SEOCrawlerValidationError(ValueError):

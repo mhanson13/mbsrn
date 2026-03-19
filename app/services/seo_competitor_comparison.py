@@ -177,12 +177,8 @@ class SEOCompetitorComparisonService:
                 self.seo_competitor_repository.add_comparison_finding(finding)
 
             run.total_findings = len(generated.findings)
-            run.critical_findings = sum(
-                1 for item in generated.findings if item.severity == FindingSeverity.CRITICAL
-            )
-            run.warning_findings = sum(
-                1 for item in generated.findings if item.severity == FindingSeverity.WARNING
-            )
+            run.critical_findings = sum(1 for item in generated.findings if item.severity == FindingSeverity.CRITICAL)
+            run.warning_findings = sum(1 for item in generated.findings if item.severity == FindingSeverity.WARNING)
             run.info_findings = sum(1 for item in generated.findings if item.severity == FindingSeverity.INFO)
             run.client_pages_analyzed = generated.client_pages_analyzed
             run.competitor_pages_analyzed = generated.competitor_pages_analyzed

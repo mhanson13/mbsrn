@@ -195,12 +195,8 @@ class VerificationGuidanceService:
                         "When the postcard arrives, enter the code in Work Boots.",
                         "Avoid starting another request unless Google says to retry.",
                     ),
-                    tips=(
-                        "Keep your business name and address consistent while waiting for the code.",
-                    ),
-                    warnings=(
-                        "Postcard delivery can take multiple days depending on your area.",
-                    ),
+                    tips=("Keep your business name and address consistent while waiting for the code.",),
+                    warnings=("Postcard delivery can take multiple days depending on your area.",),
                     troubleshooting=(
                         "If no postcard arrives after the expected window, refresh status and try a different method if available.",
                     ),
@@ -227,9 +223,7 @@ class VerificationGuidanceService:
                     ),
                     tips=tips,
                     warnings=(),
-                    troubleshooting=(
-                        "If code entry fails, request a new code or retry verification.",
-                    ),
+                    troubleshooting=("If code entry fails, request a new code or retry verification.",),
                     estimated_time="1-3 minutes",
                     cta_label="Enter code",
                     cta_type="submit_code",
@@ -294,9 +288,7 @@ class VerificationGuidanceService:
                 ),
                 tips=(),
                 warnings=(),
-                troubleshooting=(
-                    "If this persists, contact support with the location id and recent error details.",
-                ),
+                troubleshooting=("If this persists, contact support with the location id and recent error details.",),
                 estimated_time="5-10 minutes",
                 cta_label="Refresh status",
                 cta_type="refresh_status",
@@ -319,9 +311,7 @@ class VerificationGuidanceService:
                     ),
                     tips=tips,
                     warnings=(),
-                    troubleshooting=(
-                        "If a method fails, switch to another available method and retry.",
-                    ),
+                    troubleshooting=("If a method fails, switch to another available method and retry.",),
                     estimated_time="2-10 minutes",
                     cta_label="Pick method",
                     cta_type="choose_method",
@@ -341,9 +331,7 @@ class VerificationGuidanceService:
                 ),
                 tips=(),
                 warnings=(),
-                troubleshooting=(
-                    "If options remain unavailable, reconnect Google and retry.",
-                ),
+                troubleshooting=("If options remain unavailable, reconnect Google and retry.",),
                 estimated_time="5-15 minutes",
                 cta_label="Refresh status",
                 cta_type="refresh_status",
@@ -362,9 +350,7 @@ class VerificationGuidanceService:
             ),
             tips=(),
             warnings=(),
-            troubleshooting=(
-                "If the status stays unknown, contact support with the location id and timestamp.",
-            ),
+            troubleshooting=("If the status stays unknown, contact support with the location id and timestamp.",),
             estimated_time=None,
             cta_label="Refresh status",
             cta_type="refresh_status",
@@ -443,9 +429,7 @@ class VerificationGuidanceService:
             ),
             tips=("Use the same account that manages the business location in Google.",),
             warnings=(),
-            troubleshooting=(
-                "If reconnect fails, confirm your account has business access before trying again.",
-            ),
+            troubleshooting=("If reconnect fails, confirm your account has business access before trying again.",),
             estimated_time="2-3 minutes",
             cta_label="Reconnect Google",
             cta_type="reconnect",

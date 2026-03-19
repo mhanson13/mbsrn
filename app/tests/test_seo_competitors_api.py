@@ -230,9 +230,7 @@ def test_phase2_v1_site_scoped_competitor_routes(db_session, seeded_business) ->
     assert create_set.status_code == 201
     set_id = create_set.json()["id"]
 
-    get_set = client.get(
-        f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-sets/{set_id}"
-    )
+    get_set = client.get(f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-sets/{set_id}")
     assert get_set.status_code == 200
     assert get_set.json()["site_id"] == site_id
 
@@ -254,9 +252,7 @@ def test_phase2_v1_site_scoped_competitor_routes(db_session, seeded_business) ->
     )
     assert get_snapshot.status_code == 200
 
-    wrong_site_set = client.get(
-        f"/api/v1/businesses/{seeded_business.id}/seo/sites/{uuid4()}/competitor-sets/{set_id}"
-    )
+    wrong_site_set = client.get(f"/api/v1/businesses/{seeded_business.id}/seo/sites/{uuid4()}/competitor-sets/{set_id}")
     assert wrong_site_set.status_code == 404
 
 
@@ -333,9 +329,7 @@ def test_competitor_snapshot_and_domain_reads_enforce_business_scoping(db_sessio
     assert create_snapshot_run.status_code == 201
     snapshot_run_id = create_snapshot_run.json()["id"]
 
-    cross_tenant_domain_list = client.get(
-        f"/api/businesses/{other_business.id}/seo/competitor-sets/{set_id}/domains"
-    )
+    cross_tenant_domain_list = client.get(f"/api/businesses/{other_business.id}/seo/competitor-sets/{set_id}/domains")
     assert cross_tenant_domain_list.status_code == 404
 
     cross_tenant_snapshot_list = client.get(
@@ -343,7 +337,5 @@ def test_competitor_snapshot_and_domain_reads_enforce_business_scoping(db_sessio
     )
     assert cross_tenant_snapshot_list.status_code == 404
 
-    cross_tenant_snapshot_get = client.get(
-        f"/api/businesses/{other_business.id}/seo/snapshot-runs/{snapshot_run_id}"
-    )
+    cross_tenant_snapshot_get = client.get(f"/api/businesses/{other_business.id}/seo/snapshot-runs/{snapshot_run_id}")
     assert cross_tenant_snapshot_get.status_code == 404

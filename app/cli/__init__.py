@@ -1,2 +1,1 @@
 """Administrative CLI entry points."""
-

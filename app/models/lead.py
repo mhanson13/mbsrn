@@ -27,15 +27,11 @@ class LeadSource(str, PyEnum):
 
 class Lead(Base):
     __tablename__ = "leads"
-    __table_args__ = (
-        UniqueConstraint("id", "business_id", name="uq_leads_id_business_id"),
-    )
+    __table_args__ = (UniqueConstraint("id", "business_id", name="uq_leads_id_business_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     business_id: Mapped[str] = mapped_column(String(36), ForeignKey("businesses.id"), nullable=False, index=True)
-    source: Mapped[LeadSource] = mapped_column(
-        SAEnum(LeadSource), default=LeadSource.MANUAL, nullable=False
-    )
+    source: Mapped[LeadSource] = mapped_column(SAEnum(LeadSource), default=LeadSource.MANUAL, nullable=False)
     source_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     customer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -44,9 +40,7 @@ class Lead(Base):
     service_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[LeadStatus] = mapped_column(
-        SAEnum(LeadStatus), default=LeadStatus.NEW, nullable=False, index=True
-    )
+    status: Mapped[LeadStatus] = mapped_column(SAEnum(LeadStatus), default=LeadStatus.NEW, nullable=False, index=True)
     customer_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     owner_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     first_human_response_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

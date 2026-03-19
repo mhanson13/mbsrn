@@ -442,4 +442,3 @@ def test_recommendation_narrative_endpoints_not_found_behaviors(db_session, seed
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-narratives/{uuid4()}"
     )
     assert by_unknown_narrative_id.status_code == 404
-

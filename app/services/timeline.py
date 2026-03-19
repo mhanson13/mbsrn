@@ -13,8 +13,5 @@ class LeadTimelineService:
         if not lead:
             raise ValueError("Lead not found")
         if lead.business_id != business_id:
-            raise ValueError(
-                "Lead/business scope mismatch in timeline lookup: "
-                f"{lead.business_id} != {business_id}"
-            )
+            raise ValueError("Lead/business scope mismatch in timeline lookup: " f"{lead.business_id} != {business_id}")
         return self.lead_repository.list_events_for_business_lead(business_id, lead_id)

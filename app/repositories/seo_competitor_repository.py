@@ -57,7 +57,10 @@ class SEOCompetitorRepository:
         )
         if competitor_set is None:
             raise ValueError("Competitor set not found")
-        if competitor_set.business_id != competitor_domain.business_id or competitor_set.site_id != competitor_domain.site_id:
+        if (
+            competitor_set.business_id != competitor_domain.business_id
+            or competitor_set.site_id != competitor_domain.site_id
+        ):
             raise ValueError("Competitor domain scope mismatch")
 
         self.session.add(competitor_domain)
@@ -183,7 +186,9 @@ class SEOCompetitorRepository:
         self.session.flush()
         return snapshot_page
 
-    def list_snapshot_pages_for_business_run(self, business_id: str, snapshot_run_id: str) -> list[SEOCompetitorSnapshotPage]:
+    def list_snapshot_pages_for_business_run(
+        self, business_id: str, snapshot_run_id: str
+    ) -> list[SEOCompetitorSnapshotPage]:
         stmt: Select[tuple[SEOCompetitorSnapshotPage]] = (
             select(SEOCompetitorSnapshotPage)
             .where(SEOCompetitorSnapshotPage.business_id == business_id)
@@ -231,7 +236,9 @@ class SEOCompetitorRepository:
         self.session.flush()
         return comparison_run
 
-    def get_comparison_run_for_business(self, business_id: str, comparison_run_id: str) -> SEOCompetitorComparisonRun | None:
+    def get_comparison_run_for_business(
+        self, business_id: str, comparison_run_id: str
+    ) -> SEOCompetitorComparisonRun | None:
         stmt: Select[tuple[SEOCompetitorComparisonRun]] = (
             select(SEOCompetitorComparisonRun)
             .where(SEOCompetitorComparisonRun.business_id == business_id)

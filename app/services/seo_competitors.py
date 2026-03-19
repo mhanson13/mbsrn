@@ -273,7 +273,9 @@ class SEOCompetitorService:
                 if not path:
                     path = "/"
             netloc = host
-            if parsed.port and not ((scheme == "http" and parsed.port == 80) or (scheme == "https" and parsed.port == 443)):
+            if parsed.port and not (
+                (scheme == "http" and parsed.port == 80) or (scheme == "https" and parsed.port == 443)
+            ):
                 netloc = f"{host}:{parsed.port}"
             normalized_base_url = urlunsplit((scheme, netloc, path, "", ""))
             host_from_base_url = host

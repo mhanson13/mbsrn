@@ -535,14 +535,20 @@ def test_google_business_profile_callback_success_persists_encrypted_tokens(
     assert oauth_client.exchange_calls
     assert oauth_client.exchange_calls[-1]["code_verifier"] == expected_verifier
 
-    assert cipher.decrypt(
-        row.access_token_encrypted or "",
-        key_version=row.token_key_version,
-    ) == "ya29.access-token"
-    assert cipher.decrypt(
-        row.refresh_token_encrypted or "",
-        key_version=row.token_key_version,
-    ) == "1//refresh-token"
+    assert (
+        cipher.decrypt(
+            row.access_token_encrypted or "",
+            key_version=row.token_key_version,
+        )
+        == "ya29.access-token"
+    )
+    assert (
+        cipher.decrypt(
+            row.refresh_token_encrypted or "",
+            key_version=row.token_key_version,
+        )
+        == "1//refresh-token"
+    )
 
 
 def test_google_business_profile_callback_fails_closed_when_pkce_verifier_missing(
@@ -727,14 +733,20 @@ def test_google_business_profile_callback_preserves_existing_refresh_token_when_
     db_session.expire_all()
     row = _provider_connection_for_business(db_session, seeded_business.id)
     assert row is not None
-    assert cipher.decrypt(
-        row.access_token_encrypted or "",
-        key_version=row.token_key_version,
-    ) == "new-access-token"
-    assert cipher.decrypt(
-        row.refresh_token_encrypted or "",
-        key_version=row.token_key_version,
-    ) == "existing-refresh-token"
+    assert (
+        cipher.decrypt(
+            row.access_token_encrypted or "",
+            key_version=row.token_key_version,
+        )
+        == "new-access-token"
+    )
+    assert (
+        cipher.decrypt(
+            row.refresh_token_encrypted or "",
+            key_version=row.token_key_version,
+        )
+        == "existing-refresh-token"
+    )
 
 
 def test_google_business_profile_callback_state_is_single_use(
@@ -984,14 +996,20 @@ def test_google_business_profile_rewrap_tokens_with_active_key_version(
     row = _provider_connection_for_business(db_session, seeded_business.id)
     assert row is not None
     assert row.token_key_version == "v2"
-    assert active_cipher.decrypt(
-        row.access_token_encrypted or "",
-        key_version=row.token_key_version,
-    ) == "legacy-access-token"
-    assert active_cipher.decrypt(
-        row.refresh_token_encrypted or "",
-        key_version=row.token_key_version,
-    ) == "legacy-refresh-token"
+    assert (
+        active_cipher.decrypt(
+            row.access_token_encrypted or "",
+            key_version=row.token_key_version,
+        )
+        == "legacy-access-token"
+    )
+    assert (
+        active_cipher.decrypt(
+            row.refresh_token_encrypted or "",
+            key_version=row.token_key_version,
+        )
+        == "legacy-refresh-token"
+    )
 
 
 def test_google_business_profile_rewrap_all_tokens_with_active_key_version(
@@ -1156,14 +1174,20 @@ def test_google_business_profile_get_access_token_for_use_refresh_success_path(
     row = _provider_connection_for_business(db_session, seeded_business.id)
     assert row is not None
     assert row.token_key_version == "v2"
-    assert active_cipher.decrypt(
-        row.access_token_encrypted or "",
-        key_version=row.token_key_version,
-    ) == "refreshed-access-token"
-    assert active_cipher.decrypt(
-        row.refresh_token_encrypted or "",
-        key_version=row.token_key_version,
-    ) == "legacy-refresh-token"
+    assert (
+        active_cipher.decrypt(
+            row.access_token_encrypted or "",
+            key_version=row.token_key_version,
+        )
+        == "refreshed-access-token"
+    )
+    assert (
+        active_cipher.decrypt(
+            row.refresh_token_encrypted or "",
+            key_version=row.token_key_version,
+        )
+        == "legacy-refresh-token"
+    )
     assert row.last_refreshed_at is not None
 
 

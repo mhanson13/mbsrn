@@ -55,9 +55,7 @@ class SEOAuditRepository:
         return list(self.session.scalars(stmt))
 
     def add_page(self, page: SEOAuditPage) -> SEOAuditPage:
-        run = self.session.scalar(
-            select(SEOAuditRun).where(SEOAuditRun.id == page.audit_run_id)
-        )
+        run = self.session.scalar(select(SEOAuditRun).where(SEOAuditRun.id == page.audit_run_id))
         if run is None:
             raise ValueError("Audit run not found")
         if run.business_id != page.business_id or run.site_id != page.site_id:
@@ -77,18 +75,14 @@ class SEOAuditRepository:
         return list(self.session.scalars(stmt))
 
     def add_finding(self, finding: SEOAuditFinding) -> SEOAuditFinding:
-        run = self.session.scalar(
-            select(SEOAuditRun).where(SEOAuditRun.id == finding.audit_run_id)
-        )
+        run = self.session.scalar(select(SEOAuditRun).where(SEOAuditRun.id == finding.audit_run_id))
         if run is None:
             raise ValueError("Audit run not found")
         if run.business_id != finding.business_id or run.site_id != finding.site_id:
             raise ValueError("Audit finding scope mismatch")
 
         if finding.page_id is not None:
-            page = self.session.scalar(
-                select(SEOAuditPage).where(SEOAuditPage.id == finding.page_id)
-            )
+            page = self.session.scalar(select(SEOAuditPage).where(SEOAuditPage.id == finding.page_id))
             if page is None:
                 raise ValueError("Audit page not found")
             if page.audit_run_id != finding.audit_run_id or page.business_id != finding.business_id:

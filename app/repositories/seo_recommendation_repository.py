@@ -18,9 +18,7 @@ class SEORecommendationRepository:
 
     def create_run(self, run: SEORecommendationRun) -> SEORecommendationRun:
         site = self.session.scalar(
-            select(SEOSite.id)
-            .where(SEOSite.business_id == run.business_id)
-            .where(SEOSite.id == run.site_id)
+            select(SEOSite.id).where(SEOSite.business_id == run.business_id).where(SEOSite.id == run.site_id)
         )
         if site is None:
             raise ValueError("SEO site not found for business")
@@ -156,19 +154,16 @@ class SEORecommendationRepository:
             stmt = stmt.where(SEORecommendation.recommendation_run_id == recommendation_run_id)
 
         if source_type == "audit":
-            stmt = (
-                stmt.where(SEORecommendation.audit_run_id.is_not(None))
-                .where(SEORecommendation.comparison_run_id.is_(None))
+            stmt = stmt.where(SEORecommendation.audit_run_id.is_not(None)).where(
+                SEORecommendation.comparison_run_id.is_(None)
             )
         elif source_type == "comparison":
-            stmt = (
-                stmt.where(SEORecommendation.comparison_run_id.is_not(None))
-                .where(SEORecommendation.audit_run_id.is_(None))
+            stmt = stmt.where(SEORecommendation.comparison_run_id.is_not(None)).where(
+                SEORecommendation.audit_run_id.is_(None)
             )
         elif source_type == "mixed":
-            stmt = (
-                stmt.where(SEORecommendation.audit_run_id.is_not(None))
-                .where(SEORecommendation.comparison_run_id.is_not(None))
+            stmt = stmt.where(SEORecommendation.audit_run_id.is_not(None)).where(
+                SEORecommendation.comparison_run_id.is_not(None)
             )
 
         order_column = self._resolve_sort_column(sort_by)

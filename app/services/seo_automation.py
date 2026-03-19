@@ -752,7 +752,10 @@ class SEOAutomationService:
 
             if finished_at is not None:
                 step["finished_at"] = finished_at.isoformat()
-            elif status in {COMPLETED_STEP_STATUS, FAILED_STEP_STATUS, SKIPPED_STEP_STATUS} and step.get("finished_at") is None:
+            elif (
+                status in {COMPLETED_STEP_STATUS, FAILED_STEP_STATUS, SKIPPED_STEP_STATUS}
+                and step.get("finished_at") is None
+            ):
                 step["finished_at"] = utc_now().isoformat()
 
             if linked_output_id is not None:

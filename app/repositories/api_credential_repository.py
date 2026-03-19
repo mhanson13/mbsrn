@@ -88,8 +88,7 @@ class APICredentialRepository:
                 select(APICredential)
                 .join(
                     Principal,
-                    (Principal.business_id == APICredential.business_id)
-                    & (Principal.id == APICredential.principal_id),
+                    (Principal.business_id == APICredential.business_id) & (Principal.id == APICredential.principal_id),
                 )
                 .where(APICredential.token_hash == token_hash)
                 .where(APICredential.is_active.is_(True))

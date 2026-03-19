@@ -550,9 +550,7 @@ def test_phase2_v1_site_scoped_comparison_routes(db_session, seeded_business) ->
     assert create_run.status_code == 201
     run_id = create_run.json()["id"]
 
-    list_runs = client.get(
-        f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-comparison-runs"
-    )
+    list_runs = client.get(f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-comparison-runs")
     assert list_runs.status_code == 200
     assert list_runs.json()["total"] >= 1
 

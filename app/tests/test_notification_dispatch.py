@@ -236,10 +236,7 @@ def test_no_valid_targets_is_skipped_not_failed(db_session, seeded_business) -> 
     assert result.skipped is True
     assert result.detail == "No valid enabled notification target found."
 
-    event_types = [
-        event.event_type
-        for event in db_session.query(LeadEvent).filter(LeadEvent.lead_id == lead.id).all()
-    ]
+    event_types = [event.event_type for event in db_session.query(LeadEvent).filter(LeadEvent.lead_id == lead.id).all()]
     assert "notification_dispatch_requested" in event_types
     assert "notification_dispatch_skipped" in event_types
     assert "notification_dispatch_failed" not in event_types

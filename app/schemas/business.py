@@ -60,9 +60,7 @@ class BusinessSettingsUpdateRequest(BaseModel):
             return None
         normalized = _normalize_us_phone(cleaned)
         if normalized is None:
-            raise ValueError(
-                "notification_phone must be a valid US phone number (10 digits, optional country code)."
-            )
+            raise ValueError("notification_phone must be a valid US phone number (10 digits, optional country code).")
         return normalized
 
     @field_validator("timezone", mode="before")

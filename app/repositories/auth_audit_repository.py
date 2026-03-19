@@ -23,9 +23,7 @@ class AuthAuditRepository:
         event_type: str | None = None,
         limit: int = 100,
     ) -> list[AuthAuditEvent]:
-        stmt: Select[tuple[AuthAuditEvent]] = select(AuthAuditEvent).where(
-            AuthAuditEvent.business_id == business_id
-        )
+        stmt: Select[tuple[AuthAuditEvent]] = select(AuthAuditEvent).where(AuthAuditEvent.business_id == business_id)
         if target_type:
             stmt = stmt.where(AuthAuditEvent.target_type == target_type)
         if event_type:

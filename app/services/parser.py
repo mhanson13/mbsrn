@@ -9,9 +9,7 @@ from app.schemas.lead import EmailLeadFields, ParsedLeadData
 class LeadParserService:
     """Rules-based parser for GoDaddy style form notification emails."""
 
-    _PHONE_REGEX = re.compile(
-        r"(?:(?:\+?1[\s\-.]?)?\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4})"
-    )
+    _PHONE_REGEX = re.compile(r"(?:(?:\+?1[\s\-.]?)?\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4})")
     _EMAIL_REGEX = re.compile(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", re.IGNORECASE)
     _SUBJECT_NAME_REGEX = re.compile(
         r"(?:new|website|form)?\s*(?:lead|submission|message).*?\bfrom\b[:\s-]*([A-Za-z][A-Za-z .'\-]+)$",

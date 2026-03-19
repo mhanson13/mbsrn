@@ -19,15 +19,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    lead_source = postgresql.ENUM(
-        "godaddy_email", "manual", "phone", "other", name="leadsource", create_type=False
-    )
+    lead_source = postgresql.ENUM("godaddy_email", "manual", "phone", "other", name="leadsource", create_type=False)
     lead_status = postgresql.ENUM(
         "new", "contacted", "estimate_scheduled", "won", "lost", name="leadstatus", create_type=False
     )
-    actor_type = postgresql.ENUM(
-        "system", "owner", "admin", "customer", name="actortype", create_type=False
-    )
+    actor_type = postgresql.ENUM("system", "owner", "admin", "customer", name="actortype", create_type=False)
 
     lead_source.create(op.get_bind(), checkfirst=True)
     lead_status.create(op.get_bind(), checkfirst=True)

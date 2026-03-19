@@ -319,6 +319,4 @@ class AuthIdentityService:
         if bind is None:
             return
         if bind.dialect.name == "postgresql":
-            self.session.execute(
-                text("LOCK TABLE businesses, principals, principal_identities IN EXCLUSIVE MODE")
-            )
+            self.session.execute(text("LOCK TABLE businesses, principals, principal_identities IN EXCLUSIVE MODE"))

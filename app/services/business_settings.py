@@ -52,12 +52,8 @@ class BusinessSettingsService:
             "notification_email": updates.get("notification_email", business.notification_email),
             "sms_enabled": updates.get("sms_enabled", business.sms_enabled),
             "email_enabled": updates.get("email_enabled", business.email_enabled),
-            "customer_auto_ack_enabled": updates.get(
-                "customer_auto_ack_enabled", business.customer_auto_ack_enabled
-            ),
-            "contractor_alerts_enabled": updates.get(
-                "contractor_alerts_enabled", business.contractor_alerts_enabled
-            ),
+            "customer_auto_ack_enabled": updates.get("customer_auto_ack_enabled", business.customer_auto_ack_enabled),
+            "contractor_alerts_enabled": updates.get("contractor_alerts_enabled", business.contractor_alerts_enabled),
             "timezone": updates.get("timezone", business.timezone),
         }
 

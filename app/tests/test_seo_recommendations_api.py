@@ -265,9 +265,7 @@ def test_create_recommendation_run_from_persisted_inputs(db_session, seeded_busi
     assert run_payload["critical_recommendations"] >= 1
     run_id = run_payload["id"]
 
-    list_runs = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs"
-    )
+    list_runs = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs")
     assert list_runs.status_code == 200
     assert list_runs.json()["total"] >= 1
 
@@ -285,9 +283,7 @@ def test_create_recommendation_run_from_persisted_inputs(db_session, seeded_busi
     # Deterministic merge check: two missing_title findings should yield one recommendation rule.
     assert sum(1 for item in payload["items"] if item["rule_key"] == "fix_missing_title_tags") == 1
 
-    report = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/report"
-    )
+    report = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/report")
     assert report.status_code == 200
     report_payload = report.json()
     assert set(report_payload.keys()) == {"recommendation_run", "rollups", "recommendations"}
@@ -397,9 +393,7 @@ def test_phase2_v1_site_scoped_recommendation_routes(db_session, seeded_business
     assert create_run.status_code == 201
     run_id = create_run.json()["id"]
 
-    get_run = client.get(
-        f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}"
-    )
+    get_run = client.get(f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}")
     assert get_run.status_code == 200
 
     list_recommendations = client.get(
@@ -418,9 +412,7 @@ def test_phase2_v1_site_scoped_recommendation_routes(db_session, seeded_business
     )
     assert report.status_code == 200
 
-    wrong_site = client.get(
-        f"/api/v1/businesses/{seeded_business.id}/seo/sites/{uuid4()}/recommendation-runs/{run_id}"
-    )
+    wrong_site = client.get(f"/api/v1/businesses/{seeded_business.id}/seo/sites/{uuid4()}/recommendation-runs/{run_id}")
     assert wrong_site.status_code == 404
 
 
@@ -480,9 +472,7 @@ def test_recommendation_not_found_behaviors(db_session, seeded_business) -> None
     client = _make_client(db_session, business_id=seeded_business.id)
     site_id = _create_site(client, seeded_business.id)
 
-    get_run = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{uuid4()}"
-    )
+    get_run = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{uuid4()}")
     assert get_run.status_code == 404
 
     get_recommendation = client.get(
@@ -537,9 +527,7 @@ def test_recommendation_workflow_patch_backlog_and_prioritized_report(db_session
     assert patch_snoozed.json()["decision"] == "snooze"
     assert patch_snoozed.json()["snoozed_until"] is not None
 
-    backlog = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/backlog"
-    )
+    backlog = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/backlog")
     assert backlog.status_code == 200
     backlog_ids = {item["id"] for item in backlog.json()["items"]}
     assert recommendation_id not in backlog_ids
@@ -552,9 +540,7 @@ def test_recommendation_workflow_patch_backlog_and_prioritized_report(db_session
     assert patch_reopen.json()["status"] == "open"
     assert patch_reopen.json()["snoozed_until"] is None
 
-    report = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/prioritized-report"
-    )
+    report = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/prioritized-report")
     assert report.status_code == 200
     payload = report.json()
     assert set(payload.keys()) == {
@@ -646,9 +632,7 @@ def test_phase3b_recommendation_filters_and_scope_guards(db_session, seeded_busi
     )
     assert wrong_site.status_code == 404
 
-    cross_business = client.get(
-        f"/api/businesses/{other_business.id}/seo/sites/{site_a_id}/recommendations"
-    )
+    cross_business = client.get(f"/api/businesses/{other_business.id}/seo/sites/{site_a_id}/recommendations")
     assert cross_business.status_code == 404
 
 
@@ -683,9 +667,7 @@ def test_phase3b_v1_recommendation_workflow_routes(db_session, seeded_business) 
     )
     assert list_site.status_code == 200
 
-    backlog = client.get(
-        f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/backlog"
-    )
+    backlog = client.get(f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/backlog")
     assert backlog.status_code == 200
 
     report = client.get(

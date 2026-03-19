@@ -45,7 +45,9 @@ def _override_tenant_context(business_id: str):
     return _resolver
 
 
-def _make_client(db_session, *, business_id: str, summary_provider: SEOAuditSummaryProvider | None = None) -> TestClient:
+def _make_client(
+    db_session, *, business_id: str, summary_provider: SEOAuditSummaryProvider | None = None
+) -> TestClient:
     app = FastAPI()
     app.include_router(seo_router)
 

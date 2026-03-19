@@ -21,9 +21,7 @@ class APICredential(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    business_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("businesses.id"), nullable=False, index=True
-    )
+    business_id: Mapped[str] = mapped_column(String(36), ForeignKey("businesses.id"), nullable=False, index=True)
     principal_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     label: Mapped[str | None] = mapped_column(String(128), nullable=True)

@@ -41,10 +41,7 @@ def test_audit_service_persists_pages_findings_and_run_status(db_session, seeded
                 final_url="https://example.com/",
                 status_code=200,
                 body=(
-                    "<html><body>short"
-                    '<a href="/service">service</a>'
-                    '<a href="/broken">broken</a>'
-                    "</body></html>"
+                    "<html><body>short" '<a href="/service">service</a>' '<a href="/broken">broken</a>' "</body></html>"
                 ),
             ),
             "https://example.com/service": FetchResponse(

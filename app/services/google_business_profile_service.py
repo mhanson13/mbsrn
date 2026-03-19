@@ -1072,9 +1072,7 @@ class GoogleBusinessProfileService:
             reconnect_required=reconnect_required,
             error_code=guidance_error,
             current_method=(
-                self._to_guidance_method(current_verification.method)
-                if current_verification is not None
-                else None
+                self._to_guidance_method(current_verification.method) if current_verification is not None else None
             ),
             code_required=(
                 provider_method_requires_code(current_verification.provider_method)

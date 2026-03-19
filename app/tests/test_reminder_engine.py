@@ -79,9 +79,7 @@ def test_reminder_engine_eligibility_and_duplicate_suppression(db_session, seede
     assert first_run.reminder_2h_sent == 1
     assert first_run.reminders_sent == 3
 
-    event_rows = list(
-        db_session.execute(select(LeadEvent.lead_id, LeadEvent.event_type, LeadEvent.business_id)).all()
-    )
+    event_rows = list(db_session.execute(select(LeadEvent.lead_id, LeadEvent.event_type, LeadEvent.business_id)).all())
     lead_16m_events = [event_type for lead_id, event_type, _ in event_rows if lead_id == lead_16m_id]
     lead_130m_events = [event_type for lead_id, event_type, _ in event_rows if lead_id == lead_130m_id]
 

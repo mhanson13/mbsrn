@@ -82,9 +82,7 @@ class _CapturingCompetitorSummaryProvider:
         sentinel_metric_count = len(metric_rollups)
         sentinel_pages = run.competitor_pages_analyzed
         return SEOCompetitorComparisonSummaryOutput(
-            overall_gap_summary=(
-                f"grounded metric_count={sentinel_metric_count} competitor_pages={sentinel_pages}"
-            ),
+            overall_gap_summary=(f"grounded metric_count={sentinel_metric_count} competitor_pages={sentinel_pages}"),
             top_gaps=["grounded_gap_a", "grounded_gap_b"],
             plain_english_explanation="grounded deterministic summary",
             provider_name="capturing-test-provider",
@@ -297,7 +295,9 @@ def _seed_baseline_audit_run(
 
 
 def _create_completed_comparison_run(client: TestClient, db_session, business_id: str) -> tuple[str, str]:
-    site_id, competitor_set_id, competitor_domain_id, snapshot_run_id = _create_site_set_domain_snapshot(client, business_id)
+    site_id, competitor_set_id, competitor_domain_id, snapshot_run_id = _create_site_set_domain_snapshot(
+        client, business_id
+    )
     snapshot_run = _mark_snapshot_completed(db_session, snapshot_run_id=snapshot_run_id)
     _seed_snapshot_page(
         db_session,
@@ -360,9 +360,7 @@ def test_competitor_summary_manual_trigger_success_and_retrieval(db_session, see
     assert latest_payload["id"] == summary["id"]
     assert set(latest_payload.keys()) == SUMMARY_RESPONSE_KEYS
 
-    by_id = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/comparison-summaries/{summary['id']}"
-    )
+    by_id = client.get(f"/api/businesses/{seeded_business.id}/seo/comparison-summaries/{summary['id']}")
     assert by_id.status_code == 200
     by_id_payload = by_id.json()
     assert by_id_payload["id"] == summary["id"]
@@ -377,9 +375,7 @@ def test_competitor_summary_failure_is_isolated_and_persisted(db_session, seeded
     assert report_before.status_code == 200
     findings_total_before = report_before.json()["findings"]["total"]
 
-    first_summary = success_client.post(
-        f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summarize"
-    )
+    first_summary = success_client.post(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summarize")
     assert first_summary.status_code == 201
     assert first_summary.json()["version"] == 1
 
@@ -388,9 +384,7 @@ def test_competitor_summary_failure_is_isolated_and_persisted(db_session, seeded
         business_id=seeded_business.id,
         summary_provider=_FailingCompetitorSummaryProvider(),
     )
-    failed_summary = failing_client.post(
-        f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summarize"
-    )
+    failed_summary = failing_client.post(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summarize")
     assert failed_summary.status_code == 422
 
     report_after = success_client.get(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/report")
@@ -443,14 +437,10 @@ def test_competitor_summary_business_isolation_and_invalid_lineage(db_session, s
     )
     assert cross_tenant_latest.status_code == 404
 
-    cross_tenant_by_id = client.get(
-        f"/api/businesses/{other_business.id}/seo/comparison-summaries/{summary_id}"
-    )
+    cross_tenant_by_id = client.get(f"/api/businesses/{other_business.id}/seo/comparison-summaries/{summary_id}")
     assert cross_tenant_by_id.status_code == 404
 
-    invalid_run = client.post(
-        f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{uuid4()}/summarize"
-    )
+    invalid_run = client.post(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{uuid4()}/summarize")
     assert invalid_run.status_code == 404
 
 
@@ -485,9 +475,7 @@ def test_competitor_summary_is_grounded_in_persisted_comparison_outputs_only(db_
     db_session.add(run)
     db_session.commit()
 
-    summary_response = client.post(
-        f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summarize"
-    )
+    summary_response = client.post(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{run_id}/summarize")
     assert summary_response.status_code == 201
     payload = summary_response.json()
     assert payload["status"] == "completed"
@@ -529,9 +517,7 @@ def test_phase2_v1_site_scoped_summary_routes(db_session, seeded_business) -> No
     )
     assert latest.status_code == 200
 
-    by_id = client.get(
-        f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-summaries/{summary_id}"
-    )
+    by_id = client.get(f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-summaries/{summary_id}")
     assert by_id.status_code == 200
 
     wrong_site = client.get(
@@ -540,7 +526,9 @@ def test_phase2_v1_site_scoped_summary_routes(db_session, seeded_business) -> No
     assert wrong_site.status_code == 404
 
 
-def test_competitor_summary_does_not_require_snapshot_pages_after_comparison_persisted(db_session, seeded_business) -> None:
+def test_competitor_summary_does_not_require_snapshot_pages_after_comparison_persisted(
+    db_session, seeded_business
+) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
     run_id, _ = _create_completed_comparison_run(client, db_session, seeded_business.id)
 
@@ -581,12 +569,8 @@ def test_competitor_summary_endpoints_not_found_behaviors(db_session, seeded_bus
     )
     assert latest_before_any_summary.status_code == 404
 
-    list_for_unknown_run = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{uuid4()}/summaries"
-    )
+    list_for_unknown_run = client.get(f"/api/businesses/{seeded_business.id}/seo/comparison-runs/{uuid4()}/summaries")
     assert list_for_unknown_run.status_code == 404
 
-    by_unknown_summary_id = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/comparison-summaries/{uuid4()}"
-    )
+    by_unknown_summary_id = client.get(f"/api/businesses/{seeded_business.id}/seo/comparison-summaries/{uuid4()}")
     assert by_unknown_summary_id.status_code == 404

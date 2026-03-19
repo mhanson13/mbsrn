@@ -669,7 +669,9 @@ def get_seo_recommendation_backlog(
     )
 
 
-@router.get("/sites/{site_id}/recommendations/prioritized-report", response_model=SEORecommendationPrioritizedReportRead)
+@router.get(
+    "/sites/{site_id}/recommendations/prioritized-report", response_model=SEORecommendationPrioritizedReportRead
+)
 @router_v1.get(
     "/sites/{site_id}/recommendations/prioritized-report",
     response_model=SEORecommendationPrioritizedReportRead,
@@ -1246,8 +1248,12 @@ def list_competitor_sets(
     )
 
 
-@router.post("/sites/{site_id}/competitor-sets", response_model=SEOCompetitorSetRead, status_code=status.HTTP_201_CREATED)
-@router_v1.post("/sites/{site_id}/competitor-sets", response_model=SEOCompetitorSetRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/sites/{site_id}/competitor-sets", response_model=SEOCompetitorSetRead, status_code=status.HTTP_201_CREATED
+)
+@router_v1.post(
+    "/sites/{site_id}/competitor-sets", response_model=SEOCompetitorSetRead, status_code=status.HTTP_201_CREATED
+)
 def create_competitor_set(
     business_id: str,
     site_id: str,
@@ -1343,7 +1349,9 @@ def list_competitor_domains(
     )
 
 
-@router.post("/competitor-sets/{set_id}/domains", response_model=SEOCompetitorDomainRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/competitor-sets/{set_id}/domains", response_model=SEOCompetitorDomainRead, status_code=status.HTTP_201_CREATED
+)
 def add_competitor_domain(
     business_id: str,
     set_id: str,

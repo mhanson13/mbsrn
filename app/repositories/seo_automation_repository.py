@@ -16,9 +16,7 @@ class SEOAutomationRepository:
 
     def create_config(self, config: SEOAutomationConfig) -> SEOAutomationConfig:
         site_id = self.session.scalar(
-            select(SEOSite.id)
-            .where(SEOSite.business_id == config.business_id)
-            .where(SEOSite.id == config.site_id)
+            select(SEOSite.id).where(SEOSite.business_id == config.business_id).where(SEOSite.id == config.site_id)
         )
         if site_id is None:
             raise ValueError("SEO site not found for business")

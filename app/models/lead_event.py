@@ -49,15 +49,11 @@ class LeadEvent(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    business_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("businesses.id"), nullable=False, index=True
-    )
+    business_id: Mapped[str] = mapped_column(String(36), ForeignKey("businesses.id"), nullable=False, index=True)
     lead_id: Mapped[str] = mapped_column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     event_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
-    actor_type: Mapped[ActorType] = mapped_column(
-        SAEnum(ActorType), default=ActorType.SYSTEM, nullable=False
-    )
+    actor_type: Mapped[ActorType] = mapped_column(SAEnum(ActorType), default=ActorType.SYSTEM, nullable=False)
     actor_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 

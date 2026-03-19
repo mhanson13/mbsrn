@@ -11,9 +11,7 @@ from app.db.base import Base
 
 class AuthAuditEvent(Base):
     __tablename__ = "auth_audit_events"
-    __table_args__ = (
-        Index("ix_auth_audit_events_business_created_at", "business_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_auth_audit_events_business_created_at", "business_id", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     business_id: Mapped[str] = mapped_column(

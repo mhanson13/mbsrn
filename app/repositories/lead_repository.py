@@ -24,11 +24,7 @@ class LeadRepository:
         return self.session.get(Lead, lead_id)
 
     def get_for_business(self, business_id: str, lead_id: str) -> Lead | None:
-        stmt: Select[tuple[Lead]] = (
-            select(Lead)
-            .where(Lead.business_id == business_id)
-            .where(Lead.id == lead_id)
-        )
+        stmt: Select[tuple[Lead]] = select(Lead).where(Lead.business_id == business_id).where(Lead.id == lead_id)
         return self.session.scalar(stmt)
 
     def list(self, business_id: str, status: LeadStatus | None = None) -> list[Lead]:
@@ -102,9 +98,7 @@ class LeadRepository:
         return int(self.session.scalar(stmt) or 0)
 
     def add_event(self, event: LeadEvent) -> LeadEvent:
-        lead_business_id = self.session.scalar(
-            select(Lead.business_id).where(Lead.id == event.lead_id)
-        )
+        lead_business_id = self.session.scalar(select(Lead.business_id).where(Lead.id == event.lead_id))
         if not lead_business_id:
             raise ValueError(f"Lead not found for event: {event.lead_id}")
 
@@ -112,8 +106,7 @@ class LeadRepository:
             event.business_id = lead_business_id
         elif event.business_id != lead_business_id:
             raise ValueError(
-                "Event business_id does not match lead ownership: "
-                f"{event.business_id} != {lead_business_id}"
+                "Event business_id does not match lead ownership: " f"{event.business_id} != {lead_business_id}"
             )
 
         self.session.add(event)
@@ -195,16 +188,13 @@ class LeadRepository:
         return {str(status.value): int(count) for status, count in rows}
 
     def response_deltas_minutes(self, business_id: str, start: datetime, end: datetime) -> list[float]:
-        leads = (
-            self.session.scalars(
-                select(Lead)
-                .where(Lead.business_id == business_id)
-                .where(Lead.submitted_at >= start)
-                .where(Lead.submitted_at <= end)
-                .where(Lead.first_human_response_at.is_not(None))
-            )
-            .all()
-        )
+        leads = self.session.scalars(
+            select(Lead)
+            .where(Lead.business_id == business_id)
+            .where(Lead.submitted_at >= start)
+            .where(Lead.submitted_at <= end)
+            .where(Lead.first_human_response_at.is_not(None))
+        ).all()
 
         deltas: list[float] = []
         for lead in leads:

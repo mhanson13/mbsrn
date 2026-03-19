@@ -717,7 +717,9 @@ def get_google_business_profile_connection_service(
 
 
 def get_google_business_profile_service(
-    connection_service: GoogleBusinessProfileConnectionService = Depends(get_google_business_profile_connection_service),
+    connection_service: GoogleBusinessProfileConnectionService = Depends(
+        get_google_business_profile_connection_service
+    ),
     client: GoogleBusinessProfileClient = Depends(get_google_business_profile_client),
 ) -> GoogleBusinessProfileService:
     return GoogleBusinessProfileService(

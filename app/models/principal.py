@@ -17,9 +17,7 @@ class PrincipalRole(str, PyEnum):
 
 class Principal(Base):
     __tablename__ = "principals"
-    __table_args__ = (
-        PrimaryKeyConstraint("business_id", "id", name="pk_principals_business_id_id"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("business_id", "id", name="pk_principals_business_id_id"),)
 
     business_id: Mapped[str] = mapped_column(
         String(36),

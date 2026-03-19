@@ -22,8 +22,7 @@ class SEOAuditSummaryOutput:
 
 
 class SEOAuditSummaryProvider(Protocol):
-    def generate_summary(self, *, run: SEOAuditRun, findings: list[SEOAuditFinding]) -> SEOAuditSummaryOutput:
-        ...
+    def generate_summary(self, *, run: SEOAuditRun, findings: list[SEOAuditFinding]) -> SEOAuditSummaryOutput: ...
 
 
 @dataclass(frozen=True)
@@ -46,8 +45,7 @@ class SEOCompetitorComparisonSummaryProvider(Protocol):
         findings_by_type: dict[str, int],
         findings_by_category: dict[str, int],
         findings_by_severity: dict[str, int],
-    ) -> SEOCompetitorComparisonSummaryOutput:
-        ...
+    ) -> SEOCompetitorComparisonSummaryOutput: ...
 
 
 @dataclass(frozen=True)
@@ -72,8 +70,7 @@ class SEORecommendationNarrativeProvider(Protocol):
         by_effort_bucket: dict[str, int],
         by_priority_band: dict[str, int],
         backlog: list[SEORecommendation],
-    ) -> SEORecommendationNarrativeOutput:
-        ...
+    ) -> SEORecommendationNarrativeOutput: ...
 
 
 class MockSEOAuditSummaryProvider:

@@ -115,7 +115,9 @@ def _seed_lead(db_session, *, business_id: str) -> Lead:
     return lead
 
 
-def test_auth_requests_are_rate_limited_by_client_ip(db_session, seeded_business, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auth_requests_are_rate_limited_by_client_ip(
+    db_session, seeded_business, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _set_env(
         monkeypatch,
         auth_limit=2,

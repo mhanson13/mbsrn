@@ -33,9 +33,7 @@ class LeadLifecycleService:
 
         allowed = self.ALLOWED_TRANSITIONS.get(current_status, set())
         if next_status not in allowed:
-            raise InvalidStatusTransitionError(
-                f"Invalid transition: {current_status.value} -> {next_status.value}"
-            )
+            raise InvalidStatusTransitionError(f"Invalid transition: {current_status.value} -> {next_status.value}")
 
     def patch_status(
         self,
@@ -52,8 +50,7 @@ class LeadLifecycleService:
             raise ValueError(f"Lead not found: {lead_id}")
         if lead.business_id != business_id:
             raise ValueError(
-                "Lead/business scope mismatch in lifecycle status update: "
-                f"{lead.business_id} != {business_id}"
+                "Lead/business scope mismatch in lifecycle status update: " f"{lead.business_id} != {business_id}"
             )
 
         previous = lead.status

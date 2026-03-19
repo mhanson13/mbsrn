@@ -18,8 +18,7 @@ class SMSDispatchResult:
 
 
 class SMSProvider(Protocol):
-    def send_sms(self, *, to_number: str, body: str) -> SMSDispatchResult:
-        ...
+    def send_sms(self, *, to_number: str, body: str) -> SMSDispatchResult: ...
 
 
 class MockSMSProvider:
@@ -66,9 +65,7 @@ class TwilioSMSProvider:
         endpoint = f"https://api.twilio.com/2010-04-01/Accounts/{self.account_sid}/Messages.json"
         encoded = urlencode({"From": self.from_number, "To": to_number, "Body": body}).encode("utf-8")
         request = Request(endpoint, data=encoded, method="POST")
-        auth_header = base64.b64encode(
-            f"{self.account_sid}:{self.auth_token}".encode("utf-8")
-        ).decode("utf-8")
+        auth_header = base64.b64encode(f"{self.account_sid}:{self.auth_token}".encode("utf-8")).decode("utf-8")
         request.add_header("Authorization", f"Basic {auth_header}")
         request.add_header("Content-Type", "application/x-www-form-urlencoded")
 

@@ -114,9 +114,7 @@ def _ensure_alembic_version_column_capacity(connection: sa.engine.Connection) ->
             )
         return
 
-    version_columns = {
-        column.get("name"): column for column in inspector.get_columns("alembic_version")
-    }
+    version_columns = {column.get("name"): column for column in inspector.get_columns("alembic_version")}
     version_num = version_columns.get("version_num")
     if not version_num:
         return
