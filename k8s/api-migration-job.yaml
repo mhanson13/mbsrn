@@ -27,7 +27,7 @@ spec:
       containers:
         - name: migrate
           image: __API_IMAGE__
-          command: ["alembic", "upgrade", "head"]
+          command: ["python", "-m", "alembic", "upgrade", "head"]
           env:
             - name: DATABASE_URL
               valueFrom:
