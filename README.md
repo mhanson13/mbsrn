@@ -46,6 +46,7 @@ Schema initialization policy:
 - Local/dev/test convenience: startup `create_all()` is allowed only when `APP_ENV` is local-like and `DB_AUTO_CREATE_LOCAL=true`.
 - CI/staging/production/GKE: set `DB_AUTO_CREATE_LOCAL=false`; Alembic migrations are authoritative.
 - Deploy path runs `alembic upgrade head` before rollout.
+- For pre-existing databases missing Alembic history, run `deploy-prod` manually with `db_alignment_mode=baseline_existing` once to stamp revision `0024_google_business_profile_oauth_connections`, then continue normal migration-gated deploys.
 
 Health check:
 ```powershell

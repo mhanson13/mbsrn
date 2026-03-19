@@ -5,6 +5,15 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      db_alignment_mode:
+        description: "Database alignment mode for legacy untracked schema"
+        required: false
+        default: normal
+        type: choice
+        options:
+          - normal
+          - baseline_existing
 
 permissions:
   contents: read
@@ -42,6 +51,7 @@ env:
   API_CPU_LIMIT: ${{ vars.API_CPU_LIMIT }}
   API_MEMORY_LIMIT: ${{ vars.API_MEMORY_LIMIT }}
   API_EPHEMERAL_STORAGE_LIMIT: ${{ vars.API_EPHEMERAL_STORAGE_LIMIT }}
+  DB_ALIGNMENT_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.db_alignment_mode || 'normal' }}
 
 jobs:
   deploy:
@@ -106,6 +116,11 @@ jobs:
             fi
           done
 
+          if [[ "${DB_ALIGNMENT_MODE}" != "normal" && "${DB_ALIGNMENT_MODE}" != "baseline_existing" ]]; then
+            echo "Invalid DB_ALIGNMENT_MODE: ${DB_ALIGNMENT_MODE}" >&2
+            exit 1
+          fi
+
           files=(
             frontend/operator-ui/Dockerfile
             k8s/namespace.yaml
@@ -116,6 +131,7 @@ jobs:
             k8s/api-deployment.yaml
             k8s/api-service.yaml
             k8s/api-migration-job.yaml
+            k8s/api-migration-baseline-job.yaml
           )
 
           for path in "${files[@]}"; do
@@ -221,6 +237,7 @@ jobs:
           grep -q "__GOOGLE_OAUTH_CLIENT_ID__" k8s/api-deployment.yaml
           grep -q "__GOOGLE_BUSINESS_PROFILE_REDIRECT_URI__" k8s/api-deployment.yaml
           grep -q "__API_IMAGE__" k8s/api-migration-job.yaml
+          grep -q "__API_IMAGE__" k8s/api-migration-baseline-job.yaml
 
           sed \
             -e "s|__UI_IMAGE__|${UI_IMAGE}|g" \
@@ -246,6 +263,9 @@ jobs:
           sed \
             -e "s|__API_IMAGE__|${API_IMAGE}|g" \
             k8s/api-migration-job.yaml > "${render_dir}/api-migration-job.yaml"
+          sed \
+            -e "s|__API_IMAGE__|${API_IMAGE}|g" \
+            k8s/api-migration-baseline-job.yaml > "${render_dir}/api-migration-baseline-job.yaml"
 
           echo "RENDER_DIR=${render_dir}" >> "${GITHUB_ENV}"
 
@@ -268,6 +288,18 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/ui-serviceaccount.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-serviceaccount.yaml"
+
+          if [[ "${DB_ALIGNMENT_MODE}" == "baseline_existing" ]]; then
+            kubectl delete job mbsrn-api-migrate-baseline -n "${K8S_NAMESPACE}" --ignore-not-found=true
+            kubectl wait --for=delete job/mbsrn-api-migrate-baseline -n "${K8S_NAMESPACE}" --timeout=120s || true
+            kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-migration-baseline-job.yaml"
+            if ! kubectl wait --for=condition=complete job/mbsrn-api-migrate-baseline -n "${K8S_NAMESPACE}" --timeout=600s; then
+              kubectl logs -n "${K8S_NAMESPACE}" job/mbsrn-api-migrate-baseline -c align --tail=200 || true
+              kubectl logs -n "${K8S_NAMESPACE}" job/mbsrn-api-migrate-baseline -c cloud-sql-proxy --tail=200 || true
+              kubectl describe -n "${K8S_NAMESPACE}" job mbsrn-api-migrate-baseline || true
+              exit 1
+            fi
+          fi
 
           kubectl delete job mbsrn-api-migrate -n "${K8S_NAMESPACE}" --ignore-not-found=true
           kubectl wait --for=delete job/mbsrn-api-migrate -n "${K8S_NAMESPACE}" --timeout=120s || true
