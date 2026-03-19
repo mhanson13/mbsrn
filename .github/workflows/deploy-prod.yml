@@ -56,6 +56,8 @@ jobs:
         env:
           GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           GCP_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+          CLOUD_SQL_INSTANCE_CONNECTION_NAME: ${{ secrets.CLOUD_SQL_INSTANCE_CONNECTION_NAME }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: |
@@ -91,6 +93,8 @@ jobs:
             API_EPHEMERAL_STORAGE_LIMIT
             GCP_WORKLOAD_IDENTITY_PROVIDER
             GCP_SERVICE_ACCOUNT_EMAIL
+            CLOUD_SQL_INSTANCE_CONNECTION_NAME
+            DATABASE_URL
             APP_SESSION_SECRET
             GOOGLE_OAUTH_CLIENT_SECRET
           )
@@ -243,6 +247,8 @@ jobs:
       - name: Apply workload manifests
         shell: bash
         env:
+          CLOUD_SQL_INSTANCE_CONNECTION_NAME: ${{ secrets.CLOUD_SQL_INSTANCE_CONNECTION_NAME }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: |
@@ -250,6 +256,8 @@ jobs:
 
           kubectl apply -f "${RENDER_DIR}/namespace.yaml"
           kubectl -n "${K8S_NAMESPACE}" create secret generic mbsrn-api-auth \
+            --from-literal=CLOUD_SQL_INSTANCE_CONNECTION_NAME="${CLOUD_SQL_INSTANCE_CONNECTION_NAME}" \
+            --from-literal=DATABASE_URL="${DATABASE_URL}" \
             --from-literal=APP_SESSION_SECRET="${APP_SESSION_SECRET}" \
             --from-literal=GOOGLE_OAUTH_CLIENT_SECRET="${GOOGLE_OAUTH_CLIENT_SECRET}" \
             --dry-run=client -o yaml | kubectl apply -f -

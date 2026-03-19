@@ -24,6 +24,11 @@ spec:
               value: production
             - name: DB_AUTO_CREATE_LOCAL
               value: "false"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: DATABASE_URL
             - name: GOOGLE_AUTH_ENABLED
               value: "true"
             - name: GOOGLE_OIDC_CLIENT_ID
@@ -67,3 +72,15 @@ spec:
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 20
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
+          args:
+            - "--structured-logs"
+            - "--port=5432"
+            - "$(CLOUD_SQL_INSTANCE_CONNECTION_NAME)"
+          env:
+            - name: CLOUD_SQL_INSTANCE_CONNECTION_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: CLOUD_SQL_INSTANCE_CONNECTION_NAME
