@@ -27,7 +27,9 @@ spec:
       containers:
         - name: align
           image: __API_IMAGE__
-          command: ["/cnb/process/migrate-baseline-existing"]
+          command:
+            - "/layers/google.python.runtime/python/bin/python3"
+            - "/workspace/app/scripts/alembic_baseline_existing.py"
           env:
             - name: DATABASE_URL
               valueFrom:
