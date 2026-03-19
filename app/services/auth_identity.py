@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.session_token import AppSessionTokenError, AppSessionTokenService, IssuedAppSessionTokens
@@ -216,6 +217,29 @@ class AuthIdentityService:
             provider=claims.provider,
             provider_subject=claims.subject,
         )
-        if identity is None:
+        if identity is not None:
+            return identity
+
+        normalized_email = (claims.email or "").strip().lower()
+        if not normalized_email:
             raise AuthIdentityNotFoundError("Identity mapping not found.")
-        return identity
+        if not claims.email_verified:
+            raise AuthIdentityValidationError("Google account email is not verified.")
+
+        placeholder_identity = self.principal_identity_repository.get_active_by_provider_subject(
+            provider=claims.provider,
+            provider_subject=normalized_email,
+        )
+        if placeholder_identity is None:
+            raise AuthIdentityNotFoundError("Identity mapping not found.")
+        if placeholder_identity.email and placeholder_identity.email != normalized_email:
+            raise AuthIdentityValidationError("Identity mapping email mismatch.")
+
+        placeholder_identity.provider_subject = claims.subject
+        placeholder_identity.email = normalized_email
+        placeholder_identity.email_verified = claims.email_verified
+        try:
+            self.principal_identity_repository.save(placeholder_identity)
+        except IntegrityError as exc:
+            raise AuthIdentityValidationError("Identity mapping conflict for Google subject.") from exc
+        return placeholder_identity

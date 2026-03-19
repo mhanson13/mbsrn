@@ -412,6 +412,49 @@ When using `twilio` or `smtp`, configure the corresponding credentials in `.env`
 - Legacy unpeppered hash verification is off by default and can be enabled temporarily with `ALLOW_LEGACY_TOKEN_HASH_FALLBACK=true`.
 - Legacy shared-token auth (`API_AUTH_TOKEN` / `API_AUTH_BUSINESS_ID`) is no longer part of runtime auth resolution.
 
+### First Admin Bootstrap (Internal Manual)
+- Purpose: one-time/manual creation or upsert of the first internal admin principal when no admin exists yet.
+- This is an internal CLI path only (no public bootstrap endpoint).
+- `DEFAULT_BUSINESS_ID` anchors default tenant/business resolution to a real persisted `businesses.id`.
+- `DEFAULT_ADMIN_EMAIL` identifies the intended bootstrap admin Google account email target.
+
+Provisioning requirements:
+- Provide `DEFAULT_BUSINESS_ID` from the actual Business row for that environment. Do not invent or guess IDs.
+- Provide `DEFAULT_ADMIN_EMAIL` as the real environment-specific Google admin account email.
+- In production deploys, these values are injected from GitHub Actions repository secrets into Kubernetes Secret `mbsrn-api-auth`; they are not hardcoded in repo manifests.
+- These settings do not bypass OAuth verification, role checks, or authorization rules.
+
+Anti-patterns to avoid:
+- Do not use fake identifiers (for example `0`) for `DEFAULT_BUSINESS_ID`.
+- Do not store either value directly in tracked manifest YAML.
+- Do not assume `DEFAULT_ADMIN_EMAIL` alone grants access without successful Google token verification and principal mapping.
+
+Local:
+```powershell
+python -m app.scripts.bootstrap_admin --email user@example.com --role admin
+```
+
+Production (GKE):
+```bash
+kubectl -n mbsrn exec deploy/mbsrn-api -- \
+  python -m app.scripts.bootstrap_admin --email user@example.com --role admin
+```
+
+Production (use configured default admin email from secret-backed env):
+```bash
+kubectl -n mbsrn exec deploy/mbsrn-api -- \
+  python -m app.scripts.bootstrap_admin --role admin
+```
+
+Expected primary output:
+- `created principal <email> with role admin`
+- `updated principal <email> to role admin`
+- `principal already exists with correct role`
+
+Post-bootstrap validation:
+- Google login completes and `POST /api/auth/google/exchange` succeeds for the mapped principal.
+- The user receives app session tokens (`access_token` and `refresh_token`).
+
 ## API CORS And Security Headers
 - CORS is explicit and origin-scoped via `API_CORS_ALLOWED_ORIGINS` (comma-separated).
 - Local/dev/test defaults permit operator UI local origins:

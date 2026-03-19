@@ -75,6 +75,15 @@ class PrincipalIdentityRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_for_provider_email(self, *, provider: str, email: str) -> list[PrincipalIdentity]:
+        stmt: Select[tuple[PrincipalIdentity]] = (
+            select(PrincipalIdentity)
+            .where(PrincipalIdentity.provider == provider)
+            .where(PrincipalIdentity.email == email)
+            .order_by(PrincipalIdentity.created_at.desc(), PrincipalIdentity.id.desc())
+        )
+        return list(self.session.scalars(stmt))
+
     def mark_last_authenticated(
         self,
         *,

@@ -222,6 +222,51 @@ def test_google_exchange_issues_session_token_and_preserves_tenant_scope(
     assert replay_events[-1].details_json.get("action") == "auth_refresh"
 
 
+def test_google_exchange_promotes_email_bootstrap_placeholder_identity(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_auth_env(monkeypatch, default_business_id=seeded_business.id)
+    principal_id = "bootstrap-user@example.com"
+    identity = _seed_principal_identity(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=principal_id,
+        provider_subject=principal_id,
+    )
+    identity.email = principal_id
+    identity.email_verified = False
+    db_session.add(identity)
+    db_session.commit()
+
+    verifier = _StubGoogleVerifier(
+        {
+            "bootstrap-id-token": GoogleIdentityClaims(
+                provider="google",
+                subject="google-sub-bootstrap-1",
+                email=principal_id,
+                email_verified=True,
+                issuer="https://accounts.google.com",
+                audience="google-client-id",
+                display_name="Bootstrap User",
+            )
+        }
+    )
+    client = _make_client(db_session, verifier=verifier)
+
+    exchange = client.post("/api/auth/google/exchange", json={"id_token": "bootstrap-id-token"})
+    assert exchange.status_code == 200
+
+    db_session.expire_all()
+    promoted = db_session.get(PrincipalIdentity, identity.id)
+    assert promoted is not None
+    assert promoted.provider_subject == "google-sub-bootstrap-1"
+    assert promoted.email == principal_id
+    assert promoted.email_verified is True
+    assert promoted.last_authenticated_at is not None
+
+
 def test_google_exchange_rejects_unmapped_identity(
     db_session,
     seeded_business,

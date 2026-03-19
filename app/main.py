@@ -91,6 +91,10 @@ _configure_security_headers()
 @app.on_event("startup")
 def on_startup() -> None:
     if _should_auto_create_schema():
+        if not settings.default_business_id:
+            raise RuntimeError(
+                "DEFAULT_BUSINESS_ID is required when local schema auto-create is enabled."
+            )
         logger.warning(
             "Local schema auto-create is enabled (app_env=%s, DB_AUTO_CREATE_LOCAL=%s). "
             "Alembic remains authoritative for non-local environments.",

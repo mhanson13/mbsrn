@@ -874,6 +874,11 @@ def get_tenant_context(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthorized.",
         )
+    if not settings.default_business_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="DEFAULT_BUSINESS_ID is not configured for development fallback auth.",
+        )
 
     return TenantContext(
         business_id=settings.default_business_id,
