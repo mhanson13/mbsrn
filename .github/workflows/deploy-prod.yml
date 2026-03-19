@@ -71,6 +71,7 @@ jobs:
             UI_IMAGE_NAME
             API_IMAGE_NAME
             NEXT_PUBLIC_GOOGLE_CLIENT_ID
+            NEXT_PUBLIC_API_BASE_URL
             GOOGLE_OIDC_CLIENT_ID
             GOOGLE_OAUTH_CLIENT_ID
             GOOGLE_BUSINESS_PROFILE_REDIRECT_URI
@@ -102,6 +103,7 @@ jobs:
           done
 
           files=(
+            frontend/operator-ui/Dockerfile
             k8s/namespace.yaml
             k8s/ui-serviceaccount.yaml
             k8s/api-serviceaccount.yaml
@@ -165,12 +167,14 @@ jobs:
             --pack image="${API_IMAGE}" \
             .
 
-          gcloud builds submit \
-            --project "${GCP_PROJECT_ID}" \
-            --gcs-source-staging-dir "gs://mbsrn-build-source/source" \
-            --gcs-log-dir "${GCS_LOGS_BUCKET}" \
-            --pack "image=${UI_IMAGE},env=NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID},env=NEXT_PUBLIC_API_BASE_URL=${UI_API_BASE_URL}" \
+          docker build \
+            --file frontend/operator-ui/Dockerfile \
+            --build-arg NEXT_PUBLIC_GOOGLE_CLIENT_ID="${NEXT_PUBLIC_GOOGLE_CLIENT_ID}" \
+            --build-arg NEXT_PUBLIC_API_BASE_URL="${UI_API_BASE_URL}" \
+            --tag "${UI_IMAGE}" \
             frontend/operator-ui
+
+          docker push "${UI_IMAGE}"
 
       - name: Get GKE credentials
         uses: google-github-actions/get-gke-credentials@v3
