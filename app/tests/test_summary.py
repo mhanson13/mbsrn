@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import TenantContext, get_db, get_tenant_context
 from app.api.routes.leads import router as leads_router
 from app.core.time import utc_now
 from app.models.lead import Lead, LeadSource, LeadStatus
@@ -51,7 +51,15 @@ def test_summary_endpoint_returns_counts(db_session: Session, seeded_business) -
         finally:
             pass
 
+    def override_tenant_context() -> TenantContext:
+        return TenantContext(
+            business_id=seeded_business.id,
+            principal_id="test-principal",
+            auth_source="test",
+        )
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_tenant_context] = override_tenant_context
     client = TestClient(app)
 
     response = client.get(

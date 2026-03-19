@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.deps import get_db
+from app.api.deps import TenantContext, get_db, get_tenant_context
 from app.api.routes.leads import router as leads_router
 from app.core.time import utc_now
 from app.models.business import Business
@@ -50,7 +50,15 @@ def test_get_lead_requires_same_business_scope(db_session, seeded_business) -> N
         finally:
             pass
 
+    def override_tenant_context() -> TenantContext:
+        return TenantContext(
+            business_id=seeded_business.id,
+            principal_id="test-principal",
+            auth_source="test",
+        )
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_tenant_context] = override_tenant_context
     client = TestClient(app)
 
     same_scope = client.get(f"/api/leads/{lead.id}", params={"business_id": seeded_business.id})

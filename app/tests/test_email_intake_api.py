@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.api.deps import get_db, get_notification_service
+from app.api.deps import TenantContext, get_db, get_notification_service, get_tenant_context
 from app.api.routes.intake import router as intake_router
 from app.core.time import utc_now
 from app.integrations.email_provider import EmailDispatchResult
@@ -27,6 +27,17 @@ class _FailingSMSProvider:
         raise RuntimeError("sms down")
 
 
+def _override_tenant_context(business_id: str):
+    def _resolver() -> TenantContext:
+        return TenantContext(
+            business_id=business_id,
+            principal_id="test-principal",
+            auth_source="test",
+        )
+
+    return _resolver
+
+
 def test_email_intake_endpoint_success(db_session, seeded_business) -> None:
     app = FastAPI()
     app.include_router(intake_router)
@@ -38,6 +49,7 @@ def test_email_intake_endpoint_success(db_session, seeded_business) -> None:
             pass
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_tenant_context] = _override_tenant_context(seeded_business.id)
     client = TestClient(app)
 
     response = client.post(
@@ -87,6 +99,7 @@ def test_email_intake_endpoint_records_parsing_failed_event(db_session, seeded_b
             pass
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_tenant_context] = _override_tenant_context(seeded_business.id)
     client = TestClient(app)
 
     response = client.post(
@@ -135,6 +148,7 @@ def test_email_intake_persists_lead_when_notification_delivery_fails(db_session,
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_notification_service] = override_notification_service
+    app.dependency_overrides[get_tenant_context] = _override_tenant_context(seeded_business.id)
     client = TestClient(app)
 
     response = client.post(
