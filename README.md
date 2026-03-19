@@ -47,6 +47,7 @@ Schema initialization policy:
 - CI/staging/production/GKE: set `DB_AUTO_CREATE_LOCAL=false`; Alembic migrations are authoritative.
 - Deploy path runs `alembic upgrade head` before rollout.
 - For pre-existing databases missing Alembic history, run `deploy-prod` manually with `db_alignment_mode=baseline_existing` once to stamp revision `0024_google_business_profile_oauth_connections`, then continue normal migration-gated deploys.
+- In non-local environments, `/healthz` enforces Alembic head readiness and returns `503` while schema revision is behind.
 
 Health check:
 ```powershell

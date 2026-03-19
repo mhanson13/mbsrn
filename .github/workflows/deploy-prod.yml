@@ -116,6 +116,9 @@ jobs:
             fi
           done
 
+          grep -q "^migrate:" Procfile
+          grep -q "^migrate-baseline-existing:" Procfile
+
           if [[ "${DB_ALIGNMENT_MODE}" != "normal" && "${DB_ALIGNMENT_MODE}" != "baseline_existing" ]]; then
             echo "Invalid DB_ALIGNMENT_MODE: ${DB_ALIGNMENT_MODE}" >&2
             exit 1
@@ -266,6 +269,18 @@ jobs:
           sed \
             -e "s|__API_IMAGE__|${API_IMAGE}|g" \
             k8s/api-migration-baseline-job.yaml > "${render_dir}/api-migration-baseline-job.yaml"
+
+          for rendered in \
+            "${render_dir}/ui-deployment.yaml" \
+            "${render_dir}/api-deployment.yaml" \
+            "${render_dir}/api-migration-job.yaml" \
+            "${render_dir}/api-migration-baseline-job.yaml"
+          do
+            if grep -q "__[A-Z0-9_][A-Z0-9_]*__" "${rendered}"; then
+              echo "Unresolved placeholder detected in rendered manifest: ${rendered}" >&2
+              exit 1
+            fi
+          done
 
           echo "RENDER_DIR=${render_dir}" >> "${GITHUB_ENV}"
 

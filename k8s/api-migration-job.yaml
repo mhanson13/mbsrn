@@ -10,20 +10,6 @@ spec:
     spec:
       serviceAccountName: mbsrn-api
       restartPolicy: Never
-      initContainers:
-        - name: cloud-sql-proxy
-          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
-          restartPolicy: Always
-          args:
-            - "--structured-logs"
-            - "--port=5432"
-            - "$(CLOUD_SQL_INSTANCE_CONNECTION_NAME)"
-          env:
-            - name: CLOUD_SQL_INSTANCE_CONNECTION_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: mbsrn-api-auth
-                  key: CLOUD_SQL_INSTANCE_CONNECTION_NAME
       containers:
         - name: migrate
           image: __API_IMAGE__
@@ -34,3 +20,15 @@ spec:
                 secretKeyRef:
                   name: mbsrn-api-auth
                   key: DATABASE_URL
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
+          args:
+            - "--structured-logs"
+            - "--port=5432"
+            - "$(CLOUD_SQL_INSTANCE_CONNECTION_NAME)"
+          env:
+            - name: CLOUD_SQL_INSTANCE_CONNECTION_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: CLOUD_SQL_INSTANCE_CONNECTION_NAME
