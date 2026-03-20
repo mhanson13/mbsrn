@@ -296,6 +296,18 @@ export async function fetchRecommendationRuns(
   );
 }
 
+export async function fetchRecommendationsForRun(
+  token: string,
+  businessId: string,
+  siteId: string,
+  recommendationRunId: string,
+): Promise<RecommendationListResponse> {
+  return apiRequest<RecommendationListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/recommendation-runs/${recommendationRunId}/recommendations`,
+    { token },
+  );
+}
+
 export async function fetchRecommendations(
   token: string,
   businessId: string,
