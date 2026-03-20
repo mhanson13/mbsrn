@@ -13,7 +13,10 @@ import type {
   SEOSiteCreateRequest,
   SEOSiteListResponse,
   CompetitorDomainListResponse,
+  CompetitorComparisonRunListResponse,
+  CompetitorSet,
   CompetitorSetListResponse,
+  CompetitorSnapshotRunListResponse,
   Recommendation,
   RecommendationActionStatus,
   RecommendationWorkflowUpdatePayload,
@@ -202,6 +205,17 @@ export async function fetchCompetitorSets(
   );
 }
 
+export async function fetchCompetitorSet(
+  token: string,
+  businessId: string,
+  competitorSetId: string,
+): Promise<CompetitorSet> {
+  return apiRequest<CompetitorSet>(
+    `/api/businesses/${businessId}/seo/competitor-sets/${competitorSetId}`,
+    { token },
+  );
+}
+
 export async function fetchCompetitorDomains(
   token: string,
   businessId: string,
@@ -209,6 +223,28 @@ export async function fetchCompetitorDomains(
 ): Promise<CompetitorDomainListResponse> {
   return apiRequest<CompetitorDomainListResponse>(
     `/api/businesses/${businessId}/seo/competitor-sets/${competitorSetId}/domains`,
+    { token },
+  );
+}
+
+export async function fetchCompetitorSnapshotRuns(
+  token: string,
+  businessId: string,
+  competitorSetId: string,
+): Promise<CompetitorSnapshotRunListResponse> {
+  return apiRequest<CompetitorSnapshotRunListResponse>(
+    `/api/businesses/${businessId}/seo/competitor-sets/${competitorSetId}/snapshot-runs`,
+    { token },
+  );
+}
+
+export async function fetchCompetitorComparisonRuns(
+  token: string,
+  businessId: string,
+  competitorSetId: string,
+): Promise<CompetitorComparisonRunListResponse> {
+  return apiRequest<CompetitorComparisonRunListResponse>(
+    `/api/businesses/${businessId}/seo/competitor-sets/${competitorSetId}/comparison-runs`,
     { token },
   );
 }
@@ -228,6 +264,12 @@ export async function fetchRecommendations(
   }
   if (filters.category) {
     params.set("category", filters.category);
+  }
+  if (filters.source_type) {
+    params.set("source_type", filters.source_type);
+  }
+  if (filters.recommendation_run_id) {
+    params.set("recommendation_run_id", filters.recommendation_run_id);
   }
   if (filters.sort_by) {
     params.set("sort_by", filters.sort_by);

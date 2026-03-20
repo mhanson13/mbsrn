@@ -140,8 +140,10 @@ export interface CompetitorSet {
   business_id: string;
   site_id: string;
   name: string;
-  description: string | null;
+  city: string | null;
+  state: string | null;
   is_active: boolean;
+  created_by_principal_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -168,6 +170,68 @@ export interface CompetitorDomain {
 
 export interface CompetitorDomainListResponse {
   items: CompetitorDomain[];
+  total: number;
+}
+
+export interface CompetitorSnapshotRun {
+  id: string;
+  business_id: string;
+  site_id: string;
+  competitor_set_id: string;
+  client_audit_run_id: string | null;
+  status: string;
+  max_domains: number;
+  max_pages_per_domain: number;
+  max_depth: number;
+  same_domain_only: boolean;
+  domains_targeted: number;
+  domains_completed: number;
+  pages_attempted: number;
+  pages_captured: number;
+  pages_skipped: number;
+  errors_encountered: number;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+  error_summary: string | null;
+  created_by_principal_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompetitorSnapshotRunListResponse {
+  items: CompetitorSnapshotRun[];
+  total: number;
+}
+
+export interface CompetitorComparisonRun {
+  id: string;
+  business_id: string;
+  site_id: string;
+  competitor_set_id: string;
+  snapshot_run_id: string;
+  baseline_audit_run_id: string | null;
+  status: string;
+  total_findings: number;
+  critical_findings: number;
+  warning_findings: number;
+  info_findings: number;
+  client_pages_analyzed: number;
+  competitor_pages_analyzed: number;
+  finding_type_counts_json: Record<string, number>;
+  category_counts_json: Record<string, number>;
+  severity_counts_json: Record<string, number>;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+  error_summary: string | null;
+  created_by_principal_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompetitorComparisonRunListResponse {
+  items: CompetitorComparisonRun[];
   total: number;
 }
 
@@ -202,7 +266,9 @@ export interface RecommendationListFilters {
   status?: "open" | "in_progress" | "accepted" | "dismissed" | "snoozed" | "resolved";
   priority_band?: "low" | "medium" | "high" | "critical";
   category?: "SEO" | "CONTENT" | "STRUCTURE" | "TECHNICAL";
-  sort_by?: "priority_score" | "created_at";
+  source_type?: "audit" | "comparison" | "mixed";
+  recommendation_run_id?: string;
+  sort_by?: "priority_score" | "created_at" | "updated_at" | "due_at";
   sort_order?: "asc" | "desc";
   page?: number;
   page_size?: number;
