@@ -235,6 +235,87 @@ export interface CompetitorComparisonRunListResponse {
   total: number;
 }
 
+export interface CompetitorComparisonFinding {
+  id: string;
+  business_id: string;
+  site_id: string;
+  competitor_set_id: string;
+  comparison_run_id: string;
+  finding_type: string;
+  category: string;
+  severity: string;
+  title: string;
+  details: string | null;
+  rule_key: string;
+  client_value: string | null;
+  competitor_value: string | null;
+  gap_direction: string | null;
+  evidence_json: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface CompetitorComparisonFindingListResponse {
+  items: CompetitorComparisonFinding[];
+  total: number;
+  by_category: Record<string, number>;
+  by_severity: Record<string, number>;
+}
+
+export interface CompetitorComparisonMetricRollup {
+  key: string;
+  title: string;
+  category: string;
+  unit: string;
+  higher_is_better: boolean;
+  client_value: number;
+  competitor_value: number;
+  delta: number;
+  severity: string;
+  gap_direction: string;
+}
+
+export interface CompetitorComparisonRunRollups {
+  client_pages_analyzed: number;
+  competitor_pages_analyzed: number;
+  findings_by_type: Record<string, number>;
+  findings_by_category: Record<string, number>;
+  findings_by_severity: Record<string, number>;
+  metric_rollups: CompetitorComparisonMetricRollup[];
+}
+
+export interface CompetitorComparisonReport {
+  run: CompetitorComparisonRun;
+  rollups: CompetitorComparisonRunRollups;
+  findings: CompetitorComparisonFindingListResponse;
+}
+
+export interface RecommendationRun {
+  id: string;
+  business_id: string;
+  site_id: string;
+  audit_run_id: string | null;
+  comparison_run_id: string | null;
+  status: string;
+  total_recommendations: number;
+  critical_recommendations: number;
+  warning_recommendations: number;
+  info_recommendations: number;
+  category_counts_json: Record<string, number>;
+  effort_bucket_counts_json: Record<string, number>;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+  error_summary: string | null;
+  created_by_principal_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecommendationRunListResponse {
+  items: RecommendationRun[];
+  total: number;
+}
+
 export interface Recommendation {
   id: string;
   business_id: string;

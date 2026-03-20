@@ -12,10 +12,13 @@ import type {
   SEOSite,
   SEOSiteCreateRequest,
   SEOSiteListResponse,
+  CompetitorComparisonReport,
   CompetitorDomainListResponse,
   CompetitorComparisonRunListResponse,
   CompetitorSet,
   CompetitorSetListResponse,
+  RecommendationRunListResponse,
+  CompetitorSnapshotRun,
   CompetitorSnapshotRunListResponse,
   Recommendation,
   RecommendationActionStatus,
@@ -238,6 +241,16 @@ export async function fetchCompetitorSnapshotRuns(
   );
 }
 
+export async function fetchCompetitorSnapshotRun(
+  token: string,
+  businessId: string,
+  snapshotRunId: string,
+): Promise<CompetitorSnapshotRun> {
+  return apiRequest<CompetitorSnapshotRun>(`/api/businesses/${businessId}/seo/snapshot-runs/${snapshotRunId}`, {
+    token,
+  });
+}
+
 export async function fetchCompetitorComparisonRuns(
   token: string,
   businessId: string,
@@ -245,6 +258,28 @@ export async function fetchCompetitorComparisonRuns(
 ): Promise<CompetitorComparisonRunListResponse> {
   return apiRequest<CompetitorComparisonRunListResponse>(
     `/api/businesses/${businessId}/seo/competitor-sets/${competitorSetId}/comparison-runs`,
+    { token },
+  );
+}
+
+export async function fetchCompetitorComparisonReport(
+  token: string,
+  businessId: string,
+  comparisonRunId: string,
+): Promise<CompetitorComparisonReport> {
+  return apiRequest<CompetitorComparisonReport>(
+    `/api/businesses/${businessId}/seo/comparison-runs/${comparisonRunId}/report`,
+    { token },
+  );
+}
+
+export async function fetchRecommendationRuns(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<RecommendationRunListResponse> {
+  return apiRequest<RecommendationRunListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/recommendation-runs`,
     { token },
   );
 }

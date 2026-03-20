@@ -118,6 +118,20 @@ export default function CompetitorSetDetailPage() {
     return comparisonRuns[0];
   }, [comparisonRuns]);
 
+  function buildComparisonRunHref(run: CompetitorComparisonRun): string {
+    const params = new URLSearchParams();
+    const contextSiteId = competitorSet?.site_id || requestedSiteId || run.site_id;
+    const contextSetId = competitorSet?.id || competitorSetId || run.competitor_set_id;
+    if (contextSiteId) {
+      params.set("site_id", contextSiteId);
+    }
+    if (contextSetId) {
+      params.set("set_id", contextSetId);
+    }
+    const query = params.toString();
+    return query ? `/competitors/comparison-runs/${run.id}?${query}` : `/competitors/comparison-runs/${run.id}`;
+  }
+
   useEffect(() => {
     if (context.loading || context.error || !competitorSetId) {
       setCompetitorSet(null);
@@ -385,46 +399,51 @@ export default function CompetitorSetDetailPage() {
             {comparisonRuns.length === 0 ? (
               <p className="hint muted">No comparison runs have been recorded for this competitor set.</p>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Run ID</th>
-                    <th>Status</th>
-                    <th>Severity</th>
-                    <th>Baseline Audit</th>
-                    <th>Total Findings</th>
-                    <th>Client Pages</th>
-                    <th>Competitor Pages</th>
-                    <th>Created</th>
-                    <th>Updated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {comparisonRuns.map((run) => (
-                    <tr key={run.id}>
-                      <td>
-                        <code>{run.id}</code>
-                      </td>
-                      <td>{run.status}</td>
-                      <td>{deriveComparisonSeverity(run)}</td>
-                      <td>
-                        {run.baseline_audit_run_id ? (
-                          <Link href={`/audits/${run.baseline_audit_run_id}`}>
-                            <code>{run.baseline_audit_run_id}</code>
-                          </Link>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                      <td>{run.total_findings}</td>
-                      <td>{run.client_pages_analyzed}</td>
-                      <td>{run.competitor_pages_analyzed}</td>
-                      <td>{formatDateTime(run.created_at)}</td>
-                      <td>{formatDateTime(run.updated_at)}</td>
+              <>
+                <p className="hint muted">Open a run ID to inspect detailed findings, metrics, and linked records.</p>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Run ID</th>
+                      <th>Status</th>
+                      <th>Severity</th>
+                      <th>Baseline Audit</th>
+                      <th>Total Findings</th>
+                      <th>Client Pages</th>
+                      <th>Competitor Pages</th>
+                      <th>Created</th>
+                      <th>Updated</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {comparisonRuns.map((run) => (
+                      <tr key={run.id}>
+                        <td>
+                          <Link href={buildComparisonRunHref(run)}>
+                            <code>{run.id}</code>
+                          </Link>
+                        </td>
+                        <td>{run.status}</td>
+                        <td>{deriveComparisonSeverity(run)}</td>
+                        <td>
+                          {run.baseline_audit_run_id ? (
+                            <Link href={`/audits/${run.baseline_audit_run_id}`}>
+                              <code>{run.baseline_audit_run_id}</code>
+                            </Link>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                        <td>{run.total_findings}</td>
+                        <td>{run.client_pages_analyzed}</td>
+                        <td>{run.competitor_pages_analyzed}</td>
+                        <td>{formatDateTime(run.created_at)}</td>
+                        <td>{formatDateTime(run.updated_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
             )}
           </div>
 
