@@ -3,39 +3,104 @@
 import { useEffect, useState } from "react";
 
 import { useOperatorContext } from "../../components/useOperatorContext";
-import { fetchCompetitorSets } from "../../lib/api/client";
-import type { CompetitorSet } from "../../lib/api/types";
+import { ApiRequestError, fetchCompetitorDomains, fetchCompetitorSets } from "../../lib/api/client";
+import type { CompetitorDomain } from "../../lib/api/types";
+
+interface CompetitorRow extends CompetitorDomain {
+  competitor_set_name: string;
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
+function safeCompetitorErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "You are not authorized to view competitor data.";
+    }
+    if (error.status === 404) {
+      return "Competitor data for the selected site was not found.";
+    }
+  }
+  return "Unable to load competitors right now. Please try again.";
+}
 
 export default function CompetitorsPage() {
   const context = useOperatorContext();
-  const [sets, setSets] = useState<CompetitorSet[]>([]);
-  const [loadingSets, setLoadingSets] = useState(false);
-  const [setsError, setSetsError] = useState<string | null>(null);
+  const [competitors, setCompetitors] = useState<CompetitorRow[]>([]);
+  const [loadingCompetitors, setLoadingCompetitors] = useState(false);
+  const [competitorsError, setCompetitorsError] = useState<string | null>(null);
+  const [competitorSetCount, setCompetitorSetCount] = useState(0);
 
   useEffect(() => {
-    if (!context.selectedSiteId || context.loading || context.error) {
+    if (context.loading || context.error || !context.selectedSiteId) {
+      setCompetitors([]);
+      setCompetitorSetCount(0);
+      setCompetitorsError(null);
+      setLoadingCompetitors(false);
       return;
     }
     let cancelled = false;
-    async function loadSets() {
-      setLoadingSets(true);
-      setSetsError(null);
+    const selectedSiteId = context.selectedSiteId;
+
+    async function loadCompetitors() {
+      setLoadingCompetitors(true);
+      setCompetitorsError(null);
       try {
-        const response = await fetchCompetitorSets(context.token, context.businessId, context.selectedSiteId as string);
+        const setResponse = await fetchCompetitorSets(context.token, context.businessId, selectedSiteId);
+        if (cancelled) {
+          return;
+        }
+
+        setCompetitorSetCount(setResponse.total);
+        if (setResponse.items.length === 0) {
+          setCompetitors([]);
+          return;
+        }
+
+        const domainsBySet = await Promise.all(
+          setResponse.items.map((setItem) =>
+            fetchCompetitorDomains(context.token, context.businessId, setItem.id),
+          ),
+        );
+        if (cancelled) {
+          return;
+        }
+
+        const setNameById = new Map(setResponse.items.map((setItem) => [setItem.id, setItem.name]));
+        const merged = domainsBySet
+          .flatMap((response) => response.items)
+          .map((item) => ({
+            ...item,
+            competitor_set_name: setNameById.get(item.competitor_set_id) || item.competitor_set_id,
+          }))
+          .sort((a, b) => b.created_at.localeCompare(a.created_at));
+
         if (!cancelled) {
-          setSets(response.items);
+          setCompetitors(merged);
         }
       } catch (err) {
         if (!cancelled) {
-          setSetsError(err instanceof Error ? err.message : "Failed to load competitor sets.");
+          setCompetitorsError(safeCompetitorErrorMessage(err));
         }
       } finally {
         if (!cancelled) {
-          setLoadingSets(false);
+          setLoadingCompetitors(false);
         }
       }
     }
-    void loadSets();
+    void loadCompetitors();
     return () => {
       cancelled = true;
     };
@@ -45,7 +110,15 @@ export default function CompetitorsPage() {
     return <section className="panel">Loading competitor intelligence...</section>;
   }
   if (context.error) {
-    return <section className="panel">Error: {context.error}</section>;
+    return <section className="panel">Unable to load tenant context. Refresh and sign in again.</section>;
+  }
+  if (context.sites.length === 0) {
+    return (
+      <section className="panel stack">
+        <h1>Competitors</h1>
+        <p className="hint muted">No SEO sites are configured yet. Add a site first to view competitors.</p>
+      </section>
+    );
   }
 
   return (
@@ -64,30 +137,42 @@ export default function CompetitorsPage() {
         ))}
       </select>
 
-      {loadingSets ? <p>Loading competitor sets...</p> : null}
-      {setsError ? <p style={{ color: "#b91c1c" }}>{setsError}</p> : null}
+      {loadingCompetitors ? <p className="hint muted">Loading competitors...</p> : null}
+      {competitorsError ? <p className="hint error">{competitorsError}</p> : null}
 
       <table className="table">
         <thead>
           <tr>
-            <th>Set ID</th>
-            <th>Name</th>
-            <th>Description</th>
-            <th>Active</th>
+            <th>Competitor</th>
+            <th>Source</th>
+            <th>Business</th>
+            <th>Site</th>
+            <th>Set</th>
+            <th>Related Audit Run</th>
+            <th>Created</th>
+            <th>Updated</th>
           </tr>
         </thead>
         <tbody>
-          {sets.map((item) => (
+          {competitors.map((item) => (
             <tr key={item.id}>
-              <td>{item.id}</td>
-              <td>{item.name}</td>
-              <td>{item.description || "-"}</td>
-              <td>{item.is_active ? "yes" : "no"}</td>
+              <td>{item.display_name || item.domain}</td>
+              <td>{item.source}</td>
+              <td>{item.business_id}</td>
+              <td>{item.site_id}</td>
+              <td>{item.competitor_set_name}</td>
+              <td>-</td>
+              <td>{formatDateTime(item.created_at)}</td>
+              <td>{formatDateTime(item.updated_at)}</td>
             </tr>
           ))}
-          {sets.length === 0 && !loadingSets ? (
+          {!loadingCompetitors && competitors.length === 0 ? (
             <tr>
-              <td colSpan={4}>No competitor sets found for this site.</td>
+              <td colSpan={8}>
+                {competitorSetCount === 0
+                  ? "No competitor sets found for this site."
+                  : "No competitors found in this site's competitor sets."}
+              </td>
             </tr>
           ) : null}
         </tbody>

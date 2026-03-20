@@ -3,8 +3,51 @@
 import { useEffect, useState } from "react";
 
 import { useOperatorContext } from "../../components/useOperatorContext";
-import { fetchAuditRuns } from "../../lib/api/client";
+import { ApiRequestError, fetchAuditRuns } from "../../lib/api/client";
 import type { SEOAuditRun } from "../../lib/api/types";
+
+function formatDateTime(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
+function deriveResultIndicator(run: SEOAuditRun): string {
+  const status = (run.status || "").trim().toLowerCase();
+  if (status === "completed") {
+    if (run.errors_encountered > 0) {
+      return `Completed with ${run.errors_encountered} crawl error(s)`;
+    }
+    return `Completed; ${run.pages_crawled} page(s) crawled`;
+  }
+  if (status === "failed") {
+    return run.error_summary ? "Run failed; review run details" : "Run failed";
+  }
+  if (status === "running" || status === "queued") {
+    return "Run in progress";
+  }
+  return "Status unknown";
+}
+
+function safeAuditErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "You are not authorized to view audit runs.";
+    }
+    if (error.status === 404) {
+      return "Audit data for the selected site was not found.";
+    }
+  }
+  return "Unable to load audit runs right now. Please try again.";
+}
 
 export default function AuditsPage() {
   const context = useOperatorContext();
@@ -13,21 +56,26 @@ export default function AuditsPage() {
   const [runsError, setRunsError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!context.selectedSiteId || context.loading || context.error) {
+    if (context.loading || context.error || !context.selectedSiteId) {
+      setRuns([]);
+      setRunsError(null);
+      setLoadingRuns(false);
       return;
     }
     let cancelled = false;
+    const selectedSiteId = context.selectedSiteId;
+
     async function loadRuns() {
       setLoadingRuns(true);
       setRunsError(null);
       try {
-        const response = await fetchAuditRuns(context.token, context.businessId, context.selectedSiteId as string);
+        const response = await fetchAuditRuns(context.token, context.businessId, selectedSiteId);
         if (!cancelled) {
           setRuns(response.items);
         }
       } catch (err) {
         if (!cancelled) {
-          setRunsError(err instanceof Error ? err.message : "Failed to load audit runs.");
+          setRunsError(safeAuditErrorMessage(err));
         }
       } finally {
         if (!cancelled) {
@@ -45,7 +93,15 @@ export default function AuditsPage() {
     return <section className="panel">Loading audits...</section>;
   }
   if (context.error) {
-    return <section className="panel">Error: {context.error}</section>;
+    return <section className="panel">Unable to load tenant context. Refresh and sign in again.</section>;
+  }
+  if (context.sites.length === 0) {
+    return (
+      <section className="panel stack">
+        <h1>Audit Runs</h1>
+        <p className="hint muted">No SEO sites are configured yet. Add a site first to view audit runs.</p>
+      </section>
+    );
   }
 
   return (
@@ -64,32 +120,38 @@ export default function AuditsPage() {
         ))}
       </select>
 
-      {loadingRuns ? <p>Loading audit runs...</p> : null}
-      {runsError ? <p style={{ color: "#b91c1c" }}>{runsError}</p> : null}
+      {loadingRuns ? <p className="hint muted">Loading audit runs...</p> : null}
+      {runsError ? <p className="hint error">{runsError}</p> : null}
 
       <table className="table">
         <thead>
           <tr>
             <th>Run ID</th>
+            <th>Business</th>
+            <th>Site</th>
             <th>Status</th>
-            <th>Pages Crawled</th>
-            <th>Pages Skipped</th>
-            <th>Errors</th>
+            <th>Created</th>
+            <th>Started</th>
+            <th>Completed</th>
+            <th>Result</th>
           </tr>
         </thead>
         <tbody>
           {runs.map((run) => (
             <tr key={run.id}>
               <td>{run.id}</td>
+              <td>{run.business_id}</td>
+              <td>{run.site_id}</td>
               <td>{run.status}</td>
-              <td>{run.pages_crawled}</td>
-              <td>{run.pages_skipped}</td>
-              <td>{run.errors_encountered}</td>
+              <td>{formatDateTime(run.created_at)}</td>
+              <td>{formatDateTime(run.started_at)}</td>
+              <td>{formatDateTime(run.completed_at)}</td>
+              <td>{deriveResultIndicator(run)}</td>
             </tr>
           ))}
           {runs.length === 0 && !loadingRuns ? (
             <tr>
-              <td colSpan={5}>No audit runs found for the selected site.</td>
+              <td colSpan={8}>No audit runs found for the selected site.</td>
             </tr>
           ) : null}
         </tbody>

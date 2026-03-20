@@ -75,8 +75,12 @@ export interface SEOAuditRun {
   business_id: string;
   site_id: string;
   status: string;
+  created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  crawl_duration_ms: number | null;
+  error_summary: string | null;
+  created_by_principal_id: string | null;
   pages_crawled: number;
   pages_skipped: number;
   errors_encountered: number;
@@ -142,11 +146,33 @@ export interface CompetitorSetListResponse {
   total: number;
 }
 
+export interface CompetitorDomain {
+  id: string;
+  business_id: string;
+  site_id: string;
+  competitor_set_id: string;
+  domain: string;
+  base_url: string;
+  display_name: string | null;
+  source: string;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompetitorDomainListResponse {
+  items: CompetitorDomain[];
+  total: number;
+}
+
 export interface Recommendation {
   id: string;
   business_id: string;
   site_id: string;
   recommendation_run_id: string;
+  audit_run_id: string | null;
+  comparison_run_id: string | null;
   status: string;
   category: string;
   severity: string;

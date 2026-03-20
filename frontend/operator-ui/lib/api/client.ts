@@ -12,6 +12,7 @@ import type {
   SEOSite,
   SEOSiteCreateRequest,
   SEOSiteListResponse,
+  CompetitorDomainListResponse,
   CompetitorSetListResponse,
   RecommendationListResponse,
   AutomationRunListResponse,
@@ -185,6 +186,17 @@ export async function fetchCompetitorSets(
 ): Promise<CompetitorSetListResponse> {
   return apiRequest<CompetitorSetListResponse>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-sets`,
+    { token },
+  );
+}
+
+export async function fetchCompetitorDomains(
+  token: string,
+  businessId: string,
+  competitorSetId: string,
+): Promise<CompetitorDomainListResponse> {
+  return apiRequest<CompetitorDomainListResponse>(
+    `/api/businesses/${businessId}/seo/competitor-sets/${competitorSetId}/domains`,
     { token },
   );
 }
