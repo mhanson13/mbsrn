@@ -33,6 +33,11 @@ type QueueSummary = {
   dismissed: number;
   highPriority: number;
 };
+type OptimisticBulkQueueState = {
+  items: Recommendation[];
+  totalRecommendations: number | null;
+  queueSummary: QueueSummary;
+};
 
 const DEFAULT_FILTERS: FilterState = {
   status: "",
@@ -254,6 +259,10 @@ function deriveSourceType(item: Recommendation): string {
   return "unknown";
 }
 
+function isHighPriority(item: Recommendation): boolean {
+  return item.priority_band === "high" || item.priority_band === "critical";
+}
+
 function summarizeQueueFromItems(items: Recommendation[]): QueueSummary {
   return items.reduce(
     (summary, item) => {
@@ -267,13 +276,87 @@ function summarizeQueueFromItems(items: Recommendation[]): QueueSummary {
       if (item.status === "dismissed") {
         summary.dismissed += 1;
       }
-      if (item.priority_band === "high" || item.priority_band === "critical") {
+      if (isHighPriority(item)) {
         summary.highPriority += 1;
       }
       return summary;
     },
     { ...EMPTY_QUEUE_SUMMARY },
   );
+}
+
+function adjustSummaryStatusCount(summary: QueueSummary, status: string, delta: number): void {
+  if (status === "open") {
+    summary.open = Math.max(0, summary.open + delta);
+    return;
+  }
+  if (status === "accepted") {
+    summary.accepted = Math.max(0, summary.accepted + delta);
+    return;
+  }
+  if (status === "dismissed") {
+    summary.dismissed = Math.max(0, summary.dismissed + delta);
+  }
+}
+
+function applyOptimisticBulkStatusToQueueState(params: {
+  baselineItems: Recommendation[];
+  baselineTotalRecommendations: number | null;
+  baselineQueueSummary: QueueSummary;
+  selectedItemIds: string[];
+  nextStatus: RecommendationActionStatus;
+  statusFilter: FilterState["status"];
+}): OptimisticBulkQueueState {
+  const {
+    baselineItems,
+    baselineTotalRecommendations,
+    baselineQueueSummary,
+    selectedItemIds,
+    nextStatus,
+    statusFilter,
+  } = params;
+
+  const selectedIdSet = new Set(selectedItemIds);
+  let nextTotalRecommendations = baselineTotalRecommendations;
+  const nextQueueSummary: QueueSummary = { ...baselineQueueSummary };
+  const nextItems: Recommendation[] = [];
+
+  for (const item of baselineItems) {
+    if (!selectedIdSet.has(item.id)) {
+      nextItems.push(item);
+      continue;
+    }
+
+    const updatedItem: Recommendation = {
+      ...item,
+      status: nextStatus,
+    };
+
+    const remainsInFilteredView = !statusFilter || statusFilter === nextStatus;
+    if (statusFilter && statusFilter !== nextStatus) {
+      if (nextTotalRecommendations !== null) {
+        nextTotalRecommendations = Math.max(0, nextTotalRecommendations - 1);
+      }
+      nextQueueSummary.total = Math.max(0, nextQueueSummary.total - 1);
+      adjustSummaryStatusCount(nextQueueSummary, item.status, -1);
+      if (isHighPriority(item)) {
+        nextQueueSummary.highPriority = Math.max(0, nextQueueSummary.highPriority - 1);
+      }
+    } else if (item.status !== nextStatus) {
+      adjustSummaryStatusCount(nextQueueSummary, item.status, -1);
+      adjustSummaryStatusCount(nextQueueSummary, nextStatus, 1);
+    }
+
+    if (remainsInFilteredView) {
+      nextItems.push(updatedItem);
+    }
+  }
+
+  return {
+    items: nextItems,
+    totalRecommendations: nextTotalRecommendations,
+    queueSummary: nextQueueSummary,
+  };
 }
 
 function toQueueSummary(summary: RecommendationFilteredSummary | null | undefined): QueueSummary | null {
@@ -514,37 +597,84 @@ function RecommendationsPageContent() {
     if (selectedItems.length === 0) {
       return;
     }
+    const selectedItemIds = selectedItems.map((item) => item.id);
+    const statusFilter = filters.status;
+    const baselineItems = items;
+    const baselineQueueSummary = queueSummary;
+    const baselineTotalRecommendations = totalRecommendations;
+    const optimisticState = applyOptimisticBulkStatusToQueueState({
+      baselineItems,
+      baselineTotalRecommendations,
+      baselineQueueSummary,
+      selectedItemIds,
+      nextStatus: status,
+      statusFilter,
+    });
 
     setBulkActionInFlight(status);
     setBulkActionSuccess(null);
     setBulkActionError(null);
+    setItems(optimisticState.items);
+    setTotalRecommendations(optimisticState.totalRecommendations);
+    setQueueSummary(optimisticState.queueSummary);
+    setSelectedRecommendationIds([]);
+
     try {
       const results = await Promise.allSettled(
         selectedItems.map((item) =>
           updateRecommendationStatus(context.token, context.businessId, item.site_id, item.id, { status }),
         ),
       );
-      const successfulCount = results.filter((result) => result.status === "fulfilled").length;
-      const failedResults = results.filter((result) => result.status === "rejected");
-      const failedCount = failedResults.length;
+      const successfulItems: Recommendation[] = [];
+      const successfulItemIds: string[] = [];
+      const failedItems: Recommendation[] = [];
+      const failedErrors: unknown[] = [];
+      results.forEach((result, index) => {
+        const selectedItem = selectedItems[index];
+        if (!selectedItem) {
+          return;
+        }
+        if (result.status === "fulfilled") {
+          successfulItems.push(result.value);
+          successfulItemIds.push(selectedItem.id);
+          return;
+        }
+        failedItems.push(selectedItem);
+        failedErrors.push(result.reason);
+      });
+
+      const successfulCount = successfulItems.length;
+      const failedCount = failedItems.length;
+      const reconciledState = applyOptimisticBulkStatusToQueueState({
+        baselineItems,
+        baselineTotalRecommendations,
+        baselineQueueSummary,
+        selectedItemIds: successfulItemIds,
+        nextStatus: status,
+        statusFilter,
+      });
+      const successfulItemById = new Map(successfulItems.map((item) => [item.id, item]));
+      const reconciledItems = reconciledState.items.map((item) => successfulItemById.get(item.id) || item);
+
+      setItems(reconciledItems);
+      setTotalRecommendations(reconciledState.totalRecommendations);
+      setQueueSummary(reconciledState.queueSummary);
 
       if (successfulCount > 0) {
         setBulkActionSuccess(
           `Updated ${successfulCount} recommendation${successfulCount === 1 ? "" : "s"} to ${status}.`,
         );
-        setSelectedRecommendationIds([]);
         setBulkRefreshNonce((current) => current + 1);
       }
 
       if (failedCount > 0) {
-        const firstError = failedResults[0];
-        const baseErrorMessage =
-          firstError && firstError.status === "rejected"
-            ? safeBulkRecommendationErrorMessage(firstError.reason)
-            : safeBulkRecommendationErrorMessage(null);
+        const firstError = failedErrors[0];
+        const baseErrorMessage = safeBulkRecommendationErrorMessage(firstError ?? null);
         setBulkActionError(
           `${baseErrorMessage} ${failedCount} update${failedCount === 1 ? "" : "s"} failed.`,
         );
+        const failedIdSet = new Set(failedItems.map((item) => item.id));
+        setSelectedRecommendationIds(reconciledItems.filter((item) => failedIdSet.has(item.id)).map((item) => item.id));
       }
     } finally {
       setBulkActionInFlight(null);

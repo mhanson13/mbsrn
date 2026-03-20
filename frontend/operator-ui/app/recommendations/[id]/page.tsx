@@ -239,19 +239,26 @@ export default function RecommendationDetailPage() {
     if (!recommendation || actionLoading) {
       return;
     }
+    const previousRecommendation = recommendation;
+    const optimisticNote = noteDraft.trim() || null;
     setActionLoading(true);
     setActionTarget(status);
     setActionError(null);
     setActionSuccess(null);
+    setRecommendation({
+      ...recommendation,
+      status,
+      decision_reason: optimisticNote,
+    });
     try {
       const updated = await updateRecommendationStatus(
         context.token,
         context.businessId,
-        recommendation.site_id,
-        recommendation.id,
+        previousRecommendation.site_id,
+        previousRecommendation.id,
         {
           status,
-          note: noteDraft.trim() || null,
+          note: optimisticNote,
         },
       );
       setRecommendation(updated);
@@ -259,6 +266,7 @@ export default function RecommendationDetailPage() {
       setActionSuccess(`Recommendation marked as ${updated.status}.`);
       setNoteDraft(updated.decision_reason || "");
     } catch (err) {
+      setRecommendation(previousRecommendation);
       setActionError(safeRecommendationActionErrorMessage(err));
     } finally {
       setActionLoading(false);
