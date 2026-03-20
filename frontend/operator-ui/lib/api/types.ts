@@ -208,9 +208,18 @@ export interface RecommendationListFilters {
   page_size?: number;
 }
 
+export interface RecommendationFilteredSummary {
+  total: number;
+  open: number;
+  accepted: number;
+  dismissed: number;
+  high_priority: number;
+}
+
 export interface RecommendationListResponse {
   items: Recommendation[];
   total: number;
+  filtered_summary?: RecommendationFilteredSummary | null;
 }
 
 export interface AutomationRun {

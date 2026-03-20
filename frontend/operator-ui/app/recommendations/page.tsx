@@ -10,9 +10,11 @@ import {
   updateRecommendationStatus,
 } from "../../lib/api/client";
 import type {
+  RecommendationFilteredSummary,
   Recommendation,
   RecommendationActionStatus,
   RecommendationListFilters,
+  RecommendationListResponse,
 } from "../../lib/api/types";
 
 type FilterState = {
@@ -24,6 +26,13 @@ type FilterState = {
 type SortState = "priority_desc" | "priority_asc" | "newest" | "oldest";
 type QueuePresetKey = "all_recommendations" | "open_high_priority" | "accepted" | "dismissed";
 type QueuePresetSelection = QueuePresetKey | "__custom__";
+type QueueSummary = {
+  total: number;
+  open: number;
+  accepted: number;
+  dismissed: number;
+  highPriority: number;
+};
 
 const DEFAULT_FILTERS: FilterState = {
   status: "",
@@ -35,6 +44,13 @@ const DEFAULT_SORT: SortState = "priority_desc";
 const DEFAULT_PAGE = 1;
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
+const EMPTY_QUEUE_SUMMARY: QueueSummary = {
+  total: 0,
+  open: 0,
+  accepted: 0,
+  dismissed: 0,
+  highPriority: 0,
+};
 
 const SORT_OPTIONS: Array<{ label: string; value: SortState }> = [
   { label: "Priority: High to Low", value: "priority_desc" },
@@ -238,13 +254,7 @@ function deriveSourceType(item: Recommendation): string {
   return "unknown";
 }
 
-function summarizeQueue(items: Recommendation[]): {
-  total: number;
-  open: number;
-  accepted: number;
-  dismissed: number;
-  highPriority: number;
-} {
+function summarizeQueueFromItems(items: Recommendation[]): QueueSummary {
   return items.reduce(
     (summary, item) => {
       summary.total += 1;
@@ -262,14 +272,29 @@ function summarizeQueue(items: Recommendation[]): {
       }
       return summary;
     },
-    {
-      total: 0,
-      open: 0,
-      accepted: 0,
-      dismissed: 0,
-      highPriority: 0,
-    },
+    { ...EMPTY_QUEUE_SUMMARY },
   );
+}
+
+function toQueueSummary(summary: RecommendationFilteredSummary | null | undefined): QueueSummary | null {
+  if (!summary) {
+    return null;
+  }
+  return {
+    total: summary.total,
+    open: summary.open,
+    accepted: summary.accepted,
+    dismissed: summary.dismissed,
+    highPriority: summary.high_priority,
+  };
+}
+
+function deriveQueueSummary(response: RecommendationListResponse): QueueSummary {
+  const providedSummary = toQueueSummary(response.filtered_summary);
+  if (providedSummary) {
+    return providedSummary;
+  }
+  return summarizeQueueFromItems(response.items);
 }
 
 function safeRecommendationsErrorMessage(error: unknown): string {
@@ -312,6 +337,7 @@ function RecommendationsPageContent() {
   const context = useOperatorContext();
   const [items, setItems] = useState<Recommendation[]>([]);
   const [totalRecommendations, setTotalRecommendations] = useState<number | null>(null);
+  const [queueSummary, setQueueSummary] = useState<QueueSummary>(EMPTY_QUEUE_SUMMARY);
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [selectedRecommendationIds, setSelectedRecommendationIds] = useState<string[]>([]);
@@ -365,7 +391,6 @@ function RecommendationsPageContent() {
   const allDisplayedSelected =
     displayedRecommendationIds.length > 0 &&
     displayedRecommendationIds.every((id) => selectedRecommendationIds.includes(id));
-  const queueSummary = useMemo(() => summarizeQueue(items), [items]);
 
   function updateQueueParams(nextFilters: FilterState, nextSort: SortState) {
     const params = new URLSearchParams(searchParams.toString());
@@ -553,6 +578,7 @@ function RecommendationsPageContent() {
     if (context.loading || context.error || !context.selectedSiteId) {
       setItems([]);
       setTotalRecommendations(null);
+      setQueueSummary(EMPTY_QUEUE_SUMMARY);
       setItemsError(null);
       setLoadingItems(false);
       setSelectedRecommendationIds([]);
@@ -587,10 +613,12 @@ function RecommendationsPageContent() {
         if (!cancelled) {
           setItems(response.items);
           setTotalRecommendations(response.total);
+          setQueueSummary(deriveQueueSummary(response));
         }
       } catch (err) {
         if (!cancelled) {
           setItemsError(safeRecommendationsErrorMessage(err));
+          setQueueSummary(EMPTY_QUEUE_SUMMARY);
         }
       } finally {
         if (!cancelled) {
@@ -763,7 +791,7 @@ function RecommendationsPageContent() {
         }}
       >
         <div className="panel stack" style={{ padding: "0.6rem", gap: "0.2rem" }}>
-          <span className="hint muted">Shown On Page</span>
+          <span className="hint muted">Total Filtered</span>
           <strong>{queueSummary.total}</strong>
         </div>
         <div className="panel stack" style={{ padding: "0.6rem", gap: "0.2rem" }}>
@@ -783,7 +811,7 @@ function RecommendationsPageContent() {
           <strong>{queueSummary.highPriority}</strong>
         </div>
       </div>
-      <p className="hint muted">Summary cards reflect the current page only.</p>
+      <p className="hint muted">Summary cards reflect all filtered results across pages.</p>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "end" }}>
         <div className="stack" style={{ gap: "0.35rem", minWidth: "140px" }}>

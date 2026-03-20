@@ -231,9 +231,18 @@ class SEORecommendationRead(BaseModel):
         return _normalize_decision(value)
 
 
+class SEORecommendationFilteredSummary(BaseModel):
+    total: int
+    open: int = 0
+    accepted: int = 0
+    dismissed: int = 0
+    high_priority: int = 0
+
+
 class SEORecommendationListResponse(BaseModel):
     items: list[SEORecommendationRead]
     total: int
+    filtered_summary: SEORecommendationFilteredSummary | None = None
     by_status: dict[str, int] = Field(default_factory=dict)
     by_category: dict[str, int] = Field(default_factory=dict)
     by_severity: dict[str, int] = Field(default_factory=dict)

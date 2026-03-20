@@ -57,6 +57,7 @@ from app.schemas.seo_competitor import (
 )
 from app.schemas.seo_recommendation import (
     SEORecommendationBacklogRead,
+    SEORecommendationFilteredSummary,
     SEORecommendationListQuery,
     SEORecommendationListResponse,
     SEORecommendationPrioritizedReportRead,
@@ -584,7 +585,7 @@ def list_seo_recommendations(
     )
     try:
         seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
-        items, total_count = recommendation_service.list_site_recommendations(
+        page_result = recommendation_service.list_site_recommendations(
             business_id=scoped_business_id,
             site_id=site_id,
             query=query,
@@ -594,18 +595,23 @@ def list_seo_recommendations(
     except SEORecommendationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
-    serialized_items = [SEORecommendationRead.model_validate(item) for item in items]
-    by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
-        serialized_items
+    serialized_items = [SEORecommendationRead.model_validate(item) for item in page_result.items]
+    filtered_summary = SEORecommendationFilteredSummary(
+        total=page_result.total,
+        open=page_result.by_status.get("open", 0),
+        accepted=page_result.by_status.get("accepted", 0),
+        dismissed=page_result.by_status.get("dismissed", 0),
+        high_priority=page_result.by_priority_band.get("high", 0) + page_result.by_priority_band.get("critical", 0),
     )
     return SEORecommendationListResponse(
         items=serialized_items,
-        total=total_count,
-        by_status=by_status,
-        by_category=by_category,
-        by_severity=by_severity,
-        by_effort_bucket=by_effort_bucket,
-        by_priority_band=by_priority_band,
+        total=page_result.total,
+        filtered_summary=filtered_summary,
+        by_status=page_result.by_status,
+        by_category=page_result.by_category,
+        by_severity=page_result.by_severity,
+        by_effort_bucket=page_result.by_effort_bucket,
+        by_priority_band=page_result.by_priority_band,
     )
 
 

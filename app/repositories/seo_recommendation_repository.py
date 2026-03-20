@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import Select, and_, asc, case, desc, func, or_, select
@@ -10,6 +11,17 @@ from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_run import SEORecommendationRun
 from app.models.seo_site import SEOSite
+
+
+@dataclass(frozen=True)
+class SEORecommendationListPageResult:
+    items: list[SEORecommendation]
+    total: int
+    by_status: dict[str, int]
+    by_category: dict[str, int]
+    by_severity: dict[str, int]
+    by_effort_bucket: dict[str, int]
+    by_priority_band: dict[str, int]
 
 
 class SEORecommendationRepository:
@@ -168,7 +180,7 @@ class SEORecommendationRepository:
         recommendation_run_id: str | None = None,
         sort_by: str = "priority_score",
         sort_order: str = "desc",
-    ) -> tuple[list[SEORecommendation], int]:
+    ) -> SEORecommendationListPageResult:
         base_stmt = self._build_site_recommendations_base_stmt(
             business_id=business_id,
             site_id=site_id,
@@ -182,8 +194,14 @@ class SEORecommendationRepository:
             source_type=source_type,
             recommendation_run_id=recommendation_run_id,
         )
-        count_stmt = select(func.count()).select_from(base_stmt.subquery())
+        filtered_subquery = base_stmt.subquery()
+        count_stmt = select(func.count()).select_from(filtered_subquery)
         total = int(self.session.scalar(count_stmt) or 0)
+        by_status = self._group_counts(filtered_subquery=filtered_subquery, column_name="status")
+        by_category = self._group_counts(filtered_subquery=filtered_subquery, column_name="category")
+        by_severity = self._group_counts(filtered_subquery=filtered_subquery, column_name="severity")
+        by_effort_bucket = self._group_counts(filtered_subquery=filtered_subquery, column_name="effort_bucket")
+        by_priority_band = self._group_counts(filtered_subquery=filtered_subquery, column_name="priority_band")
 
         offset = (page - 1) * page_size
         items_stmt = self._apply_site_recommendation_ordering(
@@ -191,7 +209,16 @@ class SEORecommendationRepository:
             sort_by=sort_by,
             sort_order=sort_order,
         ).offset(offset).limit(page_size)
-        return list(self.session.scalars(items_stmt)), total
+        items = list(self.session.scalars(items_stmt))
+        return SEORecommendationListPageResult(
+            items=items,
+            total=total,
+            by_status=by_status,
+            by_category=by_category,
+            by_severity=by_severity,
+            by_effort_bucket=by_effort_bucket,
+            by_priority_band=by_priority_band,
+        )
 
     def _build_site_recommendations_base_stmt(
         self,
@@ -260,6 +287,18 @@ class SEORecommendationRepository:
             asc(SEORecommendation.created_at),
             asc(SEORecommendation.id),
         )
+
+    def _group_counts(self, *, filtered_subquery, column_name: str) -> dict[str, int]:
+        column = filtered_subquery.c[column_name]
+        rows = self.session.execute(
+            select(column, func.count()).group_by(column)
+        ).all()
+        counts: dict[str, int] = {}
+        for key, count in rows:
+            if key is None:
+                continue
+            counts[str(key)] = int(count)
+        return dict(sorted(counts.items()))
 
     def list_actionable_recommendations_for_business_site(
         self,

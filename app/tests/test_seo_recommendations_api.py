@@ -728,6 +728,12 @@ def test_phase3b_recommendation_list_backend_pagination(db_session, seeded_busin
     full_ids = [item["id"] for item in full_payload["items"]]
     assert full_payload["total"] == len(full_ids)
     assert full_payload["total"] >= 6
+    full_summary = full_payload["filtered_summary"]
+    assert full_summary["total"] == full_payload["total"]
+    assert full_summary["open"] == full_payload["total"]
+    assert full_summary["accepted"] == 0
+    assert full_summary["dismissed"] == 0
+    assert 0 <= full_summary["high_priority"] <= full_payload["total"]
 
     first_page = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations",
@@ -738,6 +744,9 @@ def test_phase3b_recommendation_list_backend_pagination(db_session, seeded_busin
     assert first_payload["total"] == full_payload["total"]
     assert len(first_payload["items"]) == 2
     assert [item["id"] for item in first_payload["items"]] == full_ids[:2]
+    assert first_payload["filtered_summary"] == full_summary
+    assert first_payload["by_status"].get("open") == full_payload["total"]
+    assert sum(first_payload["by_category"].values()) == full_payload["total"]
 
     second_page = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations",
@@ -748,6 +757,9 @@ def test_phase3b_recommendation_list_backend_pagination(db_session, seeded_busin
     assert second_payload["total"] == full_payload["total"]
     assert len(second_payload["items"]) == 2
     assert [item["id"] for item in second_payload["items"]] == full_ids[2:4]
+    assert second_payload["filtered_summary"] == full_summary
+    assert second_payload["by_status"].get("open") == full_payload["total"]
+    assert sum(second_payload["by_category"].values()) == full_payload["total"]
 
     recommendation_id = full_ids[0]
     resolve_recommendation = client.patch(
@@ -765,6 +777,13 @@ def test_phase3b_recommendation_list_backend_pagination(db_session, seeded_busin
     assert resolved_payload["total"] == 1
     assert len(resolved_payload["items"]) == 1
     assert resolved_payload["items"][0]["id"] == recommendation_id
+    assert resolved_payload["filtered_summary"]["total"] == 1
+    assert resolved_payload["filtered_summary"]["open"] == 0
+    assert resolved_payload["filtered_summary"]["accepted"] == 0
+    assert resolved_payload["filtered_summary"]["dismissed"] == 0
+    assert 0 <= resolved_payload["filtered_summary"]["high_priority"] <= 1
+    assert resolved_payload["by_status"].get("resolved") == 1
+    assert sum(resolved_payload["by_status"].values()) == 1
 
 
 def test_phase3b_recommendation_list_pagination_bounds_validation(db_session, seeded_business) -> None:

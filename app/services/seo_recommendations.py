@@ -18,7 +18,10 @@ from app.repositories.business_repository import BusinessRepository
 from app.repositories.principal_repository import PrincipalRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.repositories.seo_competitor_repository import SEOCompetitorRepository
-from app.repositories.seo_recommendation_repository import SEORecommendationRepository
+from app.repositories.seo_recommendation_repository import (
+    SEORecommendationListPageResult,
+    SEORecommendationRepository,
+)
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.schemas.seo_recommendation import (
     SEORecommendationListQuery,
@@ -284,7 +287,7 @@ class SEORecommendationService:
         business_id: str,
         site_id: str,
         query: SEORecommendationListQuery,
-    ) -> tuple[list[SEORecommendation], int]:
+    ) -> SEORecommendationListPageResult:
         self._require_business(business_id)
         self._require_site(business_id=business_id, site_id=site_id)
         return self.seo_recommendation_repository.list_recommendations_page_for_business_site(
