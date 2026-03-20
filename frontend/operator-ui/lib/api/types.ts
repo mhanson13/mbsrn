@@ -343,6 +343,40 @@ export interface RecommendationRunListResponse {
   total: number;
 }
 
+export interface RecommendationRunReport {
+  recommendation_run: RecommendationRun;
+  rollups: {
+    by_category: Record<string, number>;
+    by_severity: Record<string, number>;
+    by_effort_bucket: Record<string, number>;
+  };
+  recommendations: RecommendationListResponse;
+}
+
+export interface RecommendationNarrative {
+  id: string;
+  business_id: string;
+  site_id: string;
+  recommendation_run_id: string;
+  version: number;
+  status: "completed" | "failed";
+  narrative_text: string | null;
+  top_themes_json: string[];
+  sections_json: Record<string, unknown> | null;
+  provider_name: string;
+  model_name: string;
+  prompt_version: string;
+  error_message: string | null;
+  created_by_principal_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecommendationNarrativeListResponse {
+  items: RecommendationNarrative[];
+  total: number;
+}
+
 export interface Recommendation {
   id: string;
   business_id: string;
@@ -394,6 +428,11 @@ export interface RecommendationListResponse {
   items: Recommendation[];
   total: number;
   filtered_summary?: RecommendationFilteredSummary | null;
+  by_status?: Record<string, number>;
+  by_category?: Record<string, number>;
+  by_severity?: Record<string, number>;
+  by_effort_bucket?: Record<string, number>;
+  by_priority_band?: Record<string, number>;
 }
 
 export interface AutomationRun {

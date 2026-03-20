@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -571,6 +572,30 @@ function RecommendationsPageContent() {
     return `/recommendations/${item.id}?${params.toString()}`;
   }
 
+  function buildRecommendationRunDetailHref(item: Recommendation): string {
+    const params = new URLSearchParams();
+    params.set("site_id", item.site_id);
+    if (filters.status) {
+      params.set("status", filters.status);
+    }
+    if (filters.priorityBand) {
+      params.set("priority", filters.priorityBand);
+    }
+    if (filters.category) {
+      params.set("category", filters.category);
+    }
+    if (sort !== DEFAULT_SORT) {
+      params.set("sort", sort);
+    }
+    if (activePage > DEFAULT_PAGE) {
+      params.set("page", String(activePage));
+    }
+    if (pageSize !== DEFAULT_PAGE_SIZE) {
+      params.set("page_size", String(pageSize));
+    }
+    return `/recommendations/runs/${item.recommendation_run_id}?${params.toString()}`;
+  }
+
   function toggleRecommendationSelection(recommendationId: string) {
     setSelectedRecommendationIds((current) => {
       if (current.includes(recommendationId)) {
@@ -1067,7 +1092,15 @@ function RecommendationsPageContent() {
                 {item.priority_score} ({item.priority_band})
               </td>
               <td>{deriveSourceType(item)}</td>
-              <td>{item.recommendation_run_id}</td>
+              <td>
+                <Link
+                  href={buildRecommendationRunDetailHref(item)}
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  <code>{item.recommendation_run_id}</code>
+                </Link>
+              </td>
               <td>{item.business_id}</td>
               <td>{item.site_id}</td>
             </tr>

@@ -71,6 +71,15 @@ function safeRecommendationActionErrorMessage(error: unknown): string {
   return "Unable to update recommendation right now. Please try again.";
 }
 
+function buildComparisonRunHref(comparisonRunId: string, siteId: string): string {
+  const params = new URLSearchParams();
+  if (siteId) {
+    params.set("site_id", siteId);
+  }
+  const query = params.toString();
+  return query ? `/competitors/comparison-runs/${comparisonRunId}?${query}` : `/competitors/comparison-runs/${comparisonRunId}`;
+}
+
 export default function RecommendationDetailPage() {
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
@@ -426,13 +435,30 @@ export default function RecommendationDetailPage() {
           <div className="panel stack">
             <h2>Lineage</h2>
             <p>
-              Audit Run ID: <code>{recommendation.audit_run_id || "-"}</code>
+              Audit Run ID:{" "}
+              {recommendation.audit_run_id ? (
+                <Link href={`/audits/${recommendation.audit_run_id}`}>
+                  <code>{recommendation.audit_run_id}</code>
+                </Link>
+              ) : (
+                <code>-</code>
+              )}
             </p>
             <p>
-              Comparison Run ID: <code>{recommendation.comparison_run_id || "-"}</code>
+              Comparison Run ID:{" "}
+              {recommendation.comparison_run_id ? (
+                <Link href={buildComparisonRunHref(recommendation.comparison_run_id, recommendation.site_id)}>
+                  <code>{recommendation.comparison_run_id}</code>
+                </Link>
+              ) : (
+                <code>-</code>
+              )}
             </p>
             <p>
-              Recommendation Run ID: <code>{recommendation.recommendation_run_id}</code>
+              Recommendation Run ID:{" "}
+              <Link href={`/recommendations/runs/${recommendation.recommendation_run_id}?site_id=${encodeURIComponent(recommendation.site_id)}`}>
+                <code>{recommendation.recommendation_run_id}</code>
+              </Link>
             </p>
           </div>
 

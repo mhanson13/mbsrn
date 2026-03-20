@@ -98,6 +98,12 @@ function buildRecommendationDetailHref(item: Recommendation): string {
   return `/recommendations/${item.id}?${params.toString()}`;
 }
 
+function buildRecommendationRunHref(recommendationRunId: string, siteId: string): string {
+  const params = new URLSearchParams();
+  params.set("site_id", siteId);
+  return `/recommendations/runs/${recommendationRunId}?${params.toString()}`;
+}
+
 function buildComparisonRunHref(comparisonRunId: string, siteId: string, competitorSetId?: string): string {
   const params = new URLSearchParams();
   if (siteId) {
@@ -660,7 +666,9 @@ export default function AuditRunDetailPage() {
                     {relatedRecommendationRuns.map((item) => (
                       <tr key={item.id}>
                         <td>
-                          <code>{item.id}</code>
+                          <Link href={buildRecommendationRunHref(item.id, item.site_id)}>
+                            <code>{item.id}</code>
+                          </Link>
                         </td>
                         <td>{item.status}</td>
                         <td>{item.total_recommendations}</td>
@@ -725,7 +733,9 @@ export default function AuditRunDetailPage() {
                         <td>{item.category}</td>
                         <td>{recommendationSource(item)}</td>
                         <td>
-                          <code>{item.recommendation_run_id}</code>
+                          <Link href={buildRecommendationRunHref(item.recommendation_run_id, item.site_id)}>
+                            <code>{item.recommendation_run_id}</code>
+                          </Link>
                         </td>
                         <td>
                           {item.comparison_run_id ? (

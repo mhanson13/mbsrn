@@ -19,6 +19,9 @@ import type {
   CompetitorSet,
   CompetitorSetListResponse,
   RecommendationRunListResponse,
+  RecommendationRun,
+  RecommendationRunReport,
+  RecommendationNarrative,
   CompetitorSnapshotRun,
   CompetitorSnapshotRunListResponse,
   Recommendation,
@@ -292,6 +295,42 @@ export async function fetchRecommendationRuns(
 ): Promise<RecommendationRunListResponse> {
   return apiRequest<RecommendationRunListResponse>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/recommendation-runs`,
+    { token },
+  );
+}
+
+export async function fetchRecommendationRun(
+  token: string,
+  businessId: string,
+  siteId: string,
+  recommendationRunId: string,
+): Promise<RecommendationRun> {
+  return apiRequest<RecommendationRun>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/recommendation-runs/${recommendationRunId}`,
+    { token },
+  );
+}
+
+export async function fetchRecommendationRunReport(
+  token: string,
+  businessId: string,
+  siteId: string,
+  recommendationRunId: string,
+): Promise<RecommendationRunReport> {
+  return apiRequest<RecommendationRunReport>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/recommendation-runs/${recommendationRunId}/report`,
+    { token },
+  );
+}
+
+export async function fetchLatestRecommendationRunNarrative(
+  token: string,
+  businessId: string,
+  siteId: string,
+  recommendationRunId: string,
+): Promise<RecommendationNarrative> {
+  return apiRequest<RecommendationNarrative>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/recommendation-runs/${recommendationRunId}/narratives/latest`,
     { token },
   );
 }

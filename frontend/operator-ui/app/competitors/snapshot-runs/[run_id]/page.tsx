@@ -72,6 +72,12 @@ function buildRecommendationDetailHref(item: Recommendation): string {
   return `/recommendations/${item.id}?${params.toString()}`;
 }
 
+function buildRecommendationRunHref(recommendationRunId: string, siteId: string): string {
+  const params = new URLSearchParams();
+  params.set("site_id", siteId);
+  return `/recommendations/runs/${recommendationRunId}?${params.toString()}`;
+}
+
 function deriveComparisonSeverity(run: CompetitorComparisonRun): string {
   if (run.critical_findings > 0) {
     return "critical";
@@ -617,7 +623,9 @@ export default function SnapshotRunDetailPage() {
                         </td>
                         <td>{item.category}</td>
                         <td>
-                          <code>{item.recommendation_run_id}</code>
+                          <Link href={buildRecommendationRunHref(item.recommendation_run_id, item.site_id)}>
+                            <code>{item.recommendation_run_id}</code>
+                          </Link>
                         </td>
                         <td>{formatDateTime(item.created_at)}</td>
                       </tr>
