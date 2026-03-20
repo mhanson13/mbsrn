@@ -26,6 +26,25 @@ export interface PrincipalListResponse {
   total: number;
 }
 
+export interface PrincipalIdentity {
+  id: string;
+  provider: string;
+  provider_subject: string;
+  business_id: string;
+  principal_id: string;
+  email: string | null;
+  email_verified: boolean;
+  is_active: boolean;
+  last_authenticated_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PrincipalIdentityListResponse {
+  items: PrincipalIdentity[];
+  total: number;
+}
+
 export interface PrincipalCreateRequest {
   principal_id: string;
   display_name?: string;

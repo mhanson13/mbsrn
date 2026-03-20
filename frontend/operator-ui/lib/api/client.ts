@@ -8,6 +8,7 @@ import type {
   SEOAuditFindingListResponse,
   Principal,
   PrincipalCreateRequest,
+  PrincipalIdentityListResponse,
   PrincipalListResponse,
   SEOSite,
   SEOSiteCreateRequest,
@@ -189,6 +190,13 @@ export async function fetchPrincipals(token: string, businessId: string): Promis
   return apiRequest<PrincipalListResponse>(`/api/businesses/${businessId}/principals`, { token });
 }
 
+export async function fetchPrincipalIdentities(
+  token: string,
+  businessId: string,
+): Promise<PrincipalIdentityListResponse> {
+  return apiRequest<PrincipalIdentityListResponse>(`/api/businesses/${businessId}/principal-identities`, { token });
+}
+
 export async function createPrincipal(
   token: string,
   businessId: string,
@@ -273,6 +281,17 @@ export async function fetchCompetitorComparisonRuns(
 ): Promise<CompetitorComparisonRunListResponse> {
   return apiRequest<CompetitorComparisonRunListResponse>(
     `/api/businesses/${businessId}/seo/competitor-sets/${competitorSetId}/comparison-runs`,
+    { token },
+  );
+}
+
+export async function fetchSiteCompetitorComparisonRuns(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<CompetitorComparisonRunListResponse> {
+  return apiRequest<CompetitorComparisonRunListResponse>(
+    `/api/v1/businesses/${businessId}/seo/sites/${siteId}/competitor-comparison-runs`,
     { token },
   );
 }

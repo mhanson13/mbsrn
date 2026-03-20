@@ -1,17 +1,37 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useOperatorContext } from "../../components/useOperatorContext";
-import { ApiRequestError, fetchCompetitorDomains, fetchCompetitorSets } from "../../lib/api/client";
-import type { CompetitorSet } from "../../lib/api/types";
+import {
+  ApiRequestError,
+  fetchCompetitorDomains,
+  fetchCompetitorSets,
+  fetchCompetitorSnapshotRuns,
+  fetchSiteCompetitorComparisonRuns,
+} from "../../lib/api/client";
+import type {
+  CompetitorSet,
+  CompetitorSnapshotRun,
+} from "../../lib/api/types";
 
 interface CompetitorSetRow extends CompetitorSet {
   domain_count: number;
   active_domain_count: number;
   source_summary: string;
   latest_domain_updated_at: string | null;
+}
+
+interface LatestSiteRun {
+  id: string;
+  competitor_set_id: string;
+  competitor_set_name: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
 }
 
 function formatDateTime(value: string | null): string {
@@ -48,6 +68,38 @@ function safeCompetitorErrorMessage(error: unknown): string {
   return "Unable to load competitors right now. Please try again.";
 }
 
+function runActivityTimestamp(
+  run: Pick<LatestSiteRun, "completed_at" | "updated_at" | "created_at">,
+): number {
+  const activityAt = run.completed_at || run.updated_at || run.created_at;
+  const parsed = Date.parse(activityAt);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function latestByActivity<T extends Pick<LatestSiteRun, "completed_at" | "updated_at" | "created_at">>(
+  runs: T[],
+): T | null {
+  if (runs.length === 0) {
+    return null;
+  }
+  let latest = runs[0];
+  let latestTimestamp = runActivityTimestamp(latest);
+  for (let index = 1; index < runs.length; index += 1) {
+    const candidate = runs[index];
+    const candidateTimestamp = runActivityTimestamp(candidate);
+    if (candidateTimestamp > latestTimestamp) {
+      latest = candidate;
+      latestTimestamp = candidateTimestamp;
+    }
+  }
+  return latest;
+}
+
+function formatRunStatus(status: string): string {
+  const cleaned = status.trim();
+  return cleaned || "unknown";
+}
+
 function CompetitorsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -66,14 +118,25 @@ function CompetitorsPageContent() {
   const [loadingCompetitors, setLoadingCompetitors] = useState(false);
   const [competitorsError, setCompetitorsError] = useState<string | null>(null);
   const [competitorSetCount, setCompetitorSetCount] = useState(0);
+  const [latestSnapshotRun, setLatestSnapshotRun] = useState<LatestSiteRun | null>(null);
+  const [latestComparisonRun, setLatestComparisonRun] = useState<LatestSiteRun | null>(null);
+  const [readinessWarning, setReadinessWarning] = useState<string | null>(null);
 
   const totalDomainCount = useMemo(
     () => competitorSets.reduce((total, item) => total + item.domain_count, 0),
     [competitorSets],
   );
-  const hasAnyDomains = useMemo(
-    () => competitorSets.some((item) => item.domain_count > 0),
+  const activeSetCount = useMemo(
+    () => competitorSets.filter((item) => item.is_active).length,
     [competitorSets],
+  );
+  const activeDomainCount = useMemo(
+    () => competitorSets.reduce((total, item) => total + item.active_domain_count, 0),
+    [competitorSets],
+  );
+  const selectedSite = useMemo(
+    () => sites.find((site) => site.id === selectedSiteId) || null,
+    [selectedSiteId, sites],
   );
 
   function buildSetDetailHref(setItem: CompetitorSetRow): string {
@@ -81,6 +144,78 @@ function CompetitorsPageContent() {
     params.set("site_id", setItem.site_id);
     return `/competitors/${setItem.id}?${params.toString()}`;
   }
+
+  function buildSnapshotRunHref(run: LatestSiteRun): string {
+    const params = new URLSearchParams();
+    params.set("set_id", run.competitor_set_id);
+    if (selectedSiteId) {
+      params.set("site_id", selectedSiteId);
+    }
+    return `/competitors/snapshot-runs/${run.id}?${params.toString()}`;
+  }
+
+  function buildComparisonRunHref(run: LatestSiteRun): string {
+    const params = new URLSearchParams();
+    params.set("set_id", run.competitor_set_id);
+    if (selectedSiteId) {
+      params.set("site_id", selectedSiteId);
+    }
+    return `/competitors/comparison-runs/${run.id}?${params.toString()}`;
+  }
+
+  const readinessGuidance = useMemo(() => {
+    if (contextLoading || loadingCompetitors) {
+      return "Loading competitor readiness for this site.";
+    }
+    if (contextError || competitorsError) {
+      return "Competitor readiness is temporarily unavailable due to a data-loading issue.";
+    }
+    if (!selectedSiteId) {
+      return "No site is currently selected.";
+    }
+    if (competitorSetCount === 0) {
+      return "This site has no competitor sets configured yet.";
+    }
+    if (totalDomainCount === 0) {
+      return "Competitor sets exist, but no competitor domains are configured yet.";
+    }
+    if (!latestSnapshotRun) {
+      return "Competitor domains exist, but no snapshot run has been recorded yet.";
+    }
+    if (formatRunStatus(latestSnapshotRun.status).toLowerCase() !== "completed") {
+      return `Latest snapshot run is ${formatRunStatus(latestSnapshotRun.status)}. Comparison results may not be available yet.`;
+    }
+    if (!latestComparisonRun) {
+      return "Snapshot results exist, but no comparison run has been recorded yet.";
+    }
+    if (formatRunStatus(latestComparisonRun.status).toLowerCase() !== "completed") {
+      return `Latest comparison run is ${formatRunStatus(latestComparisonRun.status)}. Findings may still be in progress.`;
+    }
+    return "This site has configured competitor data and recent comparison activity.";
+  }, [
+    competitorSetCount,
+    competitorsError,
+    contextError,
+    contextLoading,
+    latestComparisonRun,
+    latestSnapshotRun,
+    loadingCompetitors,
+    selectedSiteId,
+    totalDomainCount,
+  ]);
+
+  const tableEmptyReason = useMemo(() => {
+    if (competitorsError) {
+      return "Competitor data is currently unavailable for this site.";
+    }
+    if (!selectedSiteId) {
+      return "No site is selected. Choose a site to inspect competitors.";
+    }
+    if (competitorSetCount === 0) {
+      return "This site has no competitor sets configured yet.";
+    }
+    return "Competitor sets are configured, but none are currently visible.";
+  }, [competitorSetCount, competitorsError, selectedSiteId]);
 
   useEffect(() => {
     if (contextLoading || contextError || !requestedSiteId) {
@@ -106,6 +241,9 @@ function CompetitorsPageContent() {
     if (contextLoading || contextError || !selectedSiteId) {
       setCompetitorSets([]);
       setCompetitorSetCount(0);
+      setLatestSnapshotRun(null);
+      setLatestComparisonRun(null);
+      setReadinessWarning(null);
       setCompetitorsError(null);
       setLoadingCompetitors(false);
       return;
@@ -116,6 +254,9 @@ function CompetitorsPageContent() {
     async function loadCompetitors() {
       setLoadingCompetitors(true);
       setCompetitorsError(null);
+      setLatestSnapshotRun(null);
+      setLatestComparisonRun(null);
+      setReadinessWarning(null);
       try {
         const setResponse = await fetchCompetitorSets(token, businessId, activeSiteId);
         if (cancelled) {
@@ -128,13 +269,30 @@ function CompetitorsPageContent() {
           return;
         }
 
-        const rows = await Promise.all(
+        let snapshotStatusUnavailable = false;
+        const setNameById = new Map<string, string>();
+        for (const setItem of setResponse.items) {
+          setNameById.set(setItem.id, setItem.name);
+        }
+
+        const setDetails = await Promise.all(
           setResponse.items.map(async (setItem) => {
             const domainsResponse = await fetchCompetitorDomains(
               token,
               businessId,
               setItem.id,
             );
+            let latestSnapshotCandidate: CompetitorSnapshotRun | null = null;
+            try {
+              const snapshotRunsResponse = await fetchCompetitorSnapshotRuns(
+                token,
+                businessId,
+                setItem.id,
+              );
+              latestSnapshotCandidate = latestByActivity(snapshotRunsResponse.items);
+            } catch {
+              snapshotStatusUnavailable = true;
+            }
             const sourceSet = new Set<string>();
             let latestDomainUpdatedAt: string | null = null;
             let activeDomainCount = 0;
@@ -152,15 +310,78 @@ function CompetitorsPageContent() {
             }
 
             return {
-              ...setItem,
-              domain_count: domainsResponse.total,
-              active_domain_count: activeDomainCount,
-              source_summary: sourceSet.size > 0 ? [...sourceSet].sort().join(", ") : "-",
-              latest_domain_updated_at: latestDomainUpdatedAt,
+              row: {
+                ...setItem,
+                domain_count: domainsResponse.total,
+                active_domain_count: activeDomainCount,
+                source_summary: sourceSet.size > 0 ? [...sourceSet].sort().join(", ") : "-",
+                latest_domain_updated_at: latestDomainUpdatedAt,
+              },
+              latestSnapshotCandidate,
             };
           }),
         );
+
+        const rows = setDetails.map((item) => item.row);
+        let nextLatestSnapshotRun: LatestSiteRun | null = null;
+        let nextLatestComparisonRun: LatestSiteRun | null = null;
+        let nextReadinessWarning: string | null = null;
+        const latestSnapshotCandidate = latestByActivity(
+          setDetails
+            .map((item) => item.latestSnapshotCandidate)
+            .filter((item): item is CompetitorSnapshotRun => item !== null),
+        );
+        if (latestSnapshotCandidate) {
+          nextLatestSnapshotRun = {
+            id: latestSnapshotCandidate.id,
+            competitor_set_id: latestSnapshotCandidate.competitor_set_id,
+            competitor_set_name:
+              setNameById.get(latestSnapshotCandidate.competitor_set_id) ||
+              latestSnapshotCandidate.competitor_set_id,
+            status: latestSnapshotCandidate.status,
+            created_at: latestSnapshotCandidate.created_at,
+            updated_at: latestSnapshotCandidate.updated_at,
+            completed_at: latestSnapshotCandidate.completed_at,
+          };
+        }
+
+        let comparisonStatusUnavailable = false;
+        try {
+          const comparisonRunsResponse = await fetchSiteCompetitorComparisonRuns(
+            token,
+            businessId,
+            activeSiteId,
+          );
+          const latestComparisonCandidate = latestByActivity(comparisonRunsResponse.items);
+          if (latestComparisonCandidate) {
+            nextLatestComparisonRun = {
+              id: latestComparisonCandidate.id,
+              competitor_set_id: latestComparisonCandidate.competitor_set_id,
+              competitor_set_name:
+                setNameById.get(latestComparisonCandidate.competitor_set_id) ||
+                latestComparisonCandidate.competitor_set_id,
+              status: latestComparisonCandidate.status,
+              created_at: latestComparisonCandidate.created_at,
+              updated_at: latestComparisonCandidate.updated_at,
+              completed_at: latestComparisonCandidate.completed_at,
+            };
+          }
+        } catch {
+          comparisonStatusUnavailable = true;
+        }
+
+        if (snapshotStatusUnavailable && comparisonStatusUnavailable) {
+          nextReadinessWarning = "Snapshot and comparison run status are temporarily unavailable.";
+        } else if (snapshotStatusUnavailable) {
+          nextReadinessWarning = "Snapshot run status is temporarily unavailable.";
+        } else if (comparisonStatusUnavailable) {
+          nextReadinessWarning = "Comparison run status is temporarily unavailable.";
+        }
+
         if (!cancelled) {
+          setLatestSnapshotRun(nextLatestSnapshotRun);
+          setLatestComparisonRun(nextLatestComparisonRun);
+          setReadinessWarning(nextReadinessWarning);
           setCompetitorSets(rows);
         }
       } catch (err) {
@@ -209,6 +430,53 @@ function CompetitorsPageContent() {
           </option>
         ))}
       </select>
+
+      <div className="panel stack">
+        <h2 style={{ margin: 0 }}>Readiness</h2>
+        <p className="hint muted">
+          Selected Site:{" "}
+          <strong>{selectedSite?.display_name || selectedSiteId || "No site selected"}</strong>
+          {selectedSiteId ? (
+            <>
+              {" "}
+              (<code>{selectedSiteId}</code>)
+            </>
+          ) : null}
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+          <span className="hint muted">Active Sets: {activeSetCount}/{competitorSetCount}</span>
+          <span className="hint muted">Competitor Domains: {totalDomainCount}</span>
+          <span className="hint muted">Active Domains: {activeDomainCount}</span>
+        </div>
+        <p className="hint muted">
+          Latest Snapshot Run:{" "}
+          {latestSnapshotRun ? (
+            <>
+              <strong>{formatRunStatus(latestSnapshotRun.status)}</strong>{" "}
+              ({formatDateTime(latestSnapshotRun.completed_at || latestSnapshotRun.updated_at || latestSnapshotRun.created_at)})
+              {" "}for {latestSnapshotRun.competitor_set_name}{" "}
+              <Link href={buildSnapshotRunHref(latestSnapshotRun)}>View</Link>
+            </>
+          ) : (
+            "none"
+          )}
+        </p>
+        <p className="hint muted">
+          Latest Comparison Run:{" "}
+          {latestComparisonRun ? (
+            <>
+              <strong>{formatRunStatus(latestComparisonRun.status)}</strong>{" "}
+              ({formatDateTime(latestComparisonRun.completed_at || latestComparisonRun.updated_at || latestComparisonRun.created_at)})
+              {" "}for {latestComparisonRun.competitor_set_name}{" "}
+              <Link href={buildComparisonRunHref(latestComparisonRun)}>View</Link>
+            </>
+          ) : (
+            "none"
+          )}
+        </p>
+        {readinessWarning ? <p className="hint warning">{readinessWarning}</p> : null}
+        <p className="hint muted">{readinessGuidance}</p>
+      </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
         <span className="hint muted">Competitor Sets: {competitorSetCount}</span>
@@ -271,20 +539,12 @@ function CompetitorsPageContent() {
           {!loadingCompetitors && competitorSets.length === 0 ? (
             <tr>
               <td colSpan={11}>
-                {competitorSetCount === 0
-                  ? "No competitor sets found for this site."
-                  : "No competitor sets are currently visible for this site."}
+                {tableEmptyReason}
               </td>
             </tr>
           ) : null}
         </tbody>
       </table>
-
-      {!loadingCompetitors && competitorSets.length > 0 && !hasAnyDomains ? (
-        <p className="hint muted">
-          Competitor sets exist, but no domains are attached yet.
-        </p>
-      ) : null}
     </section>
   );
 }

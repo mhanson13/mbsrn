@@ -2,7 +2,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import CompetitorsPage from "./page";
-import type { CompetitorDomainListResponse, CompetitorSetListResponse } from "../../lib/api/types";
+import type {
+  CompetitorComparisonRunListResponse,
+  CompetitorDomainListResponse,
+  CompetitorSetListResponse,
+  CompetitorSnapshotRunListResponse,
+} from "../../lib/api/types";
 
 type OperatorContextMockValue = {
   loading: boolean;
@@ -23,6 +28,8 @@ const navigationState = {
 const mockUseOperatorContext = jest.fn<OperatorContextMockValue, []>();
 const mockFetchCompetitorSets = jest.fn<Promise<CompetitorSetListResponse>, unknown[]>();
 const mockFetchCompetitorDomains = jest.fn<Promise<CompetitorDomainListResponse>, unknown[]>();
+const mockFetchCompetitorSnapshotRuns = jest.fn<Promise<CompetitorSnapshotRunListResponse>, unknown[]>();
+const mockFetchSiteCompetitorComparisonRuns = jest.fn<Promise<CompetitorComparisonRunListResponse>, unknown[]>();
 
 jest.mock("next/link", () => {
   return function MockLink({
@@ -53,6 +60,8 @@ jest.mock("../../lib/api/client", () => {
     ...actual,
     fetchCompetitorSets: (...args: unknown[]) => mockFetchCompetitorSets(...args),
     fetchCompetitorDomains: (...args: unknown[]) => mockFetchCompetitorDomains(...args),
+    fetchCompetitorSnapshotRuns: (...args: unknown[]) => mockFetchCompetitorSnapshotRuns(...args),
+    fetchSiteCompetitorComparisonRuns: (...args: unknown[]) => mockFetchSiteCompetitorComparisonRuns(...args),
   };
 });
 
@@ -74,10 +83,18 @@ beforeEach(() => {
   jest.clearAllMocks();
   navigationState.searchParams = new URLSearchParams();
   mockUseOperatorContext.mockReturnValue(baseOperatorContext());
+  mockFetchCompetitorSnapshotRuns.mockResolvedValue({
+    items: [],
+    total: 0,
+  });
+  mockFetchSiteCompetitorComparisonRuns.mockResolvedValue({
+    items: [],
+    total: 0,
+  });
 });
 
 describe("competitors page site-scoped loading", () => {
-  it("renders competitor sets for the selected configured site", async () => {
+  it("renders readiness state for a configured site", async () => {
     mockFetchCompetitorSets.mockResolvedValueOnce({
       items: [
         {
@@ -114,12 +131,75 @@ describe("competitors page site-scoped loading", () => {
       ],
       total: 1,
     });
+    mockFetchCompetitorSnapshotRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "snapshot-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          competitor_set_id: "set-1",
+          client_audit_run_id: null,
+          status: "completed",
+          max_domains: 5,
+          max_pages_per_domain: 3,
+          max_depth: 1,
+          same_domain_only: true,
+          domains_targeted: 1,
+          domains_completed: 1,
+          pages_attempted: 1,
+          pages_captured: 1,
+          pages_skipped: 0,
+          errors_encountered: 0,
+          started_at: "2026-03-20T00:00:00Z",
+          completed_at: "2026-03-20T00:01:00Z",
+          duration_ms: 1000,
+          error_summary: null,
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:01:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchSiteCompetitorComparisonRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "comparison-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          competitor_set_id: "set-1",
+          snapshot_run_id: "snapshot-1",
+          baseline_audit_run_id: null,
+          status: "completed",
+          total_findings: 2,
+          critical_findings: 0,
+          warning_findings: 1,
+          info_findings: 1,
+          client_pages_analyzed: 1,
+          competitor_pages_analyzed: 1,
+          finding_type_counts_json: {},
+          category_counts_json: {},
+          severity_counts_json: {},
+          started_at: "2026-03-20T00:02:00Z",
+          completed_at: "2026-03-20T00:03:00Z",
+          duration_ms: 1000,
+          error_summary: null,
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:02:00Z",
+          updated_at: "2026-03-20T00:03:00Z",
+        },
+      ],
+      total: 1,
+    });
 
     render(<CompetitorsPage />);
 
     await screen.findByText("Front Range");
     expect(mockFetchCompetitorSets).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     expect(screen.getByText("Competitor Sets: 1")).toBeInTheDocument();
+    expect(screen.getByText("Active Sets: 1/1")).toBeInTheDocument();
+    expect(screen.getByText("Competitor Domains: 1")).toBeInTheDocument();
+    expect(screen.getByText("This site has configured competitor data and recent comparison activity.")).toBeInTheDocument();
   });
 
   it("applies URL site_id context so competitors load for the linked site", async () => {
@@ -170,5 +250,61 @@ describe("competitors page site-scoped loading", () => {
     view.rerender(<CompetitorsPage />);
     await screen.findByText("Metro Competitors");
     expect(mockFetchCompetitorSets).toHaveBeenCalledWith("token-1", "biz-1", "site-2");
+  });
+
+  it("shows explicit empty-state reason when no competitor sets are configured", async () => {
+    mockFetchCompetitorSets.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+    });
+
+    render(<CompetitorsPage />);
+
+    const matches = await screen.findAllByText("This site has no competitor sets configured yet.");
+    expect(matches.length).toBeGreaterThan(0);
+  });
+
+  it("shows explicit readiness guidance when domains exist but snapshot has not run", async () => {
+    mockFetchCompetitorSets.mockResolvedValueOnce({
+      items: [
+        {
+          id: "set-3",
+          business_id: "biz-1",
+          site_id: "site-1",
+          name: "No Snapshot Yet",
+          city: null,
+          state: null,
+          is_active: true,
+          created_by_principal_id: null,
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchCompetitorDomains.mockResolvedValueOnce({
+      items: [
+        {
+          id: "domain-3",
+          business_id: "biz-1",
+          site_id: "site-1",
+          competitor_set_id: "set-3",
+          domain: "nosnapshot.example",
+          base_url: "https://nosnapshot.example/",
+          display_name: null,
+          source: "manual",
+          is_active: true,
+          notes: null,
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+
+    render(<CompetitorsPage />);
+
+    await screen.findByText("No Snapshot Yet");
+    expect(screen.getByText("Competitor domains exist, but no snapshot run has been recorded yet.")).toBeInTheDocument();
   });
 });
