@@ -118,6 +118,16 @@ export default function CompetitorSetDetailPage() {
     return comparisonRuns[0];
   }, [comparisonRuns]);
 
+  const backToListHref = useMemo(() => {
+    const siteId = competitorSet?.site_id || requestedSiteId;
+    if (!siteId) {
+      return "/competitors";
+    }
+    const params = new URLSearchParams();
+    params.set("site_id", siteId);
+    return `/competitors?${params.toString()}`;
+  }, [competitorSet?.site_id, requestedSiteId]);
+
   function buildComparisonRunHref(run: CompetitorComparisonRun): string {
     const params = new URLSearchParams();
     const contextSiteId = competitorSet?.site_id || requestedSiteId || run.site_id;
@@ -267,7 +277,7 @@ export default function CompetitorSetDetailPage() {
         <h1>Competitor Set Detail</h1>
         <p className="hint warning">Competitor set identifier is missing.</p>
         <p>
-          <Link href="/competitors">Back to Competitor Sets</Link>
+          <Link href={backToListHref}>Back to Competitor Sets</Link>
         </p>
       </section>
     );
@@ -277,7 +287,7 @@ export default function CompetitorSetDetailPage() {
     <section className="stack">
       <div className="panel stack">
         <p>
-          <Link href="/competitors">Back to Competitor Sets</Link>
+          <Link href={backToListHref}>Back to Competitor Sets</Link>
         </p>
         <h1>Competitor Set Detail</h1>
         <p>

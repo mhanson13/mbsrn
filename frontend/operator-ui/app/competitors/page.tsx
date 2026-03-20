@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { useOperatorContext } from "../../components/useOperatorContext";
 import { ApiRequestError, fetchCompetitorDomains, fetchCompetitorSets } from "../../lib/api/client";
@@ -48,9 +48,20 @@ function safeCompetitorErrorMessage(error: unknown): string {
   return "Unable to load competitors right now. Please try again.";
 }
 
-export default function CompetitorsPage() {
+function CompetitorsPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const context = useOperatorContext();
+  const {
+    loading: contextLoading,
+    error: contextError,
+    token,
+    businessId,
+    sites,
+    selectedSiteId,
+    setSelectedSiteId,
+  } = context;
+  const requestedSiteId = (searchParams.get("site_id") || "").trim();
   const [competitorSets, setCompetitorSets] = useState<CompetitorSetRow[]>([]);
   const [loadingCompetitors, setLoadingCompetitors] = useState(false);
   const [competitorsError, setCompetitorsError] = useState<string | null>(null);
@@ -72,7 +83,27 @@ export default function CompetitorsPage() {
   }
 
   useEffect(() => {
-    if (context.loading || context.error || !context.selectedSiteId) {
+    if (contextLoading || contextError || !requestedSiteId) {
+      return;
+    }
+    const requestedSiteExists = sites.some((site) => site.id === requestedSiteId);
+    if (!requestedSiteExists) {
+      return;
+    }
+    if (selectedSiteId !== requestedSiteId) {
+      setSelectedSiteId(requestedSiteId);
+    }
+  }, [
+    contextError,
+    contextLoading,
+    requestedSiteId,
+    selectedSiteId,
+    setSelectedSiteId,
+    sites,
+  ]);
+
+  useEffect(() => {
+    if (contextLoading || contextError || !selectedSiteId) {
       setCompetitorSets([]);
       setCompetitorSetCount(0);
       setCompetitorsError(null);
@@ -80,13 +111,13 @@ export default function CompetitorsPage() {
       return;
     }
     let cancelled = false;
-    const selectedSiteId = context.selectedSiteId;
+    const activeSiteId = selectedSiteId;
 
     async function loadCompetitors() {
       setLoadingCompetitors(true);
       setCompetitorsError(null);
       try {
-        const setResponse = await fetchCompetitorSets(context.token, context.businessId, selectedSiteId);
+        const setResponse = await fetchCompetitorSets(token, businessId, activeSiteId);
         if (cancelled) {
           return;
         }
@@ -100,8 +131,8 @@ export default function CompetitorsPage() {
         const rows = await Promise.all(
           setResponse.items.map(async (setItem) => {
             const domainsResponse = await fetchCompetitorDomains(
-              context.token,
-              context.businessId,
+              token,
+              businessId,
               setItem.id,
             );
             const sourceSet = new Set<string>();
@@ -146,15 +177,15 @@ export default function CompetitorsPage() {
     return () => {
       cancelled = true;
     };
-  }, [context.businessId, context.error, context.loading, context.selectedSiteId, context.token]);
+  }, [businessId, contextError, contextLoading, selectedSiteId, token]);
 
-  if (context.loading) {
+  if (contextLoading) {
     return <section className="panel">Loading competitor intelligence...</section>;
   }
-  if (context.error) {
+  if (contextError) {
     return <section className="panel">Unable to load tenant context. Refresh and sign in again.</section>;
   }
-  if (context.sites.length === 0) {
+  if (sites.length === 0) {
     return (
       <section className="panel stack">
         <h1>Competitors</h1>
@@ -169,10 +200,10 @@ export default function CompetitorsPage() {
       <label htmlFor="site-picker-competitors">Site</label>
       <select
         id="site-picker-competitors"
-        value={context.selectedSiteId || ""}
-        onChange={(event) => context.setSelectedSiteId(event.target.value)}
+        value={selectedSiteId || ""}
+        onChange={(event) => setSelectedSiteId(event.target.value)}
       >
-        {context.sites.map((site) => (
+        {sites.map((site) => (
           <option key={site.id} value={site.id}>
             {site.display_name}
           </option>
@@ -255,5 +286,13 @@ export default function CompetitorsPage() {
         </p>
       ) : null}
     </section>
+  );
+}
+
+export default function CompetitorsPage() {
+  return (
+    <Suspense fallback={<section className="panel">Loading competitor intelligence...</section>}>
+      <CompetitorsPageContent />
+    </Suspense>
   );
 }

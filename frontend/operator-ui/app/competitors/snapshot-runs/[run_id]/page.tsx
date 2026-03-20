@@ -119,11 +119,21 @@ export default function SnapshotRunDetailPage() {
     return match?.display_name || null;
   }, [context.sites, snapshotRun]);
 
+  const backToListHref = useMemo(() => {
+    const siteId = snapshotRun?.site_id || requestedSiteId;
+    if (!siteId) {
+      return "/competitors";
+    }
+    const params = new URLSearchParams();
+    params.set("site_id", siteId);
+    return `/competitors?${params.toString()}`;
+  }, [requestedSiteId, snapshotRun?.site_id]);
+
   const backToSetHref = useMemo(() => {
     const parentSetId = snapshotRun?.competitor_set_id || requestedSetId;
     const parentSiteId = snapshotRun?.site_id || requestedSiteId;
     if (!parentSetId) {
-      return "/competitors";
+      return backToListHref;
     }
     const query = new URLSearchParams();
     if (parentSiteId) {
@@ -131,7 +141,7 @@ export default function SnapshotRunDetailPage() {
     }
     const queryText = query.toString();
     return queryText ? `/competitors/${parentSetId}?${queryText}` : `/competitors/${parentSetId}`;
-  }, [requestedSetId, requestedSiteId, snapshotRun]);
+  }, [backToListHref, requestedSetId, requestedSiteId, snapshotRun]);
 
   function buildComparisonRunHref(run: CompetitorComparisonRun): string {
     const params = new URLSearchParams();
@@ -354,7 +364,7 @@ export default function SnapshotRunDetailPage() {
         <h1>Snapshot Run Detail</h1>
         <p className="hint warning">Snapshot run identifier is missing.</p>
         <p>
-          <Link href="/competitors">Back to Competitor Sets</Link>
+          <Link href={backToListHref}>Back to Competitor Sets</Link>
         </p>
       </section>
     );

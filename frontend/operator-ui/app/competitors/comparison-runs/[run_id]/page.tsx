@@ -108,11 +108,21 @@ export default function ComparisonRunDetailPage() {
     return match?.display_name || null;
   }, [context.sites, run]);
 
+  const backToListHref = useMemo(() => {
+    const siteId = run?.site_id || requestedSiteId;
+    if (!siteId) {
+      return "/competitors";
+    }
+    const params = new URLSearchParams();
+    params.set("site_id", siteId);
+    return `/competitors?${params.toString()}`;
+  }, [requestedSiteId, run?.site_id]);
+
   const backToSetHref = useMemo(() => {
     const parentSetId = run?.competitor_set_id || requestedSetId;
     const parentSiteId = run?.site_id || requestedSiteId;
     if (!parentSetId) {
-      return "/competitors";
+      return backToListHref;
     }
     const query = new URLSearchParams();
     if (parentSiteId) {
@@ -120,7 +130,7 @@ export default function ComparisonRunDetailPage() {
     }
     const queryText = query.toString();
     return queryText ? `/competitors/${parentSetId}?${queryText}` : `/competitors/${parentSetId}`;
-  }, [requestedSetId, requestedSiteId, run]);
+  }, [backToListHref, requestedSetId, requestedSiteId, run]);
 
   function buildSnapshotRunHref(snapshotId: string): string {
     const params = new URLSearchParams();
@@ -326,7 +336,7 @@ export default function ComparisonRunDetailPage() {
         <h1>Comparison Run Detail</h1>
         <p className="hint warning">Comparison run identifier is missing.</p>
         <p>
-          <Link href="/competitors">Back to Competitor Sets</Link>
+          <Link href={backToListHref}>Back to Competitor Sets</Link>
         </p>
       </section>
     );

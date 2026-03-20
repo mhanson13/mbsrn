@@ -492,7 +492,7 @@ export default function RecommendationRunDetailPage() {
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
               <Link href={backToRecommendationsHref}>Recommendation Queue</Link>
               <Link href="/audits">Audit Runs</Link>
-              <Link href="/competitors">Competitor Sets</Link>
+              <Link href={`/competitors?site_id=${encodeURIComponent(run.site_id)}`}>Competitor Sets</Link>
               {run.audit_run_id ? <Link href={`/audits/${run.audit_run_id}`}>Linked Audit Run</Link> : null}
               {comparisonRunHref ? <Link href={comparisonRunHref}>Linked Comparison Run</Link> : null}
             </div>
