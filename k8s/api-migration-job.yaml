@@ -10,27 +10,10 @@ spec:
     spec:
       serviceAccountName: mbsrn-api
       restartPolicy: Never
-      containers:
-        - name: migrate
-          image: __API_IMAGE__
-          command: ["/cnb/process/migrate"]
-          env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: mbsrn-api-auth
-                  key: DATABASE_URL
-          resources:
-            requests:
-              cpu: __DEPLOY_CPU_REQUEST__
-              memory: __DEPLOY_MEMORY_REQUEST__
-              ephemeral-storage: __DEPLOY_EPHEMERAL_STORAGE_REQUEST__
-            limits:
-              cpu: __DEPLOY_CPU_LIMIT__
-              memory: __DEPLOY_MEMORY_LIMIT__
-              ephemeral-storage: __DEPLOY_EPHEMERAL_STORAGE_LIMIT__
+      initContainers:
         - name: cloud-sql-proxy
           image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
+          restartPolicy: Always
           args:
             - "--structured-logs"
             - "--port=5432"
@@ -50,3 +33,22 @@ spec:
               cpu: __DEPLOY_PROXY_CPU_LIMIT__
               memory: __DEPLOY_PROXY_MEMORY_LIMIT__
               ephemeral-storage: __DEPLOY_PROXY_EPHEMERAL_STORAGE_LIMIT__
+      containers:
+        - name: migrate
+          image: __API_IMAGE__
+          command: ["/cnb/process/migrate"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: DATABASE_URL
+          resources:
+            requests:
+              cpu: __DEPLOY_CPU_REQUEST__
+              memory: __DEPLOY_MEMORY_REQUEST__
+              ephemeral-storage: __DEPLOY_EPHEMERAL_STORAGE_REQUEST__
+            limits:
+              cpu: __DEPLOY_CPU_LIMIT__
+              memory: __DEPLOY_MEMORY_LIMIT__
+              ephemeral-storage: __DEPLOY_EPHEMERAL_STORAGE_LIMIT__

@@ -140,8 +140,15 @@ jobs:
             fi
           done
 
-          grep -q "^migrate:" Procfile
-          grep -q "^migrate-baseline-existing:" Procfile
+          if ! grep -qx "migrate: python -m alembic upgrade head" Procfile; then
+            echo "Procfile migrate process must be 'python -m alembic upgrade head'" >&2
+            exit 1
+          fi
+
+          if ! grep -qx "migrate-baseline-existing: python -m alembic stamp --purge 0024_google_business_profile_oauth_connections" Procfile; then
+            echo "Procfile baseline process must stamp --purge 0024_google_business_profile_oauth_connections" >&2
+            exit 1
+          fi
 
           if [[ "${DB_ALIGNMENT_MODE}" != "normal" && "${DB_ALIGNMENT_MODE}" != "baseline_existing" ]]; then
             echo "Invalid DB_ALIGNMENT_MODE: ${DB_ALIGNMENT_MODE}" >&2
@@ -205,8 +212,14 @@ jobs:
           API_IMAGE="${AR_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPOSITORY}/${API_IMAGE_NAME}:${GITHUB_SHA}"
           UI_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-/api}"
 
+          if [[ -z "${API_IMAGE}" ]]; then
+            echo "API_IMAGE resolved empty; refusing to continue." >&2
+            exit 1
+          fi
+
           echo "UI_IMAGE=${UI_IMAGE}" >> "${GITHUB_ENV}"
           echo "API_IMAGE=${API_IMAGE}" >> "${GITHUB_ENV}"
+          echo "Using API image for migration and deploy: ${API_IMAGE}"
 
           gcloud builds submit \
             --project "${GCP_PROJECT_ID}" \
@@ -239,6 +252,13 @@ jobs:
           render_dir="${RUNNER_TEMP}/rendered-${GITHUB_SHA}"
           rm -rf "${render_dir}"
           mkdir -p "${render_dir}"
+
+          if [[ -z "${API_IMAGE:-}" ]]; then
+            echo "API_IMAGE is not set in render step." >&2
+            exit 1
+          fi
+
+          echo "Rendering manifests with API_IMAGE=${API_IMAGE}"
 
           cp k8s/namespace.yaml "${render_dir}/namespace.yaml"
           cp k8s/ui-serviceaccount.yaml "${render_dir}/ui-serviceaccount.yaml"
@@ -354,6 +374,17 @@ jobs:
             fi
           done
 
+          for rendered_api in \
+            "${render_dir}/api-deployment.yaml" \
+            "${render_dir}/api-migration-job.yaml" \
+            "${render_dir}/api-migration-baseline-job.yaml"
+          do
+            if ! grep -Fq "image: ${API_IMAGE}" "${rendered_api}"; then
+              echo "Rendered manifest does not use expected API image ${API_IMAGE}: ${rendered_api}" >&2
+              exit 1
+            fi
+          done
+
           echo "RENDER_DIR=${render_dir}" >> "${GITHUB_ENV}"
 
       - name: Apply workload manifests
@@ -365,6 +396,14 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: |
           set -euo pipefail
+
+          if [[ -z "${API_IMAGE:-}" ]]; then
+            echo "API_IMAGE is not set in apply step." >&2
+            exit 1
+          fi
+
+          echo "DB alignment mode: ${DB_ALIGNMENT_MODE}"
+          echo "Applying migration and rollout with API image: ${API_IMAGE}"
 
           kubectl apply -f "${RENDER_DIR}/namespace.yaml"
           kubectl -n "${K8S_NAMESPACE}" create secret generic mbsrn-api-auth \
