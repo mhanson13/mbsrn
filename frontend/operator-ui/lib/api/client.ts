@@ -15,6 +15,7 @@ import type {
   CompetitorDomainListResponse,
   CompetitorSetListResponse,
   Recommendation,
+  RecommendationActionStatus,
   RecommendationListResponse,
   AutomationRunListResponse,
   GoogleBusinessProfileAccountsResponse,
@@ -230,6 +231,23 @@ export async function fetchRecommendation(
   return apiRequest<Recommendation>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/recommendations/${recommendationId}`,
     { token },
+  );
+}
+
+export async function updateRecommendationStatus(
+  token: string,
+  businessId: string,
+  siteId: string,
+  recommendationId: string,
+  status: RecommendationActionStatus,
+): Promise<Recommendation> {
+  return apiRequest<Recommendation>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/recommendations/${recommendationId}`,
+    {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ status }),
+    },
   );
 }
 

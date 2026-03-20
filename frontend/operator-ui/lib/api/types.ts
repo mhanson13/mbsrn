@@ -190,6 +190,8 @@ export interface Recommendation {
   updated_at: string;
 }
 
+export type RecommendationActionStatus = "accepted" | "dismissed";
+
 export interface RecommendationListResponse {
   items: Recommendation[];
   total: number;

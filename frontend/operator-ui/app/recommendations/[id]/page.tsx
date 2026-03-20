@@ -5,7 +5,11 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { useOperatorContext } from "../../../components/useOperatorContext";
-import { ApiRequestError, fetchRecommendation } from "../../../lib/api/client";
+import {
+  ApiRequestError,
+  fetchRecommendation,
+  updateRecommendationStatus,
+} from "../../../lib/api/client";
 import type { Recommendation } from "../../../lib/api/types";
 
 function formatDateTime(value: string | null): string {
@@ -47,6 +51,24 @@ function safeRecommendationDetailErrorMessage(error: unknown): string {
   return "Unable to load recommendation detail right now. Please try again.";
 }
 
+function safeRecommendationActionErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "You are not authorized to update this recommendation.";
+    }
+    if (error.status === 404) {
+      return "Recommendation not found in your tenant scope.";
+    }
+    if (error.status === 422) {
+      return "Recommendation status update is not allowed in the current state.";
+    }
+  }
+  return "Unable to update recommendation status right now. Please try again.";
+}
+
 export default function RecommendationDetailPage() {
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
@@ -68,6 +90,10 @@ export default function RecommendationDetailPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionTarget, setActionTarget] = useState<"accepted" | "dismissed" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     if (context.loading || context.error || !recommendationId) {
@@ -76,6 +102,10 @@ export default function RecommendationDetailPage() {
       setLoading(false);
       setError(null);
       setNotFound(false);
+      setActionLoading(false);
+      setActionTarget(null);
+      setActionError(null);
+      setActionSuccess(null);
       return;
     }
 
@@ -85,6 +115,10 @@ export default function RecommendationDetailPage() {
       setLoading(false);
       setError("No site context is available to resolve this recommendation.");
       setNotFound(false);
+      setActionLoading(false);
+      setActionTarget(null);
+      setActionError(null);
+      setActionSuccess(null);
       return;
     }
 
@@ -96,6 +130,10 @@ export default function RecommendationDetailPage() {
       setNotFound(false);
       setRecommendation(null);
       setResolvedSiteId(null);
+      setActionLoading(false);
+      setActionTarget(null);
+      setActionError(null);
+      setActionSuccess(null);
 
       try {
         for (const siteId of candidateSiteIds) {
@@ -144,6 +182,33 @@ export default function RecommendationDetailPage() {
       cancelled = true;
     };
   }, [candidateSiteIds, context.businessId, context.error, context.loading, context.token, recommendationId]);
+
+  async function handleUpdateStatus(status: "accepted" | "dismissed") {
+    if (!recommendation || actionLoading) {
+      return;
+    }
+    setActionLoading(true);
+    setActionTarget(status);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      const updated = await updateRecommendationStatus(
+        context.token,
+        context.businessId,
+        recommendation.site_id,
+        recommendation.id,
+        status,
+      );
+      setRecommendation(updated);
+      setResolvedSiteId(updated.site_id);
+      setActionSuccess(`Recommendation marked as ${updated.status}.`);
+    } catch (err) {
+      setActionError(safeRecommendationActionErrorMessage(err));
+    } finally {
+      setActionLoading(false);
+      setActionTarget(null);
+    }
+  }
 
   if (context.loading) {
     return <section className="panel">Loading recommendation detail...</section>;
@@ -202,6 +267,33 @@ export default function RecommendationDetailPage() {
             <p>Status: {recommendation.status}</p>
             <p>Category: {recommendation.category}</p>
             <p>Source Type: {recommendationSourceType(recommendation)}</p>
+          </div>
+
+          <div className="panel stack">
+            <h2>Actions</h2>
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              <button
+                className="primary"
+                type="button"
+                disabled={actionLoading || recommendation.status === "accepted"}
+                onClick={() => {
+                  void handleUpdateStatus("accepted");
+                }}
+              >
+                {actionLoading && actionTarget === "accepted" ? "Saving..." : "Accept"}
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading || recommendation.status === "dismissed"}
+                onClick={() => {
+                  void handleUpdateStatus("dismissed");
+                }}
+              >
+                {actionLoading && actionTarget === "dismissed" ? "Saving..." : "Dismiss"}
+              </button>
+            </div>
+            {actionSuccess ? <p className="hint">{actionSuccess}</p> : null}
+            {actionError ? <p className="hint error">{actionError}</p> : null}
           </div>
 
           <div className="panel stack">
