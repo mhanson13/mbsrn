@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import UsersPage from "./page";
+import { ApiRequestError } from "../../lib/api/client";
 import type { PrincipalIdentityListResponse, PrincipalListResponse } from "../../lib/api/types";
 
 type OperatorContextMockValue = {
@@ -15,6 +16,7 @@ const mockUseAuth = jest.fn();
 const mockFetchPrincipals = jest.fn<Promise<PrincipalListResponse>, unknown[]>();
 const mockFetchPrincipalIdentities = jest.fn<Promise<PrincipalIdentityListResponse>, unknown[]>();
 const mockCreatePrincipal = jest.fn<Promise<unknown>, unknown[]>();
+const mockCreatePrincipalIdentity = jest.fn<Promise<unknown>, unknown[]>();
 const mockDeactivatePrincipal = jest.fn<Promise<unknown>, unknown[]>();
 const mockActivatePrincipal = jest.fn<Promise<unknown>, unknown[]>();
 const mockDeactivatePrincipalIdentity = jest.fn<Promise<unknown>, unknown[]>();
@@ -35,6 +37,7 @@ jest.mock("../../lib/api/client", () => {
     fetchPrincipals: (...args: unknown[]) => mockFetchPrincipals(...args),
     fetchPrincipalIdentities: (...args: unknown[]) => mockFetchPrincipalIdentities(...args),
     createPrincipal: (...args: unknown[]) => mockCreatePrincipal(...args),
+    createPrincipalIdentity: (...args: unknown[]) => mockCreatePrincipalIdentity(...args),
     deactivatePrincipal: (...args: unknown[]) => mockDeactivatePrincipal(...args),
     activatePrincipal: (...args: unknown[]) => mockActivatePrincipal(...args),
     deactivatePrincipalIdentity: (...args: unknown[]) => mockDeactivatePrincipalIdentity(...args),
@@ -323,6 +326,108 @@ describe("users page completeness", () => {
     confirmSpy.mockRestore();
   });
 
+  it("creates and links a sign-in identity to a selected principal", async () => {
+    mockFetchPrincipals
+      .mockResolvedValueOnce(principalsResponse(true))
+      .mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities
+      .mockResolvedValueOnce(identitiesResponse())
+      .mockResolvedValueOnce({
+        items: [
+          ...identitiesResponse().items,
+          {
+            id: "identity-3",
+            provider: "google",
+            provider_subject: "sub-3",
+            business_id: "biz-1",
+            principal_id: "operator-1",
+            email: "operator-new@example.com",
+            email_verified: true,
+            is_active: true,
+            last_authenticated_at: null,
+            created_at: "2026-03-21T00:00:00Z",
+            updated_at: "2026-03-21T00:00:00Z",
+          },
+        ],
+        total: 3,
+      });
+    mockCreatePrincipalIdentity.mockResolvedValueOnce({
+      id: "identity-3",
+      provider: "google",
+      provider_subject: "sub-3",
+      business_id: "biz-1",
+      principal_id: "operator-1",
+      email: "operator-new@example.com",
+      email_verified: true,
+      is_active: true,
+      last_authenticated_at: null,
+      created_at: "2026-03-21T00:00:00Z",
+      updated_at: "2026-03-21T00:00:00Z",
+    });
+
+    render(<UsersPage />);
+
+    await screen.findByText("operator-1");
+    fireEvent.change(screen.getByLabelText("Principal"), { target: { value: "operator-1" } });
+    fireEvent.change(screen.getByLabelText("Provider Subject"), { target: { value: "sub-3" } });
+    fireEvent.change(screen.getByLabelText("Email (optional)"), { target: { value: "operator-new@example.com" } });
+    fireEvent.click(screen.getByLabelText("Email verified"));
+    fireEvent.click(screen.getByRole("button", { name: "Create and Link Identity" }));
+
+    await waitFor(() =>
+      expect(mockCreatePrincipalIdentity).toHaveBeenCalledWith("token-1", "biz-1", {
+        provider: "google",
+        provider_subject: "sub-3",
+        principal_id: "operator-1",
+        email: "operator-new@example.com",
+        email_verified: true,
+        is_active: true,
+      }),
+    );
+    await screen.findByText('Identity linked to principal "operator-1".');
+    expect(screen.getByText("operator-new@example.com (active)")).toBeInTheDocument();
+  });
+
+  it("prevents duplicate identity linking when mapping already exists", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+
+    render(<UsersPage />);
+
+    await screen.findByText("operator-1");
+    fireEvent.change(screen.getByLabelText("Principal"), { target: { value: "operator-1" } });
+    fireEvent.change(screen.getByLabelText("Provider Subject"), { target: { value: "sub-2" } });
+
+    expect(screen.getByText("This identity is already linked to the selected principal.")).toBeInTheDocument();
+    const submitButton = screen.getByRole("button", { name: "Create and Link Identity" });
+    expect(submitButton).toBeDisabled();
+    fireEvent.click(submitButton);
+    expect(mockCreatePrincipalIdentity).not.toHaveBeenCalled();
+  });
+
+  it("shows a safe error when create and link fails", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+    mockCreatePrincipalIdentity.mockRejectedValueOnce(
+      new ApiRequestError("Identity subject is already mapped to a different principal.", {
+        status: 422,
+        detail: null,
+      }),
+    );
+
+    render(<UsersPage />);
+
+    await screen.findByText("operator-1");
+    fireEvent.change(screen.getByLabelText("Principal"), { target: { value: "operator-1" } });
+    fireEvent.change(screen.getByLabelText("Provider Subject"), { target: { value: "sub-3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create and Link Identity" }));
+
+    await screen.findByText(
+      "Unable to create sign-in identity. Verify provider, subject, and principal mapping.",
+    );
+    expect(screen.queryByText("Identity subject is already mapped to a different principal.")).not.toBeInTheDocument();
+  });
+
   it("hides user management controls for non-admin principals", () => {
     mockUseAuth.mockReturnValue({
       principal: {
@@ -338,6 +443,7 @@ describe("users page completeness", () => {
 
     expect(screen.getByText("User administration is available to admin principals only.")).toBeInTheDocument();
     expect(screen.queryByText("Create User")).not.toBeInTheDocument();
+    expect(screen.queryByText("Create and Link Identity")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deactivate Identity" })).not.toBeInTheDocument();
   });
 });

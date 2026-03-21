@@ -51,6 +51,15 @@ export interface PrincipalCreateRequest {
   role: PrincipalRole;
 }
 
+export interface PrincipalIdentityCreateRequest {
+  provider: string;
+  provider_subject: string;
+  principal_id: string;
+  email?: string;
+  email_verified?: boolean;
+  is_active?: boolean;
+}
+
 export interface AuthExchangeResponse {
   access_token: string;
   refresh_token: string;

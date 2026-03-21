@@ -9,6 +9,7 @@ import type {
   Principal,
   PrincipalCreateRequest,
   PrincipalIdentity,
+  PrincipalIdentityCreateRequest,
   PrincipalIdentityListResponse,
   PrincipalListResponse,
   SEOSite,
@@ -211,6 +212,18 @@ export async function fetchPrincipalIdentities(
   businessId: string,
 ): Promise<PrincipalIdentityListResponse> {
   return apiRequest<PrincipalIdentityListResponse>(`/api/businesses/${businessId}/principal-identities`, { token });
+}
+
+export async function createPrincipalIdentity(
+  token: string,
+  businessId: string,
+  payload: PrincipalIdentityCreateRequest,
+): Promise<PrincipalIdentity> {
+  return apiRequest<PrincipalIdentity>(`/api/businesses/${businessId}/principal-identities`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function createPrincipal(

@@ -8,6 +8,7 @@ import {
   activatePrincipalIdentity,
   activatePrincipal,
   ApiRequestError,
+  createPrincipalIdentity,
   createPrincipal,
   deactivatePrincipalIdentity,
   deactivatePrincipal,
@@ -88,6 +89,24 @@ function safeIdentityActionErrorMessage(error: unknown): string {
   return "Failed to update sign-in identity state.";
 }
 
+function safeCreateIdentityErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "You are not authorized to create sign-in identities.";
+    }
+    if (error.status === 404) {
+      return "Principal or business scope was not found.";
+    }
+    if (error.status === 422) {
+      return "Unable to create sign-in identity. Verify provider, subject, and principal mapping.";
+    }
+  }
+  return "Failed to create sign-in identity.";
+}
+
 function formatIdentityLabel(identity: PrincipalIdentity): string {
   return identity.email || `${identity.provider}:${identity.provider_subject}`;
 }
@@ -112,6 +131,15 @@ export default function UsersPage() {
   const [principalId, setPrincipalId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [role, setRole] = useState<PrincipalRole>("operator");
+  const [identityPrincipalId, setIdentityPrincipalId] = useState("");
+  const [identityProvider, setIdentityProvider] = useState("google");
+  const [identityProviderSubject, setIdentityProviderSubject] = useState("");
+  const [identityEmail, setIdentityEmail] = useState("");
+  const [identityEmailVerified, setIdentityEmailVerified] = useState(false);
+  const [identityIsActive, setIdentityIsActive] = useState(true);
+  const [identitySubmitting, setIdentitySubmitting] = useState(false);
+  const [identitySubmitError, setIdentitySubmitError] = useState<string | null>(null);
+  const [identitySubmitSuccess, setIdentitySubmitSuccess] = useState<string | null>(null);
 
   const isAdmin = principal?.role === "admin";
 
@@ -160,6 +188,33 @@ export default function UsersPage() {
     [identitiesByPrincipalId, users],
   );
 
+  const normalizedIdentityProvider = useMemo(() => identityProvider.trim().toLowerCase(), [identityProvider]);
+  const normalizedIdentityProviderSubject = useMemo(
+    () => identityProviderSubject.trim(),
+    [identityProviderSubject],
+  );
+
+  const existingIdentityForProviderSubject = useMemo(() => {
+    if (!normalizedIdentityProvider || !normalizedIdentityProviderSubject) {
+      return null;
+    }
+    return (
+      identities.find(
+        (identity) =>
+          identity.provider === normalizedIdentityProvider &&
+          identity.provider_subject === normalizedIdentityProviderSubject,
+      ) || null
+    );
+  }, [identities, normalizedIdentityProvider, normalizedIdentityProviderSubject]);
+
+  const identityAlreadyLinkedToSelectedPrincipal =
+    existingIdentityForProviderSubject !== null &&
+    existingIdentityForProviderSubject.principal_id === identityPrincipalId;
+
+  const identityLinkedToDifferentPrincipal =
+    existingIdentityForProviderSubject !== null &&
+    existingIdentityForProviderSubject.principal_id !== identityPrincipalId;
+
   useEffect(() => {
     if (context.loading || context.error || !isAdmin) {
       return;
@@ -194,11 +249,27 @@ export default function UsersPage() {
     };
   }, [context.error, context.loading, isAdmin, loadUsersData]);
 
+  useEffect(() => {
+    if (users.length === 0) {
+      if (identityPrincipalId !== "") {
+        setIdentityPrincipalId("");
+      }
+      return;
+    }
+
+    const selectedPrincipalExists = users.some((user) => user.id === identityPrincipalId);
+    if (!selectedPrincipalExists) {
+      setIdentityPrincipalId(users[0].id);
+    }
+  }, [identityPrincipalId, users]);
+
   const handleCreateUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitting(true);
     setSubmitError(null);
     setSubmitSuccess(null);
+    setIdentitySubmitError(null);
+    setIdentitySubmitSuccess(null);
     setActionError(null);
     setActionSuccess(null);
     setIdentityActionError(null);
@@ -225,6 +296,66 @@ export default function UsersPage() {
     }
   };
 
+  const handleCreateAndLinkIdentity = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setIdentitySubmitError(null);
+    setIdentitySubmitSuccess(null);
+    setSubmitError(null);
+    setSubmitSuccess(null);
+    setActionError(null);
+    setActionSuccess(null);
+    setIdentityActionError(null);
+    setIdentityActionSuccess(null);
+
+    if (!identityPrincipalId.trim()) {
+      setIdentitySubmitError("Select a principal to link this identity.");
+      return;
+    }
+    if (!normalizedIdentityProvider) {
+      setIdentitySubmitError("Provider is required.");
+      return;
+    }
+    if (!normalizedIdentityProviderSubject) {
+      setIdentitySubmitError("Provider subject is required.");
+      return;
+    }
+    if (identityAlreadyLinkedToSelectedPrincipal) {
+      setIdentitySubmitError("This identity is already linked to the selected principal.");
+      return;
+    }
+    if (identityLinkedToDifferentPrincipal) {
+      setIdentitySubmitError(
+        `This identity is already linked to principal "${existingIdentityForProviderSubject?.principal_id}".`,
+      );
+      return;
+    }
+
+    setIdentitySubmitting(true);
+    try {
+      await createPrincipalIdentity(context.token, context.businessId, {
+        provider: normalizedIdentityProvider,
+        provider_subject: normalizedIdentityProviderSubject,
+        principal_id: identityPrincipalId.trim(),
+        email: identityEmail.trim() || undefined,
+        email_verified: identityEmailVerified,
+        is_active: identityIsActive,
+      });
+      const refreshed = await loadUsersData();
+      setUsers(refreshed.users);
+      setIdentities(refreshed.identities);
+      setIdentityWarning(refreshed.identityWarning);
+      setIdentityProviderSubject("");
+      setIdentityEmail("");
+      setIdentityEmailVerified(false);
+      setIdentityIsActive(true);
+      setIdentitySubmitSuccess(`Identity linked to principal "${identityPrincipalId.trim()}".`);
+    } catch (err) {
+      setIdentitySubmitError(safeCreateIdentityErrorMessage(err));
+    } finally {
+      setIdentitySubmitting(false);
+    }
+  };
+
   const handleToggleUserActive = async (user: Principal) => {
     const activating = !user.is_active;
     const actionLabel = activating ? "reactivate" : "deactivate";
@@ -242,6 +373,8 @@ export default function UsersPage() {
     setIdentityActionSuccess(null);
     setSubmitError(null);
     setSubmitSuccess(null);
+    setIdentitySubmitError(null);
+    setIdentitySubmitSuccess(null);
     try {
       if (activating) {
         await activatePrincipal(context.token, context.businessId, user.id);
@@ -280,6 +413,8 @@ export default function UsersPage() {
     setActionSuccess(null);
     setSubmitError(null);
     setSubmitSuccess(null);
+    setIdentitySubmitError(null);
+    setIdentitySubmitSuccess(null);
     try {
       if (activating) {
         await activatePrincipalIdentity(context.token, context.businessId, identity.id);
@@ -360,8 +495,107 @@ export default function UsersPage() {
         </button>
       </form>
 
+      <form onSubmit={(event) => void handleCreateAndLinkIdentity(event)} className="stack">
+        <h2>Create and Link Identity</h2>
+        <p className="hint muted">
+          Each sign-in identity maps to exactly one principal in this business.
+        </p>
+
+        <label htmlFor="identity-principal">Principal</label>
+        <select
+          id="identity-principal"
+          value={identityPrincipalId}
+          onChange={(event) => setIdentityPrincipalId(event.target.value)}
+          required
+          disabled={users.length === 0 || identitySubmitting}
+        >
+          {users.length === 0 ? <option value="">No principals available</option> : null}
+          {users.map((user) => (
+            <option key={user.id} value={user.id}>
+              {user.id} ({user.role})
+            </option>
+          ))}
+        </select>
+
+        <label htmlFor="identity-provider">Provider</label>
+        <input
+          id="identity-provider"
+          value={identityProvider}
+          onChange={(event) => setIdentityProvider(event.target.value)}
+          placeholder="google"
+          required
+          disabled={identitySubmitting}
+        />
+
+        <label htmlFor="identity-provider-subject">Provider Subject</label>
+        <input
+          id="identity-provider-subject"
+          value={identityProviderSubject}
+          onChange={(event) => setIdentityProviderSubject(event.target.value)}
+          placeholder="provider subject"
+          required
+          disabled={identitySubmitting}
+        />
+
+        <label htmlFor="identity-email">Email (optional)</label>
+        <input
+          id="identity-email"
+          value={identityEmail}
+          onChange={(event) => setIdentityEmail(event.target.value)}
+          placeholder="user@example.com"
+          disabled={identitySubmitting}
+        />
+
+        <label htmlFor="identity-email-verified" style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+          <input
+            id="identity-email-verified"
+            type="checkbox"
+            checked={identityEmailVerified}
+            onChange={(event) => setIdentityEmailVerified(event.target.checked)}
+            disabled={identitySubmitting}
+          />
+          Email verified
+        </label>
+
+        <label htmlFor="identity-is-active" style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+          <input
+            id="identity-is-active"
+            type="checkbox"
+            checked={identityIsActive}
+            onChange={(event) => setIdentityIsActive(event.target.checked)}
+            disabled={identitySubmitting}
+          />
+          Identity active
+        </label>
+
+        {identityAlreadyLinkedToSelectedPrincipal ? (
+          <p className="hint warning">This identity is already linked to the selected principal.</p>
+        ) : null}
+        {identityLinkedToDifferentPrincipal ? (
+          <p className="hint warning">
+            This identity is already linked to principal{" "}
+            <code>{existingIdentityForProviderSubject?.principal_id}</code>.
+          </p>
+        ) : null}
+
+        <button
+          className="primary"
+          type="submit"
+          disabled={
+            identitySubmitting ||
+            users.length === 0 ||
+            identityAlreadyLinkedToSelectedPrincipal ||
+            identityLinkedToDifferentPrincipal
+          }
+        >
+          {identitySubmitting ? "Creating and Linking..." : "Create and Link Identity"}
+        </button>
+      </form>
+
       {submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
       {submitError ? <p className="hint error">{submitError}</p> : null}
+      {identitySubmitSuccess ? <p className="hint">{identitySubmitSuccess}</p> : null}
+      {identitySubmitError ? <p className="hint error">{identitySubmitError}</p> : null}
       {actionSuccess ? <p className="hint">Principal action: {actionSuccess}</p> : null}
       {actionError ? <p className="hint error">Principal action: {actionError}</p> : null}
       {identityActionSuccess ? <p className="hint">Identity action: {identityActionSuccess}</p> : null}
