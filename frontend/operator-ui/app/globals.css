@@ -29,6 +29,15 @@ main {
   padding: 1rem;
 }
 
+.page-container {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -36,9 +45,40 @@ main {
   padding: 1rem;
 }
 
+.section-card {
+  width: 100%;
+  min-width: 0;
+}
+
 .stack {
   display: grid;
   gap: 0.75rem;
+}
+
+.form-container {
+  width: 100%;
+  max-width: 48rem;
+  min-width: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.form-container > * {
+  min-width: 0;
+}
+
+.form-container input,
+.form-container select,
+.form-container textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 button {
@@ -72,6 +112,16 @@ code {
 .table {
   width: 100%;
   border-collapse: collapse;
+}
+
+.table-container {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.table-container > .table {
+  min-width: 56rem;
 }
 
 .table th,

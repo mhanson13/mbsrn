@@ -4,6 +4,9 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "../../components/AuthProvider";
+import { FormContainer } from "../../components/layout/FormContainer";
+import { PageContainer } from "../../components/layout/PageContainer";
+import { SectionCard } from "../../components/layout/SectionCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   activateSite,
@@ -360,125 +363,142 @@ export default function SitesPage() {
   };
 
   if (context.loading) {
-    return <section className="panel">Loading sites...</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div">Loading sites...</SectionCard>
+      </PageContainer>
+    );
   }
   if (context.error) {
-    return <section className="panel">Error: {context.error}</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div">Error: {context.error}</SectionCard>
+      </PageContainer>
+    );
   }
 
   return (
-    <section className="panel stack">
-      <h1>SEO Sites</h1>
-      <p>
-        Business: <code>{context.businessId}</code>
-      </p>
+    <PageContainer>
+      <SectionCard>
+        <h1>SEO Sites</h1>
+        <p>
+          Business: <code>{context.businessId}</code>
+        </p>
 
-      <form onSubmit={(event) => void handleCreateSite(event)} className="stack">
-        <h2>Add Site</h2>
-        <label htmlFor="base-url">Base URL</label>
-        <input
-          id="base-url"
-          value={baseUrl}
-          onChange={(event) => setBaseUrl(event.target.value)}
-          placeholder="https://example.com"
-          required
-        />
-        <label htmlFor="display-name">Display Name (optional)</label>
-        <input
-          id="display-name"
-          value={displayName}
-          onChange={(event) => setDisplayName(event.target.value)}
-          placeholder="Example Site"
-        />
-        <button className="primary" type="submit" disabled={submitLoading}>
-          {submitLoading ? "Adding site..." : "Add Site"}
-        </button>
-      </form>
+        <FormContainer onSubmit={(event) => void handleCreateSite(event)}>
+          <h2>Add Site</h2>
+          <label htmlFor="base-url">Base URL</label>
+          <input
+            id="base-url"
+            value={baseUrl}
+            onChange={(event) => setBaseUrl(event.target.value)}
+            placeholder="https://example.com"
+            required
+          />
+          <label htmlFor="display-name">Display Name (optional)</label>
+          <input
+            id="display-name"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            placeholder="Example Site"
+          />
+          <div className="form-actions">
+            <button className="primary" type="submit" disabled={submitLoading}>
+              {submitLoading ? "Adding site..." : "Add Site"}
+            </button>
+          </div>
+        </FormContainer>
 
-      {submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
-      {submitError ? <p className="hint error">{submitError}</p> : null}
-      {triggerMessage ? <p className="hint">{triggerMessage}</p> : null}
-      {triggerError ? <p className="hint error">{triggerError}</p> : null}
-      {siteActionSuccess ? <p className="hint">{siteActionSuccess}</p> : null}
-      {siteActionError ? <p className="hint error">{siteActionError}</p> : null}
+        {submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
+        {submitError ? <p className="hint error">{submitError}</p> : null}
+        {triggerMessage ? <p className="hint">{triggerMessage}</p> : null}
+        {triggerError ? <p className="hint error">{triggerError}</p> : null}
+        {siteActionSuccess ? <p className="hint">{siteActionSuccess}</p> : null}
+        {siteActionError ? <p className="hint error">{siteActionError}</p> : null}
+      </SectionCard>
 
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Display Name</th>
-            <th>Base URL</th>
-            <th>Domain</th>
-            <th>Status</th>
-            <th>Last Audit</th>
-            <th>Primary</th>
-            <th>Active</th>
-            <th>Workspace</th>
-            <th>Action</th>
-            {isAdmin ? <th>Admin Action</th> : null}
-          </tr>
-        </thead>
-        <tbody>
-          {context.sites.map((site) => (
-            <tr key={site.id}>
-              <td>{site.display_name}</td>
-              <td>{site.base_url}</td>
-              <td>{site.normalized_domain}</td>
-              <td>
-                <span className={statuses[site.id]?.badgeClass || "badge badge-muted"}>
-                  {statuses[site.id]?.label || "unknown"}
-                </span>
-              </td>
-              <td>{site.last_audit_completed_at || "none"}</td>
-              <td>{site.is_primary ? "yes" : "no"}</td>
-              <td>{site.is_active ? "yes" : "no"}</td>
-              <td>
-                <Link href={`/sites/${site.id}`}>Open Workspace</Link>
-              </td>
-              <td>
-                <button
-                  type="button"
-                  disabled={!!triggeringSiteId || !site.is_active}
-                  onClick={() => {
-                    void handleTriggerAudit(site);
-                  }}
-                >
-                  {triggeringSiteId === site.id
-                    ? "Running..."
-                    : site.last_audit_run_id
-                      ? "Run Audit Again"
-                      : "Run First Audit"}
-                </button>
-              </td>
-              {isAdmin ? (
-                <td>
-                  <button
-                    type="button"
-                    disabled={!!siteActionSiteId}
-                    onClick={() => {
-                      void handleToggleSiteActive(site);
-                    }}
-                  >
-                    {siteActionSiteId === site.id
-                      ? site.is_active
-                        ? "Deactivating..."
-                        : "Reactivating..."
-                      : site.is_active
-                        ? "Deactivate Site"
-                        : "Reactivate Site"}
-                  </button>
-                </td>
+      <SectionCard>
+        <h2>Configured Sites</h2>
+        <div className="table-container">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Display Name</th>
+                <th>Base URL</th>
+                <th>Domain</th>
+                <th>Status</th>
+                <th>Last Audit</th>
+                <th>Primary</th>
+                <th>Active</th>
+                <th>Workspace</th>
+                <th>Action</th>
+                {isAdmin ? <th>Admin Action</th> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {context.sites.map((site) => (
+                <tr key={site.id}>
+                  <td>{site.display_name}</td>
+                  <td>{site.base_url}</td>
+                  <td>{site.normalized_domain}</td>
+                  <td>
+                    <span className={statuses[site.id]?.badgeClass || "badge badge-muted"}>
+                      {statuses[site.id]?.label || "unknown"}
+                    </span>
+                  </td>
+                  <td>{site.last_audit_completed_at || "none"}</td>
+                  <td>{site.is_primary ? "yes" : "no"}</td>
+                  <td>{site.is_active ? "yes" : "no"}</td>
+                  <td>
+                    <Link href={`/sites/${site.id}`}>Open Workspace</Link>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      disabled={!!triggeringSiteId || !site.is_active}
+                      onClick={() => {
+                        void handleTriggerAudit(site);
+                      }}
+                    >
+                      {triggeringSiteId === site.id
+                        ? "Running..."
+                        : site.last_audit_run_id
+                          ? "Run Audit Again"
+                          : "Run First Audit"}
+                    </button>
+                  </td>
+                  {isAdmin ? (
+                    <td>
+                      <button
+                        type="button"
+                        disabled={!!siteActionSiteId}
+                        onClick={() => {
+                          void handleToggleSiteActive(site);
+                        }}
+                      >
+                        {siteActionSiteId === site.id
+                          ? site.is_active
+                            ? "Deactivating..."
+                            : "Reactivating..."
+                          : site.is_active
+                            ? "Deactivate Site"
+                            : "Reactivate Site"}
+                      </button>
+                    </td>
+                  ) : null}
+                </tr>
+              ))}
+              {context.sites.length === 0 ? (
+                <tr>
+                  <td colSpan={isAdmin ? 10 : 9}>No sites configured for this business.</td>
+                </tr>
               ) : null}
-            </tr>
-          ))}
-          {context.sites.length === 0 ? (
-            <tr>
-              <td colSpan={isAdmin ? 10 : 9}>No sites configured for this business.</td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
 
-      <div className="panel stack">
+      <SectionCard>
         <h2>Site Intelligence</h2>
 
         <label htmlFor="site-picker-intelligence">Selected Site</label>
@@ -532,78 +552,84 @@ export default function SitesPage() {
                   {topFindings.length === 0 ? (
                     <p className="hint muted">No findings were recorded for the latest audit.</p>
                   ) : (
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>Severity</th>
-                          <th>Category</th>
-                          <th>Issue</th>
-                          <th>Suggested Fix</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {topFindings.map((item) => (
-                          <tr key={item.id}>
-                            <td>{item.severity}</td>
-                            <td>{item.category}</td>
-                            <td>{item.title}</td>
-                            <td>{item.suggested_fix || "-"}</td>
+                    <div className="table-container">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>Severity</th>
+                            <th>Category</th>
+                            <th>Issue</th>
+                            <th>Suggested Fix</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {topFindings.map((item) => (
+                            <tr key={item.id}>
+                              <td>{item.severity}</td>
+                              <td>{item.category}</td>
+                              <td>{item.title}</td>
+                              <td>{item.suggested_fix || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
 
                 <div className="stack">
                   <h3>Recommendations</h3>
                   {recommendations.length > 0 ? (
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>Priority</th>
-                          <th>Severity</th>
-                          <th>Recommendation</th>
-                          <th>Rationale</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {recommendations.map((item) => (
-                          <tr key={item.id}>
-                            <td>
-                              {item.priority_score} ({item.priority_band})
-                            </td>
-                            <td>{item.severity}</td>
-                            <td>{item.title}</td>
-                            <td>{item.rationale}</td>
+                    <div className="table-container">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>Priority</th>
+                            <th>Severity</th>
+                            <th>Recommendation</th>
+                            <th>Rationale</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {recommendations.map((item) => (
+                            <tr key={item.id}>
+                              <td>
+                                {item.priority_score} ({item.priority_band})
+                              </td>
+                              <td>{item.severity}</td>
+                              <td>{item.title}</td>
+                              <td>{item.rationale}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   ) : derivedRecommendations.length > 0 ? (
                     <>
                       <p className="hint muted">
                         No persisted recommendation items exist yet. Showing direct next steps derived from latest
                         findings.
                       </p>
-                      <table className="table">
-                        <thead>
-                          <tr>
-                            <th>Severity</th>
-                            <th>Recommendation</th>
-                            <th>Source Mapping</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {derivedRecommendations.map((item) => (
-                            <tr key={item.id}>
-                              <td>{item.severity}</td>
-                              <td>{item.title}</td>
-                              <td>{item.action}</td>
+                      <div className="table-container">
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>Severity</th>
+                              <th>Recommendation</th>
+                              <th>Source Mapping</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {derivedRecommendations.map((item) => (
+                              <tr key={item.id}>
+                                <td>{item.severity}</td>
+                                <td>{item.title}</td>
+                                <td>{item.action}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </>
                   ) : (
                     <p className="hint muted">No recommendations or actionable findings are available yet.</p>
@@ -637,7 +663,7 @@ export default function SitesPage() {
             )}
           </>
         ) : null}
-      </div>
-    </section>
+      </SectionCard>
+    </PageContainer>
   );
 }
