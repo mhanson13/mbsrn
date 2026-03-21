@@ -24,6 +24,7 @@ import type {
   RecommendationRun,
   RecommendationRunReport,
   RecommendationNarrative,
+  RecommendationNarrativeListResponse,
   CompetitorSnapshotRun,
   CompetitorSnapshotRunListResponse,
   Recommendation,
@@ -415,6 +416,30 @@ export async function fetchLatestRecommendationRunNarrative(
 ): Promise<RecommendationNarrative> {
   return apiRequest<RecommendationNarrative>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/recommendation-runs/${recommendationRunId}/narratives/latest`,
+    { token },
+  );
+}
+
+export async function fetchRecommendationRunNarratives(
+  token: string,
+  businessId: string,
+  siteId: string,
+  recommendationRunId: string,
+): Promise<RecommendationNarrativeListResponse> {
+  return apiRequest<RecommendationNarrativeListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/recommendation-runs/${recommendationRunId}/narratives`,
+    { token },
+  );
+}
+
+export async function fetchRecommendationNarrative(
+  token: string,
+  businessId: string,
+  siteId: string,
+  narrativeId: string,
+): Promise<RecommendationNarrative> {
+  return apiRequest<RecommendationNarrative>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/recommendation-narratives/${narrativeId}`,
     { token },
   );
 }

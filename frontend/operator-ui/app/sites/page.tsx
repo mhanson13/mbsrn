@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "../../components/AuthProvider";
@@ -411,6 +412,7 @@ export default function SitesPage() {
             <th>Last Audit</th>
             <th>Primary</th>
             <th>Active</th>
+            <th>Workspace</th>
             <th>Action</th>
             {isAdmin ? <th>Admin Action</th> : null}
           </tr>
@@ -429,6 +431,9 @@ export default function SitesPage() {
               <td>{site.last_audit_completed_at || "none"}</td>
               <td>{site.is_primary ? "yes" : "no"}</td>
               <td>{site.is_active ? "yes" : "no"}</td>
+              <td>
+                <Link href={`/sites/${site.id}`}>Open Workspace</Link>
+              </td>
               <td>
                 <button
                   type="button"
@@ -467,7 +472,7 @@ export default function SitesPage() {
           ))}
           {context.sites.length === 0 ? (
             <tr>
-              <td colSpan={isAdmin ? 9 : 8}>No sites configured for this business.</td>
+              <td colSpan={isAdmin ? 10 : 9}>No sites configured for this business.</td>
             </tr>
           ) : null}
         </tbody>

@@ -103,6 +103,37 @@ function buildRecommendationDetailHref(item: Recommendation): string {
   return `/recommendations/${item.id}?${params.toString()}`;
 }
 
+function buildNarrativeHistoryHref(
+  recommendationRunId: string,
+  siteId: string,
+  queueContextParams: URLSearchParams,
+): string {
+  const params = new URLSearchParams(queueContextParams);
+  if (siteId) {
+    params.set("site_id", siteId);
+  }
+  const query = params.toString();
+  return query
+    ? `/recommendations/runs/${recommendationRunId}/narratives?${query}`
+    : `/recommendations/runs/${recommendationRunId}/narratives`;
+}
+
+function buildNarrativeDetailHref(
+  recommendationRunId: string,
+  narrativeId: string,
+  siteId: string,
+  queueContextParams: URLSearchParams,
+): string {
+  const params = new URLSearchParams(queueContextParams);
+  if (siteId) {
+    params.set("site_id", siteId);
+  }
+  const query = params.toString();
+  return query
+    ? `/recommendations/runs/${recommendationRunId}/narratives/${narrativeId}?${query}`
+    : `/recommendations/runs/${recommendationRunId}/narratives/${narrativeId}`;
+}
+
 function parseQueueContextSearchParams(searchParams: URLSearchParams): URLSearchParams {
   const nextParams = new URLSearchParams();
   const status = (searchParams.get("status") || "").trim().toLowerCase();
@@ -191,6 +222,34 @@ export default function RecommendationRunDetailPage() {
     const match = context.sites.find((site) => site.id === run.site_id);
     return match?.display_name || null;
   }, [context.sites, run]);
+
+  const recommendationRunNarrativeHistoryHref = useMemo(() => {
+    if (!recommendationRunId) {
+      return "/recommendations";
+    }
+    const siteId = run?.site_id || resolvedSiteId || requestedSiteId;
+    return buildNarrativeHistoryHref(recommendationRunId, siteId || "", queueContextParams);
+  }, [queueContextParams, recommendationRunId, requestedSiteId, resolvedSiteId, run?.site_id]);
+
+  const latestNarrativeDetailHref = useMemo(() => {
+    if (!latestNarrative || !recommendationRunId) {
+      return null;
+    }
+    const siteId = run?.site_id || resolvedSiteId || requestedSiteId;
+    return buildNarrativeDetailHref(
+      recommendationRunId,
+      latestNarrative.id,
+      siteId || "",
+      queueContextParams,
+    );
+  }, [
+    latestNarrative,
+    queueContextParams,
+    recommendationRunId,
+    requestedSiteId,
+    resolvedSiteId,
+    run?.site_id,
+  ]);
 
   const recommendations = useMemo(() => {
     const items = report?.recommendations.items || [];
@@ -491,6 +550,7 @@ export default function RecommendationRunDetailPage() {
             )}
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
               <Link href={backToRecommendationsHref}>Recommendation Queue</Link>
+              <Link href={recommendationRunNarrativeHistoryHref}>Narrative History</Link>
               <Link href="/audits">Audit Runs</Link>
               <Link href={`/competitors?site_id=${encodeURIComponent(run.site_id)}`}>Competitor Sets</Link>
               {run.audit_run_id ? <Link href={`/audits/${run.audit_run_id}`}>Linked Audit Run</Link> : null}
@@ -633,6 +693,9 @@ export default function RecommendationRunDetailPage() {
 
           <div className="panel stack">
             <h2>Latest Narrative</h2>
+            <p>
+              <Link href={recommendationRunNarrativeHistoryHref}>View Narrative History</Link>
+            </p>
             {!latestNarrative ? (
               <p className="hint muted">No generated narrative is currently available for this recommendation run.</p>
             ) : (
@@ -659,6 +722,11 @@ export default function RecommendationRunDetailPage() {
                 <p>
                   Sections Exposed: {latestNarrative.sections_json ? Object.keys(latestNarrative.sections_json).length : 0}
                 </p>
+                {latestNarrativeDetailHref ? (
+                  <p>
+                    <Link href={latestNarrativeDetailHref}>Open Narrative Detail</Link>
+                  </p>
+                ) : null}
                 <div className="panel stack" style={{ padding: "0.75rem" }}>
                   <h3>Narrative Text</h3>
                   <p style={{ whiteSpace: "pre-wrap" }}>{latestNarrative.narrative_text || "No narrative text returned."}</p>
