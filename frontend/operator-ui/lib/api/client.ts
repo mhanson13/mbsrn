@@ -21,6 +21,13 @@ import type {
   CompetitorSnapshotPageListResponse,
   CompetitorSet,
   CompetitorSetListResponse,
+  CompetitorProfileDraft,
+  CompetitorProfileDraftAcceptRequest,
+  CompetitorProfileDraftEditRequest,
+  CompetitorProfileDraftRejectRequest,
+  CompetitorProfileGenerationRunCreateRequest,
+  CompetitorProfileGenerationRunDetailResponse,
+  CompetitorProfileGenerationRunListResponse,
   RecommendationRunListResponse,
   RecommendationRun,
   RecommendationRunReport,
@@ -318,6 +325,99 @@ export async function fetchCompetitorDomains(
   return apiRequest<CompetitorDomainListResponse>(
     `/api/businesses/${businessId}/seo/competitor-sets/${competitorSetId}/domains`,
     { token },
+  );
+}
+
+export async function fetchCompetitorProfileGenerationRuns(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<CompetitorProfileGenerationRunListResponse> {
+  return apiRequest<CompetitorProfileGenerationRunListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-profile-generation-runs`,
+    { token },
+  );
+}
+
+export async function fetchCompetitorProfileGenerationRunDetail(
+  token: string,
+  businessId: string,
+  siteId: string,
+  generationRunId: string,
+): Promise<CompetitorProfileGenerationRunDetailResponse> {
+  return apiRequest<CompetitorProfileGenerationRunDetailResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-profile-generation-runs/${generationRunId}`,
+    { token },
+  );
+}
+
+export async function createCompetitorProfileGenerationRun(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: CompetitorProfileGenerationRunCreateRequest = {},
+): Promise<CompetitorProfileGenerationRunDetailResponse> {
+  return apiRequest<CompetitorProfileGenerationRunDetailResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-profile-generation-runs`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function editCompetitorProfileDraft(
+  token: string,
+  businessId: string,
+  siteId: string,
+  generationRunId: string,
+  draftId: string,
+  payload: CompetitorProfileDraftEditRequest,
+): Promise<CompetitorProfileDraft> {
+  return apiRequest<CompetitorProfileDraft>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-profile-generation-runs/${generationRunId}/drafts/${draftId}`,
+    {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function rejectCompetitorProfileDraft(
+  token: string,
+  businessId: string,
+  siteId: string,
+  generationRunId: string,
+  draftId: string,
+  payload: CompetitorProfileDraftRejectRequest = {},
+): Promise<CompetitorProfileDraft> {
+  return apiRequest<CompetitorProfileDraft>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-profile-generation-runs/${generationRunId}/drafts/${draftId}/reject`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function acceptCompetitorProfileDraft(
+  token: string,
+  businessId: string,
+  siteId: string,
+  generationRunId: string,
+  draftId: string,
+  payload: CompetitorProfileDraftAcceptRequest = {},
+): Promise<CompetitorProfileDraft> {
+  return apiRequest<CompetitorProfileDraft>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-profile-generation-runs/${generationRunId}/drafts/${draftId}/accept`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
   );
 }
 

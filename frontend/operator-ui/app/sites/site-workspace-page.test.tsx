@@ -4,6 +4,9 @@ import userEvent from "@testing-library/user-event";
 import SiteWorkspacePage from "./[site_id]/page";
 import type {
   CompetitorComparisonRun,
+  CompetitorProfileDraft,
+  CompetitorProfileGenerationRunDetailResponse,
+  CompetitorProfileGenerationRunListResponse,
   CompetitorDomainListResponse,
   CompetitorSetListResponse,
   CompetitorSnapshotRunListResponse,
@@ -42,6 +45,21 @@ const mockFetchSiteCompetitorComparisonRuns = jest.fn<
 const mockFetchRecommendations = jest.fn<Promise<RecommendationListResponse>, unknown[]>();
 const mockFetchRecommendationRuns = jest.fn<Promise<RecommendationRunListResponse>, unknown[]>();
 const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<RecommendationNarrative>, unknown[]>();
+const mockFetchCompetitorProfileGenerationRuns = jest.fn<
+  Promise<CompetitorProfileGenerationRunListResponse>,
+  unknown[]
+>();
+const mockFetchCompetitorProfileGenerationRunDetail = jest.fn<
+  Promise<CompetitorProfileGenerationRunDetailResponse>,
+  unknown[]
+>();
+const mockCreateCompetitorProfileGenerationRun = jest.fn<
+  Promise<CompetitorProfileGenerationRunDetailResponse>,
+  unknown[]
+>();
+const mockAcceptCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>, unknown[]>();
+const mockRejectCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>, unknown[]>();
+const mockEditCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>, unknown[]>();
 
 jest.mock("next/navigation", () => ({
   useParams: () => navigationState.params,
@@ -64,6 +82,15 @@ jest.mock("../../lib/api/client", () => {
     fetchRecommendationRuns: (...args: unknown[]) => mockFetchRecommendationRuns(...args),
     fetchLatestRecommendationRunNarrative: (...args: unknown[]) =>
       mockFetchLatestRecommendationRunNarrative(...args),
+    fetchCompetitorProfileGenerationRuns: (...args: unknown[]) =>
+      mockFetchCompetitorProfileGenerationRuns(...args),
+    fetchCompetitorProfileGenerationRunDetail: (...args: unknown[]) =>
+      mockFetchCompetitorProfileGenerationRunDetail(...args),
+    createCompetitorProfileGenerationRun: (...args: unknown[]) =>
+      mockCreateCompetitorProfileGenerationRun(...args),
+    acceptCompetitorProfileDraft: (...args: unknown[]) => mockAcceptCompetitorProfileDraft(...args),
+    rejectCompetitorProfileDraft: (...args: unknown[]) => mockRejectCompetitorProfileDraft(...args),
+    editCompetitorProfileDraft: (...args: unknown[]) => mockEditCompetitorProfileDraft(...args),
   };
 });
 
@@ -95,6 +122,15 @@ function baseContext(overrides: Partial<OperatorContextMockValue> = {}): Operato
     refreshSites: jest.fn(),
     ...overrides,
   };
+}
+
+function seedCompetitorProfileGenerationDefaults(): void {
+  mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({ items: [], total: 0 });
+  mockFetchCompetitorProfileGenerationRunDetail.mockReset();
+  mockCreateCompetitorProfileGenerationRun.mockReset();
+  mockAcceptCompetitorProfileDraft.mockReset();
+  mockRejectCompetitorProfileDraft.mockReset();
+  mockEditCompetitorProfileDraft.mockReset();
 }
 
 function seedRichWorkspaceData(): void {
@@ -918,11 +954,125 @@ function seedGroupedTimelineWorkspaceData(): void {
   mockFetchLatestRecommendationRunNarrative.mockReset();
 }
 
+function seedCompetitorProfileGenerationWorkspaceData(): void {
+  seedRichWorkspaceData();
+
+  const run = {
+    id: "gen-run-1",
+    business_id: "biz-1",
+    site_id: "site-1",
+    status: "completed" as const,
+    requested_candidate_count: 5,
+    generated_draft_count: 2,
+    provider_name: "mock",
+    model_name: "mock-seo-competitor-profile-v1",
+    prompt_version: "seo-competitor-profile-v1",
+    error_summary: null,
+    completed_at: "2026-03-21T01:00:00Z",
+    created_by_principal_id: "principal-1",
+    created_at: "2026-03-21T00:59:00Z",
+    updated_at: "2026-03-21T01:00:00Z",
+  };
+
+  const draftOne: CompetitorProfileDraft = {
+    id: "draft-1",
+    business_id: "biz-1",
+    site_id: "site-1",
+    generation_run_id: "gen-run-1",
+    suggested_name: "Example Alternatives",
+    suggested_domain: "example-alternatives.com",
+    competitor_type: "direct",
+    summary: "Direct overlap in service intent.",
+    why_competitor: "Competes for service keywords.",
+    evidence: "Heuristic evidence",
+    confidence_score: 0.82,
+    source: "ai_generated",
+    review_status: "pending",
+    edited_fields_json: null,
+    review_notes: null,
+    reviewed_by_principal_id: null,
+    reviewed_at: null,
+    accepted_competitor_set_id: null,
+    accepted_competitor_domain_id: null,
+    created_at: "2026-03-21T01:00:00Z",
+    updated_at: "2026-03-21T01:00:00Z",
+  };
+
+  const draftTwo: CompetitorProfileDraft = {
+    id: "draft-2",
+    business_id: "biz-1",
+    site_id: "site-1",
+    generation_run_id: "gen-run-1",
+    suggested_name: "Example Marketplace",
+    suggested_domain: "example-marketplace.com",
+    competitor_type: "marketplace",
+    summary: "Marketplace competitor for discovery-stage traffic.",
+    why_competitor: "Marketplace terms overlap",
+    evidence: "SERP pattern overlap",
+    confidence_score: 0.66,
+    source: "ai_generated",
+    review_status: "pending",
+    edited_fields_json: null,
+    review_notes: null,
+    reviewed_by_principal_id: null,
+    reviewed_at: null,
+    accepted_competitor_set_id: null,
+    accepted_competitor_domain_id: null,
+    created_at: "2026-03-21T01:00:00Z",
+    updated_at: "2026-03-21T01:00:00Z",
+  };
+
+  mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
+    items: [run],
+    total: 1,
+  });
+  mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+    run,
+    drafts: [draftOne, draftTwo],
+    total_drafts: 2,
+  });
+  mockCreateCompetitorProfileGenerationRun.mockResolvedValue({
+    run: {
+      ...run,
+      id: "gen-run-2",
+      created_at: "2026-03-21T01:15:00Z",
+      completed_at: "2026-03-21T01:16:00Z",
+      updated_at: "2026-03-21T01:16:00Z",
+    },
+    drafts: [draftOne],
+    total_drafts: 1,
+  });
+  mockAcceptCompetitorProfileDraft.mockResolvedValue({
+    ...draftOne,
+    review_status: "accepted",
+    accepted_competitor_set_id: "set-1",
+    accepted_competitor_domain_id: "domain-new-1",
+    reviewed_by_principal_id: "principal-1",
+    reviewed_at: "2026-03-21T01:20:00Z",
+  });
+  mockRejectCompetitorProfileDraft.mockResolvedValue({
+    ...draftTwo,
+    review_status: "rejected",
+    reviewed_by_principal_id: "principal-1",
+    reviewed_at: "2026-03-21T01:21:00Z",
+    review_notes: "Not relevant",
+  });
+  mockEditCompetitorProfileDraft.mockResolvedValue({
+    ...draftOne,
+    suggested_name: "Edited Competitor Name",
+    review_status: "edited",
+    edited_fields_json: { suggested_name: "Edited Competitor Name" },
+    reviewed_by_principal_id: "principal-1",
+    reviewed_at: "2026-03-21T01:22:00Z",
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   jest.spyOn(Date, "now").mockReturnValue(FIXED_NOW_MS);
   navigationState.params = { site_id: "site-1" };
   mockUseOperatorContext.mockReturnValue(baseContext());
+  seedCompetitorProfileGenerationDefaults();
 });
 
 afterEach(() => {
@@ -1182,5 +1332,113 @@ describe("site workspace timeline controls", () => {
 
     await screen.findByText("This site was not found or is not accessible in your tenant scope.");
     expect(mockFetchAuditRuns).not.toHaveBeenCalled();
+  });
+});
+
+describe("site workspace ai competitor profile drafts", () => {
+  it("renders generate control and latest draft review table", async () => {
+    seedCompetitorProfileGenerationWorkspaceData();
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Competitor Profiles" });
+    expect(screen.getByRole("button", { name: "Generate Competitor Profiles" })).toBeInTheDocument();
+    expect(await screen.findByText(/Latest Run:/i)).toBeInTheDocument();
+    expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(2);
+    expect(mockFetchCompetitorProfileGenerationRuns).toHaveBeenCalled();
+    expect(mockFetchCompetitorProfileGenerationRunDetail).toHaveBeenCalled();
+  });
+
+  it("triggers generation and refreshes visible drafts", async () => {
+    seedCompetitorProfileGenerationWorkspaceData();
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("button", { name: "Generate Competitor Profiles" });
+    await user.click(screen.getByRole("button", { name: "Generate Competitor Profiles" }));
+
+    await screen.findByText("Competitor profile drafts generated. Review and accept candidates explicitly.");
+    expect(mockCreateCompetitorProfileGenerationRun).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      { candidate_count: 5 },
+    );
+  });
+
+  it("accept/reject/edit actions update draft states", async () => {
+    seedCompetitorProfileGenerationWorkspaceData();
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    await screen.findAllByTestId("competitor-profile-draft-row");
+
+    await user.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    const nameInput = screen.getByLabelText("Suggested Name");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Edited Competitor Name");
+    await user.click(screen.getByRole("button", { name: "Save Edits" }));
+    await screen.findByText("Draft edits saved. Accept explicitly to create competitor records.");
+    expect(mockEditCompetitorProfileDraft).toHaveBeenCalled();
+
+    await user.click(screen.getAllByRole("button", { name: "Accept" })[0]);
+    await screen.findByText("Draft accepted and added to competitors.");
+    expect(mockAcceptCompetitorProfileDraft).toHaveBeenCalled();
+
+    const rejectButtons = screen.getAllByRole("button", { name: "Reject" });
+    const enabledRejectButton = rejectButtons.find((button) => !button.hasAttribute("disabled"));
+    expect(enabledRejectButton).toBeDefined();
+    await user.click(enabledRejectButton as HTMLButtonElement);
+    await screen.findByText("Draft rejected. No competitor record was created.");
+    expect(mockRejectCompetitorProfileDraft).toHaveBeenCalled();
+  });
+
+  it("renders safe failed-generation context", async () => {
+    seedRichWorkspaceData();
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
+      items: [
+        {
+          id: "gen-run-failed",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "failed",
+          requested_candidate_count: 5,
+          generated_draft_count: 0,
+          provider_name: "mock",
+          model_name: "mock-seo-competitor-profile-v1",
+          prompt_version: "seo-competitor-profile-v1",
+          error_summary: "Competitor profile generation failed",
+          completed_at: "2026-03-21T01:00:00Z",
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-21T00:59:00Z",
+          updated_at: "2026-03-21T01:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+      run: {
+        id: "gen-run-failed",
+        business_id: "biz-1",
+        site_id: "site-1",
+        status: "failed",
+        requested_candidate_count: 5,
+        generated_draft_count: 0,
+        provider_name: "mock",
+        model_name: "mock-seo-competitor-profile-v1",
+        prompt_version: "seo-competitor-profile-v1",
+        error_summary: "Competitor profile generation failed",
+        completed_at: "2026-03-21T01:00:00Z",
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:59:00Z",
+        updated_at: "2026-03-21T01:00:00Z",
+      },
+      drafts: [],
+      total_drafts: 0,
+    });
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByText("Competitor profile generation failed");
+    expect(screen.getByText("This run did not produce any reviewable drafts.")).toBeInTheDocument();
   });
 });

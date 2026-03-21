@@ -7,6 +7,7 @@ from app.api.deps import (
     get_seo_audit_service,
     get_seo_automation_service,
     get_seo_competitor_comparison_service,
+    get_seo_competitor_profile_generation_service,
     get_seo_competitor_summary_service,
     get_seo_recommendation_narrative_service,
     get_seo_competitor_service,
@@ -47,6 +48,14 @@ from app.schemas.seo_competitor import (
     SEOCompetitorComparisonRunSiteCreateRequest,
     SEOCompetitorComparisonRunListResponse,
     SEOCompetitorComparisonRunRead,
+    SEOCompetitorProfileDraftAcceptRequest,
+    SEOCompetitorProfileDraftEditRequest,
+    SEOCompetitorProfileDraftRead,
+    SEOCompetitorProfileDraftRejectRequest,
+    SEOCompetitorProfileGenerationRunCreateRequest,
+    SEOCompetitorProfileGenerationRunDetailRead,
+    SEOCompetitorProfileGenerationRunListResponse,
+    SEOCompetitorProfileGenerationRunRead,
     SEOCompetitorDomainCreateRequest,
     SEOCompetitorDomainListResponse,
     SEOCompetitorDomainRead,
@@ -94,6 +103,11 @@ from app.services.seo_competitor_comparison import (
     SEOCompetitorComparisonNotFoundError,
     SEOCompetitorComparisonService,
     SEOCompetitorComparisonValidationError,
+)
+from app.services.seo_competitor_profile_generation import (
+    SEOCompetitorProfileGenerationNotFoundError,
+    SEOCompetitorProfileGenerationService,
+    SEOCompetitorProfileGenerationValidationError,
 )
 from app.services.seo_competitor_summary import (
     SEOCompetitorSummaryNotFoundError,
@@ -1314,6 +1328,274 @@ def list_competitor_sets(
         items=[SEOCompetitorSetRead.model_validate(item) for item in items],
         total=len(items),
     )
+
+
+def _to_competitor_profile_generation_run_detail_response(
+    *,
+    run,
+    drafts,
+) -> SEOCompetitorProfileGenerationRunDetailRead:
+    serialized_drafts = [SEOCompetitorProfileDraftRead.model_validate(item) for item in drafts]
+    return SEOCompetitorProfileGenerationRunDetailRead(
+        run=SEOCompetitorProfileGenerationRunRead.model_validate(run),
+        drafts=serialized_drafts,
+        total_drafts=len(serialized_drafts),
+    )
+
+
+@router.post(
+    "/sites/{site_id}/competitor-profile-generation-runs",
+    response_model=SEOCompetitorProfileGenerationRunDetailRead,
+    status_code=status.HTTP_201_CREATED,
+)
+@router_v1.post(
+    "/sites/{site_id}/competitor-profile-generation-runs",
+    response_model=SEOCompetitorProfileGenerationRunDetailRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_competitor_profile_generation_run(
+    business_id: str,
+    site_id: str,
+    payload: SEOCompetitorProfileGenerationRunCreateRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(
+        get_seo_competitor_profile_generation_service
+    ),
+) -> SEOCompetitorProfileGenerationRunDetailRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        result = generation_service.create_run(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            payload=payload,
+            created_by_principal_id=tenant_context.principal_id,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEOCompetitorProfileGenerationNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOCompetitorProfileGenerationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return _to_competitor_profile_generation_run_detail_response(
+        run=result.run,
+        drafts=result.drafts,
+    )
+
+
+@router.get(
+    "/sites/{site_id}/competitor-profile-generation-runs",
+    response_model=SEOCompetitorProfileGenerationRunListResponse,
+)
+@router_v1.get(
+    "/sites/{site_id}/competitor-profile-generation-runs",
+    response_model=SEOCompetitorProfileGenerationRunListResponse,
+)
+def list_competitor_profile_generation_runs(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(
+        get_seo_competitor_profile_generation_service
+    ),
+) -> SEOCompetitorProfileGenerationRunListResponse:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        items = generation_service.list_runs(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEOCompetitorProfileGenerationNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOCompetitorProfileGenerationRunListResponse(
+        items=[SEOCompetitorProfileGenerationRunRead.model_validate(item) for item in items],
+        total=len(items),
+    )
+
+
+@router.get(
+    "/sites/{site_id}/competitor-profile-generation-runs/{generation_run_id}",
+    response_model=SEOCompetitorProfileGenerationRunDetailRead,
+)
+@router_v1.get(
+    "/sites/{site_id}/competitor-profile-generation-runs/{generation_run_id}",
+    response_model=SEOCompetitorProfileGenerationRunDetailRead,
+)
+def get_competitor_profile_generation_run_detail(
+    business_id: str,
+    site_id: str,
+    generation_run_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(
+        get_seo_competitor_profile_generation_service
+    ),
+) -> SEOCompetitorProfileGenerationRunDetailRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        detail = generation_service.get_run_detail(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            generation_run_id=generation_run_id,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEOCompetitorProfileGenerationNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _to_competitor_profile_generation_run_detail_response(
+        run=detail.run,
+        drafts=detail.drafts,
+    )
+
+
+@router.patch(
+    "/sites/{site_id}/competitor-profile-generation-runs/{generation_run_id}/drafts/{draft_id}",
+    response_model=SEOCompetitorProfileDraftRead,
+)
+@router_v1.patch(
+    "/sites/{site_id}/competitor-profile-generation-runs/{generation_run_id}/drafts/{draft_id}",
+    response_model=SEOCompetitorProfileDraftRead,
+)
+def edit_competitor_profile_generation_draft(
+    business_id: str,
+    site_id: str,
+    generation_run_id: str,
+    draft_id: str,
+    payload: SEOCompetitorProfileDraftEditRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(
+        get_seo_competitor_profile_generation_service
+    ),
+) -> SEOCompetitorProfileDraftRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        draft = generation_service.edit_draft(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            generation_run_id=generation_run_id,
+            draft_id=draft_id,
+            payload=payload,
+            reviewed_by_principal_id=tenant_context.principal_id,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEOCompetitorProfileGenerationNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOCompetitorProfileGenerationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOCompetitorProfileDraftRead.model_validate(draft)
+
+
+@router.post(
+    "/sites/{site_id}/competitor-profile-generation-runs/{generation_run_id}/drafts/{draft_id}/reject",
+    response_model=SEOCompetitorProfileDraftRead,
+)
+@router_v1.post(
+    "/sites/{site_id}/competitor-profile-generation-runs/{generation_run_id}/drafts/{draft_id}/reject",
+    response_model=SEOCompetitorProfileDraftRead,
+)
+def reject_competitor_profile_generation_draft(
+    business_id: str,
+    site_id: str,
+    generation_run_id: str,
+    draft_id: str,
+    payload: SEOCompetitorProfileDraftRejectRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(
+        get_seo_competitor_profile_generation_service
+    ),
+) -> SEOCompetitorProfileDraftRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        draft = generation_service.reject_draft(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            generation_run_id=generation_run_id,
+            draft_id=draft_id,
+            payload=payload,
+            reviewed_by_principal_id=tenant_context.principal_id,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEOCompetitorProfileGenerationNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOCompetitorProfileGenerationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOCompetitorProfileDraftRead.model_validate(draft)
+
+
+@router.post(
+    "/sites/{site_id}/competitor-profile-generation-runs/{generation_run_id}/drafts/{draft_id}/accept",
+    response_model=SEOCompetitorProfileDraftRead,
+)
+@router_v1.post(
+    "/sites/{site_id}/competitor-profile-generation-runs/{generation_run_id}/drafts/{draft_id}/accept",
+    response_model=SEOCompetitorProfileDraftRead,
+)
+def accept_competitor_profile_generation_draft(
+    business_id: str,
+    site_id: str,
+    generation_run_id: str,
+    draft_id: str,
+    payload: SEOCompetitorProfileDraftAcceptRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(
+        get_seo_competitor_profile_generation_service
+    ),
+) -> SEOCompetitorProfileDraftRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        result = generation_service.accept_draft(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            generation_run_id=generation_run_id,
+            draft_id=draft_id,
+            payload=payload,
+            reviewed_by_principal_id=tenant_context.principal_id,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEOCompetitorProfileGenerationNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOCompetitorProfileGenerationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOCompetitorProfileDraftRead.model_validate(result.draft)
 
 
 @router.post(

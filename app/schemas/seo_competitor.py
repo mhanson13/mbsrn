@@ -6,14 +6,18 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SEOCompetitorRunStatus = Literal["queued", "running", "completed", "failed"]
+SEOCompetitorProfileGenerationRunStatus = Literal["running", "completed", "failed"]
+SEOCompetitorProfileDraftReviewStatus = Literal["pending", "edited", "accepted", "rejected"]
 SEOSummaryStatus = Literal["completed", "failed"]
 SEOFindingCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
 SEOFindingSeverity = Literal["INFO", "WARNING", "CRITICAL"]
 SEOGapDirection = Literal["client_leads", "client_trails", "parity", "unknown"]
+SEOCompetitorProfileType = Literal["direct", "indirect", "local", "marketplace", "informational", "unknown"]
 
 _FINDING_CATEGORIES: set[str] = {"SEO", "CONTENT", "STRUCTURE", "TECHNICAL"}
 _FINDING_SEVERITIES: set[str] = {"INFO", "WARNING", "CRITICAL"}
 _GAP_DIRECTIONS: set[str] = {"client_leads", "client_trails", "parity", "unknown"}
+_COMPETITOR_PROFILE_TYPES: set[str] = {"direct", "indirect", "local", "marketplace", "informational", "unknown"}
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -173,6 +177,164 @@ class SEOCompetitorDomainRead(BaseModel):
 class SEOCompetitorDomainListResponse(BaseModel):
     items: list[SEOCompetitorDomainRead]
     total: int
+
+
+class SEOCompetitorProfileGenerationRunCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_count: int = Field(default=5, ge=1, le=20)
+
+
+class SEOCompetitorProfileGenerationRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    business_id: str
+    site_id: str
+    status: SEOCompetitorProfileGenerationRunStatus
+    requested_candidate_count: int
+    generated_draft_count: int
+    provider_name: str
+    model_name: str
+    prompt_version: str
+    error_summary: str | None
+    completed_at: datetime | None
+    created_by_principal_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SEOCompetitorProfileDraftRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    business_id: str
+    site_id: str
+    generation_run_id: str
+    suggested_name: str
+    suggested_domain: str
+    competitor_type: SEOCompetitorProfileType
+    summary: str | None
+    why_competitor: str | None
+    evidence: str | None
+    confidence_score: float
+    source: str
+    review_status: SEOCompetitorProfileDraftReviewStatus
+    edited_fields_json: dict[str, object] | None
+    review_notes: str | None
+    reviewed_by_principal_id: str | None
+    reviewed_at: datetime | None
+    accepted_competitor_set_id: str | None
+    accepted_competitor_domain_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("competitor_type", mode="before")
+    @classmethod
+    def normalize_competitor_type(cls, value: Any) -> SEOCompetitorProfileType:
+        normalized = str(value or "").strip().lower()
+        if normalized not in _COMPETITOR_PROFILE_TYPES:
+            return "unknown"
+        return normalized  # type: ignore[return-value]
+
+
+class SEOCompetitorProfileGenerationRunListResponse(BaseModel):
+    items: list[SEOCompetitorProfileGenerationRunRead]
+    total: int
+
+
+class SEOCompetitorProfileGenerationRunDetailRead(BaseModel):
+    run: SEOCompetitorProfileGenerationRunRead
+    drafts: list[SEOCompetitorProfileDraftRead]
+    total_drafts: int
+
+
+class SEOCompetitorProfileDraftEditRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    suggested_name: str | None = Field(default=None, min_length=1, max_length=255)
+    suggested_domain: str | None = Field(default=None, min_length=1, max_length=255)
+    competitor_type: SEOCompetitorProfileType | None = None
+    summary: str | None = Field(default=None, max_length=4000)
+    why_competitor: str | None = Field(default=None, max_length=4000)
+    evidence: str | None = Field(default=None, max_length=4000)
+    confidence_score: float | None = Field(default=None, ge=0, le=1)
+
+    @field_validator("suggested_name", "suggested_domain", "summary", "why_competitor", "evidence", mode="before")
+    @classmethod
+    def normalize_optional_strings(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _strip_or_none(str(value))
+
+    @field_validator("competitor_type", mode="before")
+    @classmethod
+    def normalize_optional_competitor_type(cls, value: Any) -> SEOCompetitorProfileType | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if normalized not in _COMPETITOR_PROFILE_TYPES:
+            raise ValueError("Invalid competitor_type")
+        return normalized  # type: ignore[return-value]
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self) -> "SEOCompetitorProfileDraftEditRequest":
+        if not self.model_fields_set:
+            raise ValueError("At least one draft field is required")
+        return self
+
+
+class SEOCompetitorProfileDraftRejectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _strip_or_none(str(value))
+
+
+class SEOCompetitorProfileDraftAcceptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    competitor_set_id: str | None = Field(default=None, min_length=1, max_length=36)
+    suggested_name: str | None = Field(default=None, min_length=1, max_length=255)
+    suggested_domain: str | None = Field(default=None, min_length=1, max_length=255)
+    competitor_type: SEOCompetitorProfileType | None = None
+    summary: str | None = Field(default=None, max_length=4000)
+    why_competitor: str | None = Field(default=None, max_length=4000)
+    evidence: str | None = Field(default=None, max_length=4000)
+    confidence_score: float | None = Field(default=None, ge=0, le=1)
+    review_notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator(
+        "competitor_set_id",
+        "suggested_name",
+        "suggested_domain",
+        "summary",
+        "why_competitor",
+        "evidence",
+        "review_notes",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_accept_strings(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _strip_or_none(str(value))
+
+    @field_validator("competitor_type", mode="before")
+    @classmethod
+    def normalize_accept_competitor_type(cls, value: Any) -> SEOCompetitorProfileType | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if normalized not in _COMPETITOR_PROFILE_TYPES:
+            raise ValueError("Invalid competitor_type")
+        return normalized  # type: ignore[return-value]
 
 
 class SEOCompetitorSnapshotRunCreateRequest(BaseModel):

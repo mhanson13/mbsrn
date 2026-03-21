@@ -95,6 +95,30 @@ class SEOCompetitorRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_domains_for_business_site(self, business_id: str, site_id: str) -> list[SEOCompetitorDomain]:
+        stmt: Select[tuple[SEOCompetitorDomain]] = (
+            select(SEOCompetitorDomain)
+            .where(SEOCompetitorDomain.business_id == business_id)
+            .where(SEOCompetitorDomain.site_id == site_id)
+            .order_by(SEOCompetitorDomain.created_at.asc(), SEOCompetitorDomain.id.asc())
+        )
+        return list(self.session.scalars(stmt))
+
+    def get_domain_for_business_site_domain(
+        self,
+        business_id: str,
+        site_id: str,
+        domain: str,
+    ) -> SEOCompetitorDomain | None:
+        stmt: Select[tuple[SEOCompetitorDomain]] = (
+            select(SEOCompetitorDomain)
+            .where(SEOCompetitorDomain.business_id == business_id)
+            .where(SEOCompetitorDomain.site_id == site_id)
+            .where(SEOCompetitorDomain.domain == domain)
+            .limit(1)
+        )
+        return self.session.scalar(stmt)
+
     def count_active_domains_for_set(self, business_id: str, competitor_set_id: str) -> int:
         stmt = (
             select(func.count())

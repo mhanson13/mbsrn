@@ -20,10 +20,12 @@ from app.integrations import (
     EmailProvider,
     GoogleBusinessProfileClient,
     MockSEOCompetitorComparisonSummaryProvider,
+    MockSEOCompetitorProfileGenerationProvider,
     MockSEORecommendationNarrativeProvider,
     MockSEOAuditSummaryProvider,
     MockEmailProvider,
     MockSMSProvider,
+    SEOCompetitorProfileGenerationProvider,
     SEORecommendationNarrativeProvider,
     SEOCompetitorComparisonSummaryProvider,
     SEOAuditSummaryProvider,
@@ -48,6 +50,7 @@ from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.repositories.seo_audit_summary_repository import SEOAuditSummaryRepository
 from app.repositories.seo_automation_repository import SEOAutomationRepository
 from app.repositories.seo_competitor_repository import SEOCompetitorRepository
+from app.repositories.seo_competitor_profile_generation_repository import SEOCompetitorProfileGenerationRepository
 from app.repositories.seo_competitor_summary_repository import SEOCompetitorSummaryRepository
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
@@ -74,6 +77,7 @@ from app.services.response_metrics import ResponseMetricsService
 from app.services.seo_audit import SEOAuditService
 from app.services.seo_automation import SEOAutomationService
 from app.services.seo_competitor_comparison import SEOCompetitorComparisonService
+from app.services.seo_competitor_profile_generation import SEOCompetitorProfileGenerationService
 from app.services.seo_competitors import SEOCompetitorService
 from app.services.seo_competitor_summary import SEOCompetitorSummaryService
 from app.services.seo_crawler import SEOCrawler
@@ -158,6 +162,12 @@ def get_seo_automation_repository(db: Session = Depends(get_db)) -> SEOAutomatio
 
 def get_seo_competitor_repository(db: Session = Depends(get_db)) -> SEOCompetitorRepository:
     return SEOCompetitorRepository(db)
+
+
+def get_seo_competitor_profile_generation_repository(
+    db: Session = Depends(get_db),
+) -> SEOCompetitorProfileGenerationRepository:
+    return SEOCompetitorProfileGenerationRepository(db)
 
 
 def get_seo_competitor_summary_repository(db: Session = Depends(get_db)) -> SEOCompetitorSummaryRepository:
@@ -371,6 +381,10 @@ def get_seo_competitor_summary_provider() -> SEOCompetitorComparisonSummaryProvi
     return MockSEOCompetitorComparisonSummaryProvider()
 
 
+def get_seo_competitor_profile_generation_provider() -> SEOCompetitorProfileGenerationProvider:
+    return MockSEOCompetitorProfileGenerationProvider()
+
+
 def get_seo_recommendation_narrative_provider() -> SEORecommendationNarrativeProvider:
     return MockSEORecommendationNarrativeProvider()
 
@@ -500,6 +514,26 @@ def get_seo_competitor_service(
         business_repository=business_repository,
         seo_site_repository=seo_site_repository,
         seo_competitor_repository=seo_competitor_repository,
+    )
+
+
+def get_seo_competitor_profile_generation_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
+    seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
+    seo_competitor_profile_generation_repository: SEOCompetitorProfileGenerationRepository = Depends(
+        get_seo_competitor_profile_generation_repository
+    ),
+    provider: SEOCompetitorProfileGenerationProvider = Depends(get_seo_competitor_profile_generation_provider),
+) -> SEOCompetitorProfileGenerationService:
+    return SEOCompetitorProfileGenerationService(
+        session=db,
+        business_repository=business_repository,
+        seo_site_repository=seo_site_repository,
+        seo_competitor_repository=seo_competitor_repository,
+        seo_competitor_profile_generation_repository=seo_competitor_profile_generation_repository,
+        provider=provider,
     )
 
 

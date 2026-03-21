@@ -17,6 +17,8 @@ from app.models.seo_competitor_comparison_finding import SEOCompetitorComparison
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_comparison_summary import SEOCompetitorComparisonSummary
 from app.models.seo_competitor_domain import SEOCompetitorDomain
+from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
+from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
 from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
@@ -51,6 +53,8 @@ __all__ = [
     "SEOCompetitorComparisonRun",
     "SEOCompetitorComparisonSummary",
     "SEOCompetitorDomain",
+    "SEOCompetitorProfileDraft",
+    "SEOCompetitorProfileGenerationRun",
     "SEOCompetitorSet",
     "SEOCompetitorSnapshotPage",
     "SEOCompetitorSnapshotRun",

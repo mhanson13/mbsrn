@@ -135,10 +135,12 @@ class SEOCompetitorService:
         business_id: str,
         competitor_set_id: str,
         payload: SEOCompetitorDomainCreateRequest,
+        source: str = "manual",
     ) -> SEOCompetitorDomain:
         self._require_business(business_id)
         competitor_set = self.get_set(business_id=business_id, competitor_set_id=competitor_set_id)
         normalized_target = self._normalize_domain_target(domain=payload.domain, base_url=payload.base_url)
+        normalized_source = (source or "").strip().lower() or "manual"
         competitor_domain = SEOCompetitorDomain(
             id=str(uuid4()),
             business_id=business_id,
@@ -147,7 +149,7 @@ class SEOCompetitorService:
             domain=normalized_target.domain,
             base_url=normalized_target.base_url,
             display_name=self._clean_optional(payload.display_name),
-            source="manual",
+            source=normalized_source,
             is_active=payload.is_active,
             notes=self._clean_optional(payload.notes),
         )

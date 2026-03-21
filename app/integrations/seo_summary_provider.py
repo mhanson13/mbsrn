@@ -9,6 +9,7 @@ from app.models.seo_competitor_comparison_finding import SEOCompetitorComparison
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_run import SEORecommendationRun
+from app.models.seo_site import SEOSite
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,35 @@ class SEOCompetitorComparisonSummaryProvider(Protocol):
         findings_by_category: dict[str, int],
         findings_by_severity: dict[str, int],
     ) -> SEOCompetitorComparisonSummaryOutput: ...
+
+
+@dataclass(frozen=True)
+class SEOCompetitorProfileDraftCandidateOutput:
+    suggested_name: str
+    suggested_domain: str
+    competitor_type: str
+    summary: str | None
+    why_competitor: str | None
+    evidence: str | None
+    confidence_score: float
+
+
+@dataclass(frozen=True)
+class SEOCompetitorProfileGenerationOutput:
+    candidates: list[SEOCompetitorProfileDraftCandidateOutput]
+    provider_name: str
+    model_name: str
+    prompt_version: str
+
+
+class SEOCompetitorProfileGenerationProvider(Protocol):
+    def generate_competitor_profiles(
+        self,
+        *,
+        site: SEOSite,
+        existing_domains: list[str],
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput: ...
 
 
 @dataclass(frozen=True)
@@ -158,6 +188,76 @@ class MockSEOCompetitorComparisonSummaryProvider:
             overall_gap_summary=overall,
             top_gaps=top_gaps,
             plain_english_explanation=plain_english,
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+        )
+
+
+class MockSEOCompetitorProfileGenerationProvider:
+    def __init__(
+        self,
+        *,
+        provider_name: str = "mock",
+        model_name: str = "mock-seo-competitor-profile-v1",
+        prompt_version: str = "seo-competitor-profile-v1",
+    ) -> None:
+        self.provider_name = provider_name
+        self.model_name = model_name
+        self.prompt_version = prompt_version
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site: SEOSite,
+        existing_domains: list[str],
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        existing = {item.strip().lower() for item in existing_domains if item.strip()}
+        normalized_domain = (site.normalized_domain or "").strip().lower() or "example.com"
+        root = normalized_domain.split(".")[0] or "example"
+        seed_candidates: list[SEOCompetitorProfileDraftCandidateOutput] = [
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name=f"{site.display_name} Alternatives",
+                suggested_domain=f"{root}-alternatives.com",
+                competitor_type="direct",
+                summary=f"Likely local alternative to {site.display_name} with overlapping service intent.",
+                why_competitor="Competes for high-intent searches around core service terms.",
+                evidence=f"Domain pattern and naming indicate direct overlap with {normalized_domain}.",
+                confidence_score=0.86,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name=f"{site.display_name} Regional",
+                suggested_domain=f"{root}regional.com",
+                competitor_type="local",
+                summary="Regional competitor likely targeting the same location-driven queries.",
+                why_competitor="Regional players often overlap in local-pack and service-area SERPs.",
+                evidence="Heuristic generation based on site naming + location-oriented positioning.",
+                confidence_score=0.74,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name=f"{site.display_name} Marketplace",
+                suggested_domain=f"{root}marketplace.com",
+                competitor_type="marketplace",
+                summary="Marketplace-style competitor aggregating similar services.",
+                why_competitor="Marketplace aggregators can displace direct providers in non-branded queries.",
+                evidence="Common marketplace naming pattern for this service category.",
+                confidence_score=0.62,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name=f"{site.display_name} Insights",
+                suggested_domain=f"{root}insights.com",
+                competitor_type="informational",
+                summary="Informational publisher that may compete for discovery-stage SEO traffic.",
+                why_competitor="Informational domains can capture top-of-funnel terms and reduce site visibility.",
+                evidence="Keyword and intent overlap at research-oriented query stages.",
+                confidence_score=0.55,
+            ),
+        ]
+        filtered = [candidate for candidate in seed_candidates if candidate.suggested_domain.lower() not in existing]
+        candidates = filtered[: max(1, candidate_count)]
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=candidates,
             provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,

@@ -201,6 +201,81 @@ export interface CompetitorDomainListResponse {
   total: number;
 }
 
+export interface CompetitorProfileGenerationRun {
+  id: string;
+  business_id: string;
+  site_id: string;
+  status: "running" | "completed" | "failed";
+  requested_candidate_count: number;
+  generated_draft_count: number;
+  provider_name: string;
+  model_name: string;
+  prompt_version: string;
+  error_summary: string | null;
+  completed_at: string | null;
+  created_by_principal_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompetitorProfileDraft {
+  id: string;
+  business_id: string;
+  site_id: string;
+  generation_run_id: string;
+  suggested_name: string;
+  suggested_domain: string;
+  competitor_type: "direct" | "indirect" | "local" | "marketplace" | "informational" | "unknown";
+  summary: string | null;
+  why_competitor: string | null;
+  evidence: string | null;
+  confidence_score: number;
+  source: string;
+  review_status: "pending" | "edited" | "accepted" | "rejected";
+  edited_fields_json: Record<string, unknown> | null;
+  review_notes: string | null;
+  reviewed_by_principal_id: string | null;
+  reviewed_at: string | null;
+  accepted_competitor_set_id: string | null;
+  accepted_competitor_domain_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompetitorProfileGenerationRunListResponse {
+  items: CompetitorProfileGenerationRun[];
+  total: number;
+}
+
+export interface CompetitorProfileGenerationRunDetailResponse {
+  run: CompetitorProfileGenerationRun;
+  drafts: CompetitorProfileDraft[];
+  total_drafts: number;
+}
+
+export interface CompetitorProfileGenerationRunCreateRequest {
+  candidate_count?: number;
+}
+
+export interface CompetitorProfileDraftEditRequest {
+  suggested_name?: string;
+  suggested_domain?: string;
+  competitor_type?: "direct" | "indirect" | "local" | "marketplace" | "informational" | "unknown";
+  summary?: string | null;
+  why_competitor?: string | null;
+  evidence?: string | null;
+  confidence_score?: number;
+}
+
+export interface CompetitorProfileDraftAcceptRequest extends CompetitorProfileDraftEditRequest {
+  competitor_set_id?: string;
+  review_notes?: string | null;
+}
+
+export interface CompetitorProfileDraftRejectRequest {
+  reason?: string | null;
+}
+
 export interface CompetitorSnapshotRun {
   id: string;
   business_id: string;

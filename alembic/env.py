@@ -38,6 +38,8 @@ from app.models import (
     seo_competitor_comparison_run,
     seo_competitor_comparison_summary,
     seo_competitor_domain,
+    seo_competitor_profile_draft,
+    seo_competitor_profile_generation_run,
     seo_competitor_set,
     seo_competitor_snapshot_page,
     seo_competitor_snapshot_run,

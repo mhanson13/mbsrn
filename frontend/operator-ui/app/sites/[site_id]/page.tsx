@@ -8,8 +8,13 @@ import { PageContainer } from "../../../components/layout/PageContainer";
 import { SectionCard } from "../../../components/layout/SectionCard";
 import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
+  acceptCompetitorProfileDraft,
   ApiRequestError,
+  createCompetitorProfileGenerationRun,
+  editCompetitorProfileDraft,
   fetchAuditRuns,
+  fetchCompetitorProfileGenerationRunDetail,
+  fetchCompetitorProfileGenerationRuns,
   fetchCompetitorDomains,
   fetchCompetitorSets,
   fetchCompetitorSnapshotRuns,
@@ -17,9 +22,12 @@ import {
   fetchRecommendationRuns,
   fetchRecommendations,
   fetchSiteCompetitorComparisonRuns,
+  rejectCompetitorProfileDraft,
 } from "../../../lib/api/client";
 import type {
   CompetitorComparisonRun,
+  CompetitorProfileDraft,
+  CompetitorProfileGenerationRun,
   CompetitorSet,
   CompetitorSnapshotRun,
   Recommendation,
@@ -36,6 +44,7 @@ const MAX_RECOMMENDATION_RUN_ROWS = 8;
 const NARRATIVE_LOOKUP_LIMIT = 5;
 const MAX_TIMELINE_EVENTS = 20;
 const TIMELINE_INITIAL_VISIBLE_COUNT = 10;
+const COMPETITOR_PROFILE_DRAFT_CANDIDATE_COUNT = 5;
 
 type SiteTimelineEventType =
   | "audit_run"
@@ -75,6 +84,16 @@ interface SiteTimelineDayGroup {
   key: string;
   label: string;
   events: SiteTimelineEvent[];
+}
+
+interface DraftEditFormState {
+  suggested_name: string;
+  suggested_domain: string;
+  competitor_type: string;
+  summary: string;
+  why_competitor: string;
+  evidence: string;
+  confidence_score: string;
 }
 
 function formatDateTime(value: string | null): string {
@@ -191,6 +210,35 @@ function normalizeTimelineStatus(value: string | null | undefined): string {
   return normalized || "-";
 }
 
+function truncateText(value: string | null | undefined, limit: number): string {
+  const normalized = (value || "").trim();
+  if (!normalized) {
+    return "-";
+  }
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, limit - 1)}…`;
+}
+
+function safeActionErrorMessage(actionLabel: string, error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return `You are not authorized to ${actionLabel} for this site.`;
+    }
+    if (error.status === 404) {
+      return `${actionLabel} target was not found in your tenant scope.`;
+    }
+    if (error.status === 422) {
+      return error.message || `Unable to ${actionLabel} due to validation constraints.`;
+    }
+  }
+  return `Unable to ${actionLabel} right now. Please try again.`;
+}
+
 function recommendationSourceType(item: Recommendation): string {
   if (item.audit_run_id && item.comparison_run_id) {
     return "mixed";
@@ -278,11 +326,62 @@ export default function SiteWorkspacePage() {
   const [recommendationRunError, setRecommendationRunError] = useState<string | null>(null);
   const [latestNarrativesByRunId, setLatestNarrativesByRunId] = useState<Record<string, RecommendationNarrative>>({});
   const [narrativeLookupError, setNarrativeLookupError] = useState<string | null>(null);
+
+  const [competitorProfileGenerationRuns, setCompetitorProfileGenerationRuns] = useState<CompetitorProfileGenerationRun[]>([]);
+  const [latestCompetitorProfileRunId, setLatestCompetitorProfileRunId] = useState<string | null>(null);
+  const [competitorProfileDrafts, setCompetitorProfileDrafts] = useState<CompetitorProfileDraft[]>([]);
+  const [competitorProfileLoading, setCompetitorProfileLoading] = useState(false);
+  const [competitorProfileError, setCompetitorProfileError] = useState<string | null>(null);
+  const [competitorProfileActionError, setCompetitorProfileActionError] = useState<string | null>(null);
+  const [competitorProfileActionMessage, setCompetitorProfileActionMessage] = useState<string | null>(null);
+  const [generationInFlight, setGenerationInFlight] = useState(false);
+  const [draftActionTargetId, setDraftActionTargetId] = useState<string | null>(null);
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  const [editFormState, setEditFormState] = useState<DraftEditFormState | null>(null);
+  const [editActionInFlight, setEditActionInFlight] = useState(false);
+  const [acceptTargetSetByDraftId, setAcceptTargetSetByDraftId] = useState<Record<string, string>>({});
+
   const [activeEventTypes, setActiveEventTypes] = useState<Set<SiteTimelineEventType>>(
     () => new Set(TIMELINE_EVENT_TYPE_OPTIONS.map((option) => option.value)),
   );
   const [activeStatuses, setActiveStatuses] = useState<Set<string>>(() => new Set());
   const [expandedTimeline, setExpandedTimeline] = useState(false);
+
+  const latestCompetitorProfileRun = useMemo(
+    () => competitorProfileGenerationRuns[0] || null,
+    [competitorProfileGenerationRuns],
+  );
+
+  function toEditFormState(draft: CompetitorProfileDraft): DraftEditFormState {
+    return {
+      suggested_name: draft.suggested_name,
+      suggested_domain: draft.suggested_domain,
+      competitor_type: draft.competitor_type,
+      summary: draft.summary || "",
+      why_competitor: draft.why_competitor || "",
+      evidence: draft.evidence || "",
+      confidence_score: String(draft.confidence_score),
+    };
+  }
+
+  function buildDraftEditPayloadFromFormState(formState: DraftEditFormState) {
+    const parsedConfidence = Number.parseFloat(formState.confidence_score);
+    return {
+      suggested_name: formState.suggested_name,
+      suggested_domain: formState.suggested_domain,
+      competitor_type: formState.competitor_type as
+        | "direct"
+        | "indirect"
+        | "local"
+        | "marketplace"
+        | "informational"
+        | "unknown",
+      summary: formState.summary || null,
+      why_competitor: formState.why_competitor || null,
+      evidence: formState.evidence || null,
+      confidence_score: Number.isFinite(parsedConfidence) ? parsedConfidence : 0.5,
+    };
+  }
 
   const activeCompetitorSetCount = useMemo(
     () => competitorSets.filter((item) => item.is_active).length,
@@ -556,6 +655,147 @@ export default function SiteWorkspacePage() {
     });
   }
 
+  function upsertDraft(nextDraft: CompetitorProfileDraft): void {
+    setCompetitorProfileDrafts((current) =>
+      current.map((item) => (item.id === nextDraft.id ? nextDraft : item)),
+    );
+  }
+
+  async function handleGenerateCompetitorProfiles(): Promise<void> {
+    if (!context.token || !context.businessId || !siteId) {
+      return;
+    }
+    setGenerationInFlight(true);
+    setCompetitorProfileActionError(null);
+    setCompetitorProfileActionMessage(null);
+    try {
+      const detail = await createCompetitorProfileGenerationRun(
+        context.token,
+        context.businessId,
+        siteId,
+        { candidate_count: COMPETITOR_PROFILE_DRAFT_CANDIDATE_COUNT },
+      );
+      setCompetitorProfileGenerationRuns((current) => {
+        const next = [detail.run, ...current.filter((item) => item.id !== detail.run.id)];
+        return next.sort((left, right) => right.created_at.localeCompare(left.created_at));
+      });
+      setLatestCompetitorProfileRunId(detail.run.id);
+      setCompetitorProfileDrafts(detail.drafts);
+      setCompetitorProfileActionMessage("Competitor profile drafts generated. Review and accept candidates explicitly.");
+      setEditingDraftId(null);
+      setEditFormState(null);
+    } catch (error) {
+      setCompetitorProfileActionError(safeActionErrorMessage("generate competitor profile drafts", error));
+    } finally {
+      setGenerationInFlight(false);
+    }
+  }
+
+  async function handleRejectCompetitorProfileDraft(draftId: string): Promise<void> {
+    if (!context.token || !context.businessId || !siteId || !latestCompetitorProfileRunId) {
+      return;
+    }
+    setDraftActionTargetId(draftId);
+    setCompetitorProfileActionError(null);
+    setCompetitorProfileActionMessage(null);
+    try {
+      const updated = await rejectCompetitorProfileDraft(
+        context.token,
+        context.businessId,
+        siteId,
+        latestCompetitorProfileRunId,
+        draftId,
+      );
+      upsertDraft(updated);
+      setCompetitorProfileActionMessage("Draft rejected. No competitor record was created.");
+      if (editingDraftId === draftId) {
+        setEditingDraftId(null);
+        setEditFormState(null);
+      }
+    } catch (error) {
+      setCompetitorProfileActionError(safeActionErrorMessage("reject this draft", error));
+    } finally {
+      setDraftActionTargetId(null);
+    }
+  }
+
+  async function handleAcceptCompetitorProfileDraft(
+    draftId: string,
+    overrides?: ReturnType<typeof buildDraftEditPayloadFromFormState>,
+  ): Promise<void> {
+    if (!context.token || !context.businessId || !siteId || !latestCompetitorProfileRunId) {
+      return;
+    }
+    setDraftActionTargetId(draftId);
+    setCompetitorProfileActionError(null);
+    setCompetitorProfileActionMessage(null);
+    try {
+      const selectedSetId = (acceptTargetSetByDraftId[draftId] || "").trim();
+      const updated = await acceptCompetitorProfileDraft(
+        context.token,
+        context.businessId,
+        siteId,
+        latestCompetitorProfileRunId,
+        draftId,
+        {
+          ...(overrides || {}),
+          ...(selectedSetId ? { competitor_set_id: selectedSetId } : {}),
+        },
+      );
+      upsertDraft(updated);
+      setCompetitorProfileActionMessage("Draft accepted and added to competitors.");
+      if (editingDraftId === draftId) {
+        setEditingDraftId(null);
+        setEditFormState(null);
+      }
+    } catch (error) {
+      setCompetitorProfileActionError(safeActionErrorMessage("accept this draft", error));
+    } finally {
+      setDraftActionTargetId(null);
+    }
+  }
+
+  function handleStartDraftEdit(draft: CompetitorProfileDraft): void {
+    setEditingDraftId(draft.id);
+    setEditFormState(toEditFormState(draft));
+    setCompetitorProfileActionError(null);
+    setCompetitorProfileActionMessage(null);
+  }
+
+  function handleCancelDraftEdit(): void {
+    setEditingDraftId(null);
+    setEditFormState(null);
+    setEditActionInFlight(false);
+  }
+
+  async function handleSaveDraftEdit(draftId: string): Promise<void> {
+    if (!context.token || !context.businessId || !siteId || !latestCompetitorProfileRunId || !editFormState) {
+      return;
+    }
+    setEditActionInFlight(true);
+    setCompetitorProfileActionError(null);
+    setCompetitorProfileActionMessage(null);
+    try {
+      const payload = buildDraftEditPayloadFromFormState(editFormState);
+      const updated = await editCompetitorProfileDraft(
+        context.token,
+        context.businessId,
+        siteId,
+        latestCompetitorProfileRunId,
+        draftId,
+        payload,
+      );
+      upsertDraft(updated);
+      setEditingDraftId(null);
+      setEditFormState(null);
+      setCompetitorProfileActionMessage("Draft edits saved. Accept explicitly to create competitor records.");
+    } catch (error) {
+      setCompetitorProfileActionError(safeActionErrorMessage("save draft edits", error));
+    } finally {
+      setEditActionInFlight(false);
+    }
+  }
+
   const timelineWarning = useMemo(() => {
     const possibleIssues = [auditError, competitorError, recommendationRunError, narrativeLookupError];
     return possibleIssues.find((value) => Boolean(value)) || null;
@@ -593,12 +833,30 @@ export default function SiteWorkspacePage() {
       setRecommendationRunError(null);
       setLatestNarrativesByRunId({});
       setNarrativeLookupError(null);
+      setCompetitorProfileGenerationRuns([]);
+      setLatestCompetitorProfileRunId(null);
+      setCompetitorProfileDrafts([]);
+      setCompetitorProfileLoading(false);
+      setCompetitorProfileError(null);
+      setCompetitorProfileActionError(null);
+      setCompetitorProfileActionMessage(null);
+      setGenerationInFlight(false);
+      setDraftActionTargetId(null);
+      setEditingDraftId(null);
+      setEditFormState(null);
+      setEditActionInFlight(false);
+      setAcceptTargetSetByDraftId({});
       return;
     }
 
     if (!selectedSite) {
       setNotFound(true);
       setLoadingWorkspace(false);
+      setCompetitorProfileGenerationRuns([]);
+      setLatestCompetitorProfileRunId(null);
+      setCompetitorProfileDrafts([]);
+      setCompetitorProfileLoading(false);
+      setCompetitorProfileError(null);
       return;
     }
 
@@ -613,7 +871,14 @@ export default function SiteWorkspacePage() {
       setRecommendationRunError(null);
       setNarrativeLookupError(null);
 
-      const [auditResult, competitorSetsResult, comparisonRunsResult, queueResult, recommendationRunsResult] =
+      const [
+        auditResult,
+        competitorSetsResult,
+        comparisonRunsResult,
+        queueResult,
+        recommendationRunsResult,
+        competitorProfileRunsResult,
+      ] =
         await Promise.allSettled([
           fetchAuditRuns(context.token, context.businessId, siteId),
           fetchCompetitorSets(context.token, context.businessId, siteId),
@@ -625,6 +890,7 @@ export default function SiteWorkspacePage() {
             sort_order: "desc",
           }),
           fetchRecommendationRuns(context.token, context.businessId, siteId),
+          fetchCompetitorProfileGenerationRuns(context.token, context.businessId, siteId),
         ]);
 
       if (cancelled) {
@@ -753,6 +1019,51 @@ export default function SiteWorkspacePage() {
         setRecommendationRuns([]);
         setLatestNarrativesByRunId({});
         setRecommendationRunError(safeSectionErrorMessage("recommendation runs", recommendationRunsResult.reason));
+      }
+
+      if (competitorProfileRunsResult.status === "fulfilled") {
+        const sortedRuns = [...competitorProfileRunsResult.value.items].sort((left, right) =>
+          right.created_at.localeCompare(left.created_at),
+        );
+        setCompetitorProfileGenerationRuns(sortedRuns);
+        setCompetitorProfileError(null);
+        const latestRun = sortedRuns[0] || null;
+        setLatestCompetitorProfileRunId(latestRun ? latestRun.id : null);
+        if (latestRun) {
+          setCompetitorProfileLoading(true);
+          try {
+            const detail = await fetchCompetitorProfileGenerationRunDetail(
+              context.token,
+              context.businessId,
+              siteId,
+              latestRun.id,
+            );
+            if (cancelled) {
+              return;
+            }
+            setCompetitorProfileDrafts(detail.drafts);
+            setCompetitorProfileError(null);
+          } catch (error) {
+            if (cancelled) {
+              return;
+            }
+            setCompetitorProfileDrafts([]);
+            setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", error));
+          } finally {
+            if (!cancelled) {
+              setCompetitorProfileLoading(false);
+            }
+          }
+        } else {
+          setCompetitorProfileDrafts([]);
+          setCompetitorProfileLoading(false);
+        }
+      } else {
+        setCompetitorProfileGenerationRuns([]);
+        setLatestCompetitorProfileRunId(null);
+        setCompetitorProfileDrafts([]);
+        setCompetitorProfileLoading(false);
+        setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", competitorProfileRunsResult.reason));
       }
 
       setLoadingWorkspace(false);
@@ -1096,6 +1407,275 @@ export default function SiteWorkspacePage() {
             ) : null}
           </>
         )}
+      </SectionCard>
+
+      <SectionCard>
+        <h2>AI Competitor Profiles</h2>
+        <p className="hint muted">
+          Generate AI-produced competitor profile drafts, then review and explicitly accept or reject each candidate.
+        </p>
+        {competitorProfileError ? <p className="hint error">{competitorProfileError}</p> : null}
+        {competitorProfileActionError ? <p className="hint error">{competitorProfileActionError}</p> : null}
+        {competitorProfileActionMessage ? <p className="hint success">{competitorProfileActionMessage}</p> : null}
+        <div className="form-actions">
+          <button
+            type="button"
+            onClick={() => void handleGenerateCompetitorProfiles()}
+            disabled={loadingWorkspace || generationInFlight || competitorProfileLoading}
+          >
+            {generationInFlight ? "Generating..." : "Generate Competitor Profiles"}
+          </button>
+        </div>
+        {latestCompetitorProfileRun ? (
+          <p>
+            Latest Run: <code>{latestCompetitorProfileRun.id}</code> ({latestCompetitorProfileRun.status}){" "}
+            {latestCompetitorProfileRun.completed_at
+              ? `completed ${formatDateTime(latestCompetitorProfileRun.completed_at)}`
+              : `created ${formatDateTime(latestCompetitorProfileRun.created_at)}`}
+          </p>
+        ) : (
+          <p className="hint muted">No competitor profile generation runs have been created for this site yet.</p>
+        )}
+        {latestCompetitorProfileRun?.error_summary ? (
+          <p className="hint warning">{latestCompetitorProfileRun.error_summary}</p>
+        ) : null}
+        {competitorProfileLoading ? <p className="hint muted">Loading generated drafts...</p> : null}
+        {!competitorProfileLoading &&
+        latestCompetitorProfileRun &&
+        competitorProfileDrafts.length === 0 ? (
+          <p className="hint muted">This run did not produce any reviewable drafts.</p>
+        ) : null}
+        {!competitorProfileLoading && competitorProfileDrafts.length > 0 ? (
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Suggested Competitor</th>
+                  <th>Type</th>
+                  <th>Confidence</th>
+                  <th>Summary</th>
+                  <th>Review Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {competitorProfileDrafts.map((draft) => {
+                  const isEditing = editingDraftId === draft.id && editFormState !== null;
+                  const actionDisabled =
+                    draftActionTargetId === draft.id || editActionInFlight || generationInFlight;
+                  const editable = draft.review_status === "pending" || draft.review_status === "edited";
+                  return (
+                    <Fragment key={draft.id}>
+                      <tr data-testid="competitor-profile-draft-row">
+                        <td className="table-cell-wrap">
+                          <strong>{draft.suggested_name}</strong>
+                          <br />
+                          <code>{draft.suggested_domain}</code>
+                        </td>
+                        <td>{draft.competitor_type}</td>
+                        <td>{draft.confidence_score.toFixed(2)}</td>
+                        <td className="table-cell-wrap">
+                          {truncateText(draft.summary, 140)}
+                          <br />
+                          <span className="hint muted">{truncateText(draft.why_competitor, 140)}</span>
+                        </td>
+                        <td>{draft.review_status}</td>
+                        <td>
+                          <div className="stack">
+                            <label className="stack">
+                              <span className="hint muted">Target Set</span>
+                              <select
+                                value={acceptTargetSetByDraftId[draft.id] || ""}
+                                onChange={(event) =>
+                                  setAcceptTargetSetByDraftId((current) => ({
+                                    ...current,
+                                    [draft.id]: event.target.value,
+                                  }))
+                                }
+                                disabled={!editable || actionDisabled}
+                              >
+                                <option value="">Auto-select</option>
+                                {competitorSets.map((setItem) => (
+                                  <option key={setItem.id} value={setItem.id}>
+                                    {setItem.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <div className="form-actions">
+                              <button
+                                type="button"
+                                onClick={() => void handleAcceptCompetitorProfileDraft(draft.id)}
+                                disabled={!editable || actionDisabled}
+                              >
+                                {draftActionTargetId === draft.id ? "Applying..." : "Accept"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleRejectCompetitorProfileDraft(draft.id)}
+                                disabled={!editable || actionDisabled}
+                              >
+                                {draftActionTargetId === draft.id ? "Applying..." : "Reject"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleStartDraftEdit(draft)}
+                                disabled={!editable || actionDisabled}
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                      {isEditing ? (
+                        <tr>
+                          <td colSpan={6}>
+                            <div className="stack">
+                              <h3>Edit Draft</h3>
+                              <label className="stack">
+                                Suggested Name
+                                <input
+                                  type="text"
+                                  value={editFormState.suggested_name}
+                                  onChange={(event) =>
+                                    setEditFormState((current) =>
+                                      current
+                                        ? { ...current, suggested_name: event.target.value }
+                                        : current,
+                                    )
+                                  }
+                                />
+                              </label>
+                              <label className="stack">
+                                Suggested Domain
+                                <input
+                                  type="text"
+                                  value={editFormState.suggested_domain}
+                                  onChange={(event) =>
+                                    setEditFormState((current) =>
+                                      current
+                                        ? { ...current, suggested_domain: event.target.value }
+                                        : current,
+                                    )
+                                  }
+                                />
+                              </label>
+                              <label className="stack">
+                                Competitor Type
+                                <select
+                                  value={editFormState.competitor_type}
+                                  onChange={(event) =>
+                                    setEditFormState((current) =>
+                                      current
+                                        ? { ...current, competitor_type: event.target.value }
+                                        : current,
+                                    )
+                                  }
+                                >
+                                  <option value="direct">direct</option>
+                                  <option value="indirect">indirect</option>
+                                  <option value="local">local</option>
+                                  <option value="marketplace">marketplace</option>
+                                  <option value="informational">informational</option>
+                                  <option value="unknown">unknown</option>
+                                </select>
+                              </label>
+                              <label className="stack">
+                                Summary
+                                <textarea
+                                  value={editFormState.summary}
+                                  onChange={(event) =>
+                                    setEditFormState((current) =>
+                                      current
+                                        ? { ...current, summary: event.target.value }
+                                        : current,
+                                    )
+                                  }
+                                />
+                              </label>
+                              <label className="stack">
+                                Why Competitor
+                                <textarea
+                                  value={editFormState.why_competitor}
+                                  onChange={(event) =>
+                                    setEditFormState((current) =>
+                                      current
+                                        ? { ...current, why_competitor: event.target.value }
+                                        : current,
+                                    )
+                                  }
+                                />
+                              </label>
+                              <label className="stack">
+                                Evidence
+                                <textarea
+                                  value={editFormState.evidence}
+                                  onChange={(event) =>
+                                    setEditFormState((current) =>
+                                      current
+                                        ? { ...current, evidence: event.target.value }
+                                        : current,
+                                    )
+                                  }
+                                />
+                              </label>
+                              <label className="stack">
+                                Confidence Score (0-1)
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={1}
+                                  step={0.01}
+                                  value={editFormState.confidence_score}
+                                  onChange={(event) =>
+                                    setEditFormState((current) =>
+                                      current
+                                        ? { ...current, confidence_score: event.target.value }
+                                        : current,
+                                    )
+                                  }
+                                />
+                              </label>
+                              <div className="form-actions">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleSaveDraftEdit(draft.id)}
+                                  disabled={editActionInFlight || draftActionTargetId === draft.id}
+                                >
+                                  {editActionInFlight ? "Saving..." : "Save Edits"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleAcceptCompetitorProfileDraft(
+                                      draft.id,
+                                      buildDraftEditPayloadFromFormState(editFormState),
+                                    )
+                                  }
+                                  disabled={editActionInFlight || draftActionTargetId === draft.id}
+                                >
+                                  {draftActionTargetId === draft.id ? "Applying..." : "Accept Edited"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelDraftEdit()}
+                                  disabled={editActionInFlight || draftActionTargetId === draft.id}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </SectionCard>
 
       <SectionCard>
