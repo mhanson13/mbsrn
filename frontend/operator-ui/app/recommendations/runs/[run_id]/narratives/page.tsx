@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { PageContainer } from "../../../../../components/layout/PageContainer";
+import { SectionCard } from "../../../../../components/layout/SectionCard";
 import { useOperatorContext } from "../../../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -642,26 +644,36 @@ export default function RecommendationRunNarrativeHistoryPage() {
   ]);
 
   if (context.loading) {
-    return <section className="panel">Loading recommendation narrative history...</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div">Loading recommendation narrative history...</SectionCard>
+      </PageContainer>
+    );
   }
   if (context.error) {
-    return <section className="panel">Unable to load tenant context. Refresh and sign in again.</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+      </PageContainer>
+    );
   }
   if (!recommendationRunId) {
     return (
-      <section className="panel stack">
-        <h1>Recommendation Narrative History</h1>
-        <p className="hint warning">Recommendation run identifier is missing.</p>
-        <p>
-          <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-        </p>
-      </section>
+      <PageContainer>
+        <SectionCard>
+          <h1>Recommendation Narrative History</h1>
+          <p className="hint warning">Recommendation run identifier is missing.</p>
+          <p>
+            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
+          </p>
+        </SectionCard>
+      </PageContainer>
     );
   }
 
   return (
-    <section className="stack">
-      <div className="panel stack">
+    <PageContainer>
+      <SectionCard>
         <p>
           <Link href={parentRunHref}>Back to Recommendation Run</Link>
         </p>
@@ -682,11 +694,11 @@ export default function RecommendationRunNarrativeHistoryPage() {
           <p className="hint warning">Recommendation run narrative history not found or not accessible in your tenant scope.</p>
         ) : null}
         {!loading && error ? <p className="hint error">{error}</p> : null}
-      </div>
+      </SectionCard>
 
       {!loading && !notFound && !error && run ? (
         <>
-          <div className="panel stack">
+          <SectionCard>
             <h2>Run Context</h2>
             <p>
               Business ID: <code>{run.business_id}</code>
@@ -709,9 +721,9 @@ export default function RecommendationRunNarrativeHistoryPage() {
                 <Link href={buildComparisonRunHref(run.comparison_run_id, run.site_id)}>Linked Comparison Run</Link>
               ) : null}
             </div>
-          </div>
+          </SectionCard>
 
-          <div className="panel stack">
+          <SectionCard>
             <h2>Narrative Summary</h2>
             <p>Total Narrative Versions: {sortedNarratives.length}</p>
             {!latestNarrative ? (
@@ -745,58 +757,60 @@ export default function RecommendationRunNarrativeHistoryPage() {
                 </p>
               </>
             )}
-          </div>
+          </SectionCard>
 
-          <div className="panel stack">
+          <SectionCard>
             <h2>Narrative Versions</h2>
             {sortedNarratives.length === 0 ? (
               <p className="hint muted">
                 No recommendation narrative versions have been generated for this run yet.
               </p>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Version</th>
-                    <th>Status</th>
-                    <th>Created</th>
-                    <th>Provider / Model</th>
-                    <th>Themes</th>
-                    <th>Sections</th>
-                    <th>Error</th>
-                    <th>Open</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedNarratives.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.version}</td>
-                      <td>{item.status}</td>
-                      <td>{formatDateTime(item.created_at)}</td>
-                      <td>{item.provider_name} / {item.model_name}</td>
-                      <td>{item.top_themes_json.length > 0 ? item.top_themes_json.slice(0, 3).join(", ") : "-"}</td>
-                      <td>{item.sections_json ? Object.keys(item.sections_json).length : 0}</td>
-                      <td>{item.error_message || "-"}</td>
-                      <td>
-                        <Link
-                          href={buildNarrativeDetailHref(
-                            recommendationRunId,
-                            item.id,
-                            run.site_id,
-                            queueContextParams,
-                          )}
-                        >
-                          View
-                        </Link>
-                      </td>
+              <div className="table-container">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Version</th>
+                      <th>Status</th>
+                      <th>Created</th>
+                      <th>Provider / Model</th>
+                      <th>Themes</th>
+                      <th>Sections</th>
+                      <th>Error</th>
+                      <th>Open</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {sortedNarratives.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.version}</td>
+                        <td>{item.status}</td>
+                        <td>{formatDateTime(item.created_at)}</td>
+                        <td>{item.provider_name} / {item.model_name}</td>
+                        <td>{item.top_themes_json.length > 0 ? item.top_themes_json.slice(0, 3).join(", ") : "-"}</td>
+                        <td>{item.sections_json ? Object.keys(item.sections_json).length : 0}</td>
+                        <td>{item.error_message || "-"}</td>
+                        <td>
+                          <Link
+                            href={buildNarrativeDetailHref(
+                              recommendationRunId,
+                              item.id,
+                              run.site_id,
+                              queueContextParams,
+                            )}
+                          >
+                            View
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
-          </div>
+          </SectionCard>
 
-          <div className="panel stack" data-testid="narrative-compare-panel">
+          <SectionCard data-testid="narrative-compare-panel">
             <h2>Narrative Version Compare</h2>
             {sortedNarratives.length < 2 ? (
               <p className="hint muted">At least two narrative versions are required to compare changes.</p>
@@ -938,37 +952,39 @@ export default function RecommendationRunNarrativeHistoryPage() {
                         {narrativeComparison.section_entries.length === 0 ? (
                           <p className="hint muted">No structured section differences were detected.</p>
                         ) : (
-                          <table className="table">
-                            <thead>
-                              <tr>
-                                <th>Change</th>
-                                <th>Section</th>
-                                <th>Compare Value</th>
-                                <th>Base Value</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {narrativeComparison.section_entries.map((item) => (
-                                <tr
-                                  key={`section-diff-${item.section_name}-${item.change_type}`}
-                                  data-testid="narrative-compare-section-row"
-                                >
-                                  <td>{item.change_type}</td>
-                                  <td>{item.section_name}</td>
-                                  <td>
-                                    <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowX: "auto" }}>
-                                      {item.change_type === "added" ? "-" : formatStructuredValue(item.compare_value)}
-                                    </pre>
-                                  </td>
-                                  <td>
-                                    <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowX: "auto" }}>
-                                      {item.change_type === "removed" ? "-" : formatStructuredValue(item.base_value)}
-                                    </pre>
-                                  </td>
+                          <div className="table-container">
+                            <table className="table">
+                              <thead>
+                                <tr>
+                                  <th>Change</th>
+                                  <th>Section</th>
+                                  <th>Compare Value</th>
+                                  <th>Base Value</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {narrativeComparison.section_entries.map((item) => (
+                                  <tr
+                                    key={`section-diff-${item.section_name}-${item.change_type}`}
+                                    data-testid="narrative-compare-section-row"
+                                  >
+                                    <td>{item.change_type}</td>
+                                    <td>{item.section_name}</td>
+                                    <td>
+                                      <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowX: "auto" }}>
+                                        {item.change_type === "added" ? "-" : formatStructuredValue(item.compare_value)}
+                                      </pre>
+                                    </td>
+                                    <td>
+                                      <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowX: "auto" }}>
+                                        {item.change_type === "removed" ? "-" : formatStructuredValue(item.base_value)}
+                                      </pre>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
                       </div>
                     ) : (
@@ -1010,44 +1026,46 @@ export default function RecommendationRunNarrativeHistoryPage() {
                 ) : null}
               </>
             )}
-          </div>
+          </SectionCard>
 
-          <div className="panel stack">
+          <SectionCard>
             <h2>Produced Recommendations ({report?.recommendations.total || 0})</h2>
             {producedRecommendations.length === 0 ? (
               <p className="hint muted">No produced recommendations are available for this run.</p>
             ) : (
               <>
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Title</th>
-                      <th>Priority</th>
-                      <th>Status</th>
-                      <th>Category</th>
-                      <th>Source</th>
-                      <th>Rationale</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {producedRecommendations.map((item) => (
-                      <tr key={item.id}>
-                        <td>
-                          <Link href={buildRecommendationDetailHref(item)}>{item.title}</Link>
-                          <br />
-                          <span className="hint muted"><code>{item.id}</code></span>
-                        </td>
-                        <td>
-                          {item.priority_score} ({item.priority_band})
-                        </td>
-                        <td>{item.status}</td>
-                        <td>{item.category}</td>
-                        <td>{deriveRecommendationSourceType(item)}</td>
-                        <td>{truncateText(item.rationale, RECOMMENDATION_RATIONALE_PREVIEW_LIMIT)}</td>
+                <div className="table-container">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Title</th>
+                        <th>Priority</th>
+                        <th>Status</th>
+                        <th>Category</th>
+                        <th>Source</th>
+                        <th>Rationale</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {producedRecommendations.map((item) => (
+                        <tr key={item.id}>
+                          <td>
+                            <Link href={buildRecommendationDetailHref(item)}>{item.title}</Link>
+                            <br />
+                            <span className="hint muted"><code>{item.id}</code></span>
+                          </td>
+                          <td>
+                            {item.priority_score} ({item.priority_band})
+                          </td>
+                          <td>{item.status}</td>
+                          <td>{item.category}</td>
+                          <td>{deriveRecommendationSourceType(item)}</td>
+                          <td>{truncateText(item.rationale, RECOMMENDATION_RATIONALE_PREVIEW_LIMIT)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
                 {(report?.recommendations.total || 0) > producedRecommendations.length ? (
                   <p className="hint muted">
                     Showing the top {producedRecommendations.length} recommendations by priority out of{" "}
@@ -1056,9 +1074,9 @@ export default function RecommendationRunNarrativeHistoryPage() {
                 ) : null}
               </>
             )}
-          </div>
+          </SectionCard>
         </>
       ) : null}
-    </section>
+    </PageContainer>
   );
 }

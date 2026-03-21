@@ -3,6 +3,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "../../components/AuthProvider";
+import { FormContainer } from "../../components/layout/FormContainer";
+import { PageContainer } from "../../components/layout/PageContainer";
+import { SectionCard } from "../../components/layout/SectionCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   activatePrincipalIdentity,
@@ -438,266 +441,287 @@ export default function UsersPage() {
   };
 
   if (context.loading) {
-    return <section className="panel">Loading users...</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div">Loading users...</SectionCard>
+      </PageContainer>
+    );
   }
   if (context.error) {
-    return <section className="panel">Error: {context.error}</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div">Error: {context.error}</SectionCard>
+      </PageContainer>
+    );
   }
   if (!isAdmin) {
     return (
-      <section className="panel stack">
+      <PageContainer>
+        <SectionCard>
         <h1>Users</h1>
         <p className="hint muted">User administration is available to admin principals only.</p>
-      </section>
+        </SectionCard>
+      </PageContainer>
     );
   }
 
   return (
-    <section className="panel stack">
-      <h1>Users</h1>
-      <p>
-        Business: <code>{context.businessId}</code>
-      </p>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
-        <span className="hint muted">Principals: {users.length}</span>
-        <span className="hint muted">Active Principals: {activeUsersCount}</span>
-        <span className="hint muted">Sign-In Identities: {identities.length}</span>
-        <span className="hint muted">Principals Without Identity: {principalsWithoutIdentityCount}</span>
-      </div>
-
-      <form onSubmit={(event) => void handleCreateUser(event)} className="stack">
-        <h2>Create User</h2>
-        <label htmlFor="principal-id">User ID</label>
-        <input
-          id="principal-id"
-          value={principalId}
-          onChange={(event) => setPrincipalId(event.target.value)}
-          placeholder="user@example.com"
-          required
-        />
-
-        <label htmlFor="display-name">Display Name (optional)</label>
-        <input
-          id="display-name"
-          value={displayName}
-          onChange={(event) => setDisplayName(event.target.value)}
-          placeholder="Operator Name"
-        />
-
-        <label htmlFor="user-role">Role</label>
-        <select id="user-role" value={role} onChange={(event) => setRole(event.target.value as PrincipalRole)}>
-          <option value="operator">operator</option>
-          <option value="admin">admin</option>
-        </select>
-
-        <button className="primary" type="submit" disabled={submitting}>
-          {submitting ? "Creating..." : "Create User"}
-        </button>
-      </form>
-
-      <form onSubmit={(event) => void handleCreateAndLinkIdentity(event)} className="stack">
-        <h2>Create and Link Identity</h2>
-        <p className="hint muted">
-          Each sign-in identity maps to exactly one principal in this business.
+    <PageContainer>
+      <SectionCard>
+        <h1>Users</h1>
+        <p>
+          Business: <code>{context.businessId}</code>
         </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+          <span className="hint muted">Principals: {users.length}</span>
+          <span className="hint muted">Active Principals: {activeUsersCount}</span>
+          <span className="hint muted">Sign-In Identities: {identities.length}</span>
+          <span className="hint muted">Principals Without Identity: {principalsWithoutIdentityCount}</span>
+        </div>
 
-        <label htmlFor="identity-principal">Principal</label>
-        <select
-          id="identity-principal"
-          value={identityPrincipalId}
-          onChange={(event) => setIdentityPrincipalId(event.target.value)}
-          required
-          disabled={users.length === 0 || identitySubmitting}
-        >
-          {users.length === 0 ? <option value="">No principals available</option> : null}
-          {users.map((user) => (
-            <option key={user.id} value={user.id}>
-              {user.id} ({user.role})
-            </option>
-          ))}
-        </select>
-
-        <label htmlFor="identity-provider">Provider</label>
-        <input
-          id="identity-provider"
-          value={identityProvider}
-          onChange={(event) => setIdentityProvider(event.target.value)}
-          placeholder="google"
-          required
-          disabled={identitySubmitting}
-        />
-
-        <label htmlFor="identity-provider-subject">Provider Subject</label>
-        <input
-          id="identity-provider-subject"
-          value={identityProviderSubject}
-          onChange={(event) => setIdentityProviderSubject(event.target.value)}
-          placeholder="provider subject"
-          required
-          disabled={identitySubmitting}
-        />
-
-        <label htmlFor="identity-email">Email (optional)</label>
-        <input
-          id="identity-email"
-          value={identityEmail}
-          onChange={(event) => setIdentityEmail(event.target.value)}
-          placeholder="user@example.com"
-          disabled={identitySubmitting}
-        />
-
-        <label htmlFor="identity-email-verified" style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+        <FormContainer onSubmit={(event) => void handleCreateUser(event)}>
+          <h2>Create User</h2>
+          <label htmlFor="principal-id">User ID</label>
           <input
-            id="identity-email-verified"
-            type="checkbox"
-            checked={identityEmailVerified}
-            onChange={(event) => setIdentityEmailVerified(event.target.checked)}
+            id="principal-id"
+            value={principalId}
+            onChange={(event) => setPrincipalId(event.target.value)}
+            placeholder="user@example.com"
+            required
+          />
+
+          <label htmlFor="display-name">Display Name (optional)</label>
+          <input
+            id="display-name"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            placeholder="Operator Name"
+          />
+
+          <label htmlFor="user-role">Role</label>
+          <select id="user-role" value={role} onChange={(event) => setRole(event.target.value as PrincipalRole)}>
+            <option value="operator">operator</option>
+            <option value="admin">admin</option>
+          </select>
+
+          <div className="form-actions">
+            <button className="primary" type="submit" disabled={submitting}>
+              {submitting ? "Creating..." : "Create User"}
+            </button>
+          </div>
+        </FormContainer>
+
+        <FormContainer onSubmit={(event) => void handleCreateAndLinkIdentity(event)}>
+          <h2>Create and Link Identity</h2>
+          <p className="hint muted">
+            Each sign-in identity maps to exactly one principal in this business.
+          </p>
+
+          <label htmlFor="identity-principal">Principal</label>
+          <select
+            id="identity-principal"
+            value={identityPrincipalId}
+            onChange={(event) => setIdentityPrincipalId(event.target.value)}
+            required
+            disabled={users.length === 0 || identitySubmitting}
+          >
+            {users.length === 0 ? <option value="">No principals available</option> : null}
+            {users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.id} ({user.role})
+              </option>
+            ))}
+          </select>
+
+          <label htmlFor="identity-provider">Provider</label>
+          <input
+            id="identity-provider"
+            value={identityProvider}
+            onChange={(event) => setIdentityProvider(event.target.value)}
+            placeholder="google"
+            required
             disabled={identitySubmitting}
           />
-          Email verified
-        </label>
 
-        <label htmlFor="identity-is-active" style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+          <label htmlFor="identity-provider-subject">Provider Subject</label>
           <input
-            id="identity-is-active"
-            type="checkbox"
-            checked={identityIsActive}
-            onChange={(event) => setIdentityIsActive(event.target.checked)}
+            id="identity-provider-subject"
+            value={identityProviderSubject}
+            onChange={(event) => setIdentityProviderSubject(event.target.value)}
+            placeholder="provider subject"
+            required
             disabled={identitySubmitting}
           />
-          Identity active
-        </label>
 
-        {identityAlreadyLinkedToSelectedPrincipal ? (
-          <p className="hint warning">This identity is already linked to the selected principal.</p>
-        ) : null}
-        {identityLinkedToDifferentPrincipal ? (
-          <p className="hint warning">
-            This identity is already linked to principal{" "}
-            <code>{existingIdentityForProviderSubject?.principal_id}</code>.
+          <label htmlFor="identity-email">Email (optional)</label>
+          <input
+            id="identity-email"
+            value={identityEmail}
+            onChange={(event) => setIdentityEmail(event.target.value)}
+            placeholder="user@example.com"
+            disabled={identitySubmitting}
+          />
+
+          <label htmlFor="identity-email-verified" style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+            <input
+              id="identity-email-verified"
+              type="checkbox"
+              checked={identityEmailVerified}
+              onChange={(event) => setIdentityEmailVerified(event.target.checked)}
+              disabled={identitySubmitting}
+            />
+            Email verified
+          </label>
+
+          <label htmlFor="identity-is-active" style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+            <input
+              id="identity-is-active"
+              type="checkbox"
+              checked={identityIsActive}
+              onChange={(event) => setIdentityIsActive(event.target.checked)}
+              disabled={identitySubmitting}
+            />
+            Identity active
+          </label>
+
+          {identityAlreadyLinkedToSelectedPrincipal ? (
+            <p className="hint warning">This identity is already linked to the selected principal.</p>
+          ) : null}
+          {identityLinkedToDifferentPrincipal ? (
+            <p className="hint warning">
+              This identity is already linked to principal{" "}
+              <code>{existingIdentityForProviderSubject?.principal_id}</code>.
+            </p>
+          ) : null}
+
+          <div className="form-actions">
+            <button
+              className="primary"
+              type="submit"
+              disabled={
+                identitySubmitting ||
+                users.length === 0 ||
+                identityAlreadyLinkedToSelectedPrincipal ||
+                identityLinkedToDifferentPrincipal
+              }
+            >
+              {identitySubmitting ? "Creating and Linking..." : "Create and Link Identity"}
+            </button>
+          </div>
+        </FormContainer>
+
+        {submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
+        {submitError ? <p className="hint error">{submitError}</p> : null}
+        {identitySubmitSuccess ? <p className="hint">{identitySubmitSuccess}</p> : null}
+        {identitySubmitError ? <p className="hint error">{identitySubmitError}</p> : null}
+        {actionSuccess ? <p className="hint">Principal action: {actionSuccess}</p> : null}
+        {actionError ? <p className="hint error">Principal action: {actionError}</p> : null}
+        {identityActionSuccess ? <p className="hint">Identity action: {identityActionSuccess}</p> : null}
+        {identityActionError ? <p className="hint error">Identity action: {identityActionError}</p> : null}
+        {loadingUsers ? <p className="hint muted">Loading users...</p> : null}
+        {usersError ? <p className="hint error">{usersError}</p> : null}
+        {identityWarning ? <p className="hint warning">{identityWarning}</p> : null}
+        {!loadingUsers && users.length > 0 && principalsWithoutIdentityCount > 0 ? (
+          <p className="hint muted">
+            Some principals have no mapped sign-in identity yet. They will not be able to authenticate until an identity is linked.
           </p>
         ) : null}
+      </SectionCard>
 
-        <button
-          className="primary"
-          type="submit"
-          disabled={
-            identitySubmitting ||
-            users.length === 0 ||
-            identityAlreadyLinkedToSelectedPrincipal ||
-            identityLinkedToDifferentPrincipal
-          }
-        >
-          {identitySubmitting ? "Creating and Linking..." : "Create and Link Identity"}
-        </button>
-      </form>
-
-      {submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
-      {submitError ? <p className="hint error">{submitError}</p> : null}
-      {identitySubmitSuccess ? <p className="hint">{identitySubmitSuccess}</p> : null}
-      {identitySubmitError ? <p className="hint error">{identitySubmitError}</p> : null}
-      {actionSuccess ? <p className="hint">Principal action: {actionSuccess}</p> : null}
-      {actionError ? <p className="hint error">Principal action: {actionError}</p> : null}
-      {identityActionSuccess ? <p className="hint">Identity action: {identityActionSuccess}</p> : null}
-      {identityActionError ? <p className="hint error">Identity action: {identityActionError}</p> : null}
-      {loadingUsers ? <p className="hint muted">Loading users...</p> : null}
-      {usersError ? <p className="hint error">{usersError}</p> : null}
-      {identityWarning ? <p className="hint warning">{identityWarning}</p> : null}
-      {!loadingUsers && users.length > 0 && principalsWithoutIdentityCount > 0 ? (
-        <p className="hint muted">
-          Some principals have no mapped sign-in identity yet. They will not be able to authenticate until an identity is linked.
-        </p>
-      ) : null}
-
-      <table className="table">
-        <thead>
-          <tr>
-            <th>User ID</th>
-            <th>Display Name</th>
-            <th>Role</th>
-            <th>Active</th>
-            <th>Last Auth</th>
-            <th>Sign-In Identities</th>
-            <th>Identity Actions</th>
-            <th>Principal Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((user) => {
-            const userIdentities = identitiesByPrincipalId.get(user.id) || [];
-            return (
-              <tr key={`${user.business_id}:${user.id}`}>
-                <td>{user.id}</td>
-                <td>{user.display_name}</td>
-                <td>{user.role}</td>
-                <td>{user.is_active ? "yes" : "no"}</td>
-                <td>{user.last_authenticated_at || "never"}</td>
-                <td>
-                  {userIdentities.length === 0 ? (
-                    "none"
-                  ) : (
-                    <ul style={{ margin: 0, paddingInlineStart: "1.25rem" }}>
-                      {userIdentities.map((identity) => (
-                        <li key={identity.id}>
-                          {formatIdentityLabel(identity)} ({identity.is_active ? "active" : "inactive"})
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </td>
-                <td>
-                  {userIdentities.length === 0 ? (
-                    "none"
-                  ) : (
-                    <div style={{ display: "grid", gap: "0.4rem" }}>
-                      {userIdentities.map((identity) => (
-                        <button
-                          key={identity.id}
-                          type="button"
-                          disabled={!!actingIdentityId || !!actingPrincipalId}
-                          onClick={() => {
-                            void handleToggleIdentityActive(identity);
-                          }}
-                        >
-                          {actingIdentityId === identity.id
-                            ? identity.is_active
-                              ? "Deactivating Identity..."
-                              : "Reactivating Identity..."
-                            : identity.is_active
-                              ? "Deactivate Identity"
-                              : "Reactivate Identity"}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    disabled={!!actingPrincipalId || !!actingIdentityId}
-                    onClick={() => {
-                      void handleToggleUserActive(user);
-                    }}
-                  >
-                    {actingPrincipalId === user.id
-                      ? user.is_active
-                        ? "Deactivating..."
-                        : "Reactivating..."
-                      : user.is_active
-                        ? "Deactivate"
-                        : "Reactivate"}
-                  </button>
-                </td>
+      <SectionCard>
+        <h2>Principals and Identities</h2>
+        <div className="table-container">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>User ID</th>
+                <th>Display Name</th>
+                <th>Role</th>
+                <th>Active</th>
+                <th>Last Auth</th>
+                <th>Sign-In Identities</th>
+                <th>Identity Actions</th>
+                <th>Principal Action</th>
               </tr>
-            );
-          })}
-          {!loadingUsers && users.length === 0 ? (
-            <tr>
-              <td colSpan={8}>No users found for this business.</td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
-    </section>
+            </thead>
+            <tbody>
+              {users.map((user) => {
+                const userIdentities = identitiesByPrincipalId.get(user.id) || [];
+                return (
+                  <tr key={`${user.business_id}:${user.id}`}>
+                    <td>{user.id}</td>
+                    <td>{user.display_name}</td>
+                    <td>{user.role}</td>
+                    <td>{user.is_active ? "yes" : "no"}</td>
+                    <td>{user.last_authenticated_at || "never"}</td>
+                    <td>
+                      {userIdentities.length === 0 ? (
+                        "none"
+                      ) : (
+                        <ul style={{ margin: 0, paddingInlineStart: "1.25rem" }}>
+                          {userIdentities.map((identity) => (
+                            <li key={identity.id}>
+                              {formatIdentityLabel(identity)} ({identity.is_active ? "active" : "inactive"})
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </td>
+                    <td>
+                      {userIdentities.length === 0 ? (
+                        "none"
+                      ) : (
+                        <div style={{ display: "grid", gap: "0.4rem" }}>
+                          {userIdentities.map((identity) => (
+                            <button
+                              key={identity.id}
+                              type="button"
+                              disabled={!!actingIdentityId || !!actingPrincipalId}
+                              onClick={() => {
+                                void handleToggleIdentityActive(identity);
+                              }}
+                            >
+                              {actingIdentityId === identity.id
+                                ? identity.is_active
+                                  ? "Deactivating Identity..."
+                                  : "Reactivating Identity..."
+                                : identity.is_active
+                                  ? "Deactivate Identity"
+                                  : "Reactivate Identity"}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        disabled={!!actingPrincipalId || !!actingIdentityId}
+                        onClick={() => {
+                          void handleToggleUserActive(user);
+                        }}
+                      >
+                        {actingPrincipalId === user.id
+                          ? user.is_active
+                            ? "Deactivating..."
+                            : "Reactivating..."
+                          : user.is_active
+                            ? "Deactivate"
+                            : "Reactivate"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!loadingUsers && users.length === 0 ? (
+                <tr>
+                  <td colSpan={8}>No users found for this business.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+    </PageContainer>
   );
 }

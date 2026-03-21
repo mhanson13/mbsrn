@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { PageContainer } from "../../../../components/layout/PageContainer";
+import { SectionCard } from "../../../../components/layout/SectionCard";
 import { useOperatorContext } from "../../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -466,26 +468,36 @@ export default function RecommendationRunDetailPage() {
   ]);
 
   if (context.loading) {
-    return <section className="panel">Loading recommendation run detail...</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div">Loading recommendation run detail...</SectionCard>
+      </PageContainer>
+    );
   }
   if (context.error) {
-    return <section className="panel">Unable to load tenant context. Refresh and sign in again.</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+      </PageContainer>
+    );
   }
   if (!recommendationRunId) {
     return (
-      <section className="panel stack">
-        <h1>Recommendation Run Detail</h1>
-        <p className="hint warning">Recommendation run identifier is missing.</p>
-        <p>
-          <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-        </p>
-      </section>
+      <PageContainer>
+        <SectionCard>
+          <h1>Recommendation Run Detail</h1>
+          <p className="hint warning">Recommendation run identifier is missing.</p>
+          <p>
+            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
+          </p>
+        </SectionCard>
+      </PageContainer>
     );
   }
 
   return (
-    <section className="stack">
-      <div className="panel stack">
+    <PageContainer>
+      <SectionCard>
         <p>
           <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
         </p>
@@ -504,17 +516,17 @@ export default function RecommendationRunDetailPage() {
           <p className="hint warning">Recommendation run not found or not accessible in your tenant scope.</p>
         ) : null}
         {!loading && error ? <p className="hint error">{error}</p> : null}
-      </div>
+      </SectionCard>
 
       {!loading && !notFound && !error && run ? (
         <>
           {relatedError ? (
-            <div className="panel stack">
+            <SectionCard>
               <p className="hint warning">{relatedError}</p>
-            </div>
+            </SectionCard>
           ) : null}
 
-          <div className="panel stack">
+          <SectionCard>
             <h2>Run Context</h2>
             <p>
               Business ID: <code>{run.business_id}</code>
@@ -531,9 +543,9 @@ export default function RecommendationRunDetailPage() {
             <p>Updated: {formatDateTime(run.updated_at)}</p>
             <p>Duration (ms): {run.duration_ms ?? "-"}</p>
             <p>Error Summary: {run.error_summary || "-"}</p>
-          </div>
+          </SectionCard>
 
-          <div className="panel stack">
+          <SectionCard>
             <h2>Run Outcome</h2>
             {runCompleted ? (
               <p className="hint">
@@ -556,30 +568,32 @@ export default function RecommendationRunDetailPage() {
               {run.audit_run_id ? <Link href={`/audits/${run.audit_run_id}`}>Linked Audit Run</Link> : null}
               {comparisonRunHref ? <Link href={comparisonRunHref}>Linked Comparison Run</Link> : null}
             </div>
-          </div>
+          </SectionCard>
 
-          <div className="panel stack">
+          <SectionCard>
             <h2>Recommendation Metrics</h2>
-            <table className="table">
-              <tbody>
-                <tr>
-                  <th>Total Recommendations</th>
-                  <td>{run.total_recommendations}</td>
-                </tr>
-                <tr>
-                  <th>Critical Recommendations</th>
-                  <td>{run.critical_recommendations}</td>
-                </tr>
-                <tr>
-                  <th>Warning Recommendations</th>
-                  <td>{run.warning_recommendations}</td>
-                </tr>
-                <tr>
-                  <th>Info Recommendations</th>
-                  <td>{run.info_recommendations}</td>
-                </tr>
-              </tbody>
-            </table>
+            <div className="table-container">
+              <table className="table">
+                <tbody>
+                  <tr>
+                    <th>Total Recommendations</th>
+                    <td>{run.total_recommendations}</td>
+                  </tr>
+                  <tr>
+                    <th>Critical Recommendations</th>
+                    <td>{run.critical_recommendations}</td>
+                  </tr>
+                  <tr>
+                    <th>Warning Recommendations</th>
+                    <td>{run.warning_recommendations}</td>
+                  </tr>
+                  <tr>
+                    <th>Info Recommendations</th>
+                    <td>{run.info_recommendations}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
             <div
               className="stack"
               style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", alignItems: "start" }}
@@ -589,16 +603,18 @@ export default function RecommendationRunDetailPage() {
                 {recommendationsByCategory.length === 0 ? (
                   <p className="hint muted">No category rollups are available.</p>
                 ) : (
-                  <table className="table">
-                    <tbody>
-                      {recommendationsByCategory.map(([key, value]) => (
-                        <tr key={`cat-${key}`}>
-                          <th>{key}</th>
-                          <td>{value}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="table-container">
+                    <table className="table">
+                      <tbody>
+                        {recommendationsByCategory.map(([key, value]) => (
+                          <tr key={`cat-${key}`}>
+                            <th>{key}</th>
+                            <td>{value}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
               <div className="panel stack" style={{ padding: "0.75rem" }}>
@@ -606,16 +622,18 @@ export default function RecommendationRunDetailPage() {
                 {recommendationsBySeverity.length === 0 ? (
                   <p className="hint muted">No severity rollups are available.</p>
                 ) : (
-                  <table className="table">
-                    <tbody>
-                      {recommendationsBySeverity.map(([key, value]) => (
-                        <tr key={`sev-${key}`}>
-                          <th>{key}</th>
-                          <td>{value}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="table-container">
+                    <table className="table">
+                      <tbody>
+                        {recommendationsBySeverity.map(([key, value]) => (
+                          <tr key={`sev-${key}`}>
+                            <th>{key}</th>
+                            <td>{value}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
               <div className="panel stack" style={{ padding: "0.75rem" }}>
@@ -623,16 +641,18 @@ export default function RecommendationRunDetailPage() {
                 {recommendationsByEffort.length === 0 ? (
                   <p className="hint muted">No effort rollups are available.</p>
                 ) : (
-                  <table className="table">
-                    <tbody>
-                      {recommendationsByEffort.map(([key, value]) => (
-                        <tr key={`effort-${key}`}>
-                          <th>{key}</th>
-                          <td>{value}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="table-container">
+                    <table className="table">
+                      <tbody>
+                        {recommendationsByEffort.map(([key, value]) => (
+                          <tr key={`effort-${key}`}>
+                            <th>{key}</th>
+                            <td>{value}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
               <div className="panel stack" style={{ padding: "0.75rem" }}>
@@ -640,22 +660,24 @@ export default function RecommendationRunDetailPage() {
                 {recommendationsByStatus.length === 0 ? (
                   <p className="hint muted">No status breakdown is available.</p>
                 ) : (
-                  <table className="table">
-                    <tbody>
-                      {recommendationsByStatus.map(([key, value]) => (
-                        <tr key={`status-${key}`}>
-                          <th>{key}</th>
-                          <td>{value}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="table-container">
+                    <table className="table">
+                      <tbody>
+                        {recommendationsByStatus.map(([key, value]) => (
+                          <tr key={`status-${key}`}>
+                            <th>{key}</th>
+                            <td>{value}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             </div>
-          </div>
+          </SectionCard>
 
-          <div className="panel stack">
+          <SectionCard>
             <h2>Lineage</h2>
             <p>
               Audit Run ID:{" "}
@@ -689,9 +711,9 @@ export default function RecommendationRunDetailPage() {
                 Snapshot Run: <Link href={snapshotRunHref}><code>{comparisonRun.snapshot_run_id}</code></Link>
               </p>
             ) : null}
-          </div>
+          </SectionCard>
 
-          <div className="panel stack">
+          <SectionCard>
             <h2>Latest Narrative</h2>
             <p>
               <Link href={recommendationRunNarrativeHistoryHref}>View Narrative History</Link>
@@ -733,46 +755,48 @@ export default function RecommendationRunDetailPage() {
                 </div>
               </>
             )}
-          </div>
+          </SectionCard>
 
-          <div className="panel stack">
+          <SectionCard>
             <h2>Produced Recommendations ({report?.recommendations.total || 0})</h2>
             {recommendations.length === 0 ? (
               <p className="hint muted">No recommendations were returned for this recommendation run.</p>
             ) : (
               <>
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Title</th>
-                      <th>Priority</th>
-                      <th>Status</th>
-                      <th>Category</th>
-                      <th>Source</th>
-                      <th>Rationale</th>
-                      <th>Created</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recommendations.map((item) => (
-                      <tr key={item.id}>
-                        <td>
-                          <Link href={buildRecommendationDetailHref(item)}>{item.title}</Link>
-                          <br />
-                          <span className="hint muted"><code>{item.id}</code></span>
-                        </td>
-                        <td>
-                          {item.priority_score} ({item.priority_band})
-                        </td>
-                        <td>{item.status}</td>
-                        <td>{item.category}</td>
-                        <td>{deriveRecommendationSourceType(item)}</td>
-                        <td>{truncateText(item.rationale, RECOMMENDATION_RATIONALE_PREVIEW_LIMIT)}</td>
-                        <td>{formatDateTime(item.created_at)}</td>
+                <div className="table-container">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Title</th>
+                        <th>Priority</th>
+                        <th>Status</th>
+                        <th>Category</th>
+                        <th>Source</th>
+                        <th>Rationale</th>
+                        <th>Created</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {recommendations.map((item) => (
+                        <tr key={item.id}>
+                          <td>
+                            <Link href={buildRecommendationDetailHref(item)}>{item.title}</Link>
+                            <br />
+                            <span className="hint muted"><code>{item.id}</code></span>
+                          </td>
+                          <td>
+                            {item.priority_score} ({item.priority_band})
+                          </td>
+                          <td>{item.status}</td>
+                          <td>{item.category}</td>
+                          <td>{deriveRecommendationSourceType(item)}</td>
+                          <td>{truncateText(item.rationale, RECOMMENDATION_RATIONALE_PREVIEW_LIMIT)}</td>
+                          <td>{formatDateTime(item.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
                 {(report?.recommendations.total || 0) > recommendations.length ? (
                   <p className="hint muted">
                     Showing the top {recommendations.length} recommendations by priority out of {report?.recommendations.total || 0}.
@@ -780,9 +804,9 @@ export default function RecommendationRunDetailPage() {
                 ) : null}
               </>
             )}
-          </div>
+          </SectionCard>
         </>
       ) : null}
-    </section>
+    </PageContainer>
   );
 }

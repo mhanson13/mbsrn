@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
+import { PageContainer } from "../../../components/layout/PageContainer";
+import { SectionCard } from "../../../components/layout/SectionCard";
 import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -776,37 +778,49 @@ export default function SiteWorkspacePage() {
   ]);
 
   if (context.loading) {
-    return <section className="panel">Loading site workspace...</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div">Loading site workspace...</SectionCard>
+      </PageContainer>
+    );
   }
   if (context.error) {
-    return <section className="panel">Unable to load tenant context. Refresh and sign in again.</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+      </PageContainer>
+    );
   }
   if (!siteId) {
     return (
-      <section className="panel stack">
-        <h1>Site SEO Workspace</h1>
-        <p className="hint warning">Site identifier is missing.</p>
-        <p>
-          <Link href="/sites">Back to Sites</Link>
-        </p>
-      </section>
+      <PageContainer>
+        <SectionCard>
+          <h1>Site SEO Workspace</h1>
+          <p className="hint warning">Site identifier is missing.</p>
+          <p>
+            <Link href="/sites">Back to Sites</Link>
+          </p>
+        </SectionCard>
+      </PageContainer>
     );
   }
   if (notFound || !selectedSite) {
     return (
-      <section className="panel stack">
-        <p>
-          <Link href="/sites">Back to Sites</Link>
-        </p>
-        <h1>Site SEO Workspace</h1>
-        <p className="hint warning">This site was not found or is not accessible in your tenant scope.</p>
-      </section>
+      <PageContainer>
+        <SectionCard>
+          <p>
+            <Link href="/sites">Back to Sites</Link>
+          </p>
+          <h1>Site SEO Workspace</h1>
+          <p className="hint warning">This site was not found or is not accessible in your tenant scope.</p>
+        </SectionCard>
+      </PageContainer>
     );
   }
 
   return (
-    <section className="stack">
-      <div className="panel stack">
+    <PageContainer>
+      <SectionCard>
         <p>
           <Link href="/sites">Back to Sites</Link>
         </p>
@@ -839,9 +853,9 @@ export default function SiteWorkspacePage() {
           <Link href="/recommendations">Recommendation Queue</Link>
         </div>
         {loadingWorkspace ? <p className="hint muted">Loading workspace data...</p> : null}
-      </div>
+      </SectionCard>
 
-      <div className="panel stack">
+      <SectionCard>
         <h2>Site Activity Timeline</h2>
         {loadingWorkspace ? <p className="hint muted">Loading recent site activity...</p> : null}
         {timelineWarning ? (
@@ -890,43 +904,45 @@ export default function SiteWorkspacePage() {
               <p className="hint muted">No timeline events match the selected filters.</p>
             ) : (
               <>
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>When</th>
-                      <th>Type</th>
-                      <th>Status</th>
-                      <th>Event</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupedVisibleTimelineEvents.map((group) => (
-                      <Fragment key={group.key}>
-                        <tr data-testid="site-activity-day-header">
-                          <td colSpan={4} style={{ fontWeight: 600, background: "rgba(255,255,255,0.03)" }}>
-                            {group.label}
-                          </td>
-                        </tr>
-                        {group.events.map((event) => (
-                          <tr key={event.id} data-testid="site-activity-row">
-                            <td>
-                              {formatDateTime(event.timestamp)}
-                              <br />
-                              <span className="hint muted">{event.timestamp_label}</span>
-                            </td>
-                            <td>{event.type_label}</td>
-                            <td>{event.status}</td>
-                            <td>
-                              <Link href={event.href}>{event.title}</Link>
-                              <br />
-                              <span className="hint muted">{event.context}</span>
+                <div className="table-container">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>When</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Event</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupedVisibleTimelineEvents.map((group) => (
+                        <Fragment key={group.key}>
+                          <tr data-testid="site-activity-day-header">
+                            <td colSpan={4} style={{ fontWeight: 600, background: "rgba(255,255,255,0.03)" }}>
+                              {group.label}
                             </td>
                           </tr>
-                        ))}
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
+                          {group.events.map((event) => (
+                            <tr key={event.id} data-testid="site-activity-row">
+                              <td>
+                                {formatDateTime(event.timestamp)}
+                                <br />
+                                <span className="hint muted">{event.timestamp_label}</span>
+                              </td>
+                              <td>{event.type_label}</td>
+                              <td>{event.status}</td>
+                              <td>
+                                <Link href={event.href}>{event.title}</Link>
+                                <br />
+                                <span className="hint muted">{event.context}</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
                 {shouldShowTimelineExpansionToggle ? (
                   <p>
@@ -942,46 +958,48 @@ export default function SiteWorkspacePage() {
             )}
           </>
         ) : null}
-      </div>
+      </SectionCard>
 
-      <div className="panel stack">
+      <SectionCard>
         <h2>Recent Audit Runs</h2>
         {auditError ? <p className="hint error">{auditError}</p> : null}
         {auditRuns.length === 0 && !auditError ? (
           <p className="hint muted">No audit runs have been recorded for this site yet.</p>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Run ID</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Started</th>
-                <th>Completed</th>
-                <th>Pages Crawled</th>
-                <th>Errors</th>
-              </tr>
-            </thead>
-            <tbody>
-              {auditRuns.map((run) => (
-                <tr key={run.id}>
-                  <td>
-                    <Link href={`/audits/${run.id}`}>{run.id}</Link>
-                  </td>
-                  <td>{run.status}</td>
-                  <td>{formatDateTime(run.created_at)}</td>
-                  <td>{formatDateTime(run.started_at)}</td>
-                  <td>{formatDateTime(run.completed_at)}</td>
-                  <td>{run.pages_crawled}</td>
-                  <td>{run.errors_encountered}</td>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Run ID</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Started</th>
+                  <th>Completed</th>
+                  <th>Pages Crawled</th>
+                  <th>Errors</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {auditRuns.map((run) => (
+                  <tr key={run.id}>
+                    <td>
+                      <Link href={`/audits/${run.id}`}>{run.id}</Link>
+                    </td>
+                    <td>{run.status}</td>
+                    <td>{formatDateTime(run.created_at)}</td>
+                    <td>{formatDateTime(run.started_at)}</td>
+                    <td>{formatDateTime(run.completed_at)}</td>
+                    <td>{run.pages_crawled}</td>
+                    <td>{run.errors_encountered}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
+      </SectionCard>
 
-      <div className="panel stack">
+      <SectionCard>
         <h2>Competitor Readiness</h2>
         {competitorError ? <p className="hint error">{competitorError}</p> : null}
         <p>{workspaceReadinessMessage}</p>
@@ -1027,48 +1045,50 @@ export default function SiteWorkspacePage() {
           <p className="hint muted">No competitor sets are currently configured for this site.</p>
         ) : (
           <>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Set</th>
-                  <th>Active</th>
-                  <th>Domains</th>
-                  <th>Latest Snapshot</th>
-                  <th>Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {competitorSets.slice(0, MAX_COMPETITOR_ROWS).map((setItem) => (
-                  <tr key={setItem.id}>
-                    <td>
-                      <Link href={buildCompetitorSetHref(setItem.id, selectedSite.id)}>{setItem.name}</Link>
-                      <br />
-                      <span className="hint muted"><code>{setItem.id}</code></span>
-                    </td>
-                    <td>{setItem.is_active ? "yes" : "no"}</td>
-                    <td>
-                      {setItem.active_domain_count}/{setItem.domain_count}
-                    </td>
-                    <td>
-                      {setItem.latest_snapshot_run ? (
-                        <Link
-                          href={buildSnapshotRunHref(
-                            setItem.latest_snapshot_run.id,
-                            selectedSite.id,
-                            setItem.id,
-                          )}
-                        >
-                          {setItem.latest_snapshot_run.status}
-                        </Link>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td>{formatDateTime(setItem.updated_at)}</td>
+            <div className="table-container">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Set</th>
+                    <th>Active</th>
+                    <th>Domains</th>
+                    <th>Latest Snapshot</th>
+                    <th>Updated</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {competitorSets.slice(0, MAX_COMPETITOR_ROWS).map((setItem) => (
+                    <tr key={setItem.id}>
+                      <td>
+                        <Link href={buildCompetitorSetHref(setItem.id, selectedSite.id)}>{setItem.name}</Link>
+                        <br />
+                        <span className="hint muted"><code>{setItem.id}</code></span>
+                      </td>
+                      <td>{setItem.is_active ? "yes" : "no"}</td>
+                      <td>
+                        {setItem.active_domain_count}/{setItem.domain_count}
+                      </td>
+                      <td>
+                        {setItem.latest_snapshot_run ? (
+                          <Link
+                            href={buildSnapshotRunHref(
+                              setItem.latest_snapshot_run.id,
+                              selectedSite.id,
+                              setItem.id,
+                            )}
+                          >
+                            {setItem.latest_snapshot_run.status}
+                          </Link>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td>{formatDateTime(setItem.updated_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             {competitorSets.length > MAX_COMPETITOR_ROWS ? (
               <p className="hint muted">
                 Showing the {MAX_COMPETITOR_ROWS} most recently updated competitor sets for this site.
@@ -1076,9 +1096,9 @@ export default function SiteWorkspacePage() {
             ) : null}
           </>
         )}
-      </div>
+      </SectionCard>
 
-      <div className="panel stack">
+      <SectionCard>
         <h2>Recommendation Queue</h2>
         {queueError ? <p className="hint error">{queueError}</p> : null}
         <p>Total: {recommendationQueueSummary.total}</p>
@@ -1093,90 +1113,94 @@ export default function SiteWorkspacePage() {
           <p className="hint muted">No recommendations are currently visible for this site.</p>
         ) : null}
         {queueResponse && queueResponse.items.length > 0 ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Priority</th>
-                <th>Status</th>
-                <th>Category</th>
-                <th>Source</th>
-                <th>Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {queueResponse.items.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
-                    <br />
-                    <span className="hint muted"><code>{item.id}</code></span>
-                  </td>
-                  <td>
-                    {item.priority_score} ({item.priority_band})
-                  </td>
-                  <td>{item.status}</td>
-                  <td>{item.category}</td>
-                  <td>{recommendationSourceType(item)}</td>
-                  <td>{formatDateTime(item.updated_at)}</td>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Priority</th>
+                  <th>Status</th>
+                  <th>Category</th>
+                  <th>Source</th>
+                  <th>Updated</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {queueResponse.items.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
+                      <br />
+                      <span className="hint muted"><code>{item.id}</code></span>
+                    </td>
+                    <td>
+                      {item.priority_score} ({item.priority_band})
+                    </td>
+                    <td>{item.status}</td>
+                    <td>{item.category}</td>
+                    <td>{recommendationSourceType(item)}</td>
+                    <td>{formatDateTime(item.updated_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : null}
-      </div>
+      </SectionCard>
 
-      <div className="panel stack">
+      <SectionCard>
         <h2>Recommendation Runs and Narratives</h2>
         {recommendationRunError ? <p className="hint error">{recommendationRunError}</p> : null}
         {narrativeLookupError ? <p className="hint warning">{narrativeLookupError}</p> : null}
         {recommendationRuns.length === 0 && !recommendationRunError ? (
           <p className="hint muted">No recommendation runs have been recorded for this site yet.</p>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Run ID</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Completed</th>
-                <th>Total Recommendations</th>
-                <th>Narrative</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recommendationRuns.map((run) => {
-                const latestNarrative = latestNarrativesByRunId[run.id] || null;
-                return (
-                  <tr key={run.id}>
-                    <td>
-                      <Link href={buildRecommendationRunHref(run.id, selectedSite.id)}>{run.id}</Link>
-                    </td>
-                    <td>{run.status}</td>
-                    <td>{formatDateTime(run.created_at)}</td>
-                    <td>{formatDateTime(run.completed_at)}</td>
-                    <td>{run.total_recommendations}</td>
-                    <td>
-                      <div className="stack">
-                        <Link href={buildNarrativeHistoryHref(run.id, selectedSite.id)}>History</Link>
-                        {latestNarrative ? (
-                          <Link
-                            href={buildNarrativeDetailHref(run.id, latestNarrative.id, selectedSite.id)}
-                          >
-                            Latest v{latestNarrative.version} ({latestNarrative.status})
-                          </Link>
-                        ) : (
-                          <span className="hint muted">No narrative yet</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Run ID</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Completed</th>
+                  <th>Total Recommendations</th>
+                  <th>Narrative</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recommendationRuns.map((run) => {
+                  const latestNarrative = latestNarrativesByRunId[run.id] || null;
+                  return (
+                    <tr key={run.id}>
+                      <td>
+                        <Link href={buildRecommendationRunHref(run.id, selectedSite.id)}>{run.id}</Link>
+                      </td>
+                      <td>{run.status}</td>
+                      <td>{formatDateTime(run.created_at)}</td>
+                      <td>{formatDateTime(run.completed_at)}</td>
+                      <td>{run.total_recommendations}</td>
+                      <td>
+                        <div className="stack">
+                          <Link href={buildNarrativeHistoryHref(run.id, selectedSite.id)}>History</Link>
+                          {latestNarrative ? (
+                            <Link
+                              href={buildNarrativeDetailHref(run.id, latestNarrative.id, selectedSite.id)}
+                            >
+                              Latest v{latestNarrative.version} ({latestNarrative.status})
+                            </Link>
+                          ) : (
+                            <span className="hint muted">No narrative yet</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
-    </section>
+      </SectionCard>
+    </PageContainer>
   );
 }
