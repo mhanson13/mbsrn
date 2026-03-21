@@ -21,6 +21,41 @@ const RECOMMENDATION_PREVIEW_LIMIT = 25;
 const RECOMMENDATION_RATIONALE_PREVIEW_LIMIT = 140;
 const RECOMMENDATION_PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 
+type NarrativeChangeType = "added" | "removed" | "changed";
+
+interface NarrativeSectionDiffEntry {
+  section_name: string;
+  change_type: NarrativeChangeType;
+  base_value: unknown;
+  compare_value: unknown;
+}
+
+interface NarrativeTextDiffEntry {
+  paragraph_index: number;
+  change_type: NarrativeChangeType;
+  base_text: string;
+  compare_text: string;
+}
+
+interface NarrativeComparisonResult {
+  structured_available: boolean;
+  section_entries: NarrativeSectionDiffEntry[];
+  section_added_count: number;
+  section_removed_count: number;
+  section_changed_count: number;
+  text_entries: NarrativeTextDiffEntry[];
+  text_added_count: number;
+  text_removed_count: number;
+  text_changed_count: number;
+  added_themes: string[];
+  removed_themes: string[];
+  recommendation_impact_available: boolean;
+  added_recommendation_ids: string[];
+  removed_recommendation_ids: string[];
+  unchanged_recommendation_ids: string[];
+  has_differences: boolean;
+}
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return "-";
@@ -38,6 +73,83 @@ function truncateText(value: string, limit: number): string {
     return normalized;
   }
   return `${normalized.slice(0, limit - 1)}…`;
+}
+
+function formatStructuredValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "undefined") {
+    return "undefined";
+  }
+  if (typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort((left, right) => left[0].localeCompare(right[0]))
+    .map(([key, nestedValue]) => `${JSON.stringify(key)}:${stableSerialize(nestedValue)}`);
+  return `{${entries.join(",")}}`;
+}
+
+function toSectionRecord(value: RecommendationNarrative["sections_json"]): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function splitNarrativeParagraphs(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+  const normalized = value.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return [];
+  }
+  const paragraphs = normalized
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return paragraphs.length > 0 ? paragraphs : [normalized];
+}
+
+function collectRecommendationIdsFromValue(
+  value: unknown,
+  knownRecommendationIds: Set<string>,
+  collected: Set<string>,
+): void {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (knownRecommendationIds.has(normalized)) {
+      collected.add(normalized);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectRecommendationIdsFromValue(item, knownRecommendationIds, collected);
+    }
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const nestedValue of Object.values(value as Record<string, unknown>)) {
+      collectRecommendationIdsFromValue(nestedValue, knownRecommendationIds, collected);
+    }
+  }
 }
 
 function isNotFoundError(error: unknown): boolean {
@@ -191,6 +303,8 @@ export default function RecommendationRunNarrativeHistoryPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [selectedBaseNarrativeId, setSelectedBaseNarrativeId] = useState<string | null>(null);
+  const [selectedCompareNarrativeId, setSelectedCompareNarrativeId] = useState<string | null>(null);
 
   const run: RecommendationRun | null = report?.recommendation_run || null;
 
@@ -213,6 +327,34 @@ export default function RecommendationRunNarrativeHistoryPage() {
 
   const latestNarrative = sortedNarratives[0] || null;
 
+  const selectedBaseNarrative = useMemo(() => {
+    if (sortedNarratives.length === 0) {
+      return null;
+    }
+    if (selectedBaseNarrativeId) {
+      const matched = sortedNarratives.find((item) => item.id === selectedBaseNarrativeId);
+      if (matched) {
+        return matched;
+      }
+    }
+    return sortedNarratives[0];
+  }, [selectedBaseNarrativeId, sortedNarratives]);
+
+  const selectedCompareNarrative = useMemo(() => {
+    if (sortedNarratives.length < 2) {
+      return null;
+    }
+    if (selectedCompareNarrativeId) {
+      const matched = sortedNarratives.find((item) => item.id === selectedCompareNarrativeId);
+      if (matched) {
+        return matched;
+      }
+    }
+    const fallback =
+      sortedNarratives.find((item) => item.id !== selectedBaseNarrative?.id) || sortedNarratives[1];
+    return fallback || null;
+  }, [selectedBaseNarrative?.id, selectedCompareNarrativeId, sortedNarratives]);
+
   const selectedSiteDisplayName = useMemo(() => {
     if (!run) {
       return null;
@@ -232,6 +374,171 @@ export default function RecommendationRunNarrativeHistoryPage() {
       })
       .slice(0, RECOMMENDATION_PREVIEW_LIMIT);
   }, [report?.recommendations.items]);
+
+  const producedRecommendationsById = useMemo(() => {
+    const byId = new Map<string, Recommendation>();
+    for (const item of report?.recommendations.items || []) {
+      byId.set(item.id, item);
+    }
+    return byId;
+  }, [report?.recommendations.items]);
+
+  const knownRecommendationIds = useMemo(
+    () => new Set(producedRecommendationsById.keys()),
+    [producedRecommendationsById],
+  );
+
+  const narrativeComparison = useMemo<NarrativeComparisonResult | null>(() => {
+    if (!selectedBaseNarrative || !selectedCompareNarrative) {
+      return null;
+    }
+
+    const baseSections = toSectionRecord(selectedBaseNarrative.sections_json);
+    const compareSections = toSectionRecord(selectedCompareNarrative.sections_json);
+    const structuredAvailable = Object.keys(baseSections).length > 0 || Object.keys(compareSections).length > 0;
+
+    const sectionEntries: NarrativeSectionDiffEntry[] = [];
+    let sectionAddedCount = 0;
+    let sectionRemovedCount = 0;
+    let sectionChangedCount = 0;
+
+    const sectionNames = Array.from(new Set([...Object.keys(baseSections), ...Object.keys(compareSections)])).sort(
+      (left, right) => left.localeCompare(right),
+    );
+    for (const sectionName of sectionNames) {
+      const hasBaseValue = Object.prototype.hasOwnProperty.call(baseSections, sectionName);
+      const hasCompareValue = Object.prototype.hasOwnProperty.call(compareSections, sectionName);
+      const baseValue = hasBaseValue ? baseSections[sectionName] : null;
+      const compareValue = hasCompareValue ? compareSections[sectionName] : null;
+
+      if (hasBaseValue && !hasCompareValue) {
+        sectionAddedCount += 1;
+        sectionEntries.push({
+          section_name: sectionName,
+          change_type: "added",
+          base_value: baseValue,
+          compare_value: null,
+        });
+        continue;
+      }
+      if (!hasBaseValue && hasCompareValue) {
+        sectionRemovedCount += 1;
+        sectionEntries.push({
+          section_name: sectionName,
+          change_type: "removed",
+          base_value: null,
+          compare_value: compareValue,
+        });
+        continue;
+      }
+
+      if (stableSerialize(baseValue) !== stableSerialize(compareValue)) {
+        sectionChangedCount += 1;
+        sectionEntries.push({
+          section_name: sectionName,
+          change_type: "changed",
+          base_value: baseValue,
+          compare_value: compareValue,
+        });
+      }
+    }
+
+    const baseParagraphs = splitNarrativeParagraphs(selectedBaseNarrative.narrative_text);
+    const compareParagraphs = splitNarrativeParagraphs(selectedCompareNarrative.narrative_text);
+    const maxParagraphs = Math.max(baseParagraphs.length, compareParagraphs.length);
+    const textEntries: NarrativeTextDiffEntry[] = [];
+    let textAddedCount = 0;
+    let textRemovedCount = 0;
+    let textChangedCount = 0;
+
+    for (let index = 0; index < maxParagraphs; index += 1) {
+      const baseText = baseParagraphs[index] || "";
+      const compareText = compareParagraphs[index] || "";
+      const hasBase = baseText.length > 0;
+      const hasCompare = compareText.length > 0;
+
+      if (hasBase && !hasCompare) {
+        textAddedCount += 1;
+        textEntries.push({
+          paragraph_index: index + 1,
+          change_type: "added",
+          base_text: baseText,
+          compare_text: "",
+        });
+        continue;
+      }
+      if (!hasBase && hasCompare) {
+        textRemovedCount += 1;
+        textEntries.push({
+          paragraph_index: index + 1,
+          change_type: "removed",
+          base_text: "",
+          compare_text: compareText,
+        });
+        continue;
+      }
+      if (hasBase && hasCompare && baseText !== compareText) {
+        textChangedCount += 1;
+        textEntries.push({
+          paragraph_index: index + 1,
+          change_type: "changed",
+          base_text: baseText,
+          compare_text: compareText,
+        });
+      }
+    }
+
+    const normalizedBaseThemes = [...new Set(selectedBaseNarrative.top_themes_json.map((item) => item.trim()).filter(Boolean))];
+    const normalizedCompareThemes = [...new Set(selectedCompareNarrative.top_themes_json.map((item) => item.trim()).filter(Boolean))];
+    const compareThemeSet = new Set(normalizedCompareThemes);
+    const baseThemeSet = new Set(normalizedBaseThemes);
+    const addedThemes = normalizedBaseThemes.filter((item) => !compareThemeSet.has(item));
+    const removedThemes = normalizedCompareThemes.filter((item) => !baseThemeSet.has(item));
+
+    const baseRecommendationIds = new Set<string>();
+    const compareRecommendationIds = new Set<string>();
+    collectRecommendationIdsFromValue(selectedBaseNarrative.sections_json, knownRecommendationIds, baseRecommendationIds);
+    collectRecommendationIdsFromValue(selectedCompareNarrative.sections_json, knownRecommendationIds, compareRecommendationIds);
+
+    const addedRecommendationIds = [...baseRecommendationIds]
+      .filter((item) => !compareRecommendationIds.has(item))
+      .sort((left, right) => left.localeCompare(right));
+    const removedRecommendationIds = [...compareRecommendationIds]
+      .filter((item) => !baseRecommendationIds.has(item))
+      .sort((left, right) => left.localeCompare(right));
+    const unchangedRecommendationIds = [...baseRecommendationIds]
+      .filter((item) => compareRecommendationIds.has(item))
+      .sort((left, right) => left.localeCompare(right));
+    const recommendationImpactAvailable =
+      baseRecommendationIds.size > 0 || compareRecommendationIds.size > 0;
+
+    const hasDifferences =
+      sectionEntries.length > 0 ||
+      textEntries.length > 0 ||
+      addedThemes.length > 0 ||
+      removedThemes.length > 0 ||
+      addedRecommendationIds.length > 0 ||
+      removedRecommendationIds.length > 0;
+
+    return {
+      structured_available: structuredAvailable,
+      section_entries: sectionEntries,
+      section_added_count: sectionAddedCount,
+      section_removed_count: sectionRemovedCount,
+      section_changed_count: sectionChangedCount,
+      text_entries: textEntries,
+      text_added_count: textAddedCount,
+      text_removed_count: textRemovedCount,
+      text_changed_count: textChangedCount,
+      added_themes: addedThemes,
+      removed_themes: removedThemes,
+      recommendation_impact_available: recommendationImpactAvailable,
+      added_recommendation_ids: addedRecommendationIds,
+      removed_recommendation_ids: removedRecommendationIds,
+      unchanged_recommendation_ids: unchangedRecommendationIds,
+      has_differences: hasDifferences,
+    };
+  }, [knownRecommendationIds, selectedBaseNarrative, selectedCompareNarrative]);
 
   useEffect(() => {
     if (context.loading || context.error || !recommendationRunId) {
@@ -486,6 +793,222 @@ export default function RecommendationRunNarrativeHistoryPage() {
                   ))}
                 </tbody>
               </table>
+            )}
+          </div>
+
+          <div className="panel stack" data-testid="narrative-compare-panel">
+            <h2>Narrative Version Compare</h2>
+            {sortedNarratives.length < 2 ? (
+              <p className="hint muted">At least two narrative versions are required to compare changes.</p>
+            ) : (
+              <>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "end" }}>
+                  <label className="stack" style={{ minWidth: "220px" }}>
+                    <span>Base Version</span>
+                    <select
+                      aria-label="Base Version"
+                      value={selectedBaseNarrative?.id || ""}
+                      onChange={(event) => setSelectedBaseNarrativeId(event.target.value)}
+                    >
+                      {sortedNarratives.map((item) => (
+                        <option key={`base-${item.id}`} value={item.id}>
+                          v{item.version} · {item.status} · {formatDateTime(item.created_at)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="stack" style={{ minWidth: "220px" }}>
+                    <span>Compare Version</span>
+                    <select
+                      aria-label="Compare Version"
+                      value={selectedCompareNarrative?.id || ""}
+                      onChange={(event) => setSelectedCompareNarrativeId(event.target.value)}
+                    >
+                      {sortedNarratives.map((item) => (
+                        <option key={`compare-${item.id}`} value={item.id}>
+                          v{item.version} · {item.status} · {formatDateTime(item.created_at)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {selectedBaseNarrative && selectedCompareNarrative && narrativeComparison ? (
+                  <>
+                    <p>
+                      Base: v{selectedBaseNarrative.version} ({selectedBaseNarrative.status}) at{" "}
+                      {formatDateTime(selectedBaseNarrative.created_at)}
+                    </p>
+                    <p>
+                      Compare: v{selectedCompareNarrative.version} ({selectedCompareNarrative.status}) at{" "}
+                      {formatDateTime(selectedCompareNarrative.created_at)}
+                    </p>
+
+                    {narrativeComparison.structured_available ? (
+                      <div className="stack">
+                        <h3>Structured Change Summary</h3>
+                        <p>Sections added: {narrativeComparison.section_added_count}</p>
+                        <p>Sections removed: {narrativeComparison.section_removed_count}</p>
+                        <p>Sections changed: {narrativeComparison.section_changed_count}</p>
+                      </div>
+                    ) : (
+                      <div className="stack">
+                        <h3>Text Change Summary</h3>
+                        <p>Paragraphs added: {narrativeComparison.text_added_count}</p>
+                        <p>Paragraphs removed: {narrativeComparison.text_removed_count}</p>
+                        <p>Paragraphs changed: {narrativeComparison.text_changed_count}</p>
+                      </div>
+                    )}
+
+                    <div className="stack">
+                      <h3>Theme Changes</h3>
+                      <p>
+                        Added themes:{" "}
+                        {narrativeComparison.added_themes.length > 0
+                          ? narrativeComparison.added_themes.join(", ")
+                          : "-"}
+                      </p>
+                      <p>
+                        Removed themes:{" "}
+                        {narrativeComparison.removed_themes.length > 0
+                          ? narrativeComparison.removed_themes.join(", ")
+                          : "-"}
+                      </p>
+                    </div>
+
+                    {narrativeComparison.recommendation_impact_available ? (
+                      <div className="stack">
+                        <h3>Recommendation Impact</h3>
+                        <p>Added references: {narrativeComparison.added_recommendation_ids.length}</p>
+                        <p>Removed references: {narrativeComparison.removed_recommendation_ids.length}</p>
+                        <p>Unchanged references: {narrativeComparison.unchanged_recommendation_ids.length}</p>
+
+                        {narrativeComparison.added_recommendation_ids.length > 0 ? (
+                          <div className="stack">
+                            <p>Added recommendation references</p>
+                            <ul>
+                              {narrativeComparison.added_recommendation_ids.map((itemId) => {
+                                const recommendation = producedRecommendationsById.get(itemId);
+                                return (
+                                  <li key={`rec-added-${itemId}`}>
+                                    {recommendation ? (
+                                      <Link href={buildRecommendationDetailHref(recommendation)}>
+                                        {recommendation.title}
+                                      </Link>
+                                    ) : (
+                                      <code>{itemId}</code>
+                                    )}{" "}
+                                    <span className="hint muted"><code>{itemId}</code></span>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        ) : null}
+
+                        {narrativeComparison.removed_recommendation_ids.length > 0 ? (
+                          <div className="stack">
+                            <p>Removed recommendation references</p>
+                            <ul>
+                              {narrativeComparison.removed_recommendation_ids.map((itemId) => {
+                                const recommendation = producedRecommendationsById.get(itemId);
+                                return (
+                                  <li key={`rec-removed-${itemId}`}>
+                                    {recommendation ? (
+                                      <Link href={buildRecommendationDetailHref(recommendation)}>
+                                        {recommendation.title}
+                                      </Link>
+                                    ) : (
+                                      <code>{itemId}</code>
+                                    )}{" "}
+                                    <span className="hint muted"><code>{itemId}</code></span>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {narrativeComparison.structured_available ? (
+                      <div className="stack">
+                        <h3>Structured Differences</h3>
+                        {narrativeComparison.section_entries.length === 0 ? (
+                          <p className="hint muted">No structured section differences were detected.</p>
+                        ) : (
+                          <table className="table">
+                            <thead>
+                              <tr>
+                                <th>Change</th>
+                                <th>Section</th>
+                                <th>Compare Value</th>
+                                <th>Base Value</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {narrativeComparison.section_entries.map((item) => (
+                                <tr
+                                  key={`section-diff-${item.section_name}-${item.change_type}`}
+                                  data-testid="narrative-compare-section-row"
+                                >
+                                  <td>{item.change_type}</td>
+                                  <td>{item.section_name}</td>
+                                  <td>
+                                    <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowX: "auto" }}>
+                                      {item.change_type === "added" ? "-" : formatStructuredValue(item.compare_value)}
+                                    </pre>
+                                  </td>
+                                  <td>
+                                    <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowX: "auto" }}>
+                                      {item.change_type === "removed" ? "-" : formatStructuredValue(item.base_value)}
+                                    </pre>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="stack">
+                        <h3>Text Differences</h3>
+                        {narrativeComparison.text_entries.length === 0 ? (
+                          <p className="hint muted">No text paragraph differences were detected.</p>
+                        ) : (
+                          <div className="stack">
+                            {narrativeComparison.text_entries.map((item) => (
+                              <div
+                                key={`text-diff-${item.paragraph_index}-${item.change_type}`}
+                                className="panel stack"
+                                style={{ padding: "0.75rem" }}
+                                data-testid="narrative-compare-text-row"
+                              >
+                                <p>
+                                  Paragraph {item.paragraph_index} ({item.change_type})
+                                </p>
+                                <p>
+                                  <strong>Compare</strong>
+                                </p>
+                                <p style={{ whiteSpace: "pre-wrap" }}>{item.compare_text || "-"}</p>
+                                <p>
+                                  <strong>Base</strong>
+                                </p>
+                                <p style={{ whiteSpace: "pre-wrap" }}>{item.base_text || "-"}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {!narrativeComparison.has_differences ? (
+                      <p className="hint muted">No differences found between these versions.</p>
+                    ) : null}
+                  </>
+                ) : null}
+              </>
             )}
           </div>
 
