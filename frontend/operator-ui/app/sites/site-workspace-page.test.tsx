@@ -1750,22 +1750,146 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "Recommendation Runs and Narratives" });
+    await screen.findByTestId("start-here-section");
+    expect(screen.getByText("Start Here")).toBeInTheDocument();
+    expect(screen.getByText("Adjust minimum relevance score from 35 -> 30")).toBeInTheDocument();
+    const startHereButton = screen.getByRole("button", { name: "Preview and Focus" });
     expect((await screen.findAllByRole("link", { name: "run-1" })).length).toBeGreaterThan(0);
     expect(screen.getByText("Minimum relevance score")).toBeInTheDocument();
     expect(screen.getByText("Current -> Suggested:", { exact: false })).toHaveTextContent("35");
     expect(
       screen.getByText("High low_relevance exclusions indicate threshold is too strict."),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Preview Impact" }));
+    await user.click(startHereButton);
     await screen.findByText(/Estimated increase of 2 included candidates over the last 30 days of telemetry\./);
     expect(screen.getByText("Impact hint: +2 candidates included")).toBeInTheDocument();
     expect(screen.getByText(/Included delta: \+2; excluded delta: -2/)).toBeInTheDocument();
+    expect(screen.getByTestId("tuning-suggestion-card")).toHaveClass("start-here-target-active");
     expect(mockPreviewRecommendationTuningImpact).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
       recommendation_run_id: "run-1",
       narrative_id: "narrative-1",
       current_values: { competitor_candidate_min_relevance_score: 35 },
       proposed_values: { competitor_candidate_min_relevance_score: 30 },
     });
+  });
+
+  it("prioritizes the strongest tuning suggestion for the start-here action", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+      business_id: "biz-1",
+      site_id: "site-1",
+      state: "completed_with_narrative",
+      latest_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 2,
+        critical_recommendations: 1,
+        warning_recommendations: 1,
+        info_recommendations: 0,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      latest_completed_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 2,
+        critical_recommendations: 1,
+        warning_recommendations: 1,
+        info_recommendations: 0,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      recommendations: {
+        items: [
+          {
+            id: "rec-1",
+            business_id: "biz-1",
+            site_id: "site-1",
+            recommendation_run_id: "run-1",
+            audit_run_id: "audit-1",
+            comparison_run_id: "comparison-1",
+            status: "open",
+            category: "SEO",
+            severity: "warning",
+            priority_score: 80,
+            priority_band: "high",
+            effort_bucket: "small",
+            title: "Fix title tags",
+            rationale: "Title tags are missing core keywords.",
+            decision_reason: null,
+            created_at: "2026-03-21T00:30:00Z",
+            updated_at: "2026-03-21T00:31:00Z",
+          },
+        ],
+        total: 1,
+      },
+      latest_narrative: {
+        id: "narrative-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        recommendation_run_id: "run-1",
+        version: 2,
+        status: "completed",
+        narrative_text: "Narrative for run 1.",
+        top_themes_json: ["titles"],
+        sections_json: { summary: "one" },
+        provider_name: "provider",
+        model_name: "model",
+        prompt_version: "v2",
+        error_message: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:33:00Z",
+        updated_at: "2026-03-21T00:33:00Z",
+      },
+      tuning_suggestions: [
+        {
+          setting: "competitor_candidate_min_relevance_score",
+          current_value: 35,
+          recommended_value: 30,
+          reason: "Lower threshold slightly.",
+          linked_recommendation_ids: ["rec-1"],
+          confidence: "medium",
+        },
+        {
+          setting: "competitor_candidate_directory_penalty",
+          current_value: 35,
+          recommended_value: 25,
+          reason: "Directory exclusions are overrepresented.",
+          linked_recommendation_ids: ["rec-1", "rec-2"],
+          confidence: "medium",
+        },
+      ],
+    });
+
+    render(<SiteWorkspacePage />);
+
+    const startHereSection = await screen.findByTestId("start-here-section");
+    await waitFor(() =>
+      expect(within(startHereSection).getByText("Adjust directory penalty from 35 -> 25")).toBeInTheDocument(),
+    );
+    expect(within(startHereSection).getByRole("button", { name: "Preview and Focus" })).toBeInTheDocument();
   });
 
   it("renders insufficient-data tuning preview state safely", async () => {
@@ -2286,9 +2410,16 @@ describe("site workspace timeline controls", () => {
 
   it("surfaces latest completed deterministic recommendations and ai narrative overlay", async () => {
     seedRichWorkspaceData();
+    const user = userEvent.setup();
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "Top Insights" });
+    const startHereSection = await screen.findByTestId("start-here-section");
+    expect(within(startHereSection).getByText("Start Here")).toBeInTheDocument();
+    expect(within(startHereSection).getByText("Fix title tags")).toBeInTheDocument();
+    expect(within(startHereSection).getByText("Marked HIGH IMPACT")).toBeInTheDocument();
+    const focusRecommendationButton = within(startHereSection).getByRole("button", { name: "Focus Recommendation" });
+    expect(focusRecommendationButton).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("You have 1 actionable improvements")).toBeInTheDocument());
     await waitFor(() => expect(screen.getByText("0 tuning opportunities identified")).toBeInTheDocument());
     expect(
@@ -2301,6 +2432,8 @@ describe("site workspace timeline controls", () => {
     expect(screen.getByText("Title tags are missing core keywords.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "AI Narrative Overlay" })).toBeInTheDocument();
     expect(screen.getByText("Narrative for run 1.")).toBeInTheDocument();
+    await user.click(focusRecommendationButton);
+    expect(document.getElementById("workspace-recommendation-rec-1")).toHaveClass("start-here-target-active");
     expect(mockFetchRecommendationWorkspaceSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
   });
 
@@ -2339,6 +2472,11 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "Latest Completed Run" });
+    await screen.findByText("No immediate action available");
+    expect(
+      screen.getByText("Run analysis to generate recommendations and tuning guidance."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Focus Recommendation|Preview and Focus|Focus Tuning Suggestion/i })).not.toBeInTheDocument();
     await screen.findByText(/No completed recommendation run is available yet\./);
     expect(mockFetchRecommendationWorkspaceSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
   });

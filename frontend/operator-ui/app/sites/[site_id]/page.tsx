@@ -109,6 +109,31 @@ interface DraftEditFormState {
   confidence_score: string;
 }
 
+type StartHereAction =
+  | {
+      kind: "tuning";
+      title: string;
+      detail: string;
+      buttonLabel: string;
+      targetId: string;
+      recommendationRunId: string;
+      narrativeId: string | null;
+      suggestion: RecommendationTuningSuggestion;
+      hasPreview: boolean;
+    }
+  | {
+      kind: "recommendation";
+      title: string;
+      detail: string;
+      buttonLabel: string;
+      targetId: string;
+    }
+  | {
+      kind: "none";
+      title: string;
+      detail: string;
+    };
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return "-";
@@ -264,6 +289,10 @@ function formatSignedDelta(value: number): string {
   return String(value);
 }
 
+function sanitizeDomId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "-");
+}
+
 function recommendationImpactLabel(
   item: Recommendation,
   index: number,
@@ -302,6 +331,17 @@ function buildTuningPreviewKey(
   suggestion: RecommendationTuningSuggestion,
 ): string {
   return `${recommendationRunId}:${suggestion.setting}:${suggestion.current_value}:${suggestion.recommended_value}`;
+}
+
+function recommendationRowId(recommendationId: string): string {
+  return `workspace-recommendation-${sanitizeDomId(recommendationId)}`;
+}
+
+function tuningSuggestionCardId(
+  recommendationRunId: string,
+  suggestion: RecommendationTuningSuggestion,
+): string {
+  return `workspace-tuning-${sanitizeDomId(buildTuningPreviewKey(recommendationRunId, suggestion))}`;
 }
 
 function tuningSettingValueFromBusinessSettings(
@@ -450,6 +490,7 @@ export default function SiteWorkspacePage() {
   const [tuningApplyMessage, setTuningApplyMessage] = useState<string | null>(null);
   const [tuningApplyErrorByKey, setTuningApplyErrorByKey] = useState<Record<string, string>>({});
   const [tuningApplyLoadingKey, setTuningApplyLoadingKey] = useState<string | null>(null);
+  const [startHereFocusedTargetId, setStartHereFocusedTargetId] = useState<string | null>(null);
 
   const [competitorProfileGenerationRuns, setCompetitorProfileGenerationRuns] = useState<CompetitorProfileGenerationRun[]>([]);
   const [competitorProfileSummary, setCompetitorProfileSummary] =
@@ -591,6 +632,137 @@ export default function SiteWorkspacePage() {
     latestCompletedTuningSuggestions,
     tuningPreviewByKey,
   ]);
+
+  const startHereAction = useMemo<StartHereAction>(() => {
+    const confidenceWeight: Record<RecommendationTuningSuggestion["confidence"], number> = {
+      low: 0,
+      medium: 1,
+      high: 2,
+    };
+
+    if (
+      latestCompletedRecommendationRun &&
+      latestCompletedRecommendationNarrative &&
+      latestCompletedTuningSuggestions.length > 0
+    ) {
+      const ranked = [...latestCompletedTuningSuggestions]
+        .map((suggestion) => {
+          const previewKey = buildTuningPreviewKey(latestCompletedRecommendationRun.id, suggestion);
+          const preview = tuningPreviewByKey[previewKey] || null;
+          return {
+            suggestion,
+            preview,
+            previewIncludedDelta: preview
+              ? preview.estimated_impact.estimated_included_candidate_delta
+              : Number.NEGATIVE_INFINITY,
+            linkedRecommendationCount: suggestion.linked_recommendation_ids.length,
+            confidence: confidenceWeight[suggestion.confidence],
+          };
+        })
+        .sort((left, right) => {
+          if (right.previewIncludedDelta !== left.previewIncludedDelta) {
+            return right.previewIncludedDelta - left.previewIncludedDelta;
+          }
+          if (right.linkedRecommendationCount !== left.linkedRecommendationCount) {
+            return right.linkedRecommendationCount - left.linkedRecommendationCount;
+          }
+          if (right.confidence !== left.confidence) {
+            return right.confidence - left.confidence;
+          }
+          return formatTuningSettingLabel(left.suggestion.setting).localeCompare(
+            formatTuningSettingLabel(right.suggestion.setting),
+          );
+        });
+
+      const best = ranked[0];
+      if (best) {
+        const settingLabel = formatTuningSettingLabel(best.suggestion.setting);
+        const hasPreview = Boolean(best.preview);
+        const detail = hasPreview
+          ? `Expected: ${formatSignedDelta(
+              best.preview!.estimated_impact.estimated_included_candidate_delta,
+            )} included competitors`
+          : "Preview impact to estimate included competitor change.";
+        return {
+          kind: "tuning",
+          title: `Adjust ${settingLabel.toLowerCase()} from ${best.suggestion.current_value} -> ${best.suggestion.recommended_value}`,
+          detail,
+          buttonLabel: hasPreview ? "Focus Tuning Suggestion" : "Preview and Focus",
+          targetId: tuningSuggestionCardId(latestCompletedRecommendationRun.id, best.suggestion),
+          recommendationRunId: latestCompletedRecommendationRun.id,
+          narrativeId: latestCompletedRecommendationNarrative.id,
+          suggestion: best.suggestion,
+          hasPreview,
+        };
+      }
+    }
+
+    if (latestCompletedRecommendations.length > 0) {
+      const highestPriorityRecommendation =
+        [...latestCompletedRecommendations].sort((left, right) => {
+          if (right.priority_score !== left.priority_score) {
+            return right.priority_score - left.priority_score;
+          }
+          return right.updated_at.localeCompare(left.updated_at);
+        })[0] || latestCompletedRecommendations[0];
+
+      const impact =
+        highestPriorityRecommendation.priority_band === "critical" ||
+        highestPriorityRecommendation.priority_band === "high"
+          ? "HIGH IMPACT"
+          : highestPriorityRecommendation.effort_bucket === "small"
+            ? "QUICK WIN"
+            : "NEEDS REVIEW";
+
+      return {
+        kind: "recommendation",
+        title: highestPriorityRecommendation.title,
+        detail: `Marked ${impact}`,
+        buttonLabel: "Focus Recommendation",
+        targetId: recommendationRowId(highestPriorityRecommendation.id),
+      };
+    }
+
+    return {
+      kind: "none",
+      title: "No immediate action available",
+      detail: "Run analysis to generate recommendations and tuning guidance.",
+    };
+  }, [
+    latestCompletedRecommendationRun,
+    latestCompletedRecommendations,
+    latestCompletedRecommendationNarrative,
+    latestCompletedTuningSuggestions,
+    tuningPreviewByKey,
+  ]);
+
+  function focusActionTarget(targetId: string): void {
+    const target = document.getElementById(targetId);
+    if (!target) {
+      return;
+    }
+    if (typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    setStartHereFocusedTargetId(targetId);
+  }
+
+  async function handleStartHereAction(): Promise<void> {
+    if (startHereAction.kind === "tuning") {
+      if (!startHereAction.hasPreview) {
+        await handlePreviewTuningSuggestion(
+          startHereAction.recommendationRunId,
+          startHereAction.narrativeId,
+          startHereAction.suggestion,
+        );
+      }
+      focusActionTarget(startHereAction.targetId);
+      return;
+    }
+    if (startHereAction.kind === "recommendation") {
+      focusActionTarget(startHereAction.targetId);
+    }
+  }
 
   function currentSuggestionValue(suggestion: RecommendationTuningSuggestion): number {
     const persistedValue = tuningSettingValueFromBusinessSettings(tuningSettings, suggestion.setting);
@@ -1764,6 +1936,16 @@ export default function SiteWorkspacePage() {
             </strong>
           </div>
         </div>
+        <div className="panel panel-compact stack" data-testid="start-here-section">
+          <span className="hint muted">Start Here</span>
+          <strong>{startHereAction.title}</strong>
+          <span className="hint">{startHereAction.detail}</span>
+          {startHereAction.kind !== "none" ? (
+            <button type="button" className="button button-secondary" onClick={() => void handleStartHereAction()}>
+              {startHereAction.buttonLabel}
+            </button>
+          ) : null}
+        </div>
       </SectionCard>
 
       <SectionCard>
@@ -2477,27 +2659,32 @@ export default function SiteWorkspacePage() {
                   <tbody>
                     {latestCompletedRecommendations.map((item, index) => {
                       const impactLabel = recommendationImpactLabel(item, index);
+                      const rowId = recommendationRowId(item.id);
                       return (
-                      <tr key={item.id}>
-                        <td className="table-cell-wrap">
-                          <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
-                          <br />
-                          {impactLabel ? (
-                            <>
-                              <span className={recommendationImpactBadgeClass(impactLabel)}>{impactLabel}</span>
-                              <br />
-                            </>
-                          ) : null}
-                          <span className="hint muted"><code>{item.id}</code></span>
-                        </td>
-                        <td>{item.category}</td>
-                        <td>{item.severity}</td>
-                        <td>
-                          {item.priority_score} ({item.priority_band})
-                        </td>
-                        <td>{item.status}</td>
-                        <td className="table-cell-wrap">{truncateText(item.rationale, 180)}</td>
-                      </tr>
+                        <tr
+                          key={item.id}
+                          id={rowId}
+                          className={startHereFocusedTargetId === rowId ? "start-here-target-active" : undefined}
+                        >
+                          <td className="table-cell-wrap">
+                            <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
+                            <br />
+                            {impactLabel ? (
+                              <>
+                                <span className={recommendationImpactBadgeClass(impactLabel)}>{impactLabel}</span>
+                                <br />
+                              </>
+                            ) : null}
+                            <span className="hint muted"><code>{item.id}</code></span>
+                          </td>
+                          <td>{item.category}</td>
+                          <td>{item.severity}</td>
+                          <td>
+                            {item.priority_score} ({item.priority_band})
+                          </td>
+                          <td>{item.status}</td>
+                          <td className="table-cell-wrap">{truncateText(item.rationale, 180)}</td>
+                        </tr>
                       );
                     })}
                   </tbody>
@@ -2545,13 +2732,19 @@ export default function SiteWorkspacePage() {
                 {latestCompletedTuningSuggestions.length > 0 ? (
                   latestCompletedTuningSuggestions.map((suggestion) => {
                     const previewKey = buildTuningPreviewKey(latestCompletedRecommendationRun.id, suggestion);
+                    const suggestionCardId = tuningSuggestionCardId(latestCompletedRecommendationRun.id, suggestion);
                     const currentValue = currentSuggestionValue(suggestion);
                     const alreadyApplied = currentValue === suggestion.recommended_value;
                     const preview = tuningPreviewByKey[previewKey];
                     return (
                       <div
                         key={`${latestCompletedRecommendationRun.id}-${suggestion.setting}-${suggestion.recommended_value}`}
-                        className="panel panel-compact stack"
+                        id={suggestionCardId}
+                        className={
+                          startHereFocusedTargetId === suggestionCardId
+                            ? "panel panel-compact stack start-here-target-active"
+                            : "panel panel-compact stack"
+                        }
                         data-testid="tuning-suggestion-card"
                       >
                         <strong>{formatTuningSettingLabel(suggestion.setting)}</strong>
