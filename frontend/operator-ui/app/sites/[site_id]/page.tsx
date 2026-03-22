@@ -21,6 +21,7 @@ import {
   fetchCompetitorSnapshotRuns,
   fetchLatestRecommendationRunNarrative,
   previewRecommendationTuningImpact,
+  fetchRecommendationsForRun,
   fetchRecommendationRuns,
   fetchRecommendations,
   fetchSiteCompetitorComparisonRuns,
@@ -441,6 +442,10 @@ export default function SiteWorkspacePage() {
   const [recommendationRunError, setRecommendationRunError] = useState<string | null>(null);
   const [latestNarrativesByRunId, setLatestNarrativesByRunId] = useState<Record<string, RecommendationNarrative>>({});
   const [narrativeLookupError, setNarrativeLookupError] = useState<string | null>(null);
+  const [latestCompletedRecommendationRun, setLatestCompletedRecommendationRun] = useState<RecommendationRun | null>(null);
+  const [latestCompletedRecommendations, setLatestCompletedRecommendations] = useState<Recommendation[]>([]);
+  const [latestCompletedRecommendationsError, setLatestCompletedRecommendationsError] = useState<string | null>(null);
+  const [latestCompletedRecommendationsLoading, setLatestCompletedRecommendationsLoading] = useState(false);
   const [tuningPreviewByKey, setTuningPreviewByKey] = useState<Record<string, RecommendationTuningImpactPreview>>({});
   const [tuningPreviewErrorByKey, setTuningPreviewErrorByKey] = useState<Record<string, string>>({});
   const [tuningPreviewLoadingKey, setTuningPreviewLoadingKey] = useState<string | null>(null);
@@ -552,6 +557,23 @@ export default function SiteWorkspacePage() {
       highPriority: Number(byPriorityBand.high || 0) + Number(byPriorityBand.critical || 0),
     };
   }, [queueResponse]);
+
+  const latestRecommendationRun = useMemo(
+    () => recommendationRuns[0] || null,
+    [recommendationRuns],
+  );
+  const latestCompletedRecommendationNarrative = useMemo(() => {
+    if (!latestCompletedRecommendationRun) {
+      return null;
+    }
+    return latestNarrativesByRunId[latestCompletedRecommendationRun.id] || null;
+  }, [latestCompletedRecommendationRun, latestNarrativesByRunId]);
+  const latestCompletedTuningSuggestions = useMemo(() => {
+    if (!latestCompletedRecommendationNarrative) {
+      return [];
+    }
+    return parseNarrativeTuningSuggestions(latestCompletedRecommendationNarrative.sections_json);
+  }, [latestCompletedRecommendationNarrative]);
 
   const workspaceReadinessMessage = useMemo(() => {
     if (!selectedSite) {
@@ -1044,6 +1066,10 @@ export default function SiteWorkspacePage() {
       setRecommendationRunError(null);
       setLatestNarrativesByRunId({});
       setNarrativeLookupError(null);
+      setLatestCompletedRecommendationRun(null);
+      setLatestCompletedRecommendations([]);
+      setLatestCompletedRecommendationsError(null);
+      setLatestCompletedRecommendationsLoading(false);
       setTuningPreviewByKey({});
       setTuningPreviewErrorByKey({});
       setTuningPreviewLoadingKey(null);
@@ -1070,6 +1096,17 @@ export default function SiteWorkspacePage() {
     if (!selectedSite) {
       setNotFound(true);
       setLoadingWorkspace(false);
+      setRecommendationRuns([]);
+      setRecommendationRunError(null);
+      setLatestNarrativesByRunId({});
+      setNarrativeLookupError(null);
+      setLatestCompletedRecommendationRun(null);
+      setLatestCompletedRecommendations([]);
+      setLatestCompletedRecommendationsError(null);
+      setLatestCompletedRecommendationsLoading(false);
+      setTuningPreviewByKey({});
+      setTuningPreviewErrorByKey({});
+      setTuningPreviewLoadingKey(null);
       setCompetitorProfileGenerationRuns([]);
       setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
@@ -1092,6 +1129,10 @@ export default function SiteWorkspacePage() {
       setQueueError(null);
       setRecommendationRunError(null);
       setNarrativeLookupError(null);
+      setLatestCompletedRecommendationRun(null);
+      setLatestCompletedRecommendations([]);
+      setLatestCompletedRecommendationsError(null);
+      setLatestCompletedRecommendationsLoading(false);
       setTuningPreviewByKey({});
       setTuningPreviewErrorByKey({});
       setTuningPreviewLoadingKey(null);
@@ -1206,6 +1247,40 @@ export default function SiteWorkspacePage() {
           .sort((left, right) => right.created_at.localeCompare(left.created_at))
           .slice(0, MAX_RECOMMENDATION_RUN_ROWS);
         setRecommendationRuns(sortedRuns);
+        const latestCompletedRun = sortedRuns.find((item) => item.status === "completed") || null;
+        setLatestCompletedRecommendationRun(latestCompletedRun);
+        if (latestCompletedRun) {
+          setLatestCompletedRecommendationsLoading(true);
+          try {
+            const runRecommendations = await fetchRecommendationsForRun(
+              context.token,
+              context.businessId,
+              siteId,
+              latestCompletedRun.id,
+            );
+            if (cancelled) {
+              return;
+            }
+            setLatestCompletedRecommendations(runRecommendations.items);
+            setLatestCompletedRecommendationsError(null);
+          } catch (error) {
+            if (cancelled) {
+              return;
+            }
+            setLatestCompletedRecommendations([]);
+            setLatestCompletedRecommendationsError(
+              safeSectionErrorMessage("latest completed recommendations", error),
+            );
+          } finally {
+            if (!cancelled) {
+              setLatestCompletedRecommendationsLoading(false);
+            }
+          }
+        } else {
+          setLatestCompletedRecommendations([]);
+          setLatestCompletedRecommendationsError(null);
+          setLatestCompletedRecommendationsLoading(false);
+        }
 
         const runsForNarrativeLookup = sortedRuns.slice(0, NARRATIVE_LOOKUP_LIMIT);
         if (runsForNarrativeLookup.length > 0) {
@@ -1251,6 +1326,10 @@ export default function SiteWorkspacePage() {
         }
       } else {
         setRecommendationRuns([]);
+        setLatestCompletedRecommendationRun(null);
+        setLatestCompletedRecommendations([]);
+        setLatestCompletedRecommendationsError(null);
+        setLatestCompletedRecommendationsLoading(false);
         setLatestNarrativesByRunId({});
         setTuningPreviewByKey({});
         setTuningPreviewErrorByKey({});
@@ -2178,9 +2257,183 @@ export default function SiteWorkspacePage() {
         <h2>Recommendation Runs and Narratives</h2>
         {recommendationRunError ? <p className="hint error">{recommendationRunError}</p> : null}
         {narrativeLookupError ? <p className="hint warning">{narrativeLookupError}</p> : null}
+        <h3>Latest Completed Run</h3>
         {recommendationRuns.length === 0 && !recommendationRunError ? (
           <p className="hint muted">No recommendation runs have been recorded for this site yet.</p>
-        ) : (
+        ) : null}
+        {recommendationRuns.length > 0 && !latestCompletedRecommendationRun && !recommendationRunError ? (
+          <p className="hint muted">
+            No completed recommendation run is available yet.
+            {latestRecommendationRun ? (
+              <>
+                {" "}
+                Latest run{" "}
+                <Link href={buildRecommendationRunHref(latestRecommendationRun.id, selectedSite.id)}>
+                  {latestRecommendationRun.id}
+                </Link>{" "}
+                is currently <strong>{latestRecommendationRun.status}</strong>.
+              </>
+            ) : null}
+          </p>
+        ) : null}
+        {latestCompletedRecommendationRun ? (
+          <div className="stack">
+            <p>
+              Run:{" "}
+              <Link href={buildRecommendationRunHref(latestCompletedRecommendationRun.id, selectedSite.id)}>
+                {latestCompletedRecommendationRun.id}
+              </Link>{" "}
+              ({latestCompletedRecommendationRun.status})
+            </p>
+            <p className="hint muted">
+              Created {formatDateTime(latestCompletedRecommendationRun.created_at)} | Completed{" "}
+              {formatDateTime(latestCompletedRecommendationRun.completed_at)} | Total{" "}
+              {latestCompletedRecommendationRun.total_recommendations} | Critical{" "}
+              {latestCompletedRecommendationRun.critical_recommendations} | Warning{" "}
+              {latestCompletedRecommendationRun.warning_recommendations} | Info{" "}
+              {latestCompletedRecommendationRun.info_recommendations}
+            </p>
+            <h4>Deterministic Recommendations</h4>
+            {latestCompletedRecommendationsLoading ? (
+              <p className="hint muted">Loading deterministic recommendations for the latest completed run...</p>
+            ) : null}
+            {latestCompletedRecommendationsError ? (
+              <p className="hint warning">{latestCompletedRecommendationsError}</p>
+            ) : null}
+            {!latestCompletedRecommendationsLoading &&
+            !latestCompletedRecommendationsError &&
+            latestCompletedRecommendations.length === 0 ? (
+              <p className="hint muted">No deterministic recommendations were produced for this run.</p>
+            ) : null}
+            {latestCompletedRecommendations.length > 0 ? (
+              <div className="table-container">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Recommendation</th>
+                      <th>Category</th>
+                      <th>Severity</th>
+                      <th>Priority</th>
+                      <th>Status</th>
+                      <th>Deterministic Rationale</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {latestCompletedRecommendations.map((item) => (
+                      <tr key={item.id}>
+                        <td className="table-cell-wrap">
+                          <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
+                          <br />
+                          <span className="hint muted"><code>{item.id}</code></span>
+                        </td>
+                        <td>{item.category}</td>
+                        <td>{item.severity}</td>
+                        <td>
+                          {item.priority_score} ({item.priority_band})
+                        </td>
+                        <td>{item.status}</td>
+                        <td className="table-cell-wrap">{truncateText(item.rationale, 180)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+            <h4>AI Narrative Overlay</h4>
+            {latestCompletedRecommendationNarrative ? (
+              <div className="stack">
+                <p className="hint muted">
+                  Narrative v{latestCompletedRecommendationNarrative.version} (
+                  {latestCompletedRecommendationNarrative.status}) | Provider{" "}
+                  {latestCompletedRecommendationNarrative.provider_name} | Model{" "}
+                  {latestCompletedRecommendationNarrative.model_name} | Prompt{" "}
+                  {latestCompletedRecommendationNarrative.prompt_version}
+                </p>
+                <p>
+                  <Link
+                    href={buildNarrativeDetailHref(
+                      latestCompletedRecommendationRun.id,
+                      latestCompletedRecommendationNarrative.id,
+                      selectedSite.id,
+                    )}
+                  >
+                    Open latest narrative
+                  </Link>
+                </p>
+                {latestCompletedRecommendationNarrative.narrative_text ? (
+                  <p>{latestCompletedRecommendationNarrative.narrative_text}</p>
+                ) : null}
+                {!latestCompletedRecommendationNarrative.narrative_text &&
+                latestCompletedRecommendationNarrative.status === "completed" ? (
+                  <p className="hint muted">Narrative completed without summary text.</p>
+                ) : null}
+                {latestCompletedRecommendationNarrative.status === "failed" ? (
+                  <p className="hint warning">
+                    Narrative generation failed.
+                    {latestCompletedRecommendationNarrative.error_message
+                      ? ` ${latestCompletedRecommendationNarrative.error_message}`
+                      : ""}
+                  </p>
+                ) : null}
+                <span className="hint muted">AI-Assisted Tuning Suggestions</span>
+                {latestCompletedTuningSuggestions.length > 0 ? (
+                  latestCompletedTuningSuggestions.map((suggestion) => {
+                    const previewKey = buildTuningPreviewKey(latestCompletedRecommendationRun.id, suggestion);
+                    return (
+                      <Fragment
+                        key={`${latestCompletedRecommendationRun.id}-${suggestion.setting}-${suggestion.recommended_value}`}
+                      >
+                        <span className="hint muted">
+                          {formatTuningSettingLabel(suggestion.setting)}: {suggestion.current_value}
+                          {" -> "}
+                          {suggestion.recommended_value} ({suggestion.reason})
+                        </span>
+                        <span className="hint muted">Confidence: {suggestion.confidence}</span>
+                        <button
+                          type="button"
+                          className="button button-tertiary"
+                          onClick={() =>
+                            handlePreviewTuningSuggestion(
+                              latestCompletedRecommendationRun.id,
+                              latestCompletedRecommendationNarrative.id,
+                              suggestion,
+                            )
+                          }
+                          disabled={tuningPreviewLoadingKey === previewKey}
+                        >
+                          {tuningPreviewLoadingKey === previewKey ? "Previewing..." : "Preview Impact"}
+                        </button>
+                        {tuningPreviewErrorByKey[previewKey] ? (
+                          <span className="hint warning">{tuningPreviewErrorByKey[previewKey]}</span>
+                        ) : null}
+                        {tuningPreviewByKey[previewKey] ? (
+                          <span className="hint muted">
+                            {tuningPreviewByKey[previewKey].estimated_impact.summary} Included delta:{" "}
+                            {formatSignedDelta(
+                              tuningPreviewByKey[previewKey].estimated_impact.estimated_included_candidate_delta,
+                            )}
+                            ; excluded delta:{" "}
+                            {formatSignedDelta(
+                              tuningPreviewByKey[previewKey].estimated_impact.estimated_excluded_candidate_delta,
+                            )}
+                          </span>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })
+                ) : (
+                  <span className="hint muted">No tuning suggestions</span>
+                )}
+              </div>
+            ) : (
+              <p className="hint muted">
+                No narrative has been generated for the latest completed recommendation run yet.
+              </p>
+            )}
+          </div>
+        ) : null}
+        <h3>Recent Run History</h3>
+        {recommendationRuns.length > 0 ? (
           <div className="table-container">
             <table className="table">
               <thead>
@@ -2196,9 +2449,6 @@ export default function SiteWorkspacePage() {
               <tbody>
                 {recommendationRuns.map((run) => {
                   const latestNarrative = latestNarrativesByRunId[run.id] || null;
-                  const tuningSuggestions = latestNarrative
-                    ? parseNarrativeTuningSuggestions(latestNarrative.sections_json)
-                    : [];
                   return (
                     <tr key={run.id}>
                       <td>
@@ -2212,70 +2462,9 @@ export default function SiteWorkspacePage() {
                         <div className="stack">
                           <Link href={buildNarrativeHistoryHref(run.id, selectedSite.id)}>History</Link>
                           {latestNarrative ? (
-                            <>
-                              <Link
-                                href={buildNarrativeDetailHref(run.id, latestNarrative.id, selectedSite.id)}
-                              >
-                                Latest v{latestNarrative.version} ({latestNarrative.status})
-                              </Link>
-                              <span className="hint muted">Tuning Suggestions</span>
-                              {tuningSuggestions.length > 0 ? (
-                                tuningSuggestions.map((suggestion) => (
-                                  <Fragment
-                                    key={`${run.id}-${suggestion.setting}-${suggestion.recommended_value}`}
-                                  >
-                                    <span className="hint muted">
-                                      {formatTuningSettingLabel(suggestion.setting)}: {suggestion.current_value}
-                                      {" -> "}
-                                      {suggestion.recommended_value} ({suggestion.reason})
-                                    </span>
-                                    <button
-                                      type="button"
-                                      className="button button-tertiary"
-                                      onClick={() =>
-                                        handlePreviewTuningSuggestion(
-                                          run.id,
-                                          latestNarrative.id,
-                                          suggestion,
-                                        )
-                                      }
-                                      disabled={
-                                        tuningPreviewLoadingKey === buildTuningPreviewKey(run.id, suggestion)
-                                      }
-                                    >
-                                      {tuningPreviewLoadingKey === buildTuningPreviewKey(run.id, suggestion)
-                                        ? "Previewing..."
-                                        : "Preview Impact"}
-                                    </button>
-                                    {tuningPreviewErrorByKey[buildTuningPreviewKey(run.id, suggestion)] ? (
-                                      <span className="hint warning">
-                                        {tuningPreviewErrorByKey[buildTuningPreviewKey(run.id, suggestion)]}
-                                      </span>
-                                    ) : null}
-                                    {tuningPreviewByKey[buildTuningPreviewKey(run.id, suggestion)] ? (
-                                      <span className="hint muted">
-                                        {
-                                          tuningPreviewByKey[buildTuningPreviewKey(run.id, suggestion)].estimated_impact
-                                            .summary
-                                        }{" "}
-                                        Included delta:{" "}
-                                        {formatSignedDelta(
-                                          tuningPreviewByKey[buildTuningPreviewKey(run.id, suggestion)].estimated_impact
-                                            .estimated_included_candidate_delta,
-                                        )}
-                                        ; excluded delta:{" "}
-                                        {formatSignedDelta(
-                                          tuningPreviewByKey[buildTuningPreviewKey(run.id, suggestion)].estimated_impact
-                                            .estimated_excluded_candidate_delta,
-                                        )}
-                                      </span>
-                                    ) : null}
-                                  </Fragment>
-                                ))
-                              ) : (
-                                <span className="hint muted">No tuning suggestions</span>
-                              )}
-                            </>
+                            <Link href={buildNarrativeDetailHref(run.id, latestNarrative.id, selectedSite.id)}>
+                              Latest v{latestNarrative.version} ({latestNarrative.status})
+                            </Link>
                           ) : (
                             <span className="hint muted">No narrative yet</span>
                           )}
@@ -2287,7 +2476,7 @@ export default function SiteWorkspacePage() {
               </tbody>
             </table>
           </div>
-        )}
+        ) : null}
       </SectionCard>
     </PageContainer>
   );

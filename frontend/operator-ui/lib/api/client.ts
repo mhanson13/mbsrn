@@ -548,6 +548,21 @@ export async function fetchRecommendationRuns(
   );
 }
 
+export async function fetchLatestRecommendationRun(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<RecommendationRun | null> {
+  const response = await fetchRecommendationRuns(token, businessId, siteId);
+  if (response.items.length === 0) {
+    return null;
+  }
+  const sortedRuns = [...response.items].sort((left, right) =>
+    right.created_at.localeCompare(left.created_at),
+  );
+  return sortedRuns.find((item) => item.status === "completed") || sortedRuns[0] || null;
+}
+
 export async function createRecommendationRun(
   token: string,
   businessId: string,

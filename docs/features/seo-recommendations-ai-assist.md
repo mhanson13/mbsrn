@@ -5,6 +5,7 @@ This feature produces deterministic SEO recommendations from persisted audit/com
 
 Deterministic recommendation records remain canonical. AI output is advisory explanation only.
 Tuning impact preview is deterministic and advisory only, and preview-to-outcome accuracy is tracked for evaluation.
+The site workspace now surfaces the latest completed recommendation run, deterministic recommendation items, latest AI narrative, AI tuning suggestions, and deterministic preview impact in one place.
 
 ## Why This Exists
 - Deterministic rules provide stable, auditable recommendation artifacts.
@@ -38,7 +39,13 @@ Tuning impact preview is deterministic and advisory only, and preview-to-outcome
 6. UI:
    - Recommendation queue and run detail pages render deterministic recommendation data.
    - Narrative views render AI explanation when available.
-   - Site workspace can preview suggested tuning deltas before any manual settings update.
+   - Site workspace surfaces:
+     - latest completed run summary
+     - deterministic recommendation list for that run
+     - latest narrative overlay (if available)
+     - AI-assisted tuning suggestions
+     - deterministic tuning preview per suggestion
+   - Missing run/narrative/preview data is handled with section-scoped safe empty/failure states.
 
 ## Data Model
 - `seo_recommendation_runs`: deterministic run lineage/status/rollups.

@@ -47,6 +47,7 @@ const mockFetchSiteCompetitorComparisonRuns = jest.fn<
   unknown[]
 >();
 const mockFetchRecommendations = jest.fn<Promise<RecommendationListResponse>, unknown[]>();
+const mockFetchRecommendationsForRun = jest.fn<Promise<RecommendationListResponse>, unknown[]>();
 const mockFetchRecommendationRuns = jest.fn<Promise<RecommendationRunListResponse>, unknown[]>();
 const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<RecommendationNarrative>, unknown[]>();
 const mockPreviewRecommendationTuningImpact = jest.fn<Promise<RecommendationTuningImpactPreview>, unknown[]>();
@@ -92,6 +93,7 @@ jest.mock("../../lib/api/client", () => {
     fetchCompetitorSnapshotRuns: (...args: unknown[]) => mockFetchCompetitorSnapshotRuns(...args),
     fetchSiteCompetitorComparisonRuns: (...args: unknown[]) => mockFetchSiteCompetitorComparisonRuns(...args),
     fetchRecommendations: (...args: unknown[]) => mockFetchRecommendations(...args),
+    fetchRecommendationsForRun: (...args: unknown[]) => mockFetchRecommendationsForRun(...args),
     fetchRecommendationRuns: (...args: unknown[]) => mockFetchRecommendationRuns(...args),
     fetchLatestRecommendationRunNarrative: (...args: unknown[]) =>
       mockFetchLatestRecommendationRunNarrative(...args),
@@ -169,6 +171,7 @@ function baseContext(overrides: Partial<OperatorContextMockValue> = {}): Operato
 function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({ items: [], total: 0 });
   mockFetchCompetitorProfileGenerationRunDetail.mockReset();
+  mockFetchRecommendationsForRun.mockResolvedValue({ items: [], total: 0 });
   mockFetchCompetitorProfileGenerationSummary.mockResolvedValue({
     business_id: "biz-1",
     site_id: "site-1",
@@ -579,6 +582,44 @@ function seedRichWorkspaceData(): void {
       dismissed: 0,
       high_priority: 1,
     },
+  });
+  mockFetchRecommendationsForRun.mockImplementation((...args: unknown[]) => {
+    const runId = String(args[3] || "");
+    if (runId !== "run-1") {
+      return Promise.resolve({
+        items: [],
+        total: 0,
+      });
+    }
+    return Promise.resolve({
+      items: [
+        {
+          id: "rec-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          recommendation_run_id: "run-1",
+          audit_run_id: "audit-1",
+          comparison_run_id: "comparison-1",
+          status: "open",
+          category: "SEO",
+          severity: "warning",
+          priority_score: 80,
+          priority_band: "high",
+          effort_bucket: "small",
+          title: "Fix title tags",
+          rationale: "Title tags are missing core keywords.",
+          decision_reason: null,
+          created_at: "2026-03-21T00:30:00Z",
+          updated_at: "2026-03-21T00:31:00Z",
+        },
+      ],
+      total: 1,
+      by_status: { open: 1 },
+      by_category: { SEO: 1 },
+      by_severity: { warning: 1 },
+      by_effort_bucket: { small: 1 },
+      by_priority_band: { high: 1 },
+    });
   });
 
   mockFetchRecommendationRuns.mockResolvedValue({
@@ -1018,6 +1059,10 @@ function seedGroupedTimelineWorkspaceData(): void {
       dismissed: 0,
       high_priority: 0,
     },
+  });
+  mockFetchRecommendationsForRun.mockResolvedValue({
+    items: [],
+    total: 0,
   });
 
   mockFetchRecommendationRuns.mockResolvedValue({
@@ -1519,7 +1564,7 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "Recommendation Runs and Narratives" });
-    await screen.findByRole("link", { name: "run-1" });
+    expect((await screen.findAllByRole("link", { name: "run-1" })).length).toBeGreaterThan(0);
     expect(
       screen.getByText(
         "Minimum relevance score: 35 -> 30 (High low_relevance exclusions indicate threshold is too strict.)",
@@ -1650,10 +1695,79 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "Recommendation Runs and Narratives" });
-    await screen.findByRole("link", { name: "run-1" });
+    expect((await screen.findAllByRole("link", { name: "run-1" })).length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Preview Impact" }));
     await screen.findByText(/Insufficient recent competitor telemetry for deterministic impact estimation\./);
     expect(screen.getByText(/Included delta: 0; excluded delta: 0/)).toBeInTheDocument();
+  });
+
+  it("surfaces latest completed deterministic recommendations and ai narrative overlay", async () => {
+    seedRichWorkspaceData();
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Recommendation Runs and Narratives" });
+    await screen.findByRole("heading", { name: "Latest Completed Run" });
+    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    expect(screen.getByText("Title tags are missing core keywords.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "AI Narrative Overlay" })).toBeInTheDocument();
+    expect(screen.getByText("Narrative for run 1.")).toBeInTheDocument();
+    expect(mockFetchRecommendationsForRun).toHaveBeenCalledWith("token-1", "biz-1", "site-1", "run-1");
+  });
+
+  it("shows safe in-progress state when no completed recommendation run exists yet", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationRuns.mockResolvedValue({
+      items: [
+        {
+          id: "run-open-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          audit_run_id: "audit-1",
+          comparison_run_id: "comparison-1",
+          status: "running",
+          total_recommendations: 0,
+          critical_recommendations: 0,
+          warning_recommendations: 0,
+          info_recommendations: 0,
+          category_counts_json: {},
+          effort_bucket_counts_json: {},
+          started_at: "2026-03-21T00:29:00Z",
+          completed_at: null,
+          duration_ms: null,
+          error_summary: null,
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-21T00:29:00Z",
+          updated_at: "2026-03-21T00:30:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchRecommendationsForRun.mockClear();
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Latest Completed Run" });
+    await screen.findByText(/No completed recommendation run is available yet\./);
+    expect(mockFetchRecommendationsForRun).not.toHaveBeenCalled();
+  });
+
+  it("renders safe latest-run narrative missing state", async () => {
+    seedRichWorkspaceData();
+    mockFetchLatestRecommendationRunNarrative.mockImplementation(() =>
+      Promise.reject(new ApiRequestError("Not found", { status: 404, detail: null })),
+    );
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Latest Completed Run" });
+    await screen.findByText("No narrative has been generated for the latest completed recommendation run yet.");
+  });
+
+  it("renders safe latest-run recommendation detail load failures", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationsForRun.mockRejectedValueOnce(new Error("failed run recommendations"));
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Latest Completed Run" });
+    await screen.findByText("Unable to load latest completed recommendations right now. Please try again.");
   });
 
   it("keeps loading and warning timeline regression behavior", async () => {
