@@ -31,6 +31,20 @@ class SEOCompetitorProfileGenerationRun(Base):
             "ix_scpg_runs_parent",
             "parent_run_id",
         ),
+        Index(
+            "ix_scpg_runs_biz_site_failcat",
+            "business_id",
+            "site_id",
+            "failure_category",
+        ),
+        CheckConstraint(
+            (
+                "failure_category IS NULL OR failure_category IN "
+                "('timeout', 'provider_auth', 'provider_config', 'malformed_output', "
+                "'schema_validation', 'internal_error', 'provider_request', 'unknown')"
+            ),
+            name="ck_scpg_runs_failure_cat",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -57,6 +71,7 @@ class SEOCompetitorProfileGenerationRun(Base):
     provider_name: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
     model_name: Mapped[str] = mapped_column(String(128), nullable=False, default="unknown")
     prompt_version: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    failure_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     raw_output: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -13,6 +13,7 @@ from app.core.time import utc_now
 from app.integrations.seo_summary_provider import MockSEOCompetitorProfileGenerationProvider
 from app.models.business import Business
 from app.models.seo_competitor_domain import SEOCompetitorDomain
+from app.models.seo_competitor_profile_cleanup_execution import SEOCompetitorProfileCleanupExecution
 from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
 from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
 from app.models.seo_competitor_set import SEOCompetitorSet
@@ -483,5 +484,91 @@ def test_cleanup_job_endpoint_keeps_detail_api_stable_and_enforces_scope(db_sess
     cross_tenant = client.post(
         "/api/jobs/seo-competitor-profile-generation/cleanup",
         json={"business_id": other_business.id},
+    )
+    assert cross_tenant.status_code == 404
+
+
+def test_cleanup_status_endpoint_returns_latest_execution_and_recent_counts(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site = _create_site(db_session, business_id=seeded_business.id, domain="cleanup-status.example")
+    run = _create_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site.id,
+        status="completed",
+        age_days=40,
+        generated_draft_count=1,
+        raw_output='{"debug":"payload"}',
+    )
+    _create_draft(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site.id,
+        run_id=run.id,
+        review_status="rejected",
+        age_days=100,
+    )
+
+    cleanup = client.post(
+        "/api/jobs/seo-competitor-profile-generation/cleanup",
+        json={"business_id": seeded_business.id},
+    )
+    assert cleanup.status_code == 200
+
+    status_response = client.get(
+        f"/api/jobs/seo-competitor-profile-generation/cleanup-status?business_id={seeded_business.id}"
+    )
+    assert status_response.status_code == 200
+    payload = status_response.json()
+    assert payload["business_id"] == seeded_business.id
+    assert payload["site_id"] is None
+    assert payload["recent_success_count"] >= 1
+    assert payload["recent_failure_count"] == 0
+    assert payload["latest_execution"] is not None
+    assert payload["latest_execution"]["status"] == "completed"
+    assert payload["latest_execution"]["raw_output_pruned_runs"] >= 1
+    assert payload["latest_execution"]["rejected_drafts_pruned"] >= 1
+
+    persisted_execution_count = (
+        db_session.query(SEOCompetitorProfileCleanupExecution)
+        .filter(SEOCompetitorProfileCleanupExecution.business_id == seeded_business.id)
+        .count()
+    )
+    assert persisted_execution_count >= 1
+
+
+def test_cleanup_status_endpoint_enforces_site_and_tenant_scope(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site = _create_site(db_session, business_id=seeded_business.id, domain="cleanup-site-scope.example")
+
+    cleanup = client.post(
+        "/api/jobs/seo-competitor-profile-generation/cleanup",
+        json={"business_id": seeded_business.id, "site_id": site.id},
+    )
+    assert cleanup.status_code == 200
+
+    scoped_status = client.get(
+        f"/api/jobs/seo-competitor-profile-generation/cleanup-status?business_id={seeded_business.id}&site_id={site.id}"
+    )
+    assert scoped_status.status_code == 200
+    scoped_payload = scoped_status.json()
+    assert scoped_payload["site_id"] == site.id
+
+    other_business = Business(
+        id=str(uuid4()),
+        name="Other Tenant",
+        notification_phone="+13035550197",
+        notification_email="owner3@other.example",
+        sms_enabled=True,
+        email_enabled=True,
+        customer_auto_ack_enabled=True,
+        contractor_alerts_enabled=True,
+        timezone="America/Denver",
+    )
+    db_session.add(other_business)
+    db_session.commit()
+
+    cross_tenant = client.get(
+        f"/api/jobs/seo-competitor-profile-generation/cleanup-status?business_id={other_business.id}"
     )
     assert cross_tenant.status_code == 404

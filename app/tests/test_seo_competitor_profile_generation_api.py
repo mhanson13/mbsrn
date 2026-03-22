@@ -533,6 +533,7 @@ def test_async_execution_failure_marks_run_failed_safely(db_session, seeded_busi
     assert payload["run"]["provider_name"] == "invalid-test-provider"
     assert payload["run"]["model_name"] == "invalid-test-model"
     assert payload["run"]["prompt_version"] == "seo-competitor-profile-v1"
+    assert payload["run"]["failure_category"] == "malformed_output"
     assert payload["total_drafts"] == 0
     persisted_run = (
         db_session.query(SEOCompetitorProfileGenerationRun)
@@ -571,6 +572,7 @@ def test_malformed_provider_output_results_in_failed_run_without_partial_drafts(
     payload = detail.json()
     assert payload["run"]["status"] == "failed"
     assert payload["run"]["error_summary"] == INVALID_OUTPUT_ERROR_SUMMARY
+    assert payload["run"]["failure_category"] == "malformed_output"
     assert payload["total_drafts"] == 0
 
 
@@ -601,6 +603,7 @@ def test_invalid_confidence_output_fails_run_safely(db_session, seeded_business)
     payload = detail.json()
     assert payload["run"]["status"] == "failed"
     assert payload["run"]["error_summary"] == INVALID_OUTPUT_ERROR_SUMMARY
+    assert payload["run"]["failure_category"] == "malformed_output"
     assert payload["total_drafts"] == 0
 
 
@@ -633,6 +636,7 @@ def test_timeout_provider_failure_marks_run_failed_safely(db_session, seeded_bus
     assert payload["run"]["error_summary"] == PROVIDER_TIMEOUT_ERROR_SUMMARY
     assert payload["run"]["provider_name"] == "openai"
     assert payload["run"]["model_name"] == "gpt-4.1-mini"
+    assert payload["run"]["failure_category"] == "timeout"
     persisted_run = (
         db_session.query(SEOCompetitorProfileGenerationRun)
         .filter(SEOCompetitorProfileGenerationRun.business_id == seeded_business.id)
@@ -672,6 +676,7 @@ def test_provider_auth_failure_marks_run_failed_safely(db_session, seeded_busine
     assert payload["run"]["error_summary"] == PROVIDER_AUTH_CONFIG_ERROR_SUMMARY
     assert payload["run"]["provider_name"] == "openai"
     assert payload["run"]["model_name"] == "gpt-4.1-mini"
+    assert payload["run"]["failure_category"] == "provider_config"
 
 
 def test_list_runs_reconciles_stale_queued_and_running_runs(db_session, seeded_business) -> None:
@@ -708,8 +713,10 @@ def test_list_runs_reconciles_stale_queued_and_running_runs(db_session, seeded_b
     items = {item["id"]: item for item in listed.json()["items"]}
     assert items[queued_run_id]["status"] == "failed"
     assert items[queued_run_id]["error_summary"] == STALE_QUEUED_RUN_ERROR_SUMMARY
+    assert items[queued_run_id]["failure_category"] == "timeout"
     assert items[running_run_id]["status"] == "failed"
     assert items[running_run_id]["error_summary"] == STALE_RUNNING_RUN_ERROR_SUMMARY
+    assert items[running_run_id]["failure_category"] == "timeout"
 
 
 def test_stale_queued_run_marked_failed_is_not_executed(db_session, seeded_business) -> None:
@@ -752,6 +759,7 @@ def test_stale_queued_run_marked_failed_is_not_executed(db_session, seeded_busin
     payload = detail.json()
     assert payload["run"]["status"] == "failed"
     assert payload["run"]["error_summary"] == STALE_QUEUED_RUN_ERROR_SUMMARY
+    assert payload["run"]["failure_category"] == "timeout"
     assert payload["total_drafts"] == 0
 
 
@@ -1098,3 +1106,87 @@ def test_competitor_profile_draft_edit_marks_edited_status(db_session, seeded_bu
     payload = edit.json()
     assert payload["review_status"] == "edited"
     assert payload["suggested_name"] == "Edited Competitor Name"
+
+
+def test_generation_summary_endpoint_returns_status_failure_and_retry_metrics(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+
+    completed_run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=completed_run_id,
+        provider=_DeterministicCompetitorProfileProvider(),
+    )
+
+    timeout_run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=timeout_run_id,
+        provider=_TimeoutCompetitorProfileProvider(),
+    )
+
+    invalid_run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=invalid_run_id,
+        provider=_InvalidCompetitorProfileProvider(),
+    )
+
+    retry_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{timeout_run_id}/retry"
+    )
+    assert retry_response.status_code == 201
+
+    summary_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/summary"
+    )
+    assert summary_response.status_code == 200
+    payload = summary_response.json()
+
+    assert payload["queued_count"] == 1
+    assert payload["running_count"] == 0
+    assert payload["completed_count"] == 1
+    assert payload["failed_count"] == 2
+    assert payload["retry_child_runs"] == 1
+    assert payload["retried_parent_runs"] == 1
+    assert payload["failed_runs_retried"] == 1
+    assert payload["failure_category_counts"]["timeout"] == 1
+    assert payload["failure_category_counts"]["malformed_output"] == 1
+    assert payload["latest_run_created_at"] is not None
+    assert payload["latest_run_completed_at"] is not None
+
+
+def test_generation_summary_endpoint_enforces_tenant_scope(db_session, seeded_business) -> None:
+    other_business = _seed_other_business(db_session)
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    _create_generation_run(client, seeded_business.id, site_id)
+
+    scoped = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/summary"
+    )
+    assert scoped.status_code == 200
+
+    cross_tenant = client.get(
+        f"/api/businesses/{other_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/summary"
+    )
+    assert cross_tenant.status_code == 404

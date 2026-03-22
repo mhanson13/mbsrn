@@ -175,3 +175,10 @@ def test_main_app_mounts_seo_routes() -> None:
     # Phase 4 scheduler-ready due-run entrypoint.
     assert route_methods["/api/jobs/seo-automation/run-due"] >= {"POST"}
     assert route_methods["/api/jobs/seo-competitor-profile-generation/cleanup"] >= {"POST"}
+    assert route_methods["/api/jobs/seo-competitor-profile-generation/cleanup-status"] >= {"GET"}
+    assert route_methods[
+        "/api/businesses/{business_id}/seo/sites/{site_id}/competitor-profile-generation-runs/summary"
+    ] >= {"GET"}
+    assert route_methods[
+        "/api/v1/businesses/{business_id}/seo/sites/{site_id}/competitor-profile-generation-runs/summary"
+    ] >= {"GET"}

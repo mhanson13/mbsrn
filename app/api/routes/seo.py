@@ -57,6 +57,7 @@ from app.schemas.seo_competitor import (
     SEOCompetitorProfileGenerationRunCreateRequest,
     SEOCompetitorProfileGenerationRunDetailRead,
     SEOCompetitorProfileGenerationRunListResponse,
+    SEOCompetitorProfileGenerationObservabilitySummaryRead,
     SEOCompetitorProfileGenerationRunRead,
     SEOCompetitorDomainCreateRequest,
     SEOCompetitorDomainListResponse,
@@ -1435,6 +1436,64 @@ def list_competitor_profile_generation_runs(
     return SEOCompetitorProfileGenerationRunListResponse(
         items=[SEOCompetitorProfileGenerationRunRead.model_validate(item) for item in items],
         total=len(items),
+    )
+
+
+@router.get(
+    "/sites/{site_id}/competitor-profile-generation-runs/summary",
+    response_model=SEOCompetitorProfileGenerationObservabilitySummaryRead,
+)
+@router_v1.get(
+    "/sites/{site_id}/competitor-profile-generation-runs/summary",
+    response_model=SEOCompetitorProfileGenerationObservabilitySummaryRead,
+)
+def get_competitor_profile_generation_runs_summary(
+    business_id: str,
+    site_id: str,
+    lookback_days: int | None = None,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(
+        get_seo_competitor_profile_generation_service
+    ),
+) -> SEOCompetitorProfileGenerationObservabilitySummaryRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        summary = generation_service.get_observability_summary(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            lookback_days=lookback_days,
+        )
+    except (
+        SEOSiteNotFoundError,
+        SEOCompetitorProfileGenerationNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOCompetitorProfileGenerationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    return SEOCompetitorProfileGenerationObservabilitySummaryRead(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        lookback_days=summary.lookback_days,
+        window_start=summary.window_start,
+        window_end=summary.window_end,
+        queued_count=summary.queued_count,
+        running_count=summary.running_count,
+        completed_count=summary.completed_count,
+        failed_count=summary.failed_count,
+        retry_child_runs=summary.retry_child_runs,
+        retried_parent_runs=summary.retried_parent_runs,
+        failed_runs_retried=summary.failed_runs_retried,
+        failure_category_counts=summary.failure_category_counts,
+        latest_run_created_at=summary.latest_run_created_at,
+        latest_run_completed_at=summary.latest_run_completed_at,
+        latest_completed_run_completed_at=summary.latest_completed_run_completed_at,
+        latest_failed_run_completed_at=summary.latest_failed_run_completed_at,
     )
 
 

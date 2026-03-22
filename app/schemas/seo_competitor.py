@@ -7,7 +7,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 SEOCompetitorRunStatus = Literal["queued", "running", "completed", "failed"]
 SEOCompetitorProfileGenerationRunStatus = Literal["queued", "running", "completed", "failed"]
+SEOCompetitorProfileFailureCategory = Literal[
+    "timeout",
+    "provider_auth",
+    "provider_config",
+    "malformed_output",
+    "schema_validation",
+    "internal_error",
+    "provider_request",
+    "unknown",
+]
 SEOCompetitorProfileDraftReviewStatus = Literal["pending", "edited", "accepted", "rejected"]
+SEOCompetitorProfileCleanupExecutionStatus = Literal["completed", "failed"]
 SEOSummaryStatus = Literal["completed", "failed"]
 SEOFindingCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
 SEOFindingSeverity = Literal["INFO", "WARNING", "CRITICAL"]
@@ -198,6 +209,7 @@ class SEOCompetitorProfileGenerationRunRead(BaseModel):
     provider_name: str
     model_name: str
     prompt_version: str
+    failure_category: SEOCompetitorProfileFailureCategory | None
     error_summary: str | None
     completed_at: datetime | None
     created_by_principal_id: str | None
@@ -250,6 +262,26 @@ class SEOCompetitorProfileGenerationRunDetailRead(BaseModel):
     total_drafts: int
 
 
+class SEOCompetitorProfileGenerationObservabilitySummaryRead(BaseModel):
+    business_id: str
+    site_id: str
+    lookback_days: int
+    window_start: datetime
+    window_end: datetime
+    queued_count: int
+    running_count: int
+    completed_count: int
+    failed_count: int
+    retry_child_runs: int
+    retried_parent_runs: int
+    failed_runs_retried: int
+    failure_category_counts: dict[str, int] = Field(default_factory=dict)
+    latest_run_created_at: datetime | None
+    latest_run_completed_at: datetime | None
+    latest_completed_run_completed_at: datetime | None
+    latest_failed_run_completed_at: datetime | None
+
+
 class SEOCompetitorProfileGenerationRetentionCleanupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -271,6 +303,35 @@ class SEOCompetitorProfileGenerationRetentionCleanupRead(BaseModel):
     raw_output_pruned_runs: int
     rejected_drafts_pruned: int
     runs_pruned: int
+
+
+class SEOCompetitorProfileGenerationRetentionCleanupExecutionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    business_id: str
+    site_id: str | None
+    status: SEOCompetitorProfileCleanupExecutionStatus
+    stale_runs_reconciled: int
+    raw_output_pruned_runs: int
+    rejected_drafts_pruned: int
+    runs_pruned: int
+    error_summary: str | None
+    started_at: datetime
+    completed_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class SEOCompetitorProfileGenerationRetentionCleanupStatusRead(BaseModel):
+    business_id: str
+    site_id: str | None
+    lookback_days: int
+    window_start: datetime
+    window_end: datetime
+    recent_success_count: int
+    recent_failure_count: int
+    latest_execution: SEOCompetitorProfileGenerationRetentionCleanupExecutionRead | None
 
 
 class SEOCompetitorProfileDraftEditRequest(BaseModel):

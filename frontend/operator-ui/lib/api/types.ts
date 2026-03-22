@@ -212,6 +212,16 @@ export interface CompetitorProfileGenerationRun {
   provider_name: string;
   model_name: string;
   prompt_version: string;
+  failure_category:
+    | "timeout"
+    | "provider_auth"
+    | "provider_config"
+    | "malformed_output"
+    | "schema_validation"
+    | "internal_error"
+    | "provider_request"
+    | "unknown"
+    | null;
   error_summary: string | null;
   completed_at: string | null;
   created_by_principal_id: string | null;
@@ -252,6 +262,26 @@ export interface CompetitorProfileGenerationRunDetailResponse {
   run: CompetitorProfileGenerationRun;
   drafts: CompetitorProfileDraft[];
   total_drafts: number;
+}
+
+export interface CompetitorProfileGenerationSummaryResponse {
+  business_id: string;
+  site_id: string;
+  lookback_days: number;
+  window_start: string;
+  window_end: string;
+  queued_count: number;
+  running_count: number;
+  completed_count: number;
+  failed_count: number;
+  retry_child_runs: number;
+  retried_parent_runs: number;
+  failed_runs_retried: number;
+  failure_category_counts: Record<string, number>;
+  latest_run_created_at: string | null;
+  latest_run_completed_at: string | null;
+  latest_completed_run_completed_at: string | null;
+  latest_failed_run_completed_at: string | null;
 }
 
 export interface CompetitorProfileGenerationRunCreateRequest {

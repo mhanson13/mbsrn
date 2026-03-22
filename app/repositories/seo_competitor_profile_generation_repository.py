@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Select, and_, delete, or_, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import Select, and_, case, delete, func, or_, select, update
+from sqlalchemy.orm import Session, aliased
 
 from app.core.time import utc_now
+from app.models.seo_competitor_profile_cleanup_execution import SEOCompetitorProfileCleanupExecution
 from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
 from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
 
@@ -71,6 +72,7 @@ class SEOCompetitorProfileGenerationRepository:
             .values(
                 status="running",
                 error_summary=None,
+                failure_category=None,
                 raw_output=None,
                 completed_at=None,
                 updated_at=utc_now(),
@@ -140,6 +142,204 @@ class SEOCompetitorProfileGenerationRepository:
             .where(SEOCompetitorProfileDraft.id == draft_id)
         )
         return self.session.scalar(stmt)
+
+    def summarize_run_status_counts(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        created_after: datetime,
+    ) -> dict[str, int]:
+        stmt = (
+            select(
+                SEOCompetitorProfileGenerationRun.status,
+                func.count(SEOCompetitorProfileGenerationRun.id),
+            )
+            .where(SEOCompetitorProfileGenerationRun.business_id == business_id)
+            .where(SEOCompetitorProfileGenerationRun.site_id == site_id)
+            .where(SEOCompetitorProfileGenerationRun.created_at >= created_after)
+            .group_by(SEOCompetitorProfileGenerationRun.status)
+        )
+        rows = self.session.execute(stmt).all()
+        return {str(status): int(count) for status, count in rows}
+
+    def summarize_failure_category_counts(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        created_after: datetime,
+    ) -> dict[str, int]:
+        stmt = (
+            select(
+                SEOCompetitorProfileGenerationRun.failure_category,
+                func.count(SEOCompetitorProfileGenerationRun.id),
+            )
+            .where(SEOCompetitorProfileGenerationRun.business_id == business_id)
+            .where(SEOCompetitorProfileGenerationRun.site_id == site_id)
+            .where(SEOCompetitorProfileGenerationRun.created_at >= created_after)
+            .where(SEOCompetitorProfileGenerationRun.status == "failed")
+            .where(SEOCompetitorProfileGenerationRun.failure_category.is_not(None))
+            .group_by(SEOCompetitorProfileGenerationRun.failure_category)
+        )
+        rows = self.session.execute(stmt).all()
+        return {
+            str(failure_category): int(count)
+            for failure_category, count in rows
+            if failure_category is not None
+        }
+
+    def count_retry_child_runs(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        created_after: datetime,
+    ) -> int:
+        stmt = (
+            select(func.count(SEOCompetitorProfileGenerationRun.id))
+            .where(SEOCompetitorProfileGenerationRun.business_id == business_id)
+            .where(SEOCompetitorProfileGenerationRun.site_id == site_id)
+            .where(SEOCompetitorProfileGenerationRun.created_at >= created_after)
+            .where(SEOCompetitorProfileGenerationRun.parent_run_id.is_not(None))
+        )
+        return int(self.session.scalar(stmt) or 0)
+
+    def count_distinct_retry_parents(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        created_after: datetime,
+    ) -> int:
+        stmt = (
+            select(func.count(func.distinct(SEOCompetitorProfileGenerationRun.parent_run_id)))
+            .where(SEOCompetitorProfileGenerationRun.business_id == business_id)
+            .where(SEOCompetitorProfileGenerationRun.site_id == site_id)
+            .where(SEOCompetitorProfileGenerationRun.created_at >= created_after)
+            .where(SEOCompetitorProfileGenerationRun.parent_run_id.is_not(None))
+        )
+        return int(self.session.scalar(stmt) or 0)
+
+    def count_failed_runs_retried(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        created_after: datetime,
+    ) -> int:
+        parent_run = aliased(SEOCompetitorProfileGenerationRun)
+        child_run = aliased(SEOCompetitorProfileGenerationRun)
+        stmt = (
+            select(func.count(func.distinct(parent_run.id)))
+            .select_from(parent_run)
+            .join(
+                child_run,
+                and_(
+                    child_run.business_id == parent_run.business_id,
+                    child_run.parent_run_id == parent_run.id,
+                ),
+            )
+            .where(parent_run.business_id == business_id)
+            .where(parent_run.site_id == site_id)
+            .where(parent_run.status == "failed")
+            .where(child_run.site_id == site_id)
+            .where(child_run.created_at >= created_after)
+        )
+        return int(self.session.scalar(stmt) or 0)
+
+    def summarize_run_latest_timestamps(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        created_after: datetime,
+    ) -> tuple[datetime | None, datetime | None, datetime | None, datetime | None]:
+        stmt = select(
+            func.max(SEOCompetitorProfileGenerationRun.created_at),
+            func.max(SEOCompetitorProfileGenerationRun.completed_at),
+            func.max(
+                case(
+                    (SEOCompetitorProfileGenerationRun.status == "completed", SEOCompetitorProfileGenerationRun.completed_at),
+                    else_=None,
+                )
+            ),
+            func.max(
+                case(
+                    (SEOCompetitorProfileGenerationRun.status == "failed", SEOCompetitorProfileGenerationRun.completed_at),
+                    else_=None,
+                )
+            ),
+        ).where(
+            SEOCompetitorProfileGenerationRun.business_id == business_id,
+            SEOCompetitorProfileGenerationRun.site_id == site_id,
+            SEOCompetitorProfileGenerationRun.created_at >= created_after,
+        )
+        row = self.session.execute(stmt).one()
+        return (
+            row[0],
+            row[1],
+            row[2],
+            row[3],
+        )
+
+    def create_cleanup_execution(
+        self,
+        execution: SEOCompetitorProfileCleanupExecution,
+    ) -> SEOCompetitorProfileCleanupExecution:
+        self.session.add(execution)
+        self.session.flush()
+        return execution
+
+    def save_cleanup_execution(
+        self,
+        execution: SEOCompetitorProfileCleanupExecution,
+    ) -> SEOCompetitorProfileCleanupExecution:
+        self.session.add(execution)
+        self.session.flush()
+        return execution
+
+    def get_latest_cleanup_execution_for_business_scope(
+        self,
+        *,
+        business_id: str,
+        site_id: str | None,
+    ) -> SEOCompetitorProfileCleanupExecution | None:
+        stmt = select(SEOCompetitorProfileCleanupExecution).where(
+            SEOCompetitorProfileCleanupExecution.business_id == business_id
+        )
+        if site_id is None:
+            stmt = stmt.where(SEOCompetitorProfileCleanupExecution.site_id.is_(None))
+        else:
+            stmt = stmt.where(SEOCompetitorProfileCleanupExecution.site_id == site_id)
+        stmt = stmt.order_by(
+            SEOCompetitorProfileCleanupExecution.started_at.desc(),
+            SEOCompetitorProfileCleanupExecution.id.desc(),
+        )
+        return self.session.scalar(stmt)
+
+    def count_cleanup_executions_by_status(
+        self,
+        *,
+        business_id: str,
+        site_id: str | None,
+        started_after: datetime,
+    ) -> dict[str, int]:
+        stmt = (
+            select(
+                SEOCompetitorProfileCleanupExecution.status,
+                func.count(SEOCompetitorProfileCleanupExecution.id),
+            )
+            .where(SEOCompetitorProfileCleanupExecution.business_id == business_id)
+            .where(SEOCompetitorProfileCleanupExecution.started_at >= started_after)
+            .group_by(SEOCompetitorProfileCleanupExecution.status)
+        )
+        if site_id is None:
+            stmt = stmt.where(SEOCompetitorProfileCleanupExecution.site_id.is_(None))
+        else:
+            stmt = stmt.where(SEOCompetitorProfileCleanupExecution.site_id == site_id)
+        rows = self.session.execute(stmt).all()
+        return {str(status): int(count) for status, count in rows}
 
     def prune_raw_output_for_terminal_runs(
         self,

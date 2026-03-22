@@ -28,6 +28,7 @@ import type {
   CompetitorProfileGenerationRunCreateRequest,
   CompetitorProfileGenerationRunDetailResponse,
   CompetitorProfileGenerationRunListResponse,
+  CompetitorProfileGenerationSummaryResponse,
   RecommendationRunListResponse,
   RecommendationRun,
   RecommendationRunReport,
@@ -347,6 +348,17 @@ export async function fetchCompetitorProfileGenerationRunDetail(
 ): Promise<CompetitorProfileGenerationRunDetailResponse> {
   return apiRequest<CompetitorProfileGenerationRunDetailResponse>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-profile-generation-runs/${generationRunId}`,
+    { token },
+  );
+}
+
+export async function fetchCompetitorProfileGenerationSummary(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<CompetitorProfileGenerationSummaryResponse> {
+  return apiRequest<CompetitorProfileGenerationSummaryResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-profile-generation-runs/summary`,
     { token },
   );
 }

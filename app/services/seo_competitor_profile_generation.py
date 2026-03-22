@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 import json
 import logging
 from urllib.parse import urlsplit
@@ -17,6 +17,7 @@ from app.integrations.seo_summary_provider import (
     SEOCompetitorProfileGenerationProvider,
 )
 from app.models.seo_competitor_domain import SEOCompetitorDomain
+from app.models.seo_competitor_profile_cleanup_execution import SEOCompetitorProfileCleanupExecution
 from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
 from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
 from app.models.seo_competitor_set import SEOCompetitorSet
@@ -61,6 +62,27 @@ RUN_RAW_OUTPUT_MAX_CHARS = 12000
 DEFAULT_RAW_OUTPUT_RETENTION_DAYS = 30
 DEFAULT_RUN_RETENTION_DAYS = 180
 DEFAULT_REJECTED_DRAFT_RETENTION_DAYS = 90
+DEFAULT_OBSERVABILITY_LOOKBACK_DAYS = 30
+
+FAILURE_CATEGORY_TIMEOUT = "timeout"
+FAILURE_CATEGORY_PROVIDER_AUTH = "provider_auth"
+FAILURE_CATEGORY_PROVIDER_CONFIG = "provider_config"
+FAILURE_CATEGORY_MALFORMED_OUTPUT = "malformed_output"
+FAILURE_CATEGORY_SCHEMA_VALIDATION = "schema_validation"
+FAILURE_CATEGORY_INTERNAL = "internal_error"
+FAILURE_CATEGORY_PROVIDER_REQUEST = "provider_request"
+FAILURE_CATEGORY_UNKNOWN = "unknown"
+
+_ALLOWED_FAILURE_CATEGORIES = {
+    FAILURE_CATEGORY_TIMEOUT,
+    FAILURE_CATEGORY_PROVIDER_AUTH,
+    FAILURE_CATEGORY_PROVIDER_CONFIG,
+    FAILURE_CATEGORY_MALFORMED_OUTPUT,
+    FAILURE_CATEGORY_SCHEMA_VALIDATION,
+    FAILURE_CATEGORY_INTERNAL,
+    FAILURE_CATEGORY_PROVIDER_REQUEST,
+    FAILURE_CATEGORY_UNKNOWN,
+}
 
 
 class SEOCompetitorProfileGenerationNotFoundError(ValueError):
@@ -106,6 +128,37 @@ class SEOCompetitorProfileRetentionCleanupSummary:
     runs_pruned: int
 
 
+@dataclass(frozen=True)
+class SEOCompetitorProfileGenerationObservabilitySummary:
+    business_id: str
+    site_id: str
+    lookback_days: int
+    window_start: datetime
+    window_end: datetime
+    queued_count: int
+    running_count: int
+    completed_count: int
+    failed_count: int
+    retry_child_runs: int
+    retried_parent_runs: int
+    failed_runs_retried: int
+    failure_category_counts: dict[str, int]
+    latest_run_created_at: datetime | None
+    latest_run_completed_at: datetime | None
+    latest_completed_run_completed_at: datetime | None
+    latest_failed_run_completed_at: datetime | None
+
+
+@dataclass(frozen=True)
+class SEOCompetitorProfileRetentionCleanupStatus:
+    latest_execution: SEOCompetitorProfileCleanupExecution | None
+    recent_success_count: int
+    recent_failure_count: int
+    lookback_days: int
+    window_start: datetime
+    window_end: datetime
+
+
 class SEOCompetitorProfileGenerationService:
     def __init__(
         self,
@@ -117,6 +170,7 @@ class SEOCompetitorProfileGenerationService:
         seo_competitor_profile_generation_repository: SEOCompetitorProfileGenerationRepository,
         provider: SEOCompetitorProfileGenerationProvider,
         retention_policy: SEOCompetitorProfileRetentionPolicy = SEOCompetitorProfileRetentionPolicy(),
+        observability_lookback_days: int = DEFAULT_OBSERVABILITY_LOOKBACK_DAYS,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
@@ -125,6 +179,7 @@ class SEOCompetitorProfileGenerationService:
         self.seo_competitor_profile_generation_repository = seo_competitor_profile_generation_repository
         self.provider = provider
         self.retention_policy = retention_policy
+        self.observability_lookback_days = max(1, int(observability_lookback_days))
 
     def create_run(
         self,
@@ -195,6 +250,7 @@ class SEOCompetitorProfileGenerationService:
             provider_name=self._default_provider_name(),
             model_name=self._default_model_name(),
             prompt_version=prompt_version,
+            failure_category=None,
             raw_output=None,
             error_summary=None,
             completed_at=None,
@@ -266,6 +322,7 @@ class SEOCompetitorProfileGenerationService:
         provider_name = run.provider_name
         model_name = run.model_name
         prompt_version = run.prompt_version or self._default_prompt_version()
+        failure_category: str | None = None
         raw_output: str | None = None
 
         try:
@@ -300,6 +357,7 @@ class SEOCompetitorProfileGenerationService:
             run.provider_name = provider_name
             run.model_name = model_name
             run.prompt_version = prompt_version
+            run.failure_category = None
             run.raw_output = raw_output
             run.error_summary = None
             run.completed_at = utc_now()
@@ -326,6 +384,7 @@ class SEOCompetitorProfileGenerationService:
                 provider_name=exc.provider_name,
                 model_name=exc.model_name,
                 prompt_version=exc.prompt_version,
+                failure_category=self._provider_failure_category(exc),
                 raw_output=exc.raw_output,
             )
             return None
@@ -339,6 +398,7 @@ class SEOCompetitorProfileGenerationService:
                 provider_name=provider_name,
                 model_name=model_name,
                 prompt_version=prompt_version,
+                failure_category=FAILURE_CATEGORY_MALFORMED_OUTPUT,
                 raw_output=raw_output,
             )
             return None
@@ -352,6 +412,7 @@ class SEOCompetitorProfileGenerationService:
                 provider_name=provider_name,
                 model_name=model_name,
                 prompt_version=prompt_version,
+                failure_category=failure_category or FAILURE_CATEGORY_INTERNAL,
                 raw_output=raw_output,
             )
             return None
@@ -390,6 +451,115 @@ class SEOCompetitorProfileGenerationService:
             generation_run_id,
         )
         return SEOCompetitorProfileGenerationRunDetail(run=run, drafts=drafts)
+
+    def get_observability_summary(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        lookback_days: int | None = None,
+    ) -> SEOCompetitorProfileGenerationObservabilitySummary:
+        self._require_business(business_id)
+        self._require_site(business_id=business_id, site_id=site_id)
+        self._reconcile_stale_runs_for_site(business_id=business_id, site_id=site_id)
+
+        effective_lookback_days = self._effective_lookback_days(lookback_days)
+        window_end = utc_now()
+        window_start = window_end - timedelta(days=effective_lookback_days)
+
+        status_counts = self.seo_competitor_profile_generation_repository.summarize_run_status_counts(
+            business_id=business_id,
+            site_id=site_id,
+            created_after=window_start,
+        )
+        failure_category_counts = self.seo_competitor_profile_generation_repository.summarize_failure_category_counts(
+            business_id=business_id,
+            site_id=site_id,
+            created_after=window_start,
+        )
+        failed_count = int(status_counts.get("failed", 0))
+        categorized_failed_count = sum(failure_category_counts.values())
+        if failed_count > categorized_failed_count:
+            failure_category_counts[FAILURE_CATEGORY_UNKNOWN] = failed_count - categorized_failed_count
+
+        retry_child_runs = self.seo_competitor_profile_generation_repository.count_retry_child_runs(
+            business_id=business_id,
+            site_id=site_id,
+            created_after=window_start,
+        )
+        retried_parent_runs = self.seo_competitor_profile_generation_repository.count_distinct_retry_parents(
+            business_id=business_id,
+            site_id=site_id,
+            created_after=window_start,
+        )
+        failed_runs_retried = self.seo_competitor_profile_generation_repository.count_failed_runs_retried(
+            business_id=business_id,
+            site_id=site_id,
+            created_after=window_start,
+        )
+        (
+            latest_run_created_at,
+            latest_run_completed_at,
+            latest_completed_run_completed_at,
+            latest_failed_run_completed_at,
+        ) = self.seo_competitor_profile_generation_repository.summarize_run_latest_timestamps(
+            business_id=business_id,
+            site_id=site_id,
+            created_after=window_start,
+        )
+
+        return SEOCompetitorProfileGenerationObservabilitySummary(
+            business_id=business_id,
+            site_id=site_id,
+            lookback_days=effective_lookback_days,
+            window_start=window_start,
+            window_end=window_end,
+            queued_count=int(status_counts.get("queued", 0)),
+            running_count=int(status_counts.get("running", 0)),
+            completed_count=int(status_counts.get("completed", 0)),
+            failed_count=failed_count,
+            retry_child_runs=retry_child_runs,
+            retried_parent_runs=retried_parent_runs,
+            failed_runs_retried=failed_runs_retried,
+            failure_category_counts=dict(sorted(failure_category_counts.items())),
+            latest_run_created_at=latest_run_created_at,
+            latest_run_completed_at=latest_run_completed_at,
+            latest_completed_run_completed_at=latest_completed_run_completed_at,
+            latest_failed_run_completed_at=latest_failed_run_completed_at,
+        )
+
+    def get_cleanup_observability_status(
+        self,
+        *,
+        business_id: str,
+        site_id: str | None,
+        lookback_days: int | None = None,
+    ) -> SEOCompetitorProfileRetentionCleanupStatus:
+        self._require_business(business_id)
+        if site_id:
+            self._require_site(business_id=business_id, site_id=site_id)
+
+        effective_lookback_days = self._effective_lookback_days(lookback_days)
+        window_end = utc_now()
+        window_start = window_end - timedelta(days=effective_lookback_days)
+
+        latest_execution = self.seo_competitor_profile_generation_repository.get_latest_cleanup_execution_for_business_scope(
+            business_id=business_id,
+            site_id=site_id,
+        )
+        status_counts = self.seo_competitor_profile_generation_repository.count_cleanup_executions_by_status(
+            business_id=business_id,
+            site_id=site_id,
+            started_after=window_start,
+        )
+        return SEOCompetitorProfileRetentionCleanupStatus(
+            latest_execution=latest_execution,
+            recent_success_count=int(status_counts.get("completed", 0)),
+            recent_failure_count=int(status_counts.get("failed", 0)),
+            lookback_days=effective_lookback_days,
+            window_start=window_start,
+            window_end=window_end,
+        )
 
     def edit_draft(
         self,
@@ -784,14 +954,42 @@ class SEOCompetitorProfileGenerationService:
         prompt_version = self._clean_optional(str(getattr(self.provider, "prompt_version", "") or ""))
         return prompt_version or SEO_COMPETITOR_PROFILE_PROMPT_VERSION
 
+    def _effective_lookback_days(self, lookback_days: int | None) -> int:
+        if lookback_days is None:
+            return self.observability_lookback_days
+        return max(1, int(lookback_days))
+
     def _provider_error_summary(self, error: SEOCompetitorProfileProviderError) -> str:
         if error.code == "timeout":
             return PROVIDER_TIMEOUT_ERROR_SUMMARY
-        if error.code == "provider_auth_config":
+        if error.code in {"provider_auth", "provider_auth_config"}:
             return PROVIDER_AUTH_CONFIG_ERROR_SUMMARY
         if error.code in {"invalid_output", "schema_validation", "parsing_error"}:
             return INVALID_OUTPUT_ERROR_SUMMARY
         return GENERIC_PROVIDER_ERROR_SUMMARY
+
+    def _provider_failure_category(self, error: SEOCompetitorProfileProviderError) -> str:
+        if error.code == "timeout":
+            return FAILURE_CATEGORY_TIMEOUT
+        if error.code == "provider_auth":
+            return FAILURE_CATEGORY_PROVIDER_AUTH
+        if error.code == "provider_auth_config":
+            return FAILURE_CATEGORY_PROVIDER_CONFIG
+        if error.code in {"invalid_output", "parsing_error"}:
+            return FAILURE_CATEGORY_MALFORMED_OUTPUT
+        if error.code == "schema_validation":
+            return FAILURE_CATEGORY_SCHEMA_VALIDATION
+        if error.code == "provider_request":
+            return FAILURE_CATEGORY_PROVIDER_REQUEST
+        return FAILURE_CATEGORY_INTERNAL
+
+    def _normalize_failure_category(self, value: str | None) -> str | None:
+        normalized = (value or "").strip().lower()
+        if not normalized:
+            return None
+        if normalized not in _ALLOWED_FAILURE_CATEGORIES:
+            return FAILURE_CATEGORY_UNKNOWN
+        return normalized
 
     def _sanitize_raw_output(self, raw_output: str | object | None) -> str | None:
         if raw_output is None:
@@ -829,7 +1027,8 @@ class SEOCompetitorProfileGenerationService:
                 site_id=target_site_id,
             )
 
-        now = utc_now()
+        started_at = utc_now()
+        now = started_at
         raw_output_before = now - timedelta(days=self.retention_policy.raw_output_retention_days)
         rejected_draft_before = now - timedelta(days=self.retention_policy.rejected_draft_retention_days)
         run_before = now - timedelta(days=self.retention_policy.run_retention_days)
@@ -855,9 +1054,40 @@ class SEOCompetitorProfileGenerationService:
             self.session.commit()
         except Exception as exc:  # noqa: BLE001
             self.session.rollback()
+            self._record_cleanup_execution(
+                business_id=business_id,
+                site_id=site_id,
+                status="failed",
+                started_at=started_at,
+                completed_at=utc_now(),
+                stale_runs_reconciled=stale_runs_reconciled,
+                raw_output_pruned_runs=0,
+                rejected_drafts_pruned=0,
+                runs_pruned=0,
+                error_summary="Failed to run competitor profile retention cleanup",
+            )
             raise SEOCompetitorProfileGenerationValidationError(
                 "Failed to run competitor profile retention cleanup"
             ) from exc
+
+        summary = SEOCompetitorProfileRetentionCleanupSummary(
+            stale_runs_reconciled=stale_runs_reconciled,
+            raw_output_pruned_runs=raw_output_pruned_runs,
+            rejected_drafts_pruned=rejected_drafts_pruned,
+            runs_pruned=runs_pruned,
+        )
+        self._record_cleanup_execution(
+            business_id=business_id,
+            site_id=site_id,
+            status="completed",
+            started_at=started_at,
+            completed_at=utc_now(),
+            stale_runs_reconciled=summary.stale_runs_reconciled,
+            raw_output_pruned_runs=summary.raw_output_pruned_runs,
+            rejected_drafts_pruned=summary.rejected_drafts_pruned,
+            runs_pruned=summary.runs_pruned,
+            error_summary=None,
+        )
 
         logger.info(
             (
@@ -866,18 +1096,52 @@ class SEOCompetitorProfileGenerationService:
             ),
             business_id,
             site_id or "all",
-            stale_runs_reconciled,
-            raw_output_pruned_runs,
-            rejected_drafts_pruned,
-            runs_pruned,
+            summary.stale_runs_reconciled,
+            summary.raw_output_pruned_runs,
+            summary.rejected_drafts_pruned,
+            summary.runs_pruned,
         )
 
-        return SEOCompetitorProfileRetentionCleanupSummary(
+        return summary
+
+    def _record_cleanup_execution(
+        self,
+        *,
+        business_id: str,
+        site_id: str | None,
+        status: str,
+        started_at: datetime,
+        completed_at: datetime,
+        stale_runs_reconciled: int,
+        raw_output_pruned_runs: int,
+        rejected_drafts_pruned: int,
+        runs_pruned: int,
+        error_summary: str | None,
+    ) -> None:
+        execution = SEOCompetitorProfileCleanupExecution(
+            id=str(uuid4()),
+            business_id=business_id,
+            site_id=site_id,
+            status=status,
             stale_runs_reconciled=stale_runs_reconciled,
             raw_output_pruned_runs=raw_output_pruned_runs,
             rejected_drafts_pruned=rejected_drafts_pruned,
             runs_pruned=runs_pruned,
+            error_summary=error_summary,
+            started_at=started_at,
+            completed_at=completed_at,
         )
+        try:
+            self.seo_competitor_profile_generation_repository.create_cleanup_execution(execution)
+            self.session.commit()
+        except Exception:  # noqa: BLE001
+            self.session.rollback()
+            logger.exception(
+                "Failed to persist competitor profile cleanup execution business_id=%s site_id=%s status=%s",
+                business_id,
+                site_id or "all",
+                status,
+            )
 
     def _target_site_ids_for_cleanup(self, *, business_id: str, site_id: str | None) -> list[str]:
         if site_id:
@@ -918,7 +1182,11 @@ class SEOCompetitorProfileGenerationService:
             return 0
 
         for run in stale_queued_runs:
-            self._set_run_failed(run, error_summary=STALE_QUEUED_RUN_ERROR_SUMMARY)
+            self._set_run_failed(
+                run,
+                error_summary=STALE_QUEUED_RUN_ERROR_SUMMARY,
+                failure_category=FAILURE_CATEGORY_TIMEOUT,
+            )
             logger.warning(
                 "SEO competitor profile generation stale queued run marked failed business_id=%s site_id=%s run_id=%s",
                 business_id,
@@ -926,7 +1194,11 @@ class SEOCompetitorProfileGenerationService:
                 run.id,
             )
         for run in stale_running_runs:
-            self._set_run_failed(run, error_summary=STALE_RUNNING_RUN_ERROR_SUMMARY)
+            self._set_run_failed(
+                run,
+                error_summary=STALE_RUNNING_RUN_ERROR_SUMMARY,
+                failure_category=FAILURE_CATEGORY_TIMEOUT,
+            )
             logger.warning(
                 "SEO competitor profile generation stale running run marked failed business_id=%s site_id=%s run_id=%s",
                 business_id,
@@ -944,11 +1216,13 @@ class SEOCompetitorProfileGenerationService:
         provider_name: str | None = None,
         model_name: str | None = None,
         prompt_version: str | None = None,
+        failure_category: str | None = None,
         raw_output: str | object | None = None,
     ) -> None:
         run.status = "failed"
         run.generated_draft_count = 0
         run.error_summary = error_summary
+        run.failure_category = self._normalize_failure_category(failure_category) or FAILURE_CATEGORY_UNKNOWN
         if provider_name:
             run.provider_name = provider_name
         if model_name:
@@ -970,12 +1244,14 @@ class SEOCompetitorProfileGenerationService:
         provider_name: str | None = None,
         model_name: str | None = None,
         prompt_version: str | None = None,
+        failure_category: str | None = None,
         raw_output: str | object | None = None,
     ) -> None:
         logger.warning(
-            "SEO competitor profile generation run failed business_id=%s run_id=%s reason=%s",
+            "SEO competitor profile generation run failed business_id=%s run_id=%s failure_category=%s reason=%s",
             business_id,
             generation_run_id,
+            failure_category or FAILURE_CATEGORY_UNKNOWN,
             str(reason),
         )
         run = self.seo_competitor_profile_generation_repository.get_run_for_business(
@@ -990,6 +1266,7 @@ class SEOCompetitorProfileGenerationService:
             provider_name=provider_name,
             model_name=model_name,
             prompt_version=prompt_version,
+            failure_category=failure_category,
             raw_output=raw_output,
         )
         self.session.commit()

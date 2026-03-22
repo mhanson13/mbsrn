@@ -8,6 +8,7 @@ import type {
   CompetitorProfileDraft,
   CompetitorProfileGenerationRunDetailResponse,
   CompetitorProfileGenerationRunListResponse,
+  CompetitorProfileGenerationSummaryResponse,
   CompetitorDomainListResponse,
   CompetitorSetListResponse,
   CompetitorSnapshotRunListResponse,
@@ -54,6 +55,10 @@ const mockFetchCompetitorProfileGenerationRunDetail = jest.fn<
   Promise<CompetitorProfileGenerationRunDetailResponse>,
   unknown[]
 >();
+const mockFetchCompetitorProfileGenerationSummary = jest.fn<
+  Promise<CompetitorProfileGenerationSummaryResponse>,
+  unknown[]
+>();
 const mockCreateCompetitorProfileGenerationRun = jest.fn<
   Promise<CompetitorProfileGenerationRunDetailResponse>,
   unknown[]
@@ -91,6 +96,8 @@ jest.mock("../../lib/api/client", () => {
       mockFetchCompetitorProfileGenerationRuns(...args),
     fetchCompetitorProfileGenerationRunDetail: (...args: unknown[]) =>
       mockFetchCompetitorProfileGenerationRunDetail(...args),
+    fetchCompetitorProfileGenerationSummary: (...args: unknown[]) =>
+      mockFetchCompetitorProfileGenerationSummary(...args),
     createCompetitorProfileGenerationRun: (...args: unknown[]) =>
       mockCreateCompetitorProfileGenerationRun(...args),
     retryCompetitorProfileGenerationRun: (...args: unknown[]) =>
@@ -134,6 +141,25 @@ function baseContext(overrides: Partial<OperatorContextMockValue> = {}): Operato
 function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({ items: [], total: 0 });
   mockFetchCompetitorProfileGenerationRunDetail.mockReset();
+  mockFetchCompetitorProfileGenerationSummary.mockResolvedValue({
+    business_id: "biz-1",
+    site_id: "site-1",
+    lookback_days: 30,
+    window_start: "2026-02-20T00:00:00Z",
+    window_end: "2026-03-21T00:00:00Z",
+    queued_count: 0,
+    running_count: 0,
+    completed_count: 0,
+    failed_count: 0,
+    retry_child_runs: 0,
+    retried_parent_runs: 0,
+    failed_runs_retried: 0,
+    failure_category_counts: {},
+    latest_run_created_at: null,
+    latest_run_completed_at: null,
+    latest_completed_run_completed_at: null,
+    latest_failed_run_completed_at: null,
+  });
   mockCreateCompetitorProfileGenerationRun.mockReset();
   mockRetryCompetitorProfileGenerationRun.mockReset();
   mockAcceptCompetitorProfileDraft.mockReset();
@@ -975,6 +1001,7 @@ function seedCompetitorProfileGenerationWorkspaceData(): void {
     provider_name: "mock",
     model_name: "mock-seo-competitor-profile-v1",
     prompt_version: "seo-competitor-profile-v1",
+    failure_category: null,
     error_summary: null,
     completed_at: "2026-03-21T01:00:00Z",
     created_by_principal_id: "principal-1",
@@ -1038,6 +1065,25 @@ function seedCompetitorProfileGenerationWorkspaceData(): void {
     run,
     drafts: [draftOne, draftTwo],
     total_drafts: 2,
+  });
+  mockFetchCompetitorProfileGenerationSummary.mockResolvedValue({
+    business_id: "biz-1",
+    site_id: "site-1",
+    lookback_days: 30,
+    window_start: "2026-02-20T00:00:00Z",
+    window_end: "2026-03-21T00:00:00Z",
+    queued_count: 0,
+    running_count: 0,
+    completed_count: 1,
+    failed_count: 0,
+    retry_child_runs: 0,
+    retried_parent_runs: 0,
+    failed_runs_retried: 0,
+    failure_category_counts: {},
+    latest_run_created_at: "2026-03-21T00:59:00Z",
+    latest_run_completed_at: "2026-03-21T01:00:00Z",
+    latest_completed_run_completed_at: "2026-03-21T01:00:00Z",
+    latest_failed_run_completed_at: null,
   });
   mockCreateCompetitorProfileGenerationRun.mockResolvedValue({
     run: {
@@ -1379,9 +1425,11 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(metadataLine).toHaveTextContent(/Provider:\s*mock/);
     expect(metadataLine).toHaveTextContent(/Model:\s*mock-seo-competitor-profile-v1/);
     expect(metadataLine).toHaveTextContent(/Prompt:\s*seo-competitor-profile-v1/);
+    expect(screen.getByText(/Last 30d: queued 0 \| running 0 \| completed 1 \| failed 0/)).toBeInTheDocument();
     expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(2);
     expect(mockFetchCompetitorProfileGenerationRuns).toHaveBeenCalled();
     expect(mockFetchCompetitorProfileGenerationRunDetail).toHaveBeenCalled();
+    expect(mockFetchCompetitorProfileGenerationSummary).toHaveBeenCalled();
   });
 
   it("triggers generation and refreshes visible drafts", async () => {
@@ -1413,6 +1461,7 @@ describe("site workspace ai competitor profile drafts", () => {
       provider_name: "mock",
       model_name: "mock-seo-competitor-profile-v1",
       prompt_version: "seo-competitor-profile-v1",
+      failure_category: null,
       error_summary: null,
       completed_at: null,
       created_by_principal_id: "principal-1",
@@ -1471,24 +1520,27 @@ describe("site workspace ai competitor profile drafts", () => {
         total_drafts: 1,
       });
 
-    jest.useFakeTimers();
-    try {
-      render(<SiteWorkspacePage />);
+    render(<SiteWorkspacePage />);
 
-      await screen.findByText("Generation is in progress for this run.");
-      await act(async () => {
-        jest.advanceTimersByTime(2100);
-      });
-
-      await waitFor(() => {
+    await screen.findByText("Generation is in progress for this run.");
+    await waitFor(
+      () => {
+        expect(mockFetchCompetitorProfileGenerationRuns.mock.calls.length).toBeGreaterThanOrEqual(3);
+      },
+      { timeout: 8000 },
+    );
+    await waitFor(
+      () => {
         expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(1);
-      });
-      await waitFor(() => {
+      },
+      { timeout: 8000 },
+    );
+    await waitFor(
+      () => {
         expect(screen.queryByText("Generation is in progress for this run.")).not.toBeInTheDocument();
-      });
-    } finally {
-      jest.useRealTimers();
-    }
+      },
+      { timeout: 8000 },
+    );
   });
 
   it("accept/reject/edit actions update draft states", async () => {
@@ -1532,6 +1584,7 @@ describe("site workspace ai competitor profile drafts", () => {
           provider_name: "mock",
           model_name: "mock-seo-competitor-profile-v1",
           prompt_version: "seo-competitor-profile-v1",
+          failure_category: "provider_config",
           error_summary: "Competitor profile generation failed",
           completed_at: "2026-03-21T01:00:00Z",
           created_by_principal_id: "principal-1",
@@ -1552,6 +1605,7 @@ describe("site workspace ai competitor profile drafts", () => {
         provider_name: "mock",
         model_name: "mock-seo-competitor-profile-v1",
         prompt_version: "seo-competitor-profile-v1",
+        failure_category: "provider_config",
         error_summary: "Competitor profile generation failed",
         completed_at: "2026-03-21T01:00:00Z",
         created_by_principal_id: "principal-1",
@@ -1565,6 +1619,7 @@ describe("site workspace ai competitor profile drafts", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findByText("Competitor profile generation failed");
+    expect(screen.getByText(/Failure Category:/i)).toHaveTextContent("provider config");
     expect(screen.getByText("This run did not produce any reviewable drafts.")).toBeInTheDocument();
   });
 
@@ -1581,6 +1636,7 @@ describe("site workspace ai competitor profile drafts", () => {
       provider_name: "mock",
       model_name: "mock-seo-competitor-profile-v1",
       prompt_version: "seo-competitor-profile-v1",
+      failure_category: "provider_config",
       error_summary: "Competitor profile generation failed",
       completed_at: "2026-03-21T01:00:00Z",
       created_by_principal_id: "principal-1",
@@ -1617,6 +1673,7 @@ describe("site workspace ai competitor profile drafts", () => {
       provider_name: "mock",
       model_name: "mock-seo-competitor-profile-v1",
       prompt_version: "seo-competitor-profile-v1",
+      failure_category: "provider_config",
       error_summary: "Competitor profile generation failed",
       completed_at: "2026-03-21T01:00:00Z",
       created_by_principal_id: "principal-1",
@@ -1692,6 +1749,7 @@ describe("site workspace ai competitor profile drafts", () => {
       provider_name: "mock",
       model_name: "mock-seo-competitor-profile-v1",
       prompt_version: "seo-competitor-profile-v1",
+      failure_category: "provider_config",
       error_summary: "Competitor profile generation failed",
       completed_at: "2026-03-21T01:00:00Z",
       created_by_principal_id: "principal-1",

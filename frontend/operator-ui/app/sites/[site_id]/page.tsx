@@ -15,6 +15,7 @@ import {
   fetchAuditRuns,
   fetchCompetitorProfileGenerationRunDetail,
   fetchCompetitorProfileGenerationRuns,
+  fetchCompetitorProfileGenerationSummary,
   fetchCompetitorDomains,
   fetchCompetitorSets,
   fetchCompetitorSnapshotRuns,
@@ -29,6 +30,7 @@ import type {
   CompetitorComparisonRun,
   CompetitorProfileDraft,
   CompetitorProfileGenerationRun,
+  CompetitorProfileGenerationSummaryResponse,
   CompetitorSet,
   CompetitorSnapshotRun,
   Recommendation,
@@ -224,6 +226,14 @@ function truncateText(value: string | null | undefined, limit: number): string {
   return `${normalized.slice(0, limit - 1)}…`;
 }
 
+function formatFailureCategory(value: string | null | undefined): string {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "-";
+  }
+  return normalized.replace(/_/g, " ");
+}
+
 function safeActionErrorMessage(actionLabel: string, error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 401) {
@@ -335,10 +345,13 @@ export default function SiteWorkspacePage() {
   const [narrativeLookupError, setNarrativeLookupError] = useState<string | null>(null);
 
   const [competitorProfileGenerationRuns, setCompetitorProfileGenerationRuns] = useState<CompetitorProfileGenerationRun[]>([]);
+  const [competitorProfileSummary, setCompetitorProfileSummary] =
+    useState<CompetitorProfileGenerationSummaryResponse | null>(null);
   const [latestCompetitorProfileRunId, setLatestCompetitorProfileRunId] = useState<string | null>(null);
   const [competitorProfileDrafts, setCompetitorProfileDrafts] = useState<CompetitorProfileDraft[]>([]);
   const [competitorProfileLoading, setCompetitorProfileLoading] = useState(false);
   const [competitorProfileError, setCompetitorProfileError] = useState<string | null>(null);
+  const [competitorProfileSummaryError, setCompetitorProfileSummaryError] = useState<string | null>(null);
   const [competitorProfileActionError, setCompetitorProfileActionError] = useState<string | null>(null);
   const [competitorProfileActionMessage, setCompetitorProfileActionMessage] = useState<string | null>(null);
   const [generationInFlight, setGenerationInFlight] = useState(false);
@@ -886,10 +899,12 @@ export default function SiteWorkspacePage() {
       setLatestNarrativesByRunId({});
       setNarrativeLookupError(null);
       setCompetitorProfileGenerationRuns([]);
+      setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
       setCompetitorProfileDrafts([]);
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
+      setCompetitorProfileSummaryError(null);
       setCompetitorProfileActionError(null);
       setCompetitorProfileActionMessage(null);
       setGenerationInFlight(false);
@@ -907,10 +922,12 @@ export default function SiteWorkspacePage() {
       setNotFound(true);
       setLoadingWorkspace(false);
       setCompetitorProfileGenerationRuns([]);
+      setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
       setCompetitorProfileDrafts([]);
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
+      setCompetitorProfileSummaryError(null);
       setRetryInFlight(false);
       setCompetitorProfilePolling(false);
       return;
@@ -926,6 +943,7 @@ export default function SiteWorkspacePage() {
       setQueueError(null);
       setRecommendationRunError(null);
       setNarrativeLookupError(null);
+      setCompetitorProfileSummaryError(null);
 
       const [
         auditResult,
@@ -934,6 +952,7 @@ export default function SiteWorkspacePage() {
         queueResult,
         recommendationRunsResult,
         competitorProfileRunsResult,
+        competitorProfileSummaryResult,
       ] =
         await Promise.allSettled([
           fetchAuditRuns(context.token, context.businessId, siteId),
@@ -947,6 +966,7 @@ export default function SiteWorkspacePage() {
           }),
           fetchRecommendationRuns(context.token, context.businessId, siteId),
           fetchCompetitorProfileGenerationRuns(context.token, context.businessId, siteId),
+          fetchCompetitorProfileGenerationSummary(context.token, context.businessId, siteId),
         ]);
 
       if (cancelled) {
@@ -1077,6 +1097,16 @@ export default function SiteWorkspacePage() {
         setRecommendationRunError(safeSectionErrorMessage("recommendation runs", recommendationRunsResult.reason));
       }
 
+      if (competitorProfileSummaryResult.status === "fulfilled") {
+        setCompetitorProfileSummary(competitorProfileSummaryResult.value);
+        setCompetitorProfileSummaryError(null);
+      } else {
+        setCompetitorProfileSummary(null);
+        setCompetitorProfileSummaryError(
+          safeSectionErrorMessage("AI competitor profile summary", competitorProfileSummaryResult.reason),
+        );
+      }
+
       if (competitorProfileRunsResult.status === "fulfilled") {
         const sortedRuns = [...competitorProfileRunsResult.value.items].sort((left, right) =>
           right.created_at.localeCompare(left.created_at),
@@ -1180,6 +1210,24 @@ export default function SiteWorkspacePage() {
         );
         if (cancelled) {
           return;
+        }
+        try {
+          const summary = await fetchCompetitorProfileGenerationSummary(
+            context.token,
+            context.businessId,
+            siteId,
+          );
+          if (!cancelled) {
+            setCompetitorProfileSummary(summary);
+            setCompetitorProfileSummaryError(null);
+          }
+        } catch (summaryError) {
+          if (!cancelled) {
+            setCompetitorProfileSummary(null);
+            setCompetitorProfileSummaryError(
+              safeSectionErrorMessage("AI competitor profile summary", summaryError),
+            );
+          }
         }
         const sortedRuns = [...runsResponse.items].sort((left, right) =>
           right.created_at.localeCompare(left.created_at),
@@ -1566,6 +1614,7 @@ export default function SiteWorkspacePage() {
           Generate AI-produced competitor profile drafts, then review and explicitly accept or reject each candidate.
         </p>
         {competitorProfileError ? <p className="hint error">{competitorProfileError}</p> : null}
+        {competitorProfileSummaryError ? <p className="hint warning">{competitorProfileSummaryError}</p> : null}
         {competitorProfileActionError ? <p className="hint error">{competitorProfileActionError}</p> : null}
         {competitorProfileActionMessage ? <p className="hint success">{competitorProfileActionMessage}</p> : null}
         <div className="form-actions">
@@ -1603,9 +1652,37 @@ export default function SiteWorkspacePage() {
             <code>{latestCompetitorProfileRun.prompt_version}</code>
           </p>
         ) : null}
+        {competitorProfileSummary ? (
+          <Fragment>
+            <p className="hint muted">
+              Last {competitorProfileSummary.lookback_days}d: queued {competitorProfileSummary.queued_count} |
+              running {competitorProfileSummary.running_count} | completed {competitorProfileSummary.completed_count} |
+              failed {competitorProfileSummary.failed_count}
+            </p>
+            <p className="hint muted">
+              Retry runs: {competitorProfileSummary.retry_child_runs} | retried parents:{" "}
+              {competitorProfileSummary.retried_parent_runs} | failed runs later retried:{" "}
+              {competitorProfileSummary.failed_runs_retried}
+            </p>
+            {Object.keys(competitorProfileSummary.failure_category_counts).length > 0 ? (
+              <p className="hint muted">
+                Failure categories:{" "}
+                {Object.entries(competitorProfileSummary.failure_category_counts)
+                  .sort(([left], [right]) => left.localeCompare(right))
+                  .map(([key, value]) => `${formatFailureCategory(key)}=${value}`)
+                  .join(", ")}
+              </p>
+            ) : null}
+          </Fragment>
+        ) : null}
         {latestCompetitorProfileRun?.parent_run_id ? (
           <p className="hint muted">
             Retry of run <code>{latestCompetitorProfileRun.parent_run_id}</code>.
+          </p>
+        ) : null}
+        {latestCompetitorProfileRun?.failure_category ? (
+          <p className="hint muted">
+            Failure Category: <code>{formatFailureCategory(latestCompetitorProfileRun.failure_category)}</code>
           </p>
         ) : null}
         {latestCompetitorProfileRun?.error_summary ? (

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import (
+    get_seo_competitor_profile_generation_service,
     get_seo_automation_job,
     get_seo_competitor_profile_generation_retention_job,
     get_lead_reminder_job,
@@ -16,11 +17,14 @@ from app.jobs.seo_automation import SEOAutomationJob
 from app.schemas.lead import ReminderRunActionRead, ReminderRunRequest, ReminderRunResponse
 from app.schemas.seo_automation import SEOAutomationDueRunRequest, SEOAutomationDueRunSummaryRead
 from app.schemas.seo_competitor import (
+    SEOCompetitorProfileGenerationRetentionCleanupExecutionRead,
     SEOCompetitorProfileGenerationRetentionCleanupRead,
     SEOCompetitorProfileGenerationRetentionCleanupRequest,
+    SEOCompetitorProfileGenerationRetentionCleanupStatusRead,
 )
 from app.services.seo_competitor_profile_generation import (
     SEOCompetitorProfileGenerationNotFoundError,
+    SEOCompetitorProfileGenerationService,
     SEOCompetitorProfileGenerationValidationError,
 )
 
@@ -108,4 +112,50 @@ def cleanup_seo_competitor_profile_generation_retention(
         raw_output_pruned_runs=summary.raw_output_pruned_runs,
         rejected_drafts_pruned=summary.rejected_drafts_pruned,
         runs_pruned=summary.runs_pruned,
+    )
+
+
+@router.get(
+    "/seo-competitor-profile-generation/cleanup-status",
+    response_model=SEOCompetitorProfileGenerationRetentionCleanupStatusRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_seo_competitor_profile_generation_retention_cleanup_status(
+    business_id: str | None = None,
+    site_id: str | None = None,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(
+        get_seo_competitor_profile_generation_service
+    ),
+) -> SEOCompetitorProfileGenerationRetentionCleanupStatusRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    normalized_site_id = (site_id or "").strip() or None
+    try:
+        status_summary = generation_service.get_cleanup_observability_status(
+            business_id=scoped_business_id,
+            site_id=normalized_site_id,
+        )
+    except SEOCompetitorProfileGenerationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOCompetitorProfileGenerationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+    latest_execution = None
+    if status_summary.latest_execution is not None:
+        latest_execution = SEOCompetitorProfileGenerationRetentionCleanupExecutionRead.model_validate(
+            status_summary.latest_execution
+        )
+
+    return SEOCompetitorProfileGenerationRetentionCleanupStatusRead(
+        business_id=scoped_business_id,
+        site_id=normalized_site_id,
+        lookback_days=status_summary.lookback_days,
+        window_start=status_summary.window_start,
+        window_end=status_summary.window_end,
+        recent_success_count=status_summary.recent_success_count,
+        recent_failure_count=status_summary.recent_failure_count,
+        latest_execution=latest_execution,
     )
