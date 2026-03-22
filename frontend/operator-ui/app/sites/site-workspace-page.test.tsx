@@ -17,6 +17,7 @@ import type {
   RecommendationNarrative,
   RecommendationTuningImpactPreview,
   RecommendationRunListResponse,
+  RecommendationWorkspaceSummaryResponse,
   SEOAuditRunListResponse,
   SEOSite,
 } from "../../lib/api/types";
@@ -47,7 +48,7 @@ const mockFetchSiteCompetitorComparisonRuns = jest.fn<
   unknown[]
 >();
 const mockFetchRecommendations = jest.fn<Promise<RecommendationListResponse>, unknown[]>();
-const mockFetchRecommendationsForRun = jest.fn<Promise<RecommendationListResponse>, unknown[]>();
+const mockFetchRecommendationWorkspaceSummary = jest.fn<Promise<RecommendationWorkspaceSummaryResponse>, unknown[]>();
 const mockFetchRecommendationRuns = jest.fn<Promise<RecommendationRunListResponse>, unknown[]>();
 const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<RecommendationNarrative>, unknown[]>();
 const mockPreviewRecommendationTuningImpact = jest.fn<Promise<RecommendationTuningImpactPreview>, unknown[]>();
@@ -93,7 +94,7 @@ jest.mock("../../lib/api/client", () => {
     fetchCompetitorSnapshotRuns: (...args: unknown[]) => mockFetchCompetitorSnapshotRuns(...args),
     fetchSiteCompetitorComparisonRuns: (...args: unknown[]) => mockFetchSiteCompetitorComparisonRuns(...args),
     fetchRecommendations: (...args: unknown[]) => mockFetchRecommendations(...args),
-    fetchRecommendationsForRun: (...args: unknown[]) => mockFetchRecommendationsForRun(...args),
+    fetchRecommendationWorkspaceSummary: (...args: unknown[]) => mockFetchRecommendationWorkspaceSummary(...args),
     fetchRecommendationRuns: (...args: unknown[]) => mockFetchRecommendationRuns(...args),
     fetchLatestRecommendationRunNarrative: (...args: unknown[]) =>
       mockFetchLatestRecommendationRunNarrative(...args),
@@ -171,7 +172,16 @@ function baseContext(overrides: Partial<OperatorContextMockValue> = {}): Operato
 function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({ items: [], total: 0 });
   mockFetchCompetitorProfileGenerationRunDetail.mockReset();
-  mockFetchRecommendationsForRun.mockResolvedValue({ items: [], total: 0 });
+  mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+    business_id: "biz-1",
+    site_id: "site-1",
+    state: "no_runs",
+    latest_run: null,
+    latest_completed_run: null,
+    recommendations: { items: [], total: 0 },
+    latest_narrative: null,
+    tuning_suggestions: [],
+  });
   mockFetchCompetitorProfileGenerationSummary.mockResolvedValue({
     business_id: "biz-1",
     site_id: "site-1",
@@ -583,44 +593,6 @@ function seedRichWorkspaceData(): void {
       high_priority: 1,
     },
   });
-  mockFetchRecommendationsForRun.mockImplementation((...args: unknown[]) => {
-    const runId = String(args[3] || "");
-    if (runId !== "run-1") {
-      return Promise.resolve({
-        items: [],
-        total: 0,
-      });
-    }
-    return Promise.resolve({
-      items: [
-        {
-          id: "rec-1",
-          business_id: "biz-1",
-          site_id: "site-1",
-          recommendation_run_id: "run-1",
-          audit_run_id: "audit-1",
-          comparison_run_id: "comparison-1",
-          status: "open",
-          category: "SEO",
-          severity: "warning",
-          priority_score: 80,
-          priority_band: "high",
-          effort_bucket: "small",
-          title: "Fix title tags",
-          rationale: "Title tags are missing core keywords.",
-          decision_reason: null,
-          created_at: "2026-03-21T00:30:00Z",
-          updated_at: "2026-03-21T00:31:00Z",
-        },
-      ],
-      total: 1,
-      by_status: { open: 1 },
-      by_category: { SEO: 1 },
-      by_severity: { warning: 1 },
-      by_effort_bucket: { small: 1 },
-      by_priority_band: { high: 1 },
-    });
-  });
 
   mockFetchRecommendationRuns.mockResolvedValue({
     items: [
@@ -755,6 +727,85 @@ function seedRichWorkspaceData(): void {
       return Promise.reject(new Error(`Unexpected run id: ${runId}`));
     }
     return Promise.resolve(narrative);
+  });
+
+  mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+    business_id: "biz-1",
+    site_id: "site-1",
+    state: "completed_with_narrative",
+    latest_run: {
+      id: "run-1",
+      business_id: "biz-1",
+      site_id: "site-1",
+      audit_run_id: "audit-1",
+      comparison_run_id: "comparison-1",
+      status: "completed",
+      total_recommendations: 4,
+      critical_recommendations: 1,
+      warning_recommendations: 2,
+      info_recommendations: 1,
+      category_counts_json: {},
+      effort_bucket_counts_json: {},
+      started_at: "2026-03-21T00:29:00Z",
+      completed_at: "2026-03-21T00:30:00Z",
+      duration_ms: 60000,
+      error_summary: null,
+      created_by_principal_id: "principal-1",
+      created_at: "2026-03-21T00:29:00Z",
+      updated_at: "2026-03-21T00:30:00Z",
+    },
+    latest_completed_run: {
+      id: "run-1",
+      business_id: "biz-1",
+      site_id: "site-1",
+      audit_run_id: "audit-1",
+      comparison_run_id: "comparison-1",
+      status: "completed",
+      total_recommendations: 4,
+      critical_recommendations: 1,
+      warning_recommendations: 2,
+      info_recommendations: 1,
+      category_counts_json: {},
+      effort_bucket_counts_json: {},
+      started_at: "2026-03-21T00:29:00Z",
+      completed_at: "2026-03-21T00:30:00Z",
+      duration_ms: 60000,
+      error_summary: null,
+      created_by_principal_id: "principal-1",
+      created_at: "2026-03-21T00:29:00Z",
+      updated_at: "2026-03-21T00:30:00Z",
+    },
+    recommendations: {
+      items: [
+        {
+          id: "rec-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          recommendation_run_id: "run-1",
+          audit_run_id: "audit-1",
+          comparison_run_id: "comparison-1",
+          status: "open",
+          category: "SEO",
+          severity: "warning",
+          priority_score: 80,
+          priority_band: "high",
+          effort_bucket: "small",
+          title: "Fix title tags",
+          rationale: "Title tags are missing core keywords.",
+          decision_reason: null,
+          created_at: "2026-03-21T00:30:00Z",
+          updated_at: "2026-03-21T00:31:00Z",
+        },
+      ],
+      total: 1,
+      by_status: { open: 1 },
+      by_category: { SEO: 1 },
+      by_severity: { warning: 1 },
+      by_effort_bucket: { small: 1 },
+      by_priority_band: { high: 1 },
+    },
+    latest_narrative: narrativesByRunId["run-1"],
+    tuning_suggestions: [],
   });
 }
 
@@ -1060,9 +1111,15 @@ function seedGroupedTimelineWorkspaceData(): void {
       high_priority: 0,
     },
   });
-  mockFetchRecommendationsForRun.mockResolvedValue({
-    items: [],
-    total: 0,
+  mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+    business_id: "biz-1",
+    site_id: "site-1",
+    state: "no_runs",
+    latest_run: null,
+    latest_completed_run: null,
+    recommendations: { items: [], total: 0 },
+    latest_narrative: null,
+    tuning_suggestions: [],
   });
 
   mockFetchRecommendationRuns.mockResolvedValue({
@@ -1493,6 +1550,105 @@ describe("site workspace timeline controls", () => {
       },
       caveat: "Preview only.",
     });
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+      business_id: "biz-1",
+      site_id: "site-1",
+      state: "completed_with_narrative",
+      latest_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 4,
+        critical_recommendations: 1,
+        warning_recommendations: 2,
+        info_recommendations: 1,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      latest_completed_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 4,
+        critical_recommendations: 1,
+        warning_recommendations: 2,
+        info_recommendations: 1,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      recommendations: {
+        items: [
+          {
+            id: "rec-1",
+            business_id: "biz-1",
+            site_id: "site-1",
+            recommendation_run_id: "run-1",
+            audit_run_id: "audit-1",
+            comparison_run_id: "comparison-1",
+            status: "open",
+            category: "SEO",
+            severity: "warning",
+            priority_score: 80,
+            priority_band: "high",
+            effort_bucket: "small",
+            title: "Fix title tags",
+            rationale: "Title tags are missing core keywords.",
+            decision_reason: null,
+            created_at: "2026-03-21T00:30:00Z",
+            updated_at: "2026-03-21T00:31:00Z",
+          },
+        ],
+        total: 1,
+      },
+      latest_narrative: {
+        id: "narrative-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        recommendation_run_id: "run-1",
+        version: 2,
+        status: "completed",
+        narrative_text: "Narrative for run 1.",
+        top_themes_json: ["titles"],
+        sections_json: { summary: "one" },
+        provider_name: "provider",
+        model_name: "model",
+        prompt_version: "v2",
+        error_message: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:33:00Z",
+        updated_at: "2026-03-21T00:33:00Z",
+      },
+      tuning_suggestions: [
+        {
+          setting: "competitor_candidate_min_relevance_score",
+          current_value: 35,
+          recommended_value: 30,
+          reason: "High low_relevance exclusions indicate threshold is too strict.",
+          linked_recommendation_ids: ["rec-1"],
+          confidence: "medium",
+        },
+      ],
+    });
     mockFetchLatestRecommendationRunNarrative
       .mockResolvedValueOnce({
         id: "narrative-1",
@@ -1612,6 +1768,105 @@ describe("site workspace timeline controls", () => {
     });
     mockFetchLatestRecommendationRunNarrative.mockReset();
     mockPreviewRecommendationTuningImpact.mockReset();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+      business_id: "biz-1",
+      site_id: "site-1",
+      state: "completed_with_narrative",
+      latest_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 1,
+        critical_recommendations: 0,
+        warning_recommendations: 1,
+        info_recommendations: 0,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      latest_completed_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 1,
+        critical_recommendations: 0,
+        warning_recommendations: 1,
+        info_recommendations: 0,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      recommendations: {
+        items: [
+          {
+            id: "rec-1",
+            business_id: "biz-1",
+            site_id: "site-1",
+            recommendation_run_id: "run-1",
+            audit_run_id: "audit-1",
+            comparison_run_id: "comparison-1",
+            status: "open",
+            category: "SEO",
+            severity: "warning",
+            priority_score: 80,
+            priority_band: "high",
+            effort_bucket: "small",
+            title: "Fix title tags",
+            rationale: "Title tags are missing core keywords.",
+            decision_reason: null,
+            created_at: "2026-03-21T00:30:00Z",
+            updated_at: "2026-03-21T00:31:00Z",
+          },
+        ],
+        total: 1,
+      },
+      latest_narrative: {
+        id: "narrative-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        recommendation_run_id: "run-1",
+        version: 2,
+        status: "completed",
+        narrative_text: "Narrative for run 1.",
+        top_themes_json: ["titles"],
+        sections_json: { summary: "one" },
+        provider_name: "provider",
+        model_name: "model",
+        prompt_version: "v2",
+        error_message: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:33:00Z",
+        updated_at: "2026-03-21T00:33:00Z",
+      },
+      tuning_suggestions: [
+        {
+          setting: "competitor_candidate_min_relevance_score",
+          current_value: 35,
+          recommended_value: 30,
+          reason: "Low relevance exclusions are high.",
+          linked_recommendation_ids: ["rec-1"],
+          confidence: "medium",
+        },
+      ],
+    });
     mockFetchLatestRecommendationRunNarrative.mockResolvedValue({
       id: "narrative-1",
       business_id: "biz-1",
@@ -1711,63 +1966,113 @@ describe("site workspace timeline controls", () => {
     expect(screen.getByText("Title tags are missing core keywords.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "AI Narrative Overlay" })).toBeInTheDocument();
     expect(screen.getByText("Narrative for run 1.")).toBeInTheDocument();
-    expect(mockFetchRecommendationsForRun).toHaveBeenCalledWith("token-1", "biz-1", "site-1", "run-1");
+    expect(mockFetchRecommendationWorkspaceSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
   });
 
   it("shows safe in-progress state when no completed recommendation run exists yet", async () => {
     seedRichWorkspaceData();
-    mockFetchRecommendationRuns.mockResolvedValue({
-      items: [
-        {
-          id: "run-open-1",
-          business_id: "biz-1",
-          site_id: "site-1",
-          audit_run_id: "audit-1",
-          comparison_run_id: "comparison-1",
-          status: "running",
-          total_recommendations: 0,
-          critical_recommendations: 0,
-          warning_recommendations: 0,
-          info_recommendations: 0,
-          category_counts_json: {},
-          effort_bucket_counts_json: {},
-          started_at: "2026-03-21T00:29:00Z",
-          completed_at: null,
-          duration_ms: null,
-          error_summary: null,
-          created_by_principal_id: "principal-1",
-          created_at: "2026-03-21T00:29:00Z",
-          updated_at: "2026-03-21T00:30:00Z",
-        },
-      ],
-      total: 1,
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+      business_id: "biz-1",
+      site_id: "site-1",
+      state: "no_completed_runs",
+      latest_run: {
+        id: "run-open-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "running",
+        total_recommendations: 0,
+        critical_recommendations: 0,
+        warning_recommendations: 0,
+        info_recommendations: 0,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: null,
+        duration_ms: null,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      latest_completed_run: null,
+      recommendations: { items: [], total: 0 },
+      latest_narrative: null,
+      tuning_suggestions: [],
     });
-    mockFetchRecommendationsForRun.mockClear();
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "Latest Completed Run" });
     await screen.findByText(/No completed recommendation run is available yet\./);
-    expect(mockFetchRecommendationsForRun).not.toHaveBeenCalled();
+    expect(mockFetchRecommendationWorkspaceSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
   });
 
   it("renders safe latest-run narrative missing state", async () => {
     seedRichWorkspaceData();
-    mockFetchLatestRecommendationRunNarrative.mockImplementation(() =>
-      Promise.reject(new ApiRequestError("Not found", { status: 404, detail: null })),
-    );
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+      business_id: "biz-1",
+      site_id: "site-1",
+      state: "completed_no_narrative",
+      latest_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 4,
+        critical_recommendations: 1,
+        warning_recommendations: 2,
+        info_recommendations: 1,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      latest_completed_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 4,
+        critical_recommendations: 1,
+        warning_recommendations: 2,
+        info_recommendations: 1,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      recommendations: { items: [], total: 0 },
+      latest_narrative: null,
+      tuning_suggestions: [],
+    });
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "Latest Completed Run" });
     await screen.findByText("No narrative has been generated for the latest completed recommendation run yet.");
   });
 
-  it("renders safe latest-run recommendation detail load failures", async () => {
+  it("renders safe latest-run workspace summary load failures", async () => {
     seedRichWorkspaceData();
-    mockFetchRecommendationsForRun.mockRejectedValueOnce(new Error("failed run recommendations"));
+    mockFetchRecommendationWorkspaceSummary.mockRejectedValueOnce(new Error("failed workspace summary"));
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "Latest Completed Run" });
-    await screen.findByText("Unable to load latest completed recommendations right now. Please try again.");
+    await screen.findByText("Unable to load recommendation workspace summary right now. Please try again.");
   });
 
   it("keeps loading and warning timeline regression behavior", async () => {

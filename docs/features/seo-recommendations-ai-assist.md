@@ -47,6 +47,19 @@ The site workspace now surfaces the latest completed recommendation run, determi
      - deterministic tuning preview per suggestion
    - Missing run/narrative/preview data is handled with section-scoped safe empty/failure states.
 
+## API / Interfaces
+- Canonical workspace read path for latest recommendation surfacing:
+  - `GET /api/businesses/{business_id}/seo/sites/{site_id}/recommendations/workspace-summary`
+  - `GET /api/v1/businesses/{business_id}/seo/sites/{site_id}/recommendations/workspace-summary`
+- The workspace summary response is bounded and includes:
+  - latest run metadata
+  - latest completed run metadata
+  - deterministic recommendations for the latest completed run
+  - latest narrative (if present)
+  - bounded tuning suggestions (if present)
+  - safe summary state (`no_runs`, `no_completed_runs`, `completed_no_narrative`, `completed_with_narrative`)
+- Existing run/recommendation/narrative endpoints remain available for history/detail workflows.
+
 ## Data Model
 - `seo_recommendation_runs`: deterministic run lineage/status/rollups.
 - `seo_recommendations`: deterministic recommendation artifacts and workflow fields.

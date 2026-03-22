@@ -35,6 +35,7 @@ import type {
   RecommendationRun,
   RecommendationRunCreateRequest,
   RecommendationRunReport,
+  RecommendationWorkspaceSummaryResponse,
   RecommendationNarrative,
   RecommendationNarrativeListResponse,
   RecommendationTuningImpactPreview,
@@ -561,6 +562,17 @@ export async function fetchLatestRecommendationRun(
     right.created_at.localeCompare(left.created_at),
   );
   return sortedRuns.find((item) => item.status === "completed") || sortedRuns[0] || null;
+}
+
+export async function fetchRecommendationWorkspaceSummary(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<RecommendationWorkspaceSummaryResponse> {
+  return apiRequest<RecommendationWorkspaceSummaryResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/recommendations/workspace-summary`,
+    { token },
+  );
 }
 
 export async function createRecommendationRun(

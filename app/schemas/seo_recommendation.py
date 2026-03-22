@@ -10,12 +10,19 @@ SEORecommendationCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
 SEORecommendationSeverity = Literal["INFO", "WARNING", "CRITICAL"]
 SEORecommendationEffort = Literal["LOW", "MEDIUM", "HIGH"]
 SEORecommendationNarrativeStatus = Literal["completed", "failed"]
+SEORecommendationWorkspaceSummaryState = Literal[
+    "no_runs",
+    "no_completed_runs",
+    "completed_no_narrative",
+    "completed_with_narrative",
+]
 SEORecommendationPriorityBand = Literal["low", "medium", "high", "critical"]
 SEORecommendationStatus = Literal["open", "in_progress", "accepted", "dismissed", "snoozed", "resolved"]
 SEORecommendationDecision = Literal["accept", "dismiss", "snooze", "resolve", "reopen", "start"]
 SEORecommendationSourceType = Literal["audit", "comparison", "mixed"]
 SEORecommendationSortBy = Literal["priority_score", "priority_band", "severity", "created_at", "updated_at", "due_at"]
 SortOrder = Literal["asc", "desc"]
+SEORecommendationTuningSuggestionConfidence = Literal["low", "medium", "high"]
 RecommendationTuningSetting = Literal[
     "competitor_candidate_min_relevance_score",
     "competitor_candidate_big_box_penalty",
@@ -374,6 +381,60 @@ class SEORecommendationNarrativeRead(BaseModel):
 class SEORecommendationNarrativeListResponse(BaseModel):
     items: list[SEORecommendationNarrativeRead]
     total: int
+
+
+class SEORecommendationTuningSuggestionRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    setting: RecommendationTuningSetting
+    current_value: int = Field(ge=0, le=100)
+    recommended_value: int = Field(ge=0, le=100)
+    reason: str = Field(min_length=1, max_length=500)
+    linked_recommendation_ids: list[str] = Field(default_factory=list)
+    confidence: SEORecommendationTuningSuggestionConfidence
+
+    @field_validator("linked_recommendation_ids", mode="before")
+    @classmethod
+    def normalize_linked_recommendation_ids(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise TypeError("linked_recommendation_ids must be a list")
+        normalized: list[str] = []
+        for item in value:
+            cleaned = _strip_or_none(str(item) if item is not None else None)
+            if cleaned:
+                normalized.append(cleaned)
+        return normalized
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value: Any) -> SEORecommendationTuningSuggestionConfidence:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"low", "medium", "high"}:
+            raise ValueError("Invalid tuning suggestion confidence")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: Any) -> str:
+        cleaned = _strip_or_none(str(value) if value is not None else None)
+        if cleaned is None:
+            raise ValueError("reason is required")
+        return cleaned
+
+
+class SEORecommendationWorkspaceSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    business_id: str
+    site_id: str
+    state: SEORecommendationWorkspaceSummaryState
+    latest_run: SEORecommendationRunRead | None
+    latest_completed_run: SEORecommendationRunRead | None
+    recommendations: SEORecommendationListResponse
+    latest_narrative: SEORecommendationNarrativeRead | None
+    tuning_suggestions: list[SEORecommendationTuningSuggestionRead] = Field(default_factory=list)
 
 
 class SEORecommendationTuningValuesPatch(BaseModel):

@@ -18,6 +18,8 @@ from app.models.seo_competitor_comparison_finding import SEOCompetitorComparison
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
+from app.models.seo_recommendation_narrative import SEORecommendationNarrative
+from app.models.seo_recommendation_run import SEORecommendationRun
 
 
 def _override_tenant_context(business_id: str):
@@ -852,3 +854,158 @@ def test_phase3b_v1_recommendation_workflow_routes(db_session, seeded_business) 
         f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/prioritized-report"
     )
     assert report.status_code == 200
+
+
+def test_recommendation_workspace_summary_returns_latest_completed_run(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+    audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+    )
+
+    created = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert created.status_code == 201
+    run_id = created.json()["id"]
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["state"] == "completed_no_narrative"
+    assert payload["latest_run"]["id"] == run_id
+    assert payload["latest_completed_run"]["id"] == run_id
+    assert payload["recommendations"]["total"] > 0
+    assert payload["latest_narrative"] is None
+    assert payload["tuning_suggestions"] == []
+
+
+def test_recommendation_workspace_summary_includes_latest_narrative_and_bounded_suggestions(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+    audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+    )
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    recommendation_list = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert recommendation_list.status_code == 200
+    recommendation_id = recommendation_list.json()["items"][0]["id"]
+
+    db_session.add(
+        SEORecommendationNarrative(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            recommendation_run_id=run_id,
+            version=1,
+            status="completed",
+            narrative_text="Narrative summary.",
+            top_themes_json=["seo"],
+            sections_json={
+                "tuning_suggestions": [
+                    {
+                        "setting": "competitor_candidate_min_relevance_score",
+                        "current_value": 35,
+                        "recommended_value": 30,
+                        "reason": "High low-relevance exclusions",
+                        "linked_recommendation_ids": [recommendation_id, "rec-unknown"],
+                        "confidence": "medium",
+                    },
+                    {
+                        "setting": "not_allowed_setting",
+                        "current_value": 1,
+                        "recommended_value": 2,
+                        "reason": "ignore",
+                        "linked_recommendation_ids": [recommendation_id],
+                        "confidence": "high",
+                    },
+                ]
+            },
+            provider_name="mock",
+            model_name="mock-model",
+            prompt_version="seo-recommendation-narrative-v2",
+            error_message=None,
+            created_by_principal_id="principal-1",
+        )
+    )
+    db_session.commit()
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["state"] == "completed_with_narrative"
+    assert payload["latest_narrative"] is not None
+    assert payload["latest_narrative"]["recommendation_run_id"] == run_id
+    assert len(payload["tuning_suggestions"]) == 1
+    assert payload["tuning_suggestions"][0]["setting"] == "competitor_candidate_min_relevance_score"
+    assert payload["tuning_suggestions"][0]["linked_recommendation_ids"] == [recommendation_id]
+
+
+def test_recommendation_workspace_summary_handles_in_progress_runs_safely(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+    audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+    )
+
+    running_run = SEORecommendationRun(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=audit_run_id,
+        comparison_run_id=None,
+        status="running",
+        total_recommendations=0,
+        critical_recommendations=0,
+        warning_recommendations=0,
+        info_recommendations=0,
+        category_counts_json={},
+        effort_bucket_counts_json={},
+        started_at=utc_now(),
+        created_by_principal_id="principal-1",
+    )
+    db_session.add(running_run)
+    db_session.commit()
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["state"] == "no_completed_runs"
+    assert payload["latest_run"]["id"] == running_run.id
+    assert payload["latest_completed_run"] is None
+    assert payload["recommendations"]["total"] == 0
+    assert payload["latest_narrative"] is None
+
+
+def test_recommendation_workspace_summary_enforces_business_scope(db_session, seeded_business) -> None:
+    other_business = _seed_other_business(db_session)
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+
+    summary = client.get(
+        f"/api/businesses/{other_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 404

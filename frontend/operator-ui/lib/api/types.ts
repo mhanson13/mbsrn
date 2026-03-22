@@ -646,6 +646,23 @@ export interface RecommendationNarrativeListResponse {
   total: number;
 }
 
+export type RecommendationWorkspaceSummaryState =
+  | "no_runs"
+  | "no_completed_runs"
+  | "completed_no_narrative"
+  | "completed_with_narrative";
+
+export interface RecommendationWorkspaceSummaryResponse {
+  business_id: string;
+  site_id: string;
+  state: RecommendationWorkspaceSummaryState;
+  latest_run: RecommendationRun | null;
+  latest_completed_run: RecommendationRun | null;
+  recommendations: RecommendationListResponse;
+  latest_narrative: RecommendationNarrative | null;
+  tuning_suggestions: RecommendationTuningSuggestion[];
+}
+
 export interface Recommendation {
   id: string;
   business_id: string;

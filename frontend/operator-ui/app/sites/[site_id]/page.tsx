@@ -20,8 +20,8 @@ import {
   fetchCompetitorSets,
   fetchCompetitorSnapshotRuns,
   fetchLatestRecommendationRunNarrative,
+  fetchRecommendationWorkspaceSummary,
   previewRecommendationTuningImpact,
-  fetchRecommendationsForRun,
   fetchRecommendationRuns,
   fetchRecommendations,
   fetchSiteCompetitorComparisonRuns,
@@ -41,6 +41,7 @@ import type {
   RecommendationTuningImpactPreview,
   RecommendationRun,
   RecommendationTuningSuggestion,
+  RecommendationWorkspaceSummaryResponse,
   SEOAuditRun,
 } from "../../../lib/api/types";
 
@@ -54,18 +55,6 @@ const TIMELINE_INITIAL_VISIBLE_COUNT = 10;
 const COMPETITOR_PROFILE_DRAFT_CANDIDATE_COUNT = 5;
 const COMPETITOR_PROFILE_POLL_INTERVAL_MS = 2000;
 const COMPETITOR_PROFILE_POLL_MAX_ATTEMPTS = 30;
-const MAX_TUNING_SUGGESTIONS_DISPLAY = 4;
-const TUNING_SUGGESTION_SETTINGS = new Set<RecommendationTuningSuggestion["setting"]>([
-  "competitor_candidate_min_relevance_score",
-  "competitor_candidate_big_box_penalty",
-  "competitor_candidate_directory_penalty",
-  "competitor_candidate_local_alignment_bonus",
-]);
-const TUNING_SUGGESTION_CONFIDENCE = new Set<RecommendationTuningSuggestion["confidence"]>([
-  "low",
-  "medium",
-  "high",
-]);
 
 type SiteTimelineEventType =
   | "audit_run"
@@ -279,60 +268,6 @@ function buildTuningPreviewKey(
   return `${recommendationRunId}:${suggestion.setting}:${suggestion.current_value}:${suggestion.recommended_value}`;
 }
 
-function parseNarrativeTuningSuggestions(
-  sections: RecommendationNarrative["sections_json"],
-): RecommendationTuningSuggestion[] {
-  if (!sections || typeof sections !== "object" || Array.isArray(sections)) {
-    return [];
-  }
-  const rawSuggestions = (sections as Record<string, unknown>).tuning_suggestions;
-  if (!Array.isArray(rawSuggestions)) {
-    return [];
-  }
-  const parsed: RecommendationTuningSuggestion[] = [];
-  for (const item of rawSuggestions) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      continue;
-    }
-    const asRecord = item as Record<string, unknown>;
-    const setting = String(asRecord.setting || "").trim() as RecommendationTuningSuggestion["setting"];
-    const currentValue = Number.parseInt(String(asRecord.current_value), 10);
-    const recommendedValue = Number.parseInt(String(asRecord.recommended_value), 10);
-    const reason = String(asRecord.reason || "").trim();
-    const confidence = String(asRecord.confidence || "").trim().toLowerCase() as RecommendationTuningSuggestion["confidence"];
-    const linkedIdsRaw = asRecord.linked_recommendation_ids;
-    if (
-      !setting ||
-      !TUNING_SUGGESTION_SETTINGS.has(setting) ||
-      !Number.isFinite(currentValue) ||
-      !Number.isFinite(recommendedValue) ||
-      !reason ||
-      !TUNING_SUGGESTION_CONFIDENCE.has(confidence) ||
-      !Array.isArray(linkedIdsRaw)
-    ) {
-      continue;
-    }
-    const linkedRecommendationIds = linkedIdsRaw
-      .map((value) => String(value || "").trim())
-      .filter((value) => value.length > 0);
-    if (linkedRecommendationIds.length === 0) {
-      continue;
-    }
-    parsed.push({
-      setting,
-      current_value: currentValue,
-      recommended_value: recommendedValue,
-      reason,
-      linked_recommendation_ids: linkedRecommendationIds,
-      confidence,
-    });
-    if (parsed.length >= MAX_TUNING_SUGGESTIONS_DISPLAY) {
-      break;
-    }
-  }
-  return parsed;
-}
-
 function safeActionErrorMessage(actionLabel: string, error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 401) {
@@ -444,8 +379,13 @@ export default function SiteWorkspacePage() {
   const [narrativeLookupError, setNarrativeLookupError] = useState<string | null>(null);
   const [latestCompletedRecommendationRun, setLatestCompletedRecommendationRun] = useState<RecommendationRun | null>(null);
   const [latestCompletedRecommendations, setLatestCompletedRecommendations] = useState<Recommendation[]>([]);
+  const [latestCompletedRecommendationNarrative, setLatestCompletedRecommendationNarrative] =
+    useState<RecommendationNarrative | null>(null);
+  const [latestCompletedTuningSuggestions, setLatestCompletedTuningSuggestions] =
+    useState<RecommendationTuningSuggestion[]>([]);
+  const [recommendationWorkspaceSummaryState, setRecommendationWorkspaceSummaryState] =
+    useState<RecommendationWorkspaceSummaryResponse["state"] | null>(null);
   const [latestCompletedRecommendationsError, setLatestCompletedRecommendationsError] = useState<string | null>(null);
-  const [latestCompletedRecommendationsLoading, setLatestCompletedRecommendationsLoading] = useState(false);
   const [tuningPreviewByKey, setTuningPreviewByKey] = useState<Record<string, RecommendationTuningImpactPreview>>({});
   const [tuningPreviewErrorByKey, setTuningPreviewErrorByKey] = useState<Record<string, string>>({});
   const [tuningPreviewLoadingKey, setTuningPreviewLoadingKey] = useState<string | null>(null);
@@ -562,18 +502,6 @@ export default function SiteWorkspacePage() {
     () => recommendationRuns[0] || null,
     [recommendationRuns],
   );
-  const latestCompletedRecommendationNarrative = useMemo(() => {
-    if (!latestCompletedRecommendationRun) {
-      return null;
-    }
-    return latestNarrativesByRunId[latestCompletedRecommendationRun.id] || null;
-  }, [latestCompletedRecommendationRun, latestNarrativesByRunId]);
-  const latestCompletedTuningSuggestions = useMemo(() => {
-    if (!latestCompletedRecommendationNarrative) {
-      return [];
-    }
-    return parseNarrativeTuningSuggestions(latestCompletedRecommendationNarrative.sections_json);
-  }, [latestCompletedRecommendationNarrative]);
 
   const workspaceReadinessMessage = useMemo(() => {
     if (!selectedSite) {
@@ -1030,9 +958,15 @@ export default function SiteWorkspacePage() {
   }
 
   const timelineWarning = useMemo(() => {
-    const possibleIssues = [auditError, competitorError, recommendationRunError, narrativeLookupError];
+    const possibleIssues = [
+      auditError,
+      competitorError,
+      recommendationRunError,
+      narrativeLookupError,
+      latestCompletedRecommendationsError,
+    ];
     return possibleIssues.find((value) => Boolean(value)) || null;
-  }, [auditError, competitorError, narrativeLookupError, recommendationRunError]);
+  }, [auditError, competitorError, latestCompletedRecommendationsError, narrativeLookupError, recommendationRunError]);
 
   useEffect(() => {
     if (context.loading || context.error || !selectedSite) {
@@ -1068,8 +1002,10 @@ export default function SiteWorkspacePage() {
       setNarrativeLookupError(null);
       setLatestCompletedRecommendationRun(null);
       setLatestCompletedRecommendations([]);
+      setLatestCompletedRecommendationNarrative(null);
+      setLatestCompletedTuningSuggestions([]);
+      setRecommendationWorkspaceSummaryState(null);
       setLatestCompletedRecommendationsError(null);
-      setLatestCompletedRecommendationsLoading(false);
       setTuningPreviewByKey({});
       setTuningPreviewErrorByKey({});
       setTuningPreviewLoadingKey(null);
@@ -1102,8 +1038,10 @@ export default function SiteWorkspacePage() {
       setNarrativeLookupError(null);
       setLatestCompletedRecommendationRun(null);
       setLatestCompletedRecommendations([]);
+      setLatestCompletedRecommendationNarrative(null);
+      setLatestCompletedTuningSuggestions([]);
+      setRecommendationWorkspaceSummaryState(null);
       setLatestCompletedRecommendationsError(null);
-      setLatestCompletedRecommendationsLoading(false);
       setTuningPreviewByKey({});
       setTuningPreviewErrorByKey({});
       setTuningPreviewLoadingKey(null);
@@ -1131,8 +1069,10 @@ export default function SiteWorkspacePage() {
       setNarrativeLookupError(null);
       setLatestCompletedRecommendationRun(null);
       setLatestCompletedRecommendations([]);
+      setLatestCompletedRecommendationNarrative(null);
+      setLatestCompletedTuningSuggestions([]);
+      setRecommendationWorkspaceSummaryState(null);
       setLatestCompletedRecommendationsError(null);
-      setLatestCompletedRecommendationsLoading(false);
       setTuningPreviewByKey({});
       setTuningPreviewErrorByKey({});
       setTuningPreviewLoadingKey(null);
@@ -1144,6 +1084,7 @@ export default function SiteWorkspacePage() {
         comparisonRunsResult,
         queueResult,
         recommendationRunsResult,
+        recommendationWorkspaceSummaryResult,
         competitorProfileRunsResult,
         competitorProfileSummaryResult,
       ] =
@@ -1158,6 +1099,7 @@ export default function SiteWorkspacePage() {
             sort_order: "desc",
           }),
           fetchRecommendationRuns(context.token, context.businessId, siteId),
+          fetchRecommendationWorkspaceSummary(context.token, context.businessId, siteId),
           fetchCompetitorProfileGenerationRuns(context.token, context.businessId, siteId),
           fetchCompetitorProfileGenerationSummary(context.token, context.businessId, siteId),
         ]);
@@ -1247,40 +1189,6 @@ export default function SiteWorkspacePage() {
           .sort((left, right) => right.created_at.localeCompare(left.created_at))
           .slice(0, MAX_RECOMMENDATION_RUN_ROWS);
         setRecommendationRuns(sortedRuns);
-        const latestCompletedRun = sortedRuns.find((item) => item.status === "completed") || null;
-        setLatestCompletedRecommendationRun(latestCompletedRun);
-        if (latestCompletedRun) {
-          setLatestCompletedRecommendationsLoading(true);
-          try {
-            const runRecommendations = await fetchRecommendationsForRun(
-              context.token,
-              context.businessId,
-              siteId,
-              latestCompletedRun.id,
-            );
-            if (cancelled) {
-              return;
-            }
-            setLatestCompletedRecommendations(runRecommendations.items);
-            setLatestCompletedRecommendationsError(null);
-          } catch (error) {
-            if (cancelled) {
-              return;
-            }
-            setLatestCompletedRecommendations([]);
-            setLatestCompletedRecommendationsError(
-              safeSectionErrorMessage("latest completed recommendations", error),
-            );
-          } finally {
-            if (!cancelled) {
-              setLatestCompletedRecommendationsLoading(false);
-            }
-          }
-        } else {
-          setLatestCompletedRecommendations([]);
-          setLatestCompletedRecommendationsError(null);
-          setLatestCompletedRecommendationsLoading(false);
-        }
 
         const runsForNarrativeLookup = sortedRuns.slice(0, NARRATIVE_LOOKUP_LIMIT);
         if (runsForNarrativeLookup.length > 0) {
@@ -1326,15 +1234,30 @@ export default function SiteWorkspacePage() {
         }
       } else {
         setRecommendationRuns([]);
-        setLatestCompletedRecommendationRun(null);
-        setLatestCompletedRecommendations([]);
-        setLatestCompletedRecommendationsError(null);
-        setLatestCompletedRecommendationsLoading(false);
         setLatestNarrativesByRunId({});
         setTuningPreviewByKey({});
         setTuningPreviewErrorByKey({});
         setTuningPreviewLoadingKey(null);
         setRecommendationRunError(safeSectionErrorMessage("recommendation runs", recommendationRunsResult.reason));
+      }
+
+      if (recommendationWorkspaceSummaryResult.status === "fulfilled") {
+        const summary = recommendationWorkspaceSummaryResult.value;
+        setRecommendationWorkspaceSummaryState(summary.state);
+        setLatestCompletedRecommendationRun(summary.latest_completed_run);
+        setLatestCompletedRecommendations(summary.recommendations.items);
+        setLatestCompletedRecommendationNarrative(summary.latest_narrative);
+        setLatestCompletedTuningSuggestions(summary.tuning_suggestions);
+        setLatestCompletedRecommendationsError(null);
+      } else {
+        setRecommendationWorkspaceSummaryState(null);
+        setLatestCompletedRecommendationRun(null);
+        setLatestCompletedRecommendations([]);
+        setLatestCompletedRecommendationNarrative(null);
+        setLatestCompletedTuningSuggestions([]);
+        setLatestCompletedRecommendationsError(
+          safeSectionErrorMessage("recommendation workspace summary", recommendationWorkspaceSummaryResult.reason),
+        );
       }
 
       if (competitorProfileSummaryResult.status === "fulfilled") {
@@ -2258,10 +2181,13 @@ export default function SiteWorkspacePage() {
         {recommendationRunError ? <p className="hint error">{recommendationRunError}</p> : null}
         {narrativeLookupError ? <p className="hint warning">{narrativeLookupError}</p> : null}
         <h3>Latest Completed Run</h3>
-        {recommendationRuns.length === 0 && !recommendationRunError ? (
+        {latestCompletedRecommendationsError ? (
+          <p className="hint warning">{latestCompletedRecommendationsError}</p>
+        ) : null}
+        {recommendationWorkspaceSummaryState === "no_runs" && !latestCompletedRecommendationsError ? (
           <p className="hint muted">No recommendation runs have been recorded for this site yet.</p>
         ) : null}
-        {recommendationRuns.length > 0 && !latestCompletedRecommendationRun && !recommendationRunError ? (
+        {recommendationWorkspaceSummaryState === "no_completed_runs" && !latestCompletedRecommendationsError ? (
           <p className="hint muted">
             No completed recommendation run is available yet.
             {latestRecommendationRun ? (
@@ -2274,7 +2200,7 @@ export default function SiteWorkspacePage() {
                 is currently <strong>{latestRecommendationRun.status}</strong>.
               </>
             ) : null}
-          </p>
+            </p>
         ) : null}
         {latestCompletedRecommendationRun ? (
           <div className="stack">
@@ -2294,15 +2220,7 @@ export default function SiteWorkspacePage() {
               {latestCompletedRecommendationRun.info_recommendations}
             </p>
             <h4>Deterministic Recommendations</h4>
-            {latestCompletedRecommendationsLoading ? (
-              <p className="hint muted">Loading deterministic recommendations for the latest completed run...</p>
-            ) : null}
-            {latestCompletedRecommendationsError ? (
-              <p className="hint warning">{latestCompletedRecommendationsError}</p>
-            ) : null}
-            {!latestCompletedRecommendationsLoading &&
-            !latestCompletedRecommendationsError &&
-            latestCompletedRecommendations.length === 0 ? (
+            {!latestCompletedRecommendationsError && latestCompletedRecommendations.length === 0 ? (
               <p className="hint muted">No deterministic recommendations were produced for this run.</p>
             ) : null}
             {latestCompletedRecommendations.length > 0 ? (

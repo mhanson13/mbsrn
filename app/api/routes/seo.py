@@ -77,6 +77,7 @@ from app.schemas.seo_recommendation import (
     SEORecommendationFilteredSummary,
     SEORecommendationListQuery,
     SEORecommendationListResponse,
+    SEORecommendationWorkspaceSummaryRead,
     SEORecommendationTuningImpactPreviewRead,
     SEORecommendationTuningImpactPreviewRequest,
     SEORecommendationPrioritizedReportRead,
@@ -87,6 +88,7 @@ from app.schemas.seo_recommendation import (
     SEORecommendationRunListResponse,
     SEORecommendationRunRead,
     SEORecommendationRunReportRead,
+    SEORecommendationTuningSuggestionRead,
     SEORecommendationWorkflowUpdateRequest,
 )
 from app.schemas.seo_automation import (
@@ -140,6 +142,14 @@ from app.schemas.seo_summary import SEOAuditSummaryRead
 
 router = APIRouter(prefix="/api/businesses/{business_id}/seo", tags=["seo"])
 router_v1 = APIRouter(prefix="/api/v1/businesses/{business_id}/seo", tags=["seo"])
+_WORKSPACE_MAX_TUNING_SUGGESTIONS = 4
+_WORKSPACE_ALLOWED_TUNING_SETTINGS = {
+    "competitor_candidate_min_relevance_score",
+    "competitor_candidate_big_box_penalty",
+    "competitor_candidate_directory_penalty",
+    "competitor_candidate_local_alignment_bonus",
+}
+_WORKSPACE_ALLOWED_TUNING_CONFIDENCE = {"low", "medium", "high"}
 
 
 def _assert_site_match(*, expected_site_id: str, actual_site_id: str, detail: str) -> None:
@@ -168,6 +178,67 @@ def _summarize_recommendation_items(
         dict(sorted(by_effort_bucket.items())),
         dict(sorted(by_priority_band.items())),
     )
+
+
+def _extract_workspace_tuning_suggestions(
+    *,
+    sections_json: dict[str, object] | None,
+    recommendation_ids: set[str],
+) -> list[SEORecommendationTuningSuggestionRead]:
+    if not sections_json or not isinstance(sections_json, dict):
+        return []
+    raw_items = sections_json.get("tuning_suggestions")
+    if not isinstance(raw_items, list):
+        return []
+
+    suggestions: list[SEORecommendationTuningSuggestionRead] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        setting = str(raw_item.get("setting", "") or "").strip()
+        confidence = str(raw_item.get("confidence", "") or "").strip().lower()
+        reason = str(raw_item.get("reason", "") or "").strip()
+        if setting not in _WORKSPACE_ALLOWED_TUNING_SETTINGS:
+            continue
+        if confidence not in _WORKSPACE_ALLOWED_TUNING_CONFIDENCE:
+            continue
+        if not reason:
+            continue
+        try:
+            current_value = int(raw_item.get("current_value"))
+            recommended_value = int(raw_item.get("recommended_value"))
+        except (TypeError, ValueError):
+            continue
+
+        linked_ids_raw = raw_item.get("linked_recommendation_ids")
+        if not isinstance(linked_ids_raw, list):
+            continue
+        linked_ids: list[str] = []
+        for linked_id in linked_ids_raw:
+            cleaned_id = str(linked_id or "").strip()
+            if cleaned_id and cleaned_id in recommendation_ids:
+                linked_ids.append(cleaned_id)
+        if not linked_ids:
+            continue
+        deduped_linked_ids = list(dict.fromkeys(linked_ids))
+
+        try:
+            parsed = SEORecommendationTuningSuggestionRead.model_validate(
+                {
+                    "setting": setting,
+                    "current_value": current_value,
+                    "recommended_value": recommended_value,
+                    "reason": reason,
+                    "linked_recommendation_ids": deduped_linked_ids,
+                    "confidence": confidence,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        suggestions.append(parsed)
+        if len(suggestions) >= _WORKSPACE_MAX_TUNING_SUGGESTIONS:
+            break
+    return suggestions
 
 
 @router.get("/sites", response_model=SEOSiteListResponse)
@@ -559,6 +630,109 @@ def list_seo_recommendation_runs(
     return SEORecommendationRunListResponse(
         items=[SEORecommendationRunRead.model_validate(item) for item in items],
         total=len(items),
+    )
+
+
+@router.get(
+    "/sites/{site_id}/recommendations/workspace-summary",
+    response_model=SEORecommendationWorkspaceSummaryRead,
+)
+@router_v1.get(
+    "/sites/{site_id}/recommendations/workspace-summary",
+    response_model=SEORecommendationWorkspaceSummaryRead,
+)
+def get_seo_recommendation_workspace_summary(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    recommendation_narrative_service: SEORecommendationNarrativeService = Depends(
+        get_seo_recommendation_narrative_service
+    ),
+) -> SEORecommendationWorkspaceSummaryRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        runs = recommendation_service.list_runs(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    except (SEOSiteNotFoundError, SEORecommendationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    latest_run = runs[0] if runs else None
+    latest_completed_run = next((run for run in runs if run.status == "completed"), None)
+    latest_narrative_read: SEORecommendationNarrativeRead | None = None
+    tuning_suggestions: list[SEORecommendationTuningSuggestionRead] = []
+
+    empty_recommendations = SEORecommendationListResponse(
+        items=[],
+        total=0,
+        by_status={},
+        by_category={},
+        by_severity={},
+        by_effort_bucket={},
+        by_priority_band={},
+    )
+    recommendations_payload = empty_recommendations
+
+    if latest_completed_run is not None:
+        recommendation_items = recommendation_service.list_recommendations(
+            business_id=scoped_business_id,
+            recommendation_run_id=latest_completed_run.id,
+        )
+        serialized_items = [SEORecommendationRead.model_validate(item) for item in recommendation_items]
+        by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
+            serialized_items
+        )
+        recommendations_payload = SEORecommendationListResponse(
+            items=serialized_items,
+            total=len(serialized_items),
+            by_status=by_status,
+            by_category=by_category,
+            by_severity=by_severity,
+            by_effort_bucket=by_effort_bucket,
+            by_priority_band=by_priority_band,
+        )
+        try:
+            latest_narrative = recommendation_narrative_service.get_latest_narrative(
+                business_id=scoped_business_id,
+                site_id=site_id,
+                recommendation_run_id=latest_completed_run.id,
+            )
+            latest_narrative_read = SEORecommendationNarrativeRead.model_validate(latest_narrative)
+            recommendation_ids = {item.id for item in serialized_items}
+            tuning_suggestions = _extract_workspace_tuning_suggestions(
+                sections_json=latest_narrative_read.sections_json,
+                recommendation_ids=recommendation_ids,
+            )
+        except SEORecommendationNarrativeNotFoundError:
+            latest_narrative_read = None
+
+    if latest_run is None:
+        state = "no_runs"
+    elif latest_completed_run is None:
+        state = "no_completed_runs"
+    elif latest_narrative_read is None:
+        state = "completed_no_narrative"
+    else:
+        state = "completed_with_narrative"
+
+    return SEORecommendationWorkspaceSummaryRead(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        state=state,
+        latest_run=(SEORecommendationRunRead.model_validate(latest_run) if latest_run else None),
+        latest_completed_run=(
+            SEORecommendationRunRead.model_validate(latest_completed_run) if latest_completed_run else None
+        ),
+        recommendations=recommendations_payload,
+        latest_narrative=latest_narrative_read,
+        tuning_suggestions=tuning_suggestions,
     )
 
 
