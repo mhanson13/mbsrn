@@ -23,6 +23,10 @@ class Business(Base):
     customer_auto_ack_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     contractor_alerts_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     seo_audit_crawl_max_pages: Mapped[int] = mapped_column(Integer, default=25, nullable=False)
+    competitor_candidate_min_relevance_score: Mapped[int] = mapped_column(Integer, default=35, nullable=False)
+    competitor_candidate_big_box_penalty: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    competitor_candidate_directory_penalty: Mapped[int] = mapped_column(Integer, default=35, nullable=False)
+    competitor_candidate_local_alignment_bonus: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False

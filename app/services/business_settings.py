@@ -12,6 +12,14 @@ _EMAIL_REGEX = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNOR
 _E164_REGEX = re.compile(r"^\+[1-9]\d{9,14}$")
 _SEO_AUDIT_CRAWL_MAX_PAGES_MIN = 5
 _SEO_AUDIT_CRAWL_MAX_PAGES_MAX = 250
+_COMPETITOR_CANDIDATE_MIN_RELEVANCE_SCORE_MIN = 0
+_COMPETITOR_CANDIDATE_MIN_RELEVANCE_SCORE_MAX = 100
+_COMPETITOR_CANDIDATE_BIG_BOX_PENALTY_MIN = 0
+_COMPETITOR_CANDIDATE_BIG_BOX_PENALTY_MAX = 50
+_COMPETITOR_CANDIDATE_DIRECTORY_PENALTY_MIN = 0
+_COMPETITOR_CANDIDATE_DIRECTORY_PENALTY_MAX = 50
+_COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MIN = 0
+_COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MAX = 50
 
 
 class BusinessSettingsNotFoundError(ValueError):
@@ -60,6 +68,22 @@ class BusinessSettingsService:
                 "seo_audit_crawl_max_pages",
                 business.seo_audit_crawl_max_pages,
             ),
+            "competitor_candidate_min_relevance_score": updates.get(
+                "competitor_candidate_min_relevance_score",
+                business.competitor_candidate_min_relevance_score,
+            ),
+            "competitor_candidate_big_box_penalty": updates.get(
+                "competitor_candidate_big_box_penalty",
+                business.competitor_candidate_big_box_penalty,
+            ),
+            "competitor_candidate_directory_penalty": updates.get(
+                "competitor_candidate_directory_penalty",
+                business.competitor_candidate_directory_penalty,
+            ),
+            "competitor_candidate_local_alignment_bonus": updates.get(
+                "competitor_candidate_local_alignment_bonus",
+                business.competitor_candidate_local_alignment_bonus,
+            ),
             "timezone": updates.get("timezone", business.timezone),
         }
 
@@ -97,6 +121,58 @@ class BusinessSettingsService:
                 (
                     "seo_audit_crawl_max_pages must be between "
                     f"{_SEO_AUDIT_CRAWL_MAX_PAGES_MIN} and {_SEO_AUDIT_CRAWL_MAX_PAGES_MAX}."
+                )
+            )
+
+        min_relevance_score = int(effective["competitor_candidate_min_relevance_score"])
+        if (
+            min_relevance_score < _COMPETITOR_CANDIDATE_MIN_RELEVANCE_SCORE_MIN
+            or min_relevance_score > _COMPETITOR_CANDIDATE_MIN_RELEVANCE_SCORE_MAX
+        ):
+            raise BusinessSettingsValidationError(
+                (
+                    "competitor_candidate_min_relevance_score must be between "
+                    f"{_COMPETITOR_CANDIDATE_MIN_RELEVANCE_SCORE_MIN} and "
+                    f"{_COMPETITOR_CANDIDATE_MIN_RELEVANCE_SCORE_MAX}."
+                )
+            )
+
+        big_box_penalty = int(effective["competitor_candidate_big_box_penalty"])
+        if (
+            big_box_penalty < _COMPETITOR_CANDIDATE_BIG_BOX_PENALTY_MIN
+            or big_box_penalty > _COMPETITOR_CANDIDATE_BIG_BOX_PENALTY_MAX
+        ):
+            raise BusinessSettingsValidationError(
+                (
+                    "competitor_candidate_big_box_penalty must be between "
+                    f"{_COMPETITOR_CANDIDATE_BIG_BOX_PENALTY_MIN} and "
+                    f"{_COMPETITOR_CANDIDATE_BIG_BOX_PENALTY_MAX}."
+                )
+            )
+
+        directory_penalty = int(effective["competitor_candidate_directory_penalty"])
+        if (
+            directory_penalty < _COMPETITOR_CANDIDATE_DIRECTORY_PENALTY_MIN
+            or directory_penalty > _COMPETITOR_CANDIDATE_DIRECTORY_PENALTY_MAX
+        ):
+            raise BusinessSettingsValidationError(
+                (
+                    "competitor_candidate_directory_penalty must be between "
+                    f"{_COMPETITOR_CANDIDATE_DIRECTORY_PENALTY_MIN} and "
+                    f"{_COMPETITOR_CANDIDATE_DIRECTORY_PENALTY_MAX}."
+                )
+            )
+
+        local_alignment_bonus = int(effective["competitor_candidate_local_alignment_bonus"])
+        if (
+            local_alignment_bonus < _COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MIN
+            or local_alignment_bonus > _COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MAX
+        ):
+            raise BusinessSettingsValidationError(
+                (
+                    "competitor_candidate_local_alignment_bonus must be between "
+                    f"{_COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MIN} and "
+                    f"{_COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MAX}."
                 )
             )
 

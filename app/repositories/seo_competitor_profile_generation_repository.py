@@ -47,6 +47,25 @@ class SEOCompetitorProfileGenerationRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_runs_for_business_site_created_after(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        created_after: datetime,
+    ) -> list[SEOCompetitorProfileGenerationRun]:
+        stmt: Select[tuple[SEOCompetitorProfileGenerationRun]] = (
+            select(SEOCompetitorProfileGenerationRun)
+            .where(SEOCompetitorProfileGenerationRun.business_id == business_id)
+            .where(SEOCompetitorProfileGenerationRun.site_id == site_id)
+            .where(SEOCompetitorProfileGenerationRun.created_at >= created_after)
+            .order_by(
+                SEOCompetitorProfileGenerationRun.created_at.desc(),
+                SEOCompetitorProfileGenerationRun.id.desc(),
+            )
+        )
+        return list(self.session.scalars(stmt))
+
     def get_run_for_business(
         self,
         business_id: str,

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import pytest
+
 from app.models.seo_site import SEOSite
 from app.services.seo_competitor_profile_candidate_quality import (
+    DEFAULT_MIN_RELEVANCE_SCORE,
+    CompetitorCandidateQualityTuning,
     CompetitorCandidateInput,
     EXCLUSION_REASON_KEYS,
     canonicalize_domain,
+    default_competitor_candidate_quality_tuning,
     normalize_competitor_name_for_matching,
     normalize_location_for_matching,
     process_competitor_candidates,
@@ -270,3 +275,173 @@ def test_existing_domain_match_is_counted_as_excluded_reason() -> None:
     assert result.included_candidates == []
     assert result.excluded_candidate_count == 1
     assert result.exclusion_counts_by_reason["existing_domain_match"] == 1
+
+
+def test_default_tuning_is_used_when_quality_tuning_not_provided() -> None:
+    default_result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        candidates=[
+            _candidate(
+                name="Denver Precision Plumbing",
+                domain="denverprecisionplumbing.example",
+                summary="Serving Denver and Aurora for emergency and routine plumbing support.",
+                index=0,
+            ),
+            _candidate(
+                name="Walmart Home Services",
+                domain="walmart.com",
+                competitor_type="marketplace",
+                summary="National marketplace for home services.",
+                why="Broad national service offering.",
+                evidence="No Denver-specific service area references.",
+                index=1,
+            ),
+        ],
+        minimum_relevance_score=0,
+    )
+    explicit_default_result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        candidates=[
+            _candidate(
+                name="Denver Precision Plumbing",
+                domain="denverprecisionplumbing.example",
+                summary="Serving Denver and Aurora for emergency and routine plumbing support.",
+                index=0,
+            ),
+            _candidate(
+                name="Walmart Home Services",
+                domain="walmart.com",
+                competitor_type="marketplace",
+                summary="National marketplace for home services.",
+                why="Broad national service offering.",
+                evidence="No Denver-specific service area references.",
+                index=1,
+            ),
+        ],
+        quality_tuning=default_competitor_candidate_quality_tuning(),
+    )
+
+    assert [item.canonical_domain for item in default_result.included_candidates] == [
+        item.canonical_domain for item in explicit_default_result.included_candidates
+    ]
+    assert [item.relevance_score for item in default_result.included_candidates] == [
+        item.relevance_score for item in explicit_default_result.included_candidates
+    ]
+
+
+def test_custom_tuning_changes_scores_deterministically() -> None:
+    base_result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        candidates=[
+            _candidate(
+                name="Denver Precision Plumbing",
+                domain="denverprecisionplumbing.example",
+                summary="Serving Denver and Aurora for emergency and routine plumbing support.",
+                index=0,
+            ),
+            _candidate(
+                name="Walmart Home Services",
+                domain="walmart.com",
+                competitor_type="marketplace",
+                summary="National marketplace for home services.",
+                why="Broad national service offering.",
+                evidence="No Denver-specific service area references.",
+                index=1,
+            ),
+        ],
+        quality_tuning=CompetitorCandidateQualityTuning(
+            minimum_relevance_score=0,
+            big_box_penalty=20,
+            directory_penalty=35,
+            local_alignment_bonus=10,
+        ),
+    )
+    tuned_result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        candidates=[
+            _candidate(
+                name="Denver Precision Plumbing",
+                domain="denverprecisionplumbing.example",
+                summary="Serving Denver and Aurora for emergency and routine plumbing support.",
+                index=0,
+            ),
+            _candidate(
+                name="Walmart Home Services",
+                domain="walmart.com",
+                competitor_type="marketplace",
+                summary="National marketplace for home services.",
+                why="Broad national service offering.",
+                evidence="No Denver-specific service area references.",
+                index=1,
+            ),
+        ],
+        quality_tuning=CompetitorCandidateQualityTuning(
+            minimum_relevance_score=0,
+            big_box_penalty=50,
+            directory_penalty=35,
+            local_alignment_bonus=0,
+        ),
+    )
+
+    base_by_domain = {item.canonical_domain: item.relevance_score for item in base_result.included_candidates}
+    tuned_by_domain = {item.canonical_domain: item.relevance_score for item in tuned_result.included_candidates}
+    assert tuned_by_domain["walmart.com"] < base_by_domain["walmart.com"]
+    assert tuned_by_domain["denverprecisionplumbing.example"] <= base_by_domain["denverprecisionplumbing.example"]
+
+
+def test_custom_minimum_relevance_threshold_controls_exclusion() -> None:
+    candidate = _candidate(
+        name="Generic Services Group",
+        domain="genericservicesgroup.example",
+        competitor_type="unknown",
+        summary="General services provider.",
+        why=None,
+        evidence=None,
+        confidence=0.35,
+        index=0,
+    )
+    included_result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        candidates=[candidate],
+        quality_tuning=CompetitorCandidateQualityTuning(
+            minimum_relevance_score=DEFAULT_MIN_RELEVANCE_SCORE,
+            big_box_penalty=20,
+            directory_penalty=35,
+            local_alignment_bonus=10,
+        ),
+    )
+    excluded_result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        candidates=[candidate],
+        quality_tuning=CompetitorCandidateQualityTuning(
+            minimum_relevance_score=80,
+            big_box_penalty=20,
+            directory_penalty=35,
+            local_alignment_bonus=10,
+        ),
+    )
+
+    assert included_result.raw_candidate_count == 1
+    assert len(included_result.included_candidates) == 1
+    assert excluded_result.included_candidates == []
+    assert excluded_result.exclusion_counts_by_reason["low_relevance"] == 1
+
+
+def test_quality_tuning_rejects_out_of_range_values() -> None:
+    with pytest.raises(ValueError):
+        CompetitorCandidateQualityTuning(minimum_relevance_score=101)
+
+    with pytest.raises(ValueError):
+        CompetitorCandidateQualityTuning(big_box_penalty=51)
+
+    with pytest.raises(ValueError):
+        CompetitorCandidateQualityTuning(directory_penalty=51)
+
+    with pytest.raises(ValueError):
+        CompetitorCandidateQualityTuning(local_alignment_bonus=51)

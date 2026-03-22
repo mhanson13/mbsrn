@@ -24,6 +24,14 @@ import type { BusinessSettings, Principal, PrincipalIdentity, PrincipalRole } fr
 
 const CRAWL_PAGE_LIMIT_MIN = 5;
 const CRAWL_PAGE_LIMIT_MAX = 250;
+const COMPETITOR_MIN_RELEVANCE_SCORE_MIN = 0;
+const COMPETITOR_MIN_RELEVANCE_SCORE_MAX = 100;
+const COMPETITOR_BIG_BOX_PENALTY_MIN = 0;
+const COMPETITOR_BIG_BOX_PENALTY_MAX = 50;
+const COMPETITOR_DIRECTORY_PENALTY_MIN = 0;
+const COMPETITOR_DIRECTORY_PENALTY_MAX = 50;
+const COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN = 0;
+const COMPETITOR_LOCAL_ALIGNMENT_BONUS_MAX = 50;
 
 interface AdminPageLoadResult {
   users: Principal[];
@@ -31,7 +39,7 @@ interface AdminPageLoadResult {
   identityWarning: string | null;
 }
 
-function parseCrawlPageLimit(input: string): number | null {
+function parseBoundedInteger(input: string, bounds: { min: number; max: number }): number | null {
   const normalized = input.trim();
   if (!/^\d+$/.test(normalized)) {
     return null;
@@ -41,10 +49,17 @@ function parseCrawlPageLimit(input: string): number | null {
   if (!Number.isSafeInteger(parsed)) {
     return null;
   }
-  if (parsed < CRAWL_PAGE_LIMIT_MIN || parsed > CRAWL_PAGE_LIMIT_MAX) {
+  if (parsed < bounds.min || parsed > bounds.max) {
     return null;
   }
   return parsed;
+}
+
+function parseCrawlPageLimit(input: string): number | null {
+  return parseBoundedInteger(input, {
+    min: CRAWL_PAGE_LIMIT_MIN,
+    max: CRAWL_PAGE_LIMIT_MAX,
+  });
 }
 
 function safeAdminPageErrorMessage(error: unknown): string {
@@ -164,6 +179,24 @@ function safeBusinessSettingsUpdateErrorMessage(error: unknown): string {
   return "Failed to update crawl page limit.";
 }
 
+function safeCandidateQualitySettingsUpdateErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "Only admin principals can update competitor quality tuning.";
+    }
+    if (error.status === 404) {
+      return "Business settings were not found in this tenant scope.";
+    }
+    if (error.status === 422) {
+      return "Competitor quality settings must use bounded integer values.";
+    }
+  }
+  return "Failed to update competitor quality settings.";
+}
+
 function formatIdentityLabel(identity: PrincipalIdentity): string {
   return identity.email || `${identity.provider}:${identity.provider_subject}`;
 }
@@ -203,6 +236,12 @@ export default function AdminPage() {
   const [crawlPageLimitInput, setCrawlPageLimitInput] = useState("25");
   const [crawlPageLimitSubmitting, setCrawlPageLimitSubmitting] = useState(false);
   const [crawlPageLimitMessage, setCrawlPageLimitMessage] = useState<string | null>(null);
+  const [candidateMinRelevanceScoreInput, setCandidateMinRelevanceScoreInput] = useState("35");
+  const [candidateBigBoxPenaltyInput, setCandidateBigBoxPenaltyInput] = useState("20");
+  const [candidateDirectoryPenaltyInput, setCandidateDirectoryPenaltyInput] = useState("35");
+  const [candidateLocalAlignmentBonusInput, setCandidateLocalAlignmentBonusInput] = useState("10");
+  const [candidateQualitySubmitting, setCandidateQualitySubmitting] = useState(false);
+  const [candidateQualityMessage, setCandidateQualityMessage] = useState<string | null>(null);
 
   const isAdmin = principal?.role === "admin";
 
@@ -329,6 +368,10 @@ export default function AdminPage() {
         }
         setBusinessSettings(settings);
         setCrawlPageLimitInput(String(settings.seo_audit_crawl_max_pages));
+        setCandidateMinRelevanceScoreInput(String(settings.competitor_candidate_min_relevance_score));
+        setCandidateBigBoxPenaltyInput(String(settings.competitor_candidate_big_box_penalty));
+        setCandidateDirectoryPenaltyInput(String(settings.competitor_candidate_directory_penalty));
+        setCandidateLocalAlignmentBonusInput(String(settings.competitor_candidate_local_alignment_bonus));
       } catch (err) {
         if (!cancelled) {
           setBusinessSettingsError(safeBusinessSettingsErrorMessage(err));
@@ -478,6 +521,89 @@ export default function AdminPage() {
       setBusinessSettingsError(safeBusinessSettingsUpdateErrorMessage(err));
     } finally {
       setCrawlPageLimitSubmitting(false);
+    }
+  };
+
+  const handleUpdateCompetitorCandidateQuality = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusinessSettingsError(null);
+    setCrawlPageLimitMessage(null);
+    setCandidateQualityMessage(null);
+
+    const minRelevanceScore = parseBoundedInteger(candidateMinRelevanceScoreInput, {
+      min: COMPETITOR_MIN_RELEVANCE_SCORE_MIN,
+      max: COMPETITOR_MIN_RELEVANCE_SCORE_MAX,
+    });
+    if (minRelevanceScore === null) {
+      setBusinessSettingsError(
+        (
+          "Minimum relevance score must be an integer between " +
+          `${COMPETITOR_MIN_RELEVANCE_SCORE_MIN} and ${COMPETITOR_MIN_RELEVANCE_SCORE_MAX}.`
+        ),
+      );
+      return;
+    }
+
+    const bigBoxPenalty = parseBoundedInteger(candidateBigBoxPenaltyInput, {
+      min: COMPETITOR_BIG_BOX_PENALTY_MIN,
+      max: COMPETITOR_BIG_BOX_PENALTY_MAX,
+    });
+    if (bigBoxPenalty === null) {
+      setBusinessSettingsError(
+        (
+          "Big-box mismatch penalty must be an integer between " +
+          `${COMPETITOR_BIG_BOX_PENALTY_MIN} and ${COMPETITOR_BIG_BOX_PENALTY_MAX}.`
+        ),
+      );
+      return;
+    }
+
+    const directoryPenalty = parseBoundedInteger(candidateDirectoryPenaltyInput, {
+      min: COMPETITOR_DIRECTORY_PENALTY_MIN,
+      max: COMPETITOR_DIRECTORY_PENALTY_MAX,
+    });
+    if (directoryPenalty === null) {
+      setBusinessSettingsError(
+        (
+          "Directory/aggregator penalty must be an integer between " +
+          `${COMPETITOR_DIRECTORY_PENALTY_MIN} and ${COMPETITOR_DIRECTORY_PENALTY_MAX}.`
+        ),
+      );
+      return;
+    }
+
+    const localAlignmentBonus = parseBoundedInteger(candidateLocalAlignmentBonusInput, {
+      min: COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN,
+      max: COMPETITOR_LOCAL_ALIGNMENT_BONUS_MAX,
+    });
+    if (localAlignmentBonus === null) {
+      setBusinessSettingsError(
+        (
+          "Local alignment bonus must be an integer between " +
+          `${COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN} and ${COMPETITOR_LOCAL_ALIGNMENT_BONUS_MAX}.`
+        ),
+      );
+      return;
+    }
+
+    setCandidateQualitySubmitting(true);
+    try {
+      const updated = await updateBusinessSettings(context.token, context.businessId, {
+        competitor_candidate_min_relevance_score: minRelevanceScore,
+        competitor_candidate_big_box_penalty: bigBoxPenalty,
+        competitor_candidate_directory_penalty: directoryPenalty,
+        competitor_candidate_local_alignment_bonus: localAlignmentBonus,
+      });
+      setBusinessSettings(updated);
+      setCandidateMinRelevanceScoreInput(String(updated.competitor_candidate_min_relevance_score));
+      setCandidateBigBoxPenaltyInput(String(updated.competitor_candidate_big_box_penalty));
+      setCandidateDirectoryPenaltyInput(String(updated.competitor_candidate_directory_penalty));
+      setCandidateLocalAlignmentBonusInput(String(updated.competitor_candidate_local_alignment_bonus));
+      setCandidateQualityMessage("AI competitor candidate quality settings updated.");
+    } catch (err) {
+      setBusinessSettingsError(safeCandidateQualitySettingsUpdateErrorMessage(err));
+    } finally {
+      setCandidateQualitySubmitting(false);
     }
   };
 
@@ -764,7 +890,82 @@ export default function AdminPage() {
           </div>
           {businessSettingsLoading ? <p className="hint muted">Loading business settings...</p> : null}
           {crawlPageLimitMessage ? <p className="hint">{crawlPageLimitMessage}</p> : null}
-          {businessSettingsError ? <p className="hint error">{businessSettingsError}</p> : null}
+        </FormContainer>
+
+        <FormContainer onSubmit={(event) => void handleUpdateCompetitorCandidateQuality(event)} noValidate>
+          <h2>AI Competitor Candidate Quality</h2>
+          <p className="hint muted">
+            Admin-controlled deterministic tuning for competitor candidate scoring and exclusion at the business scope.
+          </p>
+
+          <label htmlFor="competitor-candidate-min-relevance-score">Minimum Relevance Score</label>
+          <input
+            id="competitor-candidate-min-relevance-score"
+            type="number"
+            min={COMPETITOR_MIN_RELEVANCE_SCORE_MIN}
+            max={COMPETITOR_MIN_RELEVANCE_SCORE_MAX}
+            step={1}
+            value={candidateMinRelevanceScoreInput}
+            onChange={(event) => setCandidateMinRelevanceScoreInput(event.target.value)}
+            disabled={businessSettingsLoading || candidateQualitySubmitting}
+            required
+          />
+
+          <label htmlFor="competitor-candidate-big-box-penalty">Big-Box Mismatch Penalty</label>
+          <input
+            id="competitor-candidate-big-box-penalty"
+            type="number"
+            min={COMPETITOR_BIG_BOX_PENALTY_MIN}
+            max={COMPETITOR_BIG_BOX_PENALTY_MAX}
+            step={1}
+            value={candidateBigBoxPenaltyInput}
+            onChange={(event) => setCandidateBigBoxPenaltyInput(event.target.value)}
+            disabled={businessSettingsLoading || candidateQualitySubmitting}
+            required
+          />
+
+          <label htmlFor="competitor-candidate-directory-penalty">Directory/Aggregator Penalty</label>
+          <input
+            id="competitor-candidate-directory-penalty"
+            type="number"
+            min={COMPETITOR_DIRECTORY_PENALTY_MIN}
+            max={COMPETITOR_DIRECTORY_PENALTY_MAX}
+            step={1}
+            value={candidateDirectoryPenaltyInput}
+            onChange={(event) => setCandidateDirectoryPenaltyInput(event.target.value)}
+            disabled={businessSettingsLoading || candidateQualitySubmitting}
+            required
+          />
+
+          <label htmlFor="competitor-candidate-local-alignment-bonus">Local Alignment Bonus</label>
+          <input
+            id="competitor-candidate-local-alignment-bonus"
+            type="number"
+            min={COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN}
+            max={COMPETITOR_LOCAL_ALIGNMENT_BONUS_MAX}
+            step={1}
+            value={candidateLocalAlignmentBonusInput}
+            onChange={(event) => setCandidateLocalAlignmentBonusInput(event.target.value)}
+            disabled={businessSettingsLoading || candidateQualitySubmitting}
+            required
+          />
+
+          <p className="hint muted">
+            Minimum relevance score: {COMPETITOR_MIN_RELEVANCE_SCORE_MIN}-{COMPETITOR_MIN_RELEVANCE_SCORE_MAX}, big-box
+            mismatch penalty: {COMPETITOR_BIG_BOX_PENALTY_MIN}-{COMPETITOR_BIG_BOX_PENALTY_MAX}, directory/aggregator
+            penalty: {COMPETITOR_DIRECTORY_PENALTY_MIN}-{COMPETITOR_DIRECTORY_PENALTY_MAX}, local alignment bonus:{" "}
+            {COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN}-{COMPETITOR_LOCAL_ALIGNMENT_BONUS_MAX}.
+          </p>
+          <div className="form-actions">
+            <button
+              className="primary"
+              type="submit"
+              disabled={businessSettingsLoading || candidateQualitySubmitting}
+            >
+              {candidateQualitySubmitting ? "Saving..." : "Save Candidate Quality Settings"}
+            </button>
+          </div>
+          {candidateQualityMessage ? <p className="hint">{candidateQualityMessage}</p> : null}
         </FormContainer>
 
         <div className="message-stack">
@@ -776,6 +977,7 @@ export default function AdminPage() {
           {actionError ? <p className="hint error">Principal action: {actionError}</p> : null}
           {identityActionSuccess ? <p className="hint">Identity action: {identityActionSuccess}</p> : null}
           {identityActionError ? <p className="hint error">Identity action: {identityActionError}</p> : null}
+          {businessSettingsError ? <p className="hint error">{businessSettingsError}</p> : null}
           {loadingUsers ? <p className="hint muted">Loading users...</p> : null}
           {usersError ? <p className="hint error">{usersError}</p> : null}
           {identityWarning ? <p className="hint warning">{identityWarning}</p> : null}

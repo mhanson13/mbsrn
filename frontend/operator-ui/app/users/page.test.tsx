@@ -59,6 +59,28 @@ function baseOperatorContext(overrides: Partial<OperatorContextMockValue> = {}):
   };
 }
 
+function buildBusinessSettings(overrides: Partial<BusinessSettings> = {}): BusinessSettings {
+  return {
+    id: "biz-1",
+    name: "Business One",
+    notification_phone: "+13035550100",
+    notification_email: "owner@example.com",
+    sms_enabled: true,
+    email_enabled: true,
+    customer_auto_ack_enabled: true,
+    contractor_alerts_enabled: true,
+    seo_audit_crawl_max_pages: 25,
+    competitor_candidate_min_relevance_score: 35,
+    competitor_candidate_big_box_penalty: 20,
+    competitor_candidate_directory_penalty: 35,
+    competitor_candidate_local_alignment_bonus: 10,
+    timezone: "America/Denver",
+    created_at: "2026-03-20T00:00:00Z",
+    updated_at: "2026-03-20T00:00:00Z",
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockUseOperatorContext.mockReturnValue(baseOperatorContext());
@@ -71,20 +93,7 @@ beforeEach(() => {
       is_active: true,
     },
   });
-  mockFetchBusinessSettings.mockResolvedValue({
-    id: "biz-1",
-    name: "Business One",
-    notification_phone: "+13035550100",
-    notification_email: "owner@example.com",
-    sms_enabled: true,
-    email_enabled: true,
-    customer_auto_ack_enabled: true,
-    contractor_alerts_enabled: true,
-    seo_audit_crawl_max_pages: 25,
-    timezone: "America/Denver",
-    created_at: "2026-03-20T00:00:00Z",
-    updated_at: "2026-03-20T00:00:00Z",
-  });
+  mockFetchBusinessSettings.mockResolvedValue(buildBusinessSettings());
 });
 
 function principalsResponse(isOperatorActive: boolean): PrincipalListResponse {
@@ -468,20 +477,12 @@ describe("admin page compatibility route", () => {
   it("updates the SEO crawl page limit for admins", async () => {
     mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
     mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
-    mockUpdateBusinessSettings.mockResolvedValueOnce({
-      id: "biz-1",
-      name: "Business One",
-      notification_phone: "+13035550100",
-      notification_email: "owner@example.com",
-      sms_enabled: true,
-      email_enabled: true,
-      customer_auto_ack_enabled: true,
-      contractor_alerts_enabled: true,
-      seo_audit_crawl_max_pages: 80,
-      timezone: "America/Denver",
-      created_at: "2026-03-20T00:00:00Z",
-      updated_at: "2026-03-22T00:00:00Z",
-    });
+    mockUpdateBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        seo_audit_crawl_max_pages: 80,
+        updated_at: "2026-03-22T00:00:00Z",
+      }),
+    );
 
     render(<UsersCompatibilityPage />);
 
@@ -500,20 +501,12 @@ describe("admin page compatibility route", () => {
   it("accepts crawl page limit at lower bound (5)", async () => {
     mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
     mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
-    mockUpdateBusinessSettings.mockResolvedValueOnce({
-      id: "biz-1",
-      name: "Business One",
-      notification_phone: "+13035550100",
-      notification_email: "owner@example.com",
-      sms_enabled: true,
-      email_enabled: true,
-      customer_auto_ack_enabled: true,
-      contractor_alerts_enabled: true,
-      seo_audit_crawl_max_pages: 5,
-      timezone: "America/Denver",
-      created_at: "2026-03-20T00:00:00Z",
-      updated_at: "2026-03-22T00:00:00Z",
-    });
+    mockUpdateBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        seo_audit_crawl_max_pages: 5,
+        updated_at: "2026-03-22T00:00:00Z",
+      }),
+    );
 
     render(<UsersCompatibilityPage />);
 
@@ -532,20 +525,12 @@ describe("admin page compatibility route", () => {
   it("accepts crawl page limit at upper bound (250)", async () => {
     mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
     mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
-    mockUpdateBusinessSettings.mockResolvedValueOnce({
-      id: "biz-1",
-      name: "Business One",
-      notification_phone: "+13035550100",
-      notification_email: "owner@example.com",
-      sms_enabled: true,
-      email_enabled: true,
-      customer_auto_ack_enabled: true,
-      contractor_alerts_enabled: true,
-      seo_audit_crawl_max_pages: 250,
-      timezone: "America/Denver",
-      created_at: "2026-03-20T00:00:00Z",
-      updated_at: "2026-03-22T00:00:00Z",
-    });
+    mockUpdateBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        seo_audit_crawl_max_pages: 250,
+        updated_at: "2026-03-22T00:00:00Z",
+      }),
+    );
 
     render(<UsersCompatibilityPage />);
 
@@ -590,6 +575,76 @@ describe("admin page compatibility route", () => {
     expect(mockUpdateBusinessSettings).not.toHaveBeenCalled();
     expect(
       screen.getByText("Crawl page limit must be an integer between 5 and 250."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows competitor quality tuning values from business settings", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+    mockFetchBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        competitor_candidate_min_relevance_score: 42,
+        competitor_candidate_big_box_penalty: 18,
+        competitor_candidate_directory_penalty: 31,
+        competitor_candidate_local_alignment_bonus: 12,
+      }),
+    );
+
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    expect(screen.getByLabelText("Minimum Relevance Score")).toHaveValue(42);
+    expect(screen.getByLabelText("Big-Box Mismatch Penalty")).toHaveValue(18);
+    expect(screen.getByLabelText("Directory/Aggregator Penalty")).toHaveValue(31);
+    expect(screen.getByLabelText("Local Alignment Bonus")).toHaveValue(12);
+  });
+
+  it("updates competitor candidate quality settings for admins", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+    mockUpdateBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        competitor_candidate_min_relevance_score: 45,
+        competitor_candidate_big_box_penalty: 25,
+        competitor_candidate_directory_penalty: 30,
+        competitor_candidate_local_alignment_bonus: 15,
+        updated_at: "2026-03-22T00:00:00Z",
+      }),
+    );
+
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    fireEvent.change(screen.getByLabelText("Minimum Relevance Score"), { target: { value: "45" } });
+    fireEvent.change(screen.getByLabelText("Big-Box Mismatch Penalty"), { target: { value: "25" } });
+    fireEvent.change(screen.getByLabelText("Directory/Aggregator Penalty"), { target: { value: "30" } });
+    fireEvent.change(screen.getByLabelText("Local Alignment Bonus"), { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Candidate Quality Settings" }));
+
+    await waitFor(() =>
+      expect(mockUpdateBusinessSettings).toHaveBeenCalledWith("token-1", "biz-1", {
+        competitor_candidate_min_relevance_score: 45,
+        competitor_candidate_big_box_penalty: 25,
+        competitor_candidate_directory_penalty: 30,
+        competitor_candidate_local_alignment_bonus: 15,
+      }),
+    );
+    await screen.findByText("AI competitor candidate quality settings updated.");
+  });
+
+  it("rejects competitor quality values outside allowed bounds", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    fireEvent.change(screen.getByLabelText("Minimum Relevance Score"), { target: { value: "101" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Candidate Quality Settings" }));
+
+    expect(mockUpdateBusinessSettings).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("Minimum relevance score must be an integer between 0 and 100."),
     ).toBeInTheDocument();
   });
 });

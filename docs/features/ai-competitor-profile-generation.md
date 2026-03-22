@@ -8,6 +8,8 @@ It now includes bounded observability for:
 - run health (queued/running/completed/failed counts),
 - retry lineage behavior,
 - normalized failure categories,
+- cross-run candidate telemetry totals (raw/included/excluded),
+- cross-run exclusion reason aggregates (bounded deterministic reason codes),
 - retention cleanup outcomes and last-run visibility.
 
 Prompt quality is improved with governed site context:
@@ -20,6 +22,8 @@ Candidate quality is hardened with deterministic backend post-processing:
 - within-run deduplication,
 - relevance scoring (`0..100`),
 - conservative exclusion of weak/noisy candidates before draft persistence.
+
+Business-scoped admin tuning controls now support bounded adjustments for key scoring/exclusion levers without code changes.
 
 Bounded exclusion telemetry is persisted at run level for tuning:
 - raw/included/excluded candidate totals,
@@ -93,6 +97,12 @@ Bounded exclusion telemetry is persisted at run level for tuning:
 ### Observability flow
 1. Run summary:
    - Service aggregates bounded-window status/failure/retry metrics.
+   - Service also aggregates bounded cross-run candidate telemetry from run records:
+     - `total_runs`
+     - `total_raw_candidate_count`
+     - `total_included_candidate_count`
+     - `total_excluded_candidate_count`
+     - `exclusion_counts_by_reason` (bounded deterministic keys only).
    - Exposed via site-scoped read endpoint.
 2. Cleanup outcome:
    - Retention cleanup writes a feature-specific execution record (`completed|failed`, counts, timestamps, safe error summary).
@@ -116,7 +126,7 @@ Bounded exclusion telemetry is persisted at run level for tuning:
 
 ### New observability endpoints
 - `GET /api/businesses/{business_id}/seo/sites/{site_id}/competitor-profile-generation-runs/summary`
-  - bounded lookback summary of run status counts, retry lineage counts, failure category counts, latest timestamps.
+  - bounded lookback summary of run status counts, retry lineage counts, failure category counts, latest timestamps, and cross-run candidate exclusion telemetry totals.
 - `GET /api/jobs/seo-competitor-profile-generation/cleanup-status`
   - latest cleanup execution and recent success/failure counts for tenant-scoped business/site scope.
 
@@ -129,6 +139,7 @@ Bounded exclusion telemetry is persisted at run level for tuning:
 - `seo_competitor_profile_generation_runs`
 - `seo_competitor_profile_drafts`
 - live competitor entities (`seo_competitor_sets`, `seo_competitor_domains`) created only on accept
+- `businesses` (admin-controlled scoring/exclusion tuning fields)
 
 ### Draft quality field
 - `seo_competitor_profile_drafts.relevance_score` (integer `0..100`)
@@ -157,6 +168,12 @@ Bounded exclusion telemetry is persisted at run level for tuning:
     - `existing_domain_match`
     - `invalid_candidate`
   - values are integer counts only.
+
+### Business-scoped tuning fields
+- `businesses.competitor_candidate_min_relevance_score` (`int`, default `35`, bounds `0..100`)
+- `businesses.competitor_candidate_big_box_penalty` (`int`, default `20`, bounds `0..50`)
+- `businesses.competitor_candidate_directory_penalty` (`int`, default `35`, bounds `0..50`)
+- `businesses.competitor_candidate_local_alignment_bonus` (`int`, default `10`, bounds `0..50`)
 
 ### New cleanup outcome table
 - `seo_competitor_profile_cleanup_executions`
@@ -190,6 +207,7 @@ Bounded exclusion telemetry is persisted at run level for tuning:
 - Failures are normalized to safe summaries and normalized failure categories.
 - Retry lineage is preserved via `parent_run_id` and surfaced in summaries.
 - Candidate processing emits deterministic ordering and persisted relevance scoring for included drafts.
+- Effective candidate-quality tuning is resolved server-side from business settings with strict bounds validation and deterministic defaults.
 - Cleanup remains idempotent and now records structured execution outcomes.
 - Scheduled retention (Kubernetes CronJob) continues daily cadence; cleanup status endpoint exposes latest outcome and recent success/failure counts.
 
@@ -223,6 +241,20 @@ Deployment/runtime notes:
 - `SEO_COMPETITOR_PROFILE_RUN_RETENTION_DAYS` (default: `180`)
 - `SEO_COMPETITOR_PROFILE_REJECTED_DRAFT_RETENTION_DAYS` (default: `90`)
 
+### Admin tuning controls (business settings)
+- Read: `GET /api/businesses/{business_id}`
+- Update (admin-only): `PATCH /api/businesses/{business_id}/settings`
+- Tunables:
+  - `competitor_candidate_min_relevance_score` (default `35`, range `0..100`)
+  - `competitor_candidate_big_box_penalty` (default `20`, range `0..50`)
+  - `competitor_candidate_directory_penalty` (default `35`, range `0..50`)
+  - `competitor_candidate_local_alignment_bonus` (default `10`, range `0..50`)
+
+Behavior notes:
+- Backend always enforces bounds; UI values are never trusted as source of truth.
+- If settings are unset, deterministic defaults are used.
+- Invalid out-of-range persisted values fail runs safely with normalized failure handling instead of silently applying unsafe scoring.
+
 ### Infrastructure/runtime
 - `DATABASE_URL` (API/CLI/CronJob DB access)
 
@@ -241,6 +273,9 @@ Deployment/runtime notes:
 - Candidate-quality filtering:
   - low-relevance/noisy candidates can be excluded before draft persistence;
   - if all candidates are excluded, run fails safely with no persisted drafts.
+- Candidate-quality tuning misconfiguration:
+  - run fails safely with a normalized internal failure category and safe summary;
+  - raw candidate details remain internal and review gating is unchanged.
 - Cleanup failure:
   - API/CLI returns safe failure behavior,
   - cleanup execution record stores `failed` status and safe error summary.
@@ -252,7 +287,9 @@ Operator-visible behavior remains safe and non-diagnostic (no stack traces, no r
 - Tenant isolation is preserved in summary and cleanup-status endpoints via existing tenant resolution.
 - Raw provider output remains backend-only diagnostic data.
 - Exclusion telemetry is intentionally bounded to deterministic reason codes and integer counts.
+- Cross-run exclusion telemetry is aggregate-only internal observability data; it is not a per-candidate diagnostics surface.
 - Secrets (API keys, credential material) are not persisted in observability payloads and not exposed in API responses.
+- Admin tuning controls are business-scoped and enforced server-side; they adjust deterministic scoring/exclusion only and never bypass review gating.
 - AI provider credentials should be injected only into workloads executing provider calls (API pods), not broadly into unrelated workloads.
 - Failure categories are normalized labels, not raw internal exception traces.
 - Site-derived prompt inputs are treated as untrusted data and cannot override system instructions.

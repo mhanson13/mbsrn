@@ -1664,10 +1664,26 @@ export default function SiteWorkspacePage() {
               {competitorProfileSummary.retried_parent_runs} | failed runs later retried:{" "}
               {competitorProfileSummary.failed_runs_retried}
             </p>
+            <p className="hint muted">
+              Candidate telemetry ({competitorProfileSummary.total_runs} runs): raw{" "}
+              {competitorProfileSummary.total_raw_candidate_count} | included{" "}
+              {competitorProfileSummary.total_included_candidate_count} | excluded{" "}
+              {competitorProfileSummary.total_excluded_candidate_count}
+            </p>
             {Object.keys(competitorProfileSummary.failure_category_counts).length > 0 ? (
               <p className="hint muted">
                 Failure categories:{" "}
                 {Object.entries(competitorProfileSummary.failure_category_counts)
+                  .sort(([left], [right]) => left.localeCompare(right))
+                  .map(([key, value]) => `${formatFailureCategory(key)}=${value}`)
+                  .join(", ")}
+              </p>
+            ) : null}
+            {Object.values(competitorProfileSummary.exclusion_counts_by_reason).some((count) => count > 0) ? (
+              <p className="hint muted">
+                Exclusion reasons:{" "}
+                {Object.entries(competitorProfileSummary.exclusion_counts_by_reason)
+                  .filter(([, value]) => value > 0)
                   .sort(([left], [right]) => left.localeCompare(right))
                   .map(([key, value]) => `${formatFailureCategory(key)}=${value}`)
                   .join(", ")}

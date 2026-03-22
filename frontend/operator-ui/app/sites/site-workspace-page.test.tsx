@@ -180,6 +180,18 @@ function seedCompetitorProfileGenerationDefaults(): void {
     retried_parent_runs: 0,
     failed_runs_retried: 0,
     failure_category_counts: {},
+    total_runs: 0,
+    total_raw_candidate_count: 0,
+    total_included_candidate_count: 0,
+    total_excluded_candidate_count: 0,
+    exclusion_counts_by_reason: {
+      duplicate: 0,
+      low_relevance: 0,
+      directory_or_aggregator: 0,
+      big_box_mismatch: 0,
+      existing_domain_match: 0,
+      invalid_candidate: 0,
+    },
     latest_run_created_at: null,
     latest_run_completed_at: null,
     latest_completed_run_completed_at: null,
@@ -1093,6 +1105,18 @@ function seedCompetitorProfileGenerationWorkspaceData(): void {
     retried_parent_runs: 0,
     failed_runs_retried: 0,
     failure_category_counts: {},
+    total_runs: 1,
+    total_raw_candidate_count: 2,
+    total_included_candidate_count: 2,
+    total_excluded_candidate_count: 0,
+    exclusion_counts_by_reason: {
+      duplicate: 0,
+      low_relevance: 0,
+      directory_or_aggregator: 0,
+      big_box_mismatch: 0,
+      existing_domain_match: 0,
+      invalid_candidate: 0,
+    },
     latest_run_created_at: "2026-03-21T00:59:00Z",
     latest_run_completed_at: "2026-03-21T01:00:00Z",
     latest_completed_run_completed_at: "2026-03-21T01:00:00Z",
@@ -1439,10 +1463,55 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(metadataLine).toHaveTextContent(/Model:\s*mock-seo-competitor-profile-v1/);
     expect(metadataLine).toHaveTextContent(/Prompt:\s*seo-competitor-profile-v1/);
     expect(screen.getByText(/Last 30d: queued 0 \| running 0 \| completed 1 \| failed 0/)).toBeInTheDocument();
+    expect(screen.getByText(/Candidate telemetry \(1 runs\): raw 2 \| included 2 \| excluded 0/)).toBeInTheDocument();
+    expect(screen.queryByText(/Exclusion reasons:/i)).not.toBeInTheDocument();
     expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(2);
     expect(mockFetchCompetitorProfileGenerationRuns).toHaveBeenCalled();
     expect(mockFetchCompetitorProfileGenerationRunDetail).toHaveBeenCalled();
     expect(mockFetchCompetitorProfileGenerationSummary).toHaveBeenCalled();
+  });
+
+  it("renders non-zero exclusion reason aggregates in summary", async () => {
+    seedCompetitorProfileGenerationWorkspaceData();
+    mockFetchCompetitorProfileGenerationSummary.mockResolvedValue({
+      business_id: "biz-1",
+      site_id: "site-1",
+      lookback_days: 30,
+      window_start: "2026-02-20T00:00:00Z",
+      window_end: "2026-03-21T00:00:00Z",
+      queued_count: 0,
+      running_count: 0,
+      completed_count: 2,
+      failed_count: 1,
+      retry_child_runs: 0,
+      retried_parent_runs: 0,
+      failed_runs_retried: 0,
+      failure_category_counts: {},
+      total_runs: 3,
+      total_raw_candidate_count: 8,
+      total_included_candidate_count: 2,
+      total_excluded_candidate_count: 6,
+      exclusion_counts_by_reason: {
+        duplicate: 1,
+        low_relevance: 2,
+        directory_or_aggregator: 2,
+        big_box_mismatch: 1,
+        existing_domain_match: 0,
+        invalid_candidate: 0,
+      },
+      latest_run_created_at: "2026-03-21T00:59:00Z",
+      latest_run_completed_at: "2026-03-21T01:00:00Z",
+      latest_completed_run_completed_at: "2026-03-21T01:00:00Z",
+      latest_failed_run_completed_at: null,
+    });
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Competitor Profiles" });
+    expect(screen.getByText(/Candidate telemetry \(3 runs\): raw 8 \| included 2 \| excluded 6/)).toBeInTheDocument();
+    expect(screen.getByText(/Exclusion reasons:/i)).toHaveTextContent(
+      "Exclusion reasons: big box mismatch=1, directory or aggregator=2, duplicate=1, low relevance=2",
+    );
   });
 
   it("triggers generation and refreshes visible drafts", async () => {

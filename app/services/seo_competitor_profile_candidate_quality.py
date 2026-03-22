@@ -53,7 +53,20 @@ _BIG_BOX_ROOTS = {
 }
 _MIN_LOCATION_TERM_LENGTH = 3
 _MIN_INDUSTRY_TERM_LENGTH = 4
-_MIN_RELEVANCE_SCORE = 35
+
+DEFAULT_MIN_RELEVANCE_SCORE = 35
+DEFAULT_BIG_BOX_PENALTY = 20
+DEFAULT_DIRECTORY_PENALTY = 35
+DEFAULT_LOCAL_ALIGNMENT_BONUS = 10
+
+MIN_RELEVANCE_SCORE_MIN = 0
+MIN_RELEVANCE_SCORE_MAX = 100
+BIG_BOX_PENALTY_MIN = 0
+BIG_BOX_PENALTY_MAX = 50
+DIRECTORY_PENALTY_MIN = 0
+DIRECTORY_PENALTY_MAX = 50
+LOCAL_ALIGNMENT_BONUS_MIN = 0
+LOCAL_ALIGNMENT_BONUS_MAX = 50
 
 EXCLUSION_REASON_DUPLICATE = "duplicate"
 EXCLUSION_REASON_LOW_RELEVANCE = "low_relevance"
@@ -109,6 +122,56 @@ class CompetitorCandidateProcessingResult:
 
 
 @dataclass(frozen=True)
+class CompetitorCandidateQualityTuning:
+    minimum_relevance_score: int = DEFAULT_MIN_RELEVANCE_SCORE
+    big_box_penalty: int = DEFAULT_BIG_BOX_PENALTY
+    directory_penalty: int = DEFAULT_DIRECTORY_PENALTY
+    local_alignment_bonus: int = DEFAULT_LOCAL_ALIGNMENT_BONUS
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "minimum_relevance_score",
+            _validate_bounded_integer(
+                "minimum_relevance_score",
+                self.minimum_relevance_score,
+                min_value=MIN_RELEVANCE_SCORE_MIN,
+                max_value=MIN_RELEVANCE_SCORE_MAX,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "big_box_penalty",
+            _validate_bounded_integer(
+                "big_box_penalty",
+                self.big_box_penalty,
+                min_value=BIG_BOX_PENALTY_MIN,
+                max_value=BIG_BOX_PENALTY_MAX,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "directory_penalty",
+            _validate_bounded_integer(
+                "directory_penalty",
+                self.directory_penalty,
+                min_value=DIRECTORY_PENALTY_MIN,
+                max_value=DIRECTORY_PENALTY_MAX,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "local_alignment_bonus",
+            _validate_bounded_integer(
+                "local_alignment_bonus",
+                self.local_alignment_bonus,
+                min_value=LOCAL_ALIGNMENT_BONUS_MIN,
+                max_value=LOCAL_ALIGNMENT_BONUS_MAX,
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class _SiteScoringContext:
     domain: str
     industry_terms: set[str]
@@ -141,9 +204,13 @@ def process_competitor_candidates(
     site: SEOSite,
     candidates: list[CompetitorCandidateInput],
     existing_domains: list[str],
-    minimum_relevance_score: int = _MIN_RELEVANCE_SCORE,
+    minimum_relevance_score: int = DEFAULT_MIN_RELEVANCE_SCORE,
+    quality_tuning: CompetitorCandidateQualityTuning | None = None,
 ) -> CompetitorCandidateProcessingResult:
-    minimum_relevance_score = max(0, min(100, int(minimum_relevance_score)))
+    if quality_tuning is None:
+        tuning = CompetitorCandidateQualityTuning(minimum_relevance_score=minimum_relevance_score)
+    else:
+        tuning = quality_tuning
     context = _build_site_context(site)
     existing_domain_set = {_canonicalize_domain(value) for value in existing_domains if value.strip()}
     exclusion_counts_by_reason = _new_exclusion_reason_counts()
@@ -153,17 +220,22 @@ def process_competitor_candidates(
             candidate=candidate,
             context=context,
             existing_domain_set=existing_domain_set,
+            tuning=tuning,
         )
         for candidate in candidates
     ]
 
-    deduped_candidates, duplicate_count = _dedupe_scored_candidates(scored_candidates, context=context)
+    deduped_candidates, duplicate_count = _dedupe_scored_candidates(
+        scored_candidates,
+        context=context,
+        tuning=tuning,
+    )
     exclusion_counts_by_reason[EXCLUSION_REASON_DUPLICATE] = duplicate_count
     included: list[RankedCompetitorCandidate] = []
     for candidate in deduped_candidates:
         exclusion_reason = _determine_exclusion_reason(
             candidate=candidate,
-            minimum_relevance_score=minimum_relevance_score,
+            minimum_relevance_score=tuning.minimum_relevance_score,
             existing_domain_set=existing_domain_set,
             site_context=context,
         )
@@ -260,6 +332,7 @@ def _to_scored_state(
     candidate: CompetitorCandidateInput,
     context: _SiteScoringContext,
     existing_domain_set: set[str],
+    tuning: CompetitorCandidateQualityTuning,
 ) -> _ScoredCandidateState:
     normalized_name = normalize_competitor_name_for_matching(candidate.suggested_name)
     normalized_name_compact = normalized_name.replace(" ", "")
@@ -291,6 +364,7 @@ def _to_scored_state(
         is_directory_domain=is_directory_domain,
         is_big_box_candidate=is_big_box_candidate,
         existing_domain_set=existing_domain_set,
+        tuning=tuning,
     )
 
     return _ScoredCandidateState(
@@ -317,6 +391,7 @@ def _dedupe_scored_candidates(
     candidates: list[_ScoredCandidateState],
     *,
     context: _SiteScoringContext,
+    tuning: CompetitorCandidateQualityTuning,
 ) -> tuple[list[_ScoredCandidateState], int]:
     deduped: list[_ScoredCandidateState] = []
     duplicate_count = 0
@@ -332,7 +407,12 @@ def _dedupe_scored_candidates(
         if duplicate_index is None:
             deduped.append(candidate)
             continue
-        merged = _merge_duplicate_candidates(primary=deduped[duplicate_index], secondary=candidate, site_context=context)
+        merged = _merge_duplicate_candidates(
+            primary=deduped[duplicate_index],
+            secondary=candidate,
+            site_context=context,
+            tuning=tuning,
+        )
         deduped[duplicate_index] = merged
         duplicate_count += 1
     return deduped, duplicate_count
@@ -391,6 +471,7 @@ def _merge_duplicate_candidates(
     primary: _ScoredCandidateState,
     secondary: _ScoredCandidateState,
     site_context: _SiteScoringContext,
+    tuning: CompetitorCandidateQualityTuning,
 ) -> _ScoredCandidateState:
     stronger = _stronger_candidate(primary, secondary)
     weaker = secondary if stronger is primary else primary
@@ -418,6 +499,7 @@ def _merge_duplicate_candidates(
         candidate=merged_input,
         context=site_context,
         existing_domain_set=set(),
+        tuning=tuning,
     )
 
 
@@ -528,6 +610,7 @@ def _score_candidate(
     is_directory_domain: bool,
     is_big_box_candidate: bool,
     existing_domain_set: set[str],
+    tuning: CompetitorCandidateQualityTuning,
 ) -> int:
     score = 25
     score += max(0, min(20, int(round(candidate.confidence_score * 20))))
@@ -538,7 +621,7 @@ def _score_candidate(
         score -= 25
 
     if is_directory_domain:
-        score -= 35
+        score -= tuning.directory_penalty
     else:
         score += 8
 
@@ -571,7 +654,7 @@ def _score_candidate(
     if context.industry_terms and context.industry_terms.intersection(text_terms):
         score += 10
     if location_terms_found:
-        score += 10
+        score += tuning.local_alignment_bonus
 
     specific_fields = sum(
         1
@@ -591,7 +674,7 @@ def _score_candidate(
         score -= 8
 
     if context.has_local_context and is_big_box_candidate and not location_terms_found:
-        score -= 20
+        score -= tuning.big_box_penalty
 
     if context.domain and domain_root and domain_root != context.domain.split(".", 1)[0]:
         score += 2
@@ -656,3 +739,17 @@ def _canonicalize_domain(value: str) -> str:
     if host.startswith("www."):
         host = host[4:]
     return host
+
+
+def default_competitor_candidate_quality_tuning() -> CompetitorCandidateQualityTuning:
+    return CompetitorCandidateQualityTuning()
+
+
+def _validate_bounded_integer(name: str, value: int, *, min_value: int, max_value: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if parsed < min_value or parsed > max_value:
+        raise ValueError(f"{name} must be between {min_value} and {max_value}")
+    return parsed

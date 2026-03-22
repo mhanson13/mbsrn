@@ -38,6 +38,16 @@ The setting controls how many pages an audit crawl is allowed to scan for both m
 - Backward-compatible route: `/users` (compatibility alias for existing bookmarks)
 - The crawl limit control lives on the Admin page under **SEO Crawl Settings**.
 
+## Related Admin Tuning (AI Competitor Quality)
+
+The same business settings surface also contains bounded AI competitor candidate-quality tuning controls:
+- `competitor_candidate_min_relevance_score` (`0..100`, default `35`)
+- `competitor_candidate_big_box_penalty` (`0..50`, default `20`)
+- `competitor_candidate_directory_penalty` (`0..50`, default `35`)
+- `competitor_candidate_local_alignment_bonus` (`0..50`, default `10`)
+
+These settings are business-scoped and admin-only, and are enforced server-side in competitor candidate scoring/exclusion logic. They do not change review gating.
+
 ## Runtime Usage
 
 ### Manual audit path

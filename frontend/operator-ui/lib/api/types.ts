@@ -80,6 +80,10 @@ export interface BusinessSettings {
   customer_auto_ack_enabled: boolean;
   contractor_alerts_enabled: boolean;
   seo_audit_crawl_max_pages: number;
+  competitor_candidate_min_relevance_score: number;
+  competitor_candidate_big_box_penalty: number;
+  competitor_candidate_directory_penalty: number;
+  competitor_candidate_local_alignment_bonus: number;
   timezone: string;
   created_at: string;
   updated_at: string;
@@ -93,6 +97,10 @@ export interface BusinessSettingsUpdateRequest {
   customer_auto_ack_enabled?: boolean;
   contractor_alerts_enabled?: boolean;
   seo_audit_crawl_max_pages?: number;
+  competitor_candidate_min_relevance_score?: number;
+  competitor_candidate_big_box_penalty?: number;
+  competitor_candidate_directory_penalty?: number;
+  competitor_candidate_local_alignment_bonus?: number;
   timezone?: string | null;
 }
 
@@ -304,6 +312,19 @@ export interface CompetitorProfileGenerationSummaryResponse {
   retried_parent_runs: number;
   failed_runs_retried: number;
   failure_category_counts: Record<string, number>;
+  total_runs: number;
+  total_raw_candidate_count: number;
+  total_included_candidate_count: number;
+  total_excluded_candidate_count: number;
+  exclusion_counts_by_reason: Record<
+    | "duplicate"
+    | "low_relevance"
+    | "directory_or_aggregator"
+    | "big_box_mismatch"
+    | "existing_domain_match"
+    | "invalid_candidate",
+    number
+  >;
   latest_run_created_at: string | null;
   latest_run_completed_at: string | null;
   latest_completed_run_completed_at: string | null;

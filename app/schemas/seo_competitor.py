@@ -315,10 +315,34 @@ class SEOCompetitorProfileGenerationObservabilitySummaryRead(BaseModel):
     retried_parent_runs: int
     failed_runs_retried: int
     failure_category_counts: dict[str, int] = Field(default_factory=dict)
+    total_runs: int = 0
+    total_raw_candidate_count: int = 0
+    total_included_candidate_count: int = 0
+    total_excluded_candidate_count: int = 0
+    exclusion_counts_by_reason: dict[SEOCompetitorProfileExclusionReason, int] = Field(default_factory=dict)
     latest_run_created_at: datetime | None
     latest_run_completed_at: datetime | None
     latest_completed_run_completed_at: datetime | None
     latest_failed_run_completed_at: datetime | None
+
+    @field_validator("exclusion_counts_by_reason", mode="before")
+    @classmethod
+    def normalize_summary_exclusion_counts_by_reason(
+        cls,
+        value: Any,
+    ) -> dict[SEOCompetitorProfileExclusionReason, int]:
+        normalized = {reason: 0 for reason in _COMPETITOR_PROFILE_EXCLUSION_REASONS}
+        if value is None:
+            return normalized  # type: ignore[return-value]
+        if not isinstance(value, dict):
+            return normalized  # type: ignore[return-value]
+        for reason in _COMPETITOR_PROFILE_EXCLUSION_REASONS:
+            raw_count = value.get(reason, 0)
+            try:
+                normalized[reason] = max(0, int(raw_count))
+            except (TypeError, ValueError):
+                normalized[reason] = 0
+        return normalized  # type: ignore[return-value]
 
 
 class SEOCompetitorProfileGenerationRetentionCleanupRequest(BaseModel):

@@ -81,6 +81,10 @@ def test_get_business_settings_endpoint(db_session, seeded_business) -> None:
     assert payload["customer_auto_ack_enabled"] is True
     assert payload["contractor_alerts_enabled"] is True
     assert payload["seo_audit_crawl_max_pages"] == 25
+    assert payload["competitor_candidate_min_relevance_score"] == 35
+    assert payload["competitor_candidate_big_box_penalty"] == 20
+    assert payload["competitor_candidate_directory_penalty"] == 35
+    assert payload["competitor_candidate_local_alignment_bonus"] == 10
 
 
 def test_patch_business_settings_valid_partial_update_succeeds(db_session, seeded_business) -> None:
@@ -92,6 +96,10 @@ def test_patch_business_settings_valid_partial_update_succeeds(db_session, seede
             "notification_email": "  OWNER+ALERTS@TMFIRE.EXAMPLE  ",
             "timezone": "America/Chicago",
             "seo_audit_crawl_max_pages": 60,
+            "competitor_candidate_min_relevance_score": 45,
+            "competitor_candidate_big_box_penalty": 18,
+            "competitor_candidate_directory_penalty": 30,
+            "competitor_candidate_local_alignment_bonus": 14,
         },
     )
 
@@ -100,6 +108,10 @@ def test_patch_business_settings_valid_partial_update_succeeds(db_session, seede
     assert payload["notification_email"] == "owner+alerts@tmfire.example"
     assert payload["timezone"] == "America/Chicago"
     assert payload["seo_audit_crawl_max_pages"] == 60
+    assert payload["competitor_candidate_min_relevance_score"] == 45
+    assert payload["competitor_candidate_big_box_penalty"] == 18
+    assert payload["competitor_candidate_directory_penalty"] == 30
+    assert payload["competitor_candidate_local_alignment_bonus"] == 14
     assert payload["sms_enabled"] is True
 
 
@@ -278,3 +290,72 @@ def test_patch_business_settings_rejects_extreme_crawl_page_limit(db_session, se
 
     assert response.status_code == 422
     assert _detail_contains_field(response.json()["detail"], "seo_audit_crawl_max_pages")
+
+
+def test_patch_business_settings_accepts_candidate_quality_tuning_bounds(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "competitor_candidate_min_relevance_score": 100,
+            "competitor_candidate_big_box_penalty": 50,
+            "competitor_candidate_directory_penalty": 0,
+            "competitor_candidate_local_alignment_bonus": 50,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["competitor_candidate_min_relevance_score"] == 100
+    assert payload["competitor_candidate_big_box_penalty"] == 50
+    assert payload["competitor_candidate_directory_penalty"] == 0
+    assert payload["competitor_candidate_local_alignment_bonus"] == 50
+
+
+def test_patch_business_settings_rejects_candidate_min_relevance_out_of_range(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={"competitor_candidate_min_relevance_score": 101},
+    )
+
+    assert response.status_code == 422
+    assert _detail_contains_field(response.json()["detail"], "competitor_candidate_min_relevance_score")
+
+
+def test_patch_business_settings_rejects_candidate_big_box_penalty_out_of_range(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={"competitor_candidate_big_box_penalty": 51},
+    )
+
+    assert response.status_code == 422
+    assert _detail_contains_field(response.json()["detail"], "competitor_candidate_big_box_penalty")
+
+
+def test_patch_business_settings_rejects_candidate_directory_penalty_out_of_range(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={"competitor_candidate_directory_penalty": 51},
+    )
+
+    assert response.status_code == 422
+    assert _detail_contains_field(response.json()["detail"], "competitor_candidate_directory_penalty")
+
+
+def test_patch_business_settings_rejects_candidate_local_bonus_out_of_range(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={"competitor_candidate_local_alignment_bonus": 51},
+    )
+
+    assert response.status_code == 422
+    assert _detail_contains_field(response.json()["detail"], "competitor_candidate_local_alignment_bonus")

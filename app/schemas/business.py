@@ -22,6 +22,10 @@ class BusinessSettingsRead(BaseModel):
     customer_auto_ack_enabled: bool
     contractor_alerts_enabled: bool
     seo_audit_crawl_max_pages: int
+    competitor_candidate_min_relevance_score: int
+    competitor_candidate_big_box_penalty: int
+    competitor_candidate_directory_penalty: int
+    competitor_candidate_local_alignment_bonus: int
     timezone: str
     created_at: datetime
     updated_at: datetime
@@ -35,6 +39,10 @@ class BusinessSettingsUpdateRequest(BaseModel):
     customer_auto_ack_enabled: bool | None = None
     contractor_alerts_enabled: bool | None = None
     seo_audit_crawl_max_pages: int | None = Field(default=None, ge=5, le=250)
+    competitor_candidate_min_relevance_score: int | None = Field(default=None, ge=0, le=100)
+    competitor_candidate_big_box_penalty: int | None = Field(default=None, ge=0, le=50)
+    competitor_candidate_directory_penalty: int | None = Field(default=None, ge=0, le=50)
+    competitor_candidate_local_alignment_bonus: int | None = Field(default=None, ge=0, le=50)
     timezone: str | None = None
 
     @field_validator("notification_email", mode="before")

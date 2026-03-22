@@ -35,7 +35,20 @@ from app.schemas.seo_competitor import (
     SEOCompetitorProfileGenerationRunCreateRequest,
 )
 from app.services.seo_competitor_profile_candidate_quality import (
+    BIG_BOX_PENALTY_MAX,
+    BIG_BOX_PENALTY_MIN,
+    DIRECTORY_PENALTY_MAX,
+    DIRECTORY_PENALTY_MIN,
+    LOCAL_ALIGNMENT_BONUS_MAX,
+    LOCAL_ALIGNMENT_BONUS_MIN,
+    MIN_RELEVANCE_SCORE_MAX,
+    MIN_RELEVANCE_SCORE_MIN,
+    CompetitorCandidateQualityTuning,
     CompetitorCandidateInput,
+    DEFAULT_BIG_BOX_PENALTY,
+    DEFAULT_DIRECTORY_PENALTY,
+    DEFAULT_LOCAL_ALIGNMENT_BONUS,
+    DEFAULT_MIN_RELEVANCE_SCORE,
     EXCLUSION_REASON_KEYS,
     default_exclusion_reason_counts,
     process_competitor_candidates,
@@ -65,6 +78,7 @@ INVALID_OUTPUT_ERROR_SUMMARY = (
 )
 GENERIC_PROVIDER_ERROR_SUMMARY = "Competitor profile generation failed due to a provider error."
 GENERIC_INTERNAL_ERROR_SUMMARY = "Competitor profile generation failed"
+INVALID_QUALITY_TUNING_ERROR_SUMMARY = "Competitor profile generation failed due to invalid candidate quality settings."
 RUN_RAW_OUTPUT_MAX_CHARS = 12000
 DEFAULT_RAW_OUTPUT_RETENTION_DAYS = 30
 DEFAULT_RUN_RETENTION_DAYS = 180
@@ -97,6 +111,10 @@ class SEOCompetitorProfileGenerationNotFoundError(ValueError):
 
 
 class SEOCompetitorProfileGenerationValidationError(ValueError):
+    pass
+
+
+class SEOCompetitorProfileGenerationConfigurationError(ValueError):
     pass
 
 
@@ -160,6 +178,11 @@ class SEOCompetitorProfileGenerationObservabilitySummary:
     retried_parent_runs: int
     failed_runs_retried: int
     failure_category_counts: dict[str, int]
+    total_runs: int
+    total_raw_candidate_count: int
+    total_included_candidate_count: int
+    total_excluded_candidate_count: int
+    exclusion_counts_by_reason: dict[str, int]
     latest_run_created_at: datetime | None
     latest_run_completed_at: datetime | None
     latest_completed_run_completed_at: datetime | None
@@ -435,6 +458,24 @@ class SEOCompetitorProfileGenerationService:
                 raw_output=exc.raw_output,
             )
             return None
+        except SEOCompetitorProfileGenerationConfigurationError as exc:
+            self.session.rollback()
+            self._mark_run_failed(
+                business_id=business_id,
+                generation_run_id=generation_run_id,
+                reason=exc,
+                error_summary=INVALID_QUALITY_TUNING_ERROR_SUMMARY,
+                provider_name=provider_name,
+                model_name=model_name,
+                prompt_version=prompt_version,
+                failure_category=FAILURE_CATEGORY_INTERNAL,
+                raw_output=raw_output,
+                raw_candidate_count=draft_result.raw_candidate_count if draft_result else None,
+                included_candidate_count=draft_result.included_candidate_count if draft_result else None,
+                excluded_candidate_count=draft_result.excluded_candidate_count if draft_result else None,
+                exclusion_counts_by_reason=draft_result.exclusion_counts_by_reason if draft_result else None,
+            )
+            return None
         except SEOCompetitorProfileGenerationValidationError as exc:
             self.session.rollback()
             self._mark_run_failed(
@@ -562,6 +603,21 @@ class SEOCompetitorProfileGenerationService:
             site_id=site_id,
             created_after=window_start,
         )
+        runs_in_window = self.seo_competitor_profile_generation_repository.list_runs_for_business_site_created_after(
+            business_id=business_id,
+            site_id=site_id,
+            created_after=window_start,
+        )
+        total_runs = len(runs_in_window)
+        total_raw_candidate_count = sum(max(0, int(item.raw_candidate_count or 0)) for item in runs_in_window)
+        total_included_candidate_count = sum(max(0, int(item.included_candidate_count or 0)) for item in runs_in_window)
+        total_excluded_candidate_count = sum(max(0, int(item.excluded_candidate_count or 0)) for item in runs_in_window)
+
+        exclusion_counts_by_reason = default_exclusion_reason_counts()
+        for run in runs_in_window:
+            normalized_counts = self._normalize_exclusion_counts_by_reason(run.exclusion_counts_by_reason)
+            for reason in EXCLUSION_REASON_KEYS:
+                exclusion_counts_by_reason[reason] += normalized_counts[reason]
 
         return SEOCompetitorProfileGenerationObservabilitySummary(
             business_id=business_id,
@@ -577,6 +633,11 @@ class SEOCompetitorProfileGenerationService:
             retried_parent_runs=retried_parent_runs,
             failed_runs_retried=failed_runs_retried,
             failure_category_counts=dict(sorted(failure_category_counts.items())),
+            total_runs=total_runs,
+            total_raw_candidate_count=total_raw_candidate_count,
+            total_included_candidate_count=total_included_candidate_count,
+            total_excluded_candidate_count=total_excluded_candidate_count,
+            exclusion_counts_by_reason=dict(sorted(exclusion_counts_by_reason.items())),
             latest_run_created_at=latest_run_created_at,
             latest_run_completed_at=latest_run_completed_at,
             latest_completed_run_completed_at=latest_completed_run_completed_at,
@@ -798,10 +859,12 @@ class SEOCompetitorProfileGenerationService:
                 )
             )
 
+        quality_tuning = self._resolve_candidate_quality_tuning(business_id=run.business_id)
         candidate_processing = process_competitor_candidates(
             site=site,
             candidates=prepared_candidates,
             existing_domains=existing_domains,
+            quality_tuning=quality_tuning,
         )
         drafts: list[SEOCompetitorProfileDraft] = []
         for candidate in candidate_processing.included_candidates:
@@ -967,6 +1030,65 @@ class SEOCompetitorProfileGenerationService:
         business = self.business_repository.get(business_id)
         if business is None:
             raise SEOCompetitorProfileGenerationNotFoundError("Business not found")
+
+    def _resolve_candidate_quality_tuning(self, *, business_id: str) -> CompetitorCandidateQualityTuning:
+        business = self.business_repository.get(business_id)
+        if business is None:
+            raise SEOCompetitorProfileGenerationNotFoundError("Business not found")
+
+        min_relevance_score = (
+            int(business.competitor_candidate_min_relevance_score)
+            if business.competitor_candidate_min_relevance_score is not None
+            else DEFAULT_MIN_RELEVANCE_SCORE
+        )
+        big_box_penalty = (
+            int(business.competitor_candidate_big_box_penalty)
+            if business.competitor_candidate_big_box_penalty is not None
+            else DEFAULT_BIG_BOX_PENALTY
+        )
+        directory_penalty = (
+            int(business.competitor_candidate_directory_penalty)
+            if business.competitor_candidate_directory_penalty is not None
+            else DEFAULT_DIRECTORY_PENALTY
+        )
+        local_alignment_bonus = (
+            int(business.competitor_candidate_local_alignment_bonus)
+            if business.competitor_candidate_local_alignment_bonus is not None
+            else DEFAULT_LOCAL_ALIGNMENT_BONUS
+        )
+
+        if min_relevance_score < MIN_RELEVANCE_SCORE_MIN or min_relevance_score > MIN_RELEVANCE_SCORE_MAX:
+            raise SEOCompetitorProfileGenerationConfigurationError(
+                (
+                    "competitor_candidate_min_relevance_score must be between "
+                    f"{MIN_RELEVANCE_SCORE_MIN} and {MIN_RELEVANCE_SCORE_MAX}"
+                )
+            )
+        if big_box_penalty < BIG_BOX_PENALTY_MIN or big_box_penalty > BIG_BOX_PENALTY_MAX:
+            raise SEOCompetitorProfileGenerationConfigurationError(
+                f"competitor_candidate_big_box_penalty must be between {BIG_BOX_PENALTY_MIN} and {BIG_BOX_PENALTY_MAX}"
+            )
+        if directory_penalty < DIRECTORY_PENALTY_MIN or directory_penalty > DIRECTORY_PENALTY_MAX:
+            raise SEOCompetitorProfileGenerationConfigurationError(
+                (
+                    "competitor_candidate_directory_penalty must be between "
+                    f"{DIRECTORY_PENALTY_MIN} and {DIRECTORY_PENALTY_MAX}"
+                )
+            )
+        if local_alignment_bonus < LOCAL_ALIGNMENT_BONUS_MIN or local_alignment_bonus > LOCAL_ALIGNMENT_BONUS_MAX:
+            raise SEOCompetitorProfileGenerationConfigurationError(
+                (
+                    "competitor_candidate_local_alignment_bonus must be between "
+                    f"{LOCAL_ALIGNMENT_BONUS_MIN} and {LOCAL_ALIGNMENT_BONUS_MAX}"
+                )
+            )
+
+        return CompetitorCandidateQualityTuning(
+            minimum_relevance_score=min_relevance_score,
+            big_box_penalty=big_box_penalty,
+            directory_penalty=directory_penalty,
+            local_alignment_bonus=local_alignment_bonus,
+        )
 
     def _require_site(self, *, business_id: str, site_id: str):
         site = self.seo_site_repository.get_for_business(business_id, site_id)

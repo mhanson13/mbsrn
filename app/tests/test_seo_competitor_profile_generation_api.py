@@ -361,6 +361,39 @@ class _AllExcludedCompetitorProfileProvider:
         )
 
 
+class _ModerateCompetitorProfileProvider:
+    provider_name = "moderate-provider"
+    model_name = "moderate-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains
+        candidates = [
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Unknown Competitor",
+                suggested_domain="genericservicesgroup.example",
+                competitor_type="unknown",
+                summary=None,
+                why_competitor=None,
+                evidence=None,
+                confidence_score=0.2,
+            )
+        ]
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=candidates[:candidate_count],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Generic Services Group"}]}',
+        )
+
+
 class _StatusObservingProvider(_DeterministicCompetitorProfileProvider):
     def __init__(self, *, db_session: Session, business_id: str, run_id: str) -> None:
         self._db_session = db_session
@@ -461,10 +494,16 @@ def _create_site(client: TestClient, business_id: str, *, domain: str = "client.
     return create_site.json()["id"]
 
 
-def _create_generation_run(client: TestClient, business_id: str, site_id: str) -> dict[str, object]:
+def _create_generation_run(
+    client: TestClient,
+    business_id: str,
+    site_id: str,
+    *,
+    candidate_count: int = 2,
+) -> dict[str, object]:
     response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/competitor-profile-generation-runs",
-        json={"candidate_count": 2},
+        json={"candidate_count": candidate_count},
     )
     assert response.status_code == 201
     return response.json()
@@ -1396,6 +1435,120 @@ def test_generation_failure_with_all_candidates_excluded_persists_exclusion_tele
     assert payload["total_drafts"] == 0
 
 
+def test_generation_uses_business_quality_tuning_threshold_settings(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _ModerateCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    site = (
+        db_session.query(SEOSite)
+        .filter(SEOSite.business_id == seeded_business.id)
+        .filter(SEOSite.id == site_id)
+        .one()
+    )
+    site.primary_location = "Denver, CO"
+    site.service_areas_json = ["Denver", "Aurora"]
+    db_session.add(site)
+    db_session.commit()
+
+    business = db_session.query(Business).filter(Business.id == seeded_business.id).one()
+    business.competitor_candidate_min_relevance_score = 0
+    db_session.add(business)
+    db_session.commit()
+
+    default_threshold_run_id = _create_generation_run(
+        client,
+        seeded_business.id,
+        site_id,
+        candidate_count=1,
+    )["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=default_threshold_run_id,
+        provider=provider,
+    )
+    default_detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{default_threshold_run_id}"
+    )
+    assert default_detail.status_code == 200
+    assert default_detail.json()["run"]["status"] == "completed"
+    assert default_detail.json()["run"]["included_candidate_count"] == 1
+
+    business = db_session.query(Business).filter(Business.id == seeded_business.id).one()
+    business.competitor_candidate_min_relevance_score = 35
+    db_session.add(business)
+    db_session.commit()
+
+    high_threshold_run_id = _create_generation_run(
+        client,
+        seeded_business.id,
+        site_id,
+        candidate_count=1,
+    )["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=high_threshold_run_id,
+        provider=provider,
+    )
+    high_threshold_detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{high_threshold_run_id}"
+    )
+    assert high_threshold_detail.status_code == 200
+    high_payload = high_threshold_detail.json()
+    assert high_payload["run"]["status"] == "failed"
+    assert high_payload["run"]["included_candidate_count"] == 0
+    assert high_payload["run"]["excluded_candidate_count"] == 1
+    assert high_payload["run"]["exclusion_counts_by_reason"]["low_relevance"] == 1
+
+
+def test_generation_fails_safely_when_business_quality_tuning_is_invalid(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _ModerateCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    business = db_session.query(Business).filter(Business.id == seeded_business.id).one()
+    business.competitor_candidate_big_box_penalty = 100
+    db_session.add(business)
+    db_session.commit()
+
+    run_id = _create_generation_run(
+        client,
+        seeded_business.id,
+        site_id,
+        candidate_count=1,
+    )["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "failed"
+    assert payload["run"]["error_summary"] == "Competitor profile generation failed due to invalid candidate quality settings."
+    assert payload["run"]["failure_category"] == "internal_error"
+
+
 def test_competitor_profile_draft_edit_marks_edited_status(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
@@ -1483,8 +1636,168 @@ def test_generation_summary_endpoint_returns_status_failure_and_retry_metrics(db
     assert payload["failed_runs_retried"] == 1
     assert payload["failure_category_counts"]["timeout"] == 1
     assert payload["failure_category_counts"]["malformed_output"] == 1
+    assert payload["total_runs"] == 4
+    assert payload["total_raw_candidate_count"] == 2
+    assert payload["total_included_candidate_count"] == 2
+    assert payload["total_excluded_candidate_count"] == 0
+    assert payload["exclusion_counts_by_reason"] == {
+        "duplicate": 0,
+        "low_relevance": 0,
+        "directory_or_aggregator": 0,
+        "big_box_mismatch": 0,
+        "existing_domain_match": 0,
+        "invalid_candidate": 0,
+    }
     assert payload["latest_run_created_at"] is not None
     assert payload["latest_run_completed_at"] is not None
+
+
+def test_generation_summary_endpoint_aggregates_cross_run_exclusion_telemetry(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    site = (
+        db_session.query(SEOSite)
+        .filter(SEOSite.business_id == seeded_business.id)
+        .filter(SEOSite.id == site_id)
+        .one()
+    )
+    site.primary_location = "Denver, CO"
+    site.service_areas_json = ["Denver", "Aurora"]
+    db_session.add(site)
+    db_session.commit()
+
+    rich_run_id = _create_generation_run(
+        client,
+        seeded_business.id,
+        site_id,
+        candidate_count=6,
+    )["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=rich_run_id,
+        provider=_DedupScoringCompetitorProfileProvider(),
+    )
+
+    all_excluded_run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=all_excluded_run_id,
+        provider=_AllExcludedCompetitorProfileProvider(),
+    )
+
+    timeout_run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=timeout_run_id,
+        provider=_TimeoutCompetitorProfileProvider(),
+    )
+
+    summary_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/summary"
+    )
+    assert summary_response.status_code == 200
+    payload = summary_response.json()
+
+    assert payload["total_runs"] == 3
+    assert payload["total_raw_candidate_count"] == 8
+    assert payload["total_included_candidate_count"] == 2
+    assert payload["total_excluded_candidate_count"] == 6
+    assert payload["exclusion_counts_by_reason"] == {
+        "duplicate": 1,
+        "low_relevance": 2,
+        "directory_or_aggregator": 2,
+        "big_box_mismatch": 1,
+        "existing_domain_match": 0,
+        "invalid_candidate": 0,
+    }
+
+
+def test_generation_summary_endpoint_enforces_bounded_exclusion_reason_keys(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    run = (
+        db_session.query(SEOCompetitorProfileGenerationRun)
+        .filter(SEOCompetitorProfileGenerationRun.business_id == seeded_business.id)
+        .filter(SEOCompetitorProfileGenerationRun.id == run_id)
+        .one()
+    )
+    run.status = "completed"
+    run.generated_draft_count = 0
+    run.raw_candidate_count = 4
+    run.included_candidate_count = 1
+    run.excluded_candidate_count = 3
+    run.exclusion_counts_by_reason = {
+        "duplicate": 1,
+        "low_relevance": 2,
+        "unexpected_reason": 99,
+    }
+    run.completed_at = utc_now()
+    db_session.add(run)
+    db_session.commit()
+
+    summary_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/summary"
+    )
+    assert summary_response.status_code == 200
+    payload = summary_response.json()
+    assert payload["total_runs"] == 1
+    assert payload["total_excluded_candidate_count"] == 3
+    assert payload["exclusion_counts_by_reason"] == {
+        "duplicate": 1,
+        "low_relevance": 2,
+        "directory_or_aggregator": 0,
+        "big_box_mismatch": 0,
+        "existing_domain_match": 0,
+        "invalid_candidate": 0,
+    }
+
+
+def test_generation_summary_endpoint_returns_zero_candidate_telemetry_when_no_runs(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+
+    summary_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/summary"
+    )
+    assert summary_response.status_code == 200
+    payload = summary_response.json()
+    assert payload["total_runs"] == 0
+    assert payload["total_raw_candidate_count"] == 0
+    assert payload["total_included_candidate_count"] == 0
+    assert payload["total_excluded_candidate_count"] == 0
+    assert payload["exclusion_counts_by_reason"] == {
+        "duplicate": 0,
+        "low_relevance": 0,
+        "directory_or_aggregator": 0,
+        "big_box_mismatch": 0,
+        "existing_domain_match": 0,
+        "invalid_candidate": 0,
+    }
 
 
 def test_generation_summary_endpoint_enforces_tenant_scope(db_session, seeded_business) -> None:
