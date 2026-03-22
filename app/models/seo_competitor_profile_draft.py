@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Integer,
     Index,
     JSON,
     String,
@@ -35,6 +36,10 @@ class SEOCompetitorProfileDraft(Base):
         CheckConstraint(
             "confidence_score >= 0 AND confidence_score <= 1",
             name="ck_seo_competitor_profile_drafts_confidence_score",
+        ),
+        CheckConstraint(
+            "relevance_score >= 0 AND relevance_score <= 100",
+            name="ck_scpg_drafts_relevance",
         ),
         Index(
             "ix_scpg_drafts_biz_run_created",
@@ -81,6 +86,7 @@ class SEOCompetitorProfileDraft(Base):
     why_competitor: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    relevance_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="ai_generated")
     review_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     edited_fields_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)

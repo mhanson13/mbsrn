@@ -122,7 +122,8 @@ class SEOCompetitorProfileGenerationRepository:
             .where(SEOCompetitorProfileDraft.business_id == business_id)
             .where(SEOCompetitorProfileDraft.generation_run_id == generation_run_id)
             .order_by(
-                SEOCompetitorProfileDraft.confidence_score.desc(),
+                SEOCompetitorProfileDraft.relevance_score.desc(),
+                SEOCompetitorProfileDraft.suggested_name.asc(),
                 SEOCompetitorProfileDraft.created_at.asc(),
                 SEOCompetitorProfileDraft.id.asc(),
             )

@@ -21,6 +21,7 @@ from app.models.seo_competitor_profile_cleanup_execution import SEOCompetitorPro
 from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
 from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
 from app.models.seo_competitor_set import SEOCompetitorSet
+from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_competitor_profile_generation_repository import (
     SEOCompetitorProfileGenerationRepository,
@@ -32,6 +33,10 @@ from app.schemas.seo_competitor import (
     SEOCompetitorProfileDraftEditRequest,
     SEOCompetitorProfileDraftRejectRequest,
     SEOCompetitorProfileGenerationRunCreateRequest,
+)
+from app.services.seo_competitor_profile_candidate_quality import (
+    CompetitorCandidateInput,
+    process_competitor_candidates,
 )
 from app.services.seo_competitor_profile_prompt import SEO_COMPETITOR_PROFILE_PROMPT_VERSION
 
@@ -126,6 +131,14 @@ class SEOCompetitorProfileRetentionCleanupSummary:
     raw_output_pruned_runs: int
     rejected_drafts_pruned: int
     runs_pruned: int
+
+
+@dataclass(frozen=True)
+class SEOCompetitorProfileDraftBuildResult:
+    drafts: list[SEOCompetitorProfileDraft]
+    raw_candidate_count: int
+    deduped_candidate_count: int
+    excluded_candidate_count: int
 
 
 @dataclass(frozen=True)
@@ -343,10 +356,13 @@ class SEOCompetitorProfileGenerationService:
             prompt_version = self._clean_required_value(output.prompt_version, field_name="prompt_version")
             raw_output = self._sanitize_raw_output(output.raw_response)
 
-            drafts = self._build_drafts(
+            draft_result = self._build_drafts(
+                site=site,
+                existing_domains=existing_domains,
                 run=run,
                 raw_candidates=output.candidates,
             )
+            drafts = draft_result.drafts
             if not drafts:
                 raise SEOCompetitorProfileGenerationValidationError(
                     "No valid competitor profile drafts were generated"
@@ -371,6 +387,17 @@ class SEOCompetitorProfileGenerationService:
                 business_id,
                 site_id,
                 run.id,
+                len(drafts),
+            )
+            logger.info(
+                (
+                    "SEO competitor profile candidate processing run_id=%s raw_candidates=%s "
+                    "deduped_candidates=%s excluded_candidates=%s included_candidates=%s"
+                ),
+                run.id,
+                draft_result.raw_candidate_count,
+                draft_result.deduped_candidate_count,
+                draft_result.excluded_candidate_count,
                 len(drafts),
             )
             return SEOCompetitorProfileGenerationRunDetail(run=run, drafts=drafts)
@@ -719,36 +746,60 @@ class SEOCompetitorProfileGenerationService:
     def _build_drafts(
         self,
         *,
+        site: SEOSite,
+        existing_domains: list[str],
         run: SEOCompetitorProfileGenerationRun,
         raw_candidates: list[SEOCompetitorProfileDraftCandidateOutput],
-    ) -> list[SEOCompetitorProfileDraft]:
-        drafts: list[SEOCompetitorProfileDraft] = []
-        seen_domains: set[str] = set()
-        for candidate in raw_candidates:
+    ) -> SEOCompetitorProfileDraftBuildResult:
+        prepared_candidates: list[CompetitorCandidateInput] = []
+        for index, candidate in enumerate(raw_candidates):
             suggested_name = self._clean_required_value(candidate.suggested_name, field_name="suggested_name")
             suggested_domain = self._normalize_domain_value(candidate.suggested_domain)
-            if suggested_domain in seen_domains:
-                continue
-            seen_domains.add(suggested_domain)
             competitor_type = self._normalize_competitor_type(candidate.competitor_type)
             confidence_score = self._normalize_confidence_score(candidate.confidence_score)
+            prepared_candidates.append(
+                CompetitorCandidateInput(
+                    suggested_name=suggested_name,
+                    suggested_domain=suggested_domain,
+                    competitor_type=competitor_type,
+                    summary=self._clean_optional(candidate.summary),
+                    why_competitor=self._clean_optional(candidate.why_competitor),
+                    evidence=self._clean_optional(candidate.evidence),
+                    confidence_score=confidence_score,
+                    source_index=index,
+                )
+            )
+
+        candidate_processing = process_competitor_candidates(
+            site=site,
+            candidates=prepared_candidates,
+            existing_domains=existing_domains,
+        )
+        drafts: list[SEOCompetitorProfileDraft] = []
+        for candidate in candidate_processing.included_candidates:
             draft = SEOCompetitorProfileDraft(
                 id=str(uuid4()),
                 business_id=run.business_id,
                 site_id=run.site_id,
                 generation_run_id=run.id,
-                suggested_name=suggested_name,
-                suggested_domain=suggested_domain,
-                competitor_type=competitor_type,
-                summary=self._clean_optional(candidate.summary),
-                why_competitor=self._clean_optional(candidate.why_competitor),
-                evidence=self._clean_optional(candidate.evidence),
-                confidence_score=confidence_score,
+                suggested_name=candidate.suggested_name,
+                suggested_domain=candidate.canonical_domain,
+                competitor_type=candidate.competitor_type,
+                summary=candidate.summary,
+                why_competitor=candidate.why_competitor,
+                evidence=candidate.evidence,
+                confidence_score=candidate.confidence_score,
+                relevance_score=candidate.relevance_score,
                 source="ai_generated",
                 review_status="pending",
             )
             drafts.append(draft)
-        return drafts
+        return SEOCompetitorProfileDraftBuildResult(
+            drafts=drafts,
+            raw_candidate_count=candidate_processing.raw_candidate_count,
+            deduped_candidate_count=candidate_processing.deduped_candidate_count,
+            excluded_candidate_count=candidate_processing.excluded_candidate_count,
+        )
 
     def _apply_draft_updates(
         self,

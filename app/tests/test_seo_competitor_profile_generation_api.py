@@ -28,6 +28,7 @@ from app.models.business import Business
 from app.models.seo_competitor_domain import SEOCompetitorDomain
 from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
 from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
+from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_competitor_profile_generation_repository import (
     SEOCompetitorProfileGenerationRepository,
@@ -238,6 +239,84 @@ class _ProviderAuthCompetitorProfileProvider:
             model_name=self.model_name,
             prompt_version=self.prompt_version,
             raw_output="{\"error\":\"unauthorized\"}",
+        )
+
+
+class _DedupScoringCompetitorProfileProvider:
+    provider_name = "dedup-scoring-provider"
+    model_name = "dedup-scoring-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains
+        candidates = [
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Denver Precision Plumbing LLC",
+                suggested_domain="denver-precision-plumbing.example",
+                competitor_type="direct",
+                summary="Denver plumbing specialist serving emergency repair and maintenance jobs.",
+                why_competitor="Competes on local transactional plumbing intent.",
+                evidence="Service area messaging and local emergency coverage.",
+                confidence_score=0.89,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Denver Precision Plumbing, Inc.",
+                suggested_domain="https://www.denver-precision-plumbing.example/services",
+                competitor_type="local",
+                summary="Local Denver and Aurora plumbing team with 24/7 service intent.",
+                why_competitor="Captures local-pack demand for the same service categories.",
+                evidence="Neighborhood-specific service pages and local conversion focus.",
+                confidence_score=0.83,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Summit Plumbing Pros",
+                suggested_domain="summitplumbingpros.example",
+                competitor_type="direct",
+                summary="Regional plumbing provider serving Denver metro repair and replacement terms.",
+                why_competitor="Competes in the same metro transactional search market.",
+                evidence="Overlapping plumbing service inventory and local targeting.",
+                confidence_score=0.74,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Walmart Home Services",
+                suggested_domain="walmart.com",
+                competitor_type="direct",
+                summary="National chain marketplace with broad non-local service positioning.",
+                why_competitor="Broad service discovery profile but not metro-specific.",
+                evidence="No city-specific service-area targeting in candidate text.",
+                confidence_score=0.55,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Denver Plumbing Yelp Listings",
+                suggested_domain="yelp.com",
+                competitor_type="marketplace",
+                summary="Directory list page with Denver plumbers.",
+                why_competitor="Directory visibility only.",
+                evidence="Aggregation content rather than primary business site.",
+                confidence_score=0.58,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Unknown Competitor",
+                suggested_domain="unknown.example",
+                competitor_type="unknown",
+                summary=None,
+                why_competitor=None,
+                evidence=None,
+                confidence_score=0.1,
+            ),
+        ]
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=candidates[:candidate_count],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Denver Precision Plumbing LLC"}]}',
         )
 
 
@@ -958,7 +1037,7 @@ def test_competitor_profile_draft_reject_does_not_create_competitor_domain(db_se
     assert domain_count == 0
 
 
-def test_competitor_profile_draft_accept_prevents_duplicate_domains(db_session, seeded_business) -> None:
+def test_generation_excludes_domains_that_already_exist_as_live_competitors(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -977,7 +1056,10 @@ def test_competitor_profile_draft_accept_prevents_duplicate_domains(db_session, 
         run_id=first_run_id,
         provider=_DeterministicCompetitorProfileProvider(),
     )
-    first_draft_id = first_completed["drafts"][0].id
+    first_target_draft = next(
+        draft for draft in first_completed["drafts"] if draft.suggested_domain == "draft-competitor-one.example"
+    )
+    first_draft_id = first_target_draft.id
     first_accept = client.post(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{first_run_id}/drafts/{first_draft_id}/accept",
         json={},
@@ -993,13 +1075,8 @@ def test_competitor_profile_draft_accept_prevents_duplicate_domains(db_session, 
         run_id=second_run_id,
         provider=_DeterministicCompetitorProfileProvider(),
     )
-    second_draft_id = second_completed["drafts"][0].id
-    duplicate_accept = client.post(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{second_run_id}/drafts/{second_draft_id}/accept",
-        json={},
-    )
-    assert duplicate_accept.status_code == 422
-    assert "already exists" in duplicate_accept.json()["detail"].lower()
+    second_domains = {draft.suggested_domain for draft in second_completed["drafts"]}
+    assert "draft-competitor-one.example" not in second_domains
 
 
 def test_competitor_profile_generation_routes_enforce_tenant_scope(db_session, seeded_business) -> None:
@@ -1076,6 +1153,132 @@ def test_duplicate_execution_of_same_run_is_prevented(db_session, seeded_busines
     payload = detail.json()
     assert payload["run"]["status"] == "completed"
     assert payload["total_drafts"] == 2
+
+
+def test_generation_dedup_scoring_and_exclusion_are_applied_before_persistence(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _DedupScoringCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    site = (
+        db_session.query(SEOSite)
+        .filter(SEOSite.business_id == seeded_business.id)
+        .filter(SEOSite.id == site_id)
+        .one()
+    )
+    site.primary_location = "Denver, CO"
+    site.service_areas_json = ["Denver", "Aurora"]
+    db_session.add(site)
+    db_session.commit()
+
+    created = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs",
+        json={"candidate_count": 6},
+    )
+    assert created.status_code == 201
+    run_id = created.json()["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["generated_draft_count"] == 2
+    assert payload["run"]["provider_name"] == provider.provider_name
+    assert payload["run"]["model_name"] == provider.model_name
+    assert payload["total_drafts"] == 2
+
+    returned_domains = [item["suggested_domain"] for item in payload["drafts"]]
+    assert returned_domains == [
+        "denver-precision-plumbing.example",
+        "summitplumbingpros.example",
+    ]
+
+    persisted_drafts = (
+        db_session.query(SEOCompetitorProfileDraft)
+        .filter(SEOCompetitorProfileDraft.business_id == seeded_business.id)
+        .filter(SEOCompetitorProfileDraft.generation_run_id == run_id)
+        .order_by(SEOCompetitorProfileDraft.relevance_score.desc(), SEOCompetitorProfileDraft.suggested_name.asc())
+        .all()
+    )
+    assert len(persisted_drafts) == 2
+    assert persisted_drafts[0].suggested_domain == "denver-precision-plumbing.example"
+    assert persisted_drafts[0].relevance_score >= persisted_drafts[1].relevance_score
+
+    persisted_run = (
+        db_session.query(SEOCompetitorProfileGenerationRun)
+        .filter(SEOCompetitorProfileGenerationRun.business_id == seeded_business.id)
+        .filter(SEOCompetitorProfileGenerationRun.id == run_id)
+        .one()
+    )
+    assert persisted_run.raw_output is not None
+
+
+def test_generation_ordering_is_deterministic_for_same_input(db_session, seeded_business) -> None:
+    provider = _DedupScoringCompetitorProfileProvider()
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+
+    first_created = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs",
+        json={"candidate_count": 6},
+    )
+    assert first_created.status_code == 201
+    first_run_id = first_created.json()["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=first_run_id,
+        provider=provider,
+    )
+
+    second_created = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs",
+        json={"candidate_count": 6},
+    )
+    assert second_created.status_code == 201
+    second_run_id = second_created.json()["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=second_run_id,
+        provider=provider,
+    )
+
+    first_detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{first_run_id}"
+    )
+    second_detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{second_run_id}"
+    )
+    assert first_detail.status_code == 200
+    assert second_detail.status_code == 200
+
+    first_domains = [item["suggested_domain"] for item in first_detail.json()["drafts"]]
+    second_domains = [item["suggested_domain"] for item in second_detail.json()["drafts"]]
+    assert first_domains == second_domains
 
 
 def test_competitor_profile_draft_edit_marks_edited_status(db_session, seeded_business) -> None:
