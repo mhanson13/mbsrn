@@ -39,6 +39,10 @@ env:
   GOOGLE_BUSINESS_PROFILE_REDIRECT_URI: ${{ vars.GOOGLE_BUSINESS_PROFILE_REDIRECT_URI }}
   APP_SESSION_ISSUER: mbsrn-console
   APP_SESSION_AUDIENCE: mbsrn-api
+  AI_PROVIDER_NAME: ${{ vars.AI_PROVIDER_NAME || 'openai' }}
+  AI_MODEL_NAME: ${{ vars.AI_MODEL_NAME || 'gpt-4o-mini' }}
+  AI_TIMEOUT_VALUE: ${{ vars.AI_TIMEOUT_VALUE || '30' }}
+  AI_PROMPT_TEXT_RECOMMENDATION: ${{ vars.AI_PROMPT_TEXT_RECOMMENDATION || '' }}
   UI_CPU_REQUEST: ${{ vars.UI_CPU_REQUEST }}
   UI_MEMORY_REQUEST: ${{ vars.UI_MEMORY_REQUEST }}
   UI_EPHEMERAL_STORAGE_REQUEST: ${{ vars.UI_EPHEMERAL_STORAGE_REQUEST }}
@@ -82,6 +86,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          AI_PROVIDER_API_KEY: ${{ secrets.AI_PROVIDER_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -131,6 +136,7 @@ jobs:
             DATABASE_URL
             APP_SESSION_SECRET
             GOOGLE_OAUTH_CLIENT_SECRET
+            AI_PROVIDER_API_KEY
           )
 
           for name in "${required[@]}"; do
@@ -139,6 +145,21 @@ jobs:
               exit 1
             fi
           done
+
+          if [[ -z "${AI_PROVIDER_NAME:-}" ]]; then
+            echo "AI_PROVIDER_NAME must not be empty." >&2
+            exit 1
+          fi
+
+          if [[ -z "${AI_MODEL_NAME:-}" ]]; then
+            echo "AI_MODEL_NAME must not be empty." >&2
+            exit 1
+          fi
+
+          if ! [[ "${AI_TIMEOUT_VALUE}" =~ ^[0-9]+$ ]] || [[ "${AI_TIMEOUT_VALUE}" -lt 1 ]]; then
+            echo "AI_TIMEOUT_VALUE must be a positive integer." >&2
+            exit 1
+          fi
 
           if ! grep -qx "migrate: python -m alembic upgrade head" Procfile; then
             echo "Procfile migrate process must be 'python -m alembic upgrade head'" >&2
@@ -401,6 +422,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          AI_PROVIDER_API_KEY: ${{ secrets.AI_PROVIDER_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -418,6 +440,11 @@ jobs:
             --from-literal=DATABASE_URL="${DATABASE_URL}" \
             --from-literal=APP_SESSION_SECRET="${APP_SESSION_SECRET}" \
             --from-literal=GOOGLE_OAUTH_CLIENT_SECRET="${GOOGLE_OAUTH_CLIENT_SECRET}" \
+            --from-literal=AI_PROVIDER_API_KEY="${AI_PROVIDER_API_KEY}" \
+            --from-literal=AI_PROVIDER_NAME="${AI_PROVIDER_NAME}" \
+            --from-literal=AI_MODEL_NAME="${AI_MODEL_NAME}" \
+            --from-literal=AI_TIMEOUT_VALUE="${AI_TIMEOUT_VALUE}" \
+            --from-literal=AI_PROMPT_TEXT_RECOMMENDATION="${AI_PROMPT_TEXT_RECOMMENDATION}" \
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/ui-serviceaccount.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-serviceaccount.yaml"
@@ -449,6 +476,7 @@ jobs:
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-deployment.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-service.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-seo-competitor-profile-retention-cronjob.yaml"
+          kubectl rollout restart deployment/mbsrn-api --namespace "${K8S_NAMESPACE}"
 
       - name: Wait for rollouts
         shell: bash

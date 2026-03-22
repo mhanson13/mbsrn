@@ -24,6 +24,13 @@ spec:
                 name: work-boots-config
             - secretRef:
                 name: work-boots-secrets
+          env:
+            - name: AI_PROVIDER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: work-boots-ai-provider
+                  key: AI_PROVIDER_API_KEY
+                  optional: true
           readinessProbe:
             httpGet:
               path: /health

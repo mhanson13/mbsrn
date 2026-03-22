@@ -116,6 +116,7 @@ It now includes bounded observability for:
 ## Operational Behavior
 
 - Async run execution persists deterministic run lifecycle states.
+- Generation execution runs in API `BackgroundTasks`, so provider credentials must exist in the API pod runtime env.
 - Failures are normalized to safe summaries and normalized failure categories.
 - Retry lineage is preserved via `parent_run_id` and surfaced in summaries.
 - Cleanup remains idempotent and now records structured execution outcomes.
@@ -124,12 +125,18 @@ It now includes bounded observability for:
 ## Configuration
 
 ### AI provider/config
-- `AI_PROVIDER_API_KEY`
+- `AI_PROVIDER_API_KEY` (required secret; no default)
 - `AI_PROVIDER_NAME` (default: `openai`)
 - `AI_MODEL_NAME` (default: `gpt-4o-mini`)
 - `AI_TIMEOUT_VALUE` (default: `30`)
 - `AI_PROMPT_TEXT_RECOMMENDATION` (default: empty)
 - `OPENAI_API_BASE_URL` (default: `https://api.openai.com/v1`)
+
+Deployment/runtime notes:
+- API runtime must inject `AI_PROVIDER_API_KEY` into API pods for provider-backed generation.
+- `deploy-prod` wires AI settings via Kubernetes secret `mbsrn-api-auth` and API deployment env refs.
+- `deploy-gke` expects `AI_PROVIDER_API_KEY` in Kubernetes secret `work-boots-ai-provider` and uses ConfigMap defaults for non-secret AI vars.
+- Non-secret AI values remain deployment-configurable runtime env with safe defaults above.
 
 ### Retention/config
 - `SEO_COMPETITOR_PROFILE_RAW_OUTPUT_RETENTION_DAYS` (default: `30`)
@@ -145,6 +152,10 @@ It now includes bounded observability for:
   - run marked `failed`,
   - safe `error_summary` returned to operator surfaces,
   - normalized `failure_category` stored for observability.
+- Provider misconfiguration (missing API credentials):
+  - provider resolves to misconfigured mode,
+  - operators see safe message: `AI provider credentials are not configured for competitor profile generation.`,
+  - no drafts are persisted.
 - Validation/parsing/internal failures:
   - run marked `failed`, no unvalidated draft persistence.
 - Cleanup failure:
@@ -158,6 +169,7 @@ Operator-visible behavior remains safe and non-diagnostic (no stack traces, no r
 - Tenant isolation is preserved in summary and cleanup-status endpoints via existing tenant resolution.
 - Raw provider output remains backend-only diagnostic data.
 - Secrets (API keys, credential material) are not persisted in observability payloads and not exposed in API responses.
+- AI provider credentials should be injected only into workloads executing provider calls (API pods), not broadly into unrelated workloads.
 - Failure categories are normalized labels, not raw internal exception traces.
 
 ## Future Extensions

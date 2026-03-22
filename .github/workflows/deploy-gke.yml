@@ -334,6 +334,29 @@ jobs:
           fi
           echo "namespace=${NAMESPACE}" >> "$GITHUB_OUTPUT"
 
+      - name: Validate runtime secret wiring
+        run: |
+          NAMESPACE="${{ steps.target.outputs.namespace }}"
+
+          if ! kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1; then
+            kubectl create namespace "${NAMESPACE}"
+          fi
+
+          if ! kubectl -n "${NAMESPACE}" get secret work-boots-secrets >/dev/null 2>&1; then
+            echo "::error::Missing required secret work-boots-secrets in namespace ${NAMESPACE}."
+            exit 1
+          fi
+
+          if ! kubectl -n "${NAMESPACE}" get secret work-boots-ai-provider >/dev/null 2>&1; then
+            echo "::error::Missing required secret work-boots-ai-provider in namespace ${NAMESPACE}."
+            exit 1
+          fi
+
+          if [ -z "$(kubectl -n "${NAMESPACE}" get secret work-boots-ai-provider -o jsonpath='{.data.AI_PROVIDER_API_KEY}')" ]; then
+            echo "::error::Secret work-boots-ai-provider is missing key AI_PROVIDER_API_KEY in namespace ${NAMESPACE}."
+            exit 1
+          fi
+
       - name: Apply kustomize overlay
         run: |
           kubectl apply -k "infra/k8s/overlays/${TARGET_OVERLAY}"

@@ -6,6 +6,7 @@ import { ApiRequestError } from "../../lib/api/client";
 import type {
   CompetitorComparisonRun,
   CompetitorProfileDraft,
+  CompetitorProfileGenerationRun,
   CompetitorProfileGenerationRunDetailResponse,
   CompetitorProfileGenerationRunListResponse,
   CompetitorProfileGenerationSummaryResponse,
@@ -120,6 +121,30 @@ function buildSite(overrides: Partial<SEOSite> = {}): SEOSite {
     last_audit_run_id: "audit-1",
     last_audit_status: "completed",
     last_audit_completed_at: "2026-03-21T00:32:00Z",
+    ...overrides,
+  };
+}
+
+function buildCompetitorProfileGenerationRun(
+  overrides: Partial<CompetitorProfileGenerationRun> = {},
+): CompetitorProfileGenerationRun {
+  return {
+    id: "gen-run-default",
+    business_id: "biz-1",
+    site_id: "site-1",
+    parent_run_id: null,
+    status: "completed",
+    requested_candidate_count: 5,
+    generated_draft_count: 0,
+    provider_name: "mock",
+    model_name: "mock-seo-competitor-profile-v1",
+    prompt_version: "seo-competitor-profile-v1",
+    failure_category: null,
+    error_summary: null,
+    completed_at: "2026-03-21T01:00:00Z",
+    created_by_principal_id: "principal-1",
+    created_at: "2026-03-21T00:59:00Z",
+    updated_at: "2026-03-21T01:00:00Z",
     ...overrides,
   };
 }
@@ -991,23 +1016,11 @@ function seedGroupedTimelineWorkspaceData(): void {
 function seedCompetitorProfileGenerationWorkspaceData(): void {
   seedRichWorkspaceData();
 
-  const run = {
+  const run = buildCompetitorProfileGenerationRun({
     id: "gen-run-1",
-    business_id: "biz-1",
-    site_id: "site-1",
-    status: "completed" as const,
-    requested_candidate_count: 5,
+    status: "completed",
     generated_draft_count: 2,
-    provider_name: "mock",
-    model_name: "mock-seo-competitor-profile-v1",
-    prompt_version: "seo-competitor-profile-v1",
-    failure_category: null,
-    error_summary: null,
-    completed_at: "2026-03-21T01:00:00Z",
-    created_by_principal_id: "principal-1",
-    created_at: "2026-03-21T00:59:00Z",
-    updated_at: "2026-03-21T01:00:00Z",
-  };
+  });
 
   const draftOne: CompetitorProfileDraft = {
     id: "draft-1",
@@ -1086,19 +1099,19 @@ function seedCompetitorProfileGenerationWorkspaceData(): void {
     latest_failed_run_completed_at: null,
   });
   mockCreateCompetitorProfileGenerationRun.mockResolvedValue({
-    run: {
+    run: buildCompetitorProfileGenerationRun({
       ...run,
       id: "gen-run-2",
       status: "queued",
       created_at: "2026-03-21T01:15:00Z",
       completed_at: null,
       updated_at: "2026-03-21T01:15:00Z",
-    },
+    }),
     drafts: [],
     total_drafts: 0,
   });
   mockRetryCompetitorProfileGenerationRun.mockResolvedValue({
-    run: {
+    run: buildCompetitorProfileGenerationRun({
       ...run,
       id: "gen-run-3",
       parent_run_id: "gen-run-1",
@@ -1106,7 +1119,7 @@ function seedCompetitorProfileGenerationWorkspaceData(): void {
       created_at: "2026-03-21T01:16:00Z",
       completed_at: null,
       updated_at: "2026-03-21T01:16:00Z",
-    },
+    }),
     drafts: [],
     total_drafts: 0,
   });
@@ -1451,30 +1464,21 @@ describe("site workspace ai competitor profile drafts", () => {
 
   it("polls queued/running runs and renders drafts after completion", async () => {
     seedRichWorkspaceData();
-    const runningRun = {
+    const runningRun = buildCompetitorProfileGenerationRun({
       id: "gen-run-async-1",
-      business_id: "biz-1",
-      site_id: "site-1",
-      status: "running" as const,
-      requested_candidate_count: 5,
+      status: "running",
       generated_draft_count: 0,
-      provider_name: "mock",
-      model_name: "mock-seo-competitor-profile-v1",
-      prompt_version: "seo-competitor-profile-v1",
-      failure_category: null,
-      error_summary: null,
       completed_at: null,
-      created_by_principal_id: "principal-1",
       created_at: "2026-03-21T01:30:00Z",
       updated_at: "2026-03-21T01:30:00Z",
-    };
-    const completedRun = {
+    });
+    const completedRun = buildCompetitorProfileGenerationRun({
       ...runningRun,
-      status: "completed" as const,
+      status: "completed",
       generated_draft_count: 1,
       completed_at: "2026-03-21T01:31:30Z",
       updated_at: "2026-03-21T01:31:30Z",
-    };
+    });
     const completedDraft: CompetitorProfileDraft = {
       id: "draft-async-1",
       business_id: "biz-1",
@@ -1572,46 +1576,19 @@ describe("site workspace ai competitor profile drafts", () => {
 
   it("renders safe failed-generation context", async () => {
     seedRichWorkspaceData();
+    const failedRun = buildCompetitorProfileGenerationRun({
+      id: "gen-run-failed",
+      status: "failed",
+      generated_draft_count: 0,
+      failure_category: "provider_config",
+      error_summary: "Competitor profile generation failed",
+    });
     mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
-      items: [
-        {
-          id: "gen-run-failed",
-          business_id: "biz-1",
-          site_id: "site-1",
-          status: "failed",
-          requested_candidate_count: 5,
-          generated_draft_count: 0,
-          provider_name: "mock",
-          model_name: "mock-seo-competitor-profile-v1",
-          prompt_version: "seo-competitor-profile-v1",
-          failure_category: "provider_config",
-          error_summary: "Competitor profile generation failed",
-          completed_at: "2026-03-21T01:00:00Z",
-          created_by_principal_id: "principal-1",
-          created_at: "2026-03-21T00:59:00Z",
-          updated_at: "2026-03-21T01:00:00Z",
-        },
-      ],
+      items: [failedRun],
       total: 1,
     });
     mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
-      run: {
-        id: "gen-run-failed",
-        business_id: "biz-1",
-        site_id: "site-1",
-        status: "failed",
-        requested_candidate_count: 5,
-        generated_draft_count: 0,
-        provider_name: "mock",
-        model_name: "mock-seo-competitor-profile-v1",
-        prompt_version: "seo-competitor-profile-v1",
-        failure_category: "provider_config",
-        error_summary: "Competitor profile generation failed",
-        completed_at: "2026-03-21T01:00:00Z",
-        created_by_principal_id: "principal-1",
-        created_at: "2026-03-21T00:59:00Z",
-        updated_at: "2026-03-21T01:00:00Z",
-      },
+      run: failedRun,
       drafts: [],
       total_drafts: 0,
     });
@@ -1625,24 +1602,13 @@ describe("site workspace ai competitor profile drafts", () => {
 
   it("shows retry action for failed generation runs", async () => {
     seedRichWorkspaceData();
-    const failedRun = {
+    const failedRun = buildCompetitorProfileGenerationRun({
       id: "gen-run-failed",
-      business_id: "biz-1",
-      site_id: "site-1",
-      parent_run_id: null,
-      status: "failed" as const,
-      requested_candidate_count: 5,
+      status: "failed",
       generated_draft_count: 0,
-      provider_name: "mock",
-      model_name: "mock-seo-competitor-profile-v1",
-      prompt_version: "seo-competitor-profile-v1",
       failure_category: "provider_config",
       error_summary: "Competitor profile generation failed",
-      completed_at: "2026-03-21T01:00:00Z",
-      created_by_principal_id: "principal-1",
-      created_at: "2026-03-21T00:59:00Z",
-      updated_at: "2026-03-21T01:00:00Z",
-    };
+    });
     mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
       items: [failedRun],
       total: 1,
@@ -1662,34 +1628,23 @@ describe("site workspace ai competitor profile drafts", () => {
   it("retries a failed generation run and promotes the new queued run", async () => {
     seedRichWorkspaceData();
     const user = userEvent.setup();
-    const failedRun = {
+    const failedRun = buildCompetitorProfileGenerationRun({
       id: "gen-run-failed",
-      business_id: "biz-1",
-      site_id: "site-1",
-      parent_run_id: null,
-      status: "failed" as const,
-      requested_candidate_count: 5,
+      status: "failed",
       generated_draft_count: 0,
-      provider_name: "mock",
-      model_name: "mock-seo-competitor-profile-v1",
-      prompt_version: "seo-competitor-profile-v1",
       failure_category: "provider_config",
       error_summary: "Competitor profile generation failed",
-      completed_at: "2026-03-21T01:00:00Z",
-      created_by_principal_id: "principal-1",
-      created_at: "2026-03-21T00:59:00Z",
-      updated_at: "2026-03-21T01:00:00Z",
-    };
-    const retriedRun = {
+    });
+    const retriedRun = buildCompetitorProfileGenerationRun({
       ...failedRun,
       id: "gen-run-retry-1",
       parent_run_id: "gen-run-failed",
-      status: "queued" as const,
+      status: "queued",
       error_summary: null,
       completed_at: null,
       created_at: "2026-03-21T01:02:00Z",
       updated_at: "2026-03-21T01:02:00Z",
-    };
+    });
     mockFetchCompetitorProfileGenerationRuns
       .mockResolvedValueOnce({
         items: [failedRun],
@@ -1738,24 +1693,13 @@ describe("site workspace ai competitor profile drafts", () => {
   it("renders safe retry error state when retry request fails", async () => {
     seedRichWorkspaceData();
     const user = userEvent.setup();
-    const failedRun = {
+    const failedRun = buildCompetitorProfileGenerationRun({
       id: "gen-run-failed",
-      business_id: "biz-1",
-      site_id: "site-1",
-      parent_run_id: null,
-      status: "failed" as const,
-      requested_candidate_count: 5,
+      status: "failed",
       generated_draft_count: 0,
-      provider_name: "mock",
-      model_name: "mock-seo-competitor-profile-v1",
-      prompt_version: "seo-competitor-profile-v1",
       failure_category: "provider_config",
       error_summary: "Competitor profile generation failed",
-      completed_at: "2026-03-21T01:00:00Z",
-      created_by_principal_id: "principal-1",
-      created_at: "2026-03-21T00:59:00Z",
-      updated_at: "2026-03-21T01:00:00Z",
-    };
+    });
     mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
       items: [failedRun],
       total: 1,

@@ -51,6 +51,31 @@ spec:
                 secretKeyRef:
                   name: mbsrn-api-auth
                   key: GOOGLE_OAUTH_CLIENT_SECRET
+            - name: AI_PROVIDER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: AI_PROVIDER_API_KEY
+            - name: AI_PROVIDER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: AI_PROVIDER_NAME
+            - name: AI_MODEL_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: AI_MODEL_NAME
+            - name: AI_TIMEOUT_VALUE
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: AI_TIMEOUT_VALUE
+            - name: AI_PROMPT_TEXT_RECOMMENDATION
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: AI_PROMPT_TEXT_RECOMMENDATION
           resources:
             requests:
               cpu: __API_CPU_REQUEST__
