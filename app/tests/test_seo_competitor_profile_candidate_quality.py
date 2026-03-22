@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.models.seo_site import SEOSite
 from app.services.seo_competitor_profile_candidate_quality import (
     CompetitorCandidateInput,
+    EXCLUSION_REASON_KEYS,
     canonicalize_domain,
     normalize_competitor_name_for_matching,
     normalize_location_for_matching,
@@ -69,7 +70,8 @@ def test_exact_domain_match_collapses_to_single_candidate() -> None:
     assert len(result.included_candidates) == 1
     assert result.raw_candidate_count == 2
     assert result.deduped_candidate_count == 1
-    assert result.excluded_candidate_count == 0
+    assert result.excluded_candidate_count == 1
+    assert result.exclusion_counts_by_reason["duplicate"] == 1
 
 
 def test_name_suffix_and_punctuation_variants_collapse_safely() -> None:
@@ -94,6 +96,8 @@ def test_name_suffix_and_punctuation_variants_collapse_safely() -> None:
     assert len(result.included_candidates) == 1
     assert result.raw_candidate_count == 2
     assert result.deduped_candidate_count == 1
+    assert result.excluded_candidate_count == 1
+    assert result.exclusion_counts_by_reason["duplicate"] == 1
 
 
 def test_distinct_businesses_do_not_merge() -> None:
@@ -115,6 +119,8 @@ def test_distinct_businesses_do_not_merge() -> None:
     assert len(result.included_candidates) == 2
     included_domains = {item.canonical_domain for item in result.included_candidates}
     assert included_domains == {"acmeplumbing.example", "summitelectric.example"}
+    assert result.excluded_candidate_count == 0
+    assert all(count == 0 for count in result.exclusion_counts_by_reason.values())
 
 
 def test_business_specific_candidate_scores_higher_than_generic_candidate() -> None:
@@ -162,6 +168,7 @@ def test_directory_candidate_is_conservatively_excluded() -> None:
     )
     assert len(result.included_candidates) == 1
     assert result.excluded_candidate_count == 1
+    assert result.exclusion_counts_by_reason["directory_or_aggregator"] == 1
     assert result.included_candidates[0].canonical_domain == "denverprecisionplumbing.example"
 
 
@@ -217,4 +224,49 @@ def test_weak_candidate_is_excluded_below_threshold() -> None:
     assert result.raw_candidate_count == 1
     assert result.deduped_candidate_count == 1
     assert result.excluded_candidate_count == 1
+    assert result.exclusion_counts_by_reason["low_relevance"] == 1
     assert result.included_candidates == []
+
+
+def test_big_box_candidate_is_excluded_when_local_context_is_missing() -> None:
+    result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        candidates=[
+            _candidate(
+                name="Walmart Home Services",
+                domain="walmart.com",
+                competitor_type="direct",
+                summary="National marketplace for home services.",
+                why="Broad national service catalog.",
+                evidence="No neighborhood or city-specific service details.",
+                confidence=0.62,
+                index=0,
+            )
+        ],
+    )
+    assert result.raw_candidate_count == 1
+    assert result.included_candidates == []
+    assert result.excluded_candidate_count == 1
+    assert result.exclusion_counts_by_reason["big_box_mismatch"] == 1
+    assert tuple(result.exclusion_counts_by_reason.keys()) == EXCLUSION_REASON_KEYS
+
+
+def test_existing_domain_match_is_counted_as_excluded_reason() -> None:
+    result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=["summitplumbingpros.example"],
+        candidates=[
+            _candidate(
+                name="Summit Plumbing Pros",
+                domain="summitplumbingpros.example",
+                competitor_type="direct",
+                confidence=0.82,
+                index=0,
+            )
+        ],
+    )
+    assert result.raw_candidate_count == 1
+    assert result.included_candidates == []
+    assert result.excluded_candidate_count == 1
+    assert result.exclusion_counts_by_reason["existing_domain_match"] == 1

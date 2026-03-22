@@ -55,6 +55,21 @@ _MIN_LOCATION_TERM_LENGTH = 3
 _MIN_INDUSTRY_TERM_LENGTH = 4
 _MIN_RELEVANCE_SCORE = 35
 
+EXCLUSION_REASON_DUPLICATE = "duplicate"
+EXCLUSION_REASON_LOW_RELEVANCE = "low_relevance"
+EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR = "directory_or_aggregator"
+EXCLUSION_REASON_BIG_BOX_MISMATCH = "big_box_mismatch"
+EXCLUSION_REASON_EXISTING_DOMAIN_MATCH = "existing_domain_match"
+EXCLUSION_REASON_INVALID_CANDIDATE = "invalid_candidate"
+EXCLUSION_REASON_KEYS: tuple[str, ...] = (
+    EXCLUSION_REASON_DUPLICATE,
+    EXCLUSION_REASON_LOW_RELEVANCE,
+    EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR,
+    EXCLUSION_REASON_BIG_BOX_MISMATCH,
+    EXCLUSION_REASON_EXISTING_DOMAIN_MATCH,
+    EXCLUSION_REASON_INVALID_CANDIDATE,
+)
+
 
 @dataclass(frozen=True)
 class CompetitorCandidateInput:
@@ -90,6 +105,7 @@ class CompetitorCandidateProcessingResult:
     raw_candidate_count: int
     deduped_candidate_count: int
     excluded_candidate_count: int
+    exclusion_counts_by_reason: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -130,6 +146,7 @@ def process_competitor_candidates(
     minimum_relevance_score = max(0, min(100, int(minimum_relevance_score)))
     context = _build_site_context(site)
     existing_domain_set = {_canonicalize_domain(value) for value in existing_domains if value.strip()}
+    exclusion_counts_by_reason = _new_exclusion_reason_counts()
 
     scored_candidates = [
         _to_scored_state(
@@ -140,7 +157,8 @@ def process_competitor_candidates(
         for candidate in candidates
     ]
 
-    deduped_candidates = _dedupe_scored_candidates(scored_candidates, context=context)
+    deduped_candidates, duplicate_count = _dedupe_scored_candidates(scored_candidates, context=context)
+    exclusion_counts_by_reason[EXCLUSION_REASON_DUPLICATE] = duplicate_count
     included: list[RankedCompetitorCandidate] = []
     for candidate in deduped_candidates:
         exclusion_reason = _determine_exclusion_reason(
@@ -150,6 +168,7 @@ def process_competitor_candidates(
             site_context=context,
         )
         if exclusion_reason:
+            exclusion_counts_by_reason[exclusion_reason] += 1
             continue
         included.append(
             RankedCompetitorCandidate(
@@ -176,11 +195,13 @@ def process_competitor_candidates(
             item.source_index,
         )
     )
+    excluded_candidate_count = sum(exclusion_counts_by_reason.values())
     return CompetitorCandidateProcessingResult(
         included_candidates=included,
         raw_candidate_count=len(candidates),
         deduped_candidate_count=len(deduped_candidates),
-        excluded_candidate_count=len(deduped_candidates) - len(included),
+        excluded_candidate_count=excluded_candidate_count,
+        exclusion_counts_by_reason=exclusion_counts_by_reason,
     )
 
 
@@ -200,6 +221,10 @@ def canonicalize_domain(value: str) -> str:
 
 def normalize_location_for_matching(value: str) -> str:
     return _normalize_text(value).lower()
+
+
+def default_exclusion_reason_counts() -> dict[str, int]:
+    return _new_exclusion_reason_counts()
 
 
 def _build_site_context(site: SEOSite) -> _SiteScoringContext:
@@ -292,8 +317,9 @@ def _dedupe_scored_candidates(
     candidates: list[_ScoredCandidateState],
     *,
     context: _SiteScoringContext,
-) -> list[_ScoredCandidateState]:
+) -> tuple[list[_ScoredCandidateState], int]:
     deduped: list[_ScoredCandidateState] = []
+    duplicate_count = 0
     for candidate in candidates:
         duplicate_index = next(
             (
@@ -308,7 +334,8 @@ def _dedupe_scored_candidates(
             continue
         merged = _merge_duplicate_candidates(primary=deduped[duplicate_index], secondary=candidate, site_context=context)
         deduped[duplicate_index] = merged
-    return deduped
+        duplicate_count += 1
+    return deduped, duplicate_count
 
 
 def _are_duplicate_candidates(
@@ -471,19 +498,23 @@ def _determine_exclusion_reason(
     site_context: _SiteScoringContext,
 ) -> str | None:
     if candidate.canonical_domain in existing_domain_set:
-        return "excluded_existing_domain"
+        return EXCLUSION_REASON_EXISTING_DOMAIN_MATCH
     if candidate.is_directory_domain:
-        return "excluded_directory_domain"
+        return EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR
     if (
         site_context.has_local_context
         and candidate.is_big_box_candidate
         and not candidate.location_terms_found
         and candidate.competitor_type in {"direct", "local", "unknown"}
     ):
-        return "excluded_big_box_mismatch"
+        return EXCLUSION_REASON_BIG_BOX_MISMATCH
     if candidate.relevance_score < minimum_relevance_score:
-        return "excluded_low_relevance"
+        return EXCLUSION_REASON_LOW_RELEVANCE
     return None
+
+
+def _new_exclusion_reason_counts() -> dict[str, int]:
+    return {reason: 0 for reason in EXCLUSION_REASON_KEYS}
 
 
 def _score_candidate(

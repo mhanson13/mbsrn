@@ -320,6 +320,47 @@ class _DedupScoringCompetitorProfileProvider:
         )
 
 
+class _AllExcludedCompetitorProfileProvider:
+    provider_name = "all-excluded-provider"
+    model_name = "all-excluded-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Denver Plumbers on Yelp",
+                    suggested_domain="yelp.com",
+                    competitor_type="marketplace",
+                    summary="Directory listing for local plumbers.",
+                    why_competitor="Directory listing only.",
+                    evidence="Aggregation page, not a direct business website.",
+                    confidence_score=0.61,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Unknown Competitor",
+                    suggested_domain="unknown.example",
+                    competitor_type="unknown",
+                    summary=None,
+                    why_competitor=None,
+                    evidence=None,
+                    confidence_score=0.1,
+                ),
+            ],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Denver Plumbers on Yelp"},{"name":"Unknown Competitor"}]}',
+        )
+
+
 class _StatusObservingProvider(_DeterministicCompetitorProfileProvider):
     def __init__(self, *, db_session: Session, business_id: str, run_id: str) -> None:
         self._db_session = db_session
@@ -1198,9 +1239,20 @@ def test_generation_dedup_scoring_and_exclusion_are_applied_before_persistence(d
     payload = detail.json()
     assert payload["run"]["status"] == "completed"
     assert payload["run"]["generated_draft_count"] == 2
+    assert payload["run"]["raw_candidate_count"] == 6
+    assert payload["run"]["included_candidate_count"] == 2
+    assert payload["run"]["excluded_candidate_count"] == 4
     assert payload["run"]["provider_name"] == provider.provider_name
     assert payload["run"]["model_name"] == provider.model_name
     assert payload["total_drafts"] == 2
+    assert payload["run"]["exclusion_counts_by_reason"] == {
+        "duplicate": 1,
+        "low_relevance": 1,
+        "directory_or_aggregator": 1,
+        "big_box_mismatch": 1,
+        "existing_domain_match": 0,
+        "invalid_candidate": 0,
+    }
 
     returned_domains = [item["suggested_domain"] for item in payload["drafts"]]
     assert returned_domains == [
@@ -1226,6 +1278,10 @@ def test_generation_dedup_scoring_and_exclusion_are_applied_before_persistence(d
         .one()
     )
     assert persisted_run.raw_output is not None
+    assert persisted_run.raw_candidate_count == 6
+    assert persisted_run.included_candidate_count == 2
+    assert persisted_run.excluded_candidate_count == 4
+    assert persisted_run.exclusion_counts_by_reason["duplicate"] == 1
 
 
 def test_generation_ordering_is_deterministic_for_same_input(db_session, seeded_business) -> None:
@@ -1279,6 +1335,65 @@ def test_generation_ordering_is_deterministic_for_same_input(db_session, seeded_
     first_domains = [item["suggested_domain"] for item in first_detail.json()["drafts"]]
     second_domains = [item["suggested_domain"] for item in second_detail.json()["drafts"]]
     assert first_domains == second_domains
+
+
+def test_generation_failure_with_all_candidates_excluded_persists_exclusion_telemetry(
+    db_session, seeded_business
+) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _AllExcludedCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    site = (
+        db_session.query(SEOSite)
+        .filter(SEOSite.business_id == seeded_business.id)
+        .filter(SEOSite.id == site_id)
+        .one()
+    )
+    site.primary_location = "Denver, CO"
+    site.service_areas_json = ["Denver", "Aurora"]
+    db_session.add(site)
+    db_session.commit()
+
+    created = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs",
+        json={"candidate_count": 2},
+    )
+    assert created.status_code == 201
+    run_id = created.json()["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "failed"
+    assert payload["run"]["generated_draft_count"] == 0
+    assert payload["run"]["raw_candidate_count"] == 2
+    assert payload["run"]["included_candidate_count"] == 0
+    assert payload["run"]["excluded_candidate_count"] == 2
+    assert payload["run"]["exclusion_counts_by_reason"] == {
+        "duplicate": 0,
+        "low_relevance": 1,
+        "directory_or_aggregator": 1,
+        "big_box_mismatch": 0,
+        "existing_domain_match": 0,
+        "invalid_candidate": 0,
+    }
+    assert payload["total_drafts"] == 0
 
 
 def test_competitor_profile_draft_edit_marks_edited_status(db_session, seeded_business) -> None:

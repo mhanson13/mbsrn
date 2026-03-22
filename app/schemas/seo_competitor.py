@@ -17,6 +17,14 @@ SEOCompetitorProfileFailureCategory = Literal[
     "provider_request",
     "unknown",
 ]
+SEOCompetitorProfileExclusionReason = Literal[
+    "duplicate",
+    "low_relevance",
+    "directory_or_aggregator",
+    "big_box_mismatch",
+    "existing_domain_match",
+    "invalid_candidate",
+]
 SEOCompetitorProfileDraftReviewStatus = Literal["pending", "edited", "accepted", "rejected"]
 SEOCompetitorProfileCleanupExecutionStatus = Literal["completed", "failed"]
 SEOSummaryStatus = Literal["completed", "failed"]
@@ -29,6 +37,14 @@ _FINDING_CATEGORIES: set[str] = {"SEO", "CONTENT", "STRUCTURE", "TECHNICAL"}
 _FINDING_SEVERITIES: set[str] = {"INFO", "WARNING", "CRITICAL"}
 _GAP_DIRECTIONS: set[str] = {"client_leads", "client_trails", "parity", "unknown"}
 _COMPETITOR_PROFILE_TYPES: set[str] = {"direct", "indirect", "local", "marketplace", "informational", "unknown"}
+_COMPETITOR_PROFILE_EXCLUSION_REASONS: tuple[str, ...] = (
+    "duplicate",
+    "low_relevance",
+    "directory_or_aggregator",
+    "big_box_mismatch",
+    "existing_domain_match",
+    "invalid_candidate",
+)
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -206,6 +222,10 @@ class SEOCompetitorProfileGenerationRunRead(BaseModel):
     status: SEOCompetitorProfileGenerationRunStatus
     requested_candidate_count: int
     generated_draft_count: int
+    raw_candidate_count: int
+    included_candidate_count: int
+    excluded_candidate_count: int
+    exclusion_counts_by_reason: dict[SEOCompetitorProfileExclusionReason, int] = Field(default_factory=dict)
     provider_name: str
     model_name: str
     prompt_version: str
@@ -215,6 +235,25 @@ class SEOCompetitorProfileGenerationRunRead(BaseModel):
     created_by_principal_id: str | None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("exclusion_counts_by_reason", mode="before")
+    @classmethod
+    def normalize_exclusion_counts_by_reason(
+        cls,
+        value: Any,
+    ) -> dict[SEOCompetitorProfileExclusionReason, int]:
+        normalized = {reason: 0 for reason in _COMPETITOR_PROFILE_EXCLUSION_REASONS}
+        if value is None:
+            return normalized  # type: ignore[return-value]
+        if not isinstance(value, dict):
+            return normalized  # type: ignore[return-value]
+        for reason in _COMPETITOR_PROFILE_EXCLUSION_REASONS:
+            raw_count = value.get(reason, 0)
+            try:
+                normalized[reason] = max(0, int(raw_count))
+            except (TypeError, ValueError):
+                normalized[reason] = 0
+        return normalized  # type: ignore[return-value]
 
 
 class SEOCompetitorProfileDraftRead(BaseModel):

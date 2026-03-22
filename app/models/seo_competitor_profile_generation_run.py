@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import utc_now
@@ -45,6 +45,13 @@ class SEOCompetitorProfileGenerationRun(Base):
             ),
             name="ck_scpg_runs_failure_cat",
         ),
+        CheckConstraint(
+            (
+                "raw_candidate_count >= 0 AND included_candidate_count >= 0 "
+                "AND excluded_candidate_count >= 0"
+            ),
+            name="ck_scpg_runs_candidate_counts_nonneg",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -68,6 +75,10 @@ class SEOCompetitorProfileGenerationRun(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
     requested_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     generated_draft_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    raw_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    included_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    excluded_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    exclusion_counts_by_reason: Mapped[dict[str, int]] = mapped_column(JSON, nullable=False, default=dict)
     provider_name: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
     model_name: Mapped[str] = mapped_column(String(128), nullable=False, default="unknown")
     prompt_version: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")

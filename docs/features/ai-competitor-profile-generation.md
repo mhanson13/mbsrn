@@ -21,6 +21,10 @@ Candidate quality is hardened with deterministic backend post-processing:
 - relevance scoring (`0..100`),
 - conservative exclusion of weak/noisy candidates before draft persistence.
 
+Bounded exclusion telemetry is persisted at run level for tuning:
+- raw/included/excluded candidate totals,
+- aggregate exclusion counts by deterministic reason code.
+
 ## Why This Exists
 
 ### Problem solved
@@ -81,7 +85,8 @@ Candidate quality is hardened with deterministic backend post-processing:
    - confidence contribution,
    - penalties for noisy signals (directory/aggregator and obvious big-box mismatch patterns).
 5. Conservative exclusion removes low-relevance/noisy candidates.
-6. Remaining drafts are persisted in deterministic order:
+6. Exclusion telemetry is recorded per run as bounded aggregate counts only (no raw per-candidate diagnostic payload).
+7. Remaining drafts are persisted in deterministic order:
    - highest `relevance_score`,
    - then stable lexical tie-breakers.
 
@@ -140,6 +145,18 @@ Candidate quality is hardened with deterministic backend post-processing:
     - `internal_error`
     - `provider_request`
     - `unknown`
+- `seo_competitor_profile_generation_runs.raw_candidate_count` (non-negative integer)
+- `seo_competitor_profile_generation_runs.included_candidate_count` (non-negative integer)
+- `seo_competitor_profile_generation_runs.excluded_candidate_count` (non-negative integer)
+- `seo_competitor_profile_generation_runs.exclusion_counts_by_reason` (bounded JSON object)
+  - deterministic keys:
+    - `duplicate`
+    - `low_relevance`
+    - `directory_or_aggregator`
+    - `big_box_mismatch`
+    - `existing_domain_match`
+    - `invalid_candidate`
+  - values are integer counts only.
 
 ### New cleanup outcome table
 - `seo_competitor_profile_cleanup_executions`
@@ -164,6 +181,7 @@ Candidate quality is hardened with deterministic backend post-processing:
 - Cleanup must not delete accepted/live competitor entities.
 - Cleanup must not delete active queued/running runs.
 - Raw provider output and secrets are not exposed through operator-facing observability surfaces.
+- Exclusion telemetry is aggregate-only and internal-facing; raw excluded-candidate details are not exposed to end users.
 
 ## Operational Behavior
 
@@ -233,6 +251,7 @@ Operator-visible behavior remains safe and non-diagnostic (no stack traces, no r
 
 - Tenant isolation is preserved in summary and cleanup-status endpoints via existing tenant resolution.
 - Raw provider output remains backend-only diagnostic data.
+- Exclusion telemetry is intentionally bounded to deterministic reason codes and integer counts.
 - Secrets (API keys, credential material) are not persisted in observability payloads and not exposed in API responses.
 - AI provider credentials should be injected only into workloads executing provider calls (API pods), not broadly into unrelated workloads.
 - Failure categories are normalized labels, not raw internal exception traces.

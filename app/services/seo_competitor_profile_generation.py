@@ -36,6 +36,8 @@ from app.schemas.seo_competitor import (
 )
 from app.services.seo_competitor_profile_candidate_quality import (
     CompetitorCandidateInput,
+    EXCLUSION_REASON_KEYS,
+    default_exclusion_reason_counts,
     process_competitor_candidates,
 )
 from app.services.seo_competitor_profile_prompt import SEO_COMPETITOR_PROFILE_PROMPT_VERSION
@@ -137,8 +139,10 @@ class SEOCompetitorProfileRetentionCleanupSummary:
 class SEOCompetitorProfileDraftBuildResult:
     drafts: list[SEOCompetitorProfileDraft]
     raw_candidate_count: int
+    included_candidate_count: int
     deduped_candidate_count: int
     excluded_candidate_count: int
+    exclusion_counts_by_reason: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -260,6 +264,10 @@ class SEOCompetitorProfileGenerationService:
             status="queued",
             requested_candidate_count=candidate_count,
             generated_draft_count=0,
+            raw_candidate_count=0,
+            included_candidate_count=0,
+            excluded_candidate_count=0,
+            exclusion_counts_by_reason=default_exclusion_reason_counts(),
             provider_name=self._default_provider_name(),
             model_name=self._default_model_name(),
             prompt_version=prompt_version,
@@ -337,6 +345,7 @@ class SEOCompetitorProfileGenerationService:
         prompt_version = run.prompt_version or self._default_prompt_version()
         failure_category: str | None = None
         raw_output: str | None = None
+        draft_result: SEOCompetitorProfileDraftBuildResult | None = None
 
         try:
             existing_domains = [
@@ -370,6 +379,12 @@ class SEOCompetitorProfileGenerationService:
 
             run.status = "completed"
             run.generated_draft_count = len(drafts)
+            run.raw_candidate_count = draft_result.raw_candidate_count
+            run.included_candidate_count = draft_result.included_candidate_count
+            run.excluded_candidate_count = draft_result.excluded_candidate_count
+            run.exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(
+                draft_result.exclusion_counts_by_reason
+            )
             run.provider_name = provider_name
             run.model_name = model_name
             run.prompt_version = prompt_version
@@ -400,6 +415,11 @@ class SEOCompetitorProfileGenerationService:
                 draft_result.excluded_candidate_count,
                 len(drafts),
             )
+            logger.info(
+                "SEO competitor profile exclusion telemetry run_id=%s exclusion_counts_by_reason=%s",
+                run.id,
+                run.exclusion_counts_by_reason,
+            )
             return SEOCompetitorProfileGenerationRunDetail(run=run, drafts=drafts)
         except SEOCompetitorProfileProviderError as exc:
             self.session.rollback()
@@ -427,6 +447,10 @@ class SEOCompetitorProfileGenerationService:
                 prompt_version=prompt_version,
                 failure_category=FAILURE_CATEGORY_MALFORMED_OUTPUT,
                 raw_output=raw_output,
+                raw_candidate_count=draft_result.raw_candidate_count if draft_result else None,
+                included_candidate_count=draft_result.included_candidate_count if draft_result else None,
+                excluded_candidate_count=draft_result.excluded_candidate_count if draft_result else None,
+                exclusion_counts_by_reason=draft_result.exclusion_counts_by_reason if draft_result else None,
             )
             return None
         except Exception as exc:  # noqa: BLE001
@@ -441,6 +465,10 @@ class SEOCompetitorProfileGenerationService:
                 prompt_version=prompt_version,
                 failure_category=failure_category or FAILURE_CATEGORY_INTERNAL,
                 raw_output=raw_output,
+                raw_candidate_count=draft_result.raw_candidate_count if draft_result else None,
+                included_candidate_count=draft_result.included_candidate_count if draft_result else None,
+                excluded_candidate_count=draft_result.excluded_candidate_count if draft_result else None,
+                exclusion_counts_by_reason=draft_result.exclusion_counts_by_reason if draft_result else None,
             )
             return None
 
@@ -797,8 +825,12 @@ class SEOCompetitorProfileGenerationService:
         return SEOCompetitorProfileDraftBuildResult(
             drafts=drafts,
             raw_candidate_count=candidate_processing.raw_candidate_count,
+            included_candidate_count=len(drafts),
             deduped_candidate_count=candidate_processing.deduped_candidate_count,
             excluded_candidate_count=candidate_processing.excluded_candidate_count,
+            exclusion_counts_by_reason=self._normalize_exclusion_counts_by_reason(
+                candidate_processing.exclusion_counts_by_reason
+            ),
         )
 
     def _apply_draft_updates(
@@ -1042,6 +1074,21 @@ class SEOCompetitorProfileGenerationService:
             return FAILURE_CATEGORY_UNKNOWN
         return normalized
 
+    def _normalize_exclusion_counts_by_reason(
+        self,
+        value: dict[str, int] | None,
+    ) -> dict[str, int]:
+        normalized = default_exclusion_reason_counts()
+        if not value:
+            return normalized
+        for reason in EXCLUSION_REASON_KEYS:
+            raw_count = value.get(reason, 0)
+            try:
+                normalized[reason] = max(0, int(raw_count))
+            except (TypeError, ValueError):
+                normalized[reason] = 0
+        return normalized
+
     def _sanitize_raw_output(self, raw_output: str | object | None) -> str | None:
         if raw_output is None:
             return None
@@ -1269,9 +1316,25 @@ class SEOCompetitorProfileGenerationService:
         prompt_version: str | None = None,
         failure_category: str | None = None,
         raw_output: str | object | None = None,
+        raw_candidate_count: int | None = None,
+        included_candidate_count: int | None = None,
+        excluded_candidate_count: int | None = None,
+        exclusion_counts_by_reason: dict[str, int] | None = None,
     ) -> None:
         run.status = "failed"
         run.generated_draft_count = 0
+        if raw_candidate_count is not None:
+            run.raw_candidate_count = max(0, int(raw_candidate_count))
+        if included_candidate_count is not None:
+            run.included_candidate_count = max(0, int(included_candidate_count))
+        else:
+            run.included_candidate_count = 0
+        if excluded_candidate_count is not None:
+            run.excluded_candidate_count = max(0, int(excluded_candidate_count))
+        if exclusion_counts_by_reason is not None:
+            run.exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(exclusion_counts_by_reason)
+        elif not run.exclusion_counts_by_reason:
+            run.exclusion_counts_by_reason = default_exclusion_reason_counts()
         run.error_summary = error_summary
         run.failure_category = self._normalize_failure_category(failure_category) or FAILURE_CATEGORY_UNKNOWN
         if provider_name:
@@ -1297,6 +1360,10 @@ class SEOCompetitorProfileGenerationService:
         prompt_version: str | None = None,
         failure_category: str | None = None,
         raw_output: str | object | None = None,
+        raw_candidate_count: int | None = None,
+        included_candidate_count: int | None = None,
+        excluded_candidate_count: int | None = None,
+        exclusion_counts_by_reason: dict[str, int] | None = None,
     ) -> None:
         logger.warning(
             "SEO competitor profile generation run failed business_id=%s run_id=%s failure_category=%s reason=%s",
@@ -1319,6 +1386,10 @@ class SEOCompetitorProfileGenerationService:
             prompt_version=prompt_version,
             failure_category=failure_category,
             raw_output=raw_output,
+            raw_candidate_count=raw_candidate_count,
+            included_candidate_count=included_candidate_count,
+            excluded_candidate_count=excluded_candidate_count,
+            exclusion_counts_by_reason=exclusion_counts_by_reason,
         )
         self.session.commit()
 

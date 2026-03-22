@@ -71,6 +71,11 @@ class SEOCompetitorProfileGenerationRepository:
             .where(SEOCompetitorProfileGenerationRun.status == "queued")
             .values(
                 status="running",
+                generated_draft_count=0,
+                raw_candidate_count=0,
+                included_candidate_count=0,
+                excluded_candidate_count=0,
+                exclusion_counts_by_reason={},
                 error_summary=None,
                 failure_category=None,
                 raw_output=None,
