@@ -504,6 +504,7 @@ class SEORecommendationTuningImpactPreviewRead(BaseModel):
 
     business_id: str
     site_id: str
+    preview_event_id: str | None
     source_recommendation_run_id: str | None
     source_narrative_id: str | None
     current_values: SEORecommendationTuningValuesRead

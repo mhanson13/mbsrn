@@ -556,6 +556,7 @@ def test_recommendation_tuning_preview_returns_deterministic_estimate(db_session
     payload = response.json()
     assert payload["business_id"] == seeded_business.id
     assert payload["site_id"] == site_id
+    assert payload["preview_event_id"] is not None
     assert payload["source_recommendation_run_id"] == run_id
     assert payload["current_values"]["competitor_candidate_min_relevance_score"] == 35
     assert payload["proposed_values"]["competitor_candidate_min_relevance_score"] == 40
@@ -606,6 +607,8 @@ def test_recommendation_tuning_preview_persists_preview_event(db_session, seeded
         },
     )
     assert response.status_code == 200
+    payload = response.json()
+    assert payload["preview_event_id"] is not None
 
     events = (
         db_session.query(SEOCompetitorTuningPreviewEvent)
@@ -616,6 +619,7 @@ def test_recommendation_tuning_preview_persists_preview_event(db_session, seeded
     )
     assert len(events) == 1
     event = events[0]
+    assert event.id == payload["preview_event_id"]
     assert event.source_recommendation_run_id == run_id
     assert event.source_narrative_id is None
     assert event.preview_request["proposed_values"]["competitor_candidate_directory_penalty"] == 30

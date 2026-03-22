@@ -5,7 +5,7 @@ This feature produces deterministic SEO recommendations from persisted audit/com
 
 Deterministic recommendation records remain canonical. AI output is advisory explanation only.
 Tuning impact preview is deterministic and advisory only, and preview-to-outcome accuracy is tracked for evaluation.
-The site workspace now surfaces the latest completed recommendation run, deterministic recommendation items, latest AI narrative, AI tuning suggestions, and deterministic preview impact in one place.
+The site workspace now surfaces the latest completed recommendation run, deterministic recommendation items, latest AI narrative, AI tuning suggestions, deterministic preview impact, and a manual apply action for tuning suggestions.
 
 ## Why This Exists
 - Deterministic rules provide stable, auditable recommendation artifacts.
@@ -30,13 +30,18 @@ The site workspace now surfaces the latest completed recommendation run, determi
 5. Deterministic tuning impact preview:
    - `POST /api/businesses/{business_id}/seo/sites/{site_id}/recommendations/tuning-preview`
    - Uses persisted competitor telemetry and bounded rule-based heuristics to estimate impact of proposed tuning changes.
-   - Preview returns estimated deltas and caveats only; no settings are mutated.
-6. Preview accuracy feedback loop:
+   - Preview returns estimated deltas, caveats, and `preview_event_id`; no settings are mutated.
+6. Manual tuning apply (operator-confirmed):
+   - Workspace presents an explicit confirmation before applying a suggestion.
+   - Apply uses existing business settings path: `PATCH /api/businesses/{business_id}/settings`.
+   - PATCH payload includes only targeted tuning field(s), with optional `competitor_tuning_preview_event_id` for explicit attribution.
+   - Backend validation remains authoritative; no auto-apply path exists.
+7. Preview accuracy feedback loop:
    - Each preview request persists a bounded preview event (`request` + `response` payload snapshots).
-   - When matching tuning values are later applied through business settings, the event is linked via `applied_at`.
+   - When matching tuning values are later applied through business settings, the event is linked via `applied_at` (explicit id when provided, heuristic fallback otherwise).
    - On the next completed competitor profile generation run for that site, estimated vs actual included-candidate deltas are evaluated and persisted.
    - Site observability summary now reports aggregate preview accuracy (`preview_accuracy_rate`, `avg_error_margin`, and `last_n_preview_accuracy`).
-6. UI:
+8. UI:
    - Recommendation queue and run detail pages render deterministic recommendation data.
    - Narrative views render AI explanation when available.
    - Site workspace surfaces:
@@ -45,6 +50,7 @@ The site workspace now surfaces the latest completed recommendation run, determi
      - latest narrative overlay (if available)
      - AI-assisted tuning suggestions
      - deterministic tuning preview per suggestion
+     - explicit manual apply action per suggestion with confirmation
    - Missing run/narrative/preview data is handled with section-scoped safe empty/failure states.
 
 ## API / Interfaces
@@ -59,6 +65,9 @@ The site workspace now surfaces the latest completed recommendation run, determi
   - bounded tuning suggestions (if present)
   - safe summary state (`no_runs`, `no_completed_runs`, `completed_no_narrative`, `completed_with_narrative`)
 - Existing run/recommendation/narrative endpoints remain available for history/detail workflows.
+- Manual apply continues to use the canonical business settings endpoint:
+  - `PATCH /api/businesses/{business_id}/settings`
+  - optional attribution field: `competitor_tuning_preview_event_id`
 
 ## Data Model
 - `seo_recommendation_runs`: deterministic run lineage/status/rollups.
@@ -82,6 +91,7 @@ The site workspace now surfaces the latest completed recommendation run, determi
 - Narrative generation is grounded in persisted recommendation artifacts only.
 - Tuning suggestions are advisory only and never auto-applied.
 - Tuning impact preview is deterministic, uses persisted telemetry only, and never auto-applies settings.
+- Workspace apply requires explicit operator confirmation and uses bounded section-scoped PATCH only.
 - Preview accuracy tracking is observability-only and never mutates tuning settings automatically.
 - Tuning suggestions are strictly bounded to:
   - `competitor_candidate_min_relevance_score` (`0..100`)
@@ -111,7 +121,8 @@ Behavior:
 - Provider/model/prompt metadata is persisted for auditability.
 - Tuning suggestions are suppressed when competitor telemetry indicates a balanced candidate set (no excluded candidates in telemetry window).
 - Preview endpoint returns bounded estimated deltas from deterministic heuristics over persisted telemetry and includes a non-guarantee caveat.
-- Preview events are persisted for evaluation; linkage and accuracy scoring are best-effort observability signals and do not affect settings writes or run completion.
+- Preview events are persisted for evaluation; linkage and accuracy scoring are observability signals and do not auto-mutate settings.
+- Manual apply refreshes workspace summary and current tuning values after successful update.
 
 ## Failure Modes
 - Timeout/provider request/auth/config/schema/parse failures are normalized to safe errors.

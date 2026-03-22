@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import SiteWorkspacePage from "./[site_id]/page";
 import { ApiRequestError } from "../../lib/api/client";
 import type {
+  BusinessSettings,
   CompetitorComparisonRun,
   CompetitorProfileDraft,
   CompetitorProfileGenerationRun,
@@ -52,6 +53,8 @@ const mockFetchRecommendationWorkspaceSummary = jest.fn<Promise<RecommendationWo
 const mockFetchRecommendationRuns = jest.fn<Promise<RecommendationRunListResponse>, unknown[]>();
 const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<RecommendationNarrative>, unknown[]>();
 const mockPreviewRecommendationTuningImpact = jest.fn<Promise<RecommendationTuningImpactPreview>, unknown[]>();
+const mockFetchBusinessSettings = jest.fn<Promise<BusinessSettings>, unknown[]>();
+const mockUpdateBusinessSettings = jest.fn<Promise<BusinessSettings>, unknown[]>();
 const mockFetchCompetitorProfileGenerationRuns = jest.fn<
   Promise<CompetitorProfileGenerationRunListResponse>,
   unknown[]
@@ -99,6 +102,8 @@ jest.mock("../../lib/api/client", () => {
     fetchLatestRecommendationRunNarrative: (...args: unknown[]) =>
       mockFetchLatestRecommendationRunNarrative(...args),
     previewRecommendationTuningImpact: (...args: unknown[]) => mockPreviewRecommendationTuningImpact(...args),
+    fetchBusinessSettings: (...args: unknown[]) => mockFetchBusinessSettings(...args),
+    updateBusinessSettings: (...args: unknown[]) => mockUpdateBusinessSettings(...args),
     fetchCompetitorProfileGenerationRuns: (...args: unknown[]) =>
       mockFetchCompetitorProfileGenerationRuns(...args),
     fetchCompetitorProfileGenerationRunDetail: (...args: unknown[]) =>
@@ -127,6 +132,28 @@ function buildSite(overrides: Partial<SEOSite> = {}): SEOSite {
     last_audit_run_id: "audit-1",
     last_audit_status: "completed",
     last_audit_completed_at: "2026-03-21T00:32:00Z",
+    ...overrides,
+  };
+}
+
+function buildBusinessSettings(overrides: Partial<BusinessSettings> = {}): BusinessSettings {
+  return {
+    id: "biz-1",
+    name: "Biz 1",
+    notification_phone: "+13035550199",
+    notification_email: "owner@example.com",
+    sms_enabled: true,
+    email_enabled: true,
+    customer_auto_ack_enabled: true,
+    contractor_alerts_enabled: true,
+    seo_audit_crawl_max_pages: 25,
+    competitor_candidate_min_relevance_score: 35,
+    competitor_candidate_big_box_penalty: 20,
+    competitor_candidate_directory_penalty: 35,
+    competitor_candidate_local_alignment_bonus: 10,
+    timezone: "America/Denver",
+    created_at: "2026-03-20T00:00:00Z",
+    updated_at: "2026-03-21T00:00:00Z",
     ...overrides,
   };
 }
@@ -170,6 +197,8 @@ function baseContext(overrides: Partial<OperatorContextMockValue> = {}): Operato
 }
 
 function seedCompetitorProfileGenerationDefaults(): void {
+  mockFetchBusinessSettings.mockResolvedValue(buildBusinessSettings());
+  mockUpdateBusinessSettings.mockReset();
   mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({ items: [], total: 0 });
   mockFetchCompetitorProfileGenerationRunDetail.mockReset();
   mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
@@ -1504,6 +1533,7 @@ describe("site workspace timeline controls", () => {
     mockPreviewRecommendationTuningImpact.mockResolvedValue({
       business_id: "biz-1",
       site_id: "site-1",
+      preview_event_id: "preview-event-1",
       source_recommendation_run_id: "run-1",
       source_narrative_id: "narrative-1",
       current_values: {
@@ -1900,6 +1930,7 @@ describe("site workspace timeline controls", () => {
     mockPreviewRecommendationTuningImpact.mockResolvedValue({
       business_id: "biz-1",
       site_id: "site-1",
+      preview_event_id: "preview-event-2",
       source_recommendation_run_id: "run-1",
       source_narrative_id: "narrative-1",
       current_values: {
@@ -1954,6 +1985,299 @@ describe("site workspace timeline controls", () => {
     await user.click(screen.getByRole("button", { name: "Preview Impact" }));
     await screen.findByText(/Insufficient recent competitor telemetry for deterministic impact estimation\./);
     expect(screen.getByText(/Included delta: 0; excluded delta: 0/)).toBeInTheDocument();
+  });
+
+  it("applies a tuning suggestion with explicit confirmation and refreshes surfaced values", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    jest.spyOn(window, "confirm").mockReturnValue(true);
+
+    mockFetchBusinessSettings.mockResolvedValue(
+      buildBusinessSettings({ competitor_candidate_min_relevance_score: 35 }),
+    );
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+      business_id: "biz-1",
+      site_id: "site-1",
+      state: "completed_with_narrative",
+      latest_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 1,
+        critical_recommendations: 0,
+        warning_recommendations: 1,
+        info_recommendations: 0,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      latest_completed_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 1,
+        critical_recommendations: 0,
+        warning_recommendations: 1,
+        info_recommendations: 0,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      recommendations: {
+        items: [
+          {
+            id: "rec-1",
+            business_id: "biz-1",
+            site_id: "site-1",
+            recommendation_run_id: "run-1",
+            audit_run_id: "audit-1",
+            comparison_run_id: "comparison-1",
+            status: "open",
+            category: "SEO",
+            severity: "warning",
+            priority_score: 80,
+            priority_band: "high",
+            effort_bucket: "small",
+            title: "Fix title tags",
+            rationale: "Title tags are missing core keywords.",
+            decision_reason: null,
+            created_at: "2026-03-21T00:30:00Z",
+            updated_at: "2026-03-21T00:31:00Z",
+          },
+        ],
+        total: 1,
+      },
+      latest_narrative: {
+        id: "narrative-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        recommendation_run_id: "run-1",
+        version: 2,
+        status: "completed",
+        narrative_text: "Narrative for run 1.",
+        top_themes_json: ["titles"],
+        sections_json: { summary: "one" },
+        provider_name: "provider",
+        model_name: "model",
+        prompt_version: "v2",
+        error_message: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:33:00Z",
+        updated_at: "2026-03-21T00:33:00Z",
+      },
+      tuning_suggestions: [
+        {
+          setting: "competitor_candidate_min_relevance_score",
+          current_value: 35,
+          recommended_value: 30,
+          reason: "High low_relevance exclusions indicate threshold is too strict.",
+          linked_recommendation_ids: ["rec-1"],
+          confidence: "medium",
+        },
+      ],
+    });
+    mockPreviewRecommendationTuningImpact.mockResolvedValue({
+      business_id: "biz-1",
+      site_id: "site-1",
+      preview_event_id: "preview-event-apply-1",
+      source_recommendation_run_id: "run-1",
+      source_narrative_id: "narrative-1",
+      current_values: {
+        competitor_candidate_min_relevance_score: 35,
+        competitor_candidate_big_box_penalty: 20,
+        competitor_candidate_directory_penalty: 35,
+        competitor_candidate_local_alignment_bonus: 10,
+      },
+      proposed_values: {
+        competitor_candidate_min_relevance_score: 30,
+        competitor_candidate_big_box_penalty: 20,
+        competitor_candidate_directory_penalty: 35,
+        competitor_candidate_local_alignment_bonus: 10,
+      },
+      telemetry_window: {
+        lookback_days: 30,
+        total_runs: 4,
+        total_raw_candidate_count: 10,
+        total_included_candidate_count: 4,
+        total_excluded_candidate_count: 6,
+        exclusion_counts_by_reason: {
+          duplicate: 1,
+          low_relevance: 3,
+          directory_or_aggregator: 1,
+          big_box_mismatch: 1,
+          existing_domain_match: 0,
+          invalid_candidate: 0,
+        },
+      },
+      estimated_impact: {
+        insufficient_data: false,
+        estimated_included_candidate_delta: 2,
+        estimated_excluded_candidate_delta: -2,
+        estimated_exclusion_reason_deltas: {
+          duplicate: 0,
+          low_relevance: -2,
+          directory_or_aggregator: 0,
+          big_box_mismatch: 0,
+          existing_domain_match: 0,
+          invalid_candidate: 0,
+        },
+        summary: "Estimated increase of 2 included candidates over the last 30 days of telemetry.",
+        risk_flags: ["Lower minimum relevance score may increase weak or noisy candidates."],
+      },
+      caveat: "Preview only.",
+    });
+    mockUpdateBusinessSettings.mockResolvedValue(
+      buildBusinessSettings({ competitor_candidate_min_relevance_score: 30 }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByText(
+      "Minimum relevance score: 35 -> 30 (High low_relevance exclusions indicate threshold is too strict.)",
+    );
+    await user.click(screen.getByRole("button", { name: "Preview Impact" }));
+    await screen.findByText(/Estimated increase of 2 included candidates over the last 30 days of telemetry\./);
+
+    await user.click(screen.getByRole("button", { name: "Apply Suggestion" }));
+
+    await waitFor(() =>
+      expect(mockUpdateBusinessSettings).toHaveBeenCalledWith("token-1", "biz-1", {
+        competitor_candidate_min_relevance_score: 30,
+        competitor_tuning_preview_event_id: "preview-event-apply-1",
+      }),
+    );
+    await waitFor(() => expect(mockFetchRecommendationWorkspaceSummary).toHaveBeenCalledTimes(2));
+    expect(
+      screen.getByText(
+        "Minimum relevance score: 30 -> 30 (High low_relevance exclusions indicate threshold is too strict.)",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Applied" })).toBeDisabled();
+  });
+
+  it("surfaces safe apply errors without leaking state across other suggestions", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    jest.spyOn(window, "confirm").mockReturnValue(true);
+
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+      business_id: "biz-1",
+      site_id: "site-1",
+      state: "completed_with_narrative",
+      latest_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 1,
+        critical_recommendations: 0,
+        warning_recommendations: 1,
+        info_recommendations: 0,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      latest_completed_run: {
+        id: "run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        audit_run_id: "audit-1",
+        comparison_run_id: "comparison-1",
+        status: "completed",
+        total_recommendations: 1,
+        critical_recommendations: 0,
+        warning_recommendations: 1,
+        info_recommendations: 0,
+        category_counts_json: {},
+        effort_bucket_counts_json: {},
+        started_at: "2026-03-21T00:29:00Z",
+        completed_at: "2026-03-21T00:30:00Z",
+        duration_ms: 60000,
+        error_summary: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:29:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+      recommendations: { items: [], total: 0 },
+      latest_narrative: {
+        id: "narrative-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        recommendation_run_id: "run-1",
+        version: 2,
+        status: "completed",
+        narrative_text: "Narrative for run 1.",
+        top_themes_json: ["titles"],
+        sections_json: { summary: "one" },
+        provider_name: "provider",
+        model_name: "model",
+        prompt_version: "v2",
+        error_message: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-21T00:33:00Z",
+        updated_at: "2026-03-21T00:33:00Z",
+      },
+      tuning_suggestions: [
+        {
+          setting: "competitor_candidate_min_relevance_score",
+          current_value: 35,
+          recommended_value: 30,
+          reason: "Suggestion one.",
+          linked_recommendation_ids: ["rec-1"],
+          confidence: "medium",
+        },
+        {
+          setting: "competitor_candidate_directory_penalty",
+          current_value: 35,
+          recommended_value: 30,
+          reason: "Suggestion two.",
+          linked_recommendation_ids: ["rec-1"],
+          confidence: "medium",
+        },
+      ],
+    });
+    mockUpdateBusinessSettings.mockRejectedValue(
+      new ApiRequestError("Competitor quality settings must use bounded integer values.", {
+        status: 422,
+        detail: null,
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByText("Directory penalty: 35 -> 30 (Suggestion two.)");
+    const applyButtons = await screen.findAllByRole("button", { name: "Apply Suggestion" });
+    await user.click(applyButtons[0]);
+
+    await screen.findByText("Competitor quality settings must use bounded integer values.");
+    expect(screen.getByText("Directory penalty: 35 -> 30 (Suggestion two.)")).toBeInTheDocument();
+    expect(screen.queryAllByText("Competitor quality settings must use bounded integer values.")).toHaveLength(1);
   });
 
   it("surfaces latest completed deterministic recommendations and ai narrative overlay", async () => {

@@ -48,6 +48,12 @@ The same business settings surface also contains bounded AI competitor candidate
 
 These settings are business-scoped and admin-only, and are enforced server-side in competitor candidate scoring/exclusion logic. They do not change review gating.
 
+Manual apply path from Site Workspace:
+- AI tuning suggestions surfaced in workspace can be manually applied with explicit operator confirmation.
+- Apply uses the same canonical endpoint: `PATCH /api/businesses/{business_id}/settings`.
+- The workspace sends only targeted tuning fields, optionally with `competitor_tuning_preview_event_id` for preview attribution.
+- Backend bounds validation remains authoritative; no automatic settings mutation occurs.
+
 ## Runtime Usage
 
 ### Manual audit path

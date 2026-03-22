@@ -412,6 +412,19 @@ class SEOCompetitorProfileGenerationRepository:
         self.session.flush()
         return event
 
+    def get_tuning_preview_event_for_business(
+        self,
+        *,
+        business_id: str,
+        preview_event_id: str,
+    ) -> SEOCompetitorTuningPreviewEvent | None:
+        stmt = (
+            select(SEOCompetitorTuningPreviewEvent)
+            .where(SEOCompetitorTuningPreviewEvent.business_id == business_id)
+            .where(SEOCompetitorTuningPreviewEvent.id == preview_event_id)
+        )
+        return self.session.scalar(stmt)
+
     def find_recent_unapplied_preview_event_for_business_matching_tuning(
         self,
         *,

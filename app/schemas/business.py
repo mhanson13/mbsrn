@@ -43,6 +43,7 @@ class BusinessSettingsUpdateRequest(BaseModel):
     competitor_candidate_big_box_penalty: int | None = Field(default=None, ge=0, le=50)
     competitor_candidate_directory_penalty: int | None = Field(default=None, ge=0, le=50)
     competitor_candidate_local_alignment_bonus: int | None = Field(default=None, ge=0, le=50)
+    competitor_tuning_preview_event_id: str | None = Field(default=None, min_length=1, max_length=36)
     timezone: str | None = None
 
     @field_validator("notification_email", mode="before")
@@ -84,6 +85,11 @@ class BusinessSettingsUpdateRequest(BaseModel):
         except ZoneInfoNotFoundError as exc:
             raise ValueError("timezone must be a valid IANA timezone.") from exc
         return cleaned
+
+    @field_validator("competitor_tuning_preview_event_id", mode="before")
+    @classmethod
+    def normalize_preview_event_id(cls, value: str | None) -> str | None:
+        return _clean_optional_text(value)
 
 
 def _clean_optional_text(value: str | None) -> str | None:

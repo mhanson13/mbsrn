@@ -13,6 +13,7 @@ import {
   createCompetitorProfileGenerationRun,
   editCompetitorProfileDraft,
   fetchAuditRuns,
+  fetchBusinessSettings,
   fetchCompetitorProfileGenerationRunDetail,
   fetchCompetitorProfileGenerationRuns,
   fetchCompetitorProfileGenerationSummary,
@@ -27,8 +28,10 @@ import {
   fetchSiteCompetitorComparisonRuns,
   rejectCompetitorProfileDraft,
   retryCompetitorProfileGenerationRun,
+  updateBusinessSettings,
 } from "../../../lib/api/client";
 import type {
+  BusinessSettings,
   CompetitorComparisonRun,
   CompetitorProfileDraft,
   CompetitorProfileGenerationRun,
@@ -268,6 +271,27 @@ function buildTuningPreviewKey(
   return `${recommendationRunId}:${suggestion.setting}:${suggestion.current_value}:${suggestion.recommended_value}`;
 }
 
+function tuningSettingValueFromBusinessSettings(
+  settings: BusinessSettings | null,
+  setting: RecommendationTuningSuggestion["setting"],
+): number | null {
+  if (!settings) {
+    return null;
+  }
+  switch (setting) {
+    case "competitor_candidate_min_relevance_score":
+      return settings.competitor_candidate_min_relevance_score;
+    case "competitor_candidate_big_box_penalty":
+      return settings.competitor_candidate_big_box_penalty;
+    case "competitor_candidate_directory_penalty":
+      return settings.competitor_candidate_directory_penalty;
+    case "competitor_candidate_local_alignment_bonus":
+      return settings.competitor_candidate_local_alignment_bonus;
+    default:
+      return null;
+  }
+}
+
 function safeActionErrorMessage(actionLabel: string, error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 401) {
@@ -389,6 +413,10 @@ export default function SiteWorkspacePage() {
   const [tuningPreviewByKey, setTuningPreviewByKey] = useState<Record<string, RecommendationTuningImpactPreview>>({});
   const [tuningPreviewErrorByKey, setTuningPreviewErrorByKey] = useState<Record<string, string>>({});
   const [tuningPreviewLoadingKey, setTuningPreviewLoadingKey] = useState<string | null>(null);
+  const [tuningSettings, setTuningSettings] = useState<BusinessSettings | null>(null);
+  const [tuningApplyMessage, setTuningApplyMessage] = useState<string | null>(null);
+  const [tuningApplyErrorByKey, setTuningApplyErrorByKey] = useState<Record<string, string>>({});
+  const [tuningApplyLoadingKey, setTuningApplyLoadingKey] = useState<string | null>(null);
 
   const [competitorProfileGenerationRuns, setCompetitorProfileGenerationRuns] = useState<CompetitorProfileGenerationRun[]>([]);
   const [competitorProfileSummary, setCompetitorProfileSummary] =
@@ -502,6 +530,23 @@ export default function SiteWorkspacePage() {
     () => recommendationRuns[0] || null,
     [recommendationRuns],
   );
+
+  function currentSuggestionValue(suggestion: RecommendationTuningSuggestion): number {
+    const persistedValue = tuningSettingValueFromBusinessSettings(tuningSettings, suggestion.setting);
+    if (typeof persistedValue === "number" && Number.isFinite(persistedValue)) {
+      return persistedValue;
+    }
+    return suggestion.current_value;
+  }
+
+  function applyWorkspaceSummary(summary: RecommendationWorkspaceSummaryResponse): void {
+    setRecommendationWorkspaceSummaryState(summary.state);
+    setLatestCompletedRecommendationRun(summary.latest_completed_run);
+    setLatestCompletedRecommendations(summary.recommendations.items);
+    setLatestCompletedRecommendationNarrative(summary.latest_narrative);
+    setLatestCompletedTuningSuggestions(summary.tuning_suggestions);
+    setLatestCompletedRecommendationsError(null);
+  }
 
   const workspaceReadinessMessage = useMemo(() => {
     if (!selectedSite) {
@@ -816,7 +861,17 @@ export default function SiteWorkspacePage() {
       return;
     }
     const previewKey = buildTuningPreviewKey(recommendationRunId, suggestion);
+    const currentValue = currentSuggestionValue(suggestion);
     setTuningPreviewLoadingKey(previewKey);
+    setTuningApplyMessage(null);
+    setTuningApplyErrorByKey((current) => {
+      if (!current[previewKey]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[previewKey];
+      return next;
+    });
     setTuningPreviewErrorByKey((current) => {
       if (!current[previewKey]) {
         return current;
@@ -834,7 +889,7 @@ export default function SiteWorkspacePage() {
           recommendation_run_id: recommendationRunId,
           narrative_id: narrativeId || undefined,
           current_values: {
-            [suggestion.setting]: suggestion.current_value,
+            [suggestion.setting]: currentValue,
           },
           proposed_values: {
             [suggestion.setting]: suggestion.recommended_value,
@@ -849,6 +904,91 @@ export default function SiteWorkspacePage() {
       }));
     } finally {
       setTuningPreviewLoadingKey((current) => (current === previewKey ? null : current));
+    }
+  }
+
+  async function handleApplyTuningSuggestion(
+    recommendationRunId: string,
+    suggestion: RecommendationTuningSuggestion,
+  ): Promise<void> {
+    if (!context.token || !context.businessId || !siteId) {
+      return;
+    }
+    const previewKey = buildTuningPreviewKey(recommendationRunId, suggestion);
+    const currentValue = currentSuggestionValue(suggestion);
+    const preview = tuningPreviewByKey[previewKey];
+    const confirmationLines = [
+      `Apply tuning suggestion to business settings?`,
+      `${formatTuningSettingLabel(suggestion.setting)}: ${currentValue} -> ${suggestion.recommended_value}`,
+      "This updates the business-level setting for all sites in this business.",
+      "No automatic changes will be made without this confirmation.",
+    ];
+    if (preview?.estimated_impact?.summary) {
+      confirmationLines.push(`Preview summary: ${preview.estimated_impact.summary}`);
+    }
+    const confirmed = window.confirm(confirmationLines.join("\n"));
+    if (!confirmed) {
+      return;
+    }
+
+    setTuningApplyLoadingKey(previewKey);
+    setTuningApplyMessage(null);
+    setTuningApplyErrorByKey((current) => {
+      if (!current[previewKey]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[previewKey];
+      return next;
+    });
+    try {
+      const payload: {
+        competitor_candidate_min_relevance_score?: number;
+        competitor_candidate_big_box_penalty?: number;
+        competitor_candidate_directory_penalty?: number;
+        competitor_candidate_local_alignment_bonus?: number;
+        competitor_tuning_preview_event_id?: string;
+      } = {
+        [suggestion.setting]: suggestion.recommended_value,
+      };
+      if (preview?.preview_event_id) {
+        payload.competitor_tuning_preview_event_id = preview.preview_event_id;
+      }
+
+      const updated = await updateBusinessSettings(
+        context.token,
+        context.businessId,
+        payload,
+      );
+      setTuningSettings(updated);
+
+      try {
+        const summary = await fetchRecommendationWorkspaceSummary(
+          context.token,
+          context.businessId,
+          siteId,
+        );
+        applyWorkspaceSummary(summary);
+      } catch (refreshError) {
+        setLatestCompletedRecommendationsError(
+          safeSectionErrorMessage("recommendation workspace summary", refreshError),
+        );
+      }
+
+      setTuningPreviewByKey({});
+      setTuningPreviewErrorByKey({});
+      setTuningPreviewLoadingKey(null);
+      setTuningApplyErrorByKey({});
+      setTuningApplyMessage(
+        `${formatTuningSettingLabel(suggestion.setting)} updated to ${suggestion.recommended_value}.`,
+      );
+    } catch (error) {
+      setTuningApplyErrorByKey((current) => ({
+        ...current,
+        [previewKey]: safeActionErrorMessage("apply this tuning suggestion", error),
+      }));
+    } finally {
+      setTuningApplyLoadingKey((current) => (current === previewKey ? null : current));
     }
   }
 
@@ -1009,6 +1149,10 @@ export default function SiteWorkspacePage() {
       setTuningPreviewByKey({});
       setTuningPreviewErrorByKey({});
       setTuningPreviewLoadingKey(null);
+      setTuningSettings(null);
+      setTuningApplyMessage(null);
+      setTuningApplyErrorByKey({});
+      setTuningApplyLoadingKey(null);
       setCompetitorProfileGenerationRuns([]);
       setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
@@ -1045,6 +1189,10 @@ export default function SiteWorkspacePage() {
       setTuningPreviewByKey({});
       setTuningPreviewErrorByKey({});
       setTuningPreviewLoadingKey(null);
+      setTuningSettings(null);
+      setTuningApplyMessage(null);
+      setTuningApplyErrorByKey({});
+      setTuningApplyLoadingKey(null);
       setCompetitorProfileGenerationRuns([]);
       setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
@@ -1076,6 +1224,10 @@ export default function SiteWorkspacePage() {
       setTuningPreviewByKey({});
       setTuningPreviewErrorByKey({});
       setTuningPreviewLoadingKey(null);
+      setTuningSettings(null);
+      setTuningApplyMessage(null);
+      setTuningApplyErrorByKey({});
+      setTuningApplyLoadingKey(null);
       setCompetitorProfileSummaryError(null);
 
       const [
@@ -1085,6 +1237,7 @@ export default function SiteWorkspacePage() {
         queueResult,
         recommendationRunsResult,
         recommendationWorkspaceSummaryResult,
+        businessSettingsResult,
         competitorProfileRunsResult,
         competitorProfileSummaryResult,
       ] =
@@ -1100,6 +1253,7 @@ export default function SiteWorkspacePage() {
           }),
           fetchRecommendationRuns(context.token, context.businessId, siteId),
           fetchRecommendationWorkspaceSummary(context.token, context.businessId, siteId),
+          fetchBusinessSettings(context.token, context.businessId),
           fetchCompetitorProfileGenerationRuns(context.token, context.businessId, siteId),
           fetchCompetitorProfileGenerationSummary(context.token, context.businessId, siteId),
         ]);
@@ -1258,6 +1412,12 @@ export default function SiteWorkspacePage() {
         setLatestCompletedRecommendationsError(
           safeSectionErrorMessage("recommendation workspace summary", recommendationWorkspaceSummaryResult.reason),
         );
+      }
+
+      if (businessSettingsResult.status === "fulfilled") {
+        setTuningSettings(businessSettingsResult.value);
+      } else {
+        setTuningSettings(null);
       }
 
       if (competitorProfileSummaryResult.status === "fulfilled") {
@@ -2294,15 +2454,18 @@ export default function SiteWorkspacePage() {
                   </p>
                 ) : null}
                 <span className="hint muted">AI-Assisted Tuning Suggestions</span>
+                {tuningApplyMessage ? <span className="hint">{tuningApplyMessage}</span> : null}
                 {latestCompletedTuningSuggestions.length > 0 ? (
                   latestCompletedTuningSuggestions.map((suggestion) => {
                     const previewKey = buildTuningPreviewKey(latestCompletedRecommendationRun.id, suggestion);
+                    const currentValue = currentSuggestionValue(suggestion);
+                    const alreadyApplied = currentValue === suggestion.recommended_value;
                     return (
                       <Fragment
                         key={`${latestCompletedRecommendationRun.id}-${suggestion.setting}-${suggestion.recommended_value}`}
                       >
                         <span className="hint muted">
-                          {formatTuningSettingLabel(suggestion.setting)}: {suggestion.current_value}
+                          {formatTuningSettingLabel(suggestion.setting)}: {currentValue}
                           {" -> "}
                           {suggestion.recommended_value} ({suggestion.reason})
                         </span>
@@ -2321,8 +2484,28 @@ export default function SiteWorkspacePage() {
                         >
                           {tuningPreviewLoadingKey === previewKey ? "Previewing..." : "Preview Impact"}
                         </button>
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() =>
+                            handleApplyTuningSuggestion(
+                              latestCompletedRecommendationRun.id,
+                              suggestion,
+                            )
+                          }
+                          disabled={alreadyApplied || tuningApplyLoadingKey === previewKey}
+                        >
+                          {alreadyApplied
+                            ? "Applied"
+                            : tuningApplyLoadingKey === previewKey
+                              ? "Applying..."
+                              : "Apply Suggestion"}
+                        </button>
                         {tuningPreviewErrorByKey[previewKey] ? (
                           <span className="hint warning">{tuningPreviewErrorByKey[previewKey]}</span>
+                        ) : null}
+                        {tuningApplyErrorByKey[previewKey] ? (
+                          <span className="hint warning">{tuningApplyErrorByKey[previewKey]}</span>
                         ) : null}
                         {tuningPreviewByKey[previewKey] ? (
                           <span className="hint muted">

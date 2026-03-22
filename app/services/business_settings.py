@@ -78,6 +78,13 @@ class BusinessSettingsService:
         business = self.get(business_id=business_id)
 
         updates = payload.model_dump(exclude_unset=True)
+        explicit_preview_event_id = (
+            str(updates.pop("competitor_tuning_preview_event_id") or "").strip()
+            if "competitor_tuning_preview_event_id" in updates
+            else None
+        )
+        if explicit_preview_event_id == "":
+            explicit_preview_event_id = None
         previous_competitor_values = self._competitor_settings_from_business(business)
         effective = self._effective_settings(business=business, updates=updates)
         # Validate only the setting sections touched by this PATCH payload so one
@@ -94,6 +101,7 @@ class BusinessSettingsService:
             business=business,
             updates=updates,
             previous_competitor_values=previous_competitor_values,
+            explicit_preview_event_id=explicit_preview_event_id,
         )
         return business
 
@@ -103,6 +111,7 @@ class BusinessSettingsService:
         business: Business,
         updates: dict,
         previous_competitor_values: dict[str, int],
+        explicit_preview_event_id: str | None,
     ) -> None:
         changed_keys = {
             key
@@ -116,16 +125,28 @@ class BusinessSettingsService:
         applied_values = self._competitor_settings_from_business(business)
         created_after = utc_now() - timedelta(days=_COMPETITOR_PREVIEW_MATCH_LOOKBACK_DAYS)
         try:
-            matched_event = (
-                self.seo_competitor_profile_generation_repository.find_recent_unapplied_preview_event_for_business_matching_tuning(
+            matched_event = None
+            if explicit_preview_event_id:
+                matched_event = self._find_explicit_preview_event_match_for_tuning_change(
                     business_id=business.id,
+                    preview_event_id=explicit_preview_event_id,
                     changed_keys=changed_keys,
                     previous_values=previous_competitor_values,
                     applied_values=applied_values,
-                    created_after=created_after,
                 )
-            )
+
             if matched_event is None:
+                matched_event = (
+                    self.seo_competitor_profile_generation_repository.find_recent_unapplied_preview_event_for_business_matching_tuning(
+                        business_id=business.id,
+                        changed_keys=changed_keys,
+                        previous_values=previous_competitor_values,
+                        applied_values=applied_values,
+                        created_after=created_after,
+                    )
+                )
+
+            if matched_event is None or matched_event.applied_at is not None:
                 return
             matched_event.applied_at = utc_now()
             self.seo_competitor_profile_generation_repository.save_tuning_preview_event(matched_event)
@@ -135,12 +156,61 @@ class BusinessSettingsService:
             logger.warning(
                 (
                     "Failed to link competitor tuning preview event business_id=%s changed_keys=%s "
-                    "reason=%s"
+                    "explicit_preview_event_id=%s reason=%s"
                 ),
                 business.id,
                 ",".join(sorted(changed_keys)),
+                explicit_preview_event_id,
                 str(exc),
             )
+
+    def _find_explicit_preview_event_match_for_tuning_change(
+        self,
+        *,
+        business_id: str,
+        preview_event_id: str,
+        changed_keys: set[str],
+        previous_values: dict[str, int],
+        applied_values: dict[str, int],
+    ):
+        event = self.seo_competitor_profile_generation_repository.get_tuning_preview_event_for_business(
+            business_id=business_id,
+            preview_event_id=preview_event_id,
+        )
+        if event is None or event.applied_at is not None:
+            return None
+        event_values = self._tuning_values_from_preview_response(event.preview_response)
+        if event_values is None:
+            return None
+        current_values, proposed_values = event_values
+        for key in changed_keys:
+            if key not in _COMPETITOR_CANDIDATE_SETTING_FIELDS:
+                return None
+            if current_values.get(key) != previous_values.get(key):
+                return None
+            if proposed_values.get(key) != applied_values.get(key):
+                return None
+        return event
+
+    @staticmethod
+    def _tuning_values_from_preview_response(
+        preview_response: dict[str, object] | None,
+    ) -> tuple[dict[str, int], dict[str, int]] | None:
+        if not isinstance(preview_response, dict):
+            return None
+        raw_current = preview_response.get("current_values")
+        raw_proposed = preview_response.get("proposed_values")
+        if not isinstance(raw_current, dict) or not isinstance(raw_proposed, dict):
+            return None
+        current_values: dict[str, int] = {}
+        proposed_values: dict[str, int] = {}
+        for key in _COMPETITOR_CANDIDATE_SETTING_FIELDS:
+            try:
+                current_values[key] = int(raw_current.get(key))
+                proposed_values[key] = int(raw_proposed.get(key))
+            except (TypeError, ValueError):
+                return None
+        return current_values, proposed_values
 
     @staticmethod
     def _competitor_settings_from_business(business: Business) -> dict[str, int]:

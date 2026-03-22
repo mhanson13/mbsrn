@@ -502,3 +502,134 @@ def test_patch_business_settings_links_matching_tuning_preview_event(db_session,
 
     db_session.refresh(event)
     assert event.applied_at is not None
+
+
+def test_patch_business_settings_links_explicit_tuning_preview_event_id(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site = SEOSite(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        display_name="Explicit Link Site",
+        base_url="https://explicit-link.example/",
+        normalized_domain="explicit-link.example",
+        is_active=True,
+        is_primary=False,
+    )
+    db_session.add(site)
+    db_session.flush()
+
+    explicit_event = SEOCompetitorTuningPreviewEvent(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site.id,
+        source_narrative_id=None,
+        source_recommendation_run_id=None,
+        preview_request={
+            "current_values": {
+                "competitor_candidate_min_relevance_score": 35,
+                "competitor_candidate_big_box_penalty": 20,
+                "competitor_candidate_directory_penalty": 35,
+                "competitor_candidate_local_alignment_bonus": 10,
+            },
+            "proposed_values": {
+                "competitor_candidate_min_relevance_score": 30,
+                "competitor_candidate_big_box_penalty": 20,
+                "competitor_candidate_directory_penalty": 35,
+                "competitor_candidate_local_alignment_bonus": 10,
+            },
+        },
+        preview_response={
+            "current_values": {
+                "competitor_candidate_min_relevance_score": 35,
+                "competitor_candidate_big_box_penalty": 20,
+                "competitor_candidate_directory_penalty": 35,
+                "competitor_candidate_local_alignment_bonus": 10,
+            },
+            "proposed_values": {
+                "competitor_candidate_min_relevance_score": 30,
+                "competitor_candidate_big_box_penalty": 20,
+                "competitor_candidate_directory_penalty": 35,
+                "competitor_candidate_local_alignment_bonus": 10,
+            },
+            "telemetry_window": {
+                "lookback_days": 30,
+                "total_runs": 2,
+                "total_raw_candidate_count": 8,
+                "total_included_candidate_count": 4,
+                "total_excluded_candidate_count": 4,
+                "exclusion_counts_by_reason": {
+                    "duplicate": 0,
+                    "low_relevance": 2,
+                    "directory_or_aggregator": 1,
+                    "big_box_mismatch": 1,
+                    "existing_domain_match": 0,
+                    "invalid_candidate": 0,
+                },
+            },
+            "estimated_impact": {
+                "insufficient_data": False,
+                "estimated_included_candidate_delta": 1,
+                "estimated_excluded_candidate_delta": -1,
+                "estimated_exclusion_reason_deltas": {
+                    "duplicate": 0,
+                    "low_relevance": -1,
+                    "directory_or_aggregator": 0,
+                    "big_box_mismatch": 0,
+                    "existing_domain_match": 0,
+                    "invalid_candidate": 0,
+                },
+                "summary": "Estimated increase of included candidates.",
+                "risk_flags": [],
+            },
+            "caveat": "Preview is estimated only.",
+        },
+        applied_at=None,
+        evaluated_generation_run_id=None,
+        evaluated_at=None,
+        estimated_included_delta=None,
+        actual_included_delta=None,
+        error_margin=None,
+        direction_correct=None,
+    )
+    db_session.add(explicit_event)
+    db_session.commit()
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "competitor_candidate_min_relevance_score": 30,
+            "competitor_tuning_preview_event_id": explicit_event.id,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["competitor_candidate_min_relevance_score"] == 30
+
+    db_session.refresh(explicit_event)
+    assert explicit_event.applied_at is not None
+
+
+def test_patch_business_settings_apply_mutates_only_targeted_candidate_field(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    before = db_session.get(type(seeded_business), seeded_business.id)
+    assert before is not None
+    baseline = (
+        int(before.competitor_candidate_min_relevance_score),
+        int(before.competitor_candidate_big_box_penalty),
+        int(before.competitor_candidate_directory_penalty),
+        int(before.competitor_candidate_local_alignment_bonus),
+        int(before.seo_audit_crawl_max_pages),
+    )
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={"competitor_candidate_min_relevance_score": 30},
+    )
+    assert response.status_code == 200
+
+    after = db_session.get(type(seeded_business), seeded_business.id)
+    assert after is not None
+    assert int(after.competitor_candidate_min_relevance_score) == 30
+    assert int(after.competitor_candidate_big_box_penalty) == baseline[1]
+    assert int(after.competitor_candidate_directory_penalty) == baseline[2]
+    assert int(after.competitor_candidate_local_alignment_bonus) == baseline[3]
+    assert int(after.seo_audit_crawl_max_pages) == baseline[4]

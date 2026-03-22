@@ -101,6 +101,7 @@ export interface BusinessSettingsUpdateRequest {
   competitor_candidate_big_box_penalty?: number;
   competitor_candidate_directory_penalty?: number;
   competitor_candidate_local_alignment_bonus?: number;
+  competitor_tuning_preview_event_id?: string;
   timezone?: string | null;
 }
 
@@ -625,6 +626,7 @@ export interface RecommendationTuningImpactEstimate {
 export interface RecommendationTuningImpactPreview {
   business_id: string;
   site_id: string;
+  preview_event_id: string | null;
   source_recommendation_run_id: string | null;
   source_narrative_id: string | null;
   current_values: RecommendationTuningValues;

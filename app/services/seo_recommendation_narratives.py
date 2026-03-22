@@ -82,6 +82,7 @@ class SEORecommendationNarrativeResult:
 class SEORecommendationTuningImpactPreviewResult:
     business_id: str
     site_id: str
+    preview_event_id: str | None
     source_recommendation_run_id: str | None
     source_narrative_id: str | None
     current_values: dict[str, int]
@@ -345,17 +346,6 @@ class SEORecommendationNarrativeService:
             current_values=current_values,
             proposed_values=proposed_values,
         )
-        result = SEORecommendationTuningImpactPreviewResult(
-            business_id=business_id,
-            site_id=site_id,
-            source_recommendation_run_id=source_run_id,
-            source_narrative_id=source_narrative_id,
-            current_values=current_values,
-            proposed_values=proposed_values,
-            telemetry_window=telemetry_window,
-            estimated_impact=estimated_impact,
-            caveat=_PREVIEW_CAVEAT,
-        )
         preview_event = SEOCompetitorTuningPreviewEvent(
             id=str(uuid4()),
             business_id=business_id,
@@ -399,7 +389,18 @@ class SEORecommendationNarrativeService:
             raise SEORecommendationNarrativeValidationError(
                 "Unable to persist tuning impact preview event."
             ) from exc
-        return result
+        return SEORecommendationTuningImpactPreviewResult(
+            business_id=business_id,
+            site_id=site_id,
+            preview_event_id=preview_event.id,
+            source_recommendation_run_id=source_run_id,
+            source_narrative_id=source_narrative_id,
+            current_values=current_values,
+            proposed_values=proposed_values,
+            telemetry_window=telemetry_window,
+            estimated_impact=estimated_impact,
+            caveat=_PREVIEW_CAVEAT,
+        )
 
     def _get_run_for_business(self, *, business_id: str, site_id: str, recommendation_run_id: str):
         run = self.seo_recommendation_repository.get_run_for_business(business_id, recommendation_run_id)
