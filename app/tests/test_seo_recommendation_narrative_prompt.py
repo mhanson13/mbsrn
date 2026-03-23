@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_run import SEORecommendationRun
+from app.models.seo_site import SEOSite
 from app.services.seo_recommendation_narrative_prompt import (
     SEO_RECOMMENDATION_NARRATIVE_PROMPT_VERSION,
     build_seo_recommendation_narrative_prompt,
@@ -22,6 +23,21 @@ def _run() -> SEORecommendationRun:
         critical_recommendations=1,
         warning_recommendations=1,
         info_recommendations=0,
+    )
+
+
+def _site() -> SEOSite:
+    return SEOSite(
+        id="site-1",
+        business_id="biz-1",
+        display_name="Client Site",
+        base_url="https://client.example/",
+        normalized_domain="client.example",
+        industry="Home Services",
+        primary_location="Denver, CO",
+        service_areas_json=["Denver", "Aurora"],
+        is_active=True,
+        is_primary=True,
     )
 
 
@@ -103,6 +119,8 @@ def test_prompt_contains_grounded_deterministic_context() -> None:
     assert "RECOMMENDATION_CONTEXT_JSON" in prompt.user_prompt
     assert prompt.grounded_context["recommendation_run_id"] == "run-1"
     assert prompt.grounded_context["allowed_recommendation_ids"] == ["rec-1", "rec-2"]
+    assert prompt.grounded_context["site_business_context"]["available"] is False
+    assert prompt.grounded_context["site_business_context"]["location_context"] == "Unspecified location."
     assert len(prompt.grounded_context["top_recommendations"]) == 2
     top_item = prompt.grounded_context["top_recommendations"][0]
     assert top_item["id"] == "rec-2"
@@ -111,8 +129,39 @@ def test_prompt_contains_grounded_deterministic_context() -> None:
     assert (
         prompt.grounded_context["current_candidate_quality_tuning"]["competitor_candidate_directory_penalty"] == 35
     )
+    assert "structured_gap_context" in prompt.grounded_context
+    assert "source_counts" in prompt.grounded_context["structured_gap_context"]
+    assert "site_business_context and structured_gap_context" in prompt.user_prompt
+    assert "RECOMMENDATION SPECIFICITY RULES" in prompt.user_prompt
     assert "tuning_suggestions" in prompt.user_prompt
     assert "ONLY if justified by provided recommendation and telemetry data" in prompt.user_prompt
+
+
+def test_prompt_includes_site_business_context_when_run_site_loaded() -> None:
+    run = _run()
+    run.site = _site()
+
+    prompt = build_seo_recommendation_narrative_prompt(
+        run=run,
+        recommendations=_recommendations(),
+        by_status={"open": 1, "in_progress": 1},
+        by_category={"SEO": 1, "CONTENT": 1},
+        by_severity={"CRITICAL": 1, "WARNING": 1},
+        by_effort_bucket={"HIGH": 1, "LOW": 1},
+        by_priority_band={"critical": 1, "high": 1},
+        backlog=_recommendations(),
+        competitor_telemetry_summary={},
+        current_tuning_values={},
+    )
+
+    site_context = prompt.grounded_context["site_business_context"]
+    assert site_context["available"] is True
+    assert site_context["site_display_name"] == "Client Site"
+    assert site_context["site_normalized_domain"] == "client.example"
+    assert site_context["industry_context"] == "Home Services"
+    assert site_context["location_context"] == "Denver, CO; service areas: Denver, Aurora"
+    assert "- Site Name: Client Site" in prompt.user_prompt
+    assert "- Location Context: Denver, CO; service areas: Denver, Aurora" in prompt.user_prompt
 
 
 def test_prompt_appends_additional_recommendation_text_safely() -> None:

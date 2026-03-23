@@ -22,7 +22,8 @@ The site workspace now surfaces the latest completed recommendation run, determi
    - Recommendation rows stored in `seo_recommendations`
 3. AI narrative generation (manual trigger or automation step):
    - `POST /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives`
-   - Prompt is built from persisted recommendation artifacts, recommendation rollups, competitor candidate telemetry rollups, and current business tuning values.
+   - Prompt is built from persisted recommendation artifacts, recommendation rollups, competitor candidate telemetry rollups, current business tuning values, and bounded site/business context when available on run lineage (`run.site`).
+   - Prompt also includes a bounded structured gap context extracted from deterministic recommendation evidence (`source_counts`, `finding_type_counts`, local/competitor/service-gap signals).
    - Provider output is schema-validated before persistence.
    - Structured narrative sections can include `tuning_suggestions` (max 4), each constrained to allowed setting keys, bounded integer values, and valid linked recommendation IDs.
 4. Narrative retrieval:
@@ -149,6 +150,7 @@ Prompt source observability:
 ## Security Considerations
 - Raw provider credentials are not exposed in API responses.
 - Prompt context is treated as data; output is schema-validated before persistence.
+- Narrative prompt context is structured and bounded (site profile + deterministic gap signals) to improve specificity without introducing free-form retrieval.
 - AI output remains advisory and cannot bypass review/workflow controls.
 - Preview responses expose aggregate telemetry-derived estimates only; no raw candidate payloads are returned.
 

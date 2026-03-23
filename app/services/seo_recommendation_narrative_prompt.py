@@ -38,6 +38,19 @@ _MAX_RECOMMENDATIONS_IN_PROMPT = 30
 _MAX_ALLOWED_RECOMMENDATION_IDS = 200
 _MAX_BACKLOG_IDS = 25
 _MAX_TELEMETRY_LOOKBACK_DAYS = 365
+_MAX_SITE_DISPLAY_NAME_LENGTH = 120
+_MAX_SITE_BASE_URL_LENGTH = 2048
+_MAX_SITE_DOMAIN_LENGTH = 255
+_MAX_SITE_INDUSTRY_LENGTH = 100
+_MAX_SITE_LOCATION_LENGTH = 160
+_MAX_SITE_SERVICE_AREAS = 20
+_MAX_SITE_SERVICE_AREA_LENGTH = 80
+_MAX_SOURCE_COUNTS = 8
+_MAX_FINDING_TYPE_COUNTS = 12
+_MAX_SIGNAL_RECOMMENDATION_IDS = 10
+_MAX_LOCAL_MARKET_TERMS = 6
+_LOCAL_MARKET_TOKENS = ("local", "location", "nearby", "map", "gmb", "gbp", "citation", "nap")
+_SERVICE_COVERAGE_TOKENS = ("service", "services", "coverage", "page", "pages", "content")
 
 _TUNING_SETTING_BOUNDS: dict[str, tuple[int, int]] = {
     "competitor_candidate_min_relevance_score": (
@@ -107,6 +120,11 @@ def build_seo_recommendation_narrative_prompt(
         competitor_telemetry_summary
     )
     normalized_current_tuning_values = _normalize_current_tuning_values(current_tuning_values)
+    site_business_context = _normalize_site_business_context(run)
+    structured_gap_context = _normalize_structured_gap_context(
+        recommendations=recommendations,
+        normalized_recommendations=normalized_recommendations,
+    )
 
     context: dict[str, object] = {
         "business_id": _sanitize_required(run.business_id, max_length=_MAX_ID_LENGTH, fallback="unknown-business"),
@@ -136,6 +154,8 @@ def build_seo_recommendation_narrative_prompt(
             "effort_counts": _normalize_count_map(by_effort_bucket),
             "priority_band_counts": _normalize_count_map(by_priority_band),
         },
+        "site_business_context": site_business_context,
+        "structured_gap_context": structured_gap_context,
         "competitor_candidate_telemetry": normalized_competitor_telemetry_summary,
         "current_candidate_quality_tuning": normalized_current_tuning_values,
         "allowed_tuning_settings": _allowed_tuning_settings_schema(),
@@ -154,10 +174,20 @@ def build_seo_recommendation_narrative_prompt(
         "TASK: Summarize deterministic recommendation artifacts for operator review.\n"
         "GROUNDING RULES:\n"
         "1. Use RECOMMENDATION_CONTEXT_JSON as the only source of truth.\n"
-        "2. Never invent recommendation IDs, counts, statuses, or rule keys.\n"
+        "2. Never invent recommendation IDs, counts, statuses, rule keys, or evidence anchors.\n"
         "3. Keep explanation advisory only. No auto-apply actions.\n"
         "4. recommendation_references must only include IDs present in allowed_recommendation_ids.\n"
-        "5. You may suggest adjustments to scoring parameters ONLY if justified by provided recommendation and telemetry data.\n"
+        "5. Use site_business_context and structured_gap_context to keep recommendations business-specific and local-context aware.\n"
+        "6. You may suggest adjustments to scoring parameters ONLY if justified by provided recommendation and telemetry data.\n"
+        "BUSINESS CONTEXT SNAPSHOT:\n"
+        f"- Site Name: {site_business_context['site_display_name']}\n"
+        f"- Site Domain: {site_business_context['site_normalized_domain']}\n"
+        f"- Location Context: {site_business_context['location_context']}\n"
+        f"- Industry Context: {site_business_context['industry_context']}\n"
+        "RECOMMENDATION SPECIFICITY RULES:\n"
+        "1. Prefer concrete, evidence-anchored recommendations over generic advice.\n"
+        "2. Tie themes and next_actions to specific gaps from structured_gap_context when possible.\n"
+        "3. If local market terms are present, include local SEO specificity where relevant.\n"
         "RESPONSE_SCHEMA:\n"
         "{\n"
         '  "narrative_text": "string",\n'
@@ -262,6 +292,198 @@ def _normalize_count_map(raw: dict[str, int]) -> dict[str, int]:
         except (TypeError, ValueError):
             continue
     return normalized
+
+
+def _normalize_site_business_context(run: SEORecommendationRun) -> dict[str, object]:
+    site = getattr(run, "site", None)
+    if site is None:
+        return {
+            "available": False,
+            "site_display_name": "Unknown site",
+            "site_base_url": "unknown",
+            "site_normalized_domain": "unknown",
+            "industry_context": "Industry not available.",
+            "location_context": "Unspecified location.",
+            "service_areas": [],
+        }
+
+    display_name = _sanitize_required(
+        getattr(site, "display_name", None),
+        max_length=_MAX_SITE_DISPLAY_NAME_LENGTH,
+        fallback="Unknown site",
+    )
+    base_url = _sanitize_required(
+        getattr(site, "base_url", None),
+        max_length=_MAX_SITE_BASE_URL_LENGTH,
+        fallback="unknown",
+    )
+    normalized_domain = _sanitize_required(
+        getattr(site, "normalized_domain", None),
+        max_length=_MAX_SITE_DOMAIN_LENGTH,
+        fallback="unknown",
+    ).lower()
+    industry = _sanitize_optional(
+        getattr(site, "industry", None),
+        max_length=_MAX_SITE_INDUSTRY_LENGTH,
+    )
+    primary_location = _sanitize_optional(
+        getattr(site, "primary_location", None),
+        max_length=_MAX_SITE_LOCATION_LENGTH,
+    )
+    service_areas = _normalize_site_service_areas(getattr(site, "service_areas_json", None))
+
+    location_context = _build_site_location_context(
+        primary_location=primary_location,
+        service_areas=service_areas,
+    )
+    industry_context = (
+        industry
+        or f'Industry not explicitly classified. Infer cautiously from site "{display_name}".'
+    )
+
+    return {
+        "available": True,
+        "site_display_name": display_name,
+        "site_base_url": base_url,
+        "site_normalized_domain": normalized_domain,
+        "industry_context": industry_context,
+        "location_context": location_context,
+        "service_areas": service_areas,
+    }
+
+
+def _normalize_structured_gap_context(
+    *,
+    recommendations: list[SEORecommendation],
+    normalized_recommendations: list[dict[str, object]],
+) -> dict[str, object]:
+    source_counts: dict[str, int] = {}
+    finding_type_counts: dict[str, int] = {}
+    competitor_gap_recommendation_ids: list[str] = []
+    local_signal_recommendation_ids: list[str] = []
+    service_coverage_recommendation_ids: list[str] = []
+    local_market_terms: list[str] = []
+
+    for item in recommendations:
+        rec_id = _sanitize_required(item.id, max_length=_MAX_ID_LENGTH, fallback="unknown-id")
+        rule_key = _sanitize_required(item.rule_key, max_length=_MAX_RULE_KEY_LENGTH, fallback="unknown_rule").lower()
+        title = _sanitize_required(item.title, max_length=_MAX_TITLE_LENGTH, fallback="untitled").lower()
+        rationale = _sanitize_optional(item.rationale, max_length=_MAX_RATIONALE_EXCERPT_LENGTH) or ""
+        rationale_lower = rationale.lower()
+        corpus = f"{rule_key} {title} {rationale_lower}"
+
+        if rule_key.startswith("close_competitor_gap_"):
+            _append_unique_bounded(
+                competitor_gap_recommendation_ids,
+                rec_id,
+                limit=_MAX_SIGNAL_RECOMMENDATION_IDS,
+            )
+
+        if any(token in corpus for token in _LOCAL_MARKET_TOKENS):
+            _append_unique_bounded(
+                local_signal_recommendation_ids,
+                rec_id,
+                limit=_MAX_SIGNAL_RECOMMENDATION_IDS,
+            )
+            for token in _LOCAL_MARKET_TOKENS:
+                if token in corpus:
+                    _append_unique_bounded(local_market_terms, token, limit=_MAX_LOCAL_MARKET_TERMS)
+
+        if any(token in corpus for token in _SERVICE_COVERAGE_TOKENS):
+            _append_unique_bounded(
+                service_coverage_recommendation_ids,
+                rec_id,
+                limit=_MAX_SIGNAL_RECOMMENDATION_IDS,
+            )
+
+        evidence = item.evidence_json if isinstance(item.evidence_json, dict) else {}
+        for source in _to_sanitized_list(evidence.get("sources"), max_length=32):
+            source_counts[source] = source_counts.get(source, 0) + 1
+        for finding_type in _to_sanitized_list(evidence.get("finding_types"), max_length=48):
+            finding_type_counts[finding_type] = finding_type_counts.get(finding_type, 0) + 1
+        raw_counts = evidence.get("counts")
+        if isinstance(raw_counts, dict):
+            for raw_key, raw_value in raw_counts.items():
+                key = _sanitize_optional(str(raw_key), max_length=48)
+                if not key:
+                    continue
+                try:
+                    increment = max(0, int(raw_value))
+                except (TypeError, ValueError):
+                    continue
+                finding_type_counts[key] = finding_type_counts.get(key, 0) + increment
+
+    actionable_recommendation_ids = [
+        str(item["id"])
+        for item in normalized_recommendations
+        if str(item.get("status", "")).lower() in {"open", "in_progress", "accepted"}
+    ][: _MAX_SIGNAL_RECOMMENDATION_IDS]
+
+    return {
+        "source_counts": _top_count_items(source_counts, limit=_MAX_SOURCE_COUNTS),
+        "finding_type_counts": _top_count_items(finding_type_counts, limit=_MAX_FINDING_TYPE_COUNTS),
+        "competitor_gap_recommendation_ids": competitor_gap_recommendation_ids,
+        "local_signal_recommendation_ids": local_signal_recommendation_ids,
+        "service_coverage_recommendation_ids": service_coverage_recommendation_ids,
+        "local_market_terms": local_market_terms,
+        "actionable_recommendation_ids": actionable_recommendation_ids,
+    }
+
+
+def _normalize_site_service_areas(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    areas: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        normalized = _sanitize_optional(item, max_length=_MAX_SITE_SERVICE_AREA_LENGTH)
+        if not normalized:
+            continue
+        if normalized not in areas:
+            areas.append(normalized)
+        if len(areas) >= _MAX_SITE_SERVICE_AREAS:
+            break
+    return areas
+
+
+def _build_site_location_context(*, primary_location: str | None, service_areas: list[str]) -> str:
+    if primary_location and service_areas:
+        return f"{primary_location}; service areas: {', '.join(service_areas)}"
+    if primary_location:
+        return primary_location
+    if service_areas:
+        return f"Service areas: {', '.join(service_areas)}"
+    return "Unspecified location."
+
+
+def _to_sanitized_list(raw: object, *, max_length: int) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    normalized: list[str] = []
+    for item in raw:
+        value = _sanitize_optional(str(item), max_length=max_length)
+        if not value:
+            continue
+        if value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _top_count_items(counts: dict[str, int], *, limit: int) -> dict[str, int]:
+    items = sorted(counts.items(), key=lambda item: (-int(item[1]), item[0]))
+    return {
+        key: max(0, int(value))
+        for key, value in items[:limit]
+    }
+
+
+def _append_unique_bounded(values: list[str], value: str, *, limit: int) -> None:
+    if not value or value in values:
+        return
+    if len(values) >= limit:
+        return
+    values.append(value)
 
 
 def _normalize_competitor_telemetry_summary(raw: dict[str, object] | None) -> dict[str, object]:

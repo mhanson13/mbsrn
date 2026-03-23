@@ -83,3 +83,4 @@ Optional JSON output is available for local diffing and comparison.
 - Heuristic scoring is directional, not absolute truth.
 - Open-ended generation can vary across providers/models.
 - Use this as a regression signal plus manual review, not as a hard quality guarantee.
+- Context contract changes (for example site/locality/service context normalization) should be evaluated with before/after harness runs to confirm directional quality impact.
