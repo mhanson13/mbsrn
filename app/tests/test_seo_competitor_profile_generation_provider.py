@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 import json
+import logging
 import urllib.error
 import urllib.request
 
@@ -156,3 +157,99 @@ def test_openai_provider_malformed_content_is_normalized(monkeypatch) -> None:
         provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
 
     assert exc_info.value.code == "invalid_output"
+
+
+def test_openai_provider_logs_prompt_resolution_without_raw_prompt_text(monkeypatch, caplog) -> None:
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        response = {
+            "model": "gpt-4.1-mini",
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "candidates": [
+                                    {
+                                        "name": "Competitor One",
+                                        "domain": "competitor-one.example",
+                                        "competitor_type": "direct",
+                                        "summary": "Direct overlap",
+                                        "why_competitor": "Competes on service intent",
+                                        "evidence": "Search result overlap",
+                                        "confidence_score": 0.81,
+                                    }
+                                ]
+                            }
+                        )
+                    }
+                }
+            ],
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        prompt_text_competitor="SENSITIVE_COMPETITOR_PROMPT_TEXT",
+        prompt_source="split",
+        prompt_config_key="ai_prompt_text_competitor",
+        legacy_config_used=False,
+    )
+
+    with caplog.at_level(logging.INFO):
+        provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
+
+    assert "ai_prompt_resolution pipeline=competitor" in caplog.text
+    assert "prompt_source=split" in caplog.text
+    assert "legacy_config_used=False" in caplog.text
+    assert "SENSITIVE_COMPETITOR_PROMPT_TEXT" not in caplog.text
+    assert "ai_prompt_legacy_fallback pipeline=competitor" not in caplog.text
+
+
+def test_openai_provider_warns_on_legacy_fallback_without_raw_prompt_text(monkeypatch, caplog) -> None:
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        response = {
+            "model": "gpt-4.1-mini",
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "candidates": [
+                                    {
+                                        "name": "Competitor One",
+                                        "domain": "competitor-one.example",
+                                        "competitor_type": "direct",
+                                        "summary": "Direct overlap",
+                                        "why_competitor": "Competes on service intent",
+                                        "evidence": "Search result overlap",
+                                        "confidence_score": 0.81,
+                                    }
+                                ]
+                            }
+                        )
+                    }
+                }
+            ],
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        prompt_text_competitor="SENSITIVE_LEGACY_PROMPT_TEXT",
+        prompt_source="legacy_fallback",
+        prompt_config_key="ai_prompt_text_competitor",
+        legacy_config_used=True,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
+
+    assert "ai_prompt_legacy_fallback pipeline=competitor" in caplog.text
+    assert "prompt_source=legacy_fallback" in caplog.text
+    assert "SENSITIVE_LEGACY_PROMPT_TEXT" not in caplog.text

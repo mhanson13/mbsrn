@@ -78,6 +78,17 @@ Bounded exclusion telemetry is persisted at run level for tuning:
 - Recommendation narratives use a separate supplemental prompt contract: `AI_PROMPT_TEXT_RECOMMENDATIONS`.
 - The legacy shared variable `AI_PROMPT_TEXT_RECOMMENDATION` remains backward-compatible fallback only (when split vars are unset/blank) and should not be used for new deployments.
 
+### Prompt Source Observability
+- At AI provider invocation, the backend emits structured prompt-resolution metadata for the competitor pipeline:
+  - `pipeline=competitor`
+  - `prompt_source` (`split`, `legacy_fallback`, or `empty`)
+  - `legacy_config_used` (`true|false`)
+  - `prompt_config_key`
+  - `model_name`
+- If legacy fallback is used, a warning log is emitted to make migration drift visible.
+- Ops check: query logs for `ai_prompt_legacy_fallback` to detect environments still relying on `AI_PROMPT_TEXT_RECOMMENDATION`.
+- Raw supplemental prompt text is never logged.
+
 ### Candidate quality flow
 1. Provider structured output is validated server-side.
 2. Candidate fields are normalized for matching only:

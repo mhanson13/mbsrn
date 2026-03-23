@@ -7,6 +7,13 @@ from functools import lru_cache
 
 
 @dataclass(frozen=True)
+class _AIPromptResolution:
+    prompt_text: str
+    prompt_source: str
+    legacy_config_used: bool
+
+
+@dataclass(frozen=True)
 class Settings:
     app_name: str
     app_env: str
@@ -53,7 +60,11 @@ class Settings:
     ai_model_name: str
     ai_timeout_value: int
     ai_prompt_text_competitor: str
+    ai_prompt_text_competitor_source: str
+    ai_prompt_text_competitor_legacy_config_used: bool
     ai_prompt_text_recommendations: str
+    ai_prompt_text_recommendations_source: str
+    ai_prompt_text_recommendations_legacy_config_used: bool
     # DEPRECATED: DO NOT USE - replaced by AI_PROMPT_TEXT_COMPETITOR and AI_PROMPT_TEXT_RECOMMENDATIONS.
     ai_prompt_text_recommendation: str
     seo_competitor_profile_raw_output_retention_days: int
@@ -132,6 +143,30 @@ def _env_json_object(name: str) -> dict[str, str]:
     return normalized
 
 
+def _resolve_ai_prompt_text(*, split_env_name: str, legacy_prompt_text: str) -> _AIPromptResolution:
+    split_prompt_text = os.getenv(split_env_name)
+    split_prompt_present = split_prompt_text is not None and bool(split_prompt_text.strip())
+    legacy_prompt_present = bool((legacy_prompt_text or "").strip())
+
+    if split_prompt_present:
+        return _AIPromptResolution(
+            prompt_text=split_prompt_text or "",
+            prompt_source="split",
+            legacy_config_used=False,
+        )
+    if legacy_prompt_present:
+        return _AIPromptResolution(
+            prompt_text=legacy_prompt_text,
+            prompt_source="legacy_fallback",
+            legacy_config_used=True,
+        )
+    return _AIPromptResolution(
+        prompt_text=legacy_prompt_text,
+        prompt_source="empty",
+        legacy_config_used=False,
+    )
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     environment = os.getenv("ENVIRONMENT", "development")
@@ -193,12 +228,14 @@ def get_settings() -> Settings:
             )
 
     legacy_prompt_text_recommendation = os.getenv("AI_PROMPT_TEXT_RECOMMENDATION", "")
-    prompt_text_competitor = os.getenv("AI_PROMPT_TEXT_COMPETITOR")
-    if prompt_text_competitor is None or not prompt_text_competitor.strip():
-        prompt_text_competitor = legacy_prompt_text_recommendation
-    prompt_text_recommendations = os.getenv("AI_PROMPT_TEXT_RECOMMENDATIONS")
-    if prompt_text_recommendations is None or not prompt_text_recommendations.strip():
-        prompt_text_recommendations = legacy_prompt_text_recommendation
+    competitor_prompt_resolution = _resolve_ai_prompt_text(
+        split_env_name="AI_PROMPT_TEXT_COMPETITOR",
+        legacy_prompt_text=legacy_prompt_text_recommendation,
+    )
+    recommendations_prompt_resolution = _resolve_ai_prompt_text(
+        split_env_name="AI_PROMPT_TEXT_RECOMMENDATIONS",
+        legacy_prompt_text=legacy_prompt_text_recommendation,
+    )
 
     return Settings(
         app_name=os.getenv("APP_NAME", "MBSRN Operator Platform"),
@@ -266,8 +303,12 @@ def get_settings() -> Settings:
         ai_provider_name=(os.getenv("AI_PROVIDER_NAME", "openai").strip().lower() or "openai"),
         ai_model_name=(os.getenv("AI_MODEL_NAME", "gpt-4o-mini").strip() or "gpt-4o-mini"),
         ai_timeout_value=_env_int("AI_TIMEOUT_VALUE", 30, min_value=1),
-        ai_prompt_text_competitor=prompt_text_competitor,
-        ai_prompt_text_recommendations=prompt_text_recommendations,
+        ai_prompt_text_competitor=competitor_prompt_resolution.prompt_text,
+        ai_prompt_text_competitor_source=competitor_prompt_resolution.prompt_source,
+        ai_prompt_text_competitor_legacy_config_used=competitor_prompt_resolution.legacy_config_used,
+        ai_prompt_text_recommendations=recommendations_prompt_resolution.prompt_text,
+        ai_prompt_text_recommendations_source=recommendations_prompt_resolution.prompt_source,
+        ai_prompt_text_recommendations_legacy_config_used=recommendations_prompt_resolution.legacy_config_used,
         ai_prompt_text_recommendation=legacy_prompt_text_recommendation,
         seo_competitor_profile_raw_output_retention_days=_env_int(
             "SEO_COMPETITOR_PROFILE_RAW_OUTPUT_RETENTION_DAYS",

@@ -99,7 +99,11 @@ def test_ai_provider_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.ai_model_name == "gpt-4o-mini"
     assert settings.ai_timeout_value == 30
     assert settings.ai_prompt_text_competitor == ""
+    assert settings.ai_prompt_text_competitor_source == "empty"
+    assert settings.ai_prompt_text_competitor_legacy_config_used is False
     assert settings.ai_prompt_text_recommendations == ""
+    assert settings.ai_prompt_text_recommendations_source == "empty"
+    assert settings.ai_prompt_text_recommendations_legacy_config_used is False
     assert settings.ai_prompt_text_recommendation == ""
     assert settings.seo_competitor_profile_raw_output_retention_days == 30
     assert settings.seo_competitor_profile_run_retention_days == 180
@@ -125,7 +129,11 @@ def test_ai_provider_config_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.ai_model_name == "gpt-custom-model"
     assert settings.ai_timeout_value == 45
     assert settings.ai_prompt_text_competitor == "Prefer local competitors"
+    assert settings.ai_prompt_text_competitor_source == "split"
+    assert settings.ai_prompt_text_competitor_legacy_config_used is False
     assert settings.ai_prompt_text_recommendations == "Focus on recommendation narratives"
+    assert settings.ai_prompt_text_recommendations_source == "split"
+    assert settings.ai_prompt_text_recommendations_legacy_config_used is False
     assert settings.ai_prompt_text_recommendation == "Legacy fallback text"
     assert settings.seo_competitor_profile_raw_output_retention_days == 21
     assert settings.seo_competitor_profile_run_retention_days == 365
@@ -140,7 +148,11 @@ def test_ai_provider_config_uses_legacy_prompt_text_as_split_fallback(monkeypatc
     settings = get_settings()
 
     assert settings.ai_prompt_text_competitor == "Legacy shared guidance"
+    assert settings.ai_prompt_text_competitor_source == "legacy_fallback"
+    assert settings.ai_prompt_text_competitor_legacy_config_used is True
     assert settings.ai_prompt_text_recommendations == "Legacy shared guidance"
+    assert settings.ai_prompt_text_recommendations_source == "legacy_fallback"
+    assert settings.ai_prompt_text_recommendations_legacy_config_used is True
     assert settings.ai_prompt_text_recommendation == "Legacy shared guidance"
 
 
@@ -154,7 +166,11 @@ def test_ai_provider_config_uses_legacy_prompt_text_when_split_prompt_vars_are_b
     settings = get_settings()
 
     assert settings.ai_prompt_text_competitor == "Legacy shared guidance"
+    assert settings.ai_prompt_text_competitor_source == "legacy_fallback"
+    assert settings.ai_prompt_text_competitor_legacy_config_used is True
     assert settings.ai_prompt_text_recommendations == "Legacy shared guidance"
+    assert settings.ai_prompt_text_recommendations_source == "legacy_fallback"
+    assert settings.ai_prompt_text_recommendations_legacy_config_used is True
 
 
 def test_provider_factory_uses_configured_model_timeout_and_prompt_text(
@@ -172,6 +188,42 @@ def test_provider_factory_uses_configured_model_timeout_and_prompt_text(
     assert provider.model_name == "gpt-configured"
     assert provider.timeout_seconds == 41
     assert provider.prompt_text_competitor == "Prioritize direct local rivals"
+    assert provider.prompt_source == "split"
+    assert provider.legacy_config_used is False
+    assert provider.prompt_config_key == "ai_prompt_text_competitor"
+
+
+def test_provider_factory_competitor_prompt_metadata_legacy_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER_NAME", "openai")
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "sk-test")
+    monkeypatch.setenv("AI_MODEL_NAME", "gpt-configured")
+    monkeypatch.delenv("AI_PROMPT_TEXT_COMPETITOR", raising=False)
+    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATION", "Legacy competitor guidance")
+
+    provider = get_seo_competitor_profile_generation_provider()
+
+    assert isinstance(provider, OpenAISEOCompetitorProfileGenerationProvider)
+    assert provider.prompt_text_competitor == "Legacy competitor guidance"
+    assert provider.prompt_source == "legacy_fallback"
+    assert provider.legacy_config_used is True
+
+
+def test_provider_factory_competitor_prompt_metadata_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER_NAME", "openai")
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "sk-test")
+    monkeypatch.delenv("AI_PROMPT_TEXT_COMPETITOR", raising=False)
+    monkeypatch.delenv("AI_PROMPT_TEXT_RECOMMENDATION", raising=False)
+
+    provider = get_seo_competitor_profile_generation_provider()
+
+    assert isinstance(provider, OpenAISEOCompetitorProfileGenerationProvider)
+    assert provider.prompt_text_competitor == ""
+    assert provider.prompt_source == "empty"
+    assert provider.legacy_config_used is False
 
 
 def test_provider_factory_missing_api_key_returns_safe_misconfigured_provider(
@@ -241,6 +293,42 @@ def test_recommendation_narrative_provider_factory_uses_openai_when_configured(
     assert provider.model_name == "gpt-configured"
     assert provider.timeout_seconds == 39
     assert provider.prompt_text_recommendations == "Focus on backlog clarity"
+    assert provider.prompt_source == "split"
+    assert provider.legacy_config_used is False
+    assert provider.prompt_config_key == "ai_prompt_text_recommendations"
+
+
+def test_recommendation_narrative_provider_factory_prompt_metadata_legacy_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER_NAME", "openai")
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "sk-test")
+    monkeypatch.setenv("AI_MODEL_NAME", "gpt-configured")
+    monkeypatch.delenv("AI_PROMPT_TEXT_RECOMMENDATIONS", raising=False)
+    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATION", "Legacy recommendation guidance")
+
+    provider = get_seo_recommendation_narrative_provider()
+
+    assert isinstance(provider, OpenAISEORecommendationNarrativeProvider)
+    assert provider.prompt_text_recommendations == "Legacy recommendation guidance"
+    assert provider.prompt_source == "legacy_fallback"
+    assert provider.legacy_config_used is True
+
+
+def test_recommendation_narrative_provider_factory_prompt_metadata_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER_NAME", "openai")
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "sk-test")
+    monkeypatch.delenv("AI_PROMPT_TEXT_RECOMMENDATIONS", raising=False)
+    monkeypatch.delenv("AI_PROMPT_TEXT_RECOMMENDATION", raising=False)
+
+    provider = get_seo_recommendation_narrative_provider()
+
+    assert isinstance(provider, OpenAISEORecommendationNarrativeProvider)
+    assert provider.prompt_text_recommendations == ""
+    assert provider.prompt_source == "empty"
+    assert provider.legacy_config_used is False
 
 
 def test_recommendation_narrative_provider_factory_missing_key_in_production_is_safe_error(

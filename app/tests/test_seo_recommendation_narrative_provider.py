@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from io import BytesIO
 import json
+import logging
 import urllib.error
 import urllib.request
 
@@ -469,3 +470,123 @@ def test_openai_recommendation_narrative_provider_suppresses_tuning_suggestions_
 
     assert output.sections is not None
     assert output.sections["tuning_suggestions"] == []
+
+
+def test_openai_recommendation_narrative_provider_logs_prompt_resolution_without_raw_prompt_text(
+    monkeypatch,
+    caplog,
+) -> None:
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        response = {
+            "model": "gpt-4.1-mini",
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "narrative_text": "Narrative",
+                                "top_themes": ["theme"],
+                                "sections": {
+                                    "summary": "Summary",
+                                    "priority_rationale": "Rationale",
+                                    "next_actions": ["Action one"],
+                                    "recommendation_references": ["rec-1"],
+                                    "tuning_suggestions": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ],
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEORecommendationNarrativeProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        prompt_text_recommendations="SENSITIVE_RECOMMENDATIONS_PROMPT_TEXT",
+        prompt_source="split",
+        prompt_config_key="ai_prompt_text_recommendations",
+        legacy_config_used=False,
+    )
+
+    with caplog.at_level(logging.INFO):
+        provider.generate_narrative(
+            run=_run(),
+            recommendations=_recommendations(),
+            by_status={"open": 1},
+            by_category={"SEO": 1},
+            by_severity={"WARNING": 1},
+            by_effort_bucket={"LOW": 1},
+            by_priority_band={"high": 1},
+            backlog=_recommendations(),
+            competitor_telemetry_summary=_competitor_telemetry(raw=10, excluded=4),
+            current_tuning_values=_current_tuning_values(),
+        )
+
+    assert "ai_prompt_resolution pipeline=recommendations" in caplog.text
+    assert "prompt_source=split" in caplog.text
+    assert "legacy_config_used=False" in caplog.text
+    assert "SENSITIVE_RECOMMENDATIONS_PROMPT_TEXT" not in caplog.text
+    assert "ai_prompt_legacy_fallback pipeline=recommendations" not in caplog.text
+
+
+def test_openai_recommendation_narrative_provider_warns_on_legacy_fallback_without_raw_prompt_text(
+    monkeypatch,
+    caplog,
+) -> None:
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        response = {
+            "model": "gpt-4.1-mini",
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "narrative_text": "Narrative",
+                                "top_themes": ["theme"],
+                                "sections": {
+                                    "summary": "Summary",
+                                    "priority_rationale": "Rationale",
+                                    "next_actions": ["Action one"],
+                                    "recommendation_references": ["rec-1"],
+                                    "tuning_suggestions": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ],
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEORecommendationNarrativeProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        prompt_text_recommendations="SENSITIVE_LEGACY_RECOMMENDATION_PROMPT_TEXT",
+        prompt_source="legacy_fallback",
+        prompt_config_key="ai_prompt_text_recommendations",
+        legacy_config_used=True,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        provider.generate_narrative(
+            run=_run(),
+            recommendations=_recommendations(),
+            by_status={"open": 1},
+            by_category={"SEO": 1},
+            by_severity={"WARNING": 1},
+            by_effort_bucket={"LOW": 1},
+            by_priority_band={"high": 1},
+            backlog=_recommendations(),
+            competitor_telemetry_summary=_competitor_telemetry(raw=10, excluded=4),
+            current_tuning_values=_current_tuning_values(),
+        )
+
+    assert "ai_prompt_legacy_fallback pipeline=recommendations" in caplog.text
+    assert "prompt_source=legacy_fallback" in caplog.text
+    assert "SENSITIVE_LEGACY_RECOMMENDATION_PROMPT_TEXT" not in caplog.text

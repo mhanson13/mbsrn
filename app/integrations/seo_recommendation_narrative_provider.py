@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
 import socket
 import urllib.error
 import urllib.request
@@ -33,6 +34,8 @@ _PROVIDER_ERROR_INVALID_OUTPUT = "invalid_output"
 _PROVIDER_ERROR_SCHEMA_VALIDATION = "schema_validation"
 _PROVIDER_ERROR_PARSING = "parsing_error"
 _PROVIDER_ERROR_REQUEST = "provider_request"
+_LEGACY_PROMPT_CONFIG_KEY = "ai_prompt_text_recommendation"
+logger = logging.getLogger(__name__)
 
 _MAX_NARRATIVE_TEXT_LENGTH = 6000
 _MAX_THEME_LENGTH = 140
@@ -142,6 +145,9 @@ class OpenAISEORecommendationNarrativeProvider:
         prompt_text_recommendations: str | None = None,
         # DEPRECATED: use prompt_text_recommendations.
         prompt_text_recommendation: str | None = None,
+        prompt_source: str = "unknown",
+        prompt_config_key: str = "ai_prompt_text_recommendations",
+        legacy_config_used: bool = False,
     ) -> None:
         normalized_key = api_key.strip()
         if not normalized_key:
@@ -157,6 +163,9 @@ class OpenAISEORecommendationNarrativeProvider:
         self.prompt_text_recommendations = effective_prompt_text_recommendations
         # DEPRECATED: retained for compatibility with existing tests/callers.
         self.prompt_text_recommendation = effective_prompt_text_recommendations
+        self.prompt_source = str(prompt_source or "unknown").strip() or "unknown"
+        self.prompt_config_key = str(prompt_config_key or "ai_prompt_text_recommendations").strip()
+        self.legacy_config_used = bool(legacy_config_used)
 
     def generate_narrative(
         self,
@@ -172,6 +181,7 @@ class OpenAISEORecommendationNarrativeProvider:
         competitor_telemetry_summary: dict[str, object],
         current_tuning_values: dict[str, int],
     ) -> SEORecommendationNarrativeOutput:
+        self._log_prompt_resolution_metadata()
         prompt = build_seo_recommendation_narrative_prompt(
             run=run,
             recommendations=recommendations,
@@ -238,6 +248,32 @@ class OpenAISEORecommendationNarrativeProvider:
             model_name=model_name,
             prompt_version=prompt.prompt_version,
         )
+
+    def _log_prompt_resolution_metadata(self) -> None:
+        logger.info(
+            (
+                "ai_prompt_resolution pipeline=recommendations prompt_source=%s legacy_config_used=%s "
+                "prompt_config_key=%s model_name=%s provider_name=%s"
+            ),
+            self.prompt_source,
+            self.legacy_config_used,
+            self.prompt_config_key,
+            self.model_name,
+            self.provider_name,
+        )
+        if self.legacy_config_used:
+            logger.warning(
+                (
+                    "ai_prompt_legacy_fallback pipeline=recommendations prompt_source=%s "
+                    "prompt_config_key=%s legacy_config_key=%s model_name=%s provider_name=%s "
+                    "split_prompt_unset_or_blank=true migrate_to_split_prompt=true"
+                ),
+                self.prompt_source,
+                self.prompt_config_key,
+                _LEGACY_PROMPT_CONFIG_KEY,
+                self.model_name,
+                self.provider_name,
+            )
 
     def _request_completion(self, payload: dict[str, object]) -> str:
         body = json.dumps(payload, ensure_ascii=True).encode("utf-8")

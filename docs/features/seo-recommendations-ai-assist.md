@@ -121,6 +121,16 @@ Prompt separation:
 - Competitor discovery reads `AI_PROMPT_TEXT_COMPETITOR`.
 - The legacy shared `AI_PROMPT_TEXT_RECOMMENDATION` remains transitional fallback only (when split vars are unset/blank).
 
+Prompt source observability:
+- At provider invocation, recommendation narrative generation emits structured metadata:
+  - `pipeline=recommendations`
+  - `prompt_source` (`split`, `legacy_fallback`, or `empty`)
+  - `legacy_config_used`
+  - `prompt_config_key`
+  - `model_name`
+- Legacy fallback emits a warning-level log so operations can detect unmigrated environments.
+- Raw supplemental prompt text is never logged.
+
 ## Operational Behavior
 - Narrative generation is versioned per recommendation run.
 - Provider failures persist a `failed` narrative version with safe `error_message`.

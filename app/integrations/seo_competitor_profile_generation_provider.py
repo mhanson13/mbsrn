@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
 import socket
 import urllib.error
 import urllib.request
@@ -25,6 +26,8 @@ _PROVIDER_ERROR_INVALID_OUTPUT = "invalid_output"
 _PROVIDER_ERROR_SCHEMA_VALIDATION = "schema_validation"
 _PROVIDER_ERROR_PARSING = "parsing_error"
 _PROVIDER_ERROR_REQUEST = "provider_request"
+_LEGACY_PROMPT_CONFIG_KEY = "ai_prompt_text_recommendation"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         prompt_text_competitor: str | None = None,
         # DEPRECATED: use prompt_text_competitor.
         prompt_text_recommendation: str | None = None,
+        prompt_source: str = "unknown",
+        prompt_config_key: str = "ai_prompt_text_competitor",
+        legacy_config_used: bool = False,
     ) -> None:
         normalized_key = api_key.strip()
         if not normalized_key:
@@ -100,6 +106,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         self.prompt_text_competitor = effective_prompt_text_competitor
         # DEPRECATED: retained for compatibility with existing tests/callers.
         self.prompt_text_recommendation = effective_prompt_text_competitor
+        self.prompt_source = str(prompt_source or "unknown").strip() or "unknown"
+        self.prompt_config_key = str(prompt_config_key or "ai_prompt_text_competitor").strip()
+        self.legacy_config_used = bool(legacy_config_used)
 
     def generate_competitor_profiles(
         self,
@@ -108,6 +117,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         existing_domains: list[str],
         candidate_count: int,
     ) -> SEOCompetitorProfileGenerationOutput:
+        self._log_prompt_resolution_metadata()
         prompt = build_seo_competitor_profile_prompt(
             site=site,
             existing_domains=existing_domains,
@@ -162,6 +172,32 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             prompt_version=prompt.prompt_version,
             raw_response=assistant_content,
         )
+
+    def _log_prompt_resolution_metadata(self) -> None:
+        logger.info(
+            (
+                "ai_prompt_resolution pipeline=competitor prompt_source=%s legacy_config_used=%s "
+                "prompt_config_key=%s model_name=%s provider_name=%s"
+            ),
+            self.prompt_source,
+            self.legacy_config_used,
+            self.prompt_config_key,
+            self.model_name,
+            self.provider_name,
+        )
+        if self.legacy_config_used:
+            logger.warning(
+                (
+                    "ai_prompt_legacy_fallback pipeline=competitor prompt_source=%s "
+                    "prompt_config_key=%s legacy_config_key=%s model_name=%s provider_name=%s "
+                    "split_prompt_unset_or_blank=true migrate_to_split_prompt=true"
+                ),
+                self.prompt_source,
+                self.prompt_config_key,
+                _LEGACY_PROMPT_CONFIG_KEY,
+                self.model_name,
+                self.provider_name,
+            )
 
     def _request_completion(self, payload: dict[str, object]) -> str:
         body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
