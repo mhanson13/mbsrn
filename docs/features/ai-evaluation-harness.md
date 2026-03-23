@@ -82,6 +82,38 @@ python -m app.cli.seo_ai_quality_eval --mode mock --pipeline all --json --output
   - environment is production-like (`production` / `prod`)
 - The CLI never silently falls back from real mode to mock mode.
 
+## Real-Provider Preflight Checklist
+Use this checklist before running non-prod real-provider evaluation.
+
+1. Required env vars
+   - `AI_PROVIDER_NAME=openai`
+   - `AI_PROVIDER_API_KEY=<provider-secret>`
+   - `AI_EVAL_ALLOW_REAL_PROVIDER=true`
+2. Recommended non-secret vars
+   - `AI_MODEL_NAME` (default: `gpt-4o-mini`)
+   - `AI_TIMEOUT_VALUE` (default: `30`)
+   - `OPENAI_API_BASE_URL` (default: `https://api.openai.com/v1`)
+3. Environment safety guard
+   - Ensure `APP_ENV` and `ENVIRONMENT` are not `production`/`prod`.
+4. Provider guard
+   - Ensure `AI_PROVIDER_NAME` is not `mock` when using `--mode real`.
+5. Competitor eval command
+   - `python -m app.cli.seo_ai_quality_eval --mode real --pipeline competitor --json`
+6. Recommendation eval command
+   - `python -m app.cli.seo_ai_quality_eval --mode real --pipeline recommendations --json`
+7. Optional combined run + output file
+   - `python -m app.cli.seo_ai_quality_eval --mode real --pipeline all --json --output-file ./tmp/ai-eval-real.json`
+
+Common fail-closed errors:
+- `Real-provider eval is disabled...`:
+  `AI_EVAL_ALLOW_REAL_PROVIDER` is unset/false.
+- `requires a non-mock AI_PROVIDER_NAME`:
+  provider is configured as `mock`.
+- `blocked in production-like environments`:
+  `APP_ENV`/`ENVIRONMENT` is production-like.
+- `provider is misconfigured for 'openai'`:
+  usually missing/invalid `AI_PROVIDER_API_KEY`.
+
 ## Scoring Model
 
 ### Competitor scoring
