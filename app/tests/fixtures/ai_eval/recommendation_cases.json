@@ -1,0 +1,426 @@
+{
+  "cases": [
+    {
+      "case_id": "rec-missing-service-page-coverage",
+      "description": "Narrative should emphasize missing service-page coverage gaps.",
+      "input": {
+        "business_id": "eval-biz-1",
+        "site_id": "eval-site-1",
+        "run": {
+          "id": "rec-run-1",
+          "status": "completed",
+          "total_recommendations": 3,
+          "critical_recommendations": 1,
+          "warning_recommendations": 2,
+          "info_recommendations": 0
+        },
+        "recommendations": [
+          {
+            "id": "rec-1",
+            "rule_key": "expand_service_pages",
+            "category": "CONTENT",
+            "severity": "CRITICAL",
+            "title": "Expand thin HVAC service pages",
+            "rationale": "Service pages are too thin and lack intent-specific detail.",
+            "priority_score": 92,
+            "priority_band": "critical",
+            "effort_bucket": "HIGH",
+            "status": "open"
+          },
+          {
+            "id": "rec-2",
+            "rule_key": "add_internal_links",
+            "category": "TECHNICAL",
+            "severity": "WARNING",
+            "title": "Add internal links from hub pages",
+            "rationale": "Core service pages are underlinked from hub content.",
+            "priority_score": 76,
+            "priority_band": "high",
+            "effort_bucket": "MEDIUM",
+            "status": "in_progress"
+          },
+          {
+            "id": "rec-3",
+            "rule_key": "improve_title_tags",
+            "category": "SEO",
+            "severity": "WARNING",
+            "title": "Improve title tags for service pages",
+            "rationale": "Current title tags are generic and overlap heavily.",
+            "priority_score": 70,
+            "priority_band": "high",
+            "effort_bucket": "LOW",
+            "status": "open"
+          }
+        ],
+        "backlog_ids": ["rec-1", "rec-3", "rec-2"]
+      },
+      "expected": {
+        "must_address_topics": ["service", "pages"],
+        "required_recommendation_ids_any": ["rec-1", "rec-3"],
+        "require_recommendation_references": false,
+        "max_next_actions": 8,
+        "expect_non_empty_themes": true,
+        "min_narrative_chars": 80
+      }
+    },
+    {
+      "case_id": "rec-weak-local-seo-signal",
+      "description": "Narrative should reflect local SEO weakness and metadata priorities.",
+      "input": {
+        "business_id": "eval-biz-2",
+        "site_id": "eval-site-2",
+        "run": {
+          "id": "rec-run-2",
+          "status": "completed",
+          "total_recommendations": 2,
+          "critical_recommendations": 0,
+          "warning_recommendations": 2,
+          "info_recommendations": 0
+        },
+        "recommendations": [
+          {
+            "id": "rec-a",
+            "rule_key": "local_schema_markup",
+            "category": "SEO",
+            "severity": "WARNING",
+            "title": "Add local business schema markup",
+            "rationale": "Local entity signals are missing from key pages.",
+            "priority_score": 81,
+            "priority_band": "high",
+            "effort_bucket": "MEDIUM",
+            "status": "open"
+          },
+          {
+            "id": "rec-b",
+            "rule_key": "location_page_title_tags",
+            "category": "SEO",
+            "severity": "WARNING",
+            "title": "Improve location page title tags",
+            "rationale": "Location pages are using duplicate generic titles.",
+            "priority_score": 78,
+            "priority_band": "high",
+            "effort_bucket": "LOW",
+            "status": "open"
+          }
+        ],
+        "backlog_ids": ["rec-a", "rec-b"]
+      },
+      "expected": {
+        "must_address_topics": ["local", "title"],
+        "required_recommendation_ids_any": ["rec-a"],
+        "expect_non_empty_themes": true,
+        "min_narrative_chars": 70
+      }
+    },
+    {
+      "case_id": "rec-competitor-gap",
+      "description": "Narrative should emphasize competitor content depth gap.",
+      "input": {
+        "business_id": "eval-biz-3",
+        "site_id": "eval-site-3",
+        "run": {
+          "id": "rec-run-3",
+          "status": "completed",
+          "total_recommendations": 3,
+          "critical_recommendations": 1,
+          "warning_recommendations": 1,
+          "info_recommendations": 1
+        },
+        "recommendations": [
+          {
+            "id": "rec-x",
+            "rule_key": "close_content_depth_gap",
+            "category": "CONTENT",
+            "severity": "CRITICAL",
+            "title": "Close competitor content depth gap",
+            "rationale": "Competitors provide deeper service explanations and FAQs.",
+            "priority_score": 90,
+            "priority_band": "critical",
+            "effort_bucket": "HIGH",
+            "status": "open"
+          },
+          {
+            "id": "rec-y",
+            "rule_key": "add_comparison_pages",
+            "category": "CONTENT",
+            "severity": "WARNING",
+            "title": "Add comparison pages for top services",
+            "rationale": "Missing comparison pages causes lower decision-stage relevance.",
+            "priority_score": 72,
+            "priority_band": "high",
+            "effort_bucket": "MEDIUM",
+            "status": "in_progress"
+          },
+          {
+            "id": "rec-z",
+            "rule_key": "improve_cta_clarity",
+            "category": "UX",
+            "severity": "INFO",
+            "title": "Improve CTA clarity on service pages",
+            "rationale": "Calls to action are present but not specific to user intent.",
+            "priority_score": 55,
+            "priority_band": "medium",
+            "effort_bucket": "LOW",
+            "status": "open"
+          }
+        ]
+      },
+      "expected": {
+        "must_address_topics": ["competitor", "content"],
+        "required_recommendation_ids_any": ["rec-x", "rec-y"],
+        "expect_non_empty_themes": true,
+        "min_narrative_chars": 80
+      }
+    },
+    {
+      "case_id": "rec-trust-clarity-gap",
+      "description": "Narrative should mention trust and clarity signals for conversion-critical pages.",
+      "input": {
+        "business_id": "eval-biz-4",
+        "site_id": "eval-site-4",
+        "run": {
+          "id": "rec-run-4",
+          "status": "completed",
+          "total_recommendations": 2,
+          "critical_recommendations": 0,
+          "warning_recommendations": 1,
+          "info_recommendations": 1
+        },
+        "recommendations": [
+          {
+            "id": "rec-m",
+            "rule_key": "add_trust_signals",
+            "category": "UX",
+            "severity": "WARNING",
+            "title": "Add trust signals to service pages",
+            "rationale": "Pages lack certifications, guarantees, and review proof blocks.",
+            "priority_score": 69,
+            "priority_band": "high",
+            "effort_bucket": "LOW",
+            "status": "open"
+          },
+          {
+            "id": "rec-n",
+            "rule_key": "clarify_value_proposition",
+            "category": "CONTENT",
+            "severity": "INFO",
+            "title": "Clarify value proposition above the fold",
+            "rationale": "Current hero copy is vague and fails to communicate differentiation.",
+            "priority_score": 58,
+            "priority_band": "medium",
+            "effort_bucket": "LOW",
+            "status": "open"
+          }
+        ]
+      },
+      "expected": {
+        "must_address_topics": ["trust", "clarity"],
+        "required_recommendation_ids_any": ["rec-m"],
+        "expect_non_empty_themes": true,
+        "min_narrative_chars": 70
+      }
+    },
+    {
+      "case_id": "rec-strong-site-avoid-filler",
+      "description": "Strong site case should still avoid generic filler language.",
+      "input": {
+        "business_id": "eval-biz-5",
+        "site_id": "eval-site-5",
+        "run": {
+          "id": "rec-run-5",
+          "status": "completed",
+          "total_recommendations": 1,
+          "critical_recommendations": 0,
+          "warning_recommendations": 0,
+          "info_recommendations": 1
+        },
+        "recommendations": [
+          {
+            "id": "rec-q",
+            "rule_key": "incremental_schema_refinement",
+            "category": "SEO",
+            "severity": "INFO",
+            "title": "Refine schema coverage on FAQ pages",
+            "rationale": "Schema exists but FAQ coverage is incomplete on two pages.",
+            "priority_score": 40,
+            "priority_band": "low",
+            "effort_bucket": "LOW",
+            "status": "open"
+          }
+        ]
+      },
+      "expected": {
+        "must_address_topics": ["schema", "faq"],
+        "forbidden_phrases": ["as an ai language model", "optimize your website", "best practices"],
+        "expect_non_empty_themes": true,
+        "min_narrative_chars": 50
+      }
+    },
+    {
+      "case_id": "rec-duplicate-theme-suppression",
+      "description": "Narrative quality should avoid repetitive duplicate theme wording.",
+      "input": {
+        "business_id": "eval-biz-6",
+        "site_id": "eval-site-6",
+        "run": {
+          "id": "rec-run-6",
+          "status": "completed",
+          "total_recommendations": 3,
+          "critical_recommendations": 1,
+          "warning_recommendations": 2,
+          "info_recommendations": 0
+        },
+        "recommendations": [
+          {
+            "id": "rec-d1",
+            "rule_key": "fix_title_tags",
+            "category": "SEO",
+            "severity": "WARNING",
+            "title": "Fix duplicate title tags",
+            "rationale": "Title tags are duplicated across core service pages.",
+            "priority_score": 74,
+            "priority_band": "high",
+            "effort_bucket": "LOW",
+            "status": "open"
+          },
+          {
+            "id": "rec-d2",
+            "rule_key": "fix_meta_descriptions",
+            "category": "SEO",
+            "severity": "WARNING",
+            "title": "Fix duplicate meta descriptions",
+            "rationale": "Meta descriptions are repetitive and not intent-specific.",
+            "priority_score": 72,
+            "priority_band": "high",
+            "effort_bucket": "LOW",
+            "status": "open"
+          },
+          {
+            "id": "rec-d3",
+            "rule_key": "expand_unique_copy",
+            "category": "CONTENT",
+            "severity": "CRITICAL",
+            "title": "Expand unique copy for service pages",
+            "rationale": "Service pages contain repetitive boilerplate.",
+            "priority_score": 88,
+            "priority_band": "critical",
+            "effort_bucket": "MEDIUM",
+            "status": "in_progress"
+          }
+        ]
+      },
+      "expected": {
+        "must_address_topics": ["duplicate", "service pages"],
+        "required_recommendation_ids_any": ["rec-d3"],
+        "expect_non_empty_themes": true,
+        "max_next_actions": 8,
+        "min_narrative_chars": 80
+      }
+    },
+    {
+      "case_id": "rec-sparse-evidence-cautious",
+      "description": "Sparse evidence case should still stay grounded and concise without overreach.",
+      "input": {
+        "business_id": "eval-biz-7",
+        "site_id": "eval-site-7",
+        "run": {
+          "id": "rec-run-7",
+          "status": "completed",
+          "total_recommendations": 1,
+          "critical_recommendations": 0,
+          "warning_recommendations": 1,
+          "info_recommendations": 0
+        },
+        "recommendations": [
+          {
+            "id": "rec-s1",
+            "rule_key": "improve_internal_anchor_text",
+            "category": "SEO",
+            "severity": "WARNING",
+            "title": "Improve internal anchor text specificity",
+            "rationale": "Internal anchors are overly generic across key pages.",
+            "priority_score": 61,
+            "priority_band": "medium",
+            "effort_bucket": "LOW",
+            "status": "open"
+          }
+        ],
+        "competitor_telemetry_summary": {
+          "lookback_days": 30,
+          "total_runs": 1,
+          "total_raw_candidate_count": 2,
+          "total_included_candidate_count": 2,
+          "total_excluded_candidate_count": 0,
+          "exclusion_counts_by_reason": {}
+        }
+      },
+      "expected": {
+        "must_address_topics": ["anchor", "internal"],
+        "expect_non_empty_themes": true,
+        "min_narrative_chars": 60,
+        "max_next_actions": 6
+      }
+    },
+    {
+      "case_id": "rec-priority-ordering-focus",
+      "description": "Narrative should surface top backlog focus for highest-priority recommendation.",
+      "input": {
+        "business_id": "eval-biz-8",
+        "site_id": "eval-site-8",
+        "run": {
+          "id": "rec-run-8",
+          "status": "completed",
+          "total_recommendations": 3,
+          "critical_recommendations": 1,
+          "warning_recommendations": 1,
+          "info_recommendations": 1
+        },
+        "recommendations": [
+          {
+            "id": "rec-p1",
+            "rule_key": "resolve_indexation_issues",
+            "category": "TECHNICAL",
+            "severity": "CRITICAL",
+            "title": "Resolve indexation blockers on service pages",
+            "rationale": "Important service pages are excluded or canonicalized incorrectly.",
+            "priority_score": 95,
+            "priority_band": "critical",
+            "effort_bucket": "HIGH",
+            "status": "open"
+          },
+          {
+            "id": "rec-p2",
+            "rule_key": "improve_core_web_vitals",
+            "category": "TECHNICAL",
+            "severity": "WARNING",
+            "title": "Improve Core Web Vitals on mobile",
+            "rationale": "LCP and CLS regressions impact mobile performance.",
+            "priority_score": 73,
+            "priority_band": "high",
+            "effort_bucket": "MEDIUM",
+            "status": "in_progress"
+          },
+          {
+            "id": "rec-p3",
+            "rule_key": "expand_faq_coverage",
+            "category": "CONTENT",
+            "severity": "INFO",
+            "title": "Expand FAQ coverage for long-tail queries",
+            "rationale": "FAQ blocks are missing for key service intent terms.",
+            "priority_score": 57,
+            "priority_band": "medium",
+            "effort_bucket": "LOW",
+            "status": "open"
+          }
+        ],
+        "backlog_ids": ["rec-p1", "rec-p2", "rec-p3"]
+      },
+      "expected": {
+        "must_address_topics": ["indexation", "service pages"],
+        "required_recommendation_ids_any": ["rec-p1"],
+        "expect_non_empty_themes": true,
+        "min_narrative_chars": 80
+      }
+    }
+  ]
+}

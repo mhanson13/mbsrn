@@ -1,0 +1,199 @@
+{
+  "cases": [
+    {
+      "case_id": "comp-local-plumbing-denver",
+      "description": "Same-city local plumbing competitors with directory suppression.",
+      "input": {
+        "business_id": "eval-biz-1",
+        "site": {
+          "display_name": "Mile High Plumbing",
+          "base_url": "https://milehighplumbing.example/",
+          "normalized_domain": "milehighplumbing.example",
+          "industry": "Plumbing",
+          "primary_location": "Denver, CO",
+          "service_areas": ["Denver", "Aurora", "Lakewood"]
+        },
+        "existing_domains": ["trustedplumberdenver.example"],
+        "candidate_count": 5
+      },
+      "expected": {
+        "required_location_terms_any": ["denver", "aurora", "lakewood"],
+        "required_service_terms_any": ["plumb", "drain", "water heater"],
+        "forbidden_domains": ["yelp.com", "angi.com", "homeadvisor.com"],
+        "forbidden_competitor_types": ["informational"],
+        "min_candidate_count": 2,
+        "max_candidate_count": 5
+      }
+    },
+    {
+      "case_id": "comp-specialist-roofing",
+      "description": "Specialist roofing business should surface roofing competitors over broad home services noise.",
+      "input": {
+        "business_id": "eval-biz-2",
+        "site": {
+          "display_name": "Front Range Roofing Co",
+          "base_url": "https://frroofing.example/",
+          "normalized_domain": "frroofing.example",
+          "industry": "Roofing",
+          "primary_location": "Colorado Springs, CO",
+          "service_areas": ["Colorado Springs", "Monument"]
+        },
+        "existing_domains": [],
+        "candidate_count": 4
+      },
+      "expected": {
+        "required_location_terms_any": ["colorado springs", "monument"],
+        "required_service_terms_any": ["roof", "shingle", "repair"],
+        "forbidden_domains": ["wikipedia.org"],
+        "forbidden_competitor_types": ["informational"],
+        "min_candidate_count": 2,
+        "max_candidate_count": 4
+      }
+    },
+    {
+      "case_id": "comp-false-positive-keyword-overlap",
+      "description": "Electrical contractor should avoid generic keyword-overlap non-substitute businesses.",
+      "input": {
+        "business_id": "eval-biz-3",
+        "site": {
+          "display_name": "Summit Electric Services",
+          "base_url": "https://summitelectric.example/",
+          "normalized_domain": "summitelectric.example",
+          "industry": "Electrical Services",
+          "primary_location": "Boulder, CO",
+          "service_areas": ["Boulder", "Longmont"]
+        },
+        "existing_domains": [],
+        "candidate_count": 5
+      },
+      "expected": {
+        "required_location_terms_any": ["boulder", "longmont"],
+        "required_service_terms_any": ["electric", "panel", "wiring"],
+        "forbidden_domain_substrings": ["bike", "toy", "blog", "wiki", "reddit"],
+        "min_candidate_count": 2,
+        "max_candidate_count": 5
+      }
+    },
+    {
+      "case_id": "comp-directory-contamination",
+      "description": "Tree service case should penalize directory and marketplace contamination.",
+      "input": {
+        "business_id": "eval-biz-4",
+        "site": {
+          "display_name": "Northside Tree Care",
+          "base_url": "https://northsidetreecare.example/",
+          "normalized_domain": "northsidetreecare.example",
+          "industry": "Tree Service",
+          "primary_location": "Fort Collins, CO",
+          "service_areas": ["Fort Collins", "Loveland"]
+        },
+        "existing_domains": [],
+        "candidate_count": 5
+      },
+      "expected": {
+        "required_location_terms_any": ["fort collins", "loveland"],
+        "required_service_terms_any": ["tree", "stump", "arbor"],
+        "forbidden_domains": ["thumbtack.com", "angi.com", "yellowpages.com"],
+        "forbidden_domain_substrings": ["directory", "marketplace"],
+        "min_candidate_count": 2,
+        "max_candidate_count": 5
+      }
+    },
+    {
+      "case_id": "comp-geography-trap",
+      "description": "Miami pest control should prioritize local geography and avoid out-of-region candidates.",
+      "input": {
+        "business_id": "eval-biz-5",
+        "site": {
+          "display_name": "South Beach Pest Control",
+          "base_url": "https://southbeachpest.example/",
+          "normalized_domain": "southbeachpest.example",
+          "industry": "Pest Control",
+          "primary_location": "Miami, FL",
+          "service_areas": ["Miami", "Coral Gables"]
+        },
+        "existing_domains": ["miamipestexperts.example"],
+        "candidate_count": 5
+      },
+      "expected": {
+        "required_location_terms_any": ["miami", "coral gables"],
+        "required_service_terms_any": ["pest", "termite", "rodent"],
+        "forbidden_domain_substrings": ["seattle", "portland", "toronto"],
+        "min_candidate_count": 2,
+        "max_candidate_count": 5
+      }
+    },
+    {
+      "case_id": "comp-adjacent-not-substitute",
+      "description": "HVAC repair should avoid adjacent non-substitute businesses like appliance stores.",
+      "input": {
+        "business_id": "eval-biz-6",
+        "site": {
+          "display_name": "Peak HVAC Repair",
+          "base_url": "https://peakhvac.example/",
+          "normalized_domain": "peakhvac.example",
+          "industry": "HVAC",
+          "primary_location": "Phoenix, AZ",
+          "service_areas": ["Phoenix", "Tempe"]
+        },
+        "existing_domains": [],
+        "candidate_count": 4
+      },
+      "expected": {
+        "required_location_terms_any": ["phoenix", "tempe"],
+        "required_service_terms_any": ["hvac", "ac", "heating"],
+        "forbidden_domain_substrings": ["appliance", "retail", "ecommerce"],
+        "min_candidate_count": 2,
+        "max_candidate_count": 4
+      }
+    },
+    {
+      "case_id": "comp-strong-local-overlap",
+      "description": "Local locksmith case should return strong overlap competitors and avoid known existing domains.",
+      "input": {
+        "business_id": "eval-biz-7",
+        "site": {
+          "display_name": "Rapid Lock & Key",
+          "base_url": "https://rapidlockkey.example/",
+          "normalized_domain": "rapidlockkey.example",
+          "industry": "Locksmith",
+          "primary_location": "Nashville, TN",
+          "service_areas": ["Nashville", "Franklin"]
+        },
+        "existing_domains": ["nashvillelocksmithpros.example", "rapidlockkey.example"],
+        "candidate_count": 5
+      },
+      "expected": {
+        "required_location_terms_any": ["nashville", "franklin"],
+        "required_service_terms_any": ["locksmith", "lock", "key"],
+        "forbidden_domains": ["rapidlockkey.example", "nashvillelocksmithpros.example"],
+        "min_candidate_count": 2,
+        "max_candidate_count": 5
+      }
+    },
+    {
+      "case_id": "comp-sparse-input-conservative",
+      "description": "Sparse site context should still avoid noisy entities and produce conservative candidate volume.",
+      "input": {
+        "business_id": "eval-biz-8",
+        "site": {
+          "display_name": "Atlas Services",
+          "base_url": "https://atlasservices.example/",
+          "normalized_domain": "atlasservices.example",
+          "industry": "",
+          "primary_location": "",
+          "service_areas": []
+        },
+        "existing_domains": [],
+        "candidate_count": 3
+      },
+      "expected": {
+        "required_service_terms_any": ["service", "repair", "local"],
+        "forbidden_domains": ["reddit.com", "wikipedia.org"],
+        "forbidden_domain_substrings": ["forum", "blog"],
+        "min_candidate_count": 1,
+        "max_candidate_count": 3
+      }
+    }
+  ]
+}

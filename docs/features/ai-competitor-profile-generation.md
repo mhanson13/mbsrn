@@ -344,3 +344,8 @@ Operator-visible behavior remains safe and non-diagnostic (no stack traces, no r
 - Optional longer-term cleanup execution history retention controls.
 - Optional richer context signals (for example structured taxonomy fields) while preserving deterministic prompt governance.
 - Optional operator-facing relevance indicators in UI if/when product chooses to expose the persisted score.
+
+## Evaluation Harness Reference
+
+- Internal fixture-based competitor quality evaluation is documented in [AI Evaluation Harness](./ai-evaluation-harness.md).
+- Use this harness for prompt/model regression checks; it does not alter production workflow or review gating.

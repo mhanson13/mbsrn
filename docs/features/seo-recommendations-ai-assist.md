@@ -156,3 +156,8 @@ Prompt source observability:
 - Provider expansion behind the existing provider abstraction.
 - Richer grounded narrative sections (still tied to deterministic IDs/rollups).
 - Additional observability for narrative generation latency/error categories.
+
+## Evaluation Harness Reference
+
+- Internal fixture-based recommendation narrative quality evaluation is documented in [AI Evaluation Harness](./ai-evaluation-harness.md).
+- The harness is for regression/comparison only; deterministic recommendations remain canonical and AI remains advisory.
