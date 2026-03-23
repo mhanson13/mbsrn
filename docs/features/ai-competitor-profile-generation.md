@@ -358,4 +358,5 @@ Operator-visible behavior remains safe and non-diagnostic (no stack traces, no r
 ## Evaluation Harness Reference
 
 - Internal fixture-based competitor quality evaluation is documented in [AI Evaluation Harness](./ai-evaluation-harness.md).
+- For non-production external-model quality checks, use harness `--mode real` with explicit guard `AI_EVAL_ALLOW_REAL_PROVIDER=true`.
 - Use this harness for prompt/model regression checks; it does not alter production workflow or review gating.

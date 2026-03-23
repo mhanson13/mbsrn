@@ -65,6 +65,7 @@ class Settings:
     ai_prompt_text_recommendations: str
     ai_prompt_text_recommendations_source: str
     ai_prompt_text_recommendations_legacy_config_used: bool
+    ai_eval_allow_real_provider: bool
     # DEPRECATED: DO NOT USE - replaced by AI_PROMPT_TEXT_COMPETITOR and AI_PROMPT_TEXT_RECOMMENDATIONS.
     ai_prompt_text_recommendation: str
     seo_competitor_profile_raw_output_retention_days: int
@@ -309,6 +310,7 @@ def get_settings() -> Settings:
         ai_prompt_text_recommendations=recommendations_prompt_resolution.prompt_text,
         ai_prompt_text_recommendations_source=recommendations_prompt_resolution.prompt_source,
         ai_prompt_text_recommendations_legacy_config_used=recommendations_prompt_resolution.legacy_config_used,
+        ai_eval_allow_real_provider=_env_bool("AI_EVAL_ALLOW_REAL_PROVIDER", False),
         ai_prompt_text_recommendation=legacy_prompt_text_recommendation,
         seo_competitor_profile_raw_output_retention_days=_env_int(
             "SEO_COMPETITOR_PROFILE_RAW_OUTPUT_RETENTION_DAYS",

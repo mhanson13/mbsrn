@@ -317,9 +317,14 @@ def test_runner_and_report_include_aggregate_fields() -> None:
     report_json = reports_to_json([report])
 
     assert report.total_cases == 1
+    assert report.eval_mode == "mock"
+    assert report.provider_name == "unknown-provider"
+    assert report.model_name == "unknown-model"
     assert "aggregate_score" in report_text
+    assert "mode=mock" in report_text
     assert "runner-case-1" in report_text
     assert "\"pipeline\": \"competitor\"" in report_json
+    assert "\"eval_mode\": \"mock\"" in report_json
 
     recommendation_case = RecommendationEvalCase(
         case_id="runner-case-2",

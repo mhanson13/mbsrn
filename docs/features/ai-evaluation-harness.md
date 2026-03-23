@@ -26,9 +26,24 @@ Each file contains a `cases` array with:
 
 ## How To Run
 
+### Evaluation modes
+- `mock` mode:
+  - deterministic and CI-safe
+  - uses internal mock providers only
+  - default mode
+- `real` mode:
+  - calls configured external provider
+  - requires explicit opt-in guard
+  - blocked in production-like environments
+
 Run both pipelines:
 ```bash
 python -m app.cli.seo_ai_quality_eval --pipeline all
+```
+
+Run explicit mock mode:
+```bash
+python -m app.cli.seo_ai_quality_eval --mode mock --pipeline all
 ```
 
 Competitor only:
@@ -45,6 +60,27 @@ JSON output:
 ```bash
 python -m app.cli.seo_ai_quality_eval --pipeline all --json
 ```
+
+Real-provider (non-prod only, explicit opt-in):
+```bash
+AI_EVAL_ALLOW_REAL_PROVIDER=true \
+python -m app.cli.seo_ai_quality_eval --mode real --pipeline all --json
+```
+
+Optional output file:
+```bash
+python -m app.cli.seo_ai_quality_eval --mode mock --pipeline all --json --output-file ./tmp/ai-eval.json
+```
+
+## Real-Mode Guardrails
+- Real mode requires both:
+  - `--mode real`
+  - `AI_EVAL_ALLOW_REAL_PROVIDER=true`
+- Real mode fails closed if:
+  - provider is `mock`
+  - provider config is misconfigured
+  - environment is production-like (`production` / `prod`)
+- The CLI never silently falls back from real mode to mock mode.
 
 ## Scoring Model
 
@@ -68,14 +104,22 @@ Heuristic checks emphasize specificity and grounding:
 ## Output
 Plain-text summary by default:
 - pipeline
+- mode
+- provider name
+- model name
 - total/passed/failed
 - aggregate score
 - per-case pass/fail, score, short reasons
 
-Optional JSON output is available for local diffing and comparison.
+Optional JSON output is available for local diffing and comparison and includes:
+- `eval_mode`
+- `provider_name`
+- `model_name`
+- aggregate and per-case results
 
 ## Safety / Privacy
 - Raw supplemental prompt text is not printed by this harness.
+- Raw prompt text is not logged in eval output.
 - This harness is intended for synthetic/local fixture contexts.
 - It does not replace human review of AI quality.
 

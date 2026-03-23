@@ -162,4 +162,5 @@ Prompt source observability:
 ## Evaluation Harness Reference
 
 - Internal fixture-based recommendation narrative quality evaluation is documented in [AI Evaluation Harness](./ai-evaluation-harness.md).
+- Real-provider harness runs are opt-in and non-prod only (`--mode real` + `AI_EVAL_ALLOW_REAL_PROVIDER=true`).
 - The harness is for regression/comparison only; deterministic recommendations remain canonical and AI remains advisory.

@@ -126,6 +126,9 @@ class EvalCaseResult:
 @dataclass(frozen=True)
 class EvalPipelineReport:
     pipeline: str
+    eval_mode: str
+    provider_name: str
+    model_name: str
     total_cases: int
     passed_cases: int
     failed_cases: int
@@ -135,6 +138,9 @@ class EvalPipelineReport:
     def to_dict(self) -> dict[str, object]:
         return {
             "pipeline": self.pipeline,
+            "eval_mode": self.eval_mode,
+            "provider_name": self.provider_name,
+            "model_name": self.model_name,
             "total_cases": self.total_cases,
             "passed_cases": self.passed_cases,
             "failed_cases": self.failed_cases,
@@ -361,9 +367,12 @@ def run_competitor_eval(
     *,
     cases: list[CompetitorEvalCase],
     provider: SEOCompetitorProfileGenerationProvider,
+    eval_mode: str = "mock",
     pass_threshold: int = COMPETITOR_PASS_THRESHOLD,
 ) -> EvalPipelineReport:
     results: list[EvalCaseResult] = []
+    provider_name = _provider_name(provider, default="unknown-provider")
+    model_name = _provider_model_name(provider, default="unknown-model")
     for case in cases:
         try:
             output = provider.generate_competitor_profiles(
@@ -398,16 +407,25 @@ def run_competitor_eval(
                 metadata=metadata,
             )
         )
-    return _build_report("competitor", results)
+    return _build_report(
+        "competitor",
+        results,
+        eval_mode=eval_mode,
+        provider_name=provider_name,
+        model_name=model_name,
+    )
 
 
 def run_recommendation_eval(
     *,
     cases: list[RecommendationEvalCase],
     provider: SEORecommendationNarrativeProvider,
+    eval_mode: str = "mock",
     pass_threshold: int = RECOMMENDATION_PASS_THRESHOLD,
 ) -> EvalPipelineReport:
     results: list[EvalCaseResult] = []
+    provider_name = _provider_name(provider, default="unknown-provider")
+    model_name = _provider_model_name(provider, default="unknown-model")
     for case in cases:
         try:
             backlog = _build_backlog(case.input.recommendations, case.input.backlog_ids)
@@ -449,7 +467,13 @@ def run_recommendation_eval(
                 metadata=metadata,
             )
         )
-    return _build_report("recommendations", results)
+    return _build_report(
+        "recommendations",
+        results,
+        eval_mode=eval_mode,
+        provider_name=provider_name,
+        model_name=model_name,
+    )
 
 
 def score_competitor_output(
@@ -597,7 +621,8 @@ def score_recommendation_output(
 def format_eval_report_text(report: EvalPipelineReport) -> str:
     lines = [
         (
-            f"[{report.pipeline}] total={report.total_cases} passed={report.passed_cases} "
+            f"[{report.pipeline}] mode={report.eval_mode} provider={report.provider_name} model={report.model_name} "
+            f"total={report.total_cases} passed={report.passed_cases} "
             f"failed={report.failed_cases} aggregate_score={report.aggregate_score:.1f}"
         ),
         "case_id | status | score | reasons",
@@ -622,13 +647,23 @@ def reports_to_json(reports: list[EvalPipelineReport]) -> str:
     }
     return json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True)
 
-def _build_report(pipeline: str, results: list[EvalCaseResult]) -> EvalPipelineReport:
+def _build_report(
+    pipeline: str,
+    results: list[EvalCaseResult],
+    *,
+    eval_mode: str,
+    provider_name: str,
+    model_name: str,
+) -> EvalPipelineReport:
     total = len(results)
     passed = sum(1 for item in results if item.passed)
     failed = total - passed
     aggregate_score = round(sum(item.score for item in results) / total, 2) if total else 0.0
     return EvalPipelineReport(
         pipeline=pipeline,
+        eval_mode=eval_mode,
+        provider_name=provider_name,
+        model_name=model_name,
         total_cases=total,
         passed_cases=passed,
         failed_cases=failed,
@@ -887,3 +922,19 @@ def _clamp_score(score: int) -> int:
     if score > 100:
         return 100
     return score
+
+
+def _provider_name(provider: object, *, default: str) -> str:
+    raw = getattr(provider, "provider_name", None)
+    if raw is None:
+        return default
+    normalized = str(raw).strip()
+    return normalized or default
+
+
+def _provider_model_name(provider: object, *, default: str) -> str:
+    raw = getattr(provider, "model_name", None)
+    if raw is None:
+        return default
+    normalized = str(raw).strip()
+    return normalized or default

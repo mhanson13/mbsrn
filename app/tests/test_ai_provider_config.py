@@ -88,6 +88,7 @@ def test_ai_provider_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AI_PROMPT_TEXT_COMPETITOR", raising=False)
     monkeypatch.delenv("AI_PROMPT_TEXT_RECOMMENDATIONS", raising=False)
     monkeypatch.delenv("AI_PROMPT_TEXT_RECOMMENDATION", raising=False)
+    monkeypatch.delenv("AI_EVAL_ALLOW_REAL_PROVIDER", raising=False)
     monkeypatch.delenv("SEO_COMPETITOR_PROFILE_RAW_OUTPUT_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("SEO_COMPETITOR_PROFILE_RUN_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("SEO_COMPETITOR_PROFILE_REJECTED_DRAFT_RETENTION_DAYS", raising=False)
@@ -104,6 +105,7 @@ def test_ai_provider_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.ai_prompt_text_recommendations == ""
     assert settings.ai_prompt_text_recommendations_source == "empty"
     assert settings.ai_prompt_text_recommendations_legacy_config_used is False
+    assert settings.ai_eval_allow_real_provider is False
     assert settings.ai_prompt_text_recommendation == ""
     assert settings.seo_competitor_profile_raw_output_retention_days == 30
     assert settings.seo_competitor_profile_run_retention_days == 180
@@ -118,6 +120,7 @@ def test_ai_provider_config_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROMPT_TEXT_COMPETITOR", "Prefer local competitors")
     monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATIONS", "Focus on recommendation narratives")
     monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATION", "Legacy fallback text")
+    monkeypatch.setenv("AI_EVAL_ALLOW_REAL_PROVIDER", "true")
     monkeypatch.setenv("SEO_COMPETITOR_PROFILE_RAW_OUTPUT_RETENTION_DAYS", "21")
     monkeypatch.setenv("SEO_COMPETITOR_PROFILE_RUN_RETENTION_DAYS", "365")
     monkeypatch.setenv("SEO_COMPETITOR_PROFILE_REJECTED_DRAFT_RETENTION_DAYS", "60")
@@ -134,6 +137,7 @@ def test_ai_provider_config_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.ai_prompt_text_recommendations == "Focus on recommendation narratives"
     assert settings.ai_prompt_text_recommendations_source == "split"
     assert settings.ai_prompt_text_recommendations_legacy_config_used is False
+    assert settings.ai_eval_allow_real_provider is True
     assert settings.ai_prompt_text_recommendation == "Legacy fallback text"
     assert settings.seo_competitor_profile_raw_output_retention_days == 21
     assert settings.seo_competitor_profile_run_retention_days == 365
