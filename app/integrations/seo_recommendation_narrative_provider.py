@@ -139,7 +139,9 @@ class OpenAISEORecommendationNarrativeProvider:
         timeout_seconds: int = 30,
         api_base_url: str = "https://api.openai.com/v1",
         prompt_version: str = SEO_RECOMMENDATION_NARRATIVE_PROMPT_VERSION,
-        prompt_text_recommendation: str = "",
+        prompt_text_recommendations: str | None = None,
+        # DEPRECATED: use prompt_text_recommendations.
+        prompt_text_recommendation: str | None = None,
     ) -> None:
         normalized_key = api_key.strip()
         if not normalized_key:
@@ -149,7 +151,12 @@ class OpenAISEORecommendationNarrativeProvider:
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.api_base_url = api_base_url.rstrip("/")
         self.prompt_version = prompt_version.strip() or SEO_RECOMMENDATION_NARRATIVE_PROMPT_VERSION
-        self.prompt_text_recommendation = prompt_text_recommendation
+        effective_prompt_text_recommendations = prompt_text_recommendations
+        if effective_prompt_text_recommendations is None:
+            effective_prompt_text_recommendations = prompt_text_recommendation or ""
+        self.prompt_text_recommendations = effective_prompt_text_recommendations
+        # DEPRECATED: retained for compatibility with existing tests/callers.
+        self.prompt_text_recommendation = effective_prompt_text_recommendations
 
     def generate_narrative(
         self,
@@ -177,7 +184,7 @@ class OpenAISEORecommendationNarrativeProvider:
             competitor_telemetry_summary=competitor_telemetry_summary,
             current_tuning_values=current_tuning_values,
             prompt_version=self.prompt_version,
-            prompt_text_recommendation=self.prompt_text_recommendation,
+            prompt_text_recommendations=self.prompt_text_recommendations,
         )
         payload = self._build_request_payload(
             system_prompt=prompt.system_prompt,

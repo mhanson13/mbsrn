@@ -139,10 +139,10 @@ def test_prompt_appends_additional_recommendation_text_safely() -> None:
             "competitor_candidate_directory_penalty": 35,
             "competitor_candidate_local_alignment_bonus": 10,
         },
-        prompt_text_recommendation="Prefer concise operator language.",
+        prompt_text_recommendations="Prefer concise operator language.",
     )
 
-    assert "ADDITIONAL_RECOMMENDATION_TEXT" in prompt.user_prompt
+    assert "ADDITIONAL_RECOMMENDATIONS_TEXT" in prompt.user_prompt
     assert "Prefer concise operator language." in prompt.user_prompt
 
 
@@ -199,3 +199,63 @@ def test_prompt_is_deterministic_for_same_inputs() -> None:
     assert left.system_prompt == right.system_prompt
     assert left.user_prompt == right.user_prompt
     assert left.grounded_context == right.grounded_context
+
+
+def test_prompt_supports_deprecated_prompt_alias() -> None:
+    prompt = build_seo_recommendation_narrative_prompt(
+        run=_run(),
+        recommendations=_recommendations(),
+        by_status={"open": 1},
+        by_category={"SEO": 1},
+        by_severity={"WARNING": 1},
+        by_effort_bucket={"LOW": 1},
+        by_priority_band={"high": 1},
+        backlog=_recommendations(),
+        competitor_telemetry_summary={
+            "lookback_days": 30,
+            "total_runs": 1,
+            "total_raw_candidate_count": 2,
+            "total_included_candidate_count": 1,
+            "total_excluded_candidate_count": 1,
+            "exclusion_counts_by_reason": {"low_relevance": 1},
+        },
+        current_tuning_values={
+            "competitor_candidate_min_relevance_score": 35,
+            "competitor_candidate_big_box_penalty": 20,
+            "competitor_candidate_directory_penalty": 35,
+            "competitor_candidate_local_alignment_bonus": 10,
+        },
+        prompt_text_recommendation="Prefer concise summaries.",
+    )
+
+    assert "ADDITIONAL_RECOMMENDATIONS_TEXT" in prompt.user_prompt
+
+
+def test_recommendation_prompt_avoids_competitor_discovery_language() -> None:
+    prompt = build_seo_recommendation_narrative_prompt(
+        run=_run(),
+        recommendations=_recommendations(),
+        by_status={"open": 1},
+        by_category={"SEO": 1},
+        by_severity={"WARNING": 1},
+        by_effort_bucket={"LOW": 1},
+        by_priority_band={"high": 1},
+        backlog=_recommendations(),
+        competitor_telemetry_summary={
+            "lookback_days": 30,
+            "total_runs": 0,
+            "total_raw_candidate_count": 0,
+            "total_included_candidate_count": 0,
+            "total_excluded_candidate_count": 0,
+            "exclusion_counts_by_reason": {},
+        },
+        current_tuning_values={
+            "competitor_candidate_min_relevance_score": 35,
+            "competitor_candidate_big_box_penalty": 20,
+            "competitor_candidate_directory_penalty": 35,
+            "competitor_candidate_local_alignment_bonus": 10,
+        },
+    )
+
+    assert "REQUESTED_CANDIDATE_COUNT" not in prompt.user_prompt
+    assert "ALLOWED_COMPETITOR_TYPES" not in prompt.user_prompt

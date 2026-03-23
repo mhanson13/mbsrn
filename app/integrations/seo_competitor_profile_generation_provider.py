@@ -82,7 +82,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         timeout_seconds: int = 30,
         api_base_url: str = "https://api.openai.com/v1",
         prompt_version: str = SEO_COMPETITOR_PROFILE_PROMPT_VERSION,
-        prompt_text_recommendation: str = "",
+        prompt_text_competitor: str | None = None,
+        # DEPRECATED: use prompt_text_competitor.
+        prompt_text_recommendation: str | None = None,
     ) -> None:
         normalized_key = api_key.strip()
         if not normalized_key:
@@ -92,7 +94,12 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.api_base_url = api_base_url.rstrip("/")
         self.prompt_version = prompt_version.strip() or SEO_COMPETITOR_PROFILE_PROMPT_VERSION
-        self.prompt_text_recommendation = prompt_text_recommendation
+        effective_prompt_text_competitor = prompt_text_competitor
+        if effective_prompt_text_competitor is None:
+            effective_prompt_text_competitor = prompt_text_recommendation or ""
+        self.prompt_text_competitor = effective_prompt_text_competitor
+        # DEPRECATED: retained for compatibility with existing tests/callers.
+        self.prompt_text_recommendation = effective_prompt_text_competitor
 
     def generate_competitor_profiles(
         self,
@@ -106,7 +113,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             existing_domains=existing_domains,
             candidate_count=candidate_count,
             prompt_version=self.prompt_version,
-            prompt_text_recommendation=self.prompt_text_recommendation,
+            prompt_text_competitor=self.prompt_text_competitor,
         )
         payload = self._build_request_payload(
             system_prompt=prompt.system_prompt,

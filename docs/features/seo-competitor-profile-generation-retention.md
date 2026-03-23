@@ -124,7 +124,9 @@ Core outcomes:
 - `AI_PROVIDER_NAME` (default: `openai`)
 - `AI_MODEL_NAME` (default: `gpt-4o-mini`)
 - `AI_TIMEOUT_VALUE` (default: `30`, seconds)
-- `AI_PROMPT_TEXT_RECOMMENDATION` (default: empty string)
+- `AI_PROMPT_TEXT_COMPETITOR` (default: empty string)
+- `AI_PROMPT_TEXT_RECOMMENDATIONS` (default: empty string; used by recommendation narratives)
+- `AI_PROMPT_TEXT_RECOMMENDATION` (deprecated legacy fallback when split vars are unset/blank; default: empty string)
 - `OPENAI_API_BASE_URL` (default: `https://api.openai.com/v1`)
 
 ### Retention settings
@@ -160,4 +162,3 @@ Core outcomes:
 - Add explicit retention cleanup run audit table if stronger historical job auditing is required.
 - Add sharded/parallel cleanup execution for very large business counts.
 - Make cron cadence configurable via deployment variables if operational policy requires environment-specific schedules.
-

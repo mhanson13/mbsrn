@@ -421,7 +421,7 @@ def get_seo_competitor_profile_generation_provider() -> SEOCompetitorProfileGene
                 timeout_seconds=settings.ai_timeout_value,
                 api_base_url=settings.openai_api_base_url,
                 prompt_version="seo-competitor-profile-v1",
-                prompt_text_recommendation=settings.ai_prompt_text_recommendation,
+                prompt_text_competitor=settings.ai_prompt_text_competitor,
             )
         except ValueError as exc:
             logger.warning("Failed to initialize OpenAI competitor profile provider: %s", str(exc))
@@ -514,7 +514,7 @@ def get_seo_recommendation_narrative_provider() -> SEORecommendationNarrativePro
                 timeout_seconds=settings.ai_timeout_value,
                 api_base_url=settings.openai_api_base_url,
                 prompt_version=prompt_version,
-                prompt_text_recommendation=settings.ai_prompt_text_recommendation,
+                prompt_text_recommendations=settings.ai_prompt_text_recommendations,
             )
         except ValueError as exc:
             logger.warning("Failed to initialize OpenAI recommendation narrative provider: %s", str(exc))

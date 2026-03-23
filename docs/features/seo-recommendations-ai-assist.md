@@ -106,13 +106,20 @@ AI narrative provider wiring uses existing AI runtime settings:
 - `AI_PROVIDER_NAME` (`openai` or `mock`)
 - `AI_MODEL_NAME` (default `gpt-4o-mini`)
 - `AI_TIMEOUT_VALUE` (default `30`)
-- `AI_PROMPT_TEXT_RECOMMENDATION` (optional supplemental recommendation text)
+- `AI_PROMPT_TEXT_RECOMMENDATIONS` (optional supplemental recommendation narrative text)
+- `AI_PROMPT_TEXT_COMPETITOR` (used by competitor discovery, not narrative generation)
+- `AI_PROMPT_TEXT_RECOMMENDATION` (deprecated legacy fallback used only when split prompt vars are unset/blank)
 - `OPENAI_API_BASE_URL` (default `https://api.openai.com/v1`)
 
 Behavior:
 - `openai` + valid key -> real provider.
 - `openai` + missing key in local/test/dev -> mock fallback for local workflows/tests.
 - `openai` + missing key in production/staging -> safe misconfigured-provider failure.
+
+Prompt separation:
+- Recommendation narratives read `AI_PROMPT_TEXT_RECOMMENDATIONS`.
+- Competitor discovery reads `AI_PROMPT_TEXT_COMPETITOR`.
+- The legacy shared `AI_PROMPT_TEXT_RECOMMENDATION` remains transitional fallback only (when split vars are unset/blank).
 
 ## Operational Behavior
 - Narrative generation is versioned per recommendation run.

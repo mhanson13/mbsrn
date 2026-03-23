@@ -85,6 +85,8 @@ def test_ai_provider_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AI_PROVIDER_NAME", raising=False)
     monkeypatch.delenv("AI_MODEL_NAME", raising=False)
     monkeypatch.delenv("AI_TIMEOUT_VALUE", raising=False)
+    monkeypatch.delenv("AI_PROMPT_TEXT_COMPETITOR", raising=False)
+    monkeypatch.delenv("AI_PROMPT_TEXT_RECOMMENDATIONS", raising=False)
     monkeypatch.delenv("AI_PROMPT_TEXT_RECOMMENDATION", raising=False)
     monkeypatch.delenv("SEO_COMPETITOR_PROFILE_RAW_OUTPUT_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("SEO_COMPETITOR_PROFILE_RUN_RETENTION_DAYS", raising=False)
@@ -96,6 +98,8 @@ def test_ai_provider_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.ai_provider_name == "openai"
     assert settings.ai_model_name == "gpt-4o-mini"
     assert settings.ai_timeout_value == 30
+    assert settings.ai_prompt_text_competitor == ""
+    assert settings.ai_prompt_text_recommendations == ""
     assert settings.ai_prompt_text_recommendation == ""
     assert settings.seo_competitor_profile_raw_output_retention_days == 30
     assert settings.seo_competitor_profile_run_retention_days == 180
@@ -107,7 +111,9 @@ def test_ai_provider_config_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_NAME", " OPENAI ")
     monkeypatch.setenv("AI_MODEL_NAME", " gpt-custom-model ")
     monkeypatch.setenv("AI_TIMEOUT_VALUE", "45")
-    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATION", "Prefer local competitors")
+    monkeypatch.setenv("AI_PROMPT_TEXT_COMPETITOR", "Prefer local competitors")
+    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATIONS", "Focus on recommendation narratives")
+    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATION", "Legacy fallback text")
     monkeypatch.setenv("SEO_COMPETITOR_PROFILE_RAW_OUTPUT_RETENTION_DAYS", "21")
     monkeypatch.setenv("SEO_COMPETITOR_PROFILE_RUN_RETENTION_DAYS", "365")
     monkeypatch.setenv("SEO_COMPETITOR_PROFILE_REJECTED_DRAFT_RETENTION_DAYS", "60")
@@ -118,10 +124,37 @@ def test_ai_provider_config_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.ai_provider_name == "openai"
     assert settings.ai_model_name == "gpt-custom-model"
     assert settings.ai_timeout_value == 45
-    assert settings.ai_prompt_text_recommendation == "Prefer local competitors"
+    assert settings.ai_prompt_text_competitor == "Prefer local competitors"
+    assert settings.ai_prompt_text_recommendations == "Focus on recommendation narratives"
+    assert settings.ai_prompt_text_recommendation == "Legacy fallback text"
     assert settings.seo_competitor_profile_raw_output_retention_days == 21
     assert settings.seo_competitor_profile_run_retention_days == 365
     assert settings.seo_competitor_profile_rejected_draft_retention_days == 60
+
+
+def test_ai_provider_config_uses_legacy_prompt_text_as_split_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AI_PROMPT_TEXT_COMPETITOR", raising=False)
+    monkeypatch.delenv("AI_PROMPT_TEXT_RECOMMENDATIONS", raising=False)
+    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATION", "Legacy shared guidance")
+
+    settings = get_settings()
+
+    assert settings.ai_prompt_text_competitor == "Legacy shared guidance"
+    assert settings.ai_prompt_text_recommendations == "Legacy shared guidance"
+    assert settings.ai_prompt_text_recommendation == "Legacy shared guidance"
+
+
+def test_ai_provider_config_uses_legacy_prompt_text_when_split_prompt_vars_are_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_PROMPT_TEXT_COMPETITOR", "   ")
+    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATIONS", "")
+    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATION", "Legacy shared guidance")
+
+    settings = get_settings()
+
+    assert settings.ai_prompt_text_competitor == "Legacy shared guidance"
+    assert settings.ai_prompt_text_recommendations == "Legacy shared guidance"
 
 
 def test_provider_factory_uses_configured_model_timeout_and_prompt_text(
@@ -131,14 +164,14 @@ def test_provider_factory_uses_configured_model_timeout_and_prompt_text(
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "sk-test")
     monkeypatch.setenv("AI_MODEL_NAME", "gpt-configured")
     monkeypatch.setenv("AI_TIMEOUT_VALUE", "41")
-    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATION", "Prioritize direct local rivals")
+    monkeypatch.setenv("AI_PROMPT_TEXT_COMPETITOR", "Prioritize direct local rivals")
 
     provider = get_seo_competitor_profile_generation_provider()
 
     assert isinstance(provider, OpenAISEOCompetitorProfileGenerationProvider)
     assert provider.model_name == "gpt-configured"
     assert provider.timeout_seconds == 41
-    assert provider.prompt_text_recommendation == "Prioritize direct local rivals"
+    assert provider.prompt_text_competitor == "Prioritize direct local rivals"
 
 
 def test_provider_factory_missing_api_key_returns_safe_misconfigured_provider(
@@ -200,14 +233,14 @@ def test_recommendation_narrative_provider_factory_uses_openai_when_configured(
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "sk-test")
     monkeypatch.setenv("AI_MODEL_NAME", "gpt-configured")
     monkeypatch.setenv("AI_TIMEOUT_VALUE", "39")
-    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATION", "Focus on backlog clarity")
+    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATIONS", "Focus on backlog clarity")
 
     provider = get_seo_recommendation_narrative_provider()
 
     assert isinstance(provider, OpenAISEORecommendationNarrativeProvider)
     assert provider.model_name == "gpt-configured"
     assert provider.timeout_seconds == 39
-    assert provider.prompt_text_recommendation == "Focus on backlog clarity"
+    assert provider.prompt_text_recommendations == "Focus on backlog clarity"
 
 
 def test_recommendation_narrative_provider_factory_missing_key_in_production_is_safe_error(
