@@ -647,6 +647,27 @@ export interface RecommendationAnalysisFreshness {
   message: string;
 }
 
+export type CompetitorContextHealthStatus = "strong" | "mixed" | "weak";
+export type CompetitorContextHealthCheckKey =
+  | "location_context"
+  | "industry_context"
+  | "service_focus"
+  | "target_customer_context";
+export type CompetitorContextHealthCheckStatus = "strong" | "weak";
+
+export interface CompetitorContextHealthCheck {
+  key: CompetitorContextHealthCheckKey;
+  label: string;
+  status: CompetitorContextHealthCheckStatus;
+  detail: string;
+}
+
+export interface CompetitorContextHealth {
+  status: CompetitorContextHealthStatus;
+  checks: CompetitorContextHealthCheck[];
+  message: string;
+}
+
 export interface AIPromptPreview {
   available: boolean;
   prompt_type: "competitor" | "recommendation";
@@ -758,6 +779,7 @@ export interface RecommendationWorkspaceSummaryResponse {
   ordering_explanation?: RecommendationOrderingExplanation | null;
   start_here?: RecommendationStartHere | null;
   eeat_gap_summary?: RecommendationEEATGapSummary | null;
+  competitor_context_health?: CompetitorContextHealth | null;
   competitor_prompt_preview?: AIPromptPreview | null;
   recommendation_prompt_preview?: AIPromptPreview | null;
   site_location_context?: string | null;

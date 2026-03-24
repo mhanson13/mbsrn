@@ -34,6 +34,7 @@ import {
 import type {
   AIPromptPreview,
   BusinessSettings,
+  CompetitorContextHealth,
   CompetitorComparisonRun,
   CompetitorProfileDraft,
   CompetitorProfileGenerationRun,
@@ -556,6 +557,21 @@ function formatRecommendationThemeLabel(theme: RecommendationTheme): string {
   }
 }
 
+function formatRecommendationThemeSummary(theme: RecommendationTheme): string {
+  switch (theme) {
+    case "trust_and_legitimacy":
+      return "Improve visible business trust signals like reviews, verification, and contact legitimacy.";
+    case "experience_and_proof":
+      return "Show proof of real work with testimonials, project examples, and outcome evidence.";
+    case "authority_and_visibility":
+      return "Strengthen external credibility through citations, listings, and recognized signals.";
+    case "expertise_and_process":
+      return "Clarify how you work and what makes your process credible and capable.";
+    case "general_site_improvement":
+      return "Improve core site clarity and fundamentals that support overall performance.";
+  }
+}
+
 function formatLocationContextSourceLabel(
   source: "explicit_location" | "service_area" | "zip_capture" | "fallback" | null,
 ): string | null {
@@ -903,6 +919,109 @@ function analysisFreshnessBadgeClass(status: RecommendationAnalysisFreshnessView
   }
 }
 
+interface CompetitorContextHealthCheckView {
+  key: "location_context" | "industry_context" | "service_focus" | "target_customer_context";
+  label: string;
+  status: "strong" | "weak";
+  detail: string;
+}
+
+interface CompetitorContextHealthView {
+  status: "strong" | "mixed" | "weak";
+  checks: CompetitorContextHealthCheckView[];
+  message: string;
+}
+
+const COMPETITOR_CONTEXT_HEALTH_CHECK_ORDER: CompetitorContextHealthCheckView["key"][] = [
+  "location_context",
+  "industry_context",
+  "service_focus",
+  "target_customer_context",
+];
+
+function normalizeCompetitorContextHealth(
+  value: CompetitorContextHealth | null | undefined,
+): CompetitorContextHealthView | null {
+  if (!value) {
+    return null;
+  }
+  const status = value.status === "strong" || value.status === "mixed" || value.status === "weak"
+    ? value.status
+    : null;
+  if (!status) {
+    return null;
+  }
+  const message = truncateOptionalText(value.message, 220);
+  if (!message) {
+    return null;
+  }
+  const checksRaw = Array.isArray(value.checks) ? value.checks : [];
+  const checkMap = new Map<CompetitorContextHealthCheckView["key"], CompetitorContextHealthCheckView>();
+  for (const check of checksRaw) {
+    const key = check?.key;
+    if (
+      key !== "location_context" &&
+      key !== "industry_context" &&
+      key !== "service_focus" &&
+      key !== "target_customer_context"
+    ) {
+      continue;
+    }
+    const label = truncateOptionalText(check.label, 80);
+    const detail = truncateOptionalText(check.detail, 220);
+    const checkStatus = check.status === "strong" || check.status === "weak" ? check.status : null;
+    if (!label || !detail || !checkStatus) {
+      continue;
+    }
+    checkMap.set(key, {
+      key,
+      label,
+      status: checkStatus,
+      detail,
+    });
+  }
+  const checks: CompetitorContextHealthCheckView[] = [];
+  for (const key of COMPETITOR_CONTEXT_HEALTH_CHECK_ORDER) {
+    const found = checkMap.get(key);
+    if (found) {
+      checks.push(found);
+    }
+  }
+  return {
+    status,
+    checks,
+    message,
+  };
+}
+
+function competitorContextHealthLabel(status: CompetitorContextHealthView["status"]): string {
+  switch (status) {
+    case "strong":
+      return "Strong";
+    case "mixed":
+      return "Mixed";
+    case "weak":
+    default:
+      return "Weak";
+  }
+}
+
+function competitorContextHealthBadgeClass(status: CompetitorContextHealthView["status"]): string {
+  switch (status) {
+    case "strong":
+      return "badge badge-success";
+    case "mixed":
+      return "badge badge-warn";
+    case "weak":
+    default:
+      return "badge badge-error";
+  }
+}
+
+function competitorContextHealthCheckBadgeClass(status: CompetitorContextHealthCheckView["status"]): string {
+  return status === "strong" ? "badge badge-success" : "badge badge-warn";
+}
+
 type PromptPreviewType = "competitor" | "recommendation";
 
 interface PromptPreviewView {
@@ -1185,6 +1304,8 @@ export default function SiteWorkspacePage() {
     useState<RecommendationTuningSuggestion[]>([]);
   const [latestRecommendationApplyOutcome, setLatestRecommendationApplyOutcome] =
     useState<RecommendationApplyOutcome | null>(null);
+  const [latestCompetitorContextHealth, setLatestCompetitorContextHealth] =
+    useState<CompetitorContextHealth | null>(null);
   const [latestRecommendationEEATGapSummary, setLatestRecommendationEEATGapSummary] =
     useState<RecommendationEEATGapSummary | null>(null);
   const [latestRecommendationAnalysisFreshness, setLatestRecommendationAnalysisFreshness] =
@@ -1558,6 +1679,10 @@ export default function SiteWorkspacePage() {
     () => normalizeRecommendationApplyOutcome(latestRecommendationApplyOutcome),
     [latestRecommendationApplyOutcome],
   );
+  const competitorContextHealth = useMemo(
+    () => normalizeCompetitorContextHealth(latestCompetitorContextHealth),
+    [latestCompetitorContextHealth],
+  );
   const recommendationEEATGapSummary = useMemo(
     () => normalizeRecommendationEEATGapSummary(latestRecommendationEEATGapSummary),
     [latestRecommendationEEATGapSummary],
@@ -1732,6 +1857,7 @@ export default function SiteWorkspacePage() {
     setLatestCompletedRecommendationNarrative(summary.latest_narrative);
     setLatestCompletedTuningSuggestions(summary.tuning_suggestions);
     setLatestRecommendationApplyOutcome(summary.apply_outcome || null);
+    setLatestCompetitorContextHealth(summary.competitor_context_health || null);
     setLatestRecommendationEEATGapSummary(summary.eeat_gap_summary || null);
     setLatestRecommendationAnalysisFreshness(summary.analysis_freshness || null);
     setLatestRecommendationOrderingExplanation(summary.ordering_explanation || null);
@@ -2483,6 +2609,7 @@ export default function SiteWorkspacePage() {
       setLatestCompletedRecommendationNarrative(null);
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
+      setLatestCompetitorContextHealth(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
       setLatestRecommendationOrderingExplanation(null);
@@ -2541,6 +2668,7 @@ export default function SiteWorkspacePage() {
       setLatestCompletedRecommendationNarrative(null);
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
+      setLatestCompetitorContextHealth(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
       setLatestRecommendationOrderingExplanation(null);
@@ -2594,6 +2722,7 @@ export default function SiteWorkspacePage() {
       setLatestCompletedRecommendationNarrative(null);
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
+      setLatestCompetitorContextHealth(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
       setLatestRecommendationOrderingExplanation(null);
@@ -2796,6 +2925,7 @@ export default function SiteWorkspacePage() {
         setLatestCompletedRecommendationNarrative(null);
         setLatestCompletedTuningSuggestions([]);
         setLatestRecommendationApplyOutcome(null);
+        setLatestCompetitorContextHealth(null);
         setLatestRecommendationEEATGapSummary(null);
         setLatestRecommendationAnalysisFreshness(null);
         setLatestRecommendationOrderingExplanation(null);
@@ -4177,6 +4307,12 @@ export default function SiteWorkspacePage() {
                         <strong>{section.label}</strong>
                         <span className="badge badge-muted">{section.items.length}</span>
                       </div>
+                      <span
+                        className="hint muted"
+                        data-testid={`recommendation-theme-summary-${section.theme}`}
+                      >
+                        {formatRecommendationThemeSummary(section.theme)}
+                      </span>
                       <div className="table-container">
                         <table className="table">
                           <thead>
@@ -4423,6 +4559,29 @@ export default function SiteWorkspacePage() {
                       <span className="hint muted">
                         Location source: {formatLocationContextSourceLabel(siteLocationContextSource)}
                       </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {competitorContextHealth ? (
+                  <div className="panel panel-compact stack-tight" data-testid="competitor-context-health">
+                    <span className="hint muted">Competitor context health</span>
+                    <span className={competitorContextHealthBadgeClass(competitorContextHealth.status)}>
+                      {competitorContextHealthLabel(competitorContextHealth.status)}
+                    </span>
+                    <span className="hint">{competitorContextHealth.message}</span>
+                    {competitorContextHealth.checks.length > 0 ? (
+                      <div className="stack-tight">
+                        {competitorContextHealth.checks.map((check) => (
+                          <div key={`competitor-context-health-${check.key}`} className="link-row">
+                            <span className={competitorContextHealthCheckBadgeClass(check.status)}>
+                              {check.status === "strong" ? "Strong" : "Weak"}
+                            </span>
+                            <span className="hint">
+                              {check.label}: {check.detail}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     ) : null}
                   </div>
                 ) : null}

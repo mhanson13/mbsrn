@@ -136,3 +136,17 @@ Context effect:
 - Competitor prompt trusted context is upgraded from weak to strong when ZIP is present.
 - Prompt trusted context now also includes `site_location_context_source` so provenance can be surfaced in workspace metadata.
 - This improves local competitor relevance without adding external geocoding dependencies.
+
+## Workspace Competitor Context Health
+
+Workspace summaries now include a deterministic `competitor_context_health` block for operator/debug visibility.
+
+- Status values: `strong`, `mixed`, `weak`
+- Check keys:
+  - `location_context`
+  - `industry_context`
+  - `service_focus`
+  - `target_customer_context`
+
+This signal indicates how grounded competitor input context is before model execution.
+It does **not** score model outputs and does not change competitor generation behavior.

@@ -187,6 +187,28 @@ Fallback rules:
 - when `site_location_context_source` is present, render a subtle provenance line such as
   `Location source: ZIP provided` inside the same compact metadata area
 
+## Competitor Context Health Indicator
+
+Workspace summary payloads can include optional `competitor_context_health` metadata:
+
+- `status`: `strong | mixed | weak`
+- `checks[]`:
+  - `location_context`
+  - `industry_context`
+  - `service_focus`
+  - `target_customer_context`
+- `message`: short deterministic summary
+
+Rendering guidance:
+- show as a compact secondary block near analysis/apply metadata
+- display overall status + per-check status/details
+- keep tone operator-friendly and diagnostic, not alarming
+- hide the block entirely if metadata is absent
+
+Interpretation guidance:
+- this reflects input context quality for competitor matching, not model certainty or scoring
+- `weak`/`mixed` indicates results may be conservative until location/industry/service context is improved
+
 ## Weak Location Context ZIP Prompt
 
 When workspace summary metadata indicates weak location context and no stored ZIP:
@@ -239,6 +261,7 @@ Rendering guidance:
 - Keep the existing recommendation list semantics intact.
 - Use lightweight section headers when there are multiple groups.
 - Show compact label + count (`Trust & legitimacy`, `Experience & proof`, etc.).
+- Show one concise deterministic summary line under each theme header to explain theme intent before row-level actions.
 - Preserve row ordering within each group based on incoming flat recommendation order.
 - If grouped metadata is absent or only yields a trivial single section, avoid noisy wrappers.
 - Keep stable recommendation row IDs so `Start here` jump-to actions still focus the correct row in grouped sections.

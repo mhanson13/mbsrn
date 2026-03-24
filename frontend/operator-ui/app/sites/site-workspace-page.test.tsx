@@ -2986,12 +2986,28 @@ describe("site workspace timeline controls", () => {
             }),
             buildRecommendation({
               id: "rec-theme-3",
+              title: "Add recognized directory citations and credentials",
+              eeat_categories: ["authoritativeness"],
+              primary_eeat_category: "authoritativeness",
+              theme: "authority_and_visibility",
+              theme_label: "Authority & visibility",
+            }),
+            buildRecommendation({
+              id: "rec-theme-4",
+              title: "Publish your project intake process and quality checks",
+              eeat_categories: ["expertise"],
+              primary_eeat_category: "expertise",
+              theme: "expertise_and_process",
+              theme_label: "Expertise & process",
+            }),
+            buildRecommendation({
+              id: "rec-theme-5",
               title: "Improve title tags and service-page structure",
               theme: "general_site_improvement",
               theme_label: "General site improvement",
             }),
           ],
-          total: 3,
+          total: 5,
         },
         grouped_recommendations: [
           {
@@ -3007,10 +3023,22 @@ describe("site workspace timeline controls", () => {
             recommendation_ids: ["rec-theme-2"],
           },
           {
+            theme: "authority_and_visibility",
+            label: "Authority & visibility",
+            count: 1,
+            recommendation_ids: ["rec-theme-3"],
+          },
+          {
+            theme: "expertise_and_process",
+            label: "Expertise & process",
+            count: 1,
+            recommendation_ids: ["rec-theme-4"],
+          },
+          {
             theme: "general_site_improvement",
             label: "General site improvement",
             count: 1,
-            recommendation_ids: ["rec-theme-3"],
+            recommendation_ids: ["rec-theme-5"],
           },
         ],
       }),
@@ -3027,22 +3055,61 @@ describe("site workspace timeline controls", () => {
     expect(renderedThemeOrder).toEqual([
       "Trust & legitimacy",
       "Experience & proof",
+      "Authority & visibility",
+      "Expertise & process",
       "General site improvement",
     ]);
 
     const trustGroup = screen.getByTestId("recommendation-theme-group-trust_and_legitimacy");
     expect(within(trustGroup).getByText("Trust & legitimacy")).toBeInTheDocument();
     expect(within(trustGroup).getByText("Publish license and insurance trust proof")).toBeInTheDocument();
+    expect(
+      within(trustGroup).getByText(
+        "Improve visible business trust signals like reviews, verification, and contact legitimacy.",
+      ),
+    ).toBeInTheDocument();
     expect(within(trustGroup).getAllByRole("row")).toHaveLength(2);
 
     const experienceGroup = screen.getByTestId("recommendation-theme-group-experience_and_proof");
     expect(within(experienceGroup).getByText("Experience & proof")).toBeInTheDocument();
     expect(within(experienceGroup).getByText("Publish project stories and before/after proof")).toBeInTheDocument();
+    expect(
+      within(experienceGroup).getByText(
+        "Show proof of real work with testimonials, project examples, and outcome evidence.",
+      ),
+    ).toBeInTheDocument();
     expect(within(experienceGroup).getAllByRole("row")).toHaveLength(2);
+
+    const authorityGroup = screen.getByTestId("recommendation-theme-group-authority_and_visibility");
+    expect(within(authorityGroup).getByText("Authority & visibility")).toBeInTheDocument();
+    expect(within(authorityGroup).getByText("Add recognized directory citations and credentials")).toBeInTheDocument();
+    expect(
+      within(authorityGroup).getByText(
+        "Strengthen external credibility through citations, listings, and recognized signals.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(authorityGroup).getAllByRole("row")).toHaveLength(2);
+
+    const expertiseGroup = screen.getByTestId("recommendation-theme-group-expertise_and_process");
+    expect(within(expertiseGroup).getByText("Expertise & process")).toBeInTheDocument();
+    expect(
+      within(expertiseGroup).getByText("Publish your project intake process and quality checks"),
+    ).toBeInTheDocument();
+    expect(
+      within(expertiseGroup).getByText(
+        "Clarify how you work and what makes your process credible and capable.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(expertiseGroup).getAllByRole("row")).toHaveLength(2);
 
     const generalGroup = screen.getByTestId("recommendation-theme-group-general_site_improvement");
     expect(within(generalGroup).getByText("General site improvement")).toBeInTheDocument();
     expect(within(generalGroup).getByText("Improve title tags and service-page structure")).toBeInTheDocument();
+    expect(
+      within(generalGroup).getByText(
+        "Improve core site clarity and fundamentals that support overall performance.",
+      ),
+    ).toBeInTheDocument();
     expect(within(generalGroup).getAllByRole("row")).toHaveLength(2);
   });
 
@@ -3076,6 +3143,7 @@ describe("site workspace timeline controls", () => {
 
     await screen.findByRole("heading", { name: "Deterministic Recommendations" });
     expect(screen.queryByTestId("recommendation-theme-groups")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-theme-summary-trust_and_legitimacy")).not.toBeInTheDocument();
     expect(screen.getAllByText("Publish trust proof across key service pages").length).toBeGreaterThan(0);
   });
 
@@ -3199,6 +3267,78 @@ describe("site workspace timeline controls", () => {
     await screen.findByRole("heading", { name: "AI Narrative Overlay" });
     const freshness = screen.getByTestId("narrative-analysis-freshness");
     expect(within(freshness).getByText("Location source: ZIP provided")).toBeInTheDocument();
+  });
+
+  it("renders competitor context health block with per-check statuses", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        competitor_context_health: {
+          status: "mixed",
+          message: "Competitor matching has partial business context; results may be narrower or more conservative.",
+          checks: [
+            {
+              key: "location_context",
+              label: "Location context",
+              status: "weak",
+              detail: "Location context is weak or missing; local competitor matching may be conservative.",
+            },
+            {
+              key: "industry_context",
+              label: "Industry context",
+              status: "strong",
+              detail: "Industry context is available: Home services.",
+            },
+            {
+              key: "service_focus",
+              label: "Service focus",
+              status: "strong",
+              detail: "Service focus terms are available: plumbing, drain cleaning.",
+            },
+            {
+              key: "target_customer_context",
+              label: "Target customer context",
+              status: "weak",
+              detail: "Target customer context is generic; competitor matching may be conservative.",
+            },
+          ],
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Narrative Overlay" });
+    const contextHealth = screen.getByTestId("competitor-context-health");
+    expect(within(contextHealth).getByText("Competitor context health")).toBeInTheDocument();
+    expect(within(contextHealth).getByText("Mixed")).toBeInTheDocument();
+    expect(
+      within(contextHealth).getByText(
+        "Competitor matching has partial business context; results may be narrower or more conservative.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(contextHealth).getByText(
+        "Location context: Location context is weak or missing; local competitor matching may be conservative.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(contextHealth).getByText("Industry context: Industry context is available: Home services."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps competitor context health block hidden when metadata is absent", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        competitor_context_health: null,
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Narrative Overlay" });
+    expect(screen.queryByTestId("competitor-context-health")).not.toBeInTheDocument();
   });
 
   it("renders unknown analysis freshness safely when timestamps are insufficient", async () => {

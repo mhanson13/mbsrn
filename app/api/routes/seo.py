@@ -78,6 +78,8 @@ from app.schemas.seo_competitor import (
 )
 from app.schemas.ai_prompt import build_ai_prompt_preview_read
 from app.schemas.seo_recommendation import (
+    SEOCompetitorContextHealthCheckRead,
+    SEOCompetitorContextHealthRead,
     SEORecommendationEEATCategory,
     SEORecommendationEEATGapSummaryRead,
     SEORecommendationAnalysisFreshnessRead,
@@ -189,6 +191,7 @@ _WORKSPACE_APPLY_OUTCOME_EXPECTED_MAX_CHARS = 260
 _WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS = 220
 _WORKSPACE_EEAT_GAP_MAX_SIGNALS = 6
 _WORKSPACE_EEAT_GAP_SIGNAL_MAX_CHARS = 140
+_WORKSPACE_COMPETITOR_CONTEXT_HEALTH_DETAIL_MAX_CHARS = 220
 _WORKSPACE_RECOMMENDATION_THEME_ORDER = (
     "trust_and_legitimacy",
     "experience_and_proof",
@@ -199,6 +202,27 @@ _WORKSPACE_RECOMMENDATION_THEME_ORDER = (
 _WORKSPACE_LOCATION_CONTEXT_MAX_CHARS = 220
 _WORKSPACE_PRIMARY_LOCATION_MAX_CHARS = 255
 _WORKSPACE_START_HERE_REASON_MAX_CHARS = 320
+_WORKSPACE_CONTEXT_HEALTH_CHECK_ORDER = (
+    "location_context",
+    "industry_context",
+    "service_focus",
+    "target_customer_context",
+)
+_WORKSPACE_CONTEXT_HEALTH_CHECK_LABELS = {
+    "location_context": "Location context",
+    "industry_context": "Industry context",
+    "service_focus": "Service focus",
+    "target_customer_context": "Target customer context",
+}
+_WORKSPACE_CONTEXT_HEALTH_SERVICE_FOCUS_THIN_TERMS = {
+    "service",
+    "services",
+    "home service",
+    "home services",
+    "business",
+    "company",
+    "local services",
+}
 logger = logging.getLogger(__name__)
 
 
@@ -316,6 +340,198 @@ def _normalize_workspace_location_context_source(value: object) -> str | None:
     if normalized in {"explicit_location", "service_area", "zip_capture", "fallback"}:
         return normalized
     return None
+
+
+def _normalize_workspace_industry_context_strength(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"strong", "weak"}:
+        return normalized
+    return "unknown"
+
+
+def _normalize_workspace_service_focus_terms(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    terms: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        compacted = _compact_workspace_text(item, max_length=64)
+        if compacted is None:
+            continue
+        key = compacted.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        terms.append(compacted)
+        if len(terms) >= 8:
+            break
+    return terms
+
+
+def _is_meaningful_workspace_service_focus_term(term: str) -> bool:
+    normalized = " ".join(term.lower().split())
+    if not normalized:
+        return False
+    if normalized in _WORKSPACE_CONTEXT_HEALTH_SERVICE_FOCUS_THIN_TERMS:
+        return False
+    if normalized.endswith(".com"):
+        return False
+    alpha_count = sum(1 for char in normalized if char.isalpha())
+    return alpha_count >= 3
+
+
+def _workspace_location_source_label(value: str | None) -> str | None:
+    if value == "explicit_location":
+        return "explicit location"
+    if value == "service_area":
+        return "service area"
+    if value == "zip_capture":
+        return "ZIP capture"
+    if value == "fallback":
+        return "fallback"
+    return None
+
+
+def _build_workspace_competitor_context_health(
+    *,
+    site_location_context_strength: str,
+    site_location_context_source: str | None,
+    trusted_site_context: dict[str, object],
+) -> SEOCompetitorContextHealthRead:
+    checks_payload: list[dict[str, str]] = []
+
+    location_strong = site_location_context_strength == "strong"
+    location_source_label = _workspace_location_source_label(site_location_context_source)
+    if location_strong:
+        location_detail = (
+            f"{location_source_label.title()} is available for local competitor matching."
+            if location_source_label
+            else "Location context is available for local competitor matching."
+        )
+    else:
+        location_detail = "Location context is weak or missing; local competitor matching may be conservative."
+    checks_payload.append(
+        {
+            "key": "location_context",
+            "label": _WORKSPACE_CONTEXT_HEALTH_CHECK_LABELS["location_context"],
+            "status": "strong" if location_strong else "weak",
+            "detail": _compact_workspace_text(
+                location_detail,
+                max_length=_WORKSPACE_COMPETITOR_CONTEXT_HEALTH_DETAIL_MAX_CHARS,
+            )
+            or location_detail,
+        }
+    )
+
+    industry_context = _compact_workspace_text(
+        trusted_site_context.get("site_industry_context"),
+        max_length=120,
+    )
+    industry_strength = _normalize_workspace_industry_context_strength(
+        trusted_site_context.get("site_industry_context_strength"),
+    )
+    industry_strong = industry_strength == "strong" and industry_context is not None
+    if industry_strong:
+        industry_detail = f"Industry context is available: {industry_context}."
+    elif industry_context is not None:
+        industry_detail = "Industry context is present but weak; classification confidence is limited."
+    else:
+        industry_detail = "Industry context is missing or weak."
+    checks_payload.append(
+        {
+            "key": "industry_context",
+            "label": _WORKSPACE_CONTEXT_HEALTH_CHECK_LABELS["industry_context"],
+            "status": "strong" if industry_strong else "weak",
+            "detail": _compact_workspace_text(
+                industry_detail,
+                max_length=_WORKSPACE_COMPETITOR_CONTEXT_HEALTH_DETAIL_MAX_CHARS,
+            )
+            or industry_detail,
+        }
+    )
+
+    service_focus_terms = _normalize_workspace_service_focus_terms(
+        trusted_site_context.get("service_focus_terms"),
+    )
+    meaningful_service_terms = [
+        term for term in service_focus_terms if _is_meaningful_workspace_service_focus_term(term)
+    ]
+    service_focus_strong = len(meaningful_service_terms) > 0
+    if service_focus_strong:
+        service_focus_detail = (
+            f"Service focus terms are available: {', '.join(meaningful_service_terms[:3])}."
+        )
+    elif service_focus_terms:
+        service_focus_detail = "Service focus terms are present but too generic for strong competitor matching."
+    else:
+        service_focus_detail = "Service focus terms are missing."
+    checks_payload.append(
+        {
+            "key": "service_focus",
+            "label": _WORKSPACE_CONTEXT_HEALTH_CHECK_LABELS["service_focus"],
+            "status": "strong" if service_focus_strong else "weak",
+            "detail": _compact_workspace_text(
+                service_focus_detail,
+                max_length=_WORKSPACE_COMPETITOR_CONTEXT_HEALTH_DETAIL_MAX_CHARS,
+            )
+            or service_focus_detail,
+        }
+    )
+
+    target_customer_context = _compact_workspace_text(
+        trusted_site_context.get("target_customer_context"),
+        max_length=200,
+    )
+    target_customer_strong = bool(
+        target_customer_context
+        and target_customer_context.lower().startswith("customers in ")
+        and location_strong
+        and service_focus_strong
+    )
+    if target_customer_strong:
+        target_customer_detail = "Target customer context is grounded by location and service context."
+    elif target_customer_context:
+        target_customer_detail = "Target customer context is generic; competitor matching may be conservative."
+    else:
+        target_customer_detail = "Target customer context is missing."
+    checks_payload.append(
+        {
+            "key": "target_customer_context",
+            "label": _WORKSPACE_CONTEXT_HEALTH_CHECK_LABELS["target_customer_context"],
+            "status": "strong" if target_customer_strong else "weak",
+            "detail": _compact_workspace_text(
+                target_customer_detail,
+                max_length=_WORKSPACE_COMPETITOR_CONTEXT_HEALTH_DETAIL_MAX_CHARS,
+            )
+            or target_customer_detail,
+        }
+    )
+
+    check_status_by_key = {
+        check["key"]: check["status"] for check in checks_payload if check["key"] in _WORKSPACE_CONTEXT_HEALTH_CHECK_ORDER
+    }
+    strong_count = sum(1 for status_value in check_status_by_key.values() if status_value == "strong")
+    if strong_count >= 3:
+        status = "strong"
+        message = "Competitor matching is using grounded business context."
+    elif strong_count <= 1:
+        status = "weak"
+        message = (
+            "Competitor matching is missing key business context; results may be limited until location/industry details improve."
+        )
+    else:
+        status = "mixed"
+        message = (
+            "Competitor matching has partial business context; results may be narrower or more conservative."
+        )
+
+    return SEOCompetitorContextHealthRead.model_validate(
+        {
+            "status": status,
+            "checks": checks_payload,
+            "message": message,
+        }
+    )
 
 
 def _extract_workspace_changed_tuning_values(
@@ -1233,8 +1449,10 @@ def get_seo_recommendation_workspace_summary(
     ordering_explanation: SEORecommendationOrderingExplanationRead | None = None
     start_here: SEORecommendationStartHereRead | None = None
     eeat_gap_summary: SEORecommendationEEATGapSummaryRead | None = None
+    competitor_context_health: SEOCompetitorContextHealthRead | None = None
     competitor_prompt_preview = None
     recommendation_prompt_preview = None
+    trusted_site_context: dict[str, object] = {}
     latest_applied_preview_event = (
         seo_competitor_profile_generation_repository.get_latest_applied_tuning_preview_event_for_business_site(
             business_id=scoped_business_id,
@@ -1400,6 +1618,12 @@ def get_seo_recommendation_workspace_summary(
         if trusted_source is not None:
             site_location_context_source = trusted_source
 
+    competitor_context_health = _build_workspace_competitor_context_health(
+        site_location_context_strength=site_location_context_strength,
+        site_location_context_source=site_location_context_source,
+        trusted_site_context=trusted_site_context,
+    )
+
     if latest_run is None:
         state = "no_runs"
     elif latest_completed_run is None:
@@ -1442,6 +1666,7 @@ def get_seo_recommendation_workspace_summary(
         ordering_explanation=ordering_explanation,
         start_here=start_here,
         eeat_gap_summary=eeat_gap_summary,
+        competitor_context_health=competitor_context_health,
         competitor_prompt_preview=competitor_prompt_preview,
         recommendation_prompt_preview=recommendation_prompt_preview,
         site_location_context=site_location_context,

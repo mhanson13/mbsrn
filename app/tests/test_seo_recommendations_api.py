@@ -924,6 +924,15 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
     assert payload["analysis_freshness"]["status"] == "fresh"
     assert payload["analysis_freshness"]["analysis_generated_at"] is not None
     assert payload["analysis_freshness"]["last_apply_at"] is None
+    assert payload["competitor_context_health"] is not None
+    assert payload["competitor_context_health"]["status"] == "weak"
+    assert payload["competitor_context_health"]["message"]
+    assert [check["key"] for check in payload["competitor_context_health"]["checks"]] == [
+        "location_context",
+        "industry_context",
+        "service_focus",
+        "target_customer_context",
+    ]
     assert payload["site_location_context_strength"] == "weak"
     assert payload["site_location_context_source"] == "fallback"
     assert payload["site_primary_business_zip"] is None
@@ -1022,6 +1031,65 @@ def test_recommendation_workspace_summary_reflects_service_area_location_source(
     assert payload["site_location_context_source"] == "service_area"
     assert payload["site_primary_location"] is None
     assert payload["site_location_context"] == "Serves Fort Collins, Loveland"
+
+
+def test_recommendation_workspace_summary_context_health_strong_when_location_industry_service_and_target_are_grounded(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+
+    patch_site = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={
+            "primary_location": "Loveland, Colorado",
+            "industry": "Residential and commercial construction",
+        },
+    )
+    assert patch_site.status_code == 200
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    context_health = payload["competitor_context_health"]
+    assert context_health is not None
+    assert context_health["status"] == "strong"
+    check_statuses = {check["key"]: check["status"] for check in context_health["checks"]}
+    assert check_statuses == {
+        "location_context": "strong",
+        "industry_context": "strong",
+        "service_focus": "strong",
+        "target_customer_context": "strong",
+    }
+
+
+def test_recommendation_workspace_summary_context_health_mixed_when_location_is_weak_but_industry_service_are_grounded(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+
+    patch_site = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={"industry": "Residential and commercial construction"},
+    )
+    assert patch_site.status_code == 200
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    context_health = payload["competitor_context_health"]
+    assert context_health is not None
+    assert context_health["status"] == "mixed"
+    check_statuses = {check["key"]: check["status"] for check in context_health["checks"]}
+    assert check_statuses["location_context"] == "weak"
+    assert check_statuses["industry_context"] == "strong"
+    assert check_statuses["service_focus"] == "strong"
+    assert check_statuses["target_customer_context"] == "weak"
 
 
 def test_recommendation_workspace_summary_groups_recommendations_by_theme_without_changing_flat_order(

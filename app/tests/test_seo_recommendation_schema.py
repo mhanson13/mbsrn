@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from app.schemas.seo_recommendation import (
+    SEOCompetitorContextHealthRead,
     SEORecommendationRead,
     SEORecommendationStartHereRead,
     infer_eeat_categories_from_signals,
@@ -224,3 +225,37 @@ def test_recommendation_start_here_read_rejects_invalid_theme() -> None:
                 "context_flags": [],
             }
         )
+
+
+def test_competitor_context_health_read_normalizes_and_orders_checks() -> None:
+    health = SEOCompetitorContextHealthRead.model_validate(
+        {
+            "status": "mixed",
+            "message": "Competitor matching has partial business context; results may be narrower or more conservative.",
+            "checks": [
+                {
+                    "key": "service_focus",
+                    "label": "Service focus",
+                    "status": "strong",
+                    "detail": "Service focus terms are available: construction, remodeling.",
+                },
+                {
+                    "key": "location_context",
+                    "label": "Location context",
+                    "status": "weak",
+                    "detail": "Location context is weak or missing.",
+                },
+                {
+                    "key": "industry_context",
+                    "label": "Industry context",
+                    "status": "strong",
+                    "detail": "Industry context is available: Construction.",
+                },
+            ],
+        }
+    )
+    assert [check.key for check in health.checks] == [
+        "location_context",
+        "industry_context",
+        "service_focus",
+    ]

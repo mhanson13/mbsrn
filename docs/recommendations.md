@@ -203,6 +203,32 @@ Shape:
 
 No AI calls, thresholds, or fuzzy inference are used.
 
+## Competitor Context Health (Deterministic)
+
+Workspace summary responses now include additive `competitor_context_health` metadata that describes whether competitor prompt inputs are sufficiently grounded.
+
+Shape:
+
+```json
+{
+  "status": "mixed",
+  "checks": [
+    {"key": "location_context", "label": "Location context", "status": "weak", "detail": "..."},
+    {"key": "industry_context", "label": "Industry context", "status": "strong", "detail": "..."},
+    {"key": "service_focus", "label": "Service focus", "status": "strong", "detail": "..."},
+    {"key": "target_customer_context", "label": "Target customer context", "status": "weak", "detail": "..."}
+  ],
+  "message": "Competitor matching has partial business context; results may be narrower or more conservative."
+}
+```
+
+Key points:
+- Deterministic and additive only (no AI generation, no scoring engine).
+- Reflects **input context quality**, not model output quality.
+- Uses current structured context fields (location, industry context strength, service focus terms, target customer context).
+- `weak` or `mixed` means competitor results may be conservative/incomplete until location/industry/service context improves.
+- ZIP/location capture continues to improve local matching context and can move health toward `strong`.
+
 ## Weak Location Context ZIP Enrichment
 
 Workspace summary responses now include additive location-context metadata used for operator prompting:
@@ -317,6 +343,7 @@ No new AI calls or numeric scoring are used.
 - `grouped_recommendations` is additive and presentation-oriented only.
 - Recommendation order is preserved within each theme group.
 - Workspace rendering uses lightweight theme headers for the main recommendation list when multiple groups are present.
+- Each grouped theme can include a deterministic summary line explaining why that theme matters before row-level actions.
 - `start_here` remains compatible with grouped layouts by targeting stable recommendation IDs in the same deterministic list.
 - Group sections are emitted in a stable deterministic order:
   1. Trust & legitimacy
@@ -324,6 +351,8 @@ No new AI calls or numeric scoring are used.
   3. Authority & visibility
   4. Expertise & process
   5. General site improvement
+
+Theme summary lines are explanatory only. They do not change recommendation ranking, scoring, or apply semantics.
 
 ## Workspace EEAT Gap Summary
 

@@ -28,6 +28,14 @@ SEORecommendationTuningSuggestionConfidence = Literal["low", "medium", "high"]
 SEORecommendationSignalSupportLevel = Literal["low", "medium", "high"]
 SEORecommendationApplyOutcomeSource = Literal["recommendation", "manual"]
 SEORecommendationAnalysisFreshnessStatus = Literal["fresh", "pending_refresh", "unknown"]
+SEOCompetitorContextHealthStatus = Literal["strong", "mixed", "weak"]
+SEOCompetitorContextHealthCheckKey = Literal[
+    "location_context",
+    "industry_context",
+    "service_focus",
+    "target_customer_context",
+]
+SEOCompetitorContextHealthCheckStatus = Literal["strong", "weak"]
 SEORecommendationLocationContextStrength = Literal["strong", "weak", "unknown"]
 SEORecommendationLocationContextSource = Literal[
     "explicit_location",
@@ -94,6 +102,16 @@ _PRIMARY_LOCATION_MAX_CHARS = 255
 _PRIMARY_ZIP_MAX_CHARS = 5
 _START_HERE_TITLE_MAX_CHARS = 180
 _START_HERE_REASON_MAX_CHARS = 320
+_COMPETITOR_CONTEXT_HEALTH_CHECK_LABEL_MAX_CHARS = 80
+_COMPETITOR_CONTEXT_HEALTH_CHECK_DETAIL_MAX_CHARS = 220
+_COMPETITOR_CONTEXT_HEALTH_MESSAGE_MAX_CHARS = 220
+_COMPETITOR_CONTEXT_HEALTH_MAX_CHECKS = 4
+_COMPETITOR_CONTEXT_HEALTH_CHECK_KEY_ORDER: tuple[SEOCompetitorContextHealthCheckKey, ...] = (
+    "location_context",
+    "industry_context",
+    "service_focus",
+    "target_customer_context",
+)
 _EEAT_CATEGORY_ORDER: tuple[SEORecommendationEEATCategory, ...] = (
     "experience",
     "expertise",
@@ -671,6 +689,88 @@ class SEORecommendationAnalysisFreshnessRead(BaseModel):
         cleaned = _compact_text(value, max_length=220)
         if cleaned is None:
             raise ValueError("Analysis freshness message is required")
+        return cleaned
+
+
+class SEOCompetitorContextHealthCheckRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: SEOCompetitorContextHealthCheckKey
+    label: str = Field(min_length=1, max_length=_COMPETITOR_CONTEXT_HEALTH_CHECK_LABEL_MAX_CHARS)
+    status: SEOCompetitorContextHealthCheckStatus
+    detail: str = Field(min_length=1, max_length=_COMPETITOR_CONTEXT_HEALTH_CHECK_DETAIL_MAX_CHARS)
+
+    @field_validator("key", mode="before")
+    @classmethod
+    def normalize_key(cls, value: Any) -> SEOCompetitorContextHealthCheckKey:
+        normalized = str(value or "").strip().lower()
+        if normalized not in _COMPETITOR_CONTEXT_HEALTH_CHECK_KEY_ORDER:
+            raise ValueError("Invalid competitor context health check key")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def normalize_label(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_COMPETITOR_CONTEXT_HEALTH_CHECK_LABEL_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Context health check label is required")
+        return cleaned
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: Any) -> SEOCompetitorContextHealthCheckStatus:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"strong", "weak"}:
+            raise ValueError("Invalid competitor context health check status")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("detail", mode="before")
+    @classmethod
+    def normalize_detail(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_COMPETITOR_CONTEXT_HEALTH_CHECK_DETAIL_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Context health check detail is required")
+        return cleaned
+
+
+class SEOCompetitorContextHealthRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: SEOCompetitorContextHealthStatus
+    checks: list[SEOCompetitorContextHealthCheckRead] = Field(default_factory=list)
+    message: str = Field(min_length=1, max_length=_COMPETITOR_CONTEXT_HEALTH_MESSAGE_MAX_CHARS)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: Any) -> SEOCompetitorContextHealthStatus:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"strong", "mixed", "weak"}:
+            raise ValueError("Invalid competitor context health status")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("checks", mode="before")
+    @classmethod
+    def normalize_checks(cls, value: Any) -> list[SEOCompetitorContextHealthCheckRead]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise TypeError("checks must be a list")
+        parsed: dict[SEOCompetitorContextHealthCheckKey, SEOCompetitorContextHealthCheckRead] = {}
+        for item in value:
+            try:
+                check = SEOCompetitorContextHealthCheckRead.model_validate(item)
+            except Exception:  # noqa: BLE001
+                continue
+            parsed[check.key] = check
+        ordered = [parsed[key] for key in _COMPETITOR_CONTEXT_HEALTH_CHECK_KEY_ORDER if key in parsed]
+        return ordered[:_COMPETITOR_CONTEXT_HEALTH_MAX_CHECKS]
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def normalize_message(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_COMPETITOR_CONTEXT_HEALTH_MESSAGE_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Competitor context health message is required")
         return cleaned
 
 
@@ -1529,6 +1629,7 @@ class SEORecommendationWorkspaceSummaryRead(BaseModel):
     eeat_gap_summary: SEORecommendationEEATGapSummaryRead | None = None
     competitor_prompt_preview: AIPromptPreviewRead | None = None
     recommendation_prompt_preview: AIPromptPreviewRead | None = None
+    competitor_context_health: SEOCompetitorContextHealthRead | None = None
     site_location_context: str | None = Field(default=None, max_length=_LOCATION_CONTEXT_MAX_CHARS)
     site_primary_location: str | None = Field(default=None, max_length=_PRIMARY_LOCATION_MAX_CHARS)
     site_primary_business_zip: str | None = Field(default=None, max_length=_PRIMARY_ZIP_MAX_CHARS)
