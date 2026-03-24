@@ -207,6 +207,65 @@ def test_openai_recommendation_narrative_provider_parses_structured_response(mon
     assert "Alpha Plumbing" in user_prompt
 
 
+def test_openai_recommendation_narrative_provider_applies_next_action_diversity_dedupe(monkeypatch) -> None:
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        response = {
+            "model": "gpt-4.1-mini-2026-02-01",
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "narrative_text": "Focus on distinct operator actions.",
+                                "top_themes": ["service clarity", "local SEO"],
+                                "sections": {
+                                    "summary": "Narrative summary.",
+                                    "priority_rationale": "Distinct actions improve execution quality.",
+                                    "next_actions": [
+                                        "Improve service pages.",
+                                        "Improve service pages for nearby competitors and local emergency intent coverage.",
+                                        "Improve service pages",
+                                        "Add trust badges and testimonials to service pages.",
+                                    ],
+                                    "recommendation_references": ["rec-2", "rec-1", "rec-2"],
+                                    "tuning_suggestions": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ],
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEORecommendationNarrativeProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    output = provider.generate_narrative(
+        run=_run(),
+        recommendations=_recommendations(),
+        by_status={"open": 1, "in_progress": 1},
+        by_category={"SEO": 1, "CONTENT": 1},
+        by_severity={"WARNING": 1, "CRITICAL": 1},
+        by_effort_bucket={"LOW": 1, "HIGH": 1},
+        by_priority_band={"high": 1, "critical": 1},
+        backlog=_recommendations(),
+        competitor_telemetry_summary=_competitor_telemetry(),
+        current_tuning_values=_current_tuning_values(),
+    )
+
+    assert output.sections is not None
+    assert output.sections["next_actions"] == [
+        "Improve service pages for nearby competitors and local emergency intent coverage.",
+        "Add trust badges and testimonials to service pages.",
+    ]
+    assert output.sections["recommendation_references"] == ["rec-2", "rec-1"]
+
+
 def test_openai_recommendation_narrative_provider_timeout_is_normalized(monkeypatch) -> None:
     def _timeout_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         del request, timeout

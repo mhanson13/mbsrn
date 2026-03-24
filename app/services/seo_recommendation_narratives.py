@@ -44,6 +44,9 @@ from app.services.seo_competitor_profile_candidate_quality import (
 from app.services.seo_recommendation_competitor_context import (
     extract_recommendation_competitor_context,
 )
+from app.services.seo_recommendation_diversity import (
+    normalize_recommendation_narrative_sections,
+)
 from app.services.seo_recommendation_narrative_prompt import SEO_RECOMMENDATION_NARRATIVE_PROMPT_VERSION
 
 
@@ -56,6 +59,9 @@ _PREVIEW_CAVEAT = (
 _PREVIEW_SUMMARY_MAX_CHARS = 500
 _PREVIEW_RISK_FLAG_MAX_CHARS = 160
 _COMPETITOR_INFLUENCE_SUMMARY_MAX_CHARS = 260
+_NARRATIVE_NEXT_ACTIONS_LIMIT = 10
+_NARRATIVE_NEXT_ACTION_MAX_LENGTH = 220
+_NARRATIVE_RECOMMENDATION_REFERENCE_LIMIT = 25
 _TUNING_SETTINGS_BOUNDS: dict[str, tuple[int, int]] = {
     "competitor_candidate_min_relevance_score": (MIN_RELEVANCE_SCORE_MIN, MIN_RELEVANCE_SCORE_MAX),
     "competitor_candidate_big_box_penalty": (BIG_BOX_PENALTY_MIN, BIG_BOX_PENALTY_MAX),
@@ -169,8 +175,14 @@ class SEORecommendationNarrativeService:
                 competitor_context=competitor_context,
                 current_tuning_values=current_tuning_values,
             )
+            normalized_sections = normalize_recommendation_narrative_sections(
+                output.sections,
+                next_action_limit=_NARRATIVE_NEXT_ACTIONS_LIMIT,
+                next_action_max_length=_NARRATIVE_NEXT_ACTION_MAX_LENGTH,
+                recommendation_reference_limit=_NARRATIVE_RECOMMENDATION_REFERENCE_LIMIT,
+            )
             sections_json = self._augment_sections_with_competitor_influence(
-                sections=output.sections,
+                sections=normalized_sections,
                 competitor_context=competitor_context,
             )
             narrative = SEORecommendationNarrative(

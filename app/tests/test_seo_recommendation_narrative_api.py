@@ -181,6 +181,29 @@ class _ReferenceHeavyRecommendationNarrativeProvider:
         )
 
 
+class _DuplicateActionRecommendationNarrativeProvider:
+    def generate_narrative(self, **kwargs):  # noqa: ANN003, ANN201
+        del kwargs
+        return SEORecommendationNarrativeOutput(
+            narrative_text="Prioritize distinct actions with clear owner-ready steps.",
+            top_themes=["service coverage", "local trust"],
+            sections={
+                "summary": "Reduce repetition and keep focused next steps.",
+                "priority_rationale": "Distinct actions improve operator execution clarity.",
+                "next_actions": [
+                    "Improve service pages.",
+                    "Improve service pages for nearby competitors and local emergency intent coverage.",
+                    "Improve service pages",
+                    "Add trust badges and testimonials to service pages.",
+                ],
+                "recommendation_references": ["rec-2", "rec-1", "rec-2"],
+            },
+            provider_name="dedupe-test-provider",
+            model_name="dedupe-test-model",
+            prompt_version="seo-recommendation-narrative-v2",
+        )
+
+
 def _override_tenant_context(business_id: str):
     def _resolver() -> TenantContext:
         return TenantContext(
@@ -473,6 +496,43 @@ def test_recommendation_narrative_signal_summary_sets_reference_signal_when_refe
     assert signal_summary["reference_signal_used"] is True
     assert signal_summary["competitor_signal_used"] is False
     assert "references" in signal_summary["evidence_sources"]
+
+
+def test_recommendation_narrative_dedupes_overlapping_next_actions_and_preserves_action_summary_compatibility(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        narrative_provider=_DuplicateActionRecommendationNarrativeProvider(),
+    )
+    site_id, run_id = _create_completed_recommendation_run(client, db_session, seeded_business.id)
+
+    response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/narratives"
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    sections = payload["sections_json"]
+    assert sections["next_actions"] == [
+        "Improve service pages for nearby competitors and local emergency intent coverage.",
+        "Add trust badges and testimonials to service pages.",
+    ]
+    action_summary = payload["action_summary"]
+    assert action_summary is not None
+    assert (
+        action_summary["primary_action"]
+        == "Improve service pages for nearby competitors and local emergency intent coverage."
+    )
+    assert (
+        action_summary["first_step"]
+        == "Improve service pages for nearby competitors and local emergency intent coverage."
+    )
+    signal_summary = payload["signal_summary"]
+    assert signal_summary is not None
+    assert signal_summary["support_level"] in {"medium", "high"}
+    assert signal_summary["site_signal_used"] is True
 
 
 def test_recommendation_narrative_failure_is_isolated_and_persisted(db_session, seeded_business) -> None:

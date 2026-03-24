@@ -123,3 +123,21 @@ No additional AI/provider calls are made.
 - `signal_summary` is `null` when narrative content is too sparse/malformed to infer safely.
 - `evidence_sources` is bounded, deduplicated, and uses fixed values only.
 - This is additive response shaping; no persistence, schema migration, or workflow changes.
+
+## Recommendation Diversity and De-duplication
+
+Recommendation narrative shaping now applies a small deterministic diversity pass to `sections.next_actions` before persistence:
+
+- exact and near-duplicate actions are reduced
+- when overlap is high, the more specific action variant is kept
+- distinct action themes are preferred first, then remaining actions are filled in bounded order
+
+### High-level Selection Behavior
+
+- Normalize action text (trim/collapse whitespace, bounded length)
+- Detect overlap with token-based near-duplicate checks
+- Prefer concrete, operator-ready variants over generic phrasing
+- Keep bounded output (`next_actions` remains capped and schema-compatible)
+
+This is a clarity improvement for operators, not a confidence score or ranking engine.
+No model/provider changes, schema changes, or new AI calls are introduced.

@@ -26,6 +26,9 @@ from app.services.seo_recommendation_narrative_prompt import (
     SEO_RECOMMENDATION_NARRATIVE_PROMPT_VERSION,
     build_seo_recommendation_narrative_prompt,
 )
+from app.services.seo_recommendation_diversity import (
+    normalize_recommendation_next_actions,
+)
 
 
 _PROVIDER_ERROR_TIMEOUT = "timeout"
@@ -468,16 +471,19 @@ class OpenAISEORecommendationNarrativeProvider:
         references: list[str] = []
         tuning_suggestions: list[dict[str, object]] = []
         if sections is not None:
+            raw_next_actions: list[str] = []
             for value in sections.next_actions:
                 normalized = _clean_optional_value(value)
                 if not normalized:
                     continue
                 if len(normalized) > _MAX_NEXT_ACTION_LENGTH:
                     normalized = normalized[:_MAX_NEXT_ACTION_LENGTH]
-                if normalized not in next_actions:
-                    next_actions.append(normalized)
-                if len(next_actions) >= _MAX_NEXT_ACTIONS:
-                    break
+                raw_next_actions.append(normalized)
+            next_actions = normalize_recommendation_next_actions(
+                raw_next_actions,
+                limit=_MAX_NEXT_ACTIONS,
+                max_length=_MAX_NEXT_ACTION_LENGTH,
+            )
 
             for value in sections.recommendation_references:
                 normalized = _clean_optional_value(value)

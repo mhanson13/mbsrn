@@ -133,3 +133,12 @@ The workspace now links AI opportunities directly to the deterministic tuning/ap
 - When an operator reaches apply through an AI opportunity linkage, the resulting local recent-change entry is tagged:
   - `From AI Recommendation`
 - Attribution is frontend-session state only (non-persistent) and does not change backend contracts.
+
+## Diversity Expectation
+
+Recommendation narrative `next_actions` now come through a deterministic backend diversity/de-duplication pass.
+Frontend rendering contracts are unchanged, but operators should generally see:
+
+- fewer overlapping action variants
+- clearer separation of distinct next moves
+- preserved compatibility for `action_summary`, `competitor_influence`, and `signal_summary`
