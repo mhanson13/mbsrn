@@ -5,6 +5,8 @@ import pytest
 from app.models.seo_site import SEOSite
 from app.services.seo_competitor_profile_candidate_quality import (
     DEFAULT_MIN_RELEVANCE_SCORE,
+    INELIGIBILITY_REASON_EXCLUDED_DOMAIN_PATTERN,
+    INELIGIBILITY_REASON_INSUFFICIENT_OVERLAP_EVIDENCE,
     INELIGIBILITY_REASON_NO_LIVE_SITE,
     INELIGIBILITY_REASON_OUT_OF_MARKET,
     INELIGIBILITY_REASON_PARKED_DOMAIN,
@@ -479,6 +481,26 @@ def test_eligibility_gate_rejects_parked_domain_before_scoring() -> None:
     assert result.ineligibility_counts_by_reason[INELIGIBILITY_REASON_PARKED_DOMAIN] == 1
 
 
+def test_eligibility_gate_rejects_excluded_domain_patterns() -> None:
+    candidate = _candidate(name="For Sale Listing", domain="buy-this-domain-example.com", index=0)
+    result = filter_eligible_competitor_candidates(
+        site=_site(),
+        candidates=[candidate],
+        domain_probe=_probe_by_domain(
+            {
+                "buy-this-domain-example.com": CompetitorCandidateDomainProbeResult(
+                    status_code=200,
+                    body_text=(
+                        "This domain has placeholder content and can be acquired through a marketplace."
+                    ),
+                )
+            }
+        ),
+    )
+    assert result.eligible_candidates == []
+    assert result.ineligibility_counts_by_reason[INELIGIBILITY_REASON_EXCLUDED_DOMAIN_PATTERN] == 1
+
+
 def test_eligibility_gate_rejects_no_live_site_when_probe_fails() -> None:
     candidate = _candidate(name="Offline Site", domain="offline-site.com", index=0)
     result = filter_eligible_competitor_candidates(
@@ -544,6 +566,34 @@ def test_eligibility_gate_rejects_out_of_market_candidate_with_strong_local_cont
     )
     assert result.eligible_candidates == []
     assert result.ineligibility_counts_by_reason[INELIGIBILITY_REASON_OUT_OF_MARKET] == 1
+
+
+def test_eligibility_gate_rejects_insufficient_overlap_evidence() -> None:
+    candidate = _candidate(
+        name="Generic Home Services",
+        domain="generic-home-services.com",
+        summary="General services.",
+        why=None,
+        evidence=None,
+        confidence=0.45,
+        index=0,
+    )
+    result = filter_eligible_competitor_candidates(
+        site=_site(),
+        candidates=[candidate],
+        domain_probe=_probe_by_domain(
+            {
+                "generic-home-services.com": CompetitorCandidateDomainProbeResult(
+                    status_code=200,
+                    body_text=(
+                        "Browse links, click here, generic home page elements, and broad categories."
+                    ),
+                )
+            }
+        ),
+    )
+    assert result.eligible_candidates == []
+    assert result.ineligibility_counts_by_reason[INELIGIBILITY_REASON_INSUFFICIENT_OVERLAP_EVIDENCE] == 1
 
 
 def test_eligibility_gate_keeps_valid_candidate_then_applies_existing_tuning() -> None:
