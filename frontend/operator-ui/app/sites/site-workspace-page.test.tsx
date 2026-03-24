@@ -2702,6 +2702,65 @@ describe("site workspace timeline controls", () => {
     expect(document.getElementById("workspace-recommendation-rec-1")).toHaveClass("start-here-target-active");
   });
 
+  it("keeps start-here jump/focus working with grouped recommendation sections", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-theme-jump-1",
+              title: "Publish license and insurance proof",
+              theme: "trust_and_legitimacy",
+              theme_label: "Trust & legitimacy",
+            }),
+            buildRecommendation({
+              id: "rec-theme-jump-2",
+              title: "Publish project stories for core services",
+              theme: "experience_and_proof",
+              theme_label: "Experience & proof",
+            }),
+          ],
+          total: 2,
+        },
+        grouped_recommendations: [
+          {
+            theme: "trust_and_legitimacy",
+            label: "Trust & legitimacy",
+            count: 1,
+            recommendation_ids: ["rec-theme-jump-1"],
+          },
+          {
+            theme: "experience_and_proof",
+            label: "Experience & proof",
+            count: 1,
+            recommendation_ids: ["rec-theme-jump-2"],
+          },
+        ],
+        start_here: {
+          theme: "experience_and_proof",
+          theme_label: "Experience & proof",
+          recommendation_id: "rec-theme-jump-2",
+          title: "Publish project stories for core services",
+          reason: "Start here because this is the first action in the strongest visible theme gap.",
+          context_flags: [],
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByTestId("recommendation-theme-groups");
+    const helper = await screen.findByTestId("start-here-theme-helper");
+    expect(within(helper).getByText("Experience & proof")).toBeInTheDocument();
+
+    await user.click(within(helper).getByRole("button", { name: "Jump to recommendation" }));
+    expect(document.getElementById("workspace-recommendation-rec-theme-jump-2")).toHaveClass(
+      "start-here-target-active",
+    );
+  });
+
   it("keeps start-here-by-theme helper hidden when summary omits it", async () => {
     seedRichWorkspaceData();
     mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
@@ -2962,6 +3021,14 @@ describe("site workspace timeline controls", () => {
     await screen.findByRole("heading", { name: "Deterministic Recommendations" });
     const groupedBlock = screen.getByTestId("recommendation-theme-groups");
     expect(groupedBlock).toBeInTheDocument();
+    const renderedThemeOrder = Array.from(
+      groupedBlock.querySelectorAll('[data-testid^="recommendation-theme-group-"] strong'),
+    ).map((node) => (node.textContent || "").trim());
+    expect(renderedThemeOrder).toEqual([
+      "Trust & legitimacy",
+      "Experience & proof",
+      "General site improvement",
+    ]);
 
     const trustGroup = screen.getByTestId("recommendation-theme-group-trust_and_legitimacy");
     expect(within(trustGroup).getByText("Trust & legitimacy")).toBeInTheDocument();

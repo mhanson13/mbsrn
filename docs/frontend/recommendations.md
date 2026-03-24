@@ -241,6 +241,7 @@ Rendering guidance:
 - Show compact label + count (`Trust & legitimacy`, `Experience & proof`, etc.).
 - Preserve row ordering within each group based on incoming flat recommendation order.
 - If grouped metadata is absent or only yields a trivial single section, avoid noisy wrappers.
+- Keep stable recommendation row IDs so `Start here` jump-to actions still focus the correct row in grouped sections.
 - Treat grouping as operator clarity metadata only, not ranking/scoring.
 
 ## Workspace Ordering Explanation
@@ -275,6 +276,7 @@ Rendering guidance:
 Behavior notes:
 - helper selection is deterministic from existing grouping/order metadata
 - pending-refresh context may be shown via subtle badges/labels when present in `context_flags`
+- grouped recommendation rendering and `Start here` jump behavior are designed to work together without changing recommendation order semantics
 
 ## AI -> Action Bridge
 

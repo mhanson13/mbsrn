@@ -316,6 +316,8 @@ No new AI calls or numeric scoring are used.
 - Existing flat `recommendations.items` ordering is preserved.
 - `grouped_recommendations` is additive and presentation-oriented only.
 - Recommendation order is preserved within each theme group.
+- Workspace rendering uses lightweight theme headers for the main recommendation list when multiple groups are present.
+- `start_here` remains compatible with grouped layouts by targeting stable recommendation IDs in the same deterministic list.
 - Group sections are emitted in a stable deterministic order:
   1. Trust & legitimacy
   2. Experience & proof
