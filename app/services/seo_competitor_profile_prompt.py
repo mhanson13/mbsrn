@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import re
 
 from app.models.seo_site import SEOSite
+from app.services.seo_sites import build_location_context
 
 
 SEO_COMPETITOR_PROFILE_PROMPT_VERSION = "seo-competitor-profile-v1"
@@ -93,9 +93,6 @@ _NON_COMPETITOR_DOMAIN_HINTS = (
     "yellowpages.com",
     "youtube.com",
 )
-_ZIP_CODE_PATTERN = re.compile(r"\b(?P<zip>\d{5})\b")
-
-
 @dataclass(frozen=True)
 class SEOCompetitorProfilePrompt:
     prompt_version: str
@@ -127,18 +124,31 @@ def build_seo_competitor_profile_prompt(
     ).lower()
     business_name = _extract_business_name(site)
     industry = _sanitize_optional(site.industry, max_length=_MAX_INDUSTRY_LENGTH)
-    primary_location = _sanitize_optional(site.primary_location, max_length=_MAX_LOCATION_LENGTH)
-    service_areas = _normalize_service_areas(site.service_areas_json)
-    primary_business_zip = _extract_primary_business_zip(
-        primary_location=primary_location,
-        service_areas=service_areas,
+    location_context_details = build_location_context(site)
+    primary_location = _sanitize_optional(
+        location_context_details.primary_location,
+        max_length=_MAX_LOCATION_LENGTH,
     )
-    has_location_context = bool(primary_location or service_areas)
+    primary_business_zip = _sanitize_optional(
+        location_context_details.primary_business_zip,
+        max_length=5,
+    )
+    service_areas = [
+        sanitized
+        for area in location_context_details.service_areas
+        for sanitized in [_sanitize_optional(area, max_length=_MAX_SERVICE_AREA_LENGTH)]
+        if sanitized
+    ][:_MAX_SERVICE_AREAS]
     location_context = _sanitize_required(
-        _build_location_context(primary_location=primary_location, service_areas=service_areas),
+        location_context_details.location_context,
         max_length=_MAX_LOCATION_LENGTH,
         fallback=_LOCATION_FALLBACK_TEXT,
     )
+    location_context_strength = (
+        "strong" if location_context_details.location_context_strength == "strong" else "weak"
+    )
+    location_context_source = location_context_details.location_context_source
+    has_location_context = location_context_strength == "strong"
     has_industry_context = bool(industry)
     industry_context = _sanitize_required(
         _build_industry_context(
@@ -179,7 +189,8 @@ def build_seo_competitor_profile_prompt(
         "site_primary_business_zip": primary_business_zip,
         "site_service_areas": service_areas,
         "site_location_context": location_context,
-        "site_location_context_strength": "strong" if has_location_context else "weak",
+        "site_location_context_strength": location_context_strength,
+        "site_location_context_source": location_context_source,
         "site_industry_context": industry_context,
         "site_industry_context_strength": "strong" if has_industry_context else "weak",
         "service_focus_terms": service_focus_terms,
@@ -205,7 +216,8 @@ def build_seo_competitor_profile_prompt(
         f"- Name: {display_name}\n"
         f"- Location: {location_context}\n"
         f"- Industry: {industry_context}\n"
-        f"- Location Context Strength: {'strong' if has_location_context else 'weak'}\n"
+        f"- Location Context Strength: {location_context_strength}\n"
+        f"- Location Context Source: {location_context_source}\n"
         f"- Industry Context Strength: {'strong' if has_industry_context else 'weak'}\n"
         f"- Service Focus Terms: {', '.join(service_focus_terms) if service_focus_terms else 'Unspecified'}\n"
         f"- Target Customer Context: {target_customer_context}\n"
@@ -259,19 +271,6 @@ def _normalize_domains(domains: list[str]) -> list[str]:
     return sorted(cleaned)
 
 
-def _normalize_service_areas(service_areas: list[str] | None) -> list[str]:
-    if not service_areas:
-        return []
-    cleaned: set[str] = set()
-    for item in service_areas:
-        if not isinstance(item, str):
-            continue
-        normalized = _sanitize_optional(item, max_length=_MAX_SERVICE_AREA_LENGTH)
-        if normalized:
-            cleaned.add(normalized)
-    return sorted(cleaned)[:_MAX_SERVICE_AREAS]
-
-
 def _sanitize_required(value: str | None, *, max_length: int, fallback: str) -> str:
     cleaned = _sanitize_optional(value, max_length=max_length)
     if cleaned:
@@ -292,39 +291,6 @@ def _sanitize_optional(value: str | None, *, max_length: int) -> str | None:
     if len(normalized) > max_length:
         return normalized[:max_length]
     return normalized
-
-
-def _build_location_context(*, primary_location: str | None, service_areas: list[str]) -> str:
-    if primary_location and service_areas:
-        non_duplicate_service_areas = [
-            area
-            for area in service_areas
-            if area.lower() != primary_location.lower()
-        ]
-        if non_duplicate_service_areas:
-            preview = non_duplicate_service_areas[:3]
-            suffix = " and surrounding areas" if len(non_duplicate_service_areas) > 3 else ""
-            return f"{primary_location} and nearby service areas: {', '.join(preview)}{suffix}"
-        return primary_location
-    if primary_location:
-        return primary_location
-    if service_areas:
-        preview = service_areas[:4]
-        suffix = " and surrounding areas" if len(service_areas) > 4 else ""
-        return f"Serves {', '.join(preview)}{suffix}"
-    return _LOCATION_FALLBACK_TEXT
-
-
-def _extract_primary_business_zip(*, primary_location: str | None, service_areas: list[str]) -> str | None:
-    if primary_location:
-        match = _ZIP_CODE_PATTERN.search(primary_location)
-        if match is not None:
-            return match.group("zip")
-    for area in service_areas:
-        match = _ZIP_CODE_PATTERN.search(area)
-        if match is not None:
-            return match.group("zip")
-    return None
 
 
 def _build_industry_context(

@@ -920,6 +920,7 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
     assert payload["analysis_freshness"]["analysis_generated_at"] is not None
     assert payload["analysis_freshness"]["last_apply_at"] is None
     assert payload["site_location_context_strength"] == "weak"
+    assert payload["site_location_context_source"] == "fallback"
     assert payload["site_primary_business_zip"] is None
     assert payload["site_location_context"]
     assert payload["ordering_explanation"] is not None
@@ -962,9 +963,57 @@ def test_recommendation_workspace_summary_reflects_primary_business_zip_location
     payload = summary.json()
     assert payload["state"] == "no_runs"
     assert payload["site_location_context_strength"] == "strong"
+    assert payload["site_location_context_source"] == "zip_capture"
     assert payload["site_primary_business_zip"] == "80538"
     assert payload["site_primary_location"] == "Serving area around ZIP code 80538"
     assert "80538" in payload["site_location_context"]
+
+
+def test_recommendation_workspace_summary_reflects_explicit_location_source(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+
+    patch_site = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={"primary_location": "Loveland, Colorado"},
+    )
+    assert patch_site.status_code == 200
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["site_location_context_strength"] == "strong"
+    assert payload["site_location_context_source"] == "explicit_location"
+    assert payload["site_primary_location"] == "Loveland, Colorado"
+    assert payload["site_primary_business_zip"] is None
+    assert payload["site_location_context"] == "Loveland, Colorado"
+
+
+def test_recommendation_workspace_summary_reflects_service_area_location_source(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+
+    patch_site = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={"service_areas": ["Fort Collins", "Loveland"]},
+    )
+    assert patch_site.status_code == 200
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["site_location_context_strength"] == "strong"
+    assert payload["site_location_context_source"] == "service_area"
+    assert payload["site_primary_location"] is None
+    assert payload["site_location_context"] == "Serves Fort Collins, Loveland"
 
 
 def test_recommendation_workspace_summary_groups_recommendations_by_theme_without_changing_flat_order(

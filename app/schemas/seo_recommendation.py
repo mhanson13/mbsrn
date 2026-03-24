@@ -29,6 +29,12 @@ SEORecommendationSignalSupportLevel = Literal["low", "medium", "high"]
 SEORecommendationApplyOutcomeSource = Literal["recommendation", "manual"]
 SEORecommendationAnalysisFreshnessStatus = Literal["fresh", "pending_refresh", "unknown"]
 SEORecommendationLocationContextStrength = Literal["strong", "weak", "unknown"]
+SEORecommendationLocationContextSource = Literal[
+    "explicit_location",
+    "service_area",
+    "zip_capture",
+    "fallback",
+]
 SEORecommendationEEATCategory = Literal[
     "experience",
     "expertise",
@@ -1453,6 +1459,7 @@ class SEORecommendationWorkspaceSummaryRead(BaseModel):
     site_primary_location: str | None = Field(default=None, max_length=_PRIMARY_LOCATION_MAX_CHARS)
     site_primary_business_zip: str | None = Field(default=None, max_length=_PRIMARY_ZIP_MAX_CHARS)
     site_location_context_strength: SEORecommendationLocationContextStrength = "unknown"
+    site_location_context_source: SEORecommendationLocationContextSource | None = None
 
     @field_validator("site_location_context", mode="before")
     @classmethod
@@ -1483,6 +1490,19 @@ class SEORecommendationWorkspaceSummaryRead(BaseModel):
         normalized = str(value or "").strip().lower()
         if normalized not in {"strong", "weak", "unknown"}:
             return "unknown"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("site_location_context_source", mode="before")
+    @classmethod
+    def normalize_location_context_source(
+        cls,
+        value: Any,
+    ) -> SEORecommendationLocationContextSource | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if normalized not in {"explicit_location", "service_area", "zip_capture", "fallback"}:
+            return None
         return normalized  # type: ignore[return-value]
 
 

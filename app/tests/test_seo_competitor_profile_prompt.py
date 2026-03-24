@@ -41,6 +41,7 @@ def test_prompt_builder_uses_expected_trusted_inputs() -> None:
         "site_service_areas": ["Aurora", "Denver"],
         "site_location_context": "Denver, CO and nearby service areas: Aurora, Denver",
         "site_location_context_strength": "strong",
+        "site_location_context_source": "explicit_location",
         "site_industry_context": "Home Services",
         "site_industry_context_strength": "strong",
         "service_focus_terms": ["Home Services"],
@@ -98,6 +99,7 @@ def test_prompt_builder_location_fallback_is_clean_when_missing() -> None:
         == "Location not yet established from available business/site data."
     )
     assert prompt.trusted_site_context["site_location_context_strength"] == "weak"
+    assert prompt.trusted_site_context["site_location_context_source"] == "fallback"
     assert "- Location: Location not yet established from available business/site data." in prompt.user_prompt
     assert "- Location Context Strength: weak" in prompt.user_prompt
 
@@ -114,13 +116,14 @@ def test_prompt_builder_location_uses_service_areas_only_without_empty_parts() -
     )
 
     assert prompt.trusted_site_context["site_location_context"] == "Serves Boulder, North Metro"
+    assert prompt.trusted_site_context["site_location_context_source"] == "service_area"
     assert "- Location: Serves Boulder, North Metro" in prompt.user_prompt
 
 
 def test_prompt_builder_extracts_primary_business_zip_when_present() -> None:
     site = _build_site()
     site.primary_location = "Serving area around ZIP code 80538"
-    site.service_areas_json = ["Fort Collins", "ZIP 80538"]
+    site.service_areas_json = None
 
     prompt = build_seo_competitor_profile_prompt(
         site=site,
@@ -129,6 +132,24 @@ def test_prompt_builder_extracts_primary_business_zip_when_present() -> None:
     )
 
     assert prompt.trusted_site_context["site_primary_business_zip"] == "80538"
+    assert prompt.trusted_site_context["site_location_context_source"] == "zip_capture"
+    assert prompt.trusted_site_context["site_location_context"] == "Serving area around ZIP code 80538"
+
+
+def test_prompt_builder_service_area_source_takes_precedence_over_zip_capture() -> None:
+    site = _build_site()
+    site.primary_location = "Serving area around ZIP code 80538"
+    site.service_areas_json = ["Fort Collins", "Loveland"]
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[],
+        candidate_count=2,
+    )
+
+    assert prompt.trusted_site_context["site_primary_business_zip"] == "80538"
+    assert prompt.trusted_site_context["site_location_context_source"] == "service_area"
+    assert prompt.trusted_site_context["site_location_context"] == "Serves Fort Collins, Loveland"
 
 
 def test_prompt_builder_industry_fallback_uses_site_identity_when_missing() -> None:

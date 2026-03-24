@@ -211,6 +211,7 @@ Workspace summary responses now include additive location-context metadata used 
 - `site_primary_location`
 - `site_primary_business_zip`
 - `site_location_context_strength` (`strong | weak | unknown`)
+- `site_location_context_source` (`explicit_location | service_area | zip_capture | fallback`)
 
 When location context is weak and no ZIP is known, the operator UI can prompt for a primary business ZIP.
 
@@ -218,6 +219,7 @@ Rules:
 - ZIP capture is optional and non-blocking.
 - ZIP is used only for deterministic local-context enrichment.
 - No external geocoding or third-party location APIs are called in this step.
+- Location context is assembled by a shared deterministic builder used by both competitor prompt context and workspace summary responses.
 
 ## Deterministic Priority Reasons (Additive)
 

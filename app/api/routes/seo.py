@@ -41,7 +41,6 @@ from app.schemas.seo_site import (
     SEOSiteListResponse,
     SEOSiteRead,
     SEOSiteUpdateRequest,
-    extract_primary_business_zip,
 )
 from app.schemas.seo_competitor import (
     SEOCompetitorComparisonFindingListResponse,
@@ -153,7 +152,12 @@ from app.services.seo_competitors import (
     SEOCompetitorService,
     SEOCompetitorValidationError,
 )
-from app.services.seo_sites import SEOSiteNotFoundError, SEOSiteService, SEOSiteValidationError
+from app.services.seo_sites import (
+    SEOSiteNotFoundError,
+    SEOSiteService,
+    SEOSiteValidationError,
+    build_location_context,
+)
 from app.services.seo_summary import SEOSummaryNotFoundError, SEOSummaryService, SEOSummaryValidationError
 from app.schemas.seo_summary import SEOAuditSummaryRead
 
@@ -193,7 +197,6 @@ _WORKSPACE_RECOMMENDATION_THEME_ORDER = (
 )
 _WORKSPACE_LOCATION_CONTEXT_MAX_CHARS = 220
 _WORKSPACE_PRIMARY_LOCATION_MAX_CHARS = 255
-_WORKSPACE_LOCATION_FALLBACK_TEXT = "Location not yet established from available business/site data."
 logger = logging.getLogger(__name__)
 
 
@@ -306,18 +309,11 @@ def _normalize_workspace_location_context_strength(value: object) -> str:
     return "unknown"
 
 
-def _build_workspace_site_location_context(
-    *,
-    site_primary_location: str | None,
-    service_areas: list[str],
-) -> tuple[str, str]:
-    if site_primary_location and service_areas:
-        return (f"{site_primary_location}; service areas: {', '.join(service_areas[:4])}", "strong")
-    if site_primary_location:
-        return (site_primary_location, "strong")
-    if service_areas:
-        return (f"Serves {', '.join(service_areas[:4])}", "strong")
-    return (_WORKSPACE_LOCATION_FALLBACK_TEXT, "weak")
+def _normalize_workspace_location_context_source(value: object) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"explicit_location", "service_area", "zip_capture", "fallback"}:
+        return normalized
+    return None
 
 
 def _extract_workspace_changed_tuning_values(
@@ -1142,22 +1138,21 @@ def get_seo_recommendation_workspace_summary(
         by_priority_band={},
     )
     recommendations_payload = empty_recommendations
-    site_service_areas: list[str] = []
-    if isinstance(site.service_areas_json, list):
-        for item in site.service_areas_json:
-            compacted = _compact_workspace_text(item, max_length=120)
-            if compacted is not None:
-                site_service_areas.append(compacted)
-    site_service_areas = list(dict.fromkeys(site_service_areas))
+    site_location_details = build_location_context(site)
     site_primary_location = _compact_workspace_text(
-        site.primary_location,
+        site_location_details.primary_location,
         max_length=_WORKSPACE_PRIMARY_LOCATION_MAX_CHARS,
     )
-    site_location_context, site_location_context_strength = _build_workspace_site_location_context(
-        site_primary_location=site_primary_location,
-        service_areas=site_service_areas,
+    site_location_context = _compact_workspace_text(
+        site_location_details.location_context,
+        max_length=_WORKSPACE_LOCATION_CONTEXT_MAX_CHARS,
+    ) or site_location_details.location_context
+    site_location_context_strength = site_location_details.location_context_strength
+    site_location_context_source = site_location_details.location_context_source
+    site_primary_business_zip = _compact_workspace_text(
+        site_location_details.primary_business_zip,
+        max_length=5,
     )
-    site_primary_business_zip = extract_primary_business_zip(site_primary_location)
 
     if latest_completed_run is not None:
         recommendation_items = recommendation_service.list_recommendations(
@@ -1285,9 +1280,11 @@ def get_seo_recommendation_workspace_summary(
         )
         if trusted_strength != "unknown":
             site_location_context_strength = trusted_strength
-
-    if site_primary_business_zip is None:
-        site_primary_business_zip = extract_primary_business_zip(site_location_context)
+        trusted_source = _normalize_workspace_location_context_source(
+            trusted_site_context.get("site_location_context_source")
+        )
+        if trusted_source is not None:
+            site_location_context_source = trusted_source
 
     if latest_run is None:
         state = "no_runs"
@@ -1331,6 +1328,7 @@ def get_seo_recommendation_workspace_summary(
         site_primary_location=site_primary_location,
         site_primary_business_zip=site_primary_business_zip,
         site_location_context_strength=site_location_context_strength,
+        site_location_context_source=site_location_context_source,
     )
 
 

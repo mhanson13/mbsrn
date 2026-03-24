@@ -96,10 +96,16 @@ Competitor prompt context now prefers structured business/site metadata before a
 3. Deterministic identity hints from site metadata (for example domain labels) only when structured fields are missing
 
 ### Location context behavior
-- Uses best available human-readable location context from `primary_location` and `service_areas_json`.
+- Uses a shared deterministic location-context builder (`build_location_context(site)`) so prompt and workspace use the same source/strength logic.
+- Provenance is tracked as one of:
+  - `explicit_location`
+  - `service_area`
+  - `zip_capture`
+  - `fallback`
 - Falls back to:
   - `Location not yet established from available business/site data.`
 - Does not fabricate geography.
+- Does not call external geocoding APIs.
 
 ### Industry context behavior
 - Uses explicit structured `industry` when present.
@@ -128,4 +134,5 @@ Behavior:
 Context effect:
 - Saved ZIP is normalized into deterministic location text (`Serving area around ZIP code <ZIP>`).
 - Competitor prompt trusted context is upgraded from weak to strong when ZIP is present.
+- Prompt trusted context now also includes `site_location_context_source` so provenance can be surfaced in workspace metadata.
 - This improves local competitor relevance without adding external geocoding dependencies.

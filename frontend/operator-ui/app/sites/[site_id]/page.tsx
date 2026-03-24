@@ -555,6 +555,24 @@ function formatRecommendationThemeLabel(theme: RecommendationTheme): string {
   }
 }
 
+function formatLocationContextSourceLabel(
+  source: "explicit_location" | "service_area" | "zip_capture" | "fallback" | null,
+): string | null {
+  if (!source) {
+    return null;
+  }
+  switch (source) {
+    case "explicit_location":
+      return "Explicit location";
+    case "service_area":
+      return "Service area";
+    case "zip_capture":
+      return "ZIP provided";
+    case "fallback":
+      return "Fallback";
+  }
+}
+
 interface RecommendationThemeSectionView {
   theme: RecommendationTheme;
   label: string;
@@ -1181,6 +1199,9 @@ export default function SiteWorkspacePage() {
   const [siteLocationContextStrength, setSiteLocationContextStrength] = useState<"strong" | "weak" | "unknown">(
     "unknown",
   );
+  const [siteLocationContextSource, setSiteLocationContextSource] = useState<
+    "explicit_location" | "service_area" | "zip_capture" | "fallback" | null
+  >(null);
   const [showZipCaptureModal, setShowZipCaptureModal] = useState(false);
   const [zipCaptureInput, setZipCaptureInput] = useState("");
   const [zipCaptureSaving, setZipCaptureSaving] = useState(false);
@@ -1700,6 +1721,7 @@ export default function SiteWorkspacePage() {
     setSitePrimaryLocation(summary.site_primary_location || null);
     setSitePrimaryBusinessZip(summary.site_primary_business_zip || null);
     setSiteLocationContextStrength(summary.site_location_context_strength || "unknown");
+    setSiteLocationContextSource(summary.site_location_context_source || null);
     setLatestCompetitorPromptPreview(
       normalizePromptPreview(summary.competitor_prompt_preview, "competitor"),
     );
@@ -2449,6 +2471,7 @@ export default function SiteWorkspacePage() {
       setSitePrimaryLocation(null);
       setSitePrimaryBusinessZip(null);
       setSiteLocationContextStrength("unknown");
+      setSiteLocationContextSource(null);
       setShowZipCaptureModal(false);
       setZipCaptureInput("");
       setZipCaptureSaving(false);
@@ -2505,6 +2528,7 @@ export default function SiteWorkspacePage() {
       setSitePrimaryLocation(null);
       setSitePrimaryBusinessZip(null);
       setSiteLocationContextStrength("unknown");
+      setSiteLocationContextSource(null);
       setShowZipCaptureModal(false);
       setZipCaptureInput("");
       setZipCaptureSaving(false);
@@ -2556,6 +2580,7 @@ export default function SiteWorkspacePage() {
       setSitePrimaryLocation(null);
       setSitePrimaryBusinessZip(null);
       setSiteLocationContextStrength("unknown");
+      setSiteLocationContextSource(null);
       setShowZipCaptureModal(false);
       setZipCaptureInput("");
       setZipCaptureSaving(false);
@@ -2756,6 +2781,7 @@ export default function SiteWorkspacePage() {
         setSitePrimaryLocation(null);
         setSitePrimaryBusinessZip(null);
         setSiteLocationContextStrength("unknown");
+        setSiteLocationContextSource(null);
         setShowZipCaptureModal(false);
         setZipCaptureInput("");
         setZipCaptureSaving(false);
@@ -4344,6 +4370,11 @@ export default function SiteWorkspacePage() {
                     {recommendationAnalysisFreshness.lastApplyAt ? (
                       <span className="hint muted">
                         Last apply at: {formatDateTime(recommendationAnalysisFreshness.lastApplyAt)}
+                      </span>
+                    ) : null}
+                    {formatLocationContextSourceLabel(siteLocationContextSource) ? (
+                      <span className="hint muted">
+                        Location source: {formatLocationContextSourceLabel(siteLocationContextSource)}
                       </span>
                     ) : null}
                   </div>

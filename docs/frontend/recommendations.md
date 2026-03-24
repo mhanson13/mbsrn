@@ -184,6 +184,8 @@ State intent:
 Fallback rules:
 - if `analysis_freshness` is missing/null, do not render an empty placeholder
 - never infer `fresh` client-side when status is absent
+- when `site_location_context_source` is present, render a subtle provenance line such as
+  `Location source: ZIP provided` inside the same compact metadata area
 
 ## Weak Location Context ZIP Prompt
 
@@ -204,6 +206,7 @@ Rendering/behavior guidance:
 - show once per session per site unless saved
 - hide when ZIP exists or context is no longer weak
 - keep failures non-blocking with retry/skip
+- location provenance labels should stay subtle and hidden when source metadata is absent
 
 ## Deterministic Priority Reason Visibility
 

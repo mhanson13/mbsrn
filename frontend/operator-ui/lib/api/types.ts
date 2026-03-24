@@ -763,6 +763,7 @@ export interface RecommendationWorkspaceSummaryResponse {
   site_primary_location?: string | null;
   site_primary_business_zip?: string | null;
   site_location_context_strength?: "strong" | "weak" | "unknown";
+  site_location_context_source?: "explicit_location" | "service_area" | "zip_capture" | "fallback" | null;
 }
 
 export interface RecommendationOrderingExplanation {

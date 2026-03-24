@@ -3072,6 +3072,22 @@ describe("site workspace timeline controls", () => {
     expect(within(freshness).getByText(/Last apply at:/)).toBeInTheDocument();
   });
 
+  it("renders location source metadata when workspace summary includes provenance", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        analysis_freshness: buildRecommendationAnalysisFreshness(),
+        site_location_context_source: "zip_capture",
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Narrative Overlay" });
+    const freshness = screen.getByTestId("narrative-analysis-freshness");
+    expect(within(freshness).getByText("Location source: ZIP provided")).toBeInTheDocument();
+  });
+
   it("renders unknown analysis freshness safely when timestamps are insufficient", async () => {
     seedRichWorkspaceData();
     mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
@@ -3091,6 +3107,7 @@ describe("site workspace timeline controls", () => {
     const freshness = screen.getByTestId("narrative-analysis-freshness");
     expect(within(freshness).getByText("Unknown")).toBeInTheDocument();
     expect(within(freshness).getByText("Analysis freshness could not be determined.")).toBeInTheDocument();
+    expect(within(freshness).queryByText(/Location source:/)).not.toBeInTheDocument();
   });
 
   it("shows ZIP capture modal when location context is weak and no ZIP is stored", async () => {

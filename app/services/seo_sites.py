@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+from typing import Literal
 from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 
@@ -10,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
-from app.schemas.seo_site import normalize_primary_business_zip
+from app.schemas.seo_site import extract_primary_business_zip, normalize_primary_business_zip
 from app.schemas.seo_site import SEOSiteCreateRequest, SEOSiteUpdateRequest
 
 
@@ -26,6 +28,130 @@ class SEOSiteValidationError(ValueError):
 class NormalizedURL:
     url: str
     domain: str
+
+
+SEOLocationContextStrength = Literal["strong", "weak"]
+SEOLocationContextSource = Literal["explicit_location", "service_area", "zip_capture", "fallback"]
+_ZIP_CAPTURE_ALLOWED_TOKENS = {"zip", "code", "serving", "service", "area", "around", "primary"}
+_LOCATION_CONTEXT_FALLBACK_TEXT = "Location not yet established from available business/site data."
+_MAX_SERVICE_AREAS = 25
+
+
+@dataclass(frozen=True)
+class SEOSiteLocationContext:
+    location_context: str
+    location_context_strength: SEOLocationContextStrength
+    location_context_source: SEOLocationContextSource
+    primary_location: str | None
+    primary_business_zip: str | None
+    service_areas: list[str]
+
+
+def build_primary_location_from_zip(zip_code: str) -> str:
+    return f"Serving area around ZIP code {zip_code}"
+
+
+def build_location_context(site: SEOSite) -> SEOSiteLocationContext:
+    primary_location = _clean_location_text(site.primary_location)
+    service_areas = _normalize_location_service_areas(site.service_areas_json)
+    primary_business_zip = _extract_location_zip(primary_location=primary_location, service_areas=service_areas)
+
+    if primary_location and not _is_zip_capture_location(primary_location):
+        if service_areas:
+            non_duplicate_service_areas = [
+                area for area in service_areas if area.lower() != primary_location.lower()
+            ]
+            if non_duplicate_service_areas:
+                preview = non_duplicate_service_areas[:3]
+                suffix = " and surrounding areas" if len(non_duplicate_service_areas) > 3 else ""
+                location_context = f"{primary_location} and nearby service areas: {', '.join(preview)}{suffix}"
+            else:
+                location_context = primary_location
+        else:
+            location_context = primary_location
+        return SEOSiteLocationContext(
+            location_context=location_context,
+            location_context_strength="strong",
+            location_context_source="explicit_location",
+            primary_location=primary_location,
+            primary_business_zip=primary_business_zip,
+            service_areas=service_areas,
+        )
+
+    if service_areas:
+        preview = service_areas[:4]
+        suffix = " and surrounding areas" if len(service_areas) > 4 else ""
+        return SEOSiteLocationContext(
+            location_context=f"Serves {', '.join(preview)}{suffix}",
+            location_context_strength="strong",
+            location_context_source="service_area",
+            primary_location=primary_location,
+            primary_business_zip=primary_business_zip,
+            service_areas=service_areas,
+        )
+
+    if primary_business_zip:
+        return SEOSiteLocationContext(
+            location_context=build_primary_location_from_zip(primary_business_zip),
+            location_context_strength="strong",
+            location_context_source="zip_capture",
+            primary_location=primary_location,
+            primary_business_zip=primary_business_zip,
+            service_areas=service_areas,
+        )
+
+    return SEOSiteLocationContext(
+        location_context=_LOCATION_CONTEXT_FALLBACK_TEXT,
+        location_context_strength="weak",
+        location_context_source="fallback",
+        primary_location=primary_location,
+        primary_business_zip=primary_business_zip,
+        service_areas=service_areas,
+    )
+
+
+def _clean_location_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = " ".join(value.split()).strip()
+    return cleaned or None
+
+
+def _normalize_location_service_areas(service_areas: list[str] | None) -> list[str]:
+    if not isinstance(service_areas, list):
+        return []
+    normalized: set[str] = set()
+    for item in service_areas:
+        if not isinstance(item, str):
+            continue
+        compacted = _clean_location_text(item)
+        if compacted:
+            normalized.add(compacted)
+    return sorted(normalized)[:_MAX_SERVICE_AREAS]
+
+
+def _extract_location_zip(*, primary_location: str | None, service_areas: list[str]) -> str | None:
+    if primary_location:
+        matched = extract_primary_business_zip(primary_location)
+        if matched is not None:
+            return matched
+    for area in service_areas:
+        matched = extract_primary_business_zip(area)
+        if matched is not None:
+            return matched
+    return None
+
+
+def _is_zip_capture_location(primary_location: str) -> bool:
+    if extract_primary_business_zip(primary_location) is None:
+        return False
+    normalized = " ".join(primary_location.lower().split())
+    normalized = re.sub(r"\b\d{5}\b", " ", normalized)
+    normalized = re.sub(r"[^a-z]+", " ", normalized)
+    tokens = [token for token in normalized.split() if token]
+    if not tokens:
+        return True
+    return all(token in _ZIP_CAPTURE_ALLOWED_TOKENS for token in tokens)
 
 
 class SEOSiteService:
@@ -66,7 +192,7 @@ class SEOSiteService:
 
         primary_location = self._clean_optional(payload.primary_location)
         if primary_location is None and payload.primary_business_zip is not None:
-            primary_location = self._build_primary_location_from_zip(payload.primary_business_zip)
+            primary_location = build_primary_location_from_zip(payload.primary_business_zip)
 
         site = SEOSite(
             id=str(uuid4()),
@@ -116,7 +242,7 @@ class SEOSiteService:
         if "primary_business_zip" in changes and "primary_location" not in changes:
             normalized_zip = normalize_primary_business_zip(changes["primary_business_zip"])
             site.primary_location = (
-                self._build_primary_location_from_zip(normalized_zip)
+                build_primary_location_from_zip(normalized_zip)
                 if normalized_zip is not None
                 else None
             )
@@ -166,10 +292,6 @@ class SEOSiteService:
             return None
         cleaned = value.strip()
         return cleaned or None
-
-    @staticmethod
-    def _build_primary_location_from_zip(zip_code: str) -> str:
-        return f"Serving area around ZIP code {zip_code}"
 
     def _ensure_unique_domain(
         self,
