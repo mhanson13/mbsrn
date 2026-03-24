@@ -247,6 +247,10 @@ workspace can render a compact debug block with:
 - rejected by eligibility
 - eligible after filtering
 - removed by tuning
+- survived tuning
+- removed by existing-domain match
+- removed by deduplication
+- removed by final limit
 - final returned
 
 Rendering rules:

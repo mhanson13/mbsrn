@@ -49,6 +49,10 @@ Competitor debug payloads may also include `candidate_pipeline_summary` stage co
 - rejected by deterministic eligibility
 - passed to tuning
 - removed by tuning
+- survived tuning
+- removed by existing-domain suppression
+- removed by deduplication
+- removed by final requested-count limit
 - final returned
 Competitor debug payloads may also include deterministic tuning-stage exclusion reason telemetry for eligible candidates removed by tuning:
 - `below_minimum_relevance_score`

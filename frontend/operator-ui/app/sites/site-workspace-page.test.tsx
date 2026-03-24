@@ -4375,6 +4375,10 @@ describe("site workspace ai competitor profile drafts", () => {
         rejected_by_eligibility_count: 3,
         eligible_candidate_count: 2,
         rejected_by_tuning_count: 1,
+        survived_tuning_count: 1,
+        removed_by_existing_domain_match_count: 0,
+        removed_by_deduplication_count: 0,
+        removed_by_final_limit_count: 0,
         final_candidate_count: 1,
       },
       tuning_rejected_candidate_count: 3,
@@ -4418,7 +4422,12 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(within(pipelineDebug).getByText("Rejected by eligibility: 3")).toBeInTheDocument();
     expect(within(pipelineDebug).getByText("Eligible after filtering: 2")).toBeInTheDocument();
     expect(within(pipelineDebug).getByText("Removed by tuning: 1")).toBeInTheDocument();
+    expect(within(pipelineDebug).getByText("Survived tuning: 1")).toBeInTheDocument();
+    expect(within(pipelineDebug).getByText("Removed by existing-domain match: 0")).toBeInTheDocument();
+    expect(within(pipelineDebug).getByText("Removed by deduplication: 0")).toBeInTheDocument();
+    expect(within(pipelineDebug).getByText("Removed by final limit: 0")).toBeInTheDocument();
     expect(within(pipelineDebug).getByText("Final returned: 1")).toBeInTheDocument();
+    expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(1);
 
     const tuningDebug = screen.getByTestId("tuning-rejected-competitor-candidates-debug");
     expect(within(tuningDebug).getByText(/Removed by tuning \(debug\)/i)).toBeInTheDocument();

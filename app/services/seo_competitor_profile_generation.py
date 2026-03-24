@@ -107,6 +107,7 @@ _REJECTED_CANDIDATE_DEBUG_COUNT_KEY = "rejected_candidate_count"
 _TUNING_REJECTED_CANDIDATE_DEBUG_KEY = "tuning_rejected_candidates_debug"
 _TUNING_REJECTED_CANDIDATE_DEBUG_COUNT_KEY = "tuning_rejected_candidate_count"
 _TUNING_REJECTION_REASON_COUNTS_KEY = "tuning_rejection_reason_counts"
+_CANDIDATE_PIPELINE_SUMMARY_KEY = "candidate_pipeline_summary_debug"
 
 FAILURE_CATEGORY_TIMEOUT = "timeout"
 FAILURE_CATEGORY_PROVIDER_AUTH = "provider_auth"
@@ -198,6 +199,10 @@ class SEOCompetitorProfileCandidatePipelineSummary:
     rejected_by_eligibility_count: int
     eligible_candidate_count: int
     rejected_by_tuning_count: int
+    survived_tuning_count: int
+    removed_by_existing_domain_match_count: int
+    removed_by_deduplication_count: int
+    removed_by_final_limit_count: int
     final_candidate_count: int
 
 
@@ -534,6 +539,7 @@ class SEOCompetitorProfileGenerationService:
                 rejected_candidates=draft_result.rejected_candidates,
                 tuning_rejected_candidates=draft_result.tuning_rejected_candidates,
                 tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
+                candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
             )
             raw_output = self._sanitize_raw_output(raw_output)
             run.raw_output = raw_output
@@ -624,6 +630,7 @@ class SEOCompetitorProfileGenerationService:
                     rejected_candidates=draft_result.rejected_candidates,
                     tuning_rejected_candidates=draft_result.tuning_rejected_candidates,
                     tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
+                    candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
                 )
             self._mark_run_failed(
                 business_id=business_id,
@@ -650,6 +657,7 @@ class SEOCompetitorProfileGenerationService:
                     rejected_candidates=draft_result.rejected_candidates,
                     tuning_rejected_candidates=draft_result.tuning_rejected_candidates,
                     tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
+                    candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
                 )
             self._mark_run_failed(
                 business_id=business_id,
@@ -725,7 +733,9 @@ class SEOCompetitorProfileGenerationService:
         tuning_rejected_candidate_count, tuning_rejected_candidates, tuning_rejection_reason_counts = (
             self._extract_tuning_rejected_candidates_debug_from_raw_output(run.raw_output)
         )
-        candidate_pipeline_summary = self._derive_candidate_pipeline_summary_from_run(run)
+        candidate_pipeline_summary = self._extract_candidate_pipeline_summary_from_raw_output(run.raw_output)
+        if candidate_pipeline_summary is None:
+            candidate_pipeline_summary = self._derive_candidate_pipeline_summary_from_run(run)
         return SEOCompetitorProfileGenerationRunDetail(
             run=run,
             drafts=drafts,
@@ -1156,8 +1166,28 @@ class SEOCompetitorProfileGenerationService:
             + eligibility_result.ineligible_candidate_count
         )
 
+        proposed_candidate_count = len(prepared_candidates)
+        rejected_by_eligibility_count = eligibility_result.ineligible_candidate_count
+        eligible_candidate_count = len(eligibility_result.eligible_candidates)
+        rejected_by_tuning_count = max(0, len(candidate_processing.tuning_rejected_candidates))
+        survived_tuning_count = max(0, eligible_candidate_count - rejected_by_tuning_count)
+        removed_by_existing_domain_match_count = max(
+            0,
+            self._coerce_int(candidate_processing.exclusion_counts_by_reason.get("existing_domain_match"), default=0),
+        )
+        removed_by_deduplication_count = max(
+            0,
+            self._coerce_int(candidate_processing.exclusion_counts_by_reason.get("duplicate"), default=0),
+        )
+        bounded_requested_candidate_count = max(1, int(run.requested_candidate_count or 1))
+        final_candidates = candidate_processing.included_candidates[:bounded_requested_candidate_count]
+        removed_by_final_limit_count = max(
+            0,
+            len(candidate_processing.included_candidates) - len(final_candidates),
+        )
+
         drafts: list[SEOCompetitorProfileDraft] = []
-        for candidate in candidate_processing.included_candidates:
+        for candidate in final_candidates:
             draft = SEOCompetitorProfileDraft(
                 id=str(uuid4()),
                 business_id=run.business_id,
@@ -1177,12 +1207,14 @@ class SEOCompetitorProfileGenerationService:
             drafts.append(draft)
         return SEOCompetitorProfileDraftBuildResult(
             drafts=drafts,
-            raw_candidate_count=len(prepared_candidates),
+            raw_candidate_count=proposed_candidate_count,
             included_candidate_count=len(drafts),
             deduped_candidate_count=candidate_processing.deduped_candidate_count,
             ineligible_candidate_count=eligibility_result.ineligible_candidate_count,
             excluded_candidate_count=(
-                candidate_processing.excluded_candidate_count + eligibility_result.ineligible_candidate_count
+                candidate_processing.excluded_candidate_count
+                + eligibility_result.ineligible_candidate_count
+                + removed_by_final_limit_count
             ),
             exclusion_counts_by_reason=exclusion_counts_by_reason,
             ineligibility_counts_by_reason=eligibility_result.ineligibility_counts_by_reason,
@@ -1190,10 +1222,14 @@ class SEOCompetitorProfileGenerationService:
             tuning_rejected_candidates=tuning_rejected_candidates,
             tuning_rejection_reason_counts=tuning_rejection_reason_counts,
             candidate_pipeline_summary=SEOCompetitorProfileCandidatePipelineSummary(
-                proposed_candidate_count=len(prepared_candidates),
-                rejected_by_eligibility_count=eligibility_result.ineligible_candidate_count,
-                eligible_candidate_count=len(eligibility_result.eligible_candidates),
-                rejected_by_tuning_count=candidate_processing.excluded_candidate_count,
+                proposed_candidate_count=proposed_candidate_count,
+                rejected_by_eligibility_count=rejected_by_eligibility_count,
+                eligible_candidate_count=eligible_candidate_count,
+                rejected_by_tuning_count=rejected_by_tuning_count,
+                survived_tuning_count=survived_tuning_count,
+                removed_by_existing_domain_match_count=removed_by_existing_domain_match_count,
+                removed_by_deduplication_count=removed_by_deduplication_count,
+                removed_by_final_limit_count=removed_by_final_limit_count,
                 final_candidate_count=len(drafts),
             ),
         )
@@ -1553,13 +1589,37 @@ class SEOCompetitorProfileGenerationService:
             self._coerce_int(exclusion_counts_by_reason.get("invalid_candidate"), default=0),
         )
         eligible_candidate_count = max(0, proposed_candidate_count - rejected_by_eligibility_count)
-        rejected_by_tuning_count = max(0, excluded_candidate_count - rejected_by_eligibility_count)
+        removed_by_existing_domain_match_count = max(
+            0,
+            self._coerce_int(exclusion_counts_by_reason.get("existing_domain_match"), default=0),
+        )
+        removed_by_deduplication_count = max(
+            0,
+            self._coerce_int(exclusion_counts_by_reason.get("duplicate"), default=0),
+        )
+        rejected_by_tuning_count = max(
+            0,
+            excluded_candidate_count
+            - rejected_by_eligibility_count
+            - removed_by_existing_domain_match_count
+            - removed_by_deduplication_count,
+        )
+        survived_tuning_count = max(0, eligible_candidate_count - rejected_by_tuning_count)
+        included_before_final_limit_count = max(
+            0,
+            survived_tuning_count - removed_by_existing_domain_match_count - removed_by_deduplication_count,
+        )
+        removed_by_final_limit_count = max(0, included_before_final_limit_count - final_candidate_count)
 
         return SEOCompetitorProfileCandidatePipelineSummary(
             proposed_candidate_count=proposed_candidate_count,
             rejected_by_eligibility_count=rejected_by_eligibility_count,
             eligible_candidate_count=eligible_candidate_count,
             rejected_by_tuning_count=rejected_by_tuning_count,
+            survived_tuning_count=survived_tuning_count,
+            removed_by_existing_domain_match_count=removed_by_existing_domain_match_count,
+            removed_by_deduplication_count=removed_by_deduplication_count,
+            removed_by_final_limit_count=removed_by_final_limit_count,
             final_candidate_count=final_candidate_count,
         )
 
@@ -1670,6 +1730,7 @@ class SEOCompetitorProfileGenerationService:
         rejected_candidates: list[SEOCompetitorProfileRejectedCandidateDebug],
         tuning_rejected_candidates: list[SEOCompetitorProfileTuningRejectedCandidateDebug],
         tuning_rejection_reason_counts: dict[str, int],
+        candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummary | None,
     ) -> str | None:
         if (
             not raw_output
@@ -1677,6 +1738,7 @@ class SEOCompetitorProfileGenerationService:
                 not rejected_candidates
                 and not tuning_rejected_candidates
                 and not any(value > 0 for value in tuning_rejection_reason_counts.values())
+                and candidate_pipeline_summary is None
             )
         ):
             return raw_output
@@ -1719,6 +1781,24 @@ class SEOCompetitorProfileGenerationService:
         )
         if any(value > 0 for value in normalized_reason_counts.values()):
             parsed[_TUNING_REJECTION_REASON_COUNTS_KEY] = normalized_reason_counts
+        if candidate_pipeline_summary is not None:
+            parsed[_CANDIDATE_PIPELINE_SUMMARY_KEY] = {
+                "proposed_candidate_count": max(0, int(candidate_pipeline_summary.proposed_candidate_count)),
+                "rejected_by_eligibility_count": max(0, int(candidate_pipeline_summary.rejected_by_eligibility_count)),
+                "eligible_candidate_count": max(0, int(candidate_pipeline_summary.eligible_candidate_count)),
+                "rejected_by_tuning_count": max(0, int(candidate_pipeline_summary.rejected_by_tuning_count)),
+                "survived_tuning_count": max(0, int(candidate_pipeline_summary.survived_tuning_count)),
+                "removed_by_existing_domain_match_count": max(
+                    0,
+                    int(candidate_pipeline_summary.removed_by_existing_domain_match_count),
+                ),
+                "removed_by_deduplication_count": max(
+                    0,
+                    int(candidate_pipeline_summary.removed_by_deduplication_count),
+                ),
+                "removed_by_final_limit_count": max(0, int(candidate_pipeline_summary.removed_by_final_limit_count)),
+                "final_candidate_count": max(0, int(candidate_pipeline_summary.final_candidate_count)),
+            }
         try:
             return json.dumps(parsed, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
@@ -1831,6 +1911,70 @@ class SEOCompetitorProfileGenerationService:
             else None
         )
         return tuning_rejected_candidate_count, tuning_rejected_candidates, reason_counts
+
+    def _extract_candidate_pipeline_summary_from_raw_output(
+        self,
+        raw_output: str | None,
+    ) -> SEOCompetitorProfileCandidatePipelineSummary | None:
+        if not raw_output:
+            return None
+        try:
+            parsed = json.loads(raw_output)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(parsed, dict):
+            return None
+
+        raw_summary = parsed.get(_CANDIDATE_PIPELINE_SUMMARY_KEY)
+        if not isinstance(raw_summary, dict):
+            return None
+
+        proposed_candidate_count = max(0, self._coerce_int(raw_summary.get("proposed_candidate_count"), default=0))
+        rejected_by_eligibility_count = max(
+            0,
+            self._coerce_int(raw_summary.get("rejected_by_eligibility_count"), default=0),
+        )
+        eligible_candidate_count = max(0, self._coerce_int(raw_summary.get("eligible_candidate_count"), default=0))
+        rejected_by_tuning_count = max(0, self._coerce_int(raw_summary.get("rejected_by_tuning_count"), default=0))
+        survived_tuning_count = max(0, self._coerce_int(raw_summary.get("survived_tuning_count"), default=0))
+        removed_by_existing_domain_match_count = max(
+            0,
+            self._coerce_int(raw_summary.get("removed_by_existing_domain_match_count"), default=0),
+        )
+        removed_by_deduplication_count = max(
+            0,
+            self._coerce_int(raw_summary.get("removed_by_deduplication_count"), default=0),
+        )
+        removed_by_final_limit_count = max(
+            0,
+            self._coerce_int(raw_summary.get("removed_by_final_limit_count"), default=0),
+        )
+        final_candidate_count = max(0, self._coerce_int(raw_summary.get("final_candidate_count"), default=0))
+
+        if (
+            proposed_candidate_count <= 0
+            and rejected_by_eligibility_count <= 0
+            and eligible_candidate_count <= 0
+            and rejected_by_tuning_count <= 0
+            and survived_tuning_count <= 0
+            and removed_by_existing_domain_match_count <= 0
+            and removed_by_deduplication_count <= 0
+            and removed_by_final_limit_count <= 0
+            and final_candidate_count <= 0
+        ):
+            return None
+
+        return SEOCompetitorProfileCandidatePipelineSummary(
+            proposed_candidate_count=proposed_candidate_count,
+            rejected_by_eligibility_count=rejected_by_eligibility_count,
+            eligible_candidate_count=eligible_candidate_count,
+            rejected_by_tuning_count=rejected_by_tuning_count,
+            survived_tuning_count=survived_tuning_count,
+            removed_by_existing_domain_match_count=removed_by_existing_domain_match_count,
+            removed_by_deduplication_count=removed_by_deduplication_count,
+            removed_by_final_limit_count=removed_by_final_limit_count,
+            final_candidate_count=final_candidate_count,
+        )
 
     def _evaluate_pending_preview_accuracy_for_completed_run(
         self,

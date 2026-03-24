@@ -224,6 +224,10 @@ Competitor run detail payloads can also include bounded pipeline stage counts in
 - `rejected_by_eligibility_count`
 - `eligible_candidate_count`
 - `rejected_by_tuning_count`
+- `survived_tuning_count`
+- `removed_by_existing_domain_match_count`
+- `removed_by_deduplication_count`
+- `removed_by_final_limit_count`
 - `final_candidate_count`
 
 Stage meanings:
@@ -231,7 +235,11 @@ Stage meanings:
 - `rejected_by_eligibility_count`: removed by deterministic eligibility rules
 - `eligible_candidate_count`: candidates passed into admin-tuned scoring
 - `rejected_by_tuning_count`: removed by current admin tuning/threshold settings
-- `final_candidate_count`: candidates returned as reviewable drafts
+- `survived_tuning_count`: candidates remaining after tuning exclusions, before downstream drops
+- `removed_by_existing_domain_match_count`: removed because the domain already exists in known competitors
+- `removed_by_deduplication_count`: removed as deterministic in-run duplicates
+- `removed_by_final_limit_count`: removed only because the run requested fewer final candidates than survived
+- `final_candidate_count`: actual candidates returned as reviewable drafts (matches visible draft rows)
 
 This telemetry is a support/tuning aid only. It does not change ranking, scoring,
 or competitor review workflow semantics.

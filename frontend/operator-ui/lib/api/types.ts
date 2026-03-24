@@ -340,6 +340,10 @@ export interface CompetitorCandidatePipelineSummary {
   rejected_by_eligibility_count: number;
   eligible_candidate_count: number;
   rejected_by_tuning_count: number;
+  survived_tuning_count: number;
+  removed_by_existing_domain_match_count: number;
+  removed_by_deduplication_count: number;
+  removed_by_final_limit_count: number;
   final_candidate_count: number;
 }
 

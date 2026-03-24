@@ -424,12 +424,20 @@ function normalizeCompetitorCandidatePipelineSummary(
   const rejectedByEligibility = Math.max(0, Number(value.rejected_by_eligibility_count || 0));
   const eligible = Math.max(0, Number(value.eligible_candidate_count || 0));
   const rejectedByTuning = Math.max(0, Number(value.rejected_by_tuning_count || 0));
+  const survivedTuning = Math.max(0, Number(value.survived_tuning_count || 0));
+  const removedByExistingDomain = Math.max(0, Number(value.removed_by_existing_domain_match_count || 0));
+  const removedByDeduplication = Math.max(0, Number(value.removed_by_deduplication_count || 0));
+  const removedByFinalLimit = Math.max(0, Number(value.removed_by_final_limit_count || 0));
   const finalCount = Math.max(0, Number(value.final_candidate_count || 0));
   return {
     proposed_candidate_count: proposed,
     rejected_by_eligibility_count: rejectedByEligibility,
     eligible_candidate_count: eligible,
     rejected_by_tuning_count: rejectedByTuning,
+    survived_tuning_count: survivedTuning,
+    removed_by_existing_domain_match_count: removedByExistingDomain,
+    removed_by_deduplication_count: removedByDeduplication,
+    removed_by_final_limit_count: removedByFinalLimit,
     final_candidate_count: finalCount,
   };
 }
@@ -4178,6 +4186,19 @@ export default function SiteWorkspacePage() {
             </p>
             <p className="hint muted">
               Removed by tuning: {competitorCandidatePipelineSummary.rejected_by_tuning_count}
+            </p>
+            <p className="hint muted">
+              Survived tuning: {competitorCandidatePipelineSummary.survived_tuning_count}
+            </p>
+            <p className="hint muted">
+              Removed by existing-domain match:{" "}
+              {competitorCandidatePipelineSummary.removed_by_existing_domain_match_count}
+            </p>
+            <p className="hint muted">
+              Removed by deduplication: {competitorCandidatePipelineSummary.removed_by_deduplication_count}
+            </p>
+            <p className="hint muted">
+              Removed by final limit: {competitorCandidatePipelineSummary.removed_by_final_limit_count}
             </p>
             <p className="hint muted">Final returned: {competitorCandidatePipelineSummary.final_candidate_count}</p>
           </div>

@@ -368,6 +368,10 @@ class SEOCompetitorProfileCandidatePipelineSummaryRead(BaseModel):
     rejected_by_eligibility_count: int = Field(ge=0)
     eligible_candidate_count: int = Field(ge=0)
     rejected_by_tuning_count: int = Field(ge=0)
+    survived_tuning_count: int = Field(ge=0)
+    removed_by_existing_domain_match_count: int = Field(ge=0)
+    removed_by_deduplication_count: int = Field(ge=0)
+    removed_by_final_limit_count: int = Field(ge=0)
     final_candidate_count: int = Field(ge=0)
 
 

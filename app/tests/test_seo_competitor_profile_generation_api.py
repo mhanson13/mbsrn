@@ -28,6 +28,7 @@ from app.models.business import Business
 from app.models.seo_competitor_domain import SEOCompetitorDomain
 from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
 from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
+from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_tuning_preview_event import SEOCompetitorTuningPreviewEvent
 from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
@@ -396,6 +397,66 @@ class _ModerateCompetitorProfileProvider:
             model_name=self.model_name,
             prompt_version=self.prompt_version,
             raw_response='{"candidates":[{"name":"Generic Services Group"}]}',
+        )
+
+
+class _OverProducingCompetitorProfileProvider:
+    provider_name = "over-producing-provider"
+    model_name = "over-producing-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count
+        candidates = [
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Denver Prime Remodeling",
+                suggested_domain="denver-prime-remodeling.example",
+                competitor_type="direct",
+                summary="Denver remodeling services for kitchens and bathrooms.",
+                why_competitor="Competes on local remodeling service intent.",
+                evidence="Detailed service and neighborhood pages.",
+                confidence_score=0.82,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Aurora Build Works",
+                suggested_domain="aurora-build-works.example",
+                competitor_type="local",
+                summary="Aurora and Denver contractor services with emergency scheduling.",
+                why_competitor="Overlaps on high-intent local contractor terms.",
+                evidence="Same service categories and local conversion pages.",
+                confidence_score=0.8,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Northern Range Contractors",
+                suggested_domain="northern-range-contractors.example",
+                competitor_type="direct",
+                summary="Regional construction and remodeling for residential properties.",
+                why_competitor="Targets the same local residential project demand.",
+                evidence="Service inventory and quote-driven pages.",
+                confidence_score=0.79,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Frontier Renovation Group",
+                suggested_domain="frontier-renovation-group.example",
+                competitor_type="direct",
+                summary="Local renovation and project planning services.",
+                why_competitor="Competes for the same renovation category intent.",
+                evidence="Project-focused pages and contact-ready lead forms.",
+                confidence_score=0.77,
+            ),
+        ]
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=candidates,
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Denver Prime Remodeling"}]}',
         )
 
 
@@ -1460,6 +1521,17 @@ def test_generation_dedup_scoring_and_exclusion_are_applied_before_persistence(d
         "denver-precision-plumbing.example",
         "summitplumbingpros.example",
     ]
+    assert payload["candidate_pipeline_summary"] == {
+        "proposed_candidate_count": 6,
+        "rejected_by_eligibility_count": 0,
+        "eligible_candidate_count": 6,
+        "rejected_by_tuning_count": 3,
+        "survived_tuning_count": 3,
+        "removed_by_existing_domain_match_count": 0,
+        "removed_by_deduplication_count": 1,
+        "removed_by_final_limit_count": 0,
+        "final_candidate_count": len(payload["drafts"]),
+    }
 
     persisted_drafts = (
         db_session.query(SEOCompetitorProfileDraft)
@@ -1538,6 +1610,89 @@ def test_generation_ordering_is_deterministic_for_same_input(db_session, seeded_
     assert first_domains == second_domains
 
 
+def test_generation_pipeline_summary_tracks_final_limit_stage(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _OverProducingCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    site = (
+        db_session.query(SEOSite)
+        .filter(SEOSite.business_id == seeded_business.id)
+        .filter(SEOSite.id == site_id)
+        .one()
+    )
+    site.primary_location = "Denver, CO"
+    site.service_areas_json = ["Denver", "Aurora"]
+    site.industry = "Construction and remodeling"
+    db_session.add(site)
+    competitor_set = SEOCompetitorSet(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        name="Known Competitors",
+        city="Denver",
+        state="CO",
+        is_active=True,
+    )
+    db_session.add(competitor_set)
+    db_session.add(
+        SEOCompetitorDomain(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            competitor_set_id=competitor_set.id,
+            domain="northern-range-contractors.example",
+            base_url="https://northern-range-contractors.example/",
+            display_name="Northern Range Contractors",
+            source="manual",
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    run_id = _create_generation_run(
+        client,
+        seeded_business.id,
+        site_id,
+        candidate_count=2,
+    )["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["raw_candidate_count"] == 4
+    assert payload["run"]["included_candidate_count"] == 2
+    assert payload["run"]["excluded_candidate_count"] == 2
+    assert payload["run"]["exclusion_counts_by_reason"]["existing_domain_match"] == 1
+    assert payload["candidate_pipeline_summary"] == {
+        "proposed_candidate_count": 4,
+        "rejected_by_eligibility_count": 0,
+        "eligible_candidate_count": 4,
+        "rejected_by_tuning_count": 0,
+        "survived_tuning_count": 4,
+        "removed_by_existing_domain_match_count": 1,
+        "removed_by_deduplication_count": 0,
+        "removed_by_final_limit_count": 1,
+        "final_candidate_count": 2,
+    }
+    assert payload["candidate_pipeline_summary"]["final_candidate_count"] == len(payload["drafts"])
+
+
 def test_generation_applies_eligibility_filter_before_admin_tuning(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     provider = _EligibilityGateCompetitorProfileProvider()
@@ -1609,6 +1764,10 @@ def test_generation_applies_eligibility_filter_before_admin_tuning(db_session, s
         "rejected_by_eligibility_count": 2,
         "eligible_candidate_count": 1,
         "rejected_by_tuning_count": 0,
+        "survived_tuning_count": 1,
+        "removed_by_existing_domain_match_count": 0,
+        "removed_by_deduplication_count": 0,
+        "removed_by_final_limit_count": 0,
         "final_candidate_count": 1,
     }
     assert payload["rejected_candidate_count"] == 2
@@ -1765,6 +1924,10 @@ def test_generation_uses_business_quality_tuning_threshold_settings(db_session, 
         "rejected_by_eligibility_count": 0,
         "eligible_candidate_count": 1,
         "rejected_by_tuning_count": 1,
+        "survived_tuning_count": 0,
+        "removed_by_existing_domain_match_count": 0,
+        "removed_by_deduplication_count": 0,
+        "removed_by_final_limit_count": 0,
         "final_candidate_count": 0,
     }
     assert high_payload["tuning_rejected_candidate_count"] == 1
