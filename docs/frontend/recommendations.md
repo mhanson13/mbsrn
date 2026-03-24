@@ -254,6 +254,27 @@ Rendering rules:
 - hide the block when summary data is missing
 - treat counts as observability/support data only (not ranking or scoring UX)
 
+## Tuning Exclusion Reasons (Debug)
+
+When competitor run detail payloads include tuning-stage exclusion telemetry, the workspace can render a compact debug block for candidates that passed eligibility but were removed by tuning.
+
+Recommended elements:
+- `Removed by tuning (debug)` count
+- reason-count summary chips/text
+- bounded candidate rows (domain, deterministic reason badges, optional final score, short summary)
+
+Deterministic reason codes:
+- `below_minimum_relevance_score`
+- `directory_or_aggregator_penalty`
+- `big_box_mismatch_penalty`
+- `insufficient_local_alignment`
+
+Rendering rules:
+- keep this in the same debug area as rejected candidates and pipeline summary
+- hide when tuning telemetry is absent/empty
+- cap displayed rows and show `showing X of Y` when payload count exceeds rendered rows
+- treat this as tuning/support telemetry only (not operator ranking guidance)
+
 ## Weak Location Context ZIP Prompt
 
 When workspace summary metadata indicates weak location context and no stored ZIP:

@@ -65,6 +65,7 @@ from app.schemas.seo_competitor import (
     SEOCompetitorProfileGenerationObservabilitySummaryRead,
     SEOCompetitorProfileGenerationRunRead,
     SEOCompetitorProfileRejectedCandidateRead,
+    SEOCompetitorProfileTuningRejectedCandidateRead,
     SEOCompetitorDomainCreateRequest,
     SEOCompetitorDomainListResponse,
     SEOCompetitorDomainRead,
@@ -2500,6 +2501,9 @@ def _to_competitor_profile_generation_run_detail_response(
     drafts,
     rejected_candidate_count: int = 0,
     rejected_candidates=None,
+    tuning_rejected_candidate_count: int = 0,
+    tuning_rejected_candidates=None,
+    tuning_rejection_reason_counts=None,
     candidate_pipeline_summary=None,
 ) -> SEOCompetitorProfileGenerationRunDetailRead:
     serialized_drafts = [SEOCompetitorProfileDraftRead.model_validate(item) for item in drafts]
@@ -2507,12 +2511,23 @@ def _to_competitor_profile_generation_run_detail_response(
         SEOCompetitorProfileRejectedCandidateRead.model_validate(item)
         for item in (rejected_candidates or [])
     ]
+    serialized_tuning_rejected_candidates = [
+        SEOCompetitorProfileTuningRejectedCandidateRead.model_validate(item)
+        for item in (tuning_rejected_candidates or [])
+    ]
     return SEOCompetitorProfileGenerationRunDetailRead(
         run=SEOCompetitorProfileGenerationRunRead.model_validate(run),
         drafts=serialized_drafts,
         total_drafts=len(serialized_drafts),
         rejected_candidate_count=max(0, int(rejected_candidate_count)),
         rejected_candidates=serialized_rejected_candidates,
+        tuning_rejected_candidate_count=max(0, int(tuning_rejected_candidate_count)),
+        tuning_rejected_candidates=serialized_tuning_rejected_candidates,
+        tuning_rejection_reason_counts=(
+            dict(tuning_rejection_reason_counts)
+            if isinstance(tuning_rejection_reason_counts, dict)
+            else {}
+        ),
         candidate_pipeline_summary=(
             SEOCompetitorProfileCandidatePipelineSummaryRead.model_validate(candidate_pipeline_summary)
             if candidate_pipeline_summary is not None
@@ -2575,6 +2590,9 @@ def create_competitor_profile_generation_run(
         drafts=result.drafts,
         rejected_candidate_count=result.rejected_candidate_count,
         rejected_candidates=result.rejected_candidates,
+        tuning_rejected_candidate_count=result.tuning_rejected_candidate_count,
+        tuning_rejected_candidates=result.tuning_rejected_candidates,
+        tuning_rejection_reason_counts=result.tuning_rejection_reason_counts,
         candidate_pipeline_summary=result.candidate_pipeline_summary,
     )
 
@@ -2722,6 +2740,9 @@ def get_competitor_profile_generation_run_detail(
         drafts=detail.drafts,
         rejected_candidate_count=detail.rejected_candidate_count,
         rejected_candidates=detail.rejected_candidates,
+        tuning_rejected_candidate_count=detail.tuning_rejected_candidate_count,
+        tuning_rejected_candidates=detail.tuning_rejected_candidates,
+        tuning_rejection_reason_counts=detail.tuning_rejection_reason_counts,
         candidate_pipeline_summary=detail.candidate_pipeline_summary,
     )
 
@@ -2780,6 +2801,9 @@ def retry_competitor_profile_generation_run(
         drafts=result.drafts,
         rejected_candidate_count=result.rejected_candidate_count,
         rejected_candidates=result.rejected_candidates,
+        tuning_rejected_candidate_count=result.tuning_rejected_candidate_count,
+        tuning_rejected_candidates=result.tuning_rejected_candidates,
+        tuning_rejection_reason_counts=result.tuning_rejection_reason_counts,
         candidate_pipeline_summary=result.candidate_pipeline_summary,
     )
 

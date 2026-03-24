@@ -15,6 +15,10 @@ from app.services.seo_competitor_profile_candidate_quality import (
     CompetitorCandidateDomainProbeResult,
     CompetitorCandidateInput,
     EXCLUSION_REASON_KEYS,
+    TUNING_EXCLUSION_REASON_BELOW_MINIMUM_RELEVANCE_SCORE,
+    TUNING_EXCLUSION_REASON_BIG_BOX_MISMATCH_PENALTY,
+    TUNING_EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR_PENALTY,
+    TUNING_EXCLUSION_REASON_INSUFFICIENT_LOCAL_ALIGNMENT,
     canonicalize_domain,
     default_competitor_candidate_quality_tuning,
     filter_eligible_competitor_candidates,
@@ -183,6 +187,11 @@ def test_directory_candidate_is_conservatively_excluded() -> None:
     assert result.excluded_candidate_count == 1
     assert result.exclusion_counts_by_reason["directory_or_aggregator"] == 1
     assert result.included_candidates[0].canonical_domain == "denverprecisionplumbing.example"
+    assert result.tuning_rejection_reason_counts[TUNING_EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR_PENALTY] == 1
+    assert len(result.tuning_rejected_candidates) == 1
+    assert result.tuning_rejected_candidates[0].reasons == (
+        TUNING_EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR_PENALTY,
+    )
 
 
 def test_local_alignment_scores_higher_than_non_local_chain_candidate() -> None:
@@ -239,6 +248,13 @@ def test_weak_candidate_is_excluded_below_threshold() -> None:
     assert result.excluded_candidate_count == 1
     assert result.exclusion_counts_by_reason["low_relevance"] == 1
     assert result.included_candidates == []
+    assert result.tuning_rejection_reason_counts[TUNING_EXCLUSION_REASON_BELOW_MINIMUM_RELEVANCE_SCORE] == 1
+    assert result.tuning_rejection_reason_counts[TUNING_EXCLUSION_REASON_INSUFFICIENT_LOCAL_ALIGNMENT] == 1
+    assert len(result.tuning_rejected_candidates) == 1
+    assert result.tuning_rejected_candidates[0].reasons == (
+        TUNING_EXCLUSION_REASON_BELOW_MINIMUM_RELEVANCE_SCORE,
+        TUNING_EXCLUSION_REASON_INSUFFICIENT_LOCAL_ALIGNMENT,
+    )
 
 
 def test_big_box_candidate_is_excluded_when_local_context_is_missing() -> None:
@@ -263,6 +279,11 @@ def test_big_box_candidate_is_excluded_when_local_context_is_missing() -> None:
     assert result.excluded_candidate_count == 1
     assert result.exclusion_counts_by_reason["big_box_mismatch"] == 1
     assert tuple(result.exclusion_counts_by_reason.keys()) == EXCLUSION_REASON_KEYS
+    assert result.tuning_rejection_reason_counts[TUNING_EXCLUSION_REASON_BIG_BOX_MISMATCH_PENALTY] == 1
+    assert len(result.tuning_rejected_candidates) == 1
+    assert result.tuning_rejected_candidates[0].reasons == (
+        TUNING_EXCLUSION_REASON_BIG_BOX_MISMATCH_PENALTY,
+    )
 
 
 def test_existing_domain_match_is_counted_as_excluded_reason() -> None:
@@ -283,6 +304,7 @@ def test_existing_domain_match_is_counted_as_excluded_reason() -> None:
     assert result.included_candidates == []
     assert result.excluded_candidate_count == 1
     assert result.exclusion_counts_by_reason["existing_domain_match"] == 1
+    assert result.tuning_rejected_candidates == []
 
 
 def test_default_tuning_is_used_when_quality_tuning_not_provided() -> None:

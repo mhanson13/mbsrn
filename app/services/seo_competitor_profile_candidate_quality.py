@@ -84,6 +84,17 @@ EXCLUSION_REASON_KEYS: tuple[str, ...] = (
     EXCLUSION_REASON_INVALID_CANDIDATE,
 )
 
+TUNING_EXCLUSION_REASON_BELOW_MINIMUM_RELEVANCE_SCORE = "below_minimum_relevance_score"
+TUNING_EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR_PENALTY = "directory_or_aggregator_penalty"
+TUNING_EXCLUSION_REASON_BIG_BOX_MISMATCH_PENALTY = "big_box_mismatch_penalty"
+TUNING_EXCLUSION_REASON_INSUFFICIENT_LOCAL_ALIGNMENT = "insufficient_local_alignment"
+TUNING_EXCLUSION_REASON_KEYS: tuple[str, ...] = (
+    TUNING_EXCLUSION_REASON_BELOW_MINIMUM_RELEVANCE_SCORE,
+    TUNING_EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR_PENALTY,
+    TUNING_EXCLUSION_REASON_BIG_BOX_MISMATCH_PENALTY,
+    TUNING_EXCLUSION_REASON_INSUFFICIENT_LOCAL_ALIGNMENT,
+)
+
 INELIGIBILITY_REASON_PARKED_DOMAIN = "parked_domain"
 INELIGIBILITY_REASON_NO_LIVE_SITE = "no_live_site"
 INELIGIBILITY_REASON_WEAK_BUSINESS_IDENTITY = "weak_business_identity"
@@ -279,6 +290,8 @@ class CompetitorCandidateProcessingResult:
     deduped_candidate_count: int
     excluded_candidate_count: int
     exclusion_counts_by_reason: dict[str, int]
+    tuning_rejected_candidates: list["CompetitorCandidateTuningRejection"]
+    tuning_rejection_reason_counts: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -304,6 +317,14 @@ class CompetitorCandidateEligibilityResult:
     decisions: list[CompetitorCandidateEligibilityDecision]
     ineligible_candidate_count: int
     ineligibility_counts_by_reason: dict[str, int]
+
+
+@dataclass(frozen=True)
+class CompetitorCandidateTuningRejection:
+    suggested_domain: str
+    reasons: tuple[str, ...]
+    final_score: int | None
+    summary: str | None
 
 
 @dataclass(frozen=True)
@@ -462,6 +483,8 @@ def process_competitor_candidates(
     context = _build_site_context(site)
     existing_domain_set = {_canonicalize_domain(value) for value in existing_domains if value.strip()}
     exclusion_counts_by_reason = _new_exclusion_reason_counts()
+    tuning_rejection_reason_counts = _new_tuning_exclusion_reason_counts()
+    tuning_rejected_candidates: list[CompetitorCandidateTuningRejection] = []
 
     scored_candidates = [
         _to_scored_state(
@@ -489,6 +512,23 @@ def process_competitor_candidates(
         )
         if exclusion_reason:
             exclusion_counts_by_reason[exclusion_reason] += 1
+            tuning_reasons = _derive_tuning_exclusion_reasons(
+                candidate=candidate,
+                exclusion_reason=exclusion_reason,
+                minimum_relevance_score=tuning.minimum_relevance_score,
+                site_context=context,
+            )
+            if tuning_reasons:
+                for tuning_reason in tuning_reasons:
+                    tuning_rejection_reason_counts[tuning_reason] += 1
+                tuning_rejected_candidates.append(
+                    CompetitorCandidateTuningRejection(
+                        suggested_domain=candidate.canonical_domain,
+                        reasons=tuning_reasons,
+                        final_score=candidate.relevance_score,
+                        summary=_candidate_tuning_rejection_summary(candidate),
+                    )
+                )
             continue
         included.append(
             RankedCompetitorCandidate(
@@ -522,6 +562,8 @@ def process_competitor_candidates(
         deduped_candidate_count=len(deduped_candidates),
         excluded_candidate_count=excluded_candidate_count,
         exclusion_counts_by_reason=exclusion_counts_by_reason,
+        tuning_rejected_candidates=tuning_rejected_candidates,
+        tuning_rejection_reason_counts=tuning_rejection_reason_counts,
     )
 
 
@@ -1031,6 +1073,46 @@ def _new_exclusion_reason_counts() -> dict[str, int]:
 
 def _new_ineligibility_reason_counts() -> dict[str, int]:
     return {reason: 0 for reason in INELIGIBILITY_REASON_KEYS}
+
+
+def _new_tuning_exclusion_reason_counts() -> dict[str, int]:
+    return {reason: 0 for reason in TUNING_EXCLUSION_REASON_KEYS}
+
+
+def _derive_tuning_exclusion_reasons(
+    *,
+    candidate: _ScoredCandidateState,
+    exclusion_reason: str,
+    minimum_relevance_score: int,
+    site_context: _SiteScoringContext,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if exclusion_reason == EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR:
+        reasons.append(TUNING_EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR_PENALTY)
+    elif exclusion_reason == EXCLUSION_REASON_BIG_BOX_MISMATCH:
+        reasons.append(TUNING_EXCLUSION_REASON_BIG_BOX_MISMATCH_PENALTY)
+    elif exclusion_reason == EXCLUSION_REASON_LOW_RELEVANCE:
+        if candidate.relevance_score < minimum_relevance_score:
+            reasons.append(TUNING_EXCLUSION_REASON_BELOW_MINIMUM_RELEVANCE_SCORE)
+        if site_context.has_local_context and not candidate.location_terms_found:
+            reasons.append(TUNING_EXCLUSION_REASON_INSUFFICIENT_LOCAL_ALIGNMENT)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for reason in reasons:
+        if reason in seen:
+            continue
+        seen.add(reason)
+        deduped.append(reason)
+    return tuple(deduped)
+
+
+def _candidate_tuning_rejection_summary(candidate: _ScoredCandidateState) -> str | None:
+    for value in (candidate.why_competitor, candidate.summary, candidate.evidence):
+        normalized = _normalize_text(value or "")
+        if normalized:
+            return normalized
+    return None
 
 
 def _score_candidate(

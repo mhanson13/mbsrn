@@ -4257,6 +4257,7 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(screen.getByText(/Candidate telemetry \(1 runs\): raw 2 \| included 2 \| excluded 0/)).toBeInTheDocument();
     expect(screen.queryByText(/Exclusion reasons:/i)).not.toBeInTheDocument();
     expect(screen.queryByTestId("rejected-competitor-candidates-debug")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("tuning-rejected-competitor-candidates-debug")).not.toBeInTheDocument();
     expect(screen.queryByTestId("competitor-candidate-pipeline-summary-debug")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(2);
     expect(mockFetchCompetitorProfileGenerationRuns).toHaveBeenCalled();
@@ -4376,6 +4377,27 @@ describe("site workspace ai competitor profile drafts", () => {
         rejected_by_tuning_count: 1,
         final_candidate_count: 1,
       },
+      tuning_rejected_candidate_count: 3,
+      tuning_rejected_candidates: [
+        {
+          domain: "directory.example",
+          reasons: ["directory_or_aggregator_penalty"],
+          final_score: 42,
+          summary: "Directory-heavy listing site.",
+        },
+        {
+          domain: "big-box.example",
+          reasons: ["big_box_mismatch_penalty"],
+          final_score: 39,
+          summary: "National chain mismatch.",
+        },
+      ],
+      tuning_rejection_reason_counts: {
+        below_minimum_relevance_score: 1,
+        directory_or_aggregator_penalty: 1,
+        big_box_mismatch_penalty: 1,
+        insufficient_local_alignment: 1,
+      },
     });
 
     render(<SiteWorkspacePage />);
@@ -4397,6 +4419,14 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(within(pipelineDebug).getByText("Eligible after filtering: 2")).toBeInTheDocument();
     expect(within(pipelineDebug).getByText("Removed by tuning: 1")).toBeInTheDocument();
     expect(within(pipelineDebug).getByText("Final returned: 1")).toBeInTheDocument();
+
+    const tuningDebug = screen.getByTestId("tuning-rejected-competitor-candidates-debug");
+    expect(within(tuningDebug).getByText(/Removed by tuning \(debug\)/i)).toBeInTheDocument();
+    expect(within(tuningDebug).getByText(/: 3/)).toBeInTheDocument();
+    expect(within(tuningDebug).getByText("directory.example")).toBeInTheDocument();
+    expect(within(tuningDebug).getByText("directory or aggregator penalty")).toBeInTheDocument();
+    expect(within(tuningDebug).getByText("big box mismatch penalty")).toBeInTheDocument();
+    expect(within(tuningDebug).getByText("Showing 2 of 3 removed-by-tuning candidates.")).toBeInTheDocument();
   });
 
   it("triggers generation and refreshes visible drafts", async () => {

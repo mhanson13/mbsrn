@@ -316,9 +316,22 @@ export type CompetitorCandidateIneligibilityReason =
   | "excluded_domain_pattern"
   | "insufficient_overlap_evidence";
 
+export type CompetitorCandidateTuningExclusionReason =
+  | "below_minimum_relevance_score"
+  | "directory_or_aggregator_penalty"
+  | "big_box_mismatch_penalty"
+  | "insufficient_local_alignment";
+
 export interface RejectedCompetitorCandidateDebug {
   domain: string;
   reasons: CompetitorCandidateIneligibilityReason[];
+  summary: string | null;
+}
+
+export interface TuningRejectedCompetitorCandidateDebug {
+  domain: string;
+  reasons: CompetitorCandidateTuningExclusionReason[];
+  final_score: number | null;
   summary: string | null;
 }
 
@@ -336,6 +349,9 @@ export interface CompetitorProfileGenerationRunDetailResponse {
   total_drafts: number;
   rejected_candidate_count?: number;
   rejected_candidates?: RejectedCompetitorCandidateDebug[];
+  tuning_rejected_candidate_count?: number;
+  tuning_rejected_candidates?: TuningRejectedCompetitorCandidateDebug[];
+  tuning_rejection_reason_counts?: Partial<Record<CompetitorCandidateTuningExclusionReason, number>>;
   candidate_pipeline_summary?: CompetitorCandidatePipelineSummary | null;
 }
 

@@ -50,6 +50,11 @@ Competitor debug payloads may also include `candidate_pipeline_summary` stage co
 - passed to tuning
 - removed by tuning
 - final returned
+Competitor debug payloads may also include deterministic tuning-stage exclusion reason telemetry for eligible candidates removed by tuning:
+- `below_minimum_relevance_score`
+- `directory_or_aggregator_penalty`
+- `big_box_mismatch_penalty`
+- `insufficient_local_alignment`
 
 ## Deterministic EEAT Classification (Additive)
 

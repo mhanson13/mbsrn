@@ -41,6 +41,7 @@ import type {
   CompetitorProfileGenerationRun,
   CompetitorProfileGenerationSummaryResponse,
   RejectedCompetitorCandidateDebug,
+  TuningRejectedCompetitorCandidateDebug,
   CompetitorSet,
   CompetitorSnapshotRun,
   RecommendationAnalysisFreshness,
@@ -76,6 +77,7 @@ const COMPETITOR_PROFILE_DRAFT_CANDIDATE_COUNT = 5;
 const COMPETITOR_PROFILE_POLL_INTERVAL_MS = 2000;
 const COMPETITOR_PROFILE_POLL_MAX_ATTEMPTS = 30;
 const MAX_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
+const MAX_TUNING_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
 const ZIP_PROMPT_SESSION_KEY_PREFIX = "workspace:zip-prompt-dismissed";
 
 type SiteTimelineEventType =
@@ -351,6 +353,65 @@ function normalizeRejectedCompetitorCandidates(
     })
     .filter((candidate): candidate is RejectedCompetitorCandidateDebug => candidate !== null)
     .slice(0, MAX_REJECTED_CANDIDATE_DEBUG_ROWS);
+}
+
+function normalizeTuningRejectedCompetitorCandidates(
+  value: TuningRejectedCompetitorCandidateDebug[] | null | undefined,
+): TuningRejectedCompetitorCandidateDebug[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((candidate) => {
+      const domain = (candidate.domain || "").trim().toLowerCase();
+      if (!domain) {
+        return null;
+      }
+      const reasons = Array.isArray(candidate.reasons)
+        ? candidate.reasons
+            .map((reason) => String(reason || "").trim().toLowerCase())
+            .filter((reason) => Boolean(reason))
+        : [];
+      if (reasons.length === 0) {
+        return null;
+      }
+      const uniqueReasons = Array.from(new Set(reasons)).slice(
+        0,
+        4,
+      ) as TuningRejectedCompetitorCandidateDebug["reasons"];
+      const finalScoreRaw = Number(candidate.final_score);
+      const finalScore = Number.isFinite(finalScoreRaw) ? Math.max(0, Math.min(100, finalScoreRaw)) : null;
+      const summary = truncateOptionalText(candidate.summary, 180);
+      return {
+        domain,
+        reasons: uniqueReasons,
+        final_score: finalScore,
+        summary,
+      };
+    })
+    .filter((candidate): candidate is TuningRejectedCompetitorCandidateDebug => candidate !== null)
+    .slice(0, MAX_TUNING_REJECTED_CANDIDATE_DEBUG_ROWS);
+}
+
+function normalizeTuningRejectionReasonCounts(
+  value: Record<string, number> | null | undefined,
+): Record<string, number> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const normalized: Record<string, number> = {};
+  for (const [reason, count] of Object.entries(value)) {
+    const key = String(reason || "").trim().toLowerCase();
+    if (!key) {
+      continue;
+    }
+    const numericCount = Number(count);
+    if (!Number.isFinite(numericCount) || numericCount <= 0) {
+      continue;
+    }
+    normalized[key] = Math.max(0, Math.floor(numericCount));
+  }
+  return normalized;
 }
 
 function normalizeCompetitorCandidatePipelineSummary(
@@ -1422,6 +1483,11 @@ export default function SiteWorkspacePage() {
   const [rejectedCompetitorCandidates, setRejectedCompetitorCandidates] = useState<
     RejectedCompetitorCandidateDebug[]
   >([]);
+  const [tuningRejectedCompetitorCandidateCount, setTuningRejectedCompetitorCandidateCount] = useState(0);
+  const [tuningRejectedCompetitorCandidates, setTuningRejectedCompetitorCandidates] = useState<
+    TuningRejectedCompetitorCandidateDebug[]
+  >([]);
+  const [tuningRejectionReasonCounts, setTuningRejectionReasonCounts] = useState<Record<string, number>>({});
   const [competitorCandidatePipelineSummary, setCompetitorCandidatePipelineSummary] =
     useState<CompetitorCandidatePipelineSummary | null>(null);
   const [competitorProfileLoading, setCompetitorProfileLoading] = useState(false);
@@ -2306,6 +2372,13 @@ export default function SiteWorkspacePage() {
       setCompetitorProfileDrafts(detail.drafts);
       setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
       setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
+      setTuningRejectedCompetitorCandidateCount(Math.max(0, detail.tuning_rejected_candidate_count || 0));
+      setTuningRejectedCompetitorCandidates(
+        normalizeTuningRejectedCompetitorCandidates(detail.tuning_rejected_candidates),
+      );
+      setTuningRejectionReasonCounts(
+        normalizeTuningRejectionReasonCounts(detail.tuning_rejection_reason_counts || null),
+      );
       setCompetitorCandidatePipelineSummary(
         normalizeCompetitorCandidatePipelineSummary(detail.candidate_pipeline_summary),
       );
@@ -2349,6 +2422,13 @@ export default function SiteWorkspacePage() {
       setCompetitorProfileDrafts(detail.drafts);
       setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
       setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
+      setTuningRejectedCompetitorCandidateCount(Math.max(0, detail.tuning_rejected_candidate_count || 0));
+      setTuningRejectedCompetitorCandidates(
+        normalizeTuningRejectedCompetitorCandidates(detail.tuning_rejected_candidates),
+      );
+      setTuningRejectionReasonCounts(
+        normalizeTuningRejectionReasonCounts(detail.tuning_rejection_reason_counts || null),
+      );
       setCompetitorCandidatePipelineSummary(
         normalizeCompetitorCandidatePipelineSummary(detail.candidate_pipeline_summary),
       );
@@ -2711,6 +2791,12 @@ export default function SiteWorkspacePage() {
       setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
       setCompetitorProfileDrafts([]);
+      setRejectedCompetitorCandidateCount(0);
+      setRejectedCompetitorCandidates([]);
+      setTuningRejectedCompetitorCandidateCount(0);
+      setTuningRejectedCompetitorCandidates([]);
+      setTuningRejectionReasonCounts({});
+      setCompetitorCandidatePipelineSummary(null);
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
       setCompetitorProfileSummaryError(null);
@@ -2770,6 +2856,12 @@ export default function SiteWorkspacePage() {
       setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
       setCompetitorProfileDrafts([]);
+      setRejectedCompetitorCandidateCount(0);
+      setRejectedCompetitorCandidates([]);
+      setTuningRejectedCompetitorCandidateCount(0);
+      setTuningRejectedCompetitorCandidates([]);
+      setTuningRejectionReasonCounts({});
+      setCompetitorCandidatePipelineSummary(null);
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
       setCompetitorProfileSummaryError(null);
@@ -2821,6 +2913,12 @@ export default function SiteWorkspacePage() {
       setPendingAiApplyAttributionByPreviewKey({});
       setRecentTuningChanges([]);
       setCompetitorProfileSummaryError(null);
+      setRejectedCompetitorCandidateCount(0);
+      setRejectedCompetitorCandidates([]);
+      setTuningRejectedCompetitorCandidateCount(0);
+      setTuningRejectedCompetitorCandidates([]);
+      setTuningRejectionReasonCounts({});
+      setCompetitorCandidatePipelineSummary(null);
 
       const [
         auditResult,
@@ -3058,6 +3156,13 @@ export default function SiteWorkspacePage() {
             setCompetitorProfileDrafts(detail.drafts);
             setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
             setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
+            setTuningRejectedCompetitorCandidateCount(Math.max(0, detail.tuning_rejected_candidate_count || 0));
+            setTuningRejectedCompetitorCandidates(
+              normalizeTuningRejectedCompetitorCandidates(detail.tuning_rejected_candidates),
+            );
+            setTuningRejectionReasonCounts(
+              normalizeTuningRejectionReasonCounts(detail.tuning_rejection_reason_counts || null),
+            );
             setCompetitorCandidatePipelineSummary(
               normalizeCompetitorCandidatePipelineSummary(detail.candidate_pipeline_summary),
             );
@@ -3069,6 +3174,9 @@ export default function SiteWorkspacePage() {
             setCompetitorProfileDrafts([]);
             setRejectedCompetitorCandidateCount(0);
             setRejectedCompetitorCandidates([]);
+            setTuningRejectedCompetitorCandidateCount(0);
+            setTuningRejectedCompetitorCandidates([]);
+            setTuningRejectionReasonCounts({});
             setCompetitorCandidatePipelineSummary(null);
             setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", error));
           } finally {
@@ -3080,6 +3188,9 @@ export default function SiteWorkspacePage() {
           setCompetitorProfileDrafts([]);
           setRejectedCompetitorCandidateCount(0);
           setRejectedCompetitorCandidates([]);
+          setTuningRejectedCompetitorCandidateCount(0);
+          setTuningRejectedCompetitorCandidates([]);
+          setTuningRejectionReasonCounts({});
           setCompetitorCandidatePipelineSummary(null);
           setCompetitorProfileLoading(false);
         }
@@ -3089,6 +3200,9 @@ export default function SiteWorkspacePage() {
         setCompetitorProfileDrafts([]);
         setRejectedCompetitorCandidateCount(0);
         setRejectedCompetitorCandidates([]);
+        setTuningRejectedCompetitorCandidateCount(0);
+        setTuningRejectedCompetitorCandidates([]);
+        setTuningRejectionReasonCounts({});
         setCompetitorCandidatePipelineSummary(null);
         setCompetitorProfileLoading(false);
         setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", competitorProfileRunsResult.reason));
@@ -3181,6 +3295,9 @@ export default function SiteWorkspacePage() {
           setCompetitorProfileDrafts([]);
           setRejectedCompetitorCandidateCount(0);
           setRejectedCompetitorCandidates([]);
+          setTuningRejectedCompetitorCandidateCount(0);
+          setTuningRejectedCompetitorCandidates([]);
+          setTuningRejectionReasonCounts({});
           setCompetitorCandidatePipelineSummary(null);
           setCompetitorProfilePolling(false);
           return;
@@ -3199,6 +3316,13 @@ export default function SiteWorkspacePage() {
         setCompetitorProfileDrafts(detail.drafts);
         setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
         setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
+        setTuningRejectedCompetitorCandidateCount(Math.max(0, detail.tuning_rejected_candidate_count || 0));
+        setTuningRejectedCompetitorCandidates(
+          normalizeTuningRejectedCompetitorCandidates(detail.tuning_rejected_candidates),
+        );
+        setTuningRejectionReasonCounts(
+          normalizeTuningRejectionReasonCounts(detail.tuning_rejection_reason_counts || null),
+        );
         setCompetitorCandidatePipelineSummary(
           normalizeCompetitorCandidatePipelineSummary(detail.candidate_pipeline_summary),
         );
@@ -3213,6 +3337,9 @@ export default function SiteWorkspacePage() {
         setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", error));
         setRejectedCompetitorCandidateCount(0);
         setRejectedCompetitorCandidates([]);
+        setTuningRejectedCompetitorCandidateCount(0);
+        setTuningRejectedCompetitorCandidates([]);
+        setTuningRejectionReasonCounts({});
         setCompetitorCandidatePipelineSummary(null);
         setCompetitorProfilePolling(false);
       } finally {
@@ -3978,6 +4105,61 @@ export default function SiteWorkspacePage() {
               <p className="hint muted">
                 Showing {rejectedCompetitorCandidates.length} of {rejectedCompetitorCandidateCount} rejected
                 candidates.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {tuningRejectedCompetitorCandidateCount > 0 && tuningRejectedCompetitorCandidates.length > 0 ? (
+          <div className="stack" data-testid="tuning-rejected-competitor-candidates-debug">
+            <p className="hint muted">
+              <strong>Removed by tuning (debug)</strong>: {tuningRejectedCompetitorCandidateCount}
+            </p>
+            {Object.values(tuningRejectionReasonCounts).some((count) => count > 0) ? (
+              <p className="hint muted">
+                Reason counts:{" "}
+                {Object.entries(tuningRejectionReasonCounts)
+                  .filter(([, count]) => count > 0)
+                  .sort(([left], [right]) => left.localeCompare(right))
+                  .map(([reason, count]) => `${formatFailureCategory(reason)}=${count}`)
+                  .join(", ")}
+              </p>
+            ) : null}
+            <div className="table-container table-container-compact">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>Reasons</th>
+                    <th>Final score</th>
+                    <th>Summary</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tuningRejectedCompetitorCandidates.map((candidate) => (
+                    <tr key={`${candidate.domain}-${candidate.reasons.join("-")}`}>
+                      <td>
+                        <code>{candidate.domain}</code>
+                      </td>
+                      <td>
+                        <div className="stack-micro">
+                          {candidate.reasons.map((reason) => (
+                            <span key={`${candidate.domain}-${reason}`} className="badge badge-muted">
+                              {formatFailureCategory(reason)}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td>{typeof candidate.final_score === "number" ? candidate.final_score : "-"}</td>
+                      <td className="table-cell-wrap">{candidate.summary || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {tuningRejectedCompetitorCandidateCount > tuningRejectedCompetitorCandidates.length ? (
+              <p className="hint muted">
+                Showing {tuningRejectedCompetitorCandidates.length} of {tuningRejectedCompetitorCandidateCount}{" "}
+                removed-by-tuning candidates.
               </p>
             ) : null}
           </div>

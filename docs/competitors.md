@@ -235,3 +235,28 @@ Stage meanings:
 
 This telemetry is a support/tuning aid only. It does not change ranking, scoring,
 or competitor review workflow semantics.
+
+## Tuning Exclusion Reason Telemetry (Debug)
+
+Competitor run detail payloads may also include bounded tuning-stage exclusion telemetry for
+candidates that passed eligibility but were removed by admin tuning/threshold behavior:
+
+- `tuning_rejected_candidate_count`
+- `tuning_rejected_candidates[]` with:
+  - `domain`
+  - `reasons[]`
+  - optional `final_score`
+  - short `summary`
+- `tuning_rejection_reason_counts`
+
+Deterministic reason codes:
+- `below_minimum_relevance_score`
+- `directory_or_aggregator_penalty`
+- `big_box_mismatch_penalty`
+- `insufficient_local_alignment`
+
+Interpretation:
+- this explains *why eligible candidates were removed by tuning*
+- it does not change scoring formulas
+- it does not change eligibility logic
+- it is an admin/debug aid, not an end-user ranking feature

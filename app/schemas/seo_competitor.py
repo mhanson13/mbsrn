@@ -33,6 +33,12 @@ SEOCompetitorProfileIneligibilityReason = Literal[
     "excluded_domain_pattern",
     "insufficient_overlap_evidence",
 ]
+SEOCompetitorProfileTuningExclusionReason = Literal[
+    "below_minimum_relevance_score",
+    "directory_or_aggregator_penalty",
+    "big_box_mismatch_penalty",
+    "insufficient_local_alignment",
+]
 SEOCompetitorProfileDraftReviewStatus = Literal["pending", "edited", "accepted", "rejected"]
 SEOCompetitorProfileCleanupExecutionStatus = Literal["completed", "failed"]
 SEOSummaryStatus = Literal["completed", "failed"]
@@ -60,6 +66,12 @@ _COMPETITOR_PROFILE_INELIGIBILITY_REASONS: tuple[str, ...] = (
     "out_of_market",
     "excluded_domain_pattern",
     "insufficient_overlap_evidence",
+)
+_COMPETITOR_PROFILE_TUNING_EXCLUSION_REASONS: tuple[str, ...] = (
+    "below_minimum_relevance_score",
+    "directory_or_aggregator_penalty",
+    "big_box_mismatch_penalty",
+    "insufficient_local_alignment",
 )
 
 
@@ -359,13 +371,89 @@ class SEOCompetitorProfileCandidatePipelineSummaryRead(BaseModel):
     final_candidate_count: int = Field(ge=0)
 
 
+class SEOCompetitorProfileTuningRejectedCandidateRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    domain: str = Field(min_length=1, max_length=255)
+    reasons: list[SEOCompetitorProfileTuningExclusionReason] = Field(default_factory=list)
+    final_score: int | None = Field(default=None, ge=0, le=100)
+    summary: str | None = Field(default=None, max_length=240)
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def normalize_domain(cls, value: Any) -> str:
+        cleaned = _strip_or_none(str(value) if value is not None else None)
+        if cleaned is None:
+            raise ValueError("domain is required")
+        return cleaned
+
+    @field_validator("reasons", mode="before")
+    @classmethod
+    def normalize_reasons(cls, value: Any) -> list[SEOCompetitorProfileTuningExclusionReason]:
+        if value is None:
+            return []
+        if not isinstance(value, (list, tuple)):
+            return []
+        normalized: list[SEOCompetitorProfileTuningExclusionReason] = []
+        seen: set[str] = set()
+        for raw_reason in value:
+            reason = str(raw_reason or "").strip().lower()
+            if reason not in _COMPETITOR_PROFILE_TUNING_EXCLUSION_REASONS or reason in seen:
+                continue
+            seen.add(reason)
+            normalized.append(reason)  # type: ignore[arg-type]
+        return normalized
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def normalize_summary(cls, value: Any) -> str | None:
+        return _strip_or_none(str(value) if value is not None else None)
+
+    @field_validator("final_score", mode="before")
+    @classmethod
+    def normalize_final_score(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed < 0:
+            return 0
+        if parsed > 100:
+            return 100
+        return parsed
+
+
 class SEOCompetitorProfileGenerationRunDetailRead(BaseModel):
     run: SEOCompetitorProfileGenerationRunRead
     drafts: list[SEOCompetitorProfileDraftRead]
     total_drafts: int
     rejected_candidate_count: int = Field(default=0, ge=0)
     rejected_candidates: list[SEOCompetitorProfileRejectedCandidateRead] = Field(default_factory=list)
+    tuning_rejected_candidate_count: int = Field(default=0, ge=0)
+    tuning_rejected_candidates: list[SEOCompetitorProfileTuningRejectedCandidateRead] = Field(default_factory=list)
+    tuning_rejection_reason_counts: dict[SEOCompetitorProfileTuningExclusionReason, int] = Field(default_factory=dict)
     candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummaryRead | None = None
+
+    @field_validator("tuning_rejection_reason_counts", mode="before")
+    @classmethod
+    def normalize_tuning_rejection_reason_counts(
+        cls,
+        value: Any,
+    ) -> dict[SEOCompetitorProfileTuningExclusionReason, int]:
+        normalized = {reason: 0 for reason in _COMPETITOR_PROFILE_TUNING_EXCLUSION_REASONS}
+        if value is None:
+            return normalized  # type: ignore[return-value]
+        if not isinstance(value, dict):
+            return normalized  # type: ignore[return-value]
+        for reason in _COMPETITOR_PROFILE_TUNING_EXCLUSION_REASONS:
+            raw_count = value.get(reason, 0)
+            try:
+                normalized[reason] = max(0, int(raw_count))
+            except (TypeError, ValueError):
+                normalized[reason] = 0
+        return normalized  # type: ignore[return-value]
 
 
 class SEOCompetitorProfileGenerationObservabilitySummaryRead(BaseModel):

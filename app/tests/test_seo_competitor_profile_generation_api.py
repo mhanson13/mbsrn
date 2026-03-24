@@ -1439,6 +1439,21 @@ def test_generation_dedup_scoring_and_exclusion_are_applied_before_persistence(d
         "existing_domain_match": 0,
         "invalid_candidate": 0,
     }
+    assert payload["tuning_rejected_candidate_count"] == 3
+    assert payload["tuning_rejection_reason_counts"] == {
+        "below_minimum_relevance_score": 1,
+        "directory_or_aggregator_penalty": 1,
+        "big_box_mismatch_penalty": 1,
+        "insufficient_local_alignment": 1,
+    }
+    tuning_rejected_by_domain = {item["domain"]: item for item in payload["tuning_rejected_candidates"]}
+    assert set(tuning_rejected_by_domain.keys()) == {"yelp.com", "walmart.com", "unknown.example"}
+    assert tuning_rejected_by_domain["yelp.com"]["reasons"] == ["directory_or_aggregator_penalty"]
+    assert tuning_rejected_by_domain["walmart.com"]["reasons"] == ["big_box_mismatch_penalty"]
+    assert tuning_rejected_by_domain["unknown.example"]["reasons"] == [
+        "below_minimum_relevance_score",
+        "insufficient_local_alignment",
+    ]
 
     returned_domains = [item["suggested_domain"] for item in payload["drafts"]]
     assert returned_domains == [
@@ -1597,6 +1612,14 @@ def test_generation_applies_eligibility_filter_before_admin_tuning(db_session, s
         "final_candidate_count": 1,
     }
     assert payload["rejected_candidate_count"] == 2
+    assert payload["tuning_rejected_candidate_count"] == 0
+    assert payload["tuning_rejected_candidates"] == []
+    assert payload["tuning_rejection_reason_counts"] == {
+        "below_minimum_relevance_score": 0,
+        "directory_or_aggregator_penalty": 0,
+        "big_box_mismatch_penalty": 0,
+        "insufficient_local_alignment": 0,
+    }
     rejected_by_domain = {item["domain"]: item for item in payload["rejected_candidates"]}
     assert set(rejected_by_domain.keys()) == {"parked-candidate.com", "offline-candidate.com"}
     assert "parked_domain" in rejected_by_domain["parked-candidate.com"]["reasons"]
@@ -1744,6 +1767,9 @@ def test_generation_uses_business_quality_tuning_threshold_settings(db_session, 
         "rejected_by_tuning_count": 1,
         "final_candidate_count": 0,
     }
+    assert high_payload["tuning_rejected_candidate_count"] == 1
+    assert high_payload["tuning_rejection_reason_counts"]["below_minimum_relevance_score"] == 1
+    assert high_payload["tuning_rejection_reason_counts"]["insufficient_local_alignment"] == 1
 
 
 def test_generation_fails_safely_when_business_quality_tuning_is_invalid(db_session, seeded_business) -> None:
