@@ -61,6 +61,23 @@ Frontend guidance:
   - `action_summary` = concrete operator-next-step summary
 - Handle sparse responses safely (`action_summary: null`) without breaking narrative rendering.
 
+## Signal Summary Visibility
+
+Recommendation narrative payloads may include an optional `signal_summary` object:
+
+- `support_level`: `low | medium | high`
+- `evidence_sources`: compact bounded list from `site`, `competitors`, `references`, `themes`
+- `competitor_signal_used`
+- `site_signal_used`
+- `reference_signal_used`
+
+Frontend guidance:
+- Render this as compact framing metadata (chips/tags + small support-level badge).
+- Do not overstate `support_level` as model certainty; it is deterministic grounding metadata.
+- Keep it separate from:
+  - `competitor_influence` (context source explanation)
+  - `action_summary` (operator next-step summary)
+
 ## AI -> Action Bridge
 
 The workspace now links AI opportunities directly to the deterministic tuning/apply loop when linkage data exists.

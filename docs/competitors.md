@@ -53,3 +53,5 @@ Behavior is intentionally conservative:
 - Recommendation narrative responses may also include a separate optional `action_summary`
   payload that focuses on operator next steps; this remains distinct from
   `competitor_influence`.
+- Recommendation narrative responses may include optional `signal_summary` framing where
+  competitor context is one bounded evidence source among site/references/themes signals.

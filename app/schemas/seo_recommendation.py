@@ -23,6 +23,7 @@ SEORecommendationSourceType = Literal["audit", "comparison", "mixed"]
 SEORecommendationSortBy = Literal["priority_score", "priority_band", "severity", "created_at", "updated_at", "due_at"]
 SortOrder = Literal["asc", "desc"]
 SEORecommendationTuningSuggestionConfidence = Literal["low", "medium", "high"]
+SEORecommendationSignalSupportLevel = Literal["low", "medium", "high"]
 RecommendationTuningSetting = Literal[
     "competitor_candidate_min_relevance_score",
     "competitor_candidate_big_box_penalty",
@@ -44,6 +45,7 @@ _ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS = 180
 _ACTION_SUMMARY_WHY_MAX_CHARS = 240
 _ACTION_SUMMARY_FIRST_STEP_MAX_CHARS = 180
 _ACTION_SUMMARY_EVIDENCE_ITEM_MAX_CHARS = 160
+_SIGNAL_SUMMARY_EVIDENCE_SOURCE_ORDER = ("site", "competitors", "references", "themes")
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -216,6 +218,44 @@ class SEORecommendationActionSummaryRead(BaseModel):
             max_length=_ACTION_SUMMARY_EVIDENCE_ITEM_MAX_CHARS,
         )
 
+
+class SEORecommendationSignalSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    support_level: SEORecommendationSignalSupportLevel
+    evidence_sources: list[str] = Field(default_factory=list)
+    competitor_signal_used: bool
+    site_signal_used: bool
+    reference_signal_used: bool
+
+    @field_validator("support_level", mode="before")
+    @classmethod
+    def normalize_support_level(cls, value: Any) -> SEORecommendationSignalSupportLevel:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"low", "medium", "high"}:
+            raise ValueError("Invalid support_level")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("evidence_sources", mode="before")
+    @classmethod
+    def normalize_evidence_sources(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise TypeError("evidence_sources must be a list")
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for candidate in value:
+            source = str(candidate or "").strip().lower()
+            if source not in _SIGNAL_SUMMARY_EVIDENCE_SOURCE_ORDER:
+                continue
+            if source in seen:
+                continue
+            seen.add(source)
+            normalized.append(source)
+            if len(normalized) >= len(_SIGNAL_SUMMARY_EVIDENCE_SOURCE_ORDER):
+                break
+        return normalized
 
 class SEORecommendationRunCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -448,6 +488,7 @@ class SEORecommendationNarrativeRead(BaseModel):
     top_themes_json: list[str] = Field(default_factory=list)
     sections_json: dict[str, object] | None
     competitor_influence: "SEORecommendationCompetitorInfluenceRead | None" = None
+    signal_summary: SEORecommendationSignalSummaryRead | None = None
     action_summary: SEORecommendationActionSummaryRead | None = None
     provider_name: str
     model_name: str
@@ -479,6 +520,77 @@ class SEORecommendationNarrativeRead(BaseModel):
             self.competitor_influence = SEORecommendationCompetitorInfluenceRead.model_validate(raw)
         except Exception:  # noqa: BLE001
             self.competitor_influence = None
+        return self
+
+    @model_validator(mode="after")
+    def derive_signal_summary(self) -> "SEORecommendationNarrativeRead":
+        if self.signal_summary is not None:
+            return self
+
+        sections = self.sections_json if isinstance(self.sections_json, dict) else {}
+        summary = _compact_text(sections.get("summary"), max_length=_ACTION_SUMMARY_WHY_MAX_CHARS)
+        priority_rationale = _compact_text(
+            sections.get("priority_rationale"),
+            max_length=_ACTION_SUMMARY_WHY_MAX_CHARS,
+        )
+        next_actions = _compact_text_list(
+            sections.get("next_actions"),
+            limit=5,
+            max_length=_ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS,
+        )
+        recommendation_references = _compact_text_list(
+            sections.get("recommendation_references"),
+            limit=_ACTION_SUMMARY_EVIDENCE_MAX_ITEMS,
+            max_length=80,
+        )
+        top_themes = _compact_text_list(
+            self.top_themes_json,
+            limit=_ACTION_SUMMARY_EVIDENCE_MAX_ITEMS,
+            max_length=_ACTION_SUMMARY_EVIDENCE_ITEM_MAX_CHARS,
+        )
+        narrative_text = _compact_text(self.narrative_text, max_length=_ACTION_SUMMARY_WHY_MAX_CHARS)
+
+        site_signal_used = bool(summary or priority_rationale or next_actions or narrative_text)
+        competitor_signal_used = bool(self.competitor_influence is not None and self.competitor_influence.used)
+        reference_signal_used = bool(recommendation_references)
+
+        evidence_sources: list[str] = []
+        if site_signal_used:
+            evidence_sources.append("site")
+        if competitor_signal_used:
+            evidence_sources.append("competitors")
+        if reference_signal_used:
+            evidence_sources.append("references")
+        if top_themes:
+            evidence_sources.append("themes")
+
+        if not evidence_sources:
+            self.signal_summary = None
+            return self
+
+        site_richness_score = sum(1 for value in (summary, priority_rationale, narrative_text) if value)
+        if next_actions:
+            site_richness_score += 1
+        source_count = len(evidence_sources)
+        if source_count >= 3 and site_richness_score >= 2 and (competitor_signal_used or reference_signal_used):
+            support_level: SEORecommendationSignalSupportLevel = "high"
+        elif source_count >= 2 or site_richness_score >= 2:
+            support_level = "medium"
+        else:
+            support_level = "low"
+
+        try:
+            self.signal_summary = SEORecommendationSignalSummaryRead.model_validate(
+                {
+                    "support_level": support_level,
+                    "evidence_sources": evidence_sources,
+                    "competitor_signal_used": competitor_signal_used,
+                    "site_signal_used": site_signal_used,
+                    "reference_signal_used": reference_signal_used,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            self.signal_summary = None
         return self
 
     @model_validator(mode="after")

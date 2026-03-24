@@ -39,6 +39,7 @@ NARRATIVE_RESPONSE_KEYS = {
     "top_themes_json",
     "sections_json",
     "competitor_influence",
+    "signal_summary",
     "action_summary",
     "provider_name",
     "model_name",
@@ -158,6 +159,24 @@ class _SparseActionSummaryRecommendationNarrativeProvider:
             },
             provider_name="sparse-test-provider",
             model_name="sparse-test-model",
+            prompt_version="seo-recommendation-narrative-v2",
+        )
+
+
+class _ReferenceHeavyRecommendationNarrativeProvider:
+    def generate_narrative(self, **kwargs):  # noqa: ANN003, ANN201
+        del kwargs
+        return SEORecommendationNarrativeOutput(
+            narrative_text="Prioritize high-impact recommendation references first.",
+            top_themes=[],
+            sections={
+                "summary": "Use linked recommendation references to drive first implementation steps.",
+                "priority_rationale": "Referenced recommendations are already deterministic and scoped.",
+                "next_actions": [],
+                "recommendation_references": ["rec-2", "rec-1", "rec-2"],
+            },
+            provider_name="reference-test-provider",
+            model_name="reference-test-model",
             prompt_version="seo-recommendation-narrative-v2",
         )
 
@@ -354,6 +373,13 @@ def test_recommendation_narrative_manual_trigger_success_and_retrieval(db_sessio
     assert narrative["prompt_version"]
     assert narrative["error_message"] is None
     assert narrative["competitor_influence"] is None
+    assert narrative["signal_summary"] == {
+        "support_level": "medium",
+        "evidence_sources": ["site", "themes"],
+        "competitor_signal_used": False,
+        "site_signal_used": True,
+        "reference_signal_used": False,
+    }
 
     list_response = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/narratives"
@@ -399,6 +425,13 @@ def test_recommendation_narrative_surfaces_action_summary_from_rich_sections(
     assert action_summary["why_it_matters"] == "This addresses the strongest local conversion and visibility gaps first."
     assert 1 <= len(action_summary["evidence"]) <= 4
     assert "Emergency service pages are weaker than nearby competitors." in action_summary["evidence"]
+    signal_summary = payload["signal_summary"]
+    assert signal_summary is not None
+    assert signal_summary["competitor_signal_used"] is False
+    assert signal_summary["site_signal_used"] is True
+    assert signal_summary["reference_signal_used"] is True
+    assert signal_summary["support_level"] in {"medium", "high"}
+    assert signal_summary["evidence_sources"] == ["site", "references", "themes"]
 
 
 def test_recommendation_narrative_action_summary_is_safe_when_sections_are_sparse_or_malformed(
@@ -417,6 +450,29 @@ def test_recommendation_narrative_action_summary_is_safe_when_sections_are_spars
     )
     assert response.status_code == 201
     assert response.json()["action_summary"] is None
+    assert response.json()["signal_summary"] is None
+
+
+def test_recommendation_narrative_signal_summary_sets_reference_signal_when_references_exist(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        narrative_provider=_ReferenceHeavyRecommendationNarrativeProvider(),
+    )
+    site_id, run_id = _create_completed_recommendation_run(client, db_session, seeded_business.id)
+
+    response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/narratives"
+    )
+    assert response.status_code == 201
+    signal_summary = response.json()["signal_summary"]
+    assert signal_summary is not None
+    assert signal_summary["reference_signal_used"] is True
+    assert signal_summary["competitor_signal_used"] is False
+    assert "references" in signal_summary["evidence_sources"]
 
 
 def test_recommendation_narrative_failure_is_isolated_and_persisted(db_session, seeded_business) -> None:
@@ -653,6 +709,12 @@ def test_recommendation_narrative_optionally_includes_normalized_competitor_cont
     assert action_summary["first_step"].startswith("grounded run=")
     assert len(action_summary["evidence"]) <= 4
     assert any(item.startswith("Competitor gap: ") for item in action_summary["evidence"])
+    signal_summary = payload["signal_summary"]
+    assert signal_summary is not None
+    assert signal_summary["competitor_signal_used"] is True
+    assert signal_summary["site_signal_used"] is True
+    assert signal_summary["support_level"] in {"medium", "high"}
+    assert "competitors" in signal_summary["evidence_sources"]
 
 
 def test_recommendation_narrative_does_not_surface_competitor_influence_for_fallback_only_payload(

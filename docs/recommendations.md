@@ -83,3 +83,43 @@ When narrative content is strong enough, the payload shape is:
 - `competitor_influence` explains whether competitor context influenced narrative specificity.
 - `action_summary` explains the immediate operator action path.
 - The two fields are separate and may coexist.
+
+## Recommendation Signal Summary
+
+Recommendation narrative API responses now include an optional top-level field:
+
+- `signal_summary` (object or `null`)
+
+Shape:
+
+```json
+{
+  "support_level": "medium",
+  "evidence_sources": ["site", "competitors", "references", "themes"],
+  "competitor_signal_used": true,
+  "site_signal_used": true,
+  "reference_signal_used": true
+}
+```
+
+### Deterministic Derivation
+`signal_summary` is derived from existing narrative payload content only, including:
+- `sections_json.summary`
+- `sections_json.priority_rationale`
+- `sections_json.next_actions`
+- `sections_json.recommendation_references`
+- `top_themes_json`
+- `narrative_text`
+- `competitor_influence`
+
+No additional AI/provider calls are made.
+
+### Support-Level Heuristic
+- `high`: broad support from multiple evidence sources with rich recommendation content.
+- `medium`: useful grounding from multiple signals, but not broad/rich enough for high.
+- `low`: minimal usable grounding.
+
+### Safety and Boundaries
+- `signal_summary` is `null` when narrative content is too sparse/malformed to infer safely.
+- `evidence_sources` is bounded, deduplicated, and uses fixed values only.
+- This is additive response shaping; no persistence, schema migration, or workflow changes.
