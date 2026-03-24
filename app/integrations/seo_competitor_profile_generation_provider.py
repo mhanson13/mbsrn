@@ -14,6 +14,7 @@ from app.integrations.seo_summary_provider import (
     SEOCompetitorProfileGenerationOutput,
 )
 from app.models.seo_site import SEOSite
+from app.services.competitors.normalizer import normalize_competitor_response
 from app.services.seo_competitor_profile_prompt import (
     SEO_COMPETITOR_PROFILE_PROMPT_VERSION,
     build_seo_competitor_profile_prompt,
@@ -137,33 +138,16 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             safe_message="Competitor profile generation response could not be parsed.",
         )
         assistant_content = self._extract_assistant_content(response_json)
-        structured_json = self._parse_json_object(
-            assistant_content,
-            code=_PROVIDER_ERROR_INVALID_OUTPUT,
-            safe_message="Competitor profile generation returned malformed output.",
-            raw_output=assistant_content,
+        candidates = self._parse_or_normalize_candidates(
+            assistant_content=assistant_content,
+            candidate_count=candidate_count,
         )
-        try:
-            parsed = _OpenAICompetitorProfileResponse.model_validate(structured_json)
-        except ValidationError as exc:
+        if not candidates:
             raise self._provider_error(
-                code=_PROVIDER_ERROR_SCHEMA_VALIDATION,
-                safe_message="Competitor profile generation returned invalid structured output.",
+                code=_PROVIDER_ERROR_INVALID_OUTPUT,
+                safe_message="Competitor profile generation returned malformed output.",
                 raw_output=assistant_content,
-            ) from exc
-
-        candidates = [
-            SEOCompetitorProfileDraftCandidateOutput(
-                suggested_name=item.name,
-                suggested_domain=item.domain,
-                competitor_type=item.competitor_type,
-                summary=item.summary,
-                why_competitor=item.why_competitor,
-                evidence=item.evidence,
-                confidence_score=item.confidence_score,
             )
-            for item in parsed.candidates[: max(1, candidate_count)]
-        ]
         model_name = _clean_optional_value(response_json.get("model")) or self.model_name
         return SEOCompetitorProfileGenerationOutput(
             candidates=candidates,
@@ -172,6 +156,95 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             prompt_version=prompt.prompt_version,
             raw_response=assistant_content,
         )
+
+    def _parse_or_normalize_candidates(
+        self,
+        *,
+        assistant_content: str,
+        candidate_count: int,
+    ) -> list[SEOCompetitorProfileDraftCandidateOutput]:
+        bounded_count = max(1, candidate_count)
+        structured_json: dict[str, object] | None = None
+        try:
+            structured_json = self._parse_json_object(
+                assistant_content,
+                code=_PROVIDER_ERROR_INVALID_OUTPUT,
+                safe_message="Competitor profile generation returned malformed output.",
+                raw_output=assistant_content,
+            )
+        except SEOCompetitorProfileProviderError:
+            structured_json = None
+
+        if structured_json is not None:
+            try:
+                parsed = _OpenAICompetitorProfileResponse.model_validate(structured_json)
+                return [
+                    SEOCompetitorProfileDraftCandidateOutput(
+                        suggested_name=item.name,
+                        suggested_domain=item.domain,
+                        competitor_type=item.competitor_type,
+                        summary=item.summary,
+                        why_competitor=item.why_competitor,
+                        evidence=item.evidence,
+                        confidence_score=item.confidence_score,
+                    )
+                    for item in parsed.candidates[:bounded_count]
+                ]
+            except ValidationError:
+                logger.warning(
+                    "Competitor profile generation strict schema validation failed; applying normalizer fallback."
+                )
+
+        normalized_payload = normalize_competitor_response(assistant_content)
+        return self._coerce_candidates_from_normalized_payload(
+            normalized_payload=normalized_payload,
+            candidate_count=bounded_count,
+        )
+
+    def _coerce_candidates_from_normalized_payload(
+        self,
+        *,
+        normalized_payload: dict[str, object],
+        candidate_count: int,
+    ) -> list[SEOCompetitorProfileDraftCandidateOutput]:
+        raw_competitors = normalized_payload.get("competitors")
+        if not isinstance(raw_competitors, list):
+            return []
+
+        candidates: list[SEOCompetitorProfileDraftCandidateOutput] = []
+        for raw_competitor in raw_competitors:
+            if not isinstance(raw_competitor, dict):
+                continue
+
+            suggested_name = _clean_optional_value(raw_competitor.get("name")) or "Unknown"
+            suggested_domain = _clean_optional_value(raw_competitor.get("domain")) or ""
+            summary = _clean_optional_value(raw_competitor.get("summary"))
+            opportunities = _normalize_text_list(raw_competitor.get("opportunities"))
+            strengths = _normalize_text_list(raw_competitor.get("strengths"))
+            differentiators = _normalize_text_list(raw_competitor.get("differentiators"))
+            threats = _normalize_text_list(raw_competitor.get("threats"))
+
+            why_competitor = opportunities[0] if opportunities else (differentiators[0] if differentiators else summary)
+            evidence = strengths[0] if strengths else (differentiators[0] if differentiators else (threats[0] if threats else None))
+
+            relevance_score = _coerce_bounded_int(raw_competitor.get("relevance_score"), minimum=1, maximum=5, default=3)
+            visibility_score = _coerce_bounded_int(raw_competitor.get("visibility_score"), minimum=1, maximum=5, default=3)
+            confidence_score = max(0.0, min(1.0, (relevance_score + visibility_score) / 10.0))
+
+            candidates.append(
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name=suggested_name,
+                    suggested_domain=suggested_domain,
+                    competitor_type="unknown",
+                    summary=summary,
+                    why_competitor=why_competitor,
+                    evidence=evidence,
+                    confidence_score=confidence_score,
+                )
+            )
+            if len(candidates) >= candidate_count:
+                break
+        return candidates
 
     def _log_prompt_resolution_metadata(self) -> None:
         logger.info(
@@ -449,3 +522,22 @@ def _clean_optional_value(value: object) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _normalize_text_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        text = _clean_optional_value(item)
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def _coerce_bounded_int(value: object, *, minimum: int, maximum: int, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
