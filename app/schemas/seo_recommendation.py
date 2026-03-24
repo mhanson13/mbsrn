@@ -34,6 +34,16 @@ SEORecommendationEEATCategory = Literal[
     "authoritativeness",
     "trustworthiness",
 ]
+SEORecommendationPriorityReason = Literal[
+    "competitor_gap",
+    "trust_gap",
+    "authority_gap",
+    "experience_gap",
+    "expertise_gap",
+    "high_clarity_action",
+    "pending_refresh_context",
+    "general",
+]
 RecommendationTuningSetting = Literal[
     "competitor_candidate_min_relevance_score",
     "competitor_candidate_big_box_penalty",
@@ -61,12 +71,46 @@ _APPLY_OUTCOME_NEXT_RUN_MAX_CHARS = 220
 _SIGNAL_SUMMARY_EVIDENCE_SOURCE_ORDER = ("site", "competitors", "references", "themes")
 _RECOMMENDATION_EEAT_GAP_SUPPORTING_SIGNALS_MAX_ITEMS = 6
 _RECOMMENDATION_EEAT_GAP_SUPPORTING_SIGNAL_MAX_CHARS = 140
+_ORDERING_EXPLANATION_MAX_CHARS = 320
 _EEAT_CATEGORY_ORDER: tuple[SEORecommendationEEATCategory, ...] = (
     "experience",
     "expertise",
     "authoritativeness",
     "trustworthiness",
 )
+_PRIORITY_REASON_ORDER: tuple[SEORecommendationPriorityReason, ...] = (
+    "competitor_gap",
+    "trust_gap",
+    "authority_gap",
+    "experience_gap",
+    "expertise_gap",
+    "high_clarity_action",
+    "pending_refresh_context",
+    "general",
+)
+_EEAT_CATEGORY_TO_PRIORITY_REASON: dict[SEORecommendationEEATCategory, SEORecommendationPriorityReason] = {
+    "trustworthiness": "trust_gap",
+    "authoritativeness": "authority_gap",
+    "experience": "experience_gap",
+    "expertise": "expertise_gap",
+}
+_HIGH_CLARITY_ACTION_VERBS = {
+    "add",
+    "build",
+    "claim",
+    "clarify",
+    "create",
+    "expand",
+    "fix",
+    "implement",
+    "improve",
+    "optimize",
+    "publish",
+    "refresh",
+    "strengthen",
+    "update",
+    "verify",
+}
 _EXPERIENCE_SIGNAL_KEYWORDS = (
     "testimonial",
     "review",
@@ -235,6 +279,78 @@ def _normalize_signal_text(value: object, *, max_length: int) -> str | None:
     if normalized is None:
         return None
     return normalized.lower()
+
+
+def _normalize_priority_reason(value: Any) -> SEORecommendationPriorityReason | None:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _PRIORITY_REASON_ORDER:
+        return None
+    return normalized  # type: ignore[return-value]
+
+
+def _normalize_priority_reason_list(value: Any) -> list[SEORecommendationPriorityReason]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise TypeError("priority_reasons must be a list")
+    parsed: set[SEORecommendationPriorityReason] = set()
+    for item in value:
+        reason = _normalize_priority_reason(item)
+        if reason is None:
+            continue
+        parsed.add(reason)
+    return [reason for reason in _PRIORITY_REASON_ORDER if reason in parsed]
+
+
+def _extract_recommendation_evidence_sources(evidence_json: dict[str, object] | None) -> set[str]:
+    if not isinstance(evidence_json, dict):
+        return set()
+    raw_sources = evidence_json.get("sources")
+    if not isinstance(raw_sources, list):
+        return set()
+    normalized_sources: set[str] = set()
+    for raw_source in raw_sources:
+        source = str(raw_source or "").strip().lower()
+        if not source:
+            continue
+        normalized_sources.add(source)
+    return normalized_sources
+
+
+def _is_high_clarity_action(*, title: str | None, rationale: str | None) -> bool:
+    normalized_title = _compact_text(title, max_length=_ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS)
+    normalized_rationale = _compact_text(rationale, max_length=_ACTION_SUMMARY_WHY_MAX_CHARS)
+    if normalized_title is None or normalized_rationale is None:
+        return False
+    tokens = [token.strip(".,:;!?()[]{}-_/").lower() for token in normalized_title.split()]
+    tokens = [token for token in tokens if token]
+    if len(tokens) < 2:
+        return False
+    return tokens[0] in _HIGH_CLARITY_ACTION_VERBS
+
+
+def _derive_recommendation_priority_reasons(
+    *,
+    comparison_run_id: str | None,
+    evidence_json: dict[str, object] | None,
+    eeat_categories: list[SEORecommendationEEATCategory],
+    title: str | None,
+    rationale: str | None,
+) -> list[SEORecommendationPriorityReason]:
+    reasons: set[SEORecommendationPriorityReason] = set()
+    evidence_sources = _extract_recommendation_evidence_sources(evidence_json)
+    if comparison_run_id is not None or "comparison" in evidence_sources or "mixed" in evidence_sources:
+        reasons.add("competitor_gap")
+
+    for category in eeat_categories:
+        mapped_reason = _EEAT_CATEGORY_TO_PRIORITY_REASON.get(category)
+        if mapped_reason is not None:
+            reasons.add(mapped_reason)
+
+    if _is_high_clarity_action(title=title, rationale=rationale):
+        reasons.add("high_clarity_action")
+
+    return [reason for reason in _PRIORITY_REASON_ORDER if reason in reasons]
 
 
 def infer_eeat_categories_from_signals(signal_values: list[object]) -> list[SEORecommendationEEATCategory]:
@@ -416,6 +532,26 @@ class SEORecommendationAnalysisFreshnessRead(BaseModel):
         return cleaned
 
 
+class SEORecommendationOrderingExplanationRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=_ORDERING_EXPLANATION_MAX_CHARS)
+    context_reasons: list[SEORecommendationPriorityReason] = Field(default_factory=list)
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def normalize_message(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_ORDERING_EXPLANATION_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Ordering explanation message is required")
+        return cleaned
+
+    @field_validator("context_reasons", mode="before")
+    @classmethod
+    def normalize_context_reasons(cls, value: Any) -> list[SEORecommendationPriorityReason]:
+        return _normalize_priority_reason_list(value)
+
+
 class SEORecommendationEEATGapSummaryRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -544,6 +680,8 @@ class SEORecommendationRead(BaseModel):
     evidence_json: dict[str, object] | None
     eeat_categories: list[SEORecommendationEEATCategory] = Field(default_factory=list)
     primary_eeat_category: SEORecommendationEEATCategory | None = None
+    priority_reasons: list[SEORecommendationPriorityReason] = Field(default_factory=list)
+    primary_priority_reason: SEORecommendationPriorityReason | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -614,6 +752,24 @@ class SEORecommendationRead(BaseModel):
             return None
         return category  # type: ignore[return-value]
 
+    @field_validator("priority_reasons", mode="before")
+    @classmethod
+    def normalize_priority_reasons(
+        cls,
+        value: Any,
+    ) -> list[SEORecommendationPriorityReason]:
+        return _normalize_priority_reason_list(value)
+
+    @field_validator("primary_priority_reason", mode="before")
+    @classmethod
+    def normalize_primary_priority_reason(
+        cls,
+        value: Any,
+    ) -> SEORecommendationPriorityReason | None:
+        if value is None:
+            return None
+        return _normalize_priority_reason(value)
+
     @model_validator(mode="after")
     def derive_eeat_categories(self) -> "SEORecommendationRead":
         categories = list(self.eeat_categories)
@@ -633,6 +789,30 @@ class SEORecommendationRead(BaseModel):
             self.primary_eeat_category = categories[0]
         elif self.primary_eeat_category is not None and self.primary_eeat_category not in categories:
             self.primary_eeat_category = categories[0] if categories else None
+        return self
+
+    @model_validator(mode="after")
+    def derive_priority_reasons(self) -> "SEORecommendationRead":
+        reasons = list(self.priority_reasons)
+        if not reasons:
+            reasons = _derive_recommendation_priority_reasons(
+                comparison_run_id=self.comparison_run_id,
+                evidence_json=self.evidence_json if isinstance(self.evidence_json, dict) else None,
+                eeat_categories=self.eeat_categories,
+                title=self.title,
+                rationale=self.rationale,
+            )
+        else:
+            reasons = [reason for reason in _PRIORITY_REASON_ORDER if reason in reasons]
+
+        self.priority_reasons = reasons
+        if self.primary_priority_reason is None and reasons:
+            self.primary_priority_reason = reasons[0]
+        elif (
+            self.primary_priority_reason is not None
+            and self.primary_priority_reason not in reasons
+        ):
+            self.primary_priority_reason = reasons[0] if reasons else None
         return self
 
 
@@ -1051,6 +1231,7 @@ class SEORecommendationWorkspaceSummaryRead(BaseModel):
     tuning_suggestions: list[SEORecommendationTuningSuggestionRead] = Field(default_factory=list)
     apply_outcome: SEORecommendationApplyOutcomeRead | None = None
     analysis_freshness: SEORecommendationAnalysisFreshnessRead | None = None
+    ordering_explanation: SEORecommendationOrderingExplanationRead | None = None
     eeat_gap_summary: SEORecommendationEEATGapSummaryRead | None = None
     competitor_prompt_preview: AIPromptPreviewRead | None = None
     recommendation_prompt_preview: AIPromptPreviewRead | None = None

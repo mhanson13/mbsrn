@@ -885,12 +885,26 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
     assert payload["recommendations"]["total"] > 0
     assert isinstance(payload["recommendations"]["items"][0]["eeat_categories"], list)
     assert payload["recommendations"]["items"][0]["primary_eeat_category"] is None
+    assert isinstance(payload["recommendations"]["items"][0]["priority_reasons"], list)
+    assert payload["recommendations"]["items"][0]["primary_priority_reason"] in {
+        None,
+        "competitor_gap",
+        "trust_gap",
+        "authority_gap",
+        "experience_gap",
+        "expertise_gap",
+        "high_clarity_action",
+        "pending_refresh_context",
+        "general",
+    }
     assert payload["latest_narrative"] is None
     assert payload["tuning_suggestions"] == []
     assert payload["apply_outcome"] is None
     assert payload["analysis_freshness"]["status"] == "fresh"
     assert payload["analysis_freshness"]["analysis_generated_at"] is not None
     assert payload["analysis_freshness"]["last_apply_at"] is None
+    assert payload["ordering_explanation"] is not None
+    assert payload["ordering_explanation"]["message"]
     assert payload["eeat_gap_summary"] is None
     assert payload["competitor_prompt_preview"] is not None
     assert payload["competitor_prompt_preview"]["prompt_type"] == "competitor"
@@ -1053,9 +1067,13 @@ def test_recommendation_workspace_summary_derives_eeat_categories_and_gap_summar
     payload = summary.json()
     assert payload["recommendations"]["items"][0]["eeat_categories"] == ["trustworthiness"]
     assert payload["recommendations"]["items"][0]["primary_eeat_category"] == "trustworthiness"
+    assert "competitor_gap" in payload["recommendations"]["items"][0]["priority_reasons"]
+    assert "trust_gap" in payload["recommendations"]["items"][0]["priority_reasons"]
     assert payload["eeat_gap_summary"] is not None
     assert "trustworthiness" in payload["eeat_gap_summary"]["top_gap_categories"]
     assert payload["eeat_gap_summary"]["message"]
+    assert payload["ordering_explanation"] is not None
+    assert "Competitor-backed" in payload["ordering_explanation"]["message"]
 
 
 def test_recommendation_workspace_summary_omits_eeat_gap_summary_when_competitor_signals_are_insufficient(
@@ -1098,7 +1116,9 @@ def test_recommendation_workspace_summary_omits_eeat_gap_summary_when_competitor
     payload = summary.json()
     assert payload["recommendations"]["items"][0]["eeat_categories"] == []
     assert payload["recommendations"]["items"][0]["primary_eeat_category"] is None
+    assert payload["recommendations"]["items"][0]["priority_reasons"] in ([], ["high_clarity_action"])
     assert payload["eeat_gap_summary"] is None
+    assert payload["ordering_explanation"] is not None
 
 
 def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_session, seeded_business) -> None:
@@ -1212,6 +1232,8 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
     assert payload["analysis_freshness"]["status"] == "pending_refresh"
     assert payload["analysis_freshness"]["analysis_generated_at"] is not None
     assert payload["analysis_freshness"]["last_apply_at"] is not None
+    assert payload["ordering_explanation"] is not None
+    assert "pending_refresh_context" in payload["ordering_explanation"]["context_reasons"]
     assert payload["apply_outcome"]["applied"] is True
     assert payload["apply_outcome"]["source"] == "recommendation"
     assert payload["apply_outcome"]["recommendation_label"] == recommendation_title

@@ -43,6 +43,8 @@ import type {
   RecommendationApplyOutcome,
   RecommendationEEATCategory,
   RecommendationEEATGapSummary,
+  RecommendationOrderingExplanation,
+  RecommendationPriorityReason,
   Recommendation,
   RecommendationListResponse,
   RecommendationNarrative,
@@ -438,6 +440,87 @@ function normalizeRecommendationEEATGapSummary(
     categories,
     supportingSignals,
     message,
+  };
+}
+
+const PRIORITY_REASON_ORDER: RecommendationPriorityReason[] = [
+  "competitor_gap",
+  "trust_gap",
+  "authority_gap",
+  "experience_gap",
+  "expertise_gap",
+  "high_clarity_action",
+  "pending_refresh_context",
+  "general",
+];
+
+function formatPriorityReason(reason: RecommendationPriorityReason): string {
+  switch (reason) {
+    case "competitor_gap":
+      return "Competitor gap";
+    case "trust_gap":
+      return "Trust gap";
+    case "authority_gap":
+      return "Authority gap";
+    case "experience_gap":
+      return "Experience gap";
+    case "expertise_gap":
+      return "Expertise gap";
+    case "high_clarity_action":
+      return "Clear next step";
+    case "pending_refresh_context":
+      return "Pending refresh context";
+    case "general":
+      return "General";
+    default:
+      return reason;
+  }
+}
+
+function normalizeRecommendationPriorityReasons(
+  value: RecommendationPriorityReason[] | null | undefined,
+  limit = 4,
+): RecommendationPriorityReason[] {
+  if (!Array.isArray(value) || limit <= 0) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const normalized: RecommendationPriorityReason[] = [];
+  for (const reason of PRIORITY_REASON_ORDER) {
+    if (!value.includes(reason)) {
+      continue;
+    }
+    if (seen.has(reason)) {
+      continue;
+    }
+    seen.add(reason);
+    normalized.push(reason);
+    if (normalized.length >= limit) {
+      break;
+    }
+  }
+  return normalized;
+}
+
+interface RecommendationOrderingExplanationView {
+  message: string;
+  contextReasons: RecommendationPriorityReason[];
+}
+
+function normalizeRecommendationOrderingExplanation(
+  value: RecommendationOrderingExplanation | null | undefined,
+): RecommendationOrderingExplanationView | null {
+  if (!value) {
+    return null;
+  }
+  const message = truncateOptionalText(value.message, 320);
+  if (!message) {
+    return null;
+  }
+  const contextReasons = normalizeRecommendationPriorityReasons(value.context_reasons, 4);
+  return {
+    message,
+    contextReasons,
   };
 }
 
@@ -989,6 +1072,8 @@ export default function SiteWorkspacePage() {
     useState<RecommendationEEATGapSummary | null>(null);
   const [latestRecommendationAnalysisFreshness, setLatestRecommendationAnalysisFreshness] =
     useState<RecommendationAnalysisFreshness | null>(null);
+  const [latestRecommendationOrderingExplanation, setLatestRecommendationOrderingExplanation] =
+    useState<RecommendationOrderingExplanation | null>(null);
   const [latestCompetitorPromptPreview, setLatestCompetitorPromptPreview] = useState<PromptPreviewView | null>(null);
   const [latestRecommendationPromptPreview, setLatestRecommendationPromptPreview] =
     useState<PromptPreviewView | null>(null);
@@ -1347,6 +1432,10 @@ export default function SiteWorkspacePage() {
     () => normalizeRecommendationAnalysisFreshness(latestRecommendationAnalysisFreshness),
     [latestRecommendationAnalysisFreshness],
   );
+  const recommendationOrderingExplanation = useMemo(
+    () => normalizeRecommendationOrderingExplanation(latestRecommendationOrderingExplanation),
+    [latestRecommendationOrderingExplanation],
+  );
   const narrativeEEATFocusCategories = useMemo(() => {
     const ranked = [...latestCompletedRecommendations].sort((left, right) => {
       if (right.priority_score !== left.priority_score) {
@@ -1479,6 +1568,7 @@ export default function SiteWorkspacePage() {
     setLatestRecommendationApplyOutcome(summary.apply_outcome || null);
     setLatestRecommendationEEATGapSummary(summary.eeat_gap_summary || null);
     setLatestRecommendationAnalysisFreshness(summary.analysis_freshness || null);
+    setLatestRecommendationOrderingExplanation(summary.ordering_explanation || null);
     setLatestCompetitorPromptPreview(
       normalizePromptPreview(summary.competitor_prompt_preview, "competitor"),
     );
@@ -2154,6 +2244,7 @@ export default function SiteWorkspacePage() {
       setLatestRecommendationApplyOutcome(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
+      setLatestRecommendationOrderingExplanation(null);
       setRecommendationWorkspaceSummaryState(null);
       setLatestCompletedRecommendationsError(null);
       setTuningPreviewByKey({});
@@ -2200,6 +2291,7 @@ export default function SiteWorkspacePage() {
       setLatestRecommendationApplyOutcome(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
+      setLatestRecommendationOrderingExplanation(null);
       setRecommendationWorkspaceSummaryState(null);
       setLatestCompletedRecommendationsError(null);
       setTuningPreviewByKey({});
@@ -2241,6 +2333,7 @@ export default function SiteWorkspacePage() {
       setLatestRecommendationApplyOutcome(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
+      setLatestRecommendationOrderingExplanation(null);
       setRecommendationWorkspaceSummaryState(null);
       setLatestCompletedRecommendationsError(null);
       setTuningPreviewByKey({});
@@ -2431,6 +2524,7 @@ export default function SiteWorkspacePage() {
         setLatestRecommendationApplyOutcome(null);
         setLatestRecommendationEEATGapSummary(null);
         setLatestRecommendationAnalysisFreshness(null);
+        setLatestRecommendationOrderingExplanation(null);
         setLatestCompetitorPromptPreview(null);
         setLatestRecommendationPromptPreview(null);
         setPromptPreviewCopyFeedbackByType({ competitor: null, recommendation: null });
@@ -3620,6 +3714,21 @@ export default function SiteWorkspacePage() {
               {latestCompletedRecommendationRun.warning_recommendations} | Info{" "}
               {latestCompletedRecommendationRun.info_recommendations}
             </p>
+            {recommendationOrderingExplanation ? (
+              <div className="panel panel-compact stack-tight" data-testid="recommendation-ordering-explanation">
+                <span className="hint muted">Why this order</span>
+                <span className="hint">{recommendationOrderingExplanation.message}</span>
+                {recommendationOrderingExplanation.contextReasons.length > 0 ? (
+                  <div className="link-row">
+                    {recommendationOrderingExplanation.contextReasons.map((reason) => (
+                      <span key={`ordering-reason-${reason}`} className="badge badge-muted">
+                        {formatPriorityReason(reason)}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <h4>Deterministic Recommendations</h4>
             {!latestCompletedRecommendationsError && latestCompletedRecommendations.length === 0 ? (
               <p className="hint muted">No recommendations yet — run analysis to generate insights.</p>
@@ -3641,6 +3750,7 @@ export default function SiteWorkspacePage() {
                     {latestCompletedRecommendations.map((item, index) => {
                       const impactLabel = recommendationImpactLabel(item, index);
                       const eeatCategories = normalizeEEATCategories(item.eeat_categories);
+                      const priorityReasons = normalizeRecommendationPriorityReasons(item.priority_reasons);
                       const rowId = recommendationRowId(item.id);
                       return (
                         <tr
@@ -3664,6 +3774,18 @@ export default function SiteWorkspacePage() {
                                   {eeatCategories.map((category) => (
                                     <span key={`${item.id}-${category}`} className="badge badge-muted">
                                       {formatEEATCategory(category)}
+                                    </span>
+                                  ))}
+                                </div>
+                              </>
+                            ) : null}
+                            {priorityReasons.length > 0 ? (
+                              <>
+                                <span className="hint muted">Why surfaced</span>
+                                <div className="link-row" data-testid="recommendation-priority-reasons">
+                                  {priorityReasons.map((reason) => (
+                                    <span key={`${item.id}-${reason}`} className="badge badge-muted">
+                                      {formatPriorityReason(reason)}
                                     </span>
                                   ))}
                                 </div>

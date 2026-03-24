@@ -598,6 +598,15 @@ export type RecommendationEEATCategory =
   | "expertise"
   | "authoritativeness"
   | "trustworthiness";
+export type RecommendationPriorityReason =
+  | "competitor_gap"
+  | "trust_gap"
+  | "authority_gap"
+  | "experience_gap"
+  | "expertise_gap"
+  | "high_clarity_action"
+  | "pending_refresh_context"
+  | "general";
 
 export interface RecommendationApplyOutcome {
   applied: boolean;
@@ -724,9 +733,15 @@ export interface RecommendationWorkspaceSummaryResponse {
   tuning_suggestions: RecommendationTuningSuggestion[];
   apply_outcome?: RecommendationApplyOutcome | null;
   analysis_freshness?: RecommendationAnalysisFreshness | null;
+  ordering_explanation?: RecommendationOrderingExplanation | null;
   eeat_gap_summary?: RecommendationEEATGapSummary | null;
   competitor_prompt_preview?: AIPromptPreview | null;
   recommendation_prompt_preview?: AIPromptPreview | null;
+}
+
+export interface RecommendationOrderingExplanation {
+  message: string;
+  context_reasons: RecommendationPriorityReason[];
 }
 
 export interface RecommendationEEATGapSummary {
@@ -752,6 +767,8 @@ export interface Recommendation {
   rationale: string;
   eeat_categories: RecommendationEEATCategory[];
   primary_eeat_category: RecommendationEEATCategory | null;
+  priority_reasons?: RecommendationPriorityReason[];
+  primary_priority_reason?: RecommendationPriorityReason | null;
   decision_reason: string | null;
   created_at: string;
   updated_at: string;

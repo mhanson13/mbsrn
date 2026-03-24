@@ -185,6 +185,32 @@ Fallback rules:
 - if `analysis_freshness` is missing/null, do not render an empty placeholder
 - never infer `fresh` client-side when status is absent
 
+## Deterministic Priority Reason Visibility
+
+Recommendation rows can include additive deterministic reason chips from:
+
+- `priority_reasons`
+- `primary_priority_reason`
+
+Display guidance:
+- render as compact “Why surfaced” chips near existing recommendation metadata
+- keep this secondary to title/rationale
+- hide the block entirely when no reasons are present
+- treat reasons as explanation signals, not scores
+
+## Workspace Ordering Explanation
+
+Workspace summary payloads can include optional:
+
+- `ordering_explanation.message`
+- `ordering_explanation.context_reasons`
+
+Display guidance:
+- show a compact “Why this order” block near latest-run metadata
+- keep copy short and deterministic
+- avoid empty placeholders when field is null/absent
+- avoid language that implies weighted/AI scoring
+
 ## AI -> Action Bridge
 
 The workspace now links AI opportunities directly to the deterministic tuning/apply loop when linkage data exists.

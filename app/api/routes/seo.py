@@ -86,6 +86,7 @@ from app.schemas.seo_recommendation import (
     SEORecommendationFilteredSummary,
     SEORecommendationListQuery,
     SEORecommendationListResponse,
+    SEORecommendationOrderingExplanationRead,
     SEORecommendationWorkspaceSummaryRead,
     SEORecommendationTuningImpactPreviewRead,
     SEORecommendationTuningImpactPreviewRequest,
@@ -550,6 +551,59 @@ def _build_workspace_eeat_gap_summary(
         return None
 
 
+def _build_workspace_ordering_explanation(
+    *,
+    recommendations: list[SEORecommendationRead],
+    analysis_freshness: SEORecommendationAnalysisFreshnessRead | None,
+) -> SEORecommendationOrderingExplanationRead | None:
+    if not recommendations:
+        return None
+
+    has_competitor_gap = any("competitor_gap" in recommendation.priority_reasons for recommendation in recommendations)
+    eeat_gap_reason_order = ("trust_gap", "authority_gap", "experience_gap", "expertise_gap")
+    eeat_gap_reasons = [
+        reason
+        for reason in eeat_gap_reason_order
+        if any(reason in recommendation.priority_reasons for recommendation in recommendations)
+    ]
+    has_clarity_reason = any("high_clarity_action" in recommendation.priority_reasons for recommendation in recommendations)
+
+    message_parts = ["Ordering reflects deterministic recommendation metadata only; no score is used."]
+    context_reasons: list[str] = []
+
+    if has_competitor_gap and eeat_gap_reasons:
+        message_parts.append("Competitor-backed EEAT gap actions are surfaced first when present.")
+        context_reasons.append("competitor_gap")
+        context_reasons.append(eeat_gap_reasons[0])
+    elif has_competitor_gap:
+        message_parts.append("Competitor-backed actions are surfaced first when present.")
+        context_reasons.append("competitor_gap")
+    elif eeat_gap_reasons:
+        message_parts.append("EEAT gap-aligned actions are surfaced first when present.")
+        context_reasons.append(eeat_gap_reasons[0])
+
+    if has_clarity_reason:
+        message_parts.append("Clear next-step actions are highlighted when priorities tie.")
+        context_reasons.append("high_clarity_action")
+
+    if analysis_freshness is not None and analysis_freshness.status == "pending_refresh":
+        message_parts.append(
+            "Applied changes are newer than this analysis and may change ordering after the next completed run."
+        )
+        context_reasons.append("pending_refresh_context")
+
+    deduped_context_reasons = list(dict.fromkeys(context_reasons))
+    try:
+        return SEORecommendationOrderingExplanationRead.model_validate(
+            {
+                "message": " ".join(message_parts),
+                "context_reasons": deduped_context_reasons,
+            }
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @router.get("/sites", response_model=SEOSiteListResponse)
 def list_seo_sites(
     business_id: str,
@@ -985,6 +1039,7 @@ def get_seo_recommendation_workspace_summary(
     tuning_suggestions: list[SEORecommendationTuningSuggestionRead] = []
     apply_outcome: SEORecommendationApplyOutcomeRead | None = None
     analysis_freshness: SEORecommendationAnalysisFreshnessRead | None = None
+    ordering_explanation: SEORecommendationOrderingExplanationRead | None = None
     eeat_gap_summary: SEORecommendationEEATGapSummaryRead | None = None
     competitor_prompt_preview = None
     recommendation_prompt_preview = None
@@ -1117,6 +1172,10 @@ def get_seo_recommendation_workspace_summary(
         analysis_generated_at=analysis_generated_at,
         last_apply_at=last_apply_at,
     )
+    ordering_explanation = _build_workspace_ordering_explanation(
+        recommendations=recommendations_payload.items,
+        analysis_freshness=analysis_freshness,
+    )
 
     return SEORecommendationWorkspaceSummaryRead(
         business_id=scoped_business_id,
@@ -1131,6 +1190,7 @@ def get_seo_recommendation_workspace_summary(
         tuning_suggestions=tuning_suggestions,
         apply_outcome=apply_outcome,
         analysis_freshness=analysis_freshness,
+        ordering_explanation=ordering_explanation,
         eeat_gap_summary=eeat_gap_summary,
         competitor_prompt_preview=competitor_prompt_preview,
         recommendation_prompt_preview=recommendation_prompt_preview,

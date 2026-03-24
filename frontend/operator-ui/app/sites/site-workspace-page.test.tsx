@@ -2770,9 +2770,15 @@ describe("site workspace timeline controls", () => {
               title: "Publish license and insurance proof",
               eeat_categories: ["trustworthiness", "authoritativeness"],
               primary_eeat_category: "trustworthiness",
+              priority_reasons: ["competitor_gap", "trust_gap", "high_clarity_action"],
+              primary_priority_reason: "competitor_gap",
             }),
           ],
           total: 1,
+        },
+        ordering_explanation: {
+          message: "Ordering reflects deterministic recommendation metadata only; no score is used.",
+          context_reasons: ["competitor_gap", "trust_gap"],
         },
         eeat_gap_summary: {
           top_gap_categories: ["trustworthiness", "experience"],
@@ -2791,6 +2797,18 @@ describe("site workspace timeline controls", () => {
     const eeatBadges = screen.getByTestId("recommendation-eeat-badges");
     expect(within(eeatBadges).getByText("Trustworthiness")).toBeInTheDocument();
     expect(within(eeatBadges).getByText("Authoritativeness")).toBeInTheDocument();
+    const priorityReasonBadges = screen.getByTestId("recommendation-priority-reasons");
+    expect(within(priorityReasonBadges).getByText("Competitor gap")).toBeInTheDocument();
+    expect(within(priorityReasonBadges).getByText("Trust gap")).toBeInTheDocument();
+    expect(within(priorityReasonBadges).getByText("Clear next step")).toBeInTheDocument();
+
+    const orderingExplanation = screen.getByTestId("recommendation-ordering-explanation");
+    expect(within(orderingExplanation).getByText("Why this order")).toBeInTheDocument();
+    expect(
+      within(orderingExplanation).getByText(
+        "Ordering reflects deterministic recommendation metadata only; no score is used.",
+      ),
+    ).toBeInTheDocument();
 
     const gapSummary = screen.getByTestId("narrative-eeat-gap-summary");
     expect(within(gapSummary).getByText("EEAT gap summary")).toBeInTheDocument();
@@ -2810,10 +2828,13 @@ describe("site workspace timeline controls", () => {
               title: "Fix title tags",
               eeat_categories: [],
               primary_eeat_category: null,
+              priority_reasons: [],
+              primary_priority_reason: null,
             }),
           ],
           total: 1,
         },
+        ordering_explanation: null,
         eeat_gap_summary: null,
       }),
     );
@@ -2822,6 +2843,8 @@ describe("site workspace timeline controls", () => {
 
     await screen.findByRole("heading", { name: "Latest Completed Run" });
     expect(screen.queryByTestId("recommendation-eeat-badges")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-priority-reasons")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-ordering-explanation")).not.toBeInTheDocument();
     expect(screen.queryByTestId("narrative-eeat-gap-summary")).not.toBeInTheDocument();
   });
 

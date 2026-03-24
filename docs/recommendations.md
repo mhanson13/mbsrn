@@ -203,6 +203,44 @@ Shape:
 
 No AI calls, thresholds, or fuzzy inference are used.
 
+## Deterministic Priority Reasons (Additive)
+
+Recommendation payloads now include additive deterministic ordering-clarity metadata:
+
+- `priority_reasons` (list)
+- `primary_priority_reason` (nullable)
+
+Reason taxonomy:
+- `competitor_gap`
+- `trust_gap`
+- `authority_gap`
+- `experience_gap`
+- `expertise_gap`
+- `high_clarity_action`
+- `pending_refresh_context` (workspace context only)
+- `general` (reserved)
+
+### Derivation Rules
+- Derived from existing deterministic metadata only (no AI calls, no scoring engine).
+- Examples:
+  - comparison-backed evidence -> `competitor_gap`
+  - EEAT categories -> matching EEAT gap reason (`trust_gap`, `authority_gap`, etc.)
+  - clear imperative action title + rationale -> `high_clarity_action`
+- If there is not enough safe metadata, `priority_reasons` remains empty.
+
+These are explanation signals for operators, not numeric ranking scores.
+
+## Workspace Ordering Explanation
+
+Workspace summary payloads now include optional additive ordering metadata:
+
+- `ordering_explanation`
+  - `message` (short deterministic explanation)
+  - `context_reasons` (bounded deterministic reason tags)
+
+This explains why recommendations are surfaced prominently using existing deterministic metadata.
+It does not introduce weighted scoring or AI prioritization.
+
 ## Workspace EEAT Gap Summary
 
 Workspace summary responses may include optional `eeat_gap_summary` metadata when deterministic support exists:
