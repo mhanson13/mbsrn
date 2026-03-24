@@ -2640,6 +2640,38 @@ describe("site workspace timeline controls", () => {
     expect(screen.getByText("Applied and reflected in the latest analysis.")).toBeInTheDocument();
   });
 
+  it("renders compact recommendation evidence summaries only when metadata is present", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-evidence-1",
+              title: "Evidence-backed recommendation",
+              recommendation_evidence_summary: "Competitors show stronger trust signals in this area.",
+            }),
+            buildRecommendation({
+              id: "rec-evidence-2",
+              title: "Recommendation without evidence summary",
+            }),
+          ],
+          total: 2,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    const evidenceSummaries = screen.getAllByTestId("recommendation-evidence-summary");
+    expect(evidenceSummaries).toHaveLength(1);
+    expect(evidenceSummaries[0]).toHaveTextContent(
+      "Why this matters: Competitors show stronger trust signals in this area.",
+    );
+    expect(screen.queryByText("Why this matters: Recommendation without evidence summary")).not.toBeInTheDocument();
+  });
+
   it("renders action, competitor, and support context when all optional narrative fields are present", async () => {
     seedRichWorkspaceData();
     mockFetchRecommendationWorkspaceSummary.mockResolvedValue(

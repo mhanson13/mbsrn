@@ -222,6 +222,22 @@ Fallback rules:
 - do not infer reflected state from UI-only heuristics
 - rely on backend-provided deterministic status, which is aligned to workspace `analysis_freshness`
 
+## Recommendation Evidence Summary Rendering
+
+Recommendation rows can include optional additive evidence clarity text:
+
+- `recommendation_evidence_summary`
+
+Rendering guidance:
+- display as a compact row-level line (for example, `Why this matters: ...`)
+- keep it subtle and near existing row metadata (`Why surfaced`, `Progress`, EEAT chips)
+- render only when present; no empty placeholders
+
+Behavior guidance:
+- treat this as deterministic metadata derived from existing structured fields
+- do not treat it as a score or confidence metric
+- keep grouped layout, start-here behavior, and apply controls unchanged
+
 ## Competitor Context Health Indicator
 
 Workspace summary payloads can include optional `competitor_context_health` metadata:

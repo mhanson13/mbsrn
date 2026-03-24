@@ -97,6 +97,7 @@ _APPLY_OUTCOME_LABEL_MAX_CHARS = 180
 _APPLY_OUTCOME_EXPECTED_CHANGE_MAX_CHARS = 260
 _APPLY_OUTCOME_NEXT_RUN_MAX_CHARS = 220
 _RECOMMENDATION_PROGRESS_SUMMARY_MAX_CHARS = 220
+_RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS = 220
 _SIGNAL_SUMMARY_EVIDENCE_SOURCE_ORDER = ("site", "competitors", "references", "themes")
 _RECOMMENDATION_EEAT_GAP_SUPPORTING_SIGNALS_MAX_ITEMS = 6
 _RECOMMENDATION_EEAT_GAP_SUPPORTING_SIGNAL_MAX_CHARS = 140
@@ -517,6 +518,50 @@ def _derive_recommendation_theme(
             return theme
 
     return "general_site_improvement"
+
+
+def _derive_recommendation_evidence_summary(
+    *,
+    priority_reasons: list[SEORecommendationPriorityReason],
+    eeat_categories: list[SEORecommendationEEATCategory],
+    evidence_json: dict[str, object] | None,
+) -> str | None:
+    evidence_sources = _extract_recommendation_evidence_sources(evidence_json)
+    competitor_backed = (
+        "competitor_gap" in priority_reasons
+        or "comparison" in evidence_sources
+        or "mixed" in evidence_sources
+    )
+
+    if competitor_backed:
+        if "trustworthiness" in eeat_categories:
+            return "Competitors show stronger trust signals in this area."
+        if "experience" in eeat_categories:
+            return "Competitors show stronger proof of real work in this area."
+        if "authoritativeness" in eeat_categories:
+            return "Competitors show stronger third-party authority signals in this area."
+        if "expertise" in eeat_categories:
+            return "Competitors show stronger expertise and process signals in this area."
+        return "This addresses a visible site gap backed by competitor comparison evidence."
+
+    if eeat_categories:
+        primary_category = eeat_categories[0]
+        if primary_category == "trustworthiness":
+            return "This addresses a visible site trust and legitimacy gap."
+        if primary_category == "experience":
+            return "This improves visible proof of real work and outcomes."
+        if primary_category == "authoritativeness":
+            return "This strengthens external credibility and authority signals."
+        if primary_category == "expertise":
+            return "This clarifies methods and capability signals customers can evaluate."
+
+    if "audit" in evidence_sources:
+        return "This is backed by structured site findings from the latest analysis."
+    if "comparison" in evidence_sources or "mixed" in evidence_sources:
+        return "This is backed by deterministic comparison evidence from current competitor analysis."
+    if "high_clarity_action" in priority_reasons:
+        return "This is a clear, actionable step supported by current recommendation metadata."
+    return None
 
 
 def infer_eeat_categories_from_signals(signal_values: list[object]) -> list[SEORecommendationEEATCategory]:
@@ -1039,6 +1084,10 @@ class SEORecommendationRead(BaseModel):
         default=None,
         max_length=_RECOMMENDATION_PROGRESS_SUMMARY_MAX_CHARS,
     )
+    recommendation_evidence_summary: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS,
+    )
     decision: SEORecommendationDecision | None = None
     decision_reason: str | None = None
     assigned_principal_id: str | None = None
@@ -1096,6 +1145,11 @@ class SEORecommendationRead(BaseModel):
     @classmethod
     def normalize_recommendation_progress_summary(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_PROGRESS_SUMMARY_MAX_CHARS)
+
+    @field_validator("recommendation_evidence_summary", mode="before")
+    @classmethod
+    def normalize_recommendation_evidence_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS)
 
     @field_validator("decision", mode="before")
     @classmethod
@@ -1232,6 +1286,17 @@ class SEORecommendationRead(BaseModel):
             )
         if self.theme_label is None and self.theme is not None:
             self.theme_label = format_recommendation_theme_label(self.theme)
+        return self
+
+    @model_validator(mode="after")
+    def derive_recommendation_evidence_summary(self) -> "SEORecommendationRead":
+        if self.recommendation_evidence_summary is not None:
+            return self
+        self.recommendation_evidence_summary = _derive_recommendation_evidence_summary(
+            priority_reasons=self.priority_reasons,
+            eeat_categories=self.eeat_categories,
+            evidence_json=self.evidence_json if isinstance(self.evidence_json, dict) else None,
+        )
         return self
 
     @model_validator(mode="after")

@@ -1104,6 +1104,10 @@ function normalizeRecommendationProgress(item: Recommendation): RecommendationPr
   };
 }
 
+function normalizeRecommendationEvidenceSummary(item: Recommendation): string | null {
+  return truncateOptionalText(item.recommendation_evidence_summary, 220);
+}
+
 interface CompetitorContextHealthCheckView {
   key: "location_context" | "industry_context" | "service_focus" | "target_customer_context";
   label: string;
@@ -4662,6 +4666,7 @@ export default function SiteWorkspacePage() {
                         const eeatCategories = normalizeEEATCategories(item.eeat_categories);
                         const priorityReasons = normalizeRecommendationPriorityReasons(item.priority_reasons);
                         const recommendationProgress = normalizeRecommendationProgress(item);
+                        const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
                         const rowId = recommendationRowId(item.id);
                         return (
                           <tr
@@ -4707,6 +4712,11 @@ export default function SiteWorkspacePage() {
                                 <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
                                 <span className="hint muted">{recommendationProgress.summary}</span>
                               </div>
+                              {recommendationEvidenceSummary ? (
+                                <span className="hint muted" data-testid="recommendation-evidence-summary">
+                                  Why this matters: {recommendationEvidenceSummary}
+                                </span>
+                              ) : null}
                               <span className="hint muted"><code>{item.id}</code></span>
                             </td>
                             <td>{item.category}</td>
@@ -4759,6 +4769,7 @@ export default function SiteWorkspacePage() {
                               const eeatCategories = normalizeEEATCategories(item.eeat_categories);
                               const priorityReasons = normalizeRecommendationPriorityReasons(item.priority_reasons);
                               const recommendationProgress = normalizeRecommendationProgress(item);
+                              const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
                               const rowId = recommendationRowId(item.id);
                               return (
                                 <tr
@@ -4804,6 +4815,11 @@ export default function SiteWorkspacePage() {
                                       <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
                                       <span className="hint muted">{recommendationProgress.summary}</span>
                                     </div>
+                                    {recommendationEvidenceSummary ? (
+                                      <span className="hint muted" data-testid="recommendation-evidence-summary">
+                                        Why this matters: {recommendationEvidenceSummary}
+                                      </span>
+                                    ) : null}
                                     <span className="hint muted"><code>{item.id}</code></span>
                                   </td>
                                   <td>{item.category}</td>

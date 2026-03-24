@@ -923,6 +923,10 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
         payload["recommendations"]["items"][0]["recommendation_progress_summary"]
         == "Suggested action not yet applied."
     )
+    assert (
+        payload["recommendations"]["items"][0]["recommendation_evidence_summary"]
+        == "This is backed by structured site findings from the latest analysis."
+    )
     assert payload["latest_narrative"] is None
     assert payload["tuning_suggestions"] == []
     assert payload["apply_outcome"] is None
@@ -1332,6 +1336,10 @@ def test_recommendation_workspace_summary_derives_eeat_categories_and_gap_summar
     assert payload["recommendations"]["items"][0]["primary_eeat_category"] == "trustworthiness"
     assert "competitor_gap" in payload["recommendations"]["items"][0]["priority_reasons"]
     assert "trust_gap" in payload["recommendations"]["items"][0]["priority_reasons"]
+    assert (
+        payload["recommendations"]["items"][0]["recommendation_evidence_summary"]
+        == "Competitors show stronger trust signals in this area."
+    )
     assert payload["eeat_gap_summary"] is not None
     assert "trustworthiness" in payload["eeat_gap_summary"]["top_gap_categories"]
     assert payload["eeat_gap_summary"]["message"]

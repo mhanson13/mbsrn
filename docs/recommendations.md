@@ -273,6 +273,28 @@ No AI calls, scoring, or workflow-state persistence is added.
 - `analysis_freshness` answers whether the latest analysis is newer than the latest apply.
 - `recommendation_progress_status` applies that shared freshness truth at recommendation-row level when linkage is deterministic.
 
+## Recommendation Evidence Summary (Deterministic)
+
+Recommendation rows now include additive deterministic evidence clarity metadata:
+
+- `recommendation_evidence_summary`
+
+### What It Is
+- A short, bounded sentence that explains why a recommendation matters using existing structured metadata.
+- It is deterministic and additive.
+- It is not AI-generated prose and does not change ranking/order behavior.
+
+### Derivation Order
+1. competitor-backed support (`competitor_gap`, comparison/mixed evidence sources)
+2. EEAT-aligned signals (`eeat_categories`)
+3. structured site evidence (`audit` evidence source)
+4. clear-action fallback (`high_clarity_action`) when available
+5. omitted when metadata is too sparse
+
+### Operator Intent
+- Provide faster trust/readability at row level before opening recommendation detail.
+- Keep copy compact and conservative (no overclaiming).
+
 ## Competitor Context Health (Deterministic)
 
 Workspace summary responses now include additive `competitor_context_health` metadata that describes whether competitor prompt inputs are sufficiently grounded.

@@ -226,6 +226,49 @@ def test_recommendation_read_derives_default_progress_summary_from_status() -> N
     assert reflected.recommendation_progress_summary == "Applied and reflected in the latest analysis."
 
 
+def test_recommendation_read_derives_competitor_backed_evidence_summary() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            comparison_run_id=str(uuid4()),
+            rule_key="close_competitor_gap_missing_license_proof",
+            title="Publish license proof on service pages",
+            rationale="This creates verifiable trust proof where competitors are currently stronger.",
+            evidence_json={
+                "sources": ["comparison"],
+                "finding_types": ["missing_license_proof"],
+            },
+        )
+    )
+    assert recommendation.recommendation_evidence_summary == "Competitors show stronger trust signals in this area."
+
+
+def test_recommendation_read_derives_eeat_evidence_summary_when_competitor_signal_absent() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            eeat_categories=["experience"],
+            primary_eeat_category="experience",
+            evidence_json={"sources": ["audit"]},
+        )
+    )
+    assert recommendation.recommendation_evidence_summary == "This improves visible proof of real work and outcomes."
+
+
+def test_recommendation_read_omits_evidence_summary_when_metadata_is_sparse() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            title="Site metadata cleanup",
+            rationale="General cleanup note",
+            comparison_run_id=None,
+            evidence_json=None,
+            eeat_categories=[],
+            primary_eeat_category=None,
+            priority_reasons=[],
+            primary_priority_reason=None,
+        )
+    )
+    assert recommendation.recommendation_evidence_summary is None
+
+
 def test_recommendation_start_here_read_normalizes_context_flags() -> None:
     start_here = SEORecommendationStartHereRead.model_validate(
         {
