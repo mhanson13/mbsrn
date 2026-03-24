@@ -44,6 +44,23 @@ context influenced recommendation specificity.
 - It is absent/`null` when no usable competitor signal exists.
 - It must not be interpreted as raw model output.
 
+## Action Summary Visibility
+
+Recommendation narrative payloads may also include an optional `action_summary` object:
+
+- `primary_action`
+- `why_it_matters`
+- `evidence` (bounded list)
+- `first_step`
+
+Frontend guidance:
+- Treat this as optional additive data.
+- Emphasize `primary_action` and `first_step` visually when present.
+- Keep `competitor_influence` separate from `action_summary` in presentation:
+  - `competitor_influence` = context/rationale source
+  - `action_summary` = concrete operator-next-step summary
+- Handle sparse responses safely (`action_summary: null`) without breaking narrative rendering.
+
 ## AI -> Action Bridge
 
 The workspace now links AI opportunities directly to the deterministic tuning/apply loop when linkage data exists.

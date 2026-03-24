@@ -39,6 +39,11 @@ _DECISIONS = {"accept", "dismiss", "snooze", "resolve", "reopen", "start"}
 _SOURCE_TYPES = {"audit", "comparison", "mixed"}
 _SORT_FIELDS = {"priority_score", "priority_band", "severity", "created_at", "updated_at", "due_at"}
 _SORT_ORDERS = {"asc", "desc"}
+_ACTION_SUMMARY_EVIDENCE_MAX_ITEMS = 4
+_ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS = 180
+_ACTION_SUMMARY_WHY_MAX_CHARS = 240
+_ACTION_SUMMARY_FIRST_STEP_MAX_CHARS = 180
+_ACTION_SUMMARY_EVIDENCE_ITEM_MAX_CHARS = 160
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -128,6 +133,88 @@ def _normalize_sort_order(value: Any) -> SortOrder:
     if normalized not in _SORT_ORDERS:
         raise ValueError("Invalid sort_order")
     return normalized  # type: ignore[return-value]
+
+
+def _compact_text(value: Any, *, max_length: int) -> str | None:
+    if value is None:
+        return None
+    compacted = " ".join(str(value).split())
+    cleaned = _strip_or_none(compacted)
+    if cleaned is None:
+        return None
+    return cleaned[:max_length]
+
+
+def _compact_text_list(value: Any, *, limit: int, max_length: int) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        cleaned = _compact_text(item, max_length=max_length)
+        if cleaned is None:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+        if len(normalized) >= limit:
+            break
+    return normalized
+
+
+def _first_sentence(value: str | None, *, max_length: int) -> str | None:
+    cleaned = _compact_text(value, max_length=max_length * 2 if max_length > 0 else 0)
+    if cleaned is None:
+        return None
+    sentence = cleaned.split(".")[0].strip()
+    sentence = sentence or cleaned
+    return sentence[:max_length]
+
+
+class SEORecommendationActionSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    primary_action: str = Field(min_length=1, max_length=_ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS)
+    why_it_matters: str = Field(min_length=1, max_length=_ACTION_SUMMARY_WHY_MAX_CHARS)
+    evidence: list[str] = Field(default_factory=list)
+    first_step: str = Field(min_length=1, max_length=_ACTION_SUMMARY_FIRST_STEP_MAX_CHARS)
+
+    @field_validator("primary_action", mode="before")
+    @classmethod
+    def normalize_primary_action(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Action summary text is required")
+        return cleaned
+
+    @field_validator("why_it_matters", mode="before")
+    @classmethod
+    def normalize_why_it_matters(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_ACTION_SUMMARY_WHY_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Action summary text is required")
+        return cleaned
+
+    @field_validator("first_step", mode="before")
+    @classmethod
+    def normalize_first_step(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_ACTION_SUMMARY_FIRST_STEP_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Action summary text is required")
+        return cleaned
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def normalize_evidence(cls, value: Any) -> list[str]:
+        return _compact_text_list(
+            value,
+            limit=_ACTION_SUMMARY_EVIDENCE_MAX_ITEMS,
+            max_length=_ACTION_SUMMARY_EVIDENCE_ITEM_MAX_CHARS,
+        )
 
 
 class SEORecommendationRunCreateRequest(BaseModel):
@@ -361,6 +448,7 @@ class SEORecommendationNarrativeRead(BaseModel):
     top_themes_json: list[str] = Field(default_factory=list)
     sections_json: dict[str, object] | None
     competitor_influence: "SEORecommendationCompetitorInfluenceRead | None" = None
+    action_summary: SEORecommendationActionSummaryRead | None = None
     provider_name: str
     model_name: str
     prompt_version: str
@@ -392,6 +480,100 @@ class SEORecommendationNarrativeRead(BaseModel):
         except Exception:  # noqa: BLE001
             self.competitor_influence = None
         return self
+
+    @model_validator(mode="after")
+    def derive_action_summary(self) -> "SEORecommendationNarrativeRead":
+        if self.action_summary is not None:
+            return self
+
+        sections = self.sections_json if isinstance(self.sections_json, dict) else {}
+        summary = _compact_text(sections.get("summary"), max_length=_ACTION_SUMMARY_WHY_MAX_CHARS)
+        priority_rationale = _compact_text(
+            sections.get("priority_rationale"),
+            max_length=_ACTION_SUMMARY_WHY_MAX_CHARS,
+        )
+        next_actions = _compact_text_list(
+            sections.get("next_actions"),
+            limit=5,
+            max_length=_ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS,
+        )
+        recommendation_references = _compact_text_list(
+            sections.get("recommendation_references"),
+            limit=_ACTION_SUMMARY_EVIDENCE_MAX_ITEMS,
+            max_length=80,
+        )
+        top_themes = _compact_text_list(
+            self.top_themes_json,
+            limit=_ACTION_SUMMARY_EVIDENCE_MAX_ITEMS,
+            max_length=_ACTION_SUMMARY_EVIDENCE_ITEM_MAX_CHARS,
+        )
+        narrative_sentence = _first_sentence(
+            self.narrative_text,
+            max_length=_ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS,
+        )
+
+        primary_action = next_actions[0] if next_actions else (summary or narrative_sentence)
+        why_it_matters = priority_rationale or summary or narrative_sentence
+
+        evidence_candidates: list[str] = []
+        for value in top_themes:
+            evidence_candidates.append(value)
+        for recommendation_id in recommendation_references:
+            evidence_candidates.append(f"Linked recommendation: {recommendation_id}")
+        if self.competitor_influence is not None and self.competitor_influence.used:
+            for opportunity in self.competitor_influence.top_opportunities[:2]:
+                evidence_candidates.append(f"Competitor gap: {opportunity}")
+        for item in (summary, priority_rationale):
+            if item:
+                evidence_candidates.append(item)
+        evidence = self._dedupe_and_bound(
+            evidence_candidates,
+            limit=_ACTION_SUMMARY_EVIDENCE_MAX_ITEMS,
+            max_length=_ACTION_SUMMARY_EVIDENCE_ITEM_MAX_CHARS,
+        )
+
+        first_step = next_actions[0] if next_actions else None
+        if first_step is None and recommendation_references:
+            first_step = _compact_text(
+                f"Review recommendation {recommendation_references[0]} and define owner/timeline.",
+                max_length=_ACTION_SUMMARY_FIRST_STEP_MAX_CHARS,
+            )
+        if first_step is None:
+            first_step = primary_action
+
+        if not primary_action or not why_it_matters or not first_step:
+            self.action_summary = None
+            return self
+
+        try:
+            self.action_summary = SEORecommendationActionSummaryRead.model_validate(
+                {
+                    "primary_action": primary_action,
+                    "why_it_matters": why_it_matters,
+                    "evidence": evidence,
+                    "first_step": first_step,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            self.action_summary = None
+        return self
+
+    @staticmethod
+    def _dedupe_and_bound(values: list[str], *, limit: int, max_length: int) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            cleaned = _compact_text(value, max_length=max_length)
+            if cleaned is None:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(cleaned)
+            if len(normalized) >= limit:
+                break
+        return normalized
 
 
 class SEORecommendationCompetitorInfluenceRead(BaseModel):

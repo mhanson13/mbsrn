@@ -48,3 +48,38 @@ When competitor signal was used, the payload shape is:
 - No new database schema or endpoint is introduced.
 - No competitor parsing failure can block recommendation generation.
 - Recommendations consume normalized competitor output only, never raw malformed AI text.
+
+## Operator-Visible Action Summary
+
+Recommendation narrative API responses now include an optional top-level field:
+
+- `action_summary` (object or `null`)
+
+When narrative content is strong enough, the payload shape is:
+
+```json
+{
+  "primary_action": "Publish emergency service page updates for top service categories.",
+  "why_it_matters": "This addresses the strongest local conversion and visibility gaps first.",
+  "evidence": [
+    "Emergency service pages are weaker than nearby competitors.",
+    "Linked recommendation: rec-2"
+  ],
+  "first_step": "Publish emergency service page updates for top service categories."
+}
+```
+
+### Purpose
+- `action_summary` gives operators a deterministic, bounded “what to do next” view from existing narrative content.
+- It does not add new AI calls and does not change recommendation generation behavior.
+- It is additive and safe for existing clients.
+
+### Appearance Rules
+- Present only when narrative content has enough usable signal.
+- `null` for sparse/malformed narrative sections where a safe summary cannot be derived.
+- `evidence` is bounded and deduplicated (max 4 items).
+
+### Relationship to `competitor_influence`
+- `competitor_influence` explains whether competitor context influenced narrative specificity.
+- `action_summary` explains the immediate operator action path.
+- The two fields are separate and may coexist.

@@ -50,3 +50,6 @@ Behavior is intentionally conservative:
 - When competitor context is used, recommendation narrative responses may include a bounded
   `competitor_influence` rationale payload for operator visibility (`used`, `summary`,
   `top_opportunities`, `competitor_names`).
+- Recommendation narrative responses may also include a separate optional `action_summary`
+  payload that focuses on operator next steps; this remains distinct from
+  `competitor_influence`.

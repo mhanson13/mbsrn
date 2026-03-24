@@ -39,6 +39,7 @@ NARRATIVE_RESPONSE_KEYS = {
     "top_themes_json",
     "sections_json",
     "competitor_influence",
+    "action_summary",
     "provider_name",
     "model_name",
     "prompt_version",
@@ -111,6 +112,52 @@ class _CapturingRecommendationNarrativeProvider:
             },
             provider_name="capturing-test-provider",
             model_name="capturing-test-model",
+            prompt_version="seo-recommendation-narrative-v2",
+        )
+
+
+class _RichActionSummaryRecommendationNarrativeProvider:
+    def generate_narrative(self, **kwargs):  # noqa: ANN003, ANN201
+        del kwargs
+        return SEORecommendationNarrativeOutput(
+            narrative_text=(
+                "Prioritize emergency service coverage updates and local trust proof improvements "
+                "to recover local high-intent visibility."
+            ),
+            top_themes=[
+                "Emergency service pages are weaker than nearby competitors.",
+                "Local trust proof is less visible than competitors.",
+                "Critical content gaps remain open.",
+            ],
+            sections={
+                "summary": "Expand emergency service pages and strengthen local trust proof visibility.",
+                "priority_rationale": "This addresses the strongest local conversion and visibility gaps first.",
+                "next_actions": [
+                    "Publish emergency service page updates for top service categories.",
+                    "Add trust badges and testimonial proof to priority pages.",
+                ],
+                "recommendation_references": ["rec-2", "rec-1"],
+            },
+            provider_name="rich-test-provider",
+            model_name="rich-test-model",
+            prompt_version="seo-recommendation-narrative-v2",
+        )
+
+
+class _SparseActionSummaryRecommendationNarrativeProvider:
+    def generate_narrative(self, **kwargs):  # noqa: ANN003, ANN201
+        del kwargs
+        return SEORecommendationNarrativeOutput(
+            narrative_text="   ",
+            top_themes=[],
+            sections={
+                "summary": "  ",
+                "priority_rationale": None,
+                "next_actions": "not-a-list",
+                "recommendation_references": [None, ""],
+            },
+            provider_name="sparse-test-provider",
+            model_name="sparse-test-model",
             prompt_version="seo-recommendation-narrative-v2",
         )
 
@@ -327,6 +374,49 @@ def test_recommendation_narrative_manual_trigger_success_and_retrieval(db_sessio
     )
     assert by_id.status_code == 200
     assert by_id.json()["id"] == narrative["id"]
+
+
+def test_recommendation_narrative_surfaces_action_summary_from_rich_sections(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        narrative_provider=_RichActionSummaryRecommendationNarrativeProvider(),
+    )
+    site_id, run_id = _create_completed_recommendation_run(client, db_session, seeded_business.id)
+
+    response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/narratives"
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    action_summary = payload["action_summary"]
+    assert action_summary is not None
+    assert action_summary["primary_action"] == "Publish emergency service page updates for top service categories."
+    assert action_summary["first_step"] == "Publish emergency service page updates for top service categories."
+    assert action_summary["why_it_matters"] == "This addresses the strongest local conversion and visibility gaps first."
+    assert 1 <= len(action_summary["evidence"]) <= 4
+    assert "Emergency service pages are weaker than nearby competitors." in action_summary["evidence"]
+
+
+def test_recommendation_narrative_action_summary_is_safe_when_sections_are_sparse_or_malformed(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        narrative_provider=_SparseActionSummaryRecommendationNarrativeProvider(),
+    )
+    site_id, run_id = _create_completed_recommendation_run(client, db_session, seeded_business.id)
+
+    response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/narratives"
+    )
+    assert response.status_code == 201
+    assert response.json()["action_summary"] is None
 
 
 def test_recommendation_narrative_failure_is_isolated_and_persisted(db_session, seeded_business) -> None:
@@ -557,6 +647,12 @@ def test_recommendation_narrative_optionally_includes_normalized_competitor_cont
         "top_opportunities": ["Improve emergency pages", "Add local proof"],
         "competitor_names": ["Alpha Plumbing", "Beta HVAC"],
     }
+    action_summary = payload["action_summary"]
+    assert action_summary is not None
+    assert action_summary["primary_action"].startswith("grounded run=")
+    assert action_summary["first_step"].startswith("grounded run=")
+    assert len(action_summary["evidence"]) <= 4
+    assert any(item.startswith("Competitor gap: ") for item in action_summary["evidence"])
 
 
 def test_recommendation_narrative_does_not_surface_competitor_influence_for_fallback_only_payload(
