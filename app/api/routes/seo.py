@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 import logging
 
@@ -77,6 +78,7 @@ from app.schemas.seo_competitor import (
 )
 from app.schemas.ai_prompt import build_ai_prompt_preview_read
 from app.schemas.seo_recommendation import (
+    SEORecommendationAnalysisFreshnessRead,
     SEORecommendationApplyOutcomeRead,
     SEORecommendationBacklogRead,
     SEORecommendationFilteredSummary,
@@ -429,6 +431,32 @@ def _build_workspace_apply_outcome(
         )
     except Exception:  # noqa: BLE001
         return None
+
+
+def _derive_workspace_analysis_freshness(
+    *,
+    analysis_generated_at: datetime | None,
+    last_apply_at: datetime | None,
+) -> SEORecommendationAnalysisFreshnessRead:
+    if analysis_generated_at is not None:
+        if last_apply_at is None or analysis_generated_at >= last_apply_at:
+            status = "fresh"
+            message = "Analysis is up to date with the latest applied changes."
+        else:
+            status = "pending_refresh"
+            message = "Changes were applied after this analysis. Refresh or re-run to reflect them."
+    else:
+        status = "unknown"
+        message = "Analysis freshness could not be determined."
+
+    return SEORecommendationAnalysisFreshnessRead.model_validate(
+        {
+            "status": status,
+            "analysis_generated_at": analysis_generated_at,
+            "last_apply_at": last_apply_at,
+            "message": message,
+        }
+    )
 
 
 @router.get("/sites", response_model=SEOSiteListResponse)
@@ -865,8 +893,15 @@ def get_seo_recommendation_workspace_summary(
     latest_narrative_read: SEORecommendationNarrativeRead | None = None
     tuning_suggestions: list[SEORecommendationTuningSuggestionRead] = []
     apply_outcome: SEORecommendationApplyOutcomeRead | None = None
+    analysis_freshness: SEORecommendationAnalysisFreshnessRead | None = None
     competitor_prompt_preview = None
     recommendation_prompt_preview = None
+    latest_applied_preview_event = (
+        seo_competitor_profile_generation_repository.get_latest_applied_tuning_preview_event_for_business_site(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    )
 
     empty_recommendations = SEORecommendationListResponse(
         items=[],
@@ -912,12 +947,6 @@ def get_seo_recommendation_workspace_summary(
         except SEORecommendationNarrativeNotFoundError:
             latest_narrative_read = None
 
-        latest_applied_preview_event = (
-            seo_competitor_profile_generation_repository.get_latest_applied_tuning_preview_event_for_business_site(
-                business_id=scoped_business_id,
-                site_id=site_id,
-            )
-        )
         apply_outcome = _build_workspace_apply_outcome(
             latest_applied_preview_event=latest_applied_preview_event,
             latest_run_status=latest_run.status if latest_run else None,
@@ -986,6 +1015,13 @@ def get_seo_recommendation_workspace_summary(
     else:
         state = "completed_with_narrative"
 
+    analysis_generated_at = latest_completed_run.completed_at if latest_completed_run is not None else None
+    last_apply_at = latest_applied_preview_event.applied_at if latest_applied_preview_event is not None else None
+    analysis_freshness = _derive_workspace_analysis_freshness(
+        analysis_generated_at=analysis_generated_at,
+        last_apply_at=last_apply_at,
+    )
+
     return SEORecommendationWorkspaceSummaryRead(
         business_id=scoped_business_id,
         site_id=site_id,
@@ -998,6 +1034,7 @@ def get_seo_recommendation_workspace_summary(
         latest_narrative=latest_narrative_read,
         tuning_suggestions=tuning_suggestions,
         apply_outcome=apply_outcome,
+        analysis_freshness=analysis_freshness,
         competitor_prompt_preview=competitor_prompt_preview,
         recommendation_prompt_preview=recommendation_prompt_preview,
     )

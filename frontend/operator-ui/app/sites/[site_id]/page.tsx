@@ -39,6 +39,7 @@ import type {
   CompetitorProfileGenerationSummaryResponse,
   CompetitorSet,
   CompetitorSnapshotRun,
+  RecommendationAnalysisFreshness,
   RecommendationApplyOutcome,
   Recommendation,
   RecommendationListResponse,
@@ -572,6 +573,62 @@ function normalizeRecommendationApplyOutcome(
   };
 }
 
+interface RecommendationAnalysisFreshnessView {
+  status: "fresh" | "pending_refresh" | "unknown";
+  message: string;
+  analysisGeneratedAt: string | null;
+  lastApplyAt: string | null;
+}
+
+function normalizeRecommendationAnalysisFreshness(
+  freshness: RecommendationAnalysisFreshness | null | undefined,
+): RecommendationAnalysisFreshnessView | null {
+  if (!freshness) {
+    return null;
+  }
+  const status =
+    freshness.status === "fresh" || freshness.status === "pending_refresh" || freshness.status === "unknown"
+      ? freshness.status
+      : null;
+  if (!status) {
+    return null;
+  }
+  const message = truncateOptionalText(freshness.message, 220);
+  if (!message) {
+    return null;
+  }
+  return {
+    status,
+    message,
+    analysisGeneratedAt: truncateOptionalText(freshness.analysis_generated_at, 64),
+    lastApplyAt: truncateOptionalText(freshness.last_apply_at, 64),
+  };
+}
+
+function analysisFreshnessLabel(status: RecommendationAnalysisFreshnessView["status"]): string {
+  switch (status) {
+    case "fresh":
+      return "Fresh";
+    case "pending_refresh":
+      return "Pending Refresh";
+    case "unknown":
+    default:
+      return "Unknown";
+  }
+}
+
+function analysisFreshnessBadgeClass(status: RecommendationAnalysisFreshnessView["status"]): string {
+  switch (status) {
+    case "fresh":
+      return "badge badge-success";
+    case "pending_refresh":
+      return "badge badge-warn";
+    case "unknown":
+    default:
+      return "badge badge-muted";
+  }
+}
+
 type PromptPreviewType = "competitor" | "recommendation";
 
 interface PromptPreviewView {
@@ -854,6 +911,8 @@ export default function SiteWorkspacePage() {
     useState<RecommendationTuningSuggestion[]>([]);
   const [latestRecommendationApplyOutcome, setLatestRecommendationApplyOutcome] =
     useState<RecommendationApplyOutcome | null>(null);
+  const [latestRecommendationAnalysisFreshness, setLatestRecommendationAnalysisFreshness] =
+    useState<RecommendationAnalysisFreshness | null>(null);
   const [latestCompetitorPromptPreview, setLatestCompetitorPromptPreview] = useState<PromptPreviewView | null>(null);
   const [latestRecommendationPromptPreview, setLatestRecommendationPromptPreview] =
     useState<PromptPreviewView | null>(null);
@@ -1204,6 +1263,11 @@ export default function SiteWorkspacePage() {
     [latestRecommendationApplyOutcome],
   );
 
+  const recommendationAnalysisFreshness = useMemo(
+    () => normalizeRecommendationAnalysisFreshness(latestRecommendationAnalysisFreshness),
+    [latestRecommendationAnalysisFreshness],
+  );
+
   useEffect(() => {
     setShowAllAiOpportunities(false);
     setExpandedAiOpportunityIds(new Set());
@@ -1318,6 +1382,7 @@ export default function SiteWorkspacePage() {
     setLatestCompletedRecommendationNarrative(summary.latest_narrative);
     setLatestCompletedTuningSuggestions(summary.tuning_suggestions);
     setLatestRecommendationApplyOutcome(summary.apply_outcome || null);
+    setLatestRecommendationAnalysisFreshness(summary.analysis_freshness || null);
     setLatestCompetitorPromptPreview(
       normalizePromptPreview(summary.competitor_prompt_preview, "competitor"),
     );
@@ -1991,6 +2056,7 @@ export default function SiteWorkspacePage() {
       setLatestCompletedRecommendationNarrative(null);
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
+      setLatestRecommendationAnalysisFreshness(null);
       setRecommendationWorkspaceSummaryState(null);
       setLatestCompletedRecommendationsError(null);
       setTuningPreviewByKey({});
@@ -2035,6 +2101,7 @@ export default function SiteWorkspacePage() {
       setLatestCompletedRecommendationNarrative(null);
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
+      setLatestRecommendationAnalysisFreshness(null);
       setRecommendationWorkspaceSummaryState(null);
       setLatestCompletedRecommendationsError(null);
       setTuningPreviewByKey({});
@@ -2074,6 +2141,7 @@ export default function SiteWorkspacePage() {
       setLatestCompletedRecommendationNarrative(null);
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
+      setLatestRecommendationAnalysisFreshness(null);
       setRecommendationWorkspaceSummaryState(null);
       setLatestCompletedRecommendationsError(null);
       setTuningPreviewByKey({});
@@ -2262,6 +2330,7 @@ export default function SiteWorkspacePage() {
         setLatestCompletedRecommendationNarrative(null);
         setLatestCompletedTuningSuggestions([]);
         setLatestRecommendationApplyOutcome(null);
+        setLatestRecommendationAnalysisFreshness(null);
         setLatestCompetitorPromptPreview(null);
         setLatestRecommendationPromptPreview(null);
         setPromptPreviewCopyFeedbackByType({ competitor: null, recommendation: null });
@@ -3617,6 +3686,25 @@ export default function SiteWorkspacePage() {
                     ) : null}
                     {recommendationApplyOutcome.source === "recommendation" ? (
                       <span className="hint muted">Source: recommendation-guided tuning action.</span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {recommendationAnalysisFreshness ? (
+                  <div className="panel panel-compact stack-tight" data-testid="narrative-analysis-freshness">
+                    <span className="hint muted">Analysis freshness</span>
+                    <span className={analysisFreshnessBadgeClass(recommendationAnalysisFreshness.status)}>
+                      {analysisFreshnessLabel(recommendationAnalysisFreshness.status)}
+                    </span>
+                    <span className="hint">{recommendationAnalysisFreshness.message}</span>
+                    {recommendationAnalysisFreshness.analysisGeneratedAt ? (
+                      <span className="hint muted">
+                        Analysis generated at: {formatDateTime(recommendationAnalysisFreshness.analysisGeneratedAt)}
+                      </span>
+                    ) : null}
+                    {recommendationAnalysisFreshness.lastApplyAt ? (
+                      <span className="hint muted">
+                        Last apply at: {formatDateTime(recommendationAnalysisFreshness.lastApplyAt)}
+                      </span>
                     ) : null}
                   </div>
                 ) : null}

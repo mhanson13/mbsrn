@@ -15,6 +15,7 @@ import type {
   CompetitorDomainListResponse,
   CompetitorSetListResponse,
   CompetitorSnapshotRunListResponse,
+  RecommendationAnalysisFreshness,
   Recommendation,
   RecommendationListResponse,
   RecommendationNarrative,
@@ -247,6 +248,18 @@ function buildAIPromptPreview(
     model: "gpt-4o-mini",
     prompt_version: "v2",
     truncated: false,
+    ...overrides,
+  };
+}
+
+function buildRecommendationAnalysisFreshness(
+  overrides: Partial<RecommendationAnalysisFreshness> = {},
+): RecommendationAnalysisFreshness {
+  return {
+    status: "fresh",
+    analysis_generated_at: "2026-03-21T00:30:00Z",
+    last_apply_at: null,
+    message: "Analysis is up to date with the latest applied changes.",
     ...overrides,
   };
 }
@@ -2780,6 +2793,83 @@ describe("site workspace timeline controls", () => {
 
     await screen.findByRole("heading", { name: "AI Narrative Overlay" });
     expect(screen.queryByTestId("narrative-apply-outcome")).not.toBeInTheDocument();
+  });
+
+  it("keeps analysis freshness block hidden when workspace summary omits freshness metadata", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary(),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Narrative Overlay" });
+    expect(screen.queryByTestId("narrative-analysis-freshness")).not.toBeInTheDocument();
+  });
+
+  it("renders fresh analysis freshness status when analysis is up to date", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        analysis_freshness: buildRecommendationAnalysisFreshness(),
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Narrative Overlay" });
+    const freshness = screen.getByTestId("narrative-analysis-freshness");
+    expect(within(freshness).getByText("Analysis freshness")).toBeInTheDocument();
+    expect(within(freshness).getByText("Fresh")).toBeInTheDocument();
+    expect(
+      within(freshness).getByText("Analysis is up to date with the latest applied changes."),
+    ).toBeInTheDocument();
+    expect(within(freshness).getByText(/Analysis generated at:/)).toBeInTheDocument();
+  });
+
+  it("renders pending-refresh analysis freshness status when apply is newer than analysis", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        analysis_freshness: buildRecommendationAnalysisFreshness({
+          status: "pending_refresh",
+          analysis_generated_at: "2026-03-21T00:30:00Z",
+          last_apply_at: "2026-03-21T01:30:00Z",
+          message: "Changes were applied after this analysis. Refresh or re-run to reflect them.",
+        }),
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Narrative Overlay" });
+    const freshness = screen.getByTestId("narrative-analysis-freshness");
+    expect(within(freshness).getByText("Pending Refresh")).toBeInTheDocument();
+    expect(
+      within(freshness).getByText("Changes were applied after this analysis. Refresh or re-run to reflect them."),
+    ).toBeInTheDocument();
+    expect(within(freshness).getByText(/Last apply at:/)).toBeInTheDocument();
+  });
+
+  it("renders unknown analysis freshness safely when timestamps are insufficient", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        analysis_freshness: buildRecommendationAnalysisFreshness({
+          status: "unknown",
+          analysis_generated_at: null,
+          last_apply_at: null,
+          message: "Analysis freshness could not be determined.",
+        }),
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Narrative Overlay" });
+    const freshness = screen.getByTestId("narrative-analysis-freshness");
+    expect(within(freshness).getByText("Unknown")).toBeInTheDocument();
+    expect(within(freshness).getByText("Analysis freshness could not be determined.")).toBeInTheDocument();
   });
 
   it("renders competitor and recommendation prompt preview panels when prompt metadata is available", async () => {

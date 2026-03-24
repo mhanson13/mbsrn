@@ -602,6 +602,15 @@ export interface RecommendationApplyOutcome {
   source: "recommendation" | "manual" | null;
 }
 
+export type RecommendationAnalysisFreshnessStatus = "fresh" | "pending_refresh" | "unknown";
+
+export interface RecommendationAnalysisFreshness {
+  status: RecommendationAnalysisFreshnessStatus;
+  analysis_generated_at: string | null;
+  last_apply_at: string | null;
+  message: string;
+}
+
 export interface AIPromptPreview {
   available: boolean;
   prompt_type: "competitor" | "recommendation";
@@ -708,6 +717,7 @@ export interface RecommendationWorkspaceSummaryResponse {
   latest_narrative: RecommendationNarrative | null;
   tuning_suggestions: RecommendationTuningSuggestion[];
   apply_outcome?: RecommendationApplyOutcome | null;
+  analysis_freshness?: RecommendationAnalysisFreshness | null;
   competitor_prompt_preview?: AIPromptPreview | null;
   recommendation_prompt_preview?: AIPromptPreview | null;
 }

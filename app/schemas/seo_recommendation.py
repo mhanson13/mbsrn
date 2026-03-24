@@ -27,6 +27,7 @@ SortOrder = Literal["asc", "desc"]
 SEORecommendationTuningSuggestionConfidence = Literal["low", "medium", "high"]
 SEORecommendationSignalSupportLevel = Literal["low", "medium", "high"]
 SEORecommendationApplyOutcomeSource = Literal["recommendation", "manual"]
+SEORecommendationAnalysisFreshnessStatus = Literal["fresh", "pending_refresh", "unknown"]
 RecommendationTuningSetting = Literal[
     "competitor_candidate_min_relevance_score",
     "competitor_candidate_big_box_penalty",
@@ -298,6 +299,32 @@ class SEORecommendationApplyOutcomeRead(BaseModel):
         if normalized not in {"recommendation", "manual"}:
             raise ValueError("Invalid apply outcome source")
         return normalized  # type: ignore[return-value]
+
+
+class SEORecommendationAnalysisFreshnessRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: SEORecommendationAnalysisFreshnessStatus
+    analysis_generated_at: datetime | None = None
+    last_apply_at: datetime | None = None
+    message: str = Field(min_length=1, max_length=220)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: Any) -> SEORecommendationAnalysisFreshnessStatus:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"fresh", "pending_refresh", "unknown"}:
+            raise ValueError("Invalid analysis freshness status")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def normalize_message(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=220)
+        if cleaned is None:
+            raise ValueError("Analysis freshness message is required")
+        return cleaned
+
 
 class SEORecommendationRunCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -827,6 +854,7 @@ class SEORecommendationWorkspaceSummaryRead(BaseModel):
     latest_narrative: SEORecommendationNarrativeRead | None
     tuning_suggestions: list[SEORecommendationTuningSuggestionRead] = Field(default_factory=list)
     apply_outcome: SEORecommendationApplyOutcomeRead | None = None
+    analysis_freshness: SEORecommendationAnalysisFreshnessRead | None = None
     competitor_prompt_preview: AIPromptPreviewRead | None = None
     recommendation_prompt_preview: AIPromptPreviewRead | None = None
 

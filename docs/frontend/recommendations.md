@@ -147,6 +147,30 @@ Rules:
   - post-action feedback: `apply_outcome`
 - Keep copy concise and operator-friendly.
 
+## Analysis Freshness Indicator
+
+Workspace summary payloads can include optional `analysis_freshness` metadata:
+
+- `status`: `fresh | pending_refresh | unknown`
+- `analysis_generated_at`
+- `last_apply_at`
+- `message`
+
+Rendering guidance:
+- show a compact status block near recommendation apply outcome/narrative context
+- keep the indicator visible but secondary (badge + short message)
+- avoid large banners or modal treatment
+- render timestamps only when present
+
+State intent:
+- `fresh`: current analysis reflects latest applied changes
+- `pending_refresh`: changes were applied after current analysis; rerun/refresh is needed to reflect them
+- `unknown`: insufficient timestamp data for safe determination
+
+Fallback rules:
+- if `analysis_freshness` is missing/null, do not render an empty placeholder
+- never infer `fresh` client-side when status is absent
+
 ## AI -> Action Bridge
 
 The workspace now links AI opportunities directly to the deterministic tuning/apply loop when linkage data exists.

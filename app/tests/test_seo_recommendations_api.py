@@ -885,6 +885,9 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
     assert payload["latest_narrative"] is None
     assert payload["tuning_suggestions"] == []
     assert payload["apply_outcome"] is None
+    assert payload["analysis_freshness"]["status"] == "fresh"
+    assert payload["analysis_freshness"]["analysis_generated_at"] is not None
+    assert payload["analysis_freshness"]["last_apply_at"] is None
     assert payload["competitor_prompt_preview"] is not None
     assert payload["competitor_prompt_preview"]["prompt_type"] == "competitor"
     assert payload["competitor_prompt_preview"]["system_prompt"]
@@ -974,6 +977,7 @@ def test_recommendation_workspace_summary_includes_latest_narrative_and_bounded_
     assert payload["tuning_suggestions"][0]["setting"] == "competitor_candidate_min_relevance_score"
     assert payload["tuning_suggestions"][0]["linked_recommendation_ids"] == [recommendation_id]
     assert payload["apply_outcome"] is None
+    assert payload["analysis_freshness"]["status"] == "fresh"
     assert payload["competitor_prompt_preview"] is not None
     assert payload["recommendation_prompt_preview"] is not None
 
@@ -1086,6 +1090,9 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["apply_outcome"] is not None
+    assert payload["analysis_freshness"]["status"] == "pending_refresh"
+    assert payload["analysis_freshness"]["analysis_generated_at"] is not None
+    assert payload["analysis_freshness"]["last_apply_at"] is not None
     assert payload["apply_outcome"]["applied"] is True
     assert payload["apply_outcome"]["source"] == "recommendation"
     assert payload["apply_outcome"]["recommendation_label"] == recommendation_title
@@ -1142,6 +1149,7 @@ def test_recommendation_workspace_summary_handles_partial_apply_metadata_safely(
     assert payload["apply_outcome"]["applied"] is True
     assert payload["apply_outcome"]["expected_change"]
     assert payload["apply_outcome"]["reflected_on_next_run"]
+    assert payload["analysis_freshness"]["status"] == "pending_refresh"
 
 
 def test_recommendation_workspace_summary_handles_in_progress_runs_safely(db_session, seeded_business) -> None:
@@ -1183,8 +1191,116 @@ def test_recommendation_workspace_summary_handles_in_progress_runs_safely(db_ses
     assert payload["recommendations"]["total"] == 0
     assert payload["latest_narrative"] is None
     assert payload["apply_outcome"] is None
+    assert payload["analysis_freshness"]["status"] == "unknown"
+    assert payload["analysis_freshness"]["analysis_generated_at"] is None
     assert payload["competitor_prompt_preview"] is not None
     assert payload["recommendation_prompt_preview"] is None
+
+
+def test_recommendation_workspace_summary_marks_fresh_when_apply_is_older_than_analysis(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+    audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+    )
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    run = db_session.get(SEORecommendationRun, run_id)
+    assert run is not None
+    run.completed_at = utc_now()
+    db_session.add(run)
+    db_session.flush()
+
+    db_session.add(
+        SEOCompetitorTuningPreviewEvent(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            source_narrative_id=None,
+            source_recommendation_run_id=run_id,
+            preview_request={},
+            preview_response={},
+            applied_at=run.completed_at - timedelta(minutes=5),
+            evaluated_generation_run_id=None,
+            evaluated_at=None,
+            estimated_included_delta=None,
+            actual_included_delta=None,
+            error_margin=None,
+            direction_correct=None,
+        )
+    )
+    db_session.commit()
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["analysis_freshness"]["status"] == "fresh"
+    assert payload["analysis_freshness"]["analysis_generated_at"] is not None
+    assert payload["analysis_freshness"]["last_apply_at"] is not None
+
+
+def test_recommendation_workspace_summary_marks_unknown_when_no_analysis_exists(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["state"] == "no_runs"
+    assert payload["analysis_freshness"]["status"] == "unknown"
+    assert payload["analysis_freshness"]["analysis_generated_at"] is None
+    assert payload["analysis_freshness"]["last_apply_at"] is None
+
+
+def test_recommendation_workspace_summary_marks_unknown_when_apply_exists_without_analysis(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+
+    db_session.add(
+        SEOCompetitorTuningPreviewEvent(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            source_narrative_id=None,
+            source_recommendation_run_id=None,
+            preview_request={},
+            preview_response={},
+            applied_at=utc_now(),
+            evaluated_generation_run_id=None,
+            evaluated_at=None,
+            estimated_included_delta=None,
+            actual_included_delta=None,
+            error_margin=None,
+            direction_correct=None,
+        )
+    )
+    db_session.commit()
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["analysis_freshness"]["status"] == "unknown"
+    assert payload["analysis_freshness"]["analysis_generated_at"] is None
+    assert payload["analysis_freshness"]["last_apply_at"] is not None
 
 
 def test_recommendation_workspace_summary_enforces_business_scope(db_session, seeded_business) -> None:

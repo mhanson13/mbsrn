@@ -152,6 +152,37 @@ Shape:
 - If safe derivation is not possible, `apply_outcome` remains `null`.
 - This is deterministic response shaping from existing data; no new AI calls, persistence, or schema changes.
 
+## Workspace Analysis Freshness
+
+Workspace summary responses now include an additive `analysis_freshness` object so operators can tell whether currently displayed analysis reflects the latest applied tuning changes.
+
+Shape:
+
+```json
+{
+  "status": "fresh",
+  "analysis_generated_at": "2026-03-21T00:30:00Z",
+  "last_apply_at": "2026-03-21T00:25:00Z",
+  "message": "Analysis is up to date with the latest applied changes."
+}
+```
+
+### Deterministic Status Logic
+- `fresh`:
+  - analysis timestamp exists, and
+  - no apply timestamp exists, or analysis timestamp is newer than/equal to apply timestamp.
+- `pending_refresh`:
+  - analysis timestamp exists, and
+  - apply timestamp exists and is newer than analysis timestamp.
+- `unknown`:
+  - insufficient timestamp data for safe determination.
+
+### Timestamp Sources
+- analysis timestamp: latest completed recommendation run `completed_at`
+- apply timestamp: latest applied tuning preview event `applied_at`
+
+No AI calls, thresholds, or fuzzy inference are used.
+
 ## Prompt Preview (Debug / Inspection)
 
 Workspace summary responses may include optional prompt-inspection metadata:
