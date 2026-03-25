@@ -410,6 +410,94 @@ def test_recommendation_read_derives_general_target_context_for_sparse_metadata(
     assert recommendation.recommendation_target_context == "general"
 
 
+def test_recommendation_read_derives_observed_gap_summary_for_trust_signals() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="close_competitor_gap_missing_license_proof",
+            title="Add license and insurance proof to service pages",
+            rationale="Trust proof and contact legitimacy are weaker than nearby competitors.",
+            eeat_categories=["trustworthiness"],
+            primary_eeat_category="trustworthiness",
+            priority_reasons=["trust_gap"],
+            primary_priority_reason="trust_gap",
+            theme="trust_and_legitimacy",
+            theme_label="Trust & legitimacy",
+        )
+    )
+    assert recommendation.recommendation_observed_gap_summary is not None
+    assert "trust" in recommendation.recommendation_observed_gap_summary.lower()
+
+
+def test_recommendation_read_derives_observed_gap_summary_for_service_clarity() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="improve_service_page_clarity",
+            title="Clarify flooring services on core service pages",
+            rationale="Service detail and service proof are inconsistent across key pages.",
+            recommendation_target_context="service_pages",
+            eeat_categories=["expertise"],
+            primary_eeat_category="expertise",
+            priority_reasons=["expertise_gap"],
+            primary_priority_reason="expertise_gap",
+            theme="expertise_and_process",
+            theme_label="Expertise & process",
+        )
+    )
+    assert recommendation.recommendation_observed_gap_summary == (
+        "Service-specific wording and proof appear weak or inconsistent."
+    )
+
+
+def test_recommendation_read_derives_observed_gap_summary_for_location_context() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="expand_location_page_coverage",
+            title="Strengthen location page coverage",
+            rationale="Local city/service-area intent is underrepresented.",
+            recommendation_target_context="location_pages",
+            theme="authority_and_visibility",
+            theme_label="Authority & visibility",
+        )
+    )
+    assert recommendation.recommendation_observed_gap_summary == "Local/service-area relevance signals appear limited."
+
+
+def test_recommendation_read_derives_observed_gap_summary_for_experience_proof() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="add_project_testimonial_proof",
+            title="Publish project stories and testimonial proof",
+            rationale="Project proof is limited compared to nearby providers.",
+            eeat_categories=["experience"],
+            primary_eeat_category="experience",
+            priority_reasons=["experience_gap"],
+            primary_priority_reason="experience_gap",
+            theme="experience_and_proof",
+            theme_label="Experience & proof",
+        )
+    )
+    assert recommendation.recommendation_observed_gap_summary == (
+        "Project/testimonial proof appears limited on likely service pages."
+    )
+
+
+def test_recommendation_read_derives_observed_gap_summary_safe_fallback_for_sparse_metadata() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="generic_cleanup",
+            title="General metadata cleanup",
+            rationale="General cleanup note.",
+            theme="general_site_improvement",
+            theme_label="General site improvement",
+            eeat_categories=[],
+            priority_reasons=[],
+        )
+    )
+    assert recommendation.recommendation_observed_gap_summary == (
+        "Current site signals in this recommendation area appear limited or inconsistent."
+    )
+
+
 def test_recommendation_start_here_read_normalizes_context_flags() -> None:
     start_here = SEORecommendationStartHereRead.model_validate(
         {

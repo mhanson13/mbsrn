@@ -2681,6 +2681,8 @@ describe("site workspace timeline controls", () => {
             buildRecommendation({
               id: "rec-action-1",
               title: "Trust-focused recommendation",
+              recommendation_observed_gap_summary:
+                "No strong trust or verification signals were detected on key customer-facing pages.",
               recommendation_action_clarity: "Add stronger review and trust proof to key service pages.",
               recommendation_expected_outcome: "Helps visitors trust the business faster.",
               recommendation_target_context: "service_pages",
@@ -2719,6 +2721,12 @@ describe("site workspace timeline controls", () => {
     expect(targetPageHintLines).toHaveLength(1);
     expect(targetPageHintLines[0]).toHaveTextContent("Likely pages: Homepage, /services/flooring");
 
+    const observedGapLines = screen.getAllByTestId("recommendation-observed-gap-summary");
+    expect(observedGapLines).toHaveLength(1);
+    expect(observedGapLines[0]).toHaveTextContent(
+      "Observed gap: No strong trust or verification signals were detected on key customer-facing pages.",
+    );
+
     expect(
       screen.queryByText("Action: Recommendation without action metadata"),
     ).not.toBeInTheDocument();
@@ -2726,6 +2734,33 @@ describe("site workspace timeline controls", () => {
       screen.queryByText("Expected outcome: Recommendation without action metadata"),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Where: Recommendation without action metadata")).not.toBeInTheDocument();
+  });
+
+  it("suppresses observed gap line when it duplicates the evidence summary text", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-observed-gap-duplicate",
+              title: "Duplicate summary recommendation",
+              recommendation_evidence_summary: "Service-specific wording and proof appear weak or inconsistent.",
+              recommendation_observed_gap_summary: "Service-specific wording and proof appear weak or inconsistent.",
+            }),
+          ],
+          total: 1,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    expect(screen.getByTestId("recommendation-evidence-summary")).toHaveTextContent(
+      "Why this matters: Service-specific wording and proof appear weak or inconsistent.",
+    );
+    expect(screen.queryByTestId("recommendation-observed-gap-summary")).not.toBeInTheDocument();
   });
 
   it("renders action, competitor, and support context when all optional narrative fields are present", async () => {

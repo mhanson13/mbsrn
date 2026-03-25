@@ -244,9 +244,11 @@ Recommendation rows may include additive deterministic operator-guidance fields:
 
 - `recommendation_action_clarity`
 - `recommendation_expected_outcome`
+- `recommendation_observed_gap_summary`
 
 Rendering guidance:
 - render as compact row-level lines:
+  - `Observed gap: ...`
   - `Action: ...`
   - `Expected outcome: ...`
 - keep them near existing row metadata (`Why surfaced`, `Progress`, `Why this matters`, EEAT chips)
@@ -254,7 +256,8 @@ Rendering guidance:
 - do not treat these lines as guarantees or score/confidence output
 
 Fallback rules:
-- if either field is missing/null, hide it cleanly
+- if optional action/outcome/observed-gap fields are missing/null, hide them cleanly
+- if observed-gap text exactly duplicates `recommendation_evidence_summary`, suppress the duplicate line to avoid row noise
 - avoid empty placeholders
 - preserve grouped layout, start-here behavior, and apply controls
 

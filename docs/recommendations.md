@@ -279,10 +279,12 @@ Recommendation rows now include additive deterministic action-specificity fields
 
 - `recommendation_action_clarity`
 - `recommendation_expected_outcome`
+- `recommendation_observed_gap_summary`
 
 ### What They Provide
 - `recommendation_action_clarity`: compact, operator-facing action wording that clarifies what to do and where it applies.
 - `recommendation_expected_outcome`: compact, operator-facing wording for the likely type of improvement.
+- `recommendation_observed_gap_summary`: compact deterministic summary of what the system currently sees as weak/missing.
 
 ### Derivation Rules
 - Derived from existing recommendation metadata only (no new AI calls), using available fields such as:
@@ -294,6 +296,7 @@ Recommendation rows now include additive deterministic action-specificity fields
 - Bounded and conservative (no numeric guarantees, no score language).
 - Additive only; does not change recommendation generation/order semantics.
 - If metadata is sparse, values fall back conservatively or are omitted.
+- Observed-gap summaries are deterministic from existing recommendation/audit metadata (rule key, rationale, target context, EEAT/priority/theme, existing evidence summary) and do not use AI generation.
 
 ## Recommendation Target Context (Deterministic)
 

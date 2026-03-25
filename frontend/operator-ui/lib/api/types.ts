@@ -896,6 +896,7 @@ export interface Recommendation {
   recommendation_progress_status?: RecommendationProgressStatus;
   recommendation_progress_summary?: string | null;
   recommendation_evidence_summary?: string | null;
+  recommendation_observed_gap_summary?: string | null;
   recommendation_action_clarity?: string | null;
   recommendation_expected_outcome?: string | null;
   recommendation_target_context?: RecommendationTargetContext | null;

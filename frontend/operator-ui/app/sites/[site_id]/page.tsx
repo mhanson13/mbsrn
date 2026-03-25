@@ -1127,6 +1127,10 @@ function normalizeRecommendationEvidenceSummary(item: Recommendation): string | 
   return truncateOptionalText(item.recommendation_evidence_summary, 220);
 }
 
+function normalizeRecommendationObservedGapSummary(item: Recommendation): string | null {
+  return truncateOptionalText(item.recommendation_observed_gap_summary, 220);
+}
+
 function normalizeRecommendationActionClarity(item: Recommendation): string | null {
   return truncateOptionalText(item.recommendation_action_clarity, 220);
 }
@@ -4713,6 +4717,9 @@ export default function SiteWorkspacePage() {
                         const priorityReasons = normalizeRecommendationPriorityReasons(item.priority_reasons);
                         const recommendationProgress = normalizeRecommendationProgress(item);
                         const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
+                        const recommendationObservedGapSummary = normalizeRecommendationObservedGapSummary(item);
+                        const renderObservedGapSummary = recommendationObservedGapSummary
+                          && recommendationObservedGapSummary.toLowerCase() !== recommendationEvidenceSummary?.toLowerCase();
                         const recommendationActionClarity = normalizeRecommendationActionClarity(item);
                         const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
                         const recommendationTargetContext = normalizeRecommendationTargetContext(item);
@@ -4765,6 +4772,11 @@ export default function SiteWorkspacePage() {
                               {recommendationEvidenceSummary ? (
                                 <span className="hint muted" data-testid="recommendation-evidence-summary">
                                   Why this matters: {recommendationEvidenceSummary}
+                                </span>
+                              ) : null}
+                              {renderObservedGapSummary ? (
+                                <span className="hint muted" data-testid="recommendation-observed-gap-summary">
+                                  Observed gap: {recommendationObservedGapSummary}
                                 </span>
                               ) : null}
                               {recommendationActionClarity ? (
@@ -4840,6 +4852,9 @@ export default function SiteWorkspacePage() {
                               const priorityReasons = normalizeRecommendationPriorityReasons(item.priority_reasons);
                               const recommendationProgress = normalizeRecommendationProgress(item);
                               const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
+                              const recommendationObservedGapSummary = normalizeRecommendationObservedGapSummary(item);
+                              const renderObservedGapSummary = recommendationObservedGapSummary
+                                && recommendationObservedGapSummary.toLowerCase() !== recommendationEvidenceSummary?.toLowerCase();
                               const recommendationActionClarity = normalizeRecommendationActionClarity(item);
                               const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
                               const recommendationTargetContext = normalizeRecommendationTargetContext(item);
@@ -4892,6 +4907,11 @@ export default function SiteWorkspacePage() {
                                     {recommendationEvidenceSummary ? (
                                       <span className="hint muted" data-testid="recommendation-evidence-summary">
                                         Why this matters: {recommendationEvidenceSummary}
+                                      </span>
+                                    ) : null}
+                                    {renderObservedGapSummary ? (
+                                      <span className="hint muted" data-testid="recommendation-observed-gap-summary">
+                                        Observed gap: {recommendationObservedGapSummary}
                                       </span>
                                     ) : null}
                                     {recommendationActionClarity ? (

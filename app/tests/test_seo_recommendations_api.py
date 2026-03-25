@@ -958,6 +958,7 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
         payload["recommendations"]["items"][0]["recommendation_evidence_summary"]
         == "This is backed by structured site findings from the latest analysis."
     )
+    assert payload["recommendations"]["items"][0]["recommendation_observed_gap_summary"]
     assert payload["recommendations"]["items"][0]["recommendation_action_clarity"]
     assert payload["recommendations"]["items"][0]["recommendation_expected_outcome"]
     assert payload["recommendations"]["items"][0]["recommendation_target_context"] in {
@@ -1438,6 +1439,7 @@ def test_recommendation_workspace_summary_derives_eeat_categories_and_gap_summar
         payload["recommendations"]["items"][0]["recommendation_evidence_summary"]
         == "Competitors show stronger trust signals in this area."
     )
+    assert "trust" in payload["recommendations"]["items"][0]["recommendation_observed_gap_summary"].lower()
     assert "license and insurance proof" in payload["recommendations"]["items"][0]["recommendation_action_clarity"].lower()
     assert "trust" in payload["recommendations"]["items"][0]["recommendation_expected_outcome"].lower()
     assert payload["recommendations"]["items"][0]["recommendation_target_context"] == "contact_about"
@@ -1563,13 +1565,17 @@ def test_recommendation_workspace_summary_derives_target_page_hints_from_audit_i
     }
 
     assert by_rule_key["workspace_hint_homepage"]["recommendation_target_page_hints"] == ["Homepage"]
+    assert by_rule_key["workspace_hint_homepage"]["recommendation_observed_gap_summary"]
 
     contact_hints = by_rule_key["workspace_hint_contact_about"]["recommendation_target_page_hints"]
     assert contact_hints
     assert any(hint in {"/about", "/contact"} for hint in contact_hints)
+    assert "trust" in by_rule_key["workspace_hint_contact_about"]["recommendation_observed_gap_summary"].lower()
 
     assert "/services" in by_rule_key["workspace_hint_service_pages"]["recommendation_target_page_hints"]
+    assert "service" in by_rule_key["workspace_hint_service_pages"]["recommendation_observed_gap_summary"].lower()
     assert "/locations/loveland" in by_rule_key["workspace_hint_location_pages"]["recommendation_target_page_hints"]
+    assert "local/service-area" in by_rule_key["workspace_hint_location_pages"]["recommendation_observed_gap_summary"].lower()
 
 
 def test_recommendation_workspace_summary_omits_eeat_gap_summary_when_competitor_signals_are_insufficient(

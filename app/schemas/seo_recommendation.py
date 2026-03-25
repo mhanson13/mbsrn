@@ -106,6 +106,7 @@ _APPLY_OUTCOME_EXPECTED_CHANGE_MAX_CHARS = 260
 _APPLY_OUTCOME_NEXT_RUN_MAX_CHARS = 220
 _RECOMMENDATION_PROGRESS_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS = 220
+_RECOMMENDATION_OBSERVED_GAP_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_ACTION_CLARITY_MAX_CHARS = 220
 _RECOMMENDATION_EXPECTED_OUTCOME_MAX_CHARS = 220
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
@@ -718,6 +719,101 @@ def _derive_recommendation_expected_outcome(
         return "Clarifies process and expertise signals customers use to evaluate providers."
     if theme == "general_site_improvement":
         return "Improves core site clarity for prospective customers."
+    return None
+
+
+def _derive_recommendation_observed_gap_summary(
+    *,
+    rule_key: str | None,
+    title: str | None,
+    rationale: str | None,
+    recommendation_evidence_summary: str | None,
+    recommendation_target_context: SEORecommendationTargetContext | None,
+    eeat_categories: list[SEORecommendationEEATCategory],
+    priority_reasons: list[SEORecommendationPriorityReason],
+    theme: SEORecommendationTheme | None,
+) -> str | None:
+    normalized_signal = " ".join(
+        filter(
+            None,
+            [
+                _normalize_signal_text(rule_key, max_length=140),
+                _normalize_signal_text(title, max_length=180),
+                _normalize_signal_text(rationale, max_length=220),
+                _normalize_signal_text(recommendation_evidence_summary, max_length=220),
+            ],
+        )
+    )
+
+    if (
+        recommendation_target_context == "contact_about"
+        or "trustworthiness" in eeat_categories
+        or "trust_gap" in priority_reasons
+        or any(
+            keyword in normalized_signal
+            for keyword in (
+                "trust",
+                "license",
+                "insurance",
+                "verified",
+                "review",
+                "bbb",
+                "contact legitimacy",
+                "physical address",
+                "nap",
+            )
+        )
+    ):
+        return "No strong trust or verification signals were detected on key customer-facing pages."
+
+    if (
+        "experience" in eeat_categories
+        or "experience_gap" in priority_reasons
+        or any(
+            keyword in normalized_signal
+            for keyword in ("project", "before-after", "before/after", "testimonial", "case study", "portfolio")
+        )
+    ):
+        return "Project/testimonial proof appears limited on likely service pages."
+
+    if (
+        recommendation_target_context == "location_pages"
+        or any(
+            keyword in normalized_signal
+            for keyword in (
+                "local",
+                "location",
+                "service area",
+                "cities",
+                "zip",
+                "map",
+                "gbp",
+                "google business profile",
+            )
+        )
+    ):
+        return "Local/service-area relevance signals appear limited."
+
+    if (
+        recommendation_target_context == "service_pages"
+        or "expertise" in eeat_categories
+        or "expertise_gap" in priority_reasons
+        or any(
+            keyword in normalized_signal
+            for keyword in ("service", "services", "process", "capability", "method", "scope")
+        )
+    ):
+        return "Service-specific wording and proof appear weak or inconsistent."
+
+    if (
+        "authoritativeness" in eeat_categories
+        or "authority_gap" in priority_reasons
+        or any(keyword in normalized_signal for keyword in ("citation", "directory", "association", "credential", "award", "press"))
+    ):
+        return "External authority and recognition signals appear limited."
+
+    if theme == "general_site_improvement" or normalized_signal:
+        return "Current site signals in this recommendation area appear limited or inconsistent."
     return None
 
 
@@ -1352,6 +1448,10 @@ class SEORecommendationRead(BaseModel):
         default=None,
         max_length=_RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS,
     )
+    recommendation_observed_gap_summary: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_OBSERVED_GAP_SUMMARY_MAX_CHARS,
+    )
     recommendation_action_clarity: str | None = Field(
         default=None,
         max_length=_RECOMMENDATION_ACTION_CLARITY_MAX_CHARS,
@@ -1424,6 +1524,11 @@ class SEORecommendationRead(BaseModel):
     @classmethod
     def normalize_recommendation_evidence_summary(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS)
+
+    @field_validator("recommendation_observed_gap_summary", mode="before")
+    @classmethod
+    def normalize_recommendation_observed_gap_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_OBSERVED_GAP_SUMMARY_MAX_CHARS)
 
     @field_validator("recommendation_action_clarity", mode="before")
     @classmethod
@@ -1652,6 +1757,22 @@ class SEORecommendationRead(BaseModel):
             rationale=self.rationale,
             recommendation_action_clarity=self.recommendation_action_clarity,
             recommendation_evidence_summary=self.recommendation_evidence_summary,
+            theme=self.theme,
+        )
+        return self
+
+    @model_validator(mode="after")
+    def derive_recommendation_observed_gap_summary(self) -> "SEORecommendationRead":
+        if self.recommendation_observed_gap_summary is not None:
+            return self
+        self.recommendation_observed_gap_summary = _derive_recommendation_observed_gap_summary(
+            rule_key=self.rule_key,
+            title=self.title,
+            rationale=self.rationale,
+            recommendation_evidence_summary=self.recommendation_evidence_summary,
+            recommendation_target_context=self.recommendation_target_context,
+            eeat_categories=self.eeat_categories,
+            priority_reasons=self.priority_reasons,
             theme=self.theme,
         )
         return self
