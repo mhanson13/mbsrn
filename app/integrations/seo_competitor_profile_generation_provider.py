@@ -28,6 +28,7 @@ _PROVIDER_ERROR_SCHEMA_VALIDATION = "schema_validation"
 _PROVIDER_ERROR_PARSING = "parsing_error"
 _PROVIDER_ERROR_REQUEST = "provider_request"
 _LEGACY_PROMPT_CONFIG_KEY = "ai_prompt_text_recommendation"
+_PROVIDER_ERROR_MESSAGE_MAX_CHARS = 320
 logger = logging.getLogger(__name__)
 
 
@@ -289,6 +290,19 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 return response.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             body_text = exc.read().decode("utf-8", errors="replace")
+            error_type, error_code, error_message = self._extract_provider_error_details(body_text)
+            logger.warning(
+                (
+                    "SEO competitor provider HTTP error status=%s provider_name=%s model_name=%s "
+                    "error_type=%s error_code=%s error_message=%s"
+                ),
+                exc.code,
+                self.provider_name,
+                self.model_name,
+                error_type,
+                error_code,
+                error_message,
+            )
             if exc.code in {401, 403}:
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_AUTH_CONFIG,
@@ -309,16 +323,34 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 raw_output=body_text,
             ) from exc
         except (TimeoutError, socket.timeout) as exc:
+            logger.warning(
+                "SEO competitor provider timeout provider_name=%s model_name=%s reason=%s",
+                self.provider_name,
+                self.model_name,
+                str(exc),
+            )
             raise self._provider_error(
                 code=_PROVIDER_ERROR_TIMEOUT,
                 safe_message="Competitor profile generation timed out while calling the AI provider.",
             ) from exc
         except urllib.error.URLError as exc:
             if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
+                logger.warning(
+                    "SEO competitor provider timeout provider_name=%s model_name=%s reason=%s",
+                    self.provider_name,
+                    self.model_name,
+                    str(exc.reason),
+                )
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_TIMEOUT,
                     safe_message="Competitor profile generation timed out while calling the AI provider.",
                 ) from exc
+            logger.warning(
+                "SEO competitor provider URL error provider_name=%s model_name=%s reason=%s",
+                self.provider_name,
+                self.model_name,
+                str(exc.reason),
+            )
             raise self._provider_error(
                 code=_PROVIDER_ERROR_REQUEST,
                 safe_message="Competitor profile generation provider request failed.",
@@ -331,9 +363,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         user_prompt: str,
         candidate_count: int,
     ) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "model": self.model_name,
-            "temperature": 0,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -347,6 +378,30 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 },
             },
         }
+        if self._model_supports_temperature():
+            payload["temperature"] = 0
+        return payload
+
+    def _model_supports_temperature(self) -> bool:
+        return not self.model_name.strip().lower().startswith("gpt-5-mini")
+
+    def _extract_provider_error_details(self, body_text: str) -> tuple[str | None, str | None, str | None]:
+        normalized_body = body_text.strip()
+        if not normalized_body:
+            return None, None, None
+        try:
+            parsed = json.loads(normalized_body)
+        except json.JSONDecodeError:
+            return None, None, _compact_log_message(normalized_body)
+        if not isinstance(parsed, dict):
+            return None, None, _compact_log_message(normalized_body)
+        error_payload = parsed.get("error")
+        if isinstance(error_payload, dict):
+            error_type = _clean_optional_value(error_payload.get("type"))
+            error_code = _clean_optional_value(error_payload.get("code"))
+            error_message = _clean_optional_value(error_payload.get("message"))
+            return error_type, error_code, _compact_log_message(error_message)
+        return None, None, _compact_log_message(_clean_optional_value(parsed.get("message")))
 
     def _extract_assistant_content(self, response_json: dict[str, object]) -> str:
         choices = response_json.get("choices")
@@ -541,3 +596,12 @@ def _coerce_bounded_int(value: object, *, minimum: int, maximum: int, default: i
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, parsed))
+
+
+def _compact_log_message(value: str | None) -> str | None:
+    cleaned = _clean_optional_value(value)
+    if cleaned is None:
+        return None
+    if len(cleaned) <= _PROVIDER_ERROR_MESSAGE_MAX_CHARS:
+        return cleaned
+    return f"{cleaned[:_PROVIDER_ERROR_MESSAGE_MAX_CHARS]}..."

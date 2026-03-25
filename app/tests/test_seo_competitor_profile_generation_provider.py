@@ -95,6 +95,60 @@ def test_openai_provider_parses_structured_response(monkeypatch) -> None:
     assert output.candidates[0].suggested_name == "Competitor One"
     assert output.candidates[0].suggested_domain == "competitor-one.example"
     assert captured_payload["model"] == "gpt-4.1-mini"
+    assert captured_payload["temperature"] == 0
+    assert captured_payload["response_format"]["type"] == "json_schema"
+
+
+def test_openai_provider_omits_temperature_for_gpt5_mini(monkeypatch) -> None:
+    captured_payload: dict[str, object] = {}
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 20
+        request_body = request.data.decode("utf-8") if isinstance(request.data, bytes) else "{}"
+        captured_payload.update(json.loads(request_body))
+        response = {
+            "model": "gpt-5-mini-2026-01-01",
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "candidates": [
+                                    {
+                                        "name": "Competitor One",
+                                        "domain": "competitor-one.example",
+                                        "competitor_type": "direct",
+                                        "summary": "Direct overlap",
+                                        "why_competitor": "Competes on service intent",
+                                        "evidence": "Search result overlap",
+                                        "confidence_score": 0.81,
+                                    }
+                                ]
+                            }
+                        )
+                    }
+                }
+            ],
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+        timeout_seconds=20,
+    )
+
+    output = provider.generate_competitor_profiles(
+        site=_site(),
+        existing_domains=["known.example"],
+        candidate_count=1,
+    )
+
+    assert output.provider_name == "openai"
+    assert output.model_name == "gpt-5-mini-2026-01-01"
+    assert captured_payload["model"] == "gpt-5-mini"
+    assert "temperature" not in captured_payload
     assert captured_payload["response_format"]["type"] == "json_schema"
 
 
@@ -253,3 +307,42 @@ def test_openai_provider_warns_on_legacy_fallback_without_raw_prompt_text(monkey
     assert "ai_prompt_legacy_fallback pipeline=competitor" in caplog.text
     assert "prompt_source=legacy_fallback" in caplog.text
     assert "SENSITIVE_LEGACY_PROMPT_TEXT" not in caplog.text
+
+
+def test_openai_provider_logs_bounded_provider_error_details(monkeypatch, caplog) -> None:
+    def _bad_request_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        raise urllib.error.HTTPError(
+            url="https://api.openai.com/v1/chat/completions",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "type": "invalid_request_error",
+                            "code": "unsupported_parameter",
+                            "message": "Unsupported parameter: 'temperature' is not supported with this model.",
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _bad_request_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(SEOCompetitorProfileProviderError) as exc_info:
+            provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
+
+    assert exc_info.value.code == "provider_request"
+    assert "SEO competitor provider HTTP error status=400" in caplog.text
+    assert "model_name=gpt-5-mini" in caplog.text
+    assert "error_type=invalid_request_error" in caplog.text
+    assert "error_code=unsupported_parameter" in caplog.text
+    assert "Unsupported parameter: 'temperature' is not supported with this model." in caplog.text

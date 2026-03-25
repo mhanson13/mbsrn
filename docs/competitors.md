@@ -89,6 +89,30 @@ Workspace summary responses may include an optional `competitor_prompt_preview` 
 - Prompt text is sanitized for control characters and bounded for UI-safe rendering.
 - When preview data is unavailable, no prompt preview block is rendered.
 
+## Provider Request Compatibility (gpt-5-mini)
+
+Competitor generation provider requests now apply a small model-compatibility sanitization step at the provider boundary.
+
+- Endpoint remains `/chat/completions`.
+- For `gpt-5-mini`, unsupported request parameters are removed before sending.
+  - Current compatibility behavior removes `temperature`.
+- For other models, existing request behavior is preserved.
+- Structured `response_format` remains enabled on the current path.
+
+## Provider Error Visibility
+
+Competitor provider failures now emit bounded backend log metadata to improve debugging:
+
+- HTTP status (when available)
+- provider name
+- model name
+- provider error type/code (when provided by provider response)
+- bounded provider error message
+
+Safety:
+- no secrets, auth headers, or key material are logged
+- no raw environment dumps are logged
+
 ## Competitor Prompt Context Hardening
 
 Competitor prompt context now prefers structured business/site metadata before any heuristic fallback.
