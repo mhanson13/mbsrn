@@ -1108,6 +1108,14 @@ function normalizeRecommendationEvidenceSummary(item: Recommendation): string | 
   return truncateOptionalText(item.recommendation_evidence_summary, 220);
 }
 
+function normalizeRecommendationActionClarity(item: Recommendation): string | null {
+  return truncateOptionalText(item.recommendation_action_clarity, 220);
+}
+
+function normalizeRecommendationExpectedOutcome(item: Recommendation): string | null {
+  return truncateOptionalText(item.recommendation_expected_outcome, 220);
+}
+
 interface CompetitorContextHealthCheckView {
   key: "location_context" | "industry_context" | "service_focus" | "target_customer_context";
   label: string;
@@ -4667,6 +4675,8 @@ export default function SiteWorkspacePage() {
                         const priorityReasons = normalizeRecommendationPriorityReasons(item.priority_reasons);
                         const recommendationProgress = normalizeRecommendationProgress(item);
                         const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
+                        const recommendationActionClarity = normalizeRecommendationActionClarity(item);
+                        const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
                         const rowId = recommendationRowId(item.id);
                         return (
                           <tr
@@ -4715,6 +4725,16 @@ export default function SiteWorkspacePage() {
                               {recommendationEvidenceSummary ? (
                                 <span className="hint muted" data-testid="recommendation-evidence-summary">
                                   Why this matters: {recommendationEvidenceSummary}
+                                </span>
+                              ) : null}
+                              {recommendationActionClarity ? (
+                                <span className="hint muted" data-testid="recommendation-action-clarity">
+                                  Action: {recommendationActionClarity}
+                                </span>
+                              ) : null}
+                              {recommendationExpectedOutcome ? (
+                                <span className="hint muted" data-testid="recommendation-expected-outcome">
+                                  Expected outcome: {recommendationExpectedOutcome}
                                 </span>
                               ) : null}
                               <span className="hint muted"><code>{item.id}</code></span>
@@ -4770,6 +4790,8 @@ export default function SiteWorkspacePage() {
                               const priorityReasons = normalizeRecommendationPriorityReasons(item.priority_reasons);
                               const recommendationProgress = normalizeRecommendationProgress(item);
                               const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
+                              const recommendationActionClarity = normalizeRecommendationActionClarity(item);
+                              const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
                               const rowId = recommendationRowId(item.id);
                               return (
                                 <tr
@@ -4818,6 +4840,16 @@ export default function SiteWorkspacePage() {
                                     {recommendationEvidenceSummary ? (
                                       <span className="hint muted" data-testid="recommendation-evidence-summary">
                                         Why this matters: {recommendationEvidenceSummary}
+                                      </span>
+                                    ) : null}
+                                    {recommendationActionClarity ? (
+                                      <span className="hint muted" data-testid="recommendation-action-clarity">
+                                        Action: {recommendationActionClarity}
+                                      </span>
+                                    ) : null}
+                                    {recommendationExpectedOutcome ? (
+                                      <span className="hint muted" data-testid="recommendation-expected-outcome">
+                                        Expected outcome: {recommendationExpectedOutcome}
                                       </span>
                                     ) : null}
                                     <span className="hint muted"><code>{item.id}</code></span>

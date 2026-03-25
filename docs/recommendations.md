@@ -273,6 +273,28 @@ No AI calls, scoring, or workflow-state persistence is added.
 - `analysis_freshness` answers whether the latest analysis is newer than the latest apply.
 - `recommendation_progress_status` applies that shared freshness truth at recommendation-row level when linkage is deterministic.
 
+## Recommendation Action Specificity (Deterministic)
+
+Recommendation rows now include additive deterministic action-specificity fields:
+
+- `recommendation_action_clarity`
+- `recommendation_expected_outcome`
+
+### What They Provide
+- `recommendation_action_clarity`: compact, operator-facing action wording that clarifies what to do and where it applies.
+- `recommendation_expected_outcome`: compact, operator-facing wording for the likely type of improvement.
+
+### Derivation Rules
+- Derived from existing recommendation metadata only (no new AI calls), using available fields such as:
+  - `recommendation_evidence_summary`
+  - `eeat_categories`
+  - `priority_reasons`
+  - deterministic theme metadata
+  - existing recommendation title/rationale context
+- Bounded and conservative (no numeric guarantees, no score language).
+- Additive only; does not change recommendation generation/order semantics.
+- If metadata is sparse, values fall back conservatively or are omitted.
+
 ## Recommendation Evidence Summary (Deterministic)
 
 Recommendation rows now include additive deterministic evidence clarity metadata:

@@ -238,6 +238,26 @@ Behavior guidance:
 - do not treat it as a score or confidence metric
 - keep grouped layout, start-here behavior, and apply controls unchanged
 
+## Recommendation Action Specificity Rendering
+
+Recommendation rows may include additive deterministic operator-guidance fields:
+
+- `recommendation_action_clarity`
+- `recommendation_expected_outcome`
+
+Rendering guidance:
+- render as compact row-level lines:
+  - `Action: ...`
+  - `Expected outcome: ...`
+- keep them near existing row metadata (`Why surfaced`, `Progress`, `Why this matters`, EEAT chips)
+- keep copy concise and operator-friendly
+- do not treat these lines as guarantees or score/confidence output
+
+Fallback rules:
+- if either field is missing/null, hide it cleanly
+- avoid empty placeholders
+- preserve grouped layout, start-here behavior, and apply controls
+
 ## Competitor Context Health Indicator
 
 Workspace summary payloads can include optional `competitor_context_health` metadata:

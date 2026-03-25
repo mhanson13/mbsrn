@@ -269,6 +269,65 @@ def test_recommendation_read_omits_evidence_summary_when_metadata_is_sparse() ->
     assert recommendation.recommendation_evidence_summary is None
 
 
+def test_recommendation_read_derives_action_clarity_and_expected_outcome_for_trust_gap() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            comparison_run_id=str(uuid4()),
+            rule_key="close_competitor_gap_missing_license_proof",
+            title="Add license and insurance proof to service pages",
+            rationale="This creates verifiable trust proof where competitors are currently stronger.",
+            evidence_json={
+                "sources": ["comparison"],
+                "finding_types": ["missing_license_proof"],
+            },
+        )
+    )
+    assert recommendation.recommendation_action_clarity == "Add license and insurance proof to service pages."
+    assert (
+        recommendation.recommendation_expected_outcome
+        == "Helps visitors trust the business faster while closing visible competitor trust gaps."
+    )
+
+
+def test_recommendation_read_derives_action_clarity_and_expected_outcome_for_service_clarity() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            title="Clarify flooring services",
+            rationale="Service detail and local intent clarity are weak on primary pages.",
+            eeat_categories=["expertise"],
+            primary_eeat_category="expertise",
+            priority_reasons=["expertise_gap"],
+            primary_priority_reason="expertise_gap",
+            theme="expertise_and_process",
+            theme_label="Expertise & process",
+            evidence_json={"sources": ["audit"]},
+        )
+    )
+    assert recommendation.recommendation_action_clarity == "Clarify flooring services on core local and location pages."
+    assert (
+        recommendation.recommendation_expected_outcome
+        == "Makes service capability and process quality easier to evaluate."
+    )
+
+
+def test_recommendation_read_derives_safe_expected_outcome_fallback_for_sparse_metadata() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="fix_missing_title_tags",
+            title="Site metadata cleanup",
+            rationale="General cleanup note",
+            comparison_run_id=None,
+            evidence_json=None,
+            eeat_categories=[],
+            primary_eeat_category=None,
+            priority_reasons=[],
+            primary_priority_reason=None,
+        )
+    )
+    assert recommendation.recommendation_action_clarity == "Site metadata cleanup on high-visibility service pages."
+    assert recommendation.recommendation_expected_outcome == "Improves core site clarity for prospective customers."
+
+
 def test_recommendation_start_here_read_normalizes_context_flags() -> None:
     start_here = SEORecommendationStartHereRead.model_validate(
         {

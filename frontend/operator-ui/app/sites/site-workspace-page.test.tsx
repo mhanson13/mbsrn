@@ -2672,6 +2672,51 @@ describe("site workspace timeline controls", () => {
     expect(screen.queryByText("Why this matters: Recommendation without evidence summary")).not.toBeInTheDocument();
   });
 
+  it("renders recommendation action clarity and expected outcome lines when metadata is present", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-action-1",
+              title: "Trust-focused recommendation",
+              recommendation_action_clarity: "Add stronger review and trust proof to key service pages.",
+              recommendation_expected_outcome: "Helps visitors trust the business faster.",
+            }),
+            buildRecommendation({
+              id: "rec-action-2",
+              title: "Recommendation without action metadata",
+            }),
+          ],
+          total: 2,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    const actionLines = screen.getAllByTestId("recommendation-action-clarity");
+    expect(actionLines).toHaveLength(1);
+    expect(actionLines[0]).toHaveTextContent(
+      "Action: Add stronger review and trust proof to key service pages.",
+    );
+
+    const outcomeLines = screen.getAllByTestId("recommendation-expected-outcome");
+    expect(outcomeLines).toHaveLength(1);
+    expect(outcomeLines[0]).toHaveTextContent(
+      "Expected outcome: Helps visitors trust the business faster.",
+    );
+
+    expect(
+      screen.queryByText("Action: Recommendation without action metadata"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Expected outcome: Recommendation without action metadata"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders action, competitor, and support context when all optional narrative fields are present", async () => {
     seedRichWorkspaceData();
     mockFetchRecommendationWorkspaceSummary.mockResolvedValue(

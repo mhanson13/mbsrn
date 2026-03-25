@@ -958,6 +958,8 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
         payload["recommendations"]["items"][0]["recommendation_evidence_summary"]
         == "This is backed by structured site findings from the latest analysis."
     )
+    assert payload["recommendations"]["items"][0]["recommendation_action_clarity"]
+    assert payload["recommendations"]["items"][0]["recommendation_expected_outcome"]
     assert payload["latest_narrative"] is None
     assert payload["tuning_suggestions"] == []
     assert payload["apply_outcome"] is None
@@ -1426,6 +1428,8 @@ def test_recommendation_workspace_summary_derives_eeat_categories_and_gap_summar
         payload["recommendations"]["items"][0]["recommendation_evidence_summary"]
         == "Competitors show stronger trust signals in this area."
     )
+    assert "license and insurance proof" in payload["recommendations"]["items"][0]["recommendation_action_clarity"].lower()
+    assert "trust" in payload["recommendations"]["items"][0]["recommendation_expected_outcome"].lower()
     assert payload["eeat_gap_summary"] is not None
     assert "trustworthiness" in payload["eeat_gap_summary"]["top_gap_categories"]
     assert payload["eeat_gap_summary"]["message"]

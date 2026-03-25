@@ -98,6 +98,8 @@ _APPLY_OUTCOME_EXPECTED_CHANGE_MAX_CHARS = 260
 _APPLY_OUTCOME_NEXT_RUN_MAX_CHARS = 220
 _RECOMMENDATION_PROGRESS_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS = 220
+_RECOMMENDATION_ACTION_CLARITY_MAX_CHARS = 220
+_RECOMMENDATION_EXPECTED_OUTCOME_MAX_CHARS = 220
 _SIGNAL_SUMMARY_EVIDENCE_SOURCE_ORDER = ("site", "competitors", "references", "themes")
 _RECOMMENDATION_EEAT_GAP_SUPPORTING_SIGNALS_MAX_ITEMS = 6
 _RECOMMENDATION_EEAT_GAP_SUPPORTING_SIGNAL_MAX_CHARS = 140
@@ -561,6 +563,136 @@ def _derive_recommendation_evidence_summary(
         return "This is backed by deterministic comparison evidence from current competitor analysis."
     if "high_clarity_action" in priority_reasons:
         return "This is a clear, actionable step supported by current recommendation metadata."
+    return None
+
+
+def _derive_recommendation_action_scope(
+    *,
+    theme: SEORecommendationTheme | None,
+    rule_key: str | None,
+    title: str | None,
+    rationale: str | None,
+) -> str:
+    normalized_signal = " ".join(
+        filter(
+            None,
+            [
+                _normalize_signal_text(rule_key, max_length=120),
+                _normalize_signal_text(title, max_length=120),
+                _normalize_signal_text(rationale, max_length=160),
+            ],
+        )
+    )
+    if "home page" in normalized_signal or "homepage" in normalized_signal:
+        return "homepage and core service pages"
+    if "service page" in normalized_signal or "service pages" in normalized_signal:
+        return "key service pages"
+    if "contact" in normalized_signal or "about" in normalized_signal:
+        return "contact and about pages"
+    if "location" in normalized_signal or "local" in normalized_signal:
+        return "core local and location pages"
+
+    if theme == "trust_and_legitimacy":
+        return "key service, contact, and about pages"
+    if theme == "experience_and_proof":
+        return "service and proof-focused pages"
+    if theme == "authority_and_visibility":
+        return "profile, listing, and citation surfaces"
+    if theme == "expertise_and_process":
+        return "service and process-focused pages"
+    return "high-visibility service pages"
+
+
+def _compact_sentence(value: str | None, *, max_length: int) -> str | None:
+    compacted = _compact_text(value, max_length=max_length)
+    if compacted is None:
+        return None
+    if compacted.endswith((".", "!", "?")):
+        return compacted
+    return f"{compacted}."
+
+
+def _derive_recommendation_action_clarity(
+    *,
+    title: str | None,
+    rationale: str | None,
+    rule_key: str | None,
+    theme: SEORecommendationTheme | None,
+    recommendation_evidence_summary: str | None,
+) -> str | None:
+    base_action = _compact_text(title, max_length=_ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS)
+    if base_action:
+        lowered = base_action.lower()
+        has_scope_phrase = any(token in lowered for token in (" on ", " across ", " within ", " in "))
+        if not has_scope_phrase and (" page" in lowered or "pages" in lowered):
+            has_scope_phrase = True
+        if has_scope_phrase:
+            return _compact_sentence(base_action, max_length=_RECOMMENDATION_ACTION_CLARITY_MAX_CHARS)
+        scope = _derive_recommendation_action_scope(
+            theme=theme,
+            rule_key=rule_key,
+            title=title,
+            rationale=rationale,
+        )
+        return _compact_sentence(
+            f"{base_action.rstrip('.')} on {scope}",
+            max_length=_RECOMMENDATION_ACTION_CLARITY_MAX_CHARS,
+        )
+
+    if recommendation_evidence_summary and "trust" in recommendation_evidence_summary.lower():
+        return "Add stronger trust and legitimacy proof to key customer-facing pages."
+    if theme == "experience_and_proof":
+        return "Add clearer project proof and outcome examples on key service pages."
+    if theme == "authority_and_visibility":
+        return "Strengthen external authority signals across profile and listing surfaces."
+    if theme == "expertise_and_process":
+        return "Clarify service process and capability details on core service pages."
+    if theme == "trust_and_legitimacy":
+        return "Strengthen trust and legitimacy signals across key service and contact pages."
+    if theme == "general_site_improvement":
+        return "Improve core service-page clarity for high-intent visitors."
+    return None
+
+
+def _derive_recommendation_expected_outcome(
+    *,
+    eeat_categories: list[SEORecommendationEEATCategory],
+    priority_reasons: list[SEORecommendationPriorityReason],
+    theme: SEORecommendationTheme | None,
+    recommendation_evidence_summary: str | None,
+) -> str | None:
+    evidence_summary = (recommendation_evidence_summary or "").lower()
+    competitor_backed = "competitor" in evidence_summary or "competitor_gap" in priority_reasons
+
+    if competitor_backed and "trustworthiness" in eeat_categories:
+        return "Helps visitors trust the business faster while closing visible competitor trust gaps."
+    if competitor_backed and "experience" in eeat_categories:
+        return "Improves visible proof of experience where competitors currently stand out."
+    if competitor_backed:
+        return "Helps close visible competitor-backed gaps in this area."
+
+    if "trustworthiness" in eeat_categories:
+        return "Helps visitors trust the business faster."
+    if "experience" in eeat_categories:
+        return "Improves visible proof of experience and completed work."
+    if "authoritativeness" in eeat_categories:
+        return "Strengthens external credibility and local market authority signals."
+    if "expertise" in eeat_categories:
+        return "Makes service capability and process quality easier to evaluate."
+
+    if "high_clarity_action" in priority_reasons:
+        return "Makes the next optimization step clearer and easier to execute."
+
+    if theme == "trust_and_legitimacy":
+        return "Strengthens visible trust and legitimacy signals for prospective customers."
+    if theme == "experience_and_proof":
+        return "Improves visible proof of work quality and outcomes."
+    if theme == "authority_and_visibility":
+        return "Improves how external credibility signals are presented to local searchers."
+    if theme == "expertise_and_process":
+        return "Clarifies process and expertise signals customers use to evaluate providers."
+    if theme == "general_site_improvement":
+        return "Improves core site clarity for prospective customers."
     return None
 
 
@@ -1088,6 +1220,14 @@ class SEORecommendationRead(BaseModel):
         default=None,
         max_length=_RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS,
     )
+    recommendation_action_clarity: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_ACTION_CLARITY_MAX_CHARS,
+    )
+    recommendation_expected_outcome: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_EXPECTED_OUTCOME_MAX_CHARS,
+    )
     decision: SEORecommendationDecision | None = None
     decision_reason: str | None = None
     assigned_principal_id: str | None = None
@@ -1150,6 +1290,16 @@ class SEORecommendationRead(BaseModel):
     @classmethod
     def normalize_recommendation_evidence_summary(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS)
+
+    @field_validator("recommendation_action_clarity", mode="before")
+    @classmethod
+    def normalize_recommendation_action_clarity(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_ACTION_CLARITY_MAX_CHARS)
+
+    @field_validator("recommendation_expected_outcome", mode="before")
+    @classmethod
+    def normalize_recommendation_expected_outcome(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_EXPECTED_OUTCOME_MAX_CHARS)
 
     @field_validator("decision", mode="before")
     @classmethod
@@ -1312,6 +1462,31 @@ class SEORecommendationRead(BaseModel):
             self.recommendation_progress_summary = "Applied and reflected in the latest analysis."
         else:
             self.recommendation_progress_summary = "Suggested action not yet applied."
+        return self
+
+    @model_validator(mode="after")
+    def derive_recommendation_action_clarity(self) -> "SEORecommendationRead":
+        if self.recommendation_action_clarity is not None:
+            return self
+        self.recommendation_action_clarity = _derive_recommendation_action_clarity(
+            title=self.title,
+            rationale=self.rationale,
+            rule_key=self.rule_key,
+            theme=self.theme,
+            recommendation_evidence_summary=self.recommendation_evidence_summary,
+        )
+        return self
+
+    @model_validator(mode="after")
+    def derive_recommendation_expected_outcome(self) -> "SEORecommendationRead":
+        if self.recommendation_expected_outcome is not None:
+            return self
+        self.recommendation_expected_outcome = _derive_recommendation_expected_outcome(
+            eeat_categories=self.eeat_categories,
+            priority_reasons=self.priority_reasons,
+            theme=self.theme,
+            recommendation_evidence_summary=self.recommendation_evidence_summary,
+        )
         return self
 
 
