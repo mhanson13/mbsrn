@@ -13,14 +13,16 @@ import {
   ApiRequestError,
   createPrincipalIdentity,
   createPrincipal,
+  deleteAdminSite,
   deactivatePrincipalIdentity,
   deactivatePrincipal,
   fetchBusinessSettings,
   fetchPrincipalIdentities,
   fetchPrincipals,
+  updateAdminSite,
   updateBusinessSettings,
 } from "../../lib/api/client";
-import type { BusinessSettings, Principal, PrincipalIdentity, PrincipalRole } from "../../lib/api/types";
+import type { BusinessSettings, Principal, PrincipalIdentity, PrincipalRole, SEOSite } from "../../lib/api/types";
 import {
   COMPETITOR_BIG_BOX_PENALTY_MAX,
   COMPETITOR_BIG_BOX_PENALTY_MIN,
@@ -344,6 +346,59 @@ function safePromptSettingsUpdateErrorMessage(error: unknown): string {
   return "Failed to update AI prompt overrides.";
 }
 
+function parseAdminSiteUrl(input: string): string {
+  const normalized = input.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error("Site URL must be a valid absolute URL.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Site URL must start with http:// or https://.");
+  }
+  if (!parsed.hostname) {
+    throw new Error("Site URL must include a valid domain.");
+  }
+  return parsed.toString();
+}
+
+function safeAdminSiteUpdateErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "Only admin principals can edit site name and URL.";
+    }
+    if (error.status === 404) {
+      return "Site not found in this business scope.";
+    }
+    if (error.status === 422) {
+      return "Unable to save site changes. Check name and URL.";
+    }
+  }
+  return "Failed to update site.";
+}
+
+function safeAdminSiteDeleteErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "Only admin principals can permanently delete sites.";
+    }
+    if (error.status === 404) {
+      return "Site not found in this business scope.";
+    }
+    if (error.status === 422) {
+      return "Permanent delete failed. Site data was not fully removed.";
+    }
+  }
+  return "Failed to permanently delete site.";
+}
+
 function normalizePromptOverrideInput(value: string): string | null {
   const normalized = value.trim();
   if (!normalized) {
@@ -404,6 +459,11 @@ export default function AdminPage() {
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
   const [promptOverrideMessage, setPromptOverrideMessage] = useState<string | null>(null);
   const [promptOverrideError, setPromptOverrideError] = useState<string | null>(null);
+  const [siteDraftsById, setSiteDraftsById] = useState<Record<string, { name: string; url: string }>>({});
+  const [siteManagementMessage, setSiteManagementMessage] = useState<string | null>(null);
+  const [siteManagementError, setSiteManagementError] = useState<string | null>(null);
+  const [updatingSiteId, setUpdatingSiteId] = useState<string | null>(null);
+  const [deletingSiteId, setDeletingSiteId] = useState<string | null>(null);
 
   const isAdmin = principal?.role === "admin";
 
@@ -570,6 +630,17 @@ export default function AdminPage() {
       setIdentityPrincipalId(users[0].id);
     }
   }, [identityPrincipalId, users]);
+
+  useEffect(() => {
+    const nextDrafts: Record<string, { name: string; url: string }> = {};
+    for (const site of context.sites) {
+      nextDrafts[site.id] = {
+        name: site.display_name,
+        url: site.base_url,
+      };
+    }
+    setSiteDraftsById(nextDrafts);
+  }, [context.sites]);
 
   const handleCreateUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -819,6 +890,81 @@ export default function AdminPage() {
       setPromptOverrideError(safePromptSettingsUpdateErrorMessage(err));
     } finally {
       setPromptOverrideSubmitting(false);
+    }
+  };
+
+  const handleSiteDraftChange = (siteId: string, field: "name" | "url", value: string) => {
+    setSiteDraftsById((current) => {
+      const existing = current[siteId] || { name: "", url: "" };
+      return {
+        ...current,
+        [siteId]: {
+          ...existing,
+          [field]: value,
+        },
+      };
+    });
+  };
+
+  const handleSaveSite = async (site: SEOSite) => {
+    const draft = siteDraftsById[site.id];
+    const normalizedName = (draft?.name || "").trim();
+    if (!normalizedName) {
+      setSiteManagementError("Site name cannot be empty.");
+      setSiteManagementMessage(null);
+      return;
+    }
+
+    let normalizedUrl: string;
+    try {
+      normalizedUrl = parseAdminSiteUrl(draft?.url || "");
+    } catch (err) {
+      setSiteManagementError(err instanceof Error ? err.message : "Site URL is invalid.");
+      setSiteManagementMessage(null);
+      return;
+    }
+
+    setSiteManagementError(null);
+    setSiteManagementMessage(null);
+    setUpdatingSiteId(site.id);
+    try {
+      const updatedSite = await updateAdminSite(context.token, context.businessId, site.id, {
+        name: normalizedName,
+        url: normalizedUrl,
+      });
+      await context.refreshSites();
+      setSiteManagementMessage(`Site ${updatedSite.display_name} updated.`);
+    } catch (err) {
+      setSiteManagementError(safeAdminSiteUpdateErrorMessage(err));
+    } finally {
+      setUpdatingSiteId(null);
+    }
+  };
+
+  const handleDeleteSite = async (site: SEOSite) => {
+    const typedConfirmation = window.prompt(
+      `Type "${site.display_name}" to permanently delete this site and all site-owned SEO data.`,
+    );
+    if (typedConfirmation === null) {
+      return;
+    }
+    if (typedConfirmation.trim() !== site.display_name) {
+      setSiteManagementError("Delete cancelled. Confirmation text did not match the site name.");
+      setSiteManagementMessage(null);
+      return;
+    }
+
+    setSiteManagementError(null);
+    setSiteManagementMessage(null);
+    setDeletingSiteId(site.id);
+    try {
+      await deleteAdminSite(context.token, context.businessId, site.id);
+      await context.refreshSites();
+      setSiteManagementMessage(`Site ${site.display_name} permanently deleted.`);
+    } catch (err) {
+      setSiteManagementError(safeAdminSiteDeleteErrorMessage(err));
+    } finally {
+      setDeletingSiteId(null);
     }
   };
 
@@ -1305,6 +1451,84 @@ export default function AdminPage() {
               Some principals have no mapped sign-in identity yet. They will not be able to authenticate until an identity is linked.
             </p>
           ) : null}
+        </div>
+      </SectionCard>
+
+      <SectionCard>
+        <h2>Site Management</h2>
+        <p className="hint muted">
+          Admin-only controls to rename sites, update site URLs, and permanently delete a site with all site-owned SEO data.
+        </p>
+        <div className="message-stack">
+          {siteManagementMessage ? <p className="hint">{siteManagementMessage}</p> : null}
+          {siteManagementError ? <p className="hint error">{siteManagementError}</p> : null}
+        </div>
+        <div className="table-container">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Site Name</th>
+                <th>Site URL</th>
+                <th>Domain</th>
+                <th>Active</th>
+                <th>Edit</th>
+                <th>Permanent Delete</th>
+              </tr>
+            </thead>
+            <tbody>
+              {context.sites.map((site) => (
+                <tr key={site.id}>
+                  <td>
+                    <input
+                      aria-label={`Site Name ${site.id}`}
+                      value={siteDraftsById[site.id]?.name ?? site.display_name}
+                      onChange={(event) => handleSiteDraftChange(site.id, "name", event.target.value)}
+                      disabled={!!updatingSiteId || !!deletingSiteId}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      aria-label={`Site URL ${site.id}`}
+                      value={siteDraftsById[site.id]?.url ?? site.base_url}
+                      onChange={(event) => handleSiteDraftChange(site.id, "url", event.target.value)}
+                      disabled={!!updatingSiteId || !!deletingSiteId}
+                    />
+                  </td>
+                  <td className="table-cell-wrap">{site.normalized_domain}</td>
+                  <td>{site.is_active ? "yes" : "no"}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="button button-secondary button-inline"
+                      disabled={!!updatingSiteId || !!deletingSiteId}
+                      onClick={() => {
+                        void handleSaveSite(site);
+                      }}
+                    >
+                      {updatingSiteId === site.id ? "Saving..." : "Save"}
+                    </button>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="button button-danger button-inline"
+                      disabled={!!updatingSiteId || !!deletingSiteId}
+                      onClick={() => {
+                        void handleDeleteSite(site);
+                      }}
+                    >
+                      {deletingSiteId === site.id ? "Deleting..." : "Delete Permanently"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {context.sites.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>No sites found for this business.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
       </SectionCard>
 

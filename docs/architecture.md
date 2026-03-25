@@ -92,3 +92,18 @@ Frontend contract note:
 - Prefer service-layer tests for normalization, policy, and business behavior.
 - Verify token usability and scope enforcement before provider-call paths.
 - Keep tests deterministic (fixed fixtures, explicit error mapping expectations).
+
+## Admin Site Maintenance
+- Admin-only site maintenance endpoints are exposed under business-scoped SEO routes:
+  - `PATCH /api/businesses/{business_id}/seo/admin/sites/{site_id}`
+  - `DELETE /api/businesses/{business_id}/seo/admin/sites/{site_id}`
+- Site maintenance is service-driven (`SEOSiteService`) and destructive deletion is centralized in `delete_site_permanently(...)`.
+- Permanent delete removes the site row and all site-owned SEO records in one transaction, including:
+  - audit runs/pages/findings/summaries
+  - competitor sets/domains/snapshot runs/snapshot pages/comparison runs/comparison findings/comparison summaries
+  - recommendation runs/recommendations/narratives
+  - automation configs/runs
+  - competitor profile generation runs/drafts
+  - tuning preview events
+  - competitor profile cleanup execution records scoped to the site
+- Delete is hard-delete behavior (no soft delete) and is intended to be irreversible once confirmed in admin UI.

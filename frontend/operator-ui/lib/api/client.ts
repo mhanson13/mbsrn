@@ -16,6 +16,7 @@ import type {
   PrincipalListResponse,
   SEOSite,
   SEOSiteCreateRequest,
+  SEOSiteAdminUpdateRequest,
   SEOSiteUpdateRequest,
   SEOSiteListResponse,
   CompetitorComparisonReport,
@@ -161,6 +162,26 @@ export async function updateSite(
     method: "PATCH",
     token,
     body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAdminSite(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: SEOSiteAdminUpdateRequest,
+): Promise<SEOSite> {
+  return apiRequest<SEOSite>(`/api/businesses/${businessId}/seo/admin/sites/${siteId}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAdminSite(token: string, businessId: string, siteId: string): Promise<void> {
+  await apiRequest<void>(`/api/businesses/${businessId}/seo/admin/sites/${siteId}`, {
+    method: "DELETE",
+    token,
   });
 }
 

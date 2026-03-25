@@ -64,6 +64,17 @@ class SEOSiteUpdateRequest(BaseModel):
         return normalize_primary_business_zip(str(value))
 
 
+class SEOSiteAdminUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    url: str | None = Field(default=None, min_length=1, max_length=2048)
+
+    @model_validator(mode="after")
+    def require_name_or_url(self) -> "SEOSiteAdminUpdateRequest":
+        if self.name is None and self.url is None:
+            raise ValueError("At least one of name or url must be provided")
+        return self
+
+
 class SEOSiteRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

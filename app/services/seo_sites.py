@@ -7,9 +7,30 @@ from typing import Literal
 from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 
+from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.models.seo_audit_finding import SEOAuditFinding
+from app.models.seo_audit_page import SEOAuditPage
+from app.models.seo_audit_run import SEOAuditRun
+from app.models.seo_audit_summary import SEOAuditSummary
+from app.models.seo_automation_config import SEOAutomationConfig
+from app.models.seo_automation_run import SEOAutomationRun
+from app.models.seo_competitor_comparison_finding import SEOCompetitorComparisonFinding
+from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
+from app.models.seo_competitor_comparison_summary import SEOCompetitorComparisonSummary
+from app.models.seo_competitor_domain import SEOCompetitorDomain
+from app.models.seo_competitor_profile_cleanup_execution import SEOCompetitorProfileCleanupExecution
+from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
+from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
+from app.models.seo_competitor_set import SEOCompetitorSet
+from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage
+from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
+from app.models.seo_competitor_tuning_preview_event import SEOCompetitorTuningPreviewEvent
+from app.models.seo_recommendation import SEORecommendation
+from app.models.seo_recommendation_narrative import SEORecommendationNarrative
+from app.models.seo_recommendation_run import SEORecommendationRun
 from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
@@ -105,6 +126,30 @@ _SITE_CONTEXT_SERVICE_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("concrete", ("concrete", "foundation")),
     ("painting", ("painting", "painter")),
     ("home services", ("home service", "home services")),
+)
+
+# Ordered child-table deletion for permanent site removal.
+_SITE_PERMANENT_DELETE_MODELS = (
+    SEOCompetitorTuningPreviewEvent,
+    SEORecommendationNarrative,
+    SEORecommendation,
+    SEORecommendationRun,
+    SEOCompetitorProfileDraft,
+    SEOCompetitorProfileGenerationRun,
+    SEOCompetitorComparisonSummary,
+    SEOCompetitorComparisonFinding,
+    SEOCompetitorComparisonRun,
+    SEOCompetitorSnapshotPage,
+    SEOCompetitorSnapshotRun,
+    SEOCompetitorDomain,
+    SEOCompetitorSet,
+    SEOAuditSummary,
+    SEOAuditFinding,
+    SEOAuditPage,
+    SEOAuditRun,
+    SEOAutomationRun,
+    SEOAutomationConfig,
+    SEOCompetitorProfileCleanupExecution,
 )
 
 
@@ -544,6 +589,41 @@ class SEOSiteService:
         self._commit_with_constraint_handling()
         self.session.refresh(site)
         return site
+
+    def delete_site_permanently(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+    ) -> None:
+        self._require_business(business_id)
+        site = self.seo_site_repository.get_for_business(business_id, site_id)
+        if site is None:
+            raise SEOSiteNotFoundError("SEO site not found")
+
+        try:
+            for model in _SITE_PERMANENT_DELETE_MODELS:
+                self.session.execute(
+                    delete(model)
+                    .where(model.business_id == business_id)
+                    .where(model.site_id == site_id)
+                )
+            deleted_site = self.session.execute(
+                delete(SEOSite)
+                .where(SEOSite.business_id == business_id)
+                .where(SEOSite.id == site_id)
+            )
+            if int(deleted_site.rowcount or 0) != 1:
+                self.session.rollback()
+                raise SEOSiteValidationError(
+                    "Permanent site deletion did not remove exactly one site record"
+                )
+            self._commit_with_constraint_handling()
+        except SEOSiteValidationError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self.session.rollback()
+            raise SEOSiteValidationError("Failed to permanently delete SEO site") from exc
 
     def _require_business(self, business_id: str) -> None:
         business = self.business_repository.get(business_id)

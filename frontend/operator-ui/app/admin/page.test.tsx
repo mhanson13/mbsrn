@@ -8,6 +8,21 @@ type OperatorContextMockValue = {
   error: string | null;
   token: string;
   businessId: string;
+  sites: Array<{
+    id: string;
+    business_id: string;
+    display_name: string;
+    base_url: string;
+    normalized_domain: string;
+    is_active: boolean;
+    is_primary: boolean;
+    last_audit_run_id: string | null;
+    last_audit_status: string | null;
+    last_audit_completed_at: string | null;
+  }>;
+  selectedSiteId: string | null;
+  setSelectedSiteId: jest.Mock;
+  refreshSites: jest.Mock;
 };
 
 const mockUseOperatorContext = jest.fn<OperatorContextMockValue, []>();
@@ -28,6 +43,10 @@ describe("admin route", () => {
       error: null,
       token: "token-1",
       businessId: "biz-1",
+      sites: [],
+      selectedSiteId: null,
+      setSelectedSiteId: jest.fn(),
+      refreshSites: jest.fn(),
     });
     mockUseAuth.mockReturnValue({
       principal: {

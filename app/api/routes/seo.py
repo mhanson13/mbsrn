@@ -41,6 +41,7 @@ from app.schemas.seo_audit import (
     SEOAuditRunSummaryRead,
 )
 from app.schemas.seo_site import (
+    SEOSiteAdminUpdateRequest,
     SEOSiteCreateRequest,
     SEOSiteListResponse,
     SEOSiteRead,
@@ -1437,10 +1438,18 @@ def patch_seo_site(
         tenant_context=tenant_context,
         requested_business_id=business_id,
     )
-    if payload.is_active is not None and tenant_context.principal_role != PrincipalRole.ADMIN:
+    if (
+        tenant_context.principal_role != PrincipalRole.ADMIN
+        and (
+            payload.display_name is not None
+            or payload.base_url is not None
+            or payload.is_active is not None
+            or payload.is_primary is not None
+        )
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin principals can update site activation.",
+            detail="Only admin principals can update site name, URL, activation, or primary state.",
         )
     try:
         site = seo_site_service.update_site(
@@ -1453,6 +1462,64 @@ def patch_seo_site(
     except SEOSiteValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return SEOSiteRead.model_validate(site)
+
+
+@router.patch("/admin/sites/{site_id}", response_model=SEOSiteRead)
+def patch_admin_seo_site(
+    business_id: str,
+    site_id: str,
+    payload: SEOSiteAdminUpdateRequest,
+    _: None = Depends(require_admin_rate_limit("seo_site_admin_update")),
+    _admin_principal: Principal = Depends(require_credential_manager_principal),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+) -> SEOSiteRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    update_payload_data: dict[str, str] = {}
+    if payload.name is not None:
+        update_payload_data["display_name"] = payload.name
+    if payload.url is not None:
+        update_payload_data["base_url"] = payload.url
+    update_payload = SEOSiteUpdateRequest.model_validate(update_payload_data)
+    try:
+        site = seo_site_service.update_site(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            payload=update_payload,
+        )
+    except SEOSiteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOSiteValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOSiteRead.model_validate(site)
+
+
+@router.delete("/admin/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_admin_seo_site(
+    business_id: str,
+    site_id: str,
+    _: None = Depends(require_admin_rate_limit("seo_site_admin_delete")),
+    _admin_principal: Principal = Depends(require_credential_manager_principal),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+) -> Response:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.delete_site_permanently(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    except SEOSiteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOSiteValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/sites/{site_id}/deactivate", response_model=SEOSiteRead)

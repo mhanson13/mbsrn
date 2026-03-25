@@ -1325,10 +1325,7 @@ def test_recommendation_workspace_summary_prefers_audit_page_content_for_industr
 
     patch_site = client.patch(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
-        json={
-            "display_name": "Graham's",
-            "industry": None,
-        },
+        json={"industry": None},
     )
     assert patch_site.status_code == 200
 

@@ -142,6 +142,11 @@ export interface SEOSiteUpdateRequest {
   is_primary?: boolean;
 }
 
+export interface SEOSiteAdminUpdateRequest {
+  name?: string;
+  url?: string;
+}
+
 export interface SEOSiteListResponse {
   items: SEOSite[];
   total: number;

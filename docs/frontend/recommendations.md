@@ -207,6 +207,19 @@ Behavior:
 - override persistence is business-level (stored on `businesses`), not global across tenants/businesses
 - competitor and recommendation resolvers both use an immutable configured fallback baseline, so preview/runtime do not drift because of mutable runtime provider fields
 
+## Admin Site Management (Destructive)
+
+The Admin page includes a compact **Site Management** table with admin-only controls to:
+- edit site name
+- edit site URL
+- permanently delete a site
+
+Delete behavior:
+- delete action requires explicit typed confirmation (site name must match)
+- action is labeled as permanent/destructive in UI
+- once confirmed, the backend permanently deletes the site and all site-owned SEO records
+- after success, site list refreshes and deleted sites disappear from the admin view
+
 ## Apply Outcome Visibility
 
 Workspace summary payloads may include optional `apply_outcome` metadata to show what changed after manual tuning apply.

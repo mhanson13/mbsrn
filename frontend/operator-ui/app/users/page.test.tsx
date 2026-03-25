@@ -1,9 +1,14 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import UsersCompatibilityPage from "./page";
 import { ApiRequestError } from "../../lib/api/client";
-import type { BusinessSettings, PrincipalIdentityListResponse, PrincipalListResponse } from "../../lib/api/types";
+import type {
+  BusinessSettings,
+  PrincipalIdentityListResponse,
+  PrincipalListResponse,
+  SEOSite,
+} from "../../lib/api/types";
 import {
   COMPETITOR_DIRECTORY_PENALTY_MIN,
   COMPETITOR_DIRECTORY_PENALTY_MAX,
@@ -18,6 +23,10 @@ type OperatorContextMockValue = {
   error: string | null;
   token: string;
   businessId: string;
+  sites: SEOSite[];
+  selectedSiteId: string | null;
+  setSelectedSiteId: jest.Mock;
+  refreshSites: jest.Mock<Promise<SEOSite[]>, []>;
 };
 
 const mockUseOperatorContext = jest.fn<OperatorContextMockValue, []>();
@@ -32,6 +41,8 @@ const mockDeactivatePrincipal = jest.fn<Promise<unknown>, unknown[]>();
 const mockActivatePrincipal = jest.fn<Promise<unknown>, unknown[]>();
 const mockDeactivatePrincipalIdentity = jest.fn<Promise<unknown>, unknown[]>();
 const mockActivatePrincipalIdentity = jest.fn<Promise<unknown>, unknown[]>();
+const mockUpdateAdminSite = jest.fn<Promise<SEOSite>, unknown[]>();
+const mockDeleteAdminSite = jest.fn<Promise<void>, unknown[]>();
 const INVALID_CRAWL_BELOW_MIN = CRAWL_PAGE_LIMIT_MIN - 1;
 const INVALID_CRAWL_ABOVE_MAX = CRAWL_PAGE_LIMIT_MAX + 1;
 const INVALID_PERSISTED_CRAWL_VALUE = CRAWL_PAGE_LIMIT_MAX + 50;
@@ -65,8 +76,26 @@ jest.mock("../../lib/api/client", () => {
     activatePrincipal: (...args: unknown[]) => mockActivatePrincipal(...args),
     deactivatePrincipalIdentity: (...args: unknown[]) => mockDeactivatePrincipalIdentity(...args),
     activatePrincipalIdentity: (...args: unknown[]) => mockActivatePrincipalIdentity(...args),
+    updateAdminSite: (...args: unknown[]) => mockUpdateAdminSite(...args),
+    deleteAdminSite: (...args: unknown[]) => mockDeleteAdminSite(...args),
   };
 });
+
+function buildSite(overrides: Partial<SEOSite> = {}): SEOSite {
+  return {
+    id: "site-1",
+    business_id: "biz-1",
+    display_name: "Main Site",
+    base_url: "https://example.com/",
+    normalized_domain: "example.com",
+    is_active: true,
+    is_primary: true,
+    last_audit_run_id: null,
+    last_audit_status: null,
+    last_audit_completed_at: null,
+    ...overrides,
+  };
+}
 
 function baseOperatorContext(overrides: Partial<OperatorContextMockValue> = {}): OperatorContextMockValue {
   return {
@@ -74,6 +103,10 @@ function baseOperatorContext(overrides: Partial<OperatorContextMockValue> = {}):
     error: null,
     token: "token-1",
     businessId: "biz-1",
+    sites: [buildSite()],
+    selectedSiteId: "site-1",
+    setSelectedSiteId: jest.fn(),
+    refreshSites: jest.fn<Promise<SEOSite[]>, []>().mockResolvedValue([buildSite()]),
     ...overrides,
   };
 }
@@ -1057,5 +1090,42 @@ describe("admin page compatibility route", () => {
     );
     await screen.findByText("AI prompt overrides cleared. Deployment fallback/default is now active.");
     expect(screen.getAllByText("Deployment/default fallback")).toHaveLength(2);
+  });
+
+  it("renders admin site edit and permanent delete controls", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    expect(screen.getByRole("heading", { name: "Site Management" })).toBeInTheDocument();
+    const siteRow = screen.getByText("example.com").closest("tr");
+    expect(siteRow).not.toBeNull();
+    const scoped = within(siteRow as HTMLTableRowElement);
+    expect(scoped.getByRole("button", { name: "Save" })).toBeInTheDocument();
+    expect(scoped.getByRole("button", { name: "Delete Permanently" })).toBeInTheDocument();
+  });
+
+  it("requires typed confirmation for permanent delete and removes the site from view", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+    const contextValue = baseOperatorContext({ sites: [buildSite()] });
+    contextValue.refreshSites.mockImplementation(async () => {
+      contextValue.sites = [];
+      return [];
+    });
+    mockUseOperatorContext.mockImplementation(() => contextValue);
+    mockDeleteAdminSite.mockResolvedValueOnce();
+    const promptSpy = jest.spyOn(window, "prompt").mockReturnValue("Main Site");
+
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    fireEvent.click(screen.getByRole("button", { name: "Delete Permanently" }));
+
+    await waitFor(() => expect(mockDeleteAdminSite).toHaveBeenCalledWith("token-1", "biz-1", "site-1"));
+    await waitFor(() => expect(screen.getByText("No sites found for this business.")).toBeInTheDocument());
+    promptSpy.mockRestore();
   });
 });
