@@ -230,6 +230,9 @@ def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
     }
     assert isinstance(raw_debug_payload.get("request_debug"), dict)
     assert raw_debug_payload["request_debug"]["prompt_total_chars"] >= 1
+    assert raw_debug_payload["request_debug"]["timeout_seconds"] == provider.timeout_seconds
+    assert isinstance(raw_debug_payload["request_debug"]["web_search_enabled"], bool)
+    assert raw_debug_payload["request_debug"]["request_duration_ms"] >= 0
 
 
 def test_openai_provider_auth_error_is_normalized(monkeypatch) -> None:

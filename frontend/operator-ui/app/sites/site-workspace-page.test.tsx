@@ -4624,6 +4624,34 @@ describe("site workspace ai competitor profile drafts", () => {
         big_box_mismatch_penalty: 1,
         insufficient_local_alignment: 1,
       },
+      provider_attempt_count: 2,
+      provider_degraded_retry_used: true,
+      provider_attempts: [
+        {
+          attempt_number: 1,
+          degraded_mode: false,
+          requested_candidate_count: 5,
+          outcome: "timeout",
+          failure_kind: "timeout",
+          request_duration_ms: 30250,
+          timeout_seconds: 30,
+          web_search_enabled: true,
+          prompt_size_risk: "normal",
+          endpoint_path: "/responses",
+        },
+        {
+          attempt_number: 2,
+          degraded_mode: true,
+          requested_candidate_count: 3,
+          outcome: "success",
+          failure_kind: null,
+          request_duration_ms: 5400,
+          timeout_seconds: 30,
+          web_search_enabled: true,
+          prompt_size_risk: "normal",
+          endpoint_path: "/responses",
+        },
+      ],
     });
 
     render(<SiteWorkspacePage />);
@@ -4658,6 +4686,14 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(within(tuningDebug).getByText("directory or aggregator penalty")).toBeInTheDocument();
     expect(within(tuningDebug).getByText("big box mismatch penalty")).toBeInTheDocument();
     expect(within(tuningDebug).getByText("Showing 2 of 3 removed-by-tuning candidates.")).toBeInTheDocument();
+
+    const providerAttemptsDebug = screen.getByTestId("competitor-provider-attempts-debug");
+    expect(within(providerAttemptsDebug).getByText(/Provider attempts \(debug\)/i)).toBeInTheDocument();
+    expect(within(providerAttemptsDebug).getByText(/: 2/)).toBeInTheDocument();
+    expect(within(providerAttemptsDebug).getByText("Degraded timeout retry used: yes")).toBeInTheDocument();
+    expect(within(providerAttemptsDebug).getByText("degraded_retry")).toBeInTheDocument();
+    expect(within(providerAttemptsDebug).getByText("Success")).toBeInTheDocument();
+    expect(within(providerAttemptsDebug).getByText("timeout")).toBeInTheDocument();
   });
 
   it("triggers generation and refreshes visible drafts", async () => {

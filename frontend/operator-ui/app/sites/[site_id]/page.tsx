@@ -37,6 +37,7 @@ import type {
   CompetitorCandidatePipelineSummary,
   CompetitorContextHealth,
   CompetitorComparisonRun,
+  CompetitorProviderAttemptDebug,
   CompetitorProfileDraft,
   CompetitorProfileGenerationRun,
   CompetitorProfileGenerationSummaryResponse,
@@ -81,6 +82,7 @@ const COMPETITOR_PROFILE_POLL_INTERVAL_MS = 2000;
 const COMPETITOR_PROFILE_POLL_MAX_ATTEMPTS = 30;
 const MAX_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
 const MAX_TUNING_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
+const MAX_PROVIDER_ATTEMPT_DEBUG_ROWS = 2;
 const ZIP_PROMPT_SESSION_KEY_PREFIX = "workspace:zip-prompt-dismissed";
 
 type SiteTimelineEventType =
@@ -443,6 +445,61 @@ function normalizeCompetitorCandidatePipelineSummary(
     removed_by_final_limit_count: removedByFinalLimit,
     final_candidate_count: finalCount,
   };
+}
+
+function normalizeCompetitorProviderAttempts(
+  value: CompetitorProviderAttemptDebug[] | null | undefined,
+): CompetitorProviderAttemptDebug[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((attempt) => {
+      const attemptNumber = Math.max(1, Number(attempt.attempt_number || 1));
+      const requestedCandidateCount = Math.max(1, Number(attempt.requested_candidate_count || 1));
+      const outcome = truncateOptionalText(attempt.outcome, 64) || "success";
+      const failureKind = truncateOptionalText(attempt.failure_kind, 64);
+      const requestDurationRaw = Number(attempt.request_duration_ms);
+      const requestDurationMs = Number.isFinite(requestDurationRaw) ? Math.max(0, requestDurationRaw) : null;
+      const timeoutRaw = Number(attempt.timeout_seconds);
+      const timeoutSeconds = Number.isFinite(timeoutRaw) ? Math.max(1, timeoutRaw) : null;
+      const endpointPath = truncateOptionalText(attempt.endpoint_path, 64);
+      const promptSizeRisk = truncateOptionalText(attempt.prompt_size_risk, 32);
+      const webSearchEnabled =
+        typeof attempt.web_search_enabled === "boolean" ? attempt.web_search_enabled : null;
+      return {
+        attempt_number: attemptNumber,
+        degraded_mode: Boolean(attempt.degraded_mode),
+        requested_candidate_count: requestedCandidateCount,
+        outcome,
+        failure_kind: failureKind,
+        request_duration_ms: requestDurationMs,
+        timeout_seconds: timeoutSeconds,
+        web_search_enabled: webSearchEnabled,
+        prompt_size_risk: promptSizeRisk,
+        endpoint_path: endpointPath,
+      };
+    })
+    .sort((left, right) => left.attempt_number - right.attempt_number)
+    .slice(0, MAX_PROVIDER_ATTEMPT_DEBUG_ROWS);
+}
+
+function formatProviderAttemptOutcome(
+  outcome: string | null | undefined,
+  failureKind: string | null | undefined,
+): string {
+  const normalizedOutcome = (outcome || "").trim().toLowerCase();
+  if (normalizedOutcome === "success") {
+    return "Success";
+  }
+  const normalizedFailureKind = (failureKind || "").trim().toLowerCase();
+  if (normalizedFailureKind) {
+    return formatFailureCategory(normalizedFailureKind);
+  }
+  if (normalizedOutcome) {
+    return formatFailureCategory(normalizedOutcome);
+  }
+  return "Unknown";
 }
 
 function formatTuningSettingLabel(setting: RecommendationTuningSuggestion["setting"]): string {
@@ -1753,6 +1810,9 @@ export default function SiteWorkspacePage() {
     TuningRejectedCompetitorCandidateDebug[]
   >([]);
   const [tuningRejectionReasonCounts, setTuningRejectionReasonCounts] = useState<Record<string, number>>({});
+  const [competitorProviderAttemptCount, setCompetitorProviderAttemptCount] = useState(0);
+  const [competitorProviderDegradedRetryUsed, setCompetitorProviderDegradedRetryUsed] = useState(false);
+  const [competitorProviderAttempts, setCompetitorProviderAttempts] = useState<CompetitorProviderAttemptDebug[]>([]);
   const [competitorCandidatePipelineSummary, setCompetitorCandidatePipelineSummary] =
     useState<CompetitorCandidatePipelineSummary | null>(null);
   const [competitorProfileLoading, setCompetitorProfileLoading] = useState(false);
@@ -2647,6 +2707,9 @@ export default function SiteWorkspacePage() {
       setCompetitorCandidatePipelineSummary(
         normalizeCompetitorCandidatePipelineSummary(detail.candidate_pipeline_summary),
       );
+      setCompetitorProviderAttemptCount(Math.max(0, detail.provider_attempt_count || 0));
+      setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
+      setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
       setCompetitorProfileActionMessage(
         "Competitor profile generation queued. Drafts will appear after the run completes.",
       );
@@ -2697,6 +2760,9 @@ export default function SiteWorkspacePage() {
       setCompetitorCandidatePipelineSummary(
         normalizeCompetitorCandidatePipelineSummary(detail.candidate_pipeline_summary),
       );
+      setCompetitorProviderAttemptCount(Math.max(0, detail.provider_attempt_count || 0));
+      setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
+      setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
       setCompetitorProfileActionMessage(
         "Retry queued. Drafts will appear after the run completes.",
       );
@@ -3062,6 +3128,9 @@ export default function SiteWorkspacePage() {
       setTuningRejectedCompetitorCandidates([]);
       setTuningRejectionReasonCounts({});
       setCompetitorCandidatePipelineSummary(null);
+      setCompetitorProviderAttemptCount(0);
+      setCompetitorProviderDegradedRetryUsed(false);
+      setCompetitorProviderAttempts([]);
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
       setCompetitorProfileSummaryError(null);
@@ -3127,6 +3196,9 @@ export default function SiteWorkspacePage() {
       setTuningRejectedCompetitorCandidates([]);
       setTuningRejectionReasonCounts({});
       setCompetitorCandidatePipelineSummary(null);
+      setCompetitorProviderAttemptCount(0);
+      setCompetitorProviderDegradedRetryUsed(false);
+      setCompetitorProviderAttempts([]);
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
       setCompetitorProfileSummaryError(null);
@@ -3184,6 +3256,9 @@ export default function SiteWorkspacePage() {
       setTuningRejectedCompetitorCandidates([]);
       setTuningRejectionReasonCounts({});
       setCompetitorCandidatePipelineSummary(null);
+      setCompetitorProviderAttemptCount(0);
+      setCompetitorProviderDegradedRetryUsed(false);
+      setCompetitorProviderAttempts([]);
 
       const [
         auditResult,
@@ -3431,6 +3506,9 @@ export default function SiteWorkspacePage() {
             setCompetitorCandidatePipelineSummary(
               normalizeCompetitorCandidatePipelineSummary(detail.candidate_pipeline_summary),
             );
+            setCompetitorProviderAttemptCount(Math.max(0, detail.provider_attempt_count || 0));
+            setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
+            setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
             setCompetitorProfileError(null);
           } catch (error) {
             if (cancelled) {
@@ -3443,6 +3521,9 @@ export default function SiteWorkspacePage() {
             setTuningRejectedCompetitorCandidates([]);
             setTuningRejectionReasonCounts({});
             setCompetitorCandidatePipelineSummary(null);
+            setCompetitorProviderAttemptCount(0);
+            setCompetitorProviderDegradedRetryUsed(false);
+            setCompetitorProviderAttempts([]);
             setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", error));
           } finally {
             if (!cancelled) {
@@ -3457,6 +3538,9 @@ export default function SiteWorkspacePage() {
           setTuningRejectedCompetitorCandidates([]);
           setTuningRejectionReasonCounts({});
           setCompetitorCandidatePipelineSummary(null);
+          setCompetitorProviderAttemptCount(0);
+          setCompetitorProviderDegradedRetryUsed(false);
+          setCompetitorProviderAttempts([]);
           setCompetitorProfileLoading(false);
         }
       } else {
@@ -3469,6 +3553,9 @@ export default function SiteWorkspacePage() {
         setTuningRejectedCompetitorCandidates([]);
         setTuningRejectionReasonCounts({});
         setCompetitorCandidatePipelineSummary(null);
+        setCompetitorProviderAttemptCount(0);
+        setCompetitorProviderDegradedRetryUsed(false);
+        setCompetitorProviderAttempts([]);
         setCompetitorProfileLoading(false);
         setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", competitorProfileRunsResult.reason));
       }
@@ -3564,6 +3651,9 @@ export default function SiteWorkspacePage() {
           setTuningRejectedCompetitorCandidates([]);
           setTuningRejectionReasonCounts({});
           setCompetitorCandidatePipelineSummary(null);
+          setCompetitorProviderAttemptCount(0);
+          setCompetitorProviderDegradedRetryUsed(false);
+          setCompetitorProviderAttempts([]);
           setCompetitorProfilePolling(false);
           return;
         }
@@ -3591,6 +3681,9 @@ export default function SiteWorkspacePage() {
         setCompetitorCandidatePipelineSummary(
           normalizeCompetitorCandidatePipelineSummary(detail.candidate_pipeline_summary),
         );
+        setCompetitorProviderAttemptCount(Math.max(0, detail.provider_attempt_count || 0));
+        setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
+        setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
         setCompetitorProfileError(null);
         if (isCompetitorProfileRunTerminalStatus(detail.run.status)) {
           setCompetitorProfilePolling(false);
@@ -3606,6 +3699,9 @@ export default function SiteWorkspacePage() {
         setTuningRejectedCompetitorCandidates([]);
         setTuningRejectionReasonCounts({});
         setCompetitorCandidatePipelineSummary(null);
+        setCompetitorProviderAttemptCount(0);
+        setCompetitorProviderDegradedRetryUsed(false);
+        setCompetitorProviderAttempts([]);
         setCompetitorProfilePolling(false);
       } finally {
         inFlight = false;
@@ -4458,6 +4554,63 @@ export default function SiteWorkspacePage() {
               Removed by final limit: {competitorCandidatePipelineSummary.removed_by_final_limit_count}
             </p>
             <p className="hint muted">Final returned: {competitorCandidatePipelineSummary.final_candidate_count}</p>
+          </div>
+        ) : null}
+        {competitorProviderAttemptCount > 0 && competitorProviderAttempts.length > 0 ? (
+          <div className="stack" data-testid="competitor-provider-attempts-debug">
+            <p className="hint muted">
+              <strong>Provider attempts (debug)</strong>: {competitorProviderAttemptCount}
+            </p>
+            <p className="hint muted">
+              Degraded timeout retry used: {competitorProviderDegradedRetryUsed ? "yes" : "no"}
+            </p>
+            <div className="table-container table-container-compact">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Attempt</th>
+                    <th>Mode</th>
+                    <th>Outcome</th>
+                    <th>Duration</th>
+                    <th>Timeout</th>
+                    <th>Endpoint</th>
+                    <th>Web search</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {competitorProviderAttempts.map((attempt) => (
+                    <tr key={`provider-attempt-${attempt.attempt_number}`}>
+                      <td>{attempt.attempt_number}</td>
+                      <td>{attempt.degraded_mode ? "degraded_retry" : "standard"}</td>
+                      <td>{formatProviderAttemptOutcome(attempt.outcome, attempt.failure_kind)}</td>
+                      <td>
+                        {typeof attempt.request_duration_ms === "number"
+                          ? `${Math.max(0, Math.round(attempt.request_duration_ms))} ms`
+                          : "-"}
+                      </td>
+                      <td>
+                        {typeof attempt.timeout_seconds === "number"
+                          ? `${Math.max(1, Math.round(attempt.timeout_seconds))} s`
+                          : "-"}
+                      </td>
+                      <td>{attempt.endpoint_path || "-"}</td>
+                      <td>
+                        {attempt.web_search_enabled === null
+                          ? "-"
+                          : attempt.web_search_enabled
+                            ? "enabled"
+                            : "disabled"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {competitorProviderAttemptCount > competitorProviderAttempts.length ? (
+              <p className="hint muted">
+                Showing {competitorProviderAttempts.length} of {competitorProviderAttemptCount} provider attempts.
+              </p>
+            ) : null}
           </div>
         ) : null}
         {latestCompetitorProfileRun?.parent_run_id ? (

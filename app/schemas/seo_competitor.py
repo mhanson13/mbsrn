@@ -375,6 +375,34 @@ class SEOCompetitorProfileCandidatePipelineSummaryRead(BaseModel):
     final_candidate_count: int = Field(ge=0)
 
 
+class SEOCompetitorProfileProviderAttemptRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    attempt_number: int = Field(ge=1)
+    degraded_mode: bool = False
+    requested_candidate_count: int = Field(ge=1)
+    outcome: str = Field(min_length=1, max_length=64)
+    failure_kind: str | None = Field(default=None, max_length=64)
+    request_duration_ms: int | None = Field(default=None, ge=0)
+    timeout_seconds: int | None = Field(default=None, ge=1)
+    web_search_enabled: bool | None = None
+    prompt_size_risk: str | None = Field(default=None, max_length=32)
+    endpoint_path: str | None = Field(default=None, max_length=64)
+
+    @field_validator("outcome", mode="before")
+    @classmethod
+    def normalize_outcome(cls, value: Any) -> str:
+        cleaned = _strip_or_none(str(value) if value is not None else None)
+        if cleaned is None:
+            return "success"
+        return cleaned[:64]
+
+    @field_validator("failure_kind", "prompt_size_risk", "endpoint_path", mode="before")
+    @classmethod
+    def normalize_optional_compact_strings(cls, value: Any) -> str | None:
+        return _strip_or_none(str(value) if value is not None else None)
+
+
 class SEOCompetitorProfileTuningRejectedCandidateRead(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
@@ -439,6 +467,9 @@ class SEOCompetitorProfileGenerationRunDetailRead(BaseModel):
     tuning_rejected_candidates: list[SEOCompetitorProfileTuningRejectedCandidateRead] = Field(default_factory=list)
     tuning_rejection_reason_counts: dict[SEOCompetitorProfileTuningExclusionReason, int] = Field(default_factory=dict)
     candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummaryRead | None = None
+    provider_attempt_count: int = Field(default=0, ge=0)
+    provider_degraded_retry_used: bool = False
+    provider_attempts: list[SEOCompetitorProfileProviderAttemptRead] = Field(default_factory=list)
 
     @field_validator("tuning_rejection_reason_counts", mode="before")
     @classmethod

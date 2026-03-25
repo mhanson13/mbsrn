@@ -163,6 +163,40 @@ Operator interpretation guidance:
 - `timeout` with `high`/`elevated` prompt-size risk usually indicates latency pressure; rerun is safe and context trimming is already applied.
 - `provider_request` indicates a provider-side request failure (for example invalid or rejected request payload) and should be investigated with the bounded error code/message metadata.
 
+## Timeout Retry Hardening
+
+Competitor generation now applies a bounded timeout-only retry at the service layer:
+
+- first provider attempt uses the requested candidate count
+- retry triggers only when the first attempt is classified as `timeout`
+- exactly one retry is allowed
+- second attempt runs in deterministic degraded mode with a lower candidate-count target
+- non-timeout failures (`provider_request`, auth/config, malformed output) do not retry
+
+Degraded retry intent:
+- reduce request cost under provider/web-search latency
+- preserve core business/location/service context
+- avoid duplicate run artifacts or duplicate draft persistence
+
+## Provider Attempt Debug Metadata
+
+Competitor run detail debug payloads can include bounded provider-attempt telemetry:
+
+- `provider_attempt_count`
+- `provider_degraded_retry_used`
+- `provider_attempts[]` with compact fields such as:
+  - `attempt_number`
+  - `degraded_mode`
+  - `requested_candidate_count`
+  - `outcome` / `failure_kind`
+  - `request_duration_ms`
+  - `timeout_seconds`
+  - `endpoint_path`
+  - `web_search_enabled`
+  - `prompt_size_risk`
+
+This metadata is debug-oriented only and does not change ranking/scoring behavior.
+
 ## Competitor Prompt Context Hardening
 
 Competitor prompt context now prefers structured business/site metadata before any heuristic fallback.

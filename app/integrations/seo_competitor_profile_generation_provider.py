@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import logging
 import socket
+import time
 import urllib.error
 import urllib.request
 
@@ -362,11 +363,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "Content-Type": "application/json",
             },
         )
+        request_started_at = time.perf_counter()
 
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 return response.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
+            request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
             body_text = exc.read().decode("utf-8", errors="replace")
             error_type, error_code, error_message = self._extract_provider_error_details(body_text)
             logger.warning(
@@ -403,6 +406,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                         failure_kind="timeout",
                         request_debug=request_debug,
                         provider_error_body=body_text,
+                        request_duration_ms=request_duration_ms,
                     ),
                 ) from exc
             raise self._provider_error(
@@ -413,9 +417,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     failure_kind="provider_request",
                     request_debug=request_debug,
                     provider_error_body=body_text,
+                    request_duration_ms=request_duration_ms,
                 ),
             ) from exc
         except (TimeoutError, socket.timeout) as exc:
+            request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
             logger.warning(
                 (
                     "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s reason=%s "
@@ -437,9 +443,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     failure_kind="timeout",
                     request_debug=request_debug,
                     provider_error_body=str(exc),
+                    request_duration_ms=request_duration_ms,
                 ),
             ) from exc
         except urllib.error.URLError as exc:
+            request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
             if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
                 logger.warning(
                     (
@@ -462,6 +470,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                         failure_kind="timeout",
                         request_debug=request_debug,
                         provider_error_body=str(exc.reason),
+                        request_duration_ms=request_duration_ms,
                     ),
                 ) from exc
             logger.warning(
@@ -485,6 +494,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     failure_kind="provider_request",
                     request_debug=request_debug,
                     provider_error_body=str(exc.reason),
+                    request_duration_ms=request_duration_ms,
                 ),
             ) from exc
 
@@ -595,12 +605,15 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             prompt_size_risk = "elevated"
         else:
             prompt_size_risk = "normal"
+        normalized_endpoint = endpoint_path.strip() or "/chat/completions"
         return {
-            "endpoint_path": endpoint_path,
+            "endpoint_path": normalized_endpoint,
             "candidate_count": max(1, int(candidate_count)),
             "prompt_total_chars": prompt_total_chars,
             "context_json_chars": context_json_chars,
             "prompt_size_risk": prompt_size_risk,
+            "timeout_seconds": self.timeout_seconds,
+            "web_search_enabled": normalized_endpoint == "/responses",
         }
 
     def _build_request_failure_debug_payload(
@@ -610,6 +623,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         failure_kind: str,
         request_debug: dict[str, object] | None,
         provider_error_body: str | None,
+        request_duration_ms: int | None = None,
     ) -> str | None:
         normalized_failure_kind = (failure_kind or "").strip().lower()
         if normalized_failure_kind not in {"timeout", "provider_request"}:
@@ -624,7 +638,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "prompt_total_chars": request_debug.get("prompt_total_chars"),
                 "context_json_chars": request_debug.get("context_json_chars"),
                 "prompt_size_risk": request_debug.get("prompt_size_risk"),
+                "timeout_seconds": request_debug.get("timeout_seconds"),
+                "web_search_enabled": request_debug.get("web_search_enabled"),
             }
+        if request_duration_ms is not None:
+            payload.setdefault("request_debug", {})
+            if isinstance(payload["request_debug"], dict):
+                payload["request_debug"]["request_duration_ms"] = max(0, int(request_duration_ms))
         compact_error = _compact_log_message(_clean_optional_value(provider_error_body))
         if compact_error:
             payload["provider_error_message"] = compact_error

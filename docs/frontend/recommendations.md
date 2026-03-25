@@ -253,6 +253,20 @@ Fallback rules:
 - when `site_location_context_source` is present, render a subtle provenance line such as
   `Location source: ZIP provided` inside the same compact metadata area
 
+## Competitor Timeout Retry Debug Rendering
+
+Competitor debug panels may include additive provider-attempt telemetry:
+
+- `provider_attempt_count`
+- `provider_degraded_retry_used`
+- `provider_attempts[]` (attempt number, mode, outcome/failure kind, duration, timeout, endpoint, web-search flag)
+
+Rendering guidance:
+- keep the block compact and debug-only near existing competitor debug cards
+- show degraded retry usage as a simple yes/no line
+- hide cleanly when attempt telemetry is absent
+- do not expose raw provider payloads or stack traces
+
 ## Recommendation Progress Status Rendering
 
 Recommendation rows can include additive progress metadata:

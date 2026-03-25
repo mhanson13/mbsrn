@@ -225,6 +225,86 @@ class _TimeoutCompetitorProfileProvider:
         )
 
 
+class _TimeoutThenSuccessCompetitorProfileProvider:
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def __init__(self) -> None:
+        self.requested_candidate_counts: list[int] = []
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains
+        self.requested_candidate_counts.append(candidate_count)
+        if len(self.requested_candidate_counts) == 1:
+            raise SEOCompetitorProfileProviderError(
+                code="timeout",
+                safe_message="provider timeout",
+                provider_name=self.provider_name,
+                model_name=self.model_name,
+                prompt_version=self.prompt_version,
+                raw_output=(
+                    "{\"failure_kind\":\"timeout\",\"endpoint_path\":\"/responses\","
+                    "\"request_debug\":{\"request_duration_ms\":30500,\"timeout_seconds\":30,"
+                    "\"web_search_enabled\":true,\"prompt_size_risk\":\"normal\"}}"
+                ),
+            )
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Recovered Competitor",
+                    suggested_domain="recovered-competitor.example",
+                    competitor_type="direct",
+                    summary="Recovered on timeout retry.",
+                    why_competitor="Recovered deterministic retry output.",
+                    evidence="Retry path worked.",
+                    confidence_score=0.82,
+                )
+            ],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response="{\"candidates\":[{\"name\":\"Recovered Competitor\"}]}",
+        )
+
+
+class _ProviderRequestFailureObservingProvider:
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def __init__(self) -> None:
+        self.requested_candidate_counts: list[int] = []
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains
+        self.requested_candidate_counts.append(candidate_count)
+        raise SEOCompetitorProfileProviderError(
+            code="provider_request",
+            safe_message="provider request failed",
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_output=(
+                "{\"failure_kind\":\"provider_request\",\"endpoint_path\":\"/responses\","
+                "\"request_debug\":{\"request_duration_ms\":2200,\"timeout_seconds\":30,"
+                "\"web_search_enabled\":true,\"prompt_size_risk\":\"normal\"}}"
+            ),
+        )
+
+
 class _ProviderAuthCompetitorProfileProvider:
     provider_name = "openai"
     model_name = "gpt-4.1-mini"
@@ -1004,6 +1084,17 @@ def test_timeout_provider_failure_marks_run_failed_safely(db_session, seeded_bus
     assert payload["run"]["provider_name"] == "openai"
     assert payload["run"]["model_name"] == "gpt-4.1-mini"
     assert payload["run"]["failure_category"] == "timeout"
+    assert payload["provider_attempt_count"] == 2
+    assert payload["provider_degraded_retry_used"] is True
+    assert len(payload["provider_attempts"]) == 2
+    assert payload["provider_attempts"][0]["attempt_number"] == 1
+    assert payload["provider_attempts"][0]["degraded_mode"] is False
+    assert payload["provider_attempts"][0]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][1]["attempt_number"] == 2
+    assert payload["provider_attempts"][1]["degraded_mode"] is True
+    assert payload["provider_attempts"][1]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][0]["requested_candidate_count"] == 2
+    assert payload["provider_attempts"][1]["requested_candidate_count"] == 1
     persisted_run = (
         db_session.query(SEOCompetitorProfileGenerationRun)
         .filter(SEOCompetitorProfileGenerationRun.business_id == seeded_business.id)
@@ -1044,6 +1135,91 @@ def test_provider_auth_failure_marks_run_failed_safely(db_session, seeded_busine
     assert payload["run"]["provider_name"] == "openai"
     assert payload["run"]["model_name"] == "gpt-4.1-mini"
     assert payload["run"]["failure_category"] == "provider_config"
+    assert payload["provider_attempt_count"] == 1
+    assert payload["provider_degraded_retry_used"] is False
+    assert len(payload["provider_attempts"]) == 1
+    assert payload["provider_attempts"][0]["attempt_number"] == 1
+    assert payload["provider_attempts"][0]["degraded_mode"] is False
+    assert payload["provider_attempts"][0]["failure_kind"] in {"unknown", None}
+
+
+def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id, candidate_count=5)
+    run_id = created["run"]["id"]
+    provider = _TimeoutThenSuccessCompetitorProfileProvider()
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["generated_draft_count"] == 1
+    assert payload["total_drafts"] == 1
+    assert payload["provider_attempt_count"] == 2
+    assert payload["provider_degraded_retry_used"] is True
+    assert len(payload["provider_attempts"]) == 2
+    assert payload["provider_attempts"][0]["attempt_number"] == 1
+    assert payload["provider_attempts"][0]["degraded_mode"] is False
+    assert payload["provider_attempts"][0]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][1]["attempt_number"] == 2
+    assert payload["provider_attempts"][1]["degraded_mode"] is True
+    assert payload["provider_attempts"][1]["outcome"] == "success"
+    assert payload["provider_attempts"][1]["requested_candidate_count"] == 3
+    assert provider.requested_candidate_counts == [5, 3]
+
+
+def test_non_timeout_provider_failure_does_not_retry(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id, candidate_count=5)
+    run_id = created["run"]["id"]
+    provider = _ProviderRequestFailureObservingProvider()
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "failed"
+    assert payload["run"]["failure_category"] == "provider_request"
+    assert payload["provider_attempt_count"] == 1
+    assert payload["provider_degraded_retry_used"] is False
+    assert len(payload["provider_attempts"]) == 1
+    assert payload["provider_attempts"][0]["attempt_number"] == 1
+    assert payload["provider_attempts"][0]["degraded_mode"] is False
+    assert payload["provider_attempts"][0]["failure_kind"] == "provider_request"
+    assert provider.requested_candidate_counts == [5]
 
 
 def test_list_runs_reconciles_stale_queued_and_running_runs(db_session, seeded_business) -> None:

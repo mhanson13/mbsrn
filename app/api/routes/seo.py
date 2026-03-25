@@ -2902,6 +2902,9 @@ def _to_competitor_profile_generation_run_detail_response(
     tuning_rejected_candidates=None,
     tuning_rejection_reason_counts=None,
     candidate_pipeline_summary=None,
+    provider_attempt_count: int = 0,
+    provider_degraded_retry_used: bool = False,
+    provider_attempts=None,
 ) -> SEOCompetitorProfileGenerationRunDetailRead:
     serialized_drafts = [SEOCompetitorProfileDraftRead.model_validate(item) for item in drafts]
     serialized_rejected_candidates = [
@@ -2930,6 +2933,9 @@ def _to_competitor_profile_generation_run_detail_response(
             if candidate_pipeline_summary is not None
             else None
         ),
+        provider_attempt_count=max(0, int(provider_attempt_count)),
+        provider_degraded_retry_used=bool(provider_degraded_retry_used),
+        provider_attempts=list(provider_attempts or []),
     )
 
 
@@ -2991,6 +2997,9 @@ def create_competitor_profile_generation_run(
         tuning_rejected_candidates=result.tuning_rejected_candidates,
         tuning_rejection_reason_counts=result.tuning_rejection_reason_counts,
         candidate_pipeline_summary=result.candidate_pipeline_summary,
+        provider_attempt_count=result.provider_attempt_count,
+        provider_degraded_retry_used=result.provider_degraded_retry_used,
+        provider_attempts=result.provider_attempts,
     )
 
 
@@ -3141,6 +3150,9 @@ def get_competitor_profile_generation_run_detail(
         tuning_rejected_candidates=detail.tuning_rejected_candidates,
         tuning_rejection_reason_counts=detail.tuning_rejection_reason_counts,
         candidate_pipeline_summary=detail.candidate_pipeline_summary,
+        provider_attempt_count=detail.provider_attempt_count,
+        provider_degraded_retry_used=detail.provider_degraded_retry_used,
+        provider_attempts=detail.provider_attempts,
     )
 
 
@@ -3202,6 +3214,9 @@ def retry_competitor_profile_generation_run(
         tuning_rejected_candidates=result.tuning_rejected_candidates,
         tuning_rejection_reason_counts=result.tuning_rejection_reason_counts,
         candidate_pipeline_summary=result.candidate_pipeline_summary,
+        provider_attempt_count=result.provider_attempt_count,
+        provider_degraded_retry_used=result.provider_degraded_retry_used,
+        provider_attempts=result.provider_attempts,
     )
 
 

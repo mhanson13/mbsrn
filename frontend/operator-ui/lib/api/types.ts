@@ -351,6 +351,19 @@ export interface CompetitorCandidatePipelineSummary {
   final_candidate_count: number;
 }
 
+export interface CompetitorProviderAttemptDebug {
+  attempt_number: number;
+  degraded_mode: boolean;
+  requested_candidate_count: number;
+  outcome: string;
+  failure_kind: string | null;
+  request_duration_ms: number | null;
+  timeout_seconds: number | null;
+  web_search_enabled: boolean | null;
+  prompt_size_risk: string | null;
+  endpoint_path: string | null;
+}
+
 export interface CompetitorProfileGenerationRunDetailResponse {
   run: CompetitorProfileGenerationRun;
   drafts: CompetitorProfileDraft[];
@@ -361,6 +374,9 @@ export interface CompetitorProfileGenerationRunDetailResponse {
   tuning_rejected_candidates?: TuningRejectedCompetitorCandidateDebug[];
   tuning_rejection_reason_counts?: Partial<Record<CompetitorCandidateTuningExclusionReason, number>>;
   candidate_pipeline_summary?: CompetitorCandidatePipelineSummary | null;
+  provider_attempt_count?: number;
+  provider_degraded_retry_used?: boolean;
+  provider_attempts?: CompetitorProviderAttemptDebug[];
 }
 
 export interface CompetitorProfileGenerationSummaryResponse {

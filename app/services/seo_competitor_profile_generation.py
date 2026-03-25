@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import json
 import logging
+import time
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -113,10 +114,16 @@ _TUNING_REJECTED_CANDIDATE_DEBUG_KEY = "tuning_rejected_candidates_debug"
 _TUNING_REJECTED_CANDIDATE_DEBUG_COUNT_KEY = "tuning_rejected_candidate_count"
 _TUNING_REJECTION_REASON_COUNTS_KEY = "tuning_rejection_reason_counts"
 _CANDIDATE_PIPELINE_SUMMARY_KEY = "candidate_pipeline_summary_debug"
+_PROVIDER_ATTEMPTS_DEBUG_KEY = "provider_attempts_debug"
+_PROVIDER_ATTEMPT_COUNT_KEY = "provider_attempt_count"
+_PROVIDER_DEGRADED_RETRY_USED_KEY = "provider_degraded_retry_used"
 _SITE_CONTENT_SIGNALS_ATTR = "_seo_site_content_signals"
 _MAX_SITE_CONTENT_SIGNAL_PAGES = 40
 _MAX_SITE_CONTENT_SIGNALS = 120
 _MAX_SITE_CONTENT_SIGNAL_LENGTH = 200
+_MAX_PROVIDER_ATTEMPTS_DEBUG_ITEMS = 2
+_TIMEOUT_RETRY_BACKOFF_SECONDS = 0.2
+_DEGRADED_RETRY_MAX_CANDIDATE_COUNT = 3
 
 FAILURE_CATEGORY_TIMEOUT = "timeout"
 FAILURE_CATEGORY_PROVIDER_AUTH = "provider_auth"
@@ -176,6 +183,9 @@ class SEOCompetitorProfileGenerationRunDetail:
     tuning_rejected_candidates: list["SEOCompetitorProfileTuningRejectedCandidateDebug"] = field(default_factory=list)
     tuning_rejection_reason_counts: dict[str, int] = field(default_factory=dict)
     candidate_pipeline_summary: "SEOCompetitorProfileCandidatePipelineSummary | None" = None
+    provider_attempt_count: int = 0
+    provider_degraded_retry_used: bool = False
+    provider_attempts: list["SEOCompetitorProfileProviderAttemptDebug"] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -216,6 +226,20 @@ class SEOCompetitorProfileCandidatePipelineSummary:
     removed_by_deduplication_count: int
     removed_by_final_limit_count: int
     final_candidate_count: int
+
+
+@dataclass(frozen=True)
+class SEOCompetitorProfileProviderAttemptDebug:
+    attempt_number: int
+    degraded_mode: bool
+    requested_candidate_count: int
+    outcome: str
+    failure_kind: str | None
+    request_duration_ms: int | None
+    timeout_seconds: int | None
+    web_search_enabled: bool | None
+    prompt_size_risk: str | None
+    endpoint_path: str | None
 
 
 @dataclass(frozen=True)
@@ -505,6 +529,7 @@ class SEOCompetitorProfileGenerationService:
         failure_category: str | None = None
         raw_output: str | None = None
         draft_result: SEOCompetitorProfileDraftBuildResult | None = None
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug] = []
 
         try:
             existing_domains = [
@@ -516,10 +541,11 @@ class SEOCompetitorProfileGenerationService:
             ]
             self._attach_site_content_signals(site=site, business_id=business_id, site_id=site_id)
             self._apply_resolved_competitor_prompt_settings(business)
-            output = self.provider.generate_competitor_profiles(
+            output = self._generate_competitor_profiles_with_timeout_retry(
                 site=site,
                 existing_domains=existing_domains,
-                candidate_count=run.requested_candidate_count,
+                requested_candidate_count=run.requested_candidate_count,
+                provider_attempts=provider_attempts,
             )
             provider_name = self._clean_required_value(output.provider_name, field_name="provider_name")
             model_name = self._clean_required_value(output.model_name, field_name="model_name")
@@ -556,6 +582,7 @@ class SEOCompetitorProfileGenerationService:
                 tuning_rejected_candidates=draft_result.tuning_rejected_candidates,
                 tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
                 candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
+                provider_attempts=provider_attempts,
             )
             raw_output = self._sanitize_raw_output(raw_output)
             run.raw_output = raw_output
@@ -622,9 +649,20 @@ class SEOCompetitorProfileGenerationService:
                 tuning_rejected_candidates=draft_result.tuning_rejected_candidates,
                 tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
                 candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
+                provider_attempt_count=max(0, len(provider_attempts)),
+                provider_degraded_retry_used=any(item.degraded_mode for item in provider_attempts),
+                provider_attempts=provider_attempts,
             )
         except SEOCompetitorProfileProviderError as exc:
             self.session.rollback()
+            failure_raw_output = self._embed_competitor_debug_in_raw_output(
+                raw_output=exc.raw_output,
+                rejected_candidates=[],
+                tuning_rejected_candidates=[],
+                tuning_rejection_reason_counts={},
+                candidate_pipeline_summary=None,
+                provider_attempts=provider_attempts,
+            )
             self._mark_run_failed(
                 business_id=business_id,
                 generation_run_id=generation_run_id,
@@ -634,7 +672,7 @@ class SEOCompetitorProfileGenerationService:
                 model_name=exc.model_name,
                 prompt_version=exc.prompt_version,
                 failure_category=self._provider_failure_category(exc),
-                raw_output=exc.raw_output,
+                raw_output=failure_raw_output,
             )
             return None
         except SEOCompetitorProfileGenerationConfigurationError as exc:
@@ -647,6 +685,7 @@ class SEOCompetitorProfileGenerationService:
                     tuning_rejected_candidates=draft_result.tuning_rejected_candidates,
                     tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
                     candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
+                    provider_attempts=provider_attempts,
                 )
             self._mark_run_failed(
                 business_id=business_id,
@@ -674,6 +713,7 @@ class SEOCompetitorProfileGenerationService:
                     tuning_rejected_candidates=draft_result.tuning_rejected_candidates,
                     tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
                     candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
+                    provider_attempts=provider_attempts,
                 )
             self._mark_run_failed(
                 business_id=business_id,
@@ -702,7 +742,20 @@ class SEOCompetitorProfileGenerationService:
                 model_name=model_name,
                 prompt_version=prompt_version,
                 failure_category=failure_category or FAILURE_CATEGORY_INTERNAL,
-                raw_output=raw_output,
+                raw_output=self._embed_competitor_debug_in_raw_output(
+                    raw_output=raw_output,
+                    rejected_candidates=draft_result.rejected_candidates if draft_result is not None else [],
+                    tuning_rejected_candidates=(
+                        draft_result.tuning_rejected_candidates if draft_result is not None else []
+                    ),
+                    tuning_rejection_reason_counts=(
+                        draft_result.tuning_rejection_reason_counts if draft_result is not None else {}
+                    ),
+                    candidate_pipeline_summary=(
+                        draft_result.candidate_pipeline_summary if draft_result is not None else None
+                    ),
+                    provider_attempts=provider_attempts,
+                ),
                 raw_candidate_count=draft_result.raw_candidate_count if draft_result else None,
                 included_candidate_count=draft_result.included_candidate_count if draft_result else None,
                 excluded_candidate_count=draft_result.excluded_candidate_count if draft_result else None,
@@ -750,6 +803,9 @@ class SEOCompetitorProfileGenerationService:
             self._extract_tuning_rejected_candidates_debug_from_raw_output(run.raw_output)
         )
         candidate_pipeline_summary = self._extract_candidate_pipeline_summary_from_raw_output(run.raw_output)
+        provider_attempt_count, provider_degraded_retry_used, provider_attempts = (
+            self._extract_provider_attempts_debug_from_raw_output(run.raw_output)
+        )
         if candidate_pipeline_summary is None:
             candidate_pipeline_summary = self._derive_candidate_pipeline_summary_from_run(run)
         return SEOCompetitorProfileGenerationRunDetail(
@@ -761,6 +817,9 @@ class SEOCompetitorProfileGenerationService:
             tuning_rejected_candidates=tuning_rejected_candidates,
             tuning_rejection_reason_counts=tuning_rejection_reason_counts,
             candidate_pipeline_summary=candidate_pipeline_summary,
+            provider_attempt_count=provider_attempt_count,
+            provider_degraded_retry_used=provider_degraded_retry_used,
+            provider_attempts=provider_attempts,
         )
 
     def build_prompt_preview(
@@ -1841,6 +1900,300 @@ class SEOCompetitorProfileGenerationService:
             return cleaned[: REJECTED_CANDIDATE_DEBUG_SUMMARY_MAX_CHARS - 3] + "..."
         return None
 
+    def _generate_competitor_profiles_with_timeout_retry(
+        self,
+        *,
+        site: SEOSite,
+        existing_domains: list[str],
+        requested_candidate_count: int,
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug],
+    ) -> SEOCompetitorProfileGenerationOutput:
+        effective_requested_count = max(1, int(requested_candidate_count))
+        first_attempt_start = time.perf_counter()
+        try:
+            output = self.provider.generate_competitor_profiles(
+                site=site,
+                existing_domains=existing_domains,
+                candidate_count=effective_requested_count,
+            )
+        except SEOCompetitorProfileProviderError as exc:
+            first_duration_ms = max(0, int((time.perf_counter() - first_attempt_start) * 1000))
+            first_attempt_debug = self._build_provider_attempt_debug(
+                attempt_number=1,
+                degraded_mode=False,
+                requested_candidate_count=effective_requested_count,
+                fallback_duration_ms=first_duration_ms,
+                provider_error=exc,
+            )
+            provider_attempts.append(first_attempt_debug)
+            if first_attempt_debug.failure_kind != "timeout":
+                raise exc
+
+            degraded_candidate_count = self._degraded_retry_candidate_count(effective_requested_count)
+            if _TIMEOUT_RETRY_BACKOFF_SECONDS > 0:
+                time.sleep(_TIMEOUT_RETRY_BACKOFF_SECONDS)
+            retry_start = time.perf_counter()
+            try:
+                output = self.provider.generate_competitor_profiles(
+                    site=site,
+                    existing_domains=existing_domains,
+                    candidate_count=degraded_candidate_count,
+                )
+            except SEOCompetitorProfileProviderError as retry_exc:
+                retry_duration_ms = max(0, int((time.perf_counter() - retry_start) * 1000))
+                provider_attempts.append(
+                    self._build_provider_attempt_debug(
+                        attempt_number=2,
+                        degraded_mode=True,
+                        requested_candidate_count=degraded_candidate_count,
+                        fallback_duration_ms=retry_duration_ms,
+                        provider_error=retry_exc,
+                    )
+                )
+                raise retry_exc
+
+            retry_duration_ms = max(0, int((time.perf_counter() - retry_start) * 1000))
+            provider_attempts.append(
+                self._build_provider_attempt_debug(
+                    attempt_number=2,
+                    degraded_mode=True,
+                    requested_candidate_count=degraded_candidate_count,
+                    fallback_duration_ms=retry_duration_ms,
+                    provider_error=None,
+                )
+            )
+            logger.info(
+                (
+                    "SEO competitor timeout retry recovered business_id=%s site_id=%s "
+                    "attempts=%s degraded_candidate_count=%s first_attempt_duration_ms=%s retry_duration_ms=%s"
+                ),
+                site.business_id,
+                site.id,
+                2,
+                degraded_candidate_count,
+                first_attempt_debug.request_duration_ms,
+                provider_attempts[-1].request_duration_ms,
+            )
+            return output
+
+        first_duration_ms = max(0, int((time.perf_counter() - first_attempt_start) * 1000))
+        provider_attempts.append(
+            self._build_provider_attempt_debug(
+                attempt_number=1,
+                degraded_mode=False,
+                requested_candidate_count=effective_requested_count,
+                fallback_duration_ms=first_duration_ms,
+                provider_error=None,
+            )
+        )
+        return output
+
+    @staticmethod
+    def _degraded_retry_candidate_count(requested_candidate_count: int) -> int:
+        normalized = max(1, int(requested_candidate_count))
+        if normalized <= 1:
+            return 1
+        return max(1, min(_DEGRADED_RETRY_MAX_CANDIDATE_COUNT, normalized - 1))
+
+    def _build_provider_attempt_debug(
+        self,
+        *,
+        attempt_number: int,
+        degraded_mode: bool,
+        requested_candidate_count: int,
+        fallback_duration_ms: int,
+        provider_error: SEOCompetitorProfileProviderError | None,
+    ) -> SEOCompetitorProfileProviderAttemptDebug:
+        failure_kind = "unknown"
+        endpoint_path: str | None = None
+        prompt_size_risk: str | None = None
+        timeout_seconds: int | None = None
+        web_search_enabled: bool | None = None
+        request_duration_ms: int | None = max(0, int(fallback_duration_ms))
+        outcome = "success"
+
+        if provider_error is not None:
+            if provider_error.code == "timeout":
+                failure_kind = "timeout"
+            elif provider_error.code == "provider_request":
+                failure_kind = "provider_request"
+            provider_debug = self._extract_provider_failure_debug(provider_error.raw_output)
+            if provider_debug is not None:
+                if provider_debug.failure_kind in {"timeout", "provider_request"}:
+                    failure_kind = provider_debug.failure_kind
+                endpoint_path = provider_debug.endpoint_path
+                prompt_size_risk = provider_debug.prompt_size_risk
+                timeout_seconds = provider_debug.timeout_seconds
+                web_search_enabled = provider_debug.web_search_enabled
+                if provider_debug.request_duration_ms is not None:
+                    request_duration_ms = provider_debug.request_duration_ms
+            outcome = failure_kind
+        return SEOCompetitorProfileProviderAttemptDebug(
+            attempt_number=max(1, int(attempt_number)),
+            degraded_mode=bool(degraded_mode),
+            requested_candidate_count=max(1, int(requested_candidate_count)),
+            outcome=outcome,
+            failure_kind=None if provider_error is None else failure_kind,
+            request_duration_ms=request_duration_ms,
+            timeout_seconds=timeout_seconds,
+            web_search_enabled=web_search_enabled,
+            prompt_size_risk=prompt_size_risk,
+            endpoint_path=endpoint_path,
+        )
+
+    @dataclass(frozen=True)
+    class _ProviderFailureDebug:
+        failure_kind: str
+        endpoint_path: str | None
+        prompt_size_risk: str | None
+        timeout_seconds: int | None
+        web_search_enabled: bool | None
+        request_duration_ms: int | None
+
+    def _extract_provider_failure_debug(self, raw_output: str | None) -> _ProviderFailureDebug | None:
+        if not raw_output:
+            return None
+        try:
+            parsed = json.loads(raw_output)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        raw_failure_kind = self._clean_optional(str(parsed.get("failure_kind") or "")) or "unknown"
+        if raw_failure_kind not in {"timeout", "provider_request"}:
+            raw_failure_kind = "unknown"
+        endpoint_path = self._clean_optional(str(parsed.get("endpoint_path") or ""))
+        request_debug = parsed.get("request_debug") if isinstance(parsed.get("request_debug"), dict) else {}
+        prompt_size_risk = self._clean_optional(str(request_debug.get("prompt_size_risk") or ""))
+        if prompt_size_risk not in {"normal", "elevated", "high"}:
+            prompt_size_risk = None
+        timeout_seconds = None
+        request_duration_ms = None
+        web_search_enabled = None
+        if isinstance(request_debug, dict):
+            try:
+                timeout_seconds = max(1, int(request_debug.get("timeout_seconds")))
+            except (TypeError, ValueError):
+                timeout_seconds = None
+            try:
+                request_duration_ms = max(0, int(request_debug.get("request_duration_ms")))
+            except (TypeError, ValueError):
+                request_duration_ms = None
+            raw_web_search_enabled = request_debug.get("web_search_enabled")
+            if isinstance(raw_web_search_enabled, bool):
+                web_search_enabled = raw_web_search_enabled
+        return self._ProviderFailureDebug(
+            failure_kind=raw_failure_kind,
+            endpoint_path=endpoint_path,
+            prompt_size_risk=prompt_size_risk,
+            timeout_seconds=timeout_seconds,
+            web_search_enabled=web_search_enabled,
+            request_duration_ms=request_duration_ms,
+        )
+
+    def _serialize_provider_attempts_for_debug(
+        self,
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug] | None,
+    ) -> list[dict[str, object]]:
+        if not provider_attempts:
+            return []
+        serialized: list[dict[str, object]] = []
+        for item in provider_attempts[:_MAX_PROVIDER_ATTEMPTS_DEBUG_ITEMS]:
+            payload: dict[str, object] = {
+                "attempt_number": max(1, int(item.attempt_number)),
+                "degraded_mode": bool(item.degraded_mode),
+                "requested_candidate_count": max(1, int(item.requested_candidate_count)),
+                "outcome": self._clean_optional(item.outcome) or "success",
+            }
+            if item.failure_kind:
+                payload["failure_kind"] = item.failure_kind
+            if item.request_duration_ms is not None:
+                payload["request_duration_ms"] = max(0, int(item.request_duration_ms))
+            if item.timeout_seconds is not None:
+                payload["timeout_seconds"] = max(1, int(item.timeout_seconds))
+            if item.web_search_enabled is not None:
+                payload["web_search_enabled"] = bool(item.web_search_enabled)
+            if item.prompt_size_risk:
+                payload["prompt_size_risk"] = item.prompt_size_risk
+            if item.endpoint_path:
+                payload["endpoint_path"] = item.endpoint_path
+            serialized.append(payload)
+        return serialized
+
+    def _extract_provider_attempts_debug_from_raw_output(
+        self,
+        raw_output: str | None,
+    ) -> tuple[int, bool, list[SEOCompetitorProfileProviderAttemptDebug]]:
+        if not raw_output:
+            return 0, False, []
+        try:
+            parsed = json.loads(raw_output)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 0, False, []
+        if not isinstance(parsed, dict):
+            return 0, False, []
+
+        raw_items = parsed.get(_PROVIDER_ATTEMPTS_DEBUG_KEY)
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug] = []
+        if isinstance(raw_items, list):
+            for raw_item in raw_items[:_MAX_PROVIDER_ATTEMPTS_DEBUG_ITEMS]:
+                if not isinstance(raw_item, dict):
+                    continue
+                attempt_number = max(1, self._coerce_int(raw_item.get("attempt_number"), default=1))
+                degraded_mode = bool(raw_item.get("degraded_mode"))
+                requested_candidate_count = max(
+                    1,
+                    self._coerce_int(raw_item.get("requested_candidate_count"), default=1),
+                )
+                outcome = self._clean_optional(str(raw_item.get("outcome") or "")) or "success"
+                failure_kind = self._clean_optional(str(raw_item.get("failure_kind") or ""))
+                if failure_kind not in {"timeout", "provider_request", "unknown"}:
+                    failure_kind = None
+                request_duration_ms: int | None = None
+                timeout_seconds: int | None = None
+                try:
+                    if raw_item.get("request_duration_ms") is not None:
+                        request_duration_ms = max(0, int(raw_item.get("request_duration_ms")))
+                except (TypeError, ValueError):
+                    request_duration_ms = None
+                try:
+                    if raw_item.get("timeout_seconds") is not None:
+                        timeout_seconds = max(1, int(raw_item.get("timeout_seconds")))
+                except (TypeError, ValueError):
+                    timeout_seconds = None
+                web_search_enabled = raw_item.get("web_search_enabled")
+                if not isinstance(web_search_enabled, bool):
+                    web_search_enabled = None
+                prompt_size_risk = self._clean_optional(str(raw_item.get("prompt_size_risk") or ""))
+                if prompt_size_risk not in {"normal", "elevated", "high"}:
+                    prompt_size_risk = None
+                endpoint_path = self._clean_optional(str(raw_item.get("endpoint_path") or ""))
+                provider_attempts.append(
+                    SEOCompetitorProfileProviderAttemptDebug(
+                        attempt_number=attempt_number,
+                        degraded_mode=degraded_mode,
+                        requested_candidate_count=requested_candidate_count,
+                        outcome=outcome,
+                        failure_kind=failure_kind,
+                        request_duration_ms=request_duration_ms,
+                        timeout_seconds=timeout_seconds,
+                        web_search_enabled=web_search_enabled,
+                        prompt_size_risk=prompt_size_risk,
+                        endpoint_path=endpoint_path,
+                    )
+                )
+
+        raw_attempt_count = parsed.get(_PROVIDER_ATTEMPT_COUNT_KEY)
+        try:
+            provider_attempt_count = max(0, int(raw_attempt_count))
+        except (TypeError, ValueError):
+            provider_attempt_count = len(provider_attempts)
+        provider_attempt_count = max(provider_attempt_count, len(provider_attempts))
+        provider_degraded_retry_used = bool(parsed.get(_PROVIDER_DEGRADED_RETRY_USED_KEY))
+        if not provider_degraded_retry_used:
+            provider_degraded_retry_used = any(item.degraded_mode for item in provider_attempts)
+        return provider_attempt_count, provider_degraded_retry_used, provider_attempts
+
     def _embed_competitor_debug_in_raw_output(
         self,
         *,
@@ -1849,23 +2202,26 @@ class SEOCompetitorProfileGenerationService:
         tuning_rejected_candidates: list[SEOCompetitorProfileTuningRejectedCandidateDebug],
         tuning_rejection_reason_counts: dict[str, int],
         candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummary | None,
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug] | None = None,
     ) -> str | None:
+        serialized_provider_attempts = self._serialize_provider_attempts_for_debug(provider_attempts)
         if (
-            not raw_output
-            or (
-                not rejected_candidates
-                and not tuning_rejected_candidates
-                and not any(value > 0 for value in tuning_rejection_reason_counts.values())
-                and candidate_pipeline_summary is None
-            )
+            not rejected_candidates
+            and not tuning_rejected_candidates
+            and not any(value > 0 for value in tuning_rejection_reason_counts.values())
+            and candidate_pipeline_summary is None
+            and not serialized_provider_attempts
         ):
             return raw_output
-        try:
-            parsed = json.loads(raw_output)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return raw_output
-        if not isinstance(parsed, dict):
-            return raw_output
+        if raw_output:
+            try:
+                parsed = json.loads(raw_output)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return raw_output
+            if not isinstance(parsed, dict):
+                return raw_output
+        else:
+            parsed = {}
 
         if rejected_candidates:
             serialized_rejected: list[dict[str, object]] = []
@@ -1899,6 +2255,10 @@ class SEOCompetitorProfileGenerationService:
         )
         if any(value > 0 for value in normalized_reason_counts.values()):
             parsed[_TUNING_REJECTION_REASON_COUNTS_KEY] = normalized_reason_counts
+        if serialized_provider_attempts:
+            parsed[_PROVIDER_ATTEMPT_COUNT_KEY] = max(0, len(provider_attempts or []))
+            parsed[_PROVIDER_DEGRADED_RETRY_USED_KEY] = any(item["degraded_mode"] for item in serialized_provider_attempts)
+            parsed[_PROVIDER_ATTEMPTS_DEBUG_KEY] = serialized_provider_attempts
         if candidate_pipeline_summary is not None:
             parsed[_CANDIDATE_PIPELINE_SUMMARY_KEY] = {
                 "proposed_candidate_count": max(0, int(candidate_pipeline_summary.proposed_candidate_count)),
