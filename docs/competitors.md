@@ -73,7 +73,12 @@ Workspace summary responses may include an optional `competitor_prompt_preview` 
 ### What is shown
 - prompt type (`competitor`)
 - model label (when available)
-- prompt version (when available)
+- prompt identity label (`resolved competitor prompt`)
+- prompt template identifier (`prompt_version`) when provided
+- prompt source (`admin_config`, `env`, `default`)
+- bounded prompt metrics (character counts) for debug sizing, including:
+  - total prompt chars
+  - context JSON chars
 - final system prompt text
 - final user prompt text
 - truncation flag when bounded output clipping is applied
@@ -87,6 +92,10 @@ Workspace summary responses may include an optional `competitor_prompt_preview` 
 ### Safety behavior
 - Preview is read-only and optional.
 - Prompt text is sanitized for control characters and bounded for UI-safe rendering.
+- Prompt assembly applies deterministic context trimming when context payload size exceeds budget:
+  - existing/excluded domain lists are capped
+  - service-area/non-competitor-hint arrays are capped
+  - context JSON is reduced conservatively without changing core prompt contract
 - When preview data is unavailable, no prompt preview block is rendered.
 
 ## Admin-Managed Prompt Overrides
@@ -135,6 +144,11 @@ Competitor provider failures now emit bounded backend log metadata to improve de
 - model name
 - provider error type/code (when provided by provider response)
 - bounded provider error message
+- bounded request-debug metadata for timeout triage:
+  - endpoint path (`/responses` or fallback `/chat/completions`)
+  - prompt char counts
+  - context char counts
+  - prompt size risk bucket (`normal`, `elevated`, `high`)
 
 Safety:
 - no secrets, auth headers, or key material are logged

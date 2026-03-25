@@ -69,3 +69,24 @@ def test_build_ai_prompt_preview_read_normalizes_prompt_source() -> None:
     )
     assert unsupported is not None
     assert unsupported.source is None
+
+
+def test_build_ai_prompt_preview_read_includes_label_and_metrics() -> None:
+    preview = build_ai_prompt_preview_read(
+        prompt_type="competitor",
+        system_prompt="system",
+        user_prompt="user",
+        prompt_label="  resolved competitor prompt  ",
+        prompt_metrics={
+            "total_prompt_chars": 3210,
+            "context_json_chars": 712,
+            "ignored": "bad",
+        },
+    )
+
+    assert preview is not None
+    assert preview.prompt_label == "resolved competitor prompt"
+    assert preview.prompt_metrics == {
+        "total_prompt_chars": 3210,
+        "context_json_chars": 712,
+    }

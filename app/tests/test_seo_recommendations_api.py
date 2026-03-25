@@ -1002,6 +1002,10 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
     assert payload["competitor_prompt_preview"]["system_prompt"]
     assert payload["competitor_prompt_preview"]["user_prompt"]
     assert payload["competitor_prompt_preview"]["source"] in {"admin_config", "env", "default"}
+    assert payload["competitor_prompt_preview"]["prompt_label"] == "resolved competitor prompt"
+    assert payload["competitor_prompt_preview"]["prompt_metrics"] is not None
+    assert payload["competitor_prompt_preview"]["prompt_metrics"]["total_prompt_chars"] > 0
+    assert payload["competitor_prompt_preview"]["prompt_metrics"]["context_json_chars"] > 0
     assert "Authorization:" not in payload["competitor_prompt_preview"]["system_prompt"]
     assert "Authorization:" not in payload["competitor_prompt_preview"]["user_prompt"]
     assert payload["recommendation_prompt_preview"] is not None
@@ -1060,6 +1064,7 @@ def test_recommendation_workspace_summary_prompt_previews_use_admin_prompt_overr
         assert recommendation_preview is not None
         assert competitor_preview["source"] == "admin_config"
         assert recommendation_preview["source"] == "admin_config"
+        assert competitor_preview["prompt_label"] == "resolved competitor prompt"
         assert "Prefer direct local competitors with service overlap." in competitor_preview["user_prompt"]
         assert "Prioritize concrete next-step recommendation guidance." in recommendation_preview["user_prompt"]
     finally:

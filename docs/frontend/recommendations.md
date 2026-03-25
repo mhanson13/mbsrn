@@ -165,6 +165,20 @@ Prompt preview cards should show prompt source attribution from API payload `sou
 
 This source label is informational/debug-only and helps confirm effective prompt resolution.
 
+### Prompt Identity and Size Metadata
+
+Prompt preview cards should prefer the additive prompt identity label when available:
+
+- `prompt_label` (for competitor previews this is a neutral `resolved competitor prompt` label)
+- optional template identifier from `prompt_version`
+
+Cards may also render compact prompt-size metadata from `prompt_metrics` when present:
+
+- total prompt chars
+- context JSON chars
+
+This keeps prompt preview trustworthy and easier to debug without exposing full prompt bodies in logs.
+
 ## Admin Prompt Overrides
 
 The Admin page includes two business-scoped prompt override textareas:

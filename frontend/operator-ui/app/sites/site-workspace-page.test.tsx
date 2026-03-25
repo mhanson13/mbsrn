@@ -3665,7 +3665,12 @@ describe("site workspace timeline controls", () => {
           user_prompt: "COMPETITOR_USER",
           model: "gpt-4o-mini",
           prompt_version: "seo-competitor-profile-v1",
+          prompt_label: "resolved competitor prompt",
           source: "admin_config",
+          prompt_metrics: {
+            total_prompt_chars: 2048,
+            context_json_chars: 640,
+          },
         }),
         recommendation_prompt_preview: buildAIPromptPreview({
           prompt_type: "recommendation",
@@ -3683,6 +3688,8 @@ describe("site workspace timeline controls", () => {
     const competitorPanel = await screen.findByTestId("competitor-prompt-preview");
     expect(within(competitorPanel).getByText("View AI prompt")).toBeInTheDocument();
     expect(within(competitorPanel).getByText(/Source: Business admin override/)).toBeInTheDocument();
+    expect(within(competitorPanel).getByText(/Prompt:\s*resolved competitor prompt/)).toBeInTheDocument();
+    expect(within(competitorPanel).getByText(/Size:\s*2048 chars/)).toBeInTheDocument();
     const recommendationPanel = await screen.findByTestId("recommendation-prompt-preview");
     expect(within(recommendationPanel).getByText(/Source: Deployment fallback/)).toBeInTheDocument();
     await user.click(within(recommendationPanel).getByText("View AI prompt"));

@@ -29,6 +29,8 @@ _PROVIDER_ERROR_PARSING = "parsing_error"
 _PROVIDER_ERROR_REQUEST = "provider_request"
 _LEGACY_PROMPT_CONFIG_KEY = "ai_prompt_text_recommendation"
 _PROVIDER_ERROR_MESSAGE_MAX_CHARS = 320
+_PROMPT_SIZE_WARN_THRESHOLD_CHARS = 10000
+_PROMPT_SIZE_HIGH_RISK_CHARS = 14000
 logger = logging.getLogger(__name__)
 
 
@@ -127,9 +129,20 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             prompt_version=self.prompt_version,
             prompt_text_competitor=self.prompt_text_competitor,
         )
+        responses_request_debug = self._build_request_debug_metadata(
+            endpoint_path="/responses",
+            candidate_count=candidate_count,
+            prompt_metrics=prompt.prompt_telemetry,
+        )
+        self._log_prompt_telemetry(responses_request_debug)
         responses_payload = self._build_responses_request_payload(
             system_prompt=prompt.system_prompt,
             user_prompt=prompt.user_prompt,
+        )
+        chat_request_debug = self._build_request_debug_metadata(
+            endpoint_path="/chat/completions",
+            candidate_count=candidate_count,
+            prompt_metrics=prompt.prompt_telemetry,
         )
         chat_payload = self._build_chat_completions_request_payload(
             system_prompt=prompt.system_prompt,
@@ -142,6 +155,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             raw_response = self._request_completion(
                 responses_payload,
                 endpoint_path="/responses",
+                request_debug=responses_request_debug,
             )
             response_json = self._parse_json_object(
                 raw_response,
@@ -171,16 +185,22 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             logger.warning(
                 (
                     "SEO competitor provider responses path failed; falling back to chat completions "
-                    "provider_name=%s model_name=%s error_code=%s safe_message=%s"
+                    "provider_name=%s model_name=%s endpoint=%s error_code=%s safe_message=%s "
+                    "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
                 ),
                 self.provider_name,
                 self.model_name,
+                responses_request_debug.get("endpoint_path"),
                 exc.code,
                 _compact_log_message(exc.safe_message),
+                responses_request_debug.get("prompt_total_chars"),
+                responses_request_debug.get("context_json_chars"),
+                responses_request_debug.get("prompt_size_risk"),
             )
             raw_response = self._request_completion(
                 chat_payload,
                 endpoint_path="/chat/completions",
+                request_debug=chat_request_debug,
             )
             response_json = self._parse_json_object(
                 raw_response,
@@ -322,7 +342,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 self.provider_name,
             )
 
-    def _request_completion(self, payload: dict[str, object], *, endpoint_path: str) -> str:
+    def _request_completion(
+        self,
+        payload: dict[str, object],
+        *,
+        endpoint_path: str,
+        request_debug: dict[str, object] | None = None,
+    ) -> str:
         normalized_endpoint = endpoint_path.strip() or "/chat/completions"
         if not normalized_endpoint.startswith("/"):
             normalized_endpoint = f"/{normalized_endpoint}"
@@ -346,7 +372,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             logger.warning(
                 (
                     "SEO competitor provider HTTP error status=%s provider_name=%s model_name=%s "
-                    "endpoint=%s error_type=%s error_code=%s error_message=%s"
+                    "endpoint=%s error_type=%s error_code=%s error_message=%s "
+                    "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
                 ),
                 exc.code,
                 self.provider_name,
@@ -355,6 +382,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 error_type,
                 error_code,
                 error_message,
+                request_debug.get("prompt_total_chars") if request_debug else None,
+                request_debug.get("context_json_chars") if request_debug else None,
+                request_debug.get("prompt_size_risk") if request_debug else None,
             )
             if exc.code in {401, 403}:
                 raise self._provider_error(
@@ -368,48 +398,89 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_TIMEOUT,
                     safe_message="Competitor profile generation timed out while calling the AI provider.",
-                    raw_output=body_text,
+                    raw_output=self._build_request_failure_debug_payload(
+                        endpoint_path=normalized_endpoint,
+                        request_debug=request_debug,
+                        provider_error_body=body_text,
+                    ),
                 ) from exc
             raise self._provider_error(
                 code=_PROVIDER_ERROR_REQUEST,
                 safe_message="Competitor profile generation provider request failed.",
-                raw_output=body_text,
+                raw_output=self._build_request_failure_debug_payload(
+                    endpoint_path=normalized_endpoint,
+                    request_debug=request_debug,
+                    provider_error_body=body_text,
+                ),
             ) from exc
         except (TimeoutError, socket.timeout) as exc:
             logger.warning(
-                "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s reason=%s",
+                (
+                    "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s reason=%s "
+                    "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
+                ),
                 self.provider_name,
                 self.model_name,
                 normalized_endpoint,
                 str(exc),
+                request_debug.get("prompt_total_chars") if request_debug else None,
+                request_debug.get("context_json_chars") if request_debug else None,
+                request_debug.get("prompt_size_risk") if request_debug else None,
             )
             raise self._provider_error(
                 code=_PROVIDER_ERROR_TIMEOUT,
                 safe_message="Competitor profile generation timed out while calling the AI provider.",
+                raw_output=self._build_request_failure_debug_payload(
+                    endpoint_path=normalized_endpoint,
+                    request_debug=request_debug,
+                    provider_error_body=str(exc),
+                ),
             ) from exc
         except urllib.error.URLError as exc:
             if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
                 logger.warning(
-                    "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s reason=%s",
+                    (
+                        "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s reason=%s "
+                        "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
+                    ),
                     self.provider_name,
                     self.model_name,
                     normalized_endpoint,
                     str(exc.reason),
+                    request_debug.get("prompt_total_chars") if request_debug else None,
+                    request_debug.get("context_json_chars") if request_debug else None,
+                    request_debug.get("prompt_size_risk") if request_debug else None,
                 )
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_TIMEOUT,
                     safe_message="Competitor profile generation timed out while calling the AI provider.",
+                    raw_output=self._build_request_failure_debug_payload(
+                        endpoint_path=normalized_endpoint,
+                        request_debug=request_debug,
+                        provider_error_body=str(exc.reason),
+                    ),
                 ) from exc
             logger.warning(
-                "SEO competitor provider URL error provider_name=%s model_name=%s endpoint=%s reason=%s",
+                (
+                    "SEO competitor provider URL error provider_name=%s model_name=%s endpoint=%s reason=%s "
+                    "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
+                ),
                 self.provider_name,
                 self.model_name,
                 normalized_endpoint,
                 str(exc.reason),
+                request_debug.get("prompt_total_chars") if request_debug else None,
+                request_debug.get("context_json_chars") if request_debug else None,
+                request_debug.get("prompt_size_risk") if request_debug else None,
             )
             raise self._provider_error(
                 code=_PROVIDER_ERROR_REQUEST,
                 safe_message="Competitor profile generation provider request failed.",
+                raw_output=self._build_request_failure_debug_payload(
+                    endpoint_path=normalized_endpoint,
+                    request_debug=request_debug,
+                    provider_error_body=str(exc.reason),
+                ),
             ) from exc
 
     def _build_responses_request_payload(
@@ -473,6 +544,85 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             error_message = _clean_optional_value(error_payload.get("message"))
             return error_type, error_code, _compact_log_message(error_message)
         return None, None, _compact_log_message(_clean_optional_value(parsed.get("message")))
+
+    def _log_prompt_telemetry(self, request_debug: dict[str, object]) -> None:
+        prompt_total_chars = request_debug.get("prompt_total_chars")
+        context_json_chars = request_debug.get("context_json_chars")
+        prompt_size_risk = request_debug.get("prompt_size_risk")
+        level = logging.WARNING if prompt_size_risk in {"high", "elevated"} else logging.INFO
+        logger.log(
+            level,
+            (
+                "SEO competitor prompt assembly telemetry provider_name=%s model_name=%s endpoint=%s "
+                "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
+            ),
+            self.provider_name,
+            self.model_name,
+            request_debug.get("endpoint_path"),
+            prompt_total_chars,
+            context_json_chars,
+            prompt_size_risk,
+        )
+
+    def _build_request_debug_metadata(
+        self,
+        *,
+        endpoint_path: str,
+        candidate_count: int,
+        prompt_metrics: dict[str, int] | None,
+    ) -> dict[str, object]:
+        metrics = prompt_metrics or {}
+        prompt_total_chars = _coerce_bounded_int(
+            metrics.get("total_prompt_chars"),
+            minimum=0,
+            maximum=250000,
+            default=0,
+        )
+        context_json_chars = _coerce_bounded_int(
+            metrics.get("context_json_chars"),
+            minimum=0,
+            maximum=250000,
+            default=0,
+        )
+        if prompt_total_chars >= _PROMPT_SIZE_HIGH_RISK_CHARS:
+            prompt_size_risk = "high"
+        elif prompt_total_chars >= _PROMPT_SIZE_WARN_THRESHOLD_CHARS:
+            prompt_size_risk = "elevated"
+        else:
+            prompt_size_risk = "normal"
+        return {
+            "endpoint_path": endpoint_path,
+            "candidate_count": max(1, int(candidate_count)),
+            "prompt_total_chars": prompt_total_chars,
+            "context_json_chars": context_json_chars,
+            "prompt_size_risk": prompt_size_risk,
+        }
+
+    def _build_request_failure_debug_payload(
+        self,
+        *,
+        endpoint_path: str,
+        request_debug: dict[str, object] | None,
+        provider_error_body: str | None,
+    ) -> str | None:
+        payload: dict[str, object] = {
+            "error": "provider_request_failed",
+            "endpoint_path": endpoint_path,
+        }
+        if request_debug:
+            payload["request_debug"] = {
+                "candidate_count": request_debug.get("candidate_count"),
+                "prompt_total_chars": request_debug.get("prompt_total_chars"),
+                "context_json_chars": request_debug.get("context_json_chars"),
+                "prompt_size_risk": request_debug.get("prompt_size_risk"),
+            }
+        compact_error = _compact_log_message(_clean_optional_value(provider_error_body))
+        if compact_error:
+            payload["provider_error_message"] = compact_error
+        try:
+            return json.dumps(payload, ensure_ascii=True, sort_keys=True)
+        except (TypeError, ValueError):
+            return None
 
     def _extract_assistant_content(self, response_json: dict[str, object]) -> str:
         choices = response_json.get("choices")

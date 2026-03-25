@@ -65,6 +65,7 @@ from app.services.seo_competitor_profile_candidate_quality import (
 )
 from app.services.seo_competitor_profile_prompt import SEO_COMPETITOR_PROFILE_PROMPT_VERSION
 from app.services.seo_competitor_profile_prompt import (
+    SEO_COMPETITOR_PROFILE_PROMPT_LABEL,
     build_seo_competitor_profile_prompt,
 )
 from app.services.ai_prompt_settings import ResolvedAIPromptText, resolve_ai_prompt_text
@@ -183,8 +184,10 @@ class SEOCompetitorPromptPreview:
     user_prompt: str
     model_name: str | None
     prompt_version: str
+    prompt_label: str | None
     prompt_source: str | None
     trusted_site_context: dict[str, object]
+    prompt_metrics: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -798,8 +801,10 @@ class SEOCompetitorProfileGenerationService:
             user_prompt=prompt.user_prompt,
             model_name=self._clean_optional(self._default_model_name()),
             prompt_version=prompt.prompt_version,
+            prompt_label=SEO_COMPETITOR_PROFILE_PROMPT_LABEL,
             prompt_source=resolved_prompt.prompt_source,
             trusted_site_context=prompt.trusted_site_context,
+            prompt_metrics=prompt.prompt_telemetry,
         )
 
     def get_observability_summary(

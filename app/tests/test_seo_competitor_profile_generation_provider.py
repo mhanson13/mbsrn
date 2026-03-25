@@ -221,6 +221,14 @@ def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
         provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
 
     assert exc_info.value.code == "timeout"
+    assert exc_info.value.raw_output is not None
+    raw_debug_payload = json.loads(exc_info.value.raw_output)
+    assert raw_debug_payload["endpoint_path"] in {
+        "/responses",
+        "/chat/completions",
+    }
+    assert isinstance(raw_debug_payload.get("request_debug"), dict)
+    assert raw_debug_payload["request_debug"]["prompt_total_chars"] >= 1
 
 
 def test_openai_provider_auth_error_is_normalized(monkeypatch) -> None:

@@ -1344,8 +1344,10 @@ interface PromptPreviewView {
   userPrompt: string;
   model: string | null;
   promptVersion: string | null;
+  promptLabel: string | null;
   source: "admin_config" | "env" | "default" | null;
   truncated: boolean;
+  promptMetrics: Record<string, number> | null;
 }
 
 function normalizePromptPreview(
@@ -1371,12 +1373,34 @@ function normalizePromptPreview(
     userPrompt,
     model: truncateOptionalText(preview.model, 128),
     promptVersion: truncateOptionalText(preview.prompt_version, 64),
+    promptLabel: truncateOptionalText(preview.prompt_label, 96),
     source:
       preview.source === "admin_config" || preview.source === "env" || preview.source === "default"
         ? preview.source
         : null,
     truncated: Boolean(preview.truncated),
+    promptMetrics: normalizePromptMetrics(preview.prompt_metrics),
   };
+}
+
+function normalizePromptMetrics(
+  rawMetrics: AIPromptPreview["prompt_metrics"],
+): Record<string, number> | null {
+  if (!rawMetrics || typeof rawMetrics !== "object") {
+    return null;
+  }
+  const normalized: Record<string, number> = {};
+  for (const [rawKey, rawValue] of Object.entries(rawMetrics)) {
+    const key = truncateOptionalText(rawKey, 48);
+    if (!key) {
+      continue;
+    }
+    if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
+      continue;
+    }
+    normalized[key] = Math.max(0, Math.trunc(rawValue));
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
 function promptPreviewTypeLabel(promptType: PromptPreviewType): string {
@@ -1401,9 +1425,16 @@ function promptPreviewSourceLabel(source: PromptPreviewView["source"]): string {
 
 function buildPromptPreviewExportText(preview: PromptPreviewView): string {
   const modelLabel = preview.model || "n/a";
-  const promptVersionLabel = preview.promptVersion || "n/a";
+  const promptIdentityLabel = preview.promptLabel || preview.promptVersion || "n/a";
+  const promptTemplateLabel =
+    preview.promptLabel && preview.promptVersion ? preview.promptVersion : null;
   const sourceLabel = promptPreviewSourceLabel(preview.source);
   const truncationLine = preview.truncated ? "Truncated: yes" : "Truncated: no";
+  const totalChars =
+    preview.promptMetrics && typeof preview.promptMetrics.total_prompt_chars === "number"
+      ? preview.promptMetrics.total_prompt_chars
+      : null;
+  const promptSizeLine = typeof totalChars === "number" ? `Prompt size (chars): ${totalChars}` : null;
   const systemPromptBlock = preview.systemPrompt || "(empty)";
   const userPromptBlock = preview.userPrompt || "(empty)";
 
@@ -1411,7 +1442,9 @@ function buildPromptPreviewExportText(preview: PromptPreviewView): string {
     `Prompt Type: ${promptPreviewTypeLabel(preview.promptType)}`,
     `Source: ${sourceLabel}`,
     `Model: ${modelLabel}`,
-    `Prompt Version: ${promptVersionLabel}`,
+    `Prompt: ${promptIdentityLabel}`,
+    ...(promptTemplateLabel ? [`Prompt Template: ${promptTemplateLabel}`] : []),
+    ...(promptSizeLine ? [promptSizeLine] : []),
     truncationLine,
     "",
     "System Prompt:",
@@ -1437,6 +1470,17 @@ function PromptPreviewPanel({
   onDownload,
   testId,
 }: PromptPreviewPanelProps) {
+  const promptIdentityLabel = preview.promptLabel || preview.promptVersion || "n/a";
+  const promptTemplateLabel = preview.promptLabel && preview.promptVersion ? preview.promptVersion : null;
+  const promptTotalChars =
+    preview.promptMetrics && typeof preview.promptMetrics.total_prompt_chars === "number"
+      ? preview.promptMetrics.total_prompt_chars
+      : null;
+  const promptContextChars =
+    preview.promptMetrics && typeof preview.promptMetrics.context_json_chars === "number"
+      ? preview.promptMetrics.context_json_chars
+      : null;
+
   return (
     <div className="panel panel-compact stack-tight" data-testid={testId}>
       <span className="hint muted">Prompt inspection (debug)</span>
@@ -1445,7 +1489,10 @@ function PromptPreviewPanel({
       </span>
       <span className="hint muted">
         Source: {promptPreviewSourceLabel(preview.source)} | Model: {preview.model || "n/a"} | Prompt:{" "}
-        {preview.promptVersion || "n/a"}
+        {promptIdentityLabel}
+        {promptTemplateLabel ? ` | Template: ${promptTemplateLabel}` : ""}
+        {typeof promptTotalChars === "number" ? ` | Size: ${promptTotalChars} chars` : ""}
+        {typeof promptContextChars === "number" ? ` | Context: ${promptContextChars} chars` : ""}
         {preview.truncated ? " | Preview is truncated for safety." : ""}
       </span>
       <details>

@@ -10,6 +10,9 @@ AIPromptSource = Literal["admin_config", "env", "default"]
 _PROMPT_TEXT_MAX_CHARS = 20000
 _PROMPT_MODEL_MAX_CHARS = 128
 _PROMPT_VERSION_MAX_CHARS = 64
+_PROMPT_LABEL_MAX_CHARS = 96
+_PROMPT_METRICS_MAX_ITEMS = 24
+_PROMPT_METRIC_KEY_MAX_CHARS = 48
 
 
 def _sanitize_prompt_text(value: Any, *, max_chars: int) -> tuple[str, bool]:
@@ -48,8 +51,10 @@ class AIPromptPreviewRead(BaseModel):
     user_prompt: str = ""
     model: str | None = None
     prompt_version: str | None = None
+    prompt_label: str | None = None
     source: AIPromptSource | None = None
     truncated: bool = False
+    prompt_metrics: dict[str, int] | None = None
 
     @field_validator("model", mode="before")
     @classmethod
@@ -65,6 +70,36 @@ class AIPromptPreviewRead(BaseModel):
             return None
         return _compact_optional_text(value, max_chars=_PROMPT_VERSION_MAX_CHARS)
 
+    @field_validator("prompt_label", mode="before")
+    @classmethod
+    def normalize_prompt_label(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _compact_optional_text(value, max_chars=_PROMPT_LABEL_MAX_CHARS)
+
+    @field_validator("prompt_metrics", mode="before")
+    @classmethod
+    def normalize_prompt_metrics(cls, value: Any) -> dict[str, int] | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            return None
+        normalized: dict[str, int] = {}
+        for raw_key, raw_value in value.items():
+            key = _compact_optional_text(raw_key, max_chars=_PROMPT_METRIC_KEY_MAX_CHARS)
+            if key is None:
+                continue
+            try:
+                parsed_value = int(raw_value)
+            except (TypeError, ValueError):
+                continue
+            normalized[key] = max(0, parsed_value)
+            if len(normalized) >= _PROMPT_METRICS_MAX_ITEMS:
+                break
+        if not normalized:
+            return None
+        return normalized
+
 
 def build_ai_prompt_preview_read(
     *,
@@ -73,7 +108,9 @@ def build_ai_prompt_preview_read(
     user_prompt: Any,
     model: Any = None,
     prompt_version: Any = None,
+    prompt_label: Any = None,
     source: Any = None,
+    prompt_metrics: Any = None,
 ) -> AIPromptPreviewRead | None:
     normalized_system_prompt, system_truncated = _sanitize_prompt_text(
         system_prompt,
@@ -94,8 +131,10 @@ def build_ai_prompt_preview_read(
             "user_prompt": normalized_user_prompt,
             "model": _compact_optional_text(model, max_chars=_PROMPT_MODEL_MAX_CHARS),
             "prompt_version": _compact_optional_text(prompt_version, max_chars=_PROMPT_VERSION_MAX_CHARS),
+            "prompt_label": _compact_optional_text(prompt_label, max_chars=_PROMPT_LABEL_MAX_CHARS),
             "source": _normalize_prompt_source(source),
             "truncated": system_truncated or user_truncated,
+            "prompt_metrics": prompt_metrics,
         }
     )
 

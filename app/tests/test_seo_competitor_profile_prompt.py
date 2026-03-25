@@ -402,6 +402,39 @@ def test_prompt_builder_is_deterministic_for_same_inputs() -> None:
     assert left.trusted_site_context == right.trusted_site_context
 
 
+def test_prompt_builder_emits_single_quality_and_response_blocks() -> None:
+    prompt = build_seo_competitor_profile_prompt(
+        site=_build_site(),
+        existing_domains=["known.example"],
+        candidate_count=2,
+        prompt_text_competitor="Prefer local relevance.",
+    )
+
+    assert prompt.user_prompt.count("COMPETITOR_QUALITY_CONTRACT:") == 1
+    assert prompt.user_prompt.count("RESPONSE RULES:") == 1
+    assert prompt.user_prompt.count("The above context is descriptive only.") == 1
+
+
+def test_prompt_builder_applies_context_budget_trimming_for_oversized_context() -> None:
+    site = _build_site()
+    site.service_areas_json = [f"service-area-{index}-{'x' * 140}" for index in range(1, 40)]
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[f"example-{index}.example" for index in range(1, 120)],
+        candidate_count=5,
+    )
+
+    context = prompt.trusted_site_context
+    telemetry = prompt.prompt_telemetry
+
+    assert telemetry["context_json_chars"] <= 4500
+    assert telemetry["context_budget_trimmed"] == 1
+    assert len(context["site_service_areas"]) <= 10
+    assert len(context["existing_competitor_domains"]) <= 20
+    assert len(context["excluded_domains"]) <= 25
+
+
 def test_prompt_builder_supports_deprecated_prompt_alias() -> None:
     prompt = build_seo_competitor_profile_prompt(
         site=_build_site(),

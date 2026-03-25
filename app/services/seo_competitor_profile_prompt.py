@@ -8,6 +8,7 @@ from app.services.seo_sites import build_location_context, build_site_business_c
 
 
 SEO_COMPETITOR_PROFILE_PROMPT_VERSION = "seo-competitor-profile-v1"
+SEO_COMPETITOR_PROFILE_PROMPT_LABEL = "resolved competitor prompt"
 _ALLOWED_COMPETITOR_TYPES = ("direct", "indirect", "local", "marketplace", "informational", "unknown")
 _MAX_DOMAIN_LENGTH = 255
 _MAX_BASE_URL_LENGTH = 2048
@@ -21,6 +22,17 @@ _MAX_SERVICE_FOCUS_TERM_LENGTH = 32
 _MAX_SERVICE_FOCUS_TERMS = 8
 _MAX_TARGET_CUSTOMER_CONTEXT_LENGTH = 220
 _MAX_NON_COMPETITOR_HINTS = 12
+_MAX_EXISTING_COMPETITOR_DOMAINS = 40
+_MAX_EXISTING_COMPETITOR_DOMAINS_TOTAL_CHARS = 900
+_MAX_EXCLUDED_DOMAINS = 45
+_MAX_EXCLUDED_DOMAINS_TOTAL_CHARS = 1024
+_MAX_CONTEXT_JSON_CHARS = 4500
+_BUDGET_CONTEXT_EXISTING_DOMAIN_CAP = 20
+_BUDGET_CONTEXT_EXISTING_DOMAIN_TOTAL_CHARS = 500
+_BUDGET_CONTEXT_EXCLUDED_DOMAIN_CAP = 25
+_BUDGET_CONTEXT_EXCLUDED_DOMAIN_TOTAL_CHARS = 600
+_BUDGET_CONTEXT_SERVICE_AREA_CAP = 10
+_BUDGET_CONTEXT_NON_COMPETITOR_HINT_CAP = 6
 _LOCATION_FALLBACK_TEXT = "Location not yet established from available business/site data."
 _INDUSTRY_FALLBACK_TEXT = "Industry not yet confidently classified from available structured data."
 _NON_COMPETITOR_DOMAIN_HINTS = (
@@ -35,12 +47,15 @@ _NON_COMPETITOR_DOMAIN_HINTS = (
     "yellowpages.com",
     "youtube.com",
 )
+
+
 @dataclass(frozen=True)
 class SEOCompetitorProfilePrompt:
     prompt_version: str
     system_prompt: str
     user_prompt: str
     trusted_site_context: dict[str, object]
+    prompt_telemetry: dict[str, int]
 
 
 def build_seo_competitor_profile_prompt(
@@ -56,7 +71,11 @@ def build_seo_competitor_profile_prompt(
     if candidate_count < 1:
         raise ValueError("candidate_count must be at least 1")
 
-    normalized_domains = _normalize_domains(existing_domains)
+    normalized_domains = _limit_domains_for_prompt(
+        _normalize_domains(existing_domains),
+        max_items=_MAX_EXISTING_COMPETITOR_DOMAINS,
+        max_total_chars=_MAX_EXISTING_COMPETITOR_DOMAINS_TOTAL_CHARS,
+    )
     display_name = _sanitize_required(site.display_name, max_length=_MAX_DISPLAY_NAME_LENGTH, fallback="Unknown business")
     base_url = _sanitize_required(site.base_url, max_length=_MAX_BASE_URL_LENGTH, fallback="https://example.invalid/")
     normalized_domain = _sanitize_required(
@@ -113,7 +132,12 @@ def build_seo_competitor_profile_prompt(
         max_length=_MAX_TARGET_CUSTOMER_CONTEXT_LENGTH,
         fallback="Customers seeking clearly substitutable services in the same market context.",
     )
-    excluded_domains = sorted({normalized_domain, *normalized_domains})
+    excluded_domains = _build_excluded_domains(
+        site_domain=normalized_domain,
+        existing_domains=normalized_domains,
+        max_items=_MAX_EXCLUDED_DOMAINS,
+        max_total_chars=_MAX_EXCLUDED_DOMAINS_TOTAL_CHARS,
+    )
 
     context: dict[str, object] = {
         "site_display_name": display_name,
@@ -135,7 +159,10 @@ def build_seo_competitor_profile_prompt(
         "existing_competitor_domains": normalized_domains,
         "non_competitor_domain_hints": list(_NON_COMPETITOR_DOMAIN_HINTS[:_MAX_NON_COMPETITOR_HINTS]),
     }
-    context_json = json.dumps(context, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    context, context_json, context_budget_trimmed = _apply_context_budget(
+        context=context,
+        site_domain=normalized_domain,
+    )
 
     system_prompt = (
         "You generate SEO competitor profile draft candidates for human review. "
@@ -187,12 +214,40 @@ def build_seo_competitor_profile_prompt(
     competitor_block = _build_prompt_text_competitor_block(effective_prompt_text_competitor)
     if competitor_block:
         user_prompt += competitor_block
+    supplemental_competitor_text_chars = len(competitor_block) if competitor_block else 0
+    system_prompt_chars = len(system_prompt)
+    user_prompt_chars = len(user_prompt)
+    context_service_areas = context.get("site_service_areas")
+    context_service_focus_terms = context.get("service_focus_terms")
+    context_existing_domains = context.get("existing_competitor_domains")
+    context_excluded_domains = context.get("excluded_domains")
+    context_non_competitor_hints = context.get("non_competitor_domain_hints")
+    prompt_telemetry: dict[str, int] = {
+        "system_prompt_chars": system_prompt_chars,
+        "user_prompt_chars": user_prompt_chars,
+        "total_prompt_chars": system_prompt_chars + user_prompt_chars,
+        "context_json_chars": len(context_json),
+        "site_service_areas_count": len(context_service_areas) if isinstance(context_service_areas, list) else 0,
+        "service_focus_terms_count": (
+            len(context_service_focus_terms) if isinstance(context_service_focus_terms, list) else 0
+        ),
+        "existing_competitor_domains_count": (
+            len(context_existing_domains) if isinstance(context_existing_domains, list) else 0
+        ),
+        "excluded_domains_count": len(context_excluded_domains) if isinstance(context_excluded_domains, list) else 0,
+        "non_competitor_domain_hints_count": (
+            len(context_non_competitor_hints) if isinstance(context_non_competitor_hints, list) else 0
+        ),
+        "supplemental_competitor_text_chars": supplemental_competitor_text_chars,
+        "context_budget_trimmed": 1 if context_budget_trimmed else 0,
+    }
 
     return SEOCompetitorProfilePrompt(
         prompt_version=prompt_version,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         trusted_site_context=context,
+        prompt_telemetry=prompt_telemetry,
     )
 
 
@@ -205,6 +260,131 @@ def _normalize_domains(domains: list[str]) -> list[str]:
         if normalized:
             cleaned.add(normalized)
     return sorted(cleaned)
+
+
+def _build_excluded_domains(
+    *,
+    site_domain: str,
+    existing_domains: list[str],
+    max_items: int,
+    max_total_chars: int,
+) -> list[str]:
+    merged = sorted({site_domain, *existing_domains})
+    return _limit_domains_for_prompt(
+        merged,
+        max_items=max_items,
+        max_total_chars=max_total_chars,
+        required_first=site_domain,
+    )
+
+
+def _limit_domains_for_prompt(
+    domains: list[str],
+    *,
+    max_items: int,
+    max_total_chars: int,
+    required_first: str | None = None,
+) -> list[str]:
+    bounded_items = max(1, int(max_items))
+    bounded_total_chars = max(64, int(max_total_chars))
+    selected: list[str] = []
+    seen: set[str] = set()
+    total_chars = 0
+
+    if required_first:
+        required_clean = _sanitize_optional(required_first, max_length=_MAX_DOMAIN_LENGTH)
+        if required_clean:
+            required_normalized = required_clean.lower()
+            selected.append(required_normalized)
+            seen.add(required_normalized)
+            total_chars = len(required_normalized)
+
+    for raw_domain in domains:
+        normalized = _sanitize_optional(raw_domain, max_length=_MAX_DOMAIN_LENGTH)
+        if not normalized:
+            continue
+        domain = normalized.lower()
+        if domain in seen:
+            continue
+        if len(selected) >= bounded_items:
+            break
+        delimiter_cost = 1 if selected else 0
+        projected = total_chars + delimiter_cost + len(domain)
+        if selected and projected > bounded_total_chars:
+            break
+        selected.append(domain)
+        seen.add(domain)
+        total_chars = projected
+
+    return sorted(selected)
+
+
+def _apply_context_budget(
+    *,
+    context: dict[str, object],
+    site_domain: str,
+) -> tuple[dict[str, object], str, bool]:
+    budgeted = dict(context)
+    context_json = _serialize_context_json(budgeted)
+    if len(context_json) <= _MAX_CONTEXT_JSON_CHARS:
+        return budgeted, context_json, False
+
+    existing_domains = budgeted.get("existing_competitor_domains")
+    if isinstance(existing_domains, list):
+        budgeted["existing_competitor_domains"] = _limit_domains_for_prompt(
+            [str(item) for item in existing_domains],
+            max_items=_BUDGET_CONTEXT_EXISTING_DOMAIN_CAP,
+            max_total_chars=_BUDGET_CONTEXT_EXISTING_DOMAIN_TOTAL_CHARS,
+        )
+    excluded_domains = budgeted.get("excluded_domains")
+    if isinstance(excluded_domains, list):
+        budgeted["excluded_domains"] = _limit_domains_for_prompt(
+            [str(item) for item in excluded_domains],
+            max_items=_BUDGET_CONTEXT_EXCLUDED_DOMAIN_CAP,
+            max_total_chars=_BUDGET_CONTEXT_EXCLUDED_DOMAIN_TOTAL_CHARS,
+            required_first=site_domain,
+        )
+    service_areas = budgeted.get("site_service_areas")
+    if isinstance(service_areas, list):
+        budgeted["site_service_areas"] = service_areas[:_BUDGET_CONTEXT_SERVICE_AREA_CAP]
+    non_competitor_hints = budgeted.get("non_competitor_domain_hints")
+    if isinstance(non_competitor_hints, list):
+        budgeted["non_competitor_domain_hints"] = non_competitor_hints[:_BUDGET_CONTEXT_NON_COMPETITOR_HINT_CAP]
+
+    context_json = _serialize_context_json(budgeted)
+    if len(context_json) > _MAX_CONTEXT_JSON_CHARS:
+        budgeted["existing_competitor_domains"] = []
+        budgeted["excluded_domains"] = [site_domain]
+        budgeted["site_service_areas"] = []
+        budgeted["non_competitor_domain_hints"] = []
+        service_focus_terms = budgeted.get("service_focus_terms")
+        if isinstance(service_focus_terms, list):
+            budgeted["service_focus_terms"] = service_focus_terms[:4]
+        context_json = _serialize_context_json(budgeted)
+
+    if len(context_json) > _MAX_CONTEXT_JSON_CHARS:
+        budgeted = {
+            "site_display_name": budgeted.get("site_display_name"),
+            "site_business_name": budgeted.get("site_business_name"),
+            "site_base_url": budgeted.get("site_base_url"),
+            "site_normalized_domain": budgeted.get("site_normalized_domain"),
+            "site_location_context": budgeted.get("site_location_context"),
+            "site_location_context_strength": budgeted.get("site_location_context_strength"),
+            "site_location_context_source": budgeted.get("site_location_context_source"),
+            "site_industry_context": budgeted.get("site_industry_context"),
+            "site_industry_context_strength": budgeted.get("site_industry_context_strength"),
+            "service_focus_terms": budgeted.get("service_focus_terms"),
+            "target_customer_context": budgeted.get("target_customer_context"),
+            "excluded_domains": [site_domain],
+            "existing_competitor_domains": [],
+        }
+        context_json = _serialize_context_json(budgeted)
+
+    return budgeted, context_json, True
+
+
+def _serialize_context_json(context: dict[str, object]) -> str:
+    return json.dumps(context, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
 def _sanitize_required(value: str | None, *, max_length: int, fallback: str) -> str:

@@ -740,8 +740,10 @@ export interface AIPromptPreview {
   user_prompt: string;
   model: string | null;
   prompt_version: string | null;
+  prompt_label?: string | null;
   source?: "admin_config" | "env" | "default" | null;
   truncated: boolean;
+  prompt_metrics?: Record<string, number> | null;
 }
 
 export type CompetitorCandidateExclusionReason =
