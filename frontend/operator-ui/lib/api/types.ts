@@ -673,6 +673,13 @@ export type RecommendationTheme =
   | "authority_and_visibility"
   | "expertise_and_process"
   | "general_site_improvement";
+export type RecommendationTargetContext =
+  | "homepage"
+  | "service_pages"
+  | "contact_about"
+  | "location_pages"
+  | "sitewide"
+  | "general";
 
 export interface RecommendationApplyOutcome {
   applied: boolean;
@@ -891,6 +898,7 @@ export interface Recommendation {
   recommendation_evidence_summary?: string | null;
   recommendation_action_clarity?: string | null;
   recommendation_expected_outcome?: string | null;
+  recommendation_target_context?: RecommendationTargetContext | null;
   decision_reason: string | null;
   created_at: string;
   updated_at: string;

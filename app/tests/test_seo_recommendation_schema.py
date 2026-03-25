@@ -328,6 +328,73 @@ def test_recommendation_read_derives_safe_expected_outcome_fallback_for_sparse_m
     assert recommendation.recommendation_expected_outcome == "Improves core site clarity for prospective customers."
 
 
+def test_recommendation_read_derives_contact_about_target_context_for_trust_signals() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="close_competitor_gap_missing_license_proof",
+            title="Add license and insurance proof to service pages",
+            rationale="Trust proof and contact legitimacy are weaker than nearby competitors.",
+            eeat_categories=["trustworthiness"],
+            primary_eeat_category="trustworthiness",
+            priority_reasons=["trust_gap"],
+            primary_priority_reason="trust_gap",
+            theme="trust_and_legitimacy",
+            theme_label="Trust & legitimacy",
+        )
+    )
+    assert recommendation.recommendation_target_context == "contact_about"
+
+
+def test_recommendation_read_derives_homepage_target_context_from_homepage_signal() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="improve_homepage_service_clarity",
+            title="Clarify core services on homepage",
+            rationale="Homepage value proposition is unclear for local service intent.",
+        )
+    )
+    assert recommendation.recommendation_target_context == "homepage"
+
+
+def test_recommendation_read_derives_location_pages_target_context_from_local_signals() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="expand_location_page_coverage",
+            title="Strengthen location page coverage",
+            rationale="Local city/service-area intent is underrepresented across location pages.",
+            theme="authority_and_visibility",
+            theme_label="Authority & visibility",
+        )
+    )
+    assert recommendation.recommendation_target_context == "location_pages"
+
+
+def test_recommendation_read_derives_sitewide_target_context_for_global_changes() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="standardize_trust_signals_sitewide",
+            title="Apply trust signal consistency across all pages",
+            rationale="Global trust copy and verification signals should be standardized sitewide.",
+        )
+    )
+    assert recommendation.recommendation_target_context == "sitewide"
+
+
+def test_recommendation_read_derives_general_target_context_for_sparse_metadata() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="generic_cleanup",
+            title="General metadata cleanup",
+            rationale="General cleanup note.",
+            theme="general_site_improvement",
+            theme_label="General site improvement",
+            eeat_categories=[],
+            priority_reasons=[],
+        )
+    )
+    assert recommendation.recommendation_target_context == "general"
+
+
 def test_recommendation_start_here_read_normalizes_context_flags() -> None:
     start_here = SEORecommendationStartHereRead.model_validate(
         {

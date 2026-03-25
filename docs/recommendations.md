@@ -295,6 +295,29 @@ Recommendation rows now include additive deterministic action-specificity fields
 - Additive only; does not change recommendation generation/order semantics.
 - If metadata is sparse, values fall back conservatively or are omitted.
 
+## Recommendation Target Context (Deterministic)
+
+Recommendation rows now include an additive deterministic target-context field:
+
+- `recommendation_target_context`
+
+Bounded values:
+- `homepage`
+- `service_pages`
+- `contact_about`
+- `location_pages`
+- `sitewide`
+- `general`
+
+Derivation:
+- deterministic only, from existing metadata (for example `rule_key`, title/rationale, action/evidence metadata, theme/EEAT context)
+- no AI page selection
+- no new crawling behavior
+
+Operator intent:
+- show where a recommendation most likely applies in a compact form
+- provide guidance, not a guaranteed page-level map or editing workflow
+
 ## Recommendation Evidence Summary (Deterministic)
 
 Recommendation rows now include additive deterministic evidence clarity metadata:

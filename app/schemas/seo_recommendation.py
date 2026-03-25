@@ -33,6 +33,14 @@ SEORecommendationProgressStatus = Literal[
     "applied_pending_refresh",
     "reflected_in_latest_analysis",
 ]
+SEORecommendationTargetContext = Literal[
+    "homepage",
+    "service_pages",
+    "contact_about",
+    "location_pages",
+    "sitewide",
+    "general",
+]
 SEOCompetitorContextHealthStatus = Literal["strong", "mixed", "weak"]
 SEOCompetitorContextHealthCheckKey = Literal[
     "location_context",
@@ -170,6 +178,14 @@ _PRIORITY_REASON_TO_THEME: dict[SEORecommendationPriorityReason, SEORecommendati
     "expertise_gap": "expertise_and_process",
     "competitor_gap": "authority_and_visibility",
 }
+_RECOMMENDATION_TARGET_CONTEXT_ORDER: tuple[SEORecommendationTargetContext, ...] = (
+    "homepage",
+    "service_pages",
+    "contact_about",
+    "location_pages",
+    "sitewide",
+    "general",
+)
 _HIGH_CLARITY_ACTION_VERBS = {
     "add",
     "build",
@@ -425,6 +441,13 @@ def _normalize_priority_reason_list(value: Any) -> list[SEORecommendationPriorit
 def _normalize_recommendation_theme(value: Any) -> SEORecommendationTheme | None:
     normalized = str(value or "").strip().lower()
     if normalized not in _RECOMMENDATION_THEME_ORDER:
+        return None
+    return normalized  # type: ignore[return-value]
+
+
+def _normalize_recommendation_target_context(value: Any) -> SEORecommendationTargetContext | None:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _RECOMMENDATION_TARGET_CONTEXT_ORDER:
         return None
     return normalized  # type: ignore[return-value]
 
@@ -694,6 +717,113 @@ def _derive_recommendation_expected_outcome(
     if theme == "general_site_improvement":
         return "Improves core site clarity for prospective customers."
     return None
+
+
+def _derive_recommendation_target_context(
+    *,
+    rule_key: str | None,
+    title: str | None,
+    rationale: str | None,
+    recommendation_action_clarity: str | None,
+    recommendation_evidence_summary: str | None,
+    theme: SEORecommendationTheme | None,
+) -> SEORecommendationTargetContext:
+    core_signal = " ".join(
+        filter(
+            None,
+            [
+                _normalize_signal_text(rule_key, max_length=140),
+                _normalize_signal_text(title, max_length=180),
+                _normalize_signal_text(rationale, max_length=220),
+            ],
+        )
+    )
+    signal = " ".join(
+        filter(
+            None,
+            [
+                core_signal,
+                _normalize_signal_text(recommendation_action_clarity, max_length=220),
+                _normalize_signal_text(recommendation_evidence_summary, max_length=220),
+            ],
+        )
+    )
+
+    if any(keyword in signal for keyword in ("sitewide", "across all pages", "across the site", "all pages", "every page", "global")):
+        return "sitewide"
+    if any(keyword in signal for keyword in ("homepage", "home page", "hero", "h1", "title tag", "above the fold")):
+        return "homepage"
+    if any(
+        keyword in signal
+        for keyword in (
+            "contact page",
+            "about page",
+            "contact/about",
+            "contact and about",
+            "license",
+            "insurance",
+            "bbb",
+            "trust proof",
+            "verified review",
+            "contact legitimacy",
+            "physical address",
+            "nap",
+        )
+    ):
+        return "contact_about"
+    if any(
+        keyword in signal
+        for keyword in (
+            "location page",
+            "location pages",
+            "service area",
+            "local",
+            "nearby",
+            "city",
+            "zip",
+            "map",
+            "gbp",
+            "google business profile",
+        )
+    ):
+        return "location_pages"
+    service_hint_from_core = any(
+        keyword in core_signal
+        for keyword in (
+            "service page",
+            "service pages",
+            "services",
+            "service coverage",
+            "service clarity",
+            "service proof",
+            "process detail",
+        )
+    )
+    service_hint_from_extended = any(
+        keyword in signal
+        for keyword in (
+            "service page",
+            "service pages",
+            "service coverage",
+            "service clarity",
+            "service proof",
+            "process detail",
+        )
+    )
+    if service_hint_from_core or (service_hint_from_extended and theme != "general_site_improvement"):
+        return "service_pages"
+
+    if theme == "trust_and_legitimacy":
+        return "contact_about"
+    if theme == "experience_and_proof":
+        return "service_pages"
+    if theme == "authority_and_visibility":
+        return "location_pages"
+    if theme == "expertise_and_process":
+        return "service_pages"
+    if theme == "general_site_improvement":
+        return "general"
+    return "general"
 
 
 def infer_eeat_categories_from_signals(signal_values: list[object]) -> list[SEORecommendationEEATCategory]:
@@ -1228,6 +1358,7 @@ class SEORecommendationRead(BaseModel):
         default=None,
         max_length=_RECOMMENDATION_EXPECTED_OUTCOME_MAX_CHARS,
     )
+    recommendation_target_context: SEORecommendationTargetContext | None = None
     decision: SEORecommendationDecision | None = None
     decision_reason: str | None = None
     assigned_principal_id: str | None = None
@@ -1300,6 +1431,16 @@ class SEORecommendationRead(BaseModel):
     @classmethod
     def normalize_recommendation_expected_outcome(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_EXPECTED_OUTCOME_MAX_CHARS)
+
+    @field_validator("recommendation_target_context", mode="before")
+    @classmethod
+    def normalize_recommendation_target_context(
+        cls,
+        value: Any,
+    ) -> SEORecommendationTargetContext | None:
+        if value is None:
+            return None
+        return _normalize_recommendation_target_context(value)
 
     @field_validator("decision", mode="before")
     @classmethod
@@ -1486,6 +1627,20 @@ class SEORecommendationRead(BaseModel):
             priority_reasons=self.priority_reasons,
             theme=self.theme,
             recommendation_evidence_summary=self.recommendation_evidence_summary,
+        )
+        return self
+
+    @model_validator(mode="after")
+    def derive_recommendation_target_context(self) -> "SEORecommendationRead":
+        if self.recommendation_target_context is not None:
+            return self
+        self.recommendation_target_context = _derive_recommendation_target_context(
+            rule_key=self.rule_key,
+            title=self.title,
+            rationale=self.rationale,
+            recommendation_action_clarity=self.recommendation_action_clarity,
+            recommendation_evidence_summary=self.recommendation_evidence_summary,
+            theme=self.theme,
         )
         return self
 

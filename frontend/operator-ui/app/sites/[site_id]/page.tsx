@@ -52,6 +52,7 @@ import type {
   RecommendationProgressStatus,
   RecommendationPriorityReason,
   RecommendationStartHere,
+  RecommendationTargetContext,
   RecommendationTheme,
   RecommendationThemeGroup,
   Recommendation,
@@ -697,6 +698,24 @@ function formatRecommendationThemeSummary(theme: RecommendationTheme): string {
   }
 }
 
+function formatRecommendationTargetContext(context: RecommendationTargetContext): string {
+  switch (context) {
+    case "homepage":
+      return "Homepage";
+    case "service_pages":
+      return "Service pages";
+    case "contact_about":
+      return "Contact/About";
+    case "location_pages":
+      return "Location pages";
+    case "sitewide":
+      return "Sitewide";
+    case "general":
+    default:
+      return "General";
+  }
+}
+
 function formatLocationContextSourceLabel(
   source: "explicit_location" | "service_area" | "zip_capture" | "fallback" | null,
 ): string | null {
@@ -1114,6 +1133,21 @@ function normalizeRecommendationActionClarity(item: Recommendation): string | nu
 
 function normalizeRecommendationExpectedOutcome(item: Recommendation): string | null {
   return truncateOptionalText(item.recommendation_expected_outcome, 220);
+}
+
+function normalizeRecommendationTargetContext(item: Recommendation): RecommendationTargetContext | null {
+  const value = item.recommendation_target_context;
+  if (
+    value === "homepage" ||
+    value === "service_pages" ||
+    value === "contact_about" ||
+    value === "location_pages" ||
+    value === "sitewide" ||
+    value === "general"
+  ) {
+    return value;
+  }
+  return null;
 }
 
 interface CompetitorContextHealthCheckView {
@@ -4677,6 +4711,7 @@ export default function SiteWorkspacePage() {
                         const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
                         const recommendationActionClarity = normalizeRecommendationActionClarity(item);
                         const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
+                        const recommendationTargetContext = normalizeRecommendationTargetContext(item);
                         const rowId = recommendationRowId(item.id);
                         return (
                           <tr
@@ -4737,6 +4772,11 @@ export default function SiteWorkspacePage() {
                                   Expected outcome: {recommendationExpectedOutcome}
                                 </span>
                               ) : null}
+                              {recommendationTargetContext ? (
+                                <span className="hint muted" data-testid="recommendation-target-context">
+                                  Where: {formatRecommendationTargetContext(recommendationTargetContext)}
+                                </span>
+                              ) : null}
                               <span className="hint muted"><code>{item.id}</code></span>
                             </td>
                             <td>{item.category}</td>
@@ -4792,6 +4832,7 @@ export default function SiteWorkspacePage() {
                               const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
                               const recommendationActionClarity = normalizeRecommendationActionClarity(item);
                               const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
+                              const recommendationTargetContext = normalizeRecommendationTargetContext(item);
                               const rowId = recommendationRowId(item.id);
                               return (
                                 <tr
@@ -4850,6 +4891,11 @@ export default function SiteWorkspacePage() {
                                     {recommendationExpectedOutcome ? (
                                       <span className="hint muted" data-testid="recommendation-expected-outcome">
                                         Expected outcome: {recommendationExpectedOutcome}
+                                      </span>
+                                    ) : null}
+                                    {recommendationTargetContext ? (
+                                      <span className="hint muted" data-testid="recommendation-target-context">
+                                        Where: {formatRecommendationTargetContext(recommendationTargetContext)}
                                       </span>
                                     ) : null}
                                     <span className="hint muted"><code>{item.id}</code></span>

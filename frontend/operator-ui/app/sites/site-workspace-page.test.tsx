@@ -2683,6 +2683,7 @@ describe("site workspace timeline controls", () => {
               title: "Trust-focused recommendation",
               recommendation_action_clarity: "Add stronger review and trust proof to key service pages.",
               recommendation_expected_outcome: "Helps visitors trust the business faster.",
+              recommendation_target_context: "service_pages",
             }),
             buildRecommendation({
               id: "rec-action-2",
@@ -2709,12 +2710,17 @@ describe("site workspace timeline controls", () => {
       "Expected outcome: Helps visitors trust the business faster.",
     );
 
+    const targetContextLines = screen.getAllByTestId("recommendation-target-context");
+    expect(targetContextLines).toHaveLength(1);
+    expect(targetContextLines[0]).toHaveTextContent("Where: Service pages");
+
     expect(
       screen.queryByText("Action: Recommendation without action metadata"),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByText("Expected outcome: Recommendation without action metadata"),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText("Where: Recommendation without action metadata")).not.toBeInTheDocument();
   });
 
   it("renders action, competitor, and support context when all optional narrative fields are present", async () => {

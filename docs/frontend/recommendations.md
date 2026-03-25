@@ -258,6 +258,30 @@ Fallback rules:
 - avoid empty placeholders
 - preserve grouped layout, start-here behavior, and apply controls
 
+## Recommendation Target Context Rendering
+
+Recommendation rows may include additive deterministic target context:
+
+- `recommendation_target_context`
+
+Supported values:
+- `homepage`
+- `service_pages`
+- `contact_about`
+- `location_pages`
+- `sitewide`
+- `general`
+
+Rendering guidance:
+- display as a compact row-level line, for example `Where: Service pages`
+- keep it subtle and near action/outcome/evidence metadata
+- hide cleanly when field is missing/null
+
+Notes:
+- target context is operator guidance only
+- it is deterministic metadata, not AI-selected page mapping
+- it does not introduce editing workflow or page-level task orchestration
+
 ## Competitor Context Health Indicator
 
 Workspace summary payloads can include optional `competitor_context_health` metadata:
