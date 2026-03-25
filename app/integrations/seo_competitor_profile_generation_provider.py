@@ -127,36 +127,85 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             prompt_version=self.prompt_version,
             prompt_text_competitor=self.prompt_text_competitor,
         )
-        payload = self._build_request_payload(
+        responses_payload = self._build_responses_request_payload(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+        )
+        chat_payload = self._build_chat_completions_request_payload(
             system_prompt=prompt.system_prompt,
             user_prompt=prompt.user_prompt,
             candidate_count=candidate_count,
         )
-        raw_response = self._request_completion(payload)
-        response_json = self._parse_json_object(
-            raw_response,
-            code=_PROVIDER_ERROR_PARSING,
-            safe_message="Competitor profile generation response could not be parsed.",
-        )
-        assistant_content = self._extract_assistant_content(response_json)
-        candidates = self._parse_or_normalize_candidates(
-            assistant_content=assistant_content,
-            candidate_count=candidate_count,
-        )
-        if not candidates:
-            raise self._provider_error(
-                code=_PROVIDER_ERROR_INVALID_OUTPUT,
-                safe_message="Competitor profile generation returned malformed output.",
-                raw_output=assistant_content,
+        try:
+            response_json: dict[str, object] | None = None
+            assistant_content: str | None = None
+            raw_response = self._request_completion(
+                responses_payload,
+                endpoint_path="/responses",
             )
-        model_name = _clean_optional_value(response_json.get("model")) or self.model_name
-        return SEOCompetitorProfileGenerationOutput(
-            candidates=candidates,
-            provider_name=self.provider_name,
-            model_name=model_name,
-            prompt_version=prompt.prompt_version,
-            raw_response=assistant_content,
-        )
+            response_json = self._parse_json_object(
+                raw_response,
+                code=_PROVIDER_ERROR_PARSING,
+                safe_message="Competitor profile generation response could not be parsed.",
+            )
+            assistant_content = self._extract_assistant_content_from_responses(response_json)
+            candidates = self._parse_or_normalize_candidates(
+                assistant_content=assistant_content,
+                candidate_count=candidate_count,
+            )
+            if not candidates:
+                raise self._provider_error(
+                    code=_PROVIDER_ERROR_INVALID_OUTPUT,
+                    safe_message="Competitor profile generation returned malformed output.",
+                    raw_output=assistant_content,
+                )
+            model_name = _clean_optional_value(response_json.get("model")) or self.model_name
+            return SEOCompetitorProfileGenerationOutput(
+                candidates=candidates,
+                provider_name=self.provider_name,
+                model_name=model_name,
+                prompt_version=prompt.prompt_version,
+                raw_response=assistant_content,
+            )
+        except SEOCompetitorProfileProviderError as exc:
+            logger.warning(
+                (
+                    "SEO competitor provider responses path failed; falling back to chat completions "
+                    "provider_name=%s model_name=%s error_code=%s safe_message=%s"
+                ),
+                self.provider_name,
+                self.model_name,
+                exc.code,
+                _compact_log_message(exc.safe_message),
+            )
+            raw_response = self._request_completion(
+                chat_payload,
+                endpoint_path="/chat/completions",
+            )
+            response_json = self._parse_json_object(
+                raw_response,
+                code=_PROVIDER_ERROR_PARSING,
+                safe_message="Competitor profile generation response could not be parsed.",
+            )
+            assistant_content = self._extract_assistant_content(response_json)
+            candidates = self._parse_or_normalize_candidates(
+                assistant_content=assistant_content,
+                candidate_count=candidate_count,
+            )
+            if not candidates:
+                raise self._provider_error(
+                    code=_PROVIDER_ERROR_INVALID_OUTPUT,
+                    safe_message="Competitor profile generation returned malformed output.",
+                    raw_output=assistant_content,
+                )
+            model_name = _clean_optional_value(response_json.get("model")) or self.model_name
+            return SEOCompetitorProfileGenerationOutput(
+                candidates=candidates,
+                provider_name=self.provider_name,
+                model_name=model_name,
+                prompt_version=prompt.prompt_version,
+                raw_response=assistant_content,
+            )
 
     def _parse_or_normalize_candidates(
         self,
@@ -273,10 +322,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 self.provider_name,
             )
 
-    def _request_completion(self, payload: dict[str, object]) -> str:
+    def _request_completion(self, payload: dict[str, object], *, endpoint_path: str) -> str:
+        normalized_endpoint = endpoint_path.strip() or "/chat/completions"
+        if not normalized_endpoint.startswith("/"):
+            normalized_endpoint = f"/{normalized_endpoint}"
         body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
         request = urllib.request.Request(
-            url=f"{self.api_base_url}/chat/completions",
+            url=f"{self.api_base_url}{normalized_endpoint}",
             data=body,
             method="POST",
             headers={
@@ -294,11 +346,12 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             logger.warning(
                 (
                     "SEO competitor provider HTTP error status=%s provider_name=%s model_name=%s "
-                    "error_type=%s error_code=%s error_message=%s"
+                    "endpoint=%s error_type=%s error_code=%s error_message=%s"
                 ),
                 exc.code,
                 self.provider_name,
                 self.model_name,
+                normalized_endpoint,
                 error_type,
                 error_code,
                 error_message,
@@ -324,9 +377,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             ) from exc
         except (TimeoutError, socket.timeout) as exc:
             logger.warning(
-                "SEO competitor provider timeout provider_name=%s model_name=%s reason=%s",
+                "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s reason=%s",
                 self.provider_name,
                 self.model_name,
+                normalized_endpoint,
                 str(exc),
             )
             raise self._provider_error(
@@ -336,9 +390,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         except urllib.error.URLError as exc:
             if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
                 logger.warning(
-                    "SEO competitor provider timeout provider_name=%s model_name=%s reason=%s",
+                    "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s reason=%s",
                     self.provider_name,
                     self.model_name,
+                    normalized_endpoint,
                     str(exc.reason),
                 )
                 raise self._provider_error(
@@ -346,9 +401,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     safe_message="Competitor profile generation timed out while calling the AI provider.",
                 ) from exc
             logger.warning(
-                "SEO competitor provider URL error provider_name=%s model_name=%s reason=%s",
+                "SEO competitor provider URL error provider_name=%s model_name=%s endpoint=%s reason=%s",
                 self.provider_name,
                 self.model_name,
+                normalized_endpoint,
                 str(exc.reason),
             )
             raise self._provider_error(
@@ -356,7 +412,22 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 safe_message="Competitor profile generation provider request failed.",
             ) from exc
 
-    def _build_request_payload(
+    def _build_responses_request_payload(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, object]:
+        return {
+            "model": self.model_name,
+            "tools": [{"type": "web_search"}],
+            "input": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+
+    def _build_chat_completions_request_payload(
         self,
         *,
         system_prompt: str,
@@ -444,6 +515,37 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     parts.append(text.strip())
             if parts:
                 return "\n".join(parts)
+
+        raise self._provider_error(
+            code=_PROVIDER_ERROR_PARSING,
+            safe_message="Competitor profile generation response did not include content.",
+            raw_output=json.dumps(response_json, ensure_ascii=True, sort_keys=True),
+        )
+
+    def _extract_assistant_content_from_responses(self, response_json: dict[str, object]) -> str:
+        output_text = response_json.get("output_text")
+        if isinstance(output_text, str):
+            normalized_output_text = output_text.strip()
+            if normalized_output_text:
+                return normalized_output_text
+
+        output = response_json.get("output")
+        if isinstance(output, list):
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if not isinstance(content, list):
+                    continue
+                parts: list[str] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    text = part.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                if parts:
+                    return "\n".join(parts)
 
         raise self._provider_error(
             code=_PROVIDER_ERROR_PARSING,

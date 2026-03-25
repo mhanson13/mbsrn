@@ -89,15 +89,20 @@ Workspace summary responses may include an optional `competitor_prompt_preview` 
 - Prompt text is sanitized for control characters and bounded for UI-safe rendering.
 - When preview data is unavailable, no prompt preview block is rendered.
 
-## Provider Request Compatibility (gpt-5-mini)
+## Web Search Enabled Competitor Discovery
 
-Competitor generation provider requests now apply a small model-compatibility sanitization step at the provider boundary.
+Competitor generation now uses OpenAI `/responses` as the primary path with `web_search` enabled.
 
-- Endpoint remains `/chat/completions`.
-- For `gpt-5-mini`, unsupported request parameters are removed before sending.
-  - Current compatibility behavior removes `temperature`.
-- For other models, existing request behavior is preserved.
-- Structured `response_format` remains enabled on the current path.
+- Primary request path: `/responses`
+- Tooling: `tools: [{"type":"web_search"}]`
+- Input shape: system + user prompt in the `input` array
+- Model compatibility:
+  - `gpt-5-mini` request payload omits unsupported sampling fields (for example `temperature`, `top_p`)
+
+Safe fallback behavior:
+- If `/responses` fails or response parsing fails, provider retries once via `/chat/completions`.
+- Fallback preserves the existing structured JSON parsing contract used by downstream candidate handling.
+- This keeps production behavior backward-safe while enabling live-search discovery on the primary path.
 
 ## Provider Error Visibility
 

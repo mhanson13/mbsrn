@@ -41,38 +41,98 @@ def _site() -> SEOSite:
     )
 
 
-def test_openai_provider_parses_structured_response(monkeypatch) -> None:
+def _candidate_json_text() -> str:
+    return json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "Competitor One",
+                    "domain": "competitor-one.example",
+                    "competitor_type": "direct",
+                    "summary": "Direct overlap",
+                    "why_competitor": "Competes on service intent",
+                    "evidence": "Search result overlap",
+                    "confidence_score": 0.81,
+                }
+            ]
+        }
+    )
+
+
+def _responses_api_payload(*, model: str) -> dict[str, object]:
+    return {
+        "model": model,
+        "output": [
+            {
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": _candidate_json_text(),
+                    }
+                ]
+            }
+        ],
+    }
+
+
+def _chat_completions_payload(*, model: str) -> dict[str, object]:
+    return {
+        "model": model,
+        "choices": [
+            {
+                "message": {
+                    "content": _candidate_json_text(),
+                }
+            }
+        ],
+    }
+
+
+def test_gpt5_mini_uses_responses_api_with_web_search(monkeypatch) -> None:
+    captured_url: str | None = None
     captured_payload: dict[str, object] = {}
 
     def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        nonlocal captured_url
         assert timeout == 20
+        captured_url = request.full_url
         request_body = request.data.decode("utf-8") if isinstance(request.data, bytes) else "{}"
         captured_payload.update(json.loads(request_body))
-        response = {
-            "model": "gpt-4.1-mini-2026-01-01",
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "candidates": [
-                                    {
-                                        "name": "Competitor One",
-                                        "domain": "competitor-one.example",
-                                        "competitor_type": "direct",
-                                        "summary": "Direct overlap",
-                                        "why_competitor": "Competes on service intent",
-                                        "evidence": "Search result overlap",
-                                        "confidence_score": 0.81,
-                                    }
-                                ]
-                            }
-                        )
-                    }
-                }
-            ],
-        }
-        return _FakeHTTPResponse(json.dumps(response))
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-5-mini-2026-01-01")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+        timeout_seconds=20,
+    )
+
+    output = provider.generate_competitor_profiles(
+        site=_site(),
+        existing_domains=["known.example"],
+        candidate_count=1,
+    )
+
+    assert captured_url is not None
+    assert captured_url.endswith("/responses")
+    assert output.provider_name == "openai"
+    assert output.model_name == "gpt-5-mini-2026-01-01"
+    assert captured_payload["model"] == "gpt-5-mini"
+    assert captured_payload["tools"] == [{"type": "web_search"}]
+    assert "temperature" not in captured_payload
+    assert "top_p" not in captured_payload
+    assert "response_format" not in captured_payload
+    input_items = captured_payload["input"]
+    assert isinstance(input_items, list)
+    assert input_items[0]["role"] == "system"
+    assert input_items[1]["role"] == "user"
+
+
+def test_response_parsing_still_returns_valid_candidates(monkeypatch) -> None:
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 20
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-4.1-mini-2026-01-01")))
 
     monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
     provider = OpenAISEOCompetitorProfileGenerationProvider(
@@ -94,48 +154,41 @@ def test_openai_provider_parses_structured_response(monkeypatch) -> None:
     assert len(output.candidates) == 1
     assert output.candidates[0].suggested_name == "Competitor One"
     assert output.candidates[0].suggested_domain == "competitor-one.example"
-    assert captured_payload["model"] == "gpt-4.1-mini"
-    assert captured_payload["temperature"] == 0
-    assert captured_payload["response_format"]["type"] == "json_schema"
 
 
-def test_openai_provider_omits_temperature_for_gpt5_mini(monkeypatch) -> None:
-    captured_payload: dict[str, object] = {}
+def test_fallback_to_chat_completions_on_error(monkeypatch) -> None:
+    call_urls: list[str] = []
 
     def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
-        assert timeout == 20
-        request_body = request.data.decode("utf-8") if isinstance(request.data, bytes) else "{}"
-        captured_payload.update(json.loads(request_body))
-        response = {
-            "model": "gpt-5-mini-2026-01-01",
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "candidates": [
-                                    {
-                                        "name": "Competitor One",
-                                        "domain": "competitor-one.example",
-                                        "competitor_type": "direct",
-                                        "summary": "Direct overlap",
-                                        "why_competitor": "Competes on service intent",
-                                        "evidence": "Search result overlap",
-                                        "confidence_score": 0.81,
-                                    }
-                                ]
+        del timeout
+        call_urls.append(request.full_url)
+        if request.full_url.endswith("/responses"):
+            raise urllib.error.HTTPError(
+                url=request.full_url,
+                code=400,
+                msg="Bad Request",
+                hdrs=None,
+                fp=BytesIO(
+                    json.dumps(
+                        {
+                            "error": {
+                                "type": "invalid_request_error",
+                                "code": "unsupported_parameter",
+                                "message": "web_search is not supported for this request.",
                             }
-                        )
-                    }
-                }
-            ],
-        }
-        return _FakeHTTPResponse(json.dumps(response))
+                        }
+                    ).encode("utf-8")
+                ),
+            )
+        assert request.full_url.endswith("/chat/completions")
+        payload = json.loads(request.data.decode("utf-8")) if isinstance(request.data, bytes) else {}
+        assert payload["response_format"]["type"] == "json_schema"
+        return _FakeHTTPResponse(json.dumps(_chat_completions_payload(model="gpt-4.1-mini-2026-01-01")))
 
     monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
     provider = OpenAISEOCompetitorProfileGenerationProvider(
         api_key="sk-test",
-        model_name="gpt-5-mini",
+        model_name="gpt-4.1-mini",
         timeout_seconds=20,
     )
 
@@ -145,11 +198,12 @@ def test_openai_provider_omits_temperature_for_gpt5_mini(monkeypatch) -> None:
         candidate_count=1,
     )
 
-    assert output.provider_name == "openai"
-    assert output.model_name == "gpt-5-mini-2026-01-01"
-    assert captured_payload["model"] == "gpt-5-mini"
-    assert "temperature" not in captured_payload
-    assert captured_payload["response_format"]["type"] == "json_schema"
+    assert output.model_name == "gpt-4.1-mini-2026-01-01"
+    assert len(output.candidates) == 1
+    assert call_urls == [
+        "https://api.openai.com/v1/responses",
+        "https://api.openai.com/v1/chat/completions",
+    ]
 
 
 def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
@@ -171,9 +225,9 @@ def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
 
 def test_openai_provider_auth_error_is_normalized(monkeypatch) -> None:
     def _unauthorized_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
-        del request, timeout
+        del timeout
         raise urllib.error.HTTPError(
-            url="https://api.openai.com/v1/chat/completions",
+            url=request.full_url,
             code=401,
             msg="Unauthorized",
             hdrs=None,
@@ -194,12 +248,25 @@ def test_openai_provider_auth_error_is_normalized(monkeypatch) -> None:
 
 def test_openai_provider_malformed_content_is_normalized(monkeypatch) -> None:
     def _invalid_content_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
-        del request, timeout
-        response = {
-            "model": "gpt-4.1-mini",
-            "choices": [{"message": {"content": "not-json"}}],
-        }
-        return _FakeHTTPResponse(json.dumps(response))
+        del timeout
+        if request.full_url.endswith("/responses"):
+            return _FakeHTTPResponse(
+                json.dumps(
+                    {
+                        "model": "gpt-4.1-mini",
+                        "output": [{"content": [{"type": "output_text", "text": "not-json"}]}],
+                    }
+                )
+            )
+        assert request.full_url.endswith("/chat/completions")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "choices": [{"message": {"content": "not-json"}}],
+                }
+            )
+        )
 
     monkeypatch.setattr(urllib.request, "urlopen", _invalid_content_urlopen)
     provider = OpenAISEOCompetitorProfileGenerationProvider(
@@ -216,31 +283,7 @@ def test_openai_provider_malformed_content_is_normalized(monkeypatch) -> None:
 def test_openai_provider_logs_prompt_resolution_without_raw_prompt_text(monkeypatch, caplog) -> None:
     def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         del request, timeout
-        response = {
-            "model": "gpt-4.1-mini",
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "candidates": [
-                                    {
-                                        "name": "Competitor One",
-                                        "domain": "competitor-one.example",
-                                        "competitor_type": "direct",
-                                        "summary": "Direct overlap",
-                                        "why_competitor": "Competes on service intent",
-                                        "evidence": "Search result overlap",
-                                        "confidence_score": 0.81,
-                                    }
-                                ]
-                            }
-                        )
-                    }
-                }
-            ],
-        }
-        return _FakeHTTPResponse(json.dumps(response))
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-4.1-mini")))
 
     monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
     provider = OpenAISEOCompetitorProfileGenerationProvider(
@@ -265,31 +308,7 @@ def test_openai_provider_logs_prompt_resolution_without_raw_prompt_text(monkeypa
 def test_openai_provider_warns_on_legacy_fallback_without_raw_prompt_text(monkeypatch, caplog) -> None:
     def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         del request, timeout
-        response = {
-            "model": "gpt-4.1-mini",
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "candidates": [
-                                    {
-                                        "name": "Competitor One",
-                                        "domain": "competitor-one.example",
-                                        "competitor_type": "direct",
-                                        "summary": "Direct overlap",
-                                        "why_competitor": "Competes on service intent",
-                                        "evidence": "Search result overlap",
-                                        "confidence_score": 0.81,
-                                    }
-                                ]
-                            }
-                        )
-                    }
-                }
-            ],
-        }
-        return _FakeHTTPResponse(json.dumps(response))
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-4.1-mini")))
 
     monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
     provider = OpenAISEOCompetitorProfileGenerationProvider(
@@ -311,9 +330,9 @@ def test_openai_provider_warns_on_legacy_fallback_without_raw_prompt_text(monkey
 
 def test_openai_provider_logs_bounded_provider_error_details(monkeypatch, caplog) -> None:
     def _bad_request_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
-        del request, timeout
+        del timeout
         raise urllib.error.HTTPError(
-            url="https://api.openai.com/v1/chat/completions",
+            url=request.full_url,
             code=400,
             msg="Bad Request",
             hdrs=None,
@@ -343,6 +362,8 @@ def test_openai_provider_logs_bounded_provider_error_details(monkeypatch, caplog
     assert exc_info.value.code == "provider_request"
     assert "SEO competitor provider HTTP error status=400" in caplog.text
     assert "model_name=gpt-5-mini" in caplog.text
+    assert "endpoint=/responses" in caplog.text
+    assert "endpoint=/chat/completions" in caplog.text
     assert "error_type=invalid_request_error" in caplog.text
     assert "error_code=unsupported_parameter" in caplog.text
     assert "Unsupported parameter: 'temperature' is not supported with this model." in caplog.text
