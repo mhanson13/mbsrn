@@ -259,11 +259,12 @@ Competitor debug panels may include additive provider-attempt telemetry:
 
 - `provider_attempt_count`
 - `provider_degraded_retry_used`
-- `provider_attempts[]` (attempt number, mode, outcome/failure kind, duration, timeout, endpoint, web-search flag)
+- `provider_attempts[]` (attempt number, mode, reduced-context flag, outcome/failure kind, duration, timeout, endpoint, web-search flag, prompt-size metrics)
 
 Rendering guidance:
 - keep the block compact and debug-only near existing competitor debug cards
 - show degraded retry usage as a simple yes/no line
+- show retry-only reduced context usage (`reduced_context_mode`) and prompt-size values (`prompt_total_chars`) when available
 - hide cleanly when attempt telemetry is absent
 - do not expose raw provider payloads or stack traces
 

@@ -76,6 +76,7 @@ class SEOCompetitorProfileGenerationProvider(Protocol):
         site: SEOSite,
         existing_domains: list[str],
         candidate_count: int,
+        reduced_context_mode: bool = False,
     ) -> SEOCompetitorProfileGenerationOutput: ...
 
 
@@ -216,7 +217,9 @@ class MockSEOCompetitorProfileGenerationProvider:
         site: SEOSite,
         existing_domains: list[str],
         candidate_count: int,
+        reduced_context_mode: bool = False,
     ) -> SEOCompetitorProfileGenerationOutput:
+        del reduced_context_mode
         existing = {item.strip().lower() for item in existing_domains if item.strip()}
         normalized_domain = (site.normalized_domain or "").strip().lower() or "example.com"
         root = normalized_domain.split(".")[0] or "example"

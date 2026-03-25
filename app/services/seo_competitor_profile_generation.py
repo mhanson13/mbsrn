@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import inspect
 import json
 import logging
 import time
@@ -232,6 +233,7 @@ class SEOCompetitorProfileCandidatePipelineSummary:
 class SEOCompetitorProfileProviderAttemptDebug:
     attempt_number: int
     degraded_mode: bool
+    reduced_context_mode: bool
     requested_candidate_count: int
     outcome: str
     failure_kind: str | None
@@ -239,7 +241,18 @@ class SEOCompetitorProfileProviderAttemptDebug:
     timeout_seconds: int | None
     web_search_enabled: bool | None
     prompt_size_risk: str | None
+    prompt_total_chars: int | None
+    context_json_chars: int | None
+    user_prompt_chars: int | None
     endpoint_path: str | None
+
+
+@dataclass(frozen=True)
+class _ProviderAttemptPromptMetrics:
+    reduced_context_mode: bool
+    prompt_total_chars: int | None
+    context_json_chars: int | None
+    user_prompt_chars: int | None
 
 
 @dataclass(frozen=True)
@@ -1909,18 +1922,26 @@ class SEOCompetitorProfileGenerationService:
         provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug],
     ) -> SEOCompetitorProfileGenerationOutput:
         effective_requested_count = max(1, int(requested_candidate_count))
+        first_prompt_metrics = self._build_provider_attempt_prompt_metrics(
+            site=site,
+            existing_domains=existing_domains,
+            candidate_count=effective_requested_count,
+            reduced_context_mode=False,
+        )
         first_attempt_start = time.perf_counter()
         try:
-            output = self.provider.generate_competitor_profiles(
+            output = self._invoke_provider_generate_competitor_profiles(
                 site=site,
                 existing_domains=existing_domains,
                 candidate_count=effective_requested_count,
+                reduced_context_mode=False,
             )
         except SEOCompetitorProfileProviderError as exc:
             first_duration_ms = max(0, int((time.perf_counter() - first_attempt_start) * 1000))
             first_attempt_debug = self._build_provider_attempt_debug(
                 attempt_number=1,
                 degraded_mode=False,
+                prompt_metrics=first_prompt_metrics,
                 requested_candidate_count=effective_requested_count,
                 fallback_duration_ms=first_duration_ms,
                 provider_error=exc,
@@ -1930,14 +1951,21 @@ class SEOCompetitorProfileGenerationService:
                 raise exc
 
             degraded_candidate_count = self._degraded_retry_candidate_count(effective_requested_count)
+            retry_prompt_metrics = self._build_provider_attempt_prompt_metrics(
+                site=site,
+                existing_domains=existing_domains,
+                candidate_count=degraded_candidate_count,
+                reduced_context_mode=True,
+            )
             if _TIMEOUT_RETRY_BACKOFF_SECONDS > 0:
                 time.sleep(_TIMEOUT_RETRY_BACKOFF_SECONDS)
             retry_start = time.perf_counter()
             try:
-                output = self.provider.generate_competitor_profiles(
+                output = self._invoke_provider_generate_competitor_profiles(
                     site=site,
                     existing_domains=existing_domains,
                     candidate_count=degraded_candidate_count,
+                    reduced_context_mode=True,
                 )
             except SEOCompetitorProfileProviderError as retry_exc:
                 retry_duration_ms = max(0, int((time.perf_counter() - retry_start) * 1000))
@@ -1945,6 +1973,7 @@ class SEOCompetitorProfileGenerationService:
                     self._build_provider_attempt_debug(
                         attempt_number=2,
                         degraded_mode=True,
+                        prompt_metrics=retry_prompt_metrics,
                         requested_candidate_count=degraded_candidate_count,
                         fallback_duration_ms=retry_duration_ms,
                         provider_error=retry_exc,
@@ -1957,6 +1986,7 @@ class SEOCompetitorProfileGenerationService:
                 self._build_provider_attempt_debug(
                     attempt_number=2,
                     degraded_mode=True,
+                    prompt_metrics=retry_prompt_metrics,
                     requested_candidate_count=degraded_candidate_count,
                     fallback_duration_ms=retry_duration_ms,
                     provider_error=None,
@@ -1981,12 +2011,79 @@ class SEOCompetitorProfileGenerationService:
             self._build_provider_attempt_debug(
                 attempt_number=1,
                 degraded_mode=False,
+                prompt_metrics=first_prompt_metrics,
                 requested_candidate_count=effective_requested_count,
                 fallback_duration_ms=first_duration_ms,
                 provider_error=None,
             )
         )
         return output
+
+    def _invoke_provider_generate_competitor_profiles(
+        self,
+        *,
+        site: SEOSite,
+        existing_domains: list[str],
+        candidate_count: int,
+        reduced_context_mode: bool,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        provider_method = self.provider.generate_competitor_profiles
+        try:
+            signature = inspect.signature(provider_method)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is not None and "reduced_context_mode" in signature.parameters:
+            return provider_method(
+                site=site,
+                existing_domains=existing_domains,
+                candidate_count=candidate_count,
+                reduced_context_mode=reduced_context_mode,
+            )
+        return provider_method(
+            site=site,
+            existing_domains=existing_domains,
+            candidate_count=candidate_count,
+        )
+
+    def _build_provider_attempt_prompt_metrics(
+        self,
+        *,
+        site: SEOSite,
+        existing_domains: list[str],
+        candidate_count: int,
+        reduced_context_mode: bool,
+    ) -> _ProviderAttemptPromptMetrics:
+        try:
+            prompt = build_seo_competitor_profile_prompt(
+                site=site,
+                existing_domains=existing_domains,
+                candidate_count=max(1, int(candidate_count)),
+                reduced_context_mode=bool(reduced_context_mode),
+                prompt_version=self._default_prompt_version(),
+                prompt_text_competitor=self._provider_prompt_text_competitor(),
+            )
+        except Exception:  # noqa: BLE001
+            return _ProviderAttemptPromptMetrics(
+                reduced_context_mode=bool(reduced_context_mode),
+                prompt_total_chars=None,
+                context_json_chars=None,
+                user_prompt_chars=None,
+            )
+        telemetry = prompt.prompt_telemetry or {}
+        return _ProviderAttemptPromptMetrics(
+            reduced_context_mode=bool(reduced_context_mode),
+            prompt_total_chars=self._coerce_non_negative_int(telemetry.get("total_prompt_chars")),
+            context_json_chars=self._coerce_non_negative_int(telemetry.get("context_json_chars")),
+            user_prompt_chars=self._coerce_non_negative_int(telemetry.get("user_prompt_chars")),
+        )
+
+    @staticmethod
+    def _coerce_non_negative_int(value: object) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return max(0, parsed)
 
     @staticmethod
     def _degraded_retry_candidate_count(requested_candidate_count: int) -> int:
@@ -2000,6 +2097,7 @@ class SEOCompetitorProfileGenerationService:
         *,
         attempt_number: int,
         degraded_mode: bool,
+        prompt_metrics: _ProviderAttemptPromptMetrics,
         requested_candidate_count: int,
         fallback_duration_ms: int,
         provider_error: SEOCompetitorProfileProviderError | None,
@@ -2011,6 +2109,10 @@ class SEOCompetitorProfileGenerationService:
         web_search_enabled: bool | None = None
         request_duration_ms: int | None = max(0, int(fallback_duration_ms))
         outcome = "success"
+        reduced_context_mode = bool(prompt_metrics.reduced_context_mode)
+        prompt_total_chars = prompt_metrics.prompt_total_chars
+        context_json_chars = prompt_metrics.context_json_chars
+        user_prompt_chars = prompt_metrics.user_prompt_chars
 
         if provider_error is not None:
             if provider_error.code == "timeout":
@@ -2025,12 +2127,21 @@ class SEOCompetitorProfileGenerationService:
                 prompt_size_risk = provider_debug.prompt_size_risk
                 timeout_seconds = provider_debug.timeout_seconds
                 web_search_enabled = provider_debug.web_search_enabled
+                if provider_debug.reduced_context_mode is not None:
+                    reduced_context_mode = provider_debug.reduced_context_mode
+                if provider_debug.prompt_total_chars is not None:
+                    prompt_total_chars = provider_debug.prompt_total_chars
+                if provider_debug.context_json_chars is not None:
+                    context_json_chars = provider_debug.context_json_chars
+                if provider_debug.user_prompt_chars is not None:
+                    user_prompt_chars = provider_debug.user_prompt_chars
                 if provider_debug.request_duration_ms is not None:
                     request_duration_ms = provider_debug.request_duration_ms
             outcome = failure_kind
         return SEOCompetitorProfileProviderAttemptDebug(
             attempt_number=max(1, int(attempt_number)),
             degraded_mode=bool(degraded_mode),
+            reduced_context_mode=reduced_context_mode,
             requested_candidate_count=max(1, int(requested_candidate_count)),
             outcome=outcome,
             failure_kind=None if provider_error is None else failure_kind,
@@ -2038,6 +2149,9 @@ class SEOCompetitorProfileGenerationService:
             timeout_seconds=timeout_seconds,
             web_search_enabled=web_search_enabled,
             prompt_size_risk=prompt_size_risk,
+            prompt_total_chars=prompt_total_chars,
+            context_json_chars=context_json_chars,
+            user_prompt_chars=user_prompt_chars,
             endpoint_path=endpoint_path,
         )
 
@@ -2048,6 +2162,10 @@ class SEOCompetitorProfileGenerationService:
         prompt_size_risk: str | None
         timeout_seconds: int | None
         web_search_enabled: bool | None
+        reduced_context_mode: bool | None
+        prompt_total_chars: int | None
+        context_json_chars: int | None
+        user_prompt_chars: int | None
         request_duration_ms: int | None
 
     def _extract_provider_failure_debug(self, raw_output: str | None) -> _ProviderFailureDebug | None:
@@ -2070,6 +2188,10 @@ class SEOCompetitorProfileGenerationService:
         timeout_seconds = None
         request_duration_ms = None
         web_search_enabled = None
+        reduced_context_mode = None
+        prompt_total_chars = None
+        context_json_chars = None
+        user_prompt_chars = None
         if isinstance(request_debug, dict):
             try:
                 timeout_seconds = max(1, int(request_debug.get("timeout_seconds")))
@@ -2082,12 +2204,34 @@ class SEOCompetitorProfileGenerationService:
             raw_web_search_enabled = request_debug.get("web_search_enabled")
             if isinstance(raw_web_search_enabled, bool):
                 web_search_enabled = raw_web_search_enabled
+            raw_reduced_context_mode = request_debug.get("reduced_context_mode")
+            if isinstance(raw_reduced_context_mode, bool):
+                reduced_context_mode = raw_reduced_context_mode
+            try:
+                if request_debug.get("prompt_total_chars") is not None:
+                    prompt_total_chars = max(0, int(request_debug.get("prompt_total_chars")))
+            except (TypeError, ValueError):
+                prompt_total_chars = None
+            try:
+                if request_debug.get("context_json_chars") is not None:
+                    context_json_chars = max(0, int(request_debug.get("context_json_chars")))
+            except (TypeError, ValueError):
+                context_json_chars = None
+            try:
+                if request_debug.get("user_prompt_chars") is not None:
+                    user_prompt_chars = max(0, int(request_debug.get("user_prompt_chars")))
+            except (TypeError, ValueError):
+                user_prompt_chars = None
         return self._ProviderFailureDebug(
             failure_kind=raw_failure_kind,
             endpoint_path=endpoint_path,
             prompt_size_risk=prompt_size_risk,
             timeout_seconds=timeout_seconds,
             web_search_enabled=web_search_enabled,
+            reduced_context_mode=reduced_context_mode,
+            prompt_total_chars=prompt_total_chars,
+            context_json_chars=context_json_chars,
+            user_prompt_chars=user_prompt_chars,
             request_duration_ms=request_duration_ms,
         )
 
@@ -2102,6 +2246,7 @@ class SEOCompetitorProfileGenerationService:
             payload: dict[str, object] = {
                 "attempt_number": max(1, int(item.attempt_number)),
                 "degraded_mode": bool(item.degraded_mode),
+                "reduced_context_mode": bool(item.reduced_context_mode),
                 "requested_candidate_count": max(1, int(item.requested_candidate_count)),
                 "outcome": self._clean_optional(item.outcome) or "success",
             }
@@ -2115,6 +2260,12 @@ class SEOCompetitorProfileGenerationService:
                 payload["web_search_enabled"] = bool(item.web_search_enabled)
             if item.prompt_size_risk:
                 payload["prompt_size_risk"] = item.prompt_size_risk
+            if item.prompt_total_chars is not None:
+                payload["prompt_total_chars"] = max(0, int(item.prompt_total_chars))
+            if item.context_json_chars is not None:
+                payload["context_json_chars"] = max(0, int(item.context_json_chars))
+            if item.user_prompt_chars is not None:
+                payload["user_prompt_chars"] = max(0, int(item.user_prompt_chars))
             if item.endpoint_path:
                 payload["endpoint_path"] = item.endpoint_path
             serialized.append(payload)
@@ -2141,6 +2292,7 @@ class SEOCompetitorProfileGenerationService:
                     continue
                 attempt_number = max(1, self._coerce_int(raw_item.get("attempt_number"), default=1))
                 degraded_mode = bool(raw_item.get("degraded_mode"))
+                reduced_context_mode = bool(raw_item.get("reduced_context_mode"))
                 requested_candidate_count = max(
                     1,
                     self._coerce_int(raw_item.get("requested_candidate_count"), default=1),
@@ -2164,6 +2316,24 @@ class SEOCompetitorProfileGenerationService:
                 web_search_enabled = raw_item.get("web_search_enabled")
                 if not isinstance(web_search_enabled, bool):
                     web_search_enabled = None
+                prompt_total_chars: int | None = None
+                context_json_chars: int | None = None
+                user_prompt_chars: int | None = None
+                try:
+                    if raw_item.get("prompt_total_chars") is not None:
+                        prompt_total_chars = max(0, int(raw_item.get("prompt_total_chars")))
+                except (TypeError, ValueError):
+                    prompt_total_chars = None
+                try:
+                    if raw_item.get("context_json_chars") is not None:
+                        context_json_chars = max(0, int(raw_item.get("context_json_chars")))
+                except (TypeError, ValueError):
+                    context_json_chars = None
+                try:
+                    if raw_item.get("user_prompt_chars") is not None:
+                        user_prompt_chars = max(0, int(raw_item.get("user_prompt_chars")))
+                except (TypeError, ValueError):
+                    user_prompt_chars = None
                 prompt_size_risk = self._clean_optional(str(raw_item.get("prompt_size_risk") or ""))
                 if prompt_size_risk not in {"normal", "elevated", "high"}:
                     prompt_size_risk = None
@@ -2172,6 +2342,7 @@ class SEOCompetitorProfileGenerationService:
                     SEOCompetitorProfileProviderAttemptDebug(
                         attempt_number=attempt_number,
                         degraded_mode=degraded_mode,
+                        reduced_context_mode=reduced_context_mode,
                         requested_candidate_count=requested_candidate_count,
                         outcome=outcome,
                         failure_kind=failure_kind,
@@ -2179,6 +2350,9 @@ class SEOCompetitorProfileGenerationService:
                         timeout_seconds=timeout_seconds,
                         web_search_enabled=web_search_enabled,
                         prompt_size_risk=prompt_size_risk,
+                        prompt_total_chars=prompt_total_chars,
+                        context_json_chars=context_json_chars,
+                        user_prompt_chars=user_prompt_chars,
                         endpoint_path=endpoint_path,
                     )
                 )

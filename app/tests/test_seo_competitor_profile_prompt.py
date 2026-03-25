@@ -435,6 +435,40 @@ def test_prompt_builder_applies_context_budget_trimming_for_oversized_context() 
     assert len(context["excluded_domains"]) <= 25
 
 
+def test_prompt_builder_reduced_context_mode_trims_optional_context() -> None:
+    site = _build_site()
+    site.service_areas_json = [f"service-area-{index}-{'x' * 120}" for index in range(1, 35)]
+    existing_domains = [f"example-{index}.example" for index in range(1, 140)]
+
+    standard_prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=existing_domains,
+        candidate_count=5,
+        reduced_context_mode=False,
+    )
+    reduced_prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=existing_domains,
+        candidate_count=4,
+        reduced_context_mode=True,
+    )
+
+    standard_context = standard_prompt.trusted_site_context
+    reduced_context = reduced_prompt.trusted_site_context
+
+    assert standard_prompt.prompt_telemetry["reduced_context_mode"] == 0
+    assert reduced_prompt.prompt_telemetry["reduced_context_mode"] == 1
+    assert len(reduced_context["existing_competitor_domains"]) <= len(standard_context["existing_competitor_domains"])
+    assert len(reduced_context["excluded_domains"]) <= len(standard_context["excluded_domains"])
+    assert len(reduced_context["site_service_areas"]) <= len(standard_context["site_service_areas"])
+    assert len(reduced_context["non_competitor_domain_hints"]) <= len(standard_context["non_competitor_domain_hints"])
+    assert reduced_prompt.prompt_telemetry["context_json_chars"] <= standard_prompt.prompt_telemetry["context_json_chars"]
+    assert reduced_prompt.prompt_telemetry["user_prompt_chars"] <= standard_prompt.prompt_telemetry["user_prompt_chars"]
+    assert reduced_context["site_location_context"] == standard_context["site_location_context"]
+    assert reduced_context["site_industry_context"] == standard_context["site_industry_context"]
+    assert reduced_context["target_customer_context"] == standard_context["target_customer_context"]
+
+
 def test_prompt_builder_supports_deprecated_prompt_alias() -> None:
     prompt = build_seo_competitor_profile_prompt(
         site=_build_site(),

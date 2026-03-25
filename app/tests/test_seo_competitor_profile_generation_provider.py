@@ -156,6 +156,45 @@ def test_response_parsing_still_returns_valid_candidates(monkeypatch) -> None:
     assert output.candidates[0].suggested_domain == "competitor-one.example"
 
 
+def test_reduced_context_mode_builds_smaller_retry_prompt(monkeypatch) -> None:
+    captured_user_prompt_lengths: list[int] = []
+    existing_domains = [f"example-{index}.example" for index in range(1, 140)]
+    site = _site()
+    site.service_areas_json = [f"service-area-{index}-{'x' * 80}" for index in range(1, 30)]
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 20
+        payload = json.loads(request.data.decode("utf-8")) if isinstance(request.data, bytes) else {}
+        input_items = payload.get("input")
+        assert isinstance(input_items, list)
+        user_prompt = input_items[1]["content"]
+        captured_user_prompt_lengths.append(len(str(user_prompt)))
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-4.1-mini-2026-01-01")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        timeout_seconds=20,
+    )
+
+    provider.generate_competitor_profiles(
+        site=site,
+        existing_domains=existing_domains,
+        candidate_count=5,
+        reduced_context_mode=False,
+    )
+    provider.generate_competitor_profiles(
+        site=site,
+        existing_domains=existing_domains,
+        candidate_count=4,
+        reduced_context_mode=True,
+    )
+
+    assert len(captured_user_prompt_lengths) == 2
+    assert captured_user_prompt_lengths[1] < captured_user_prompt_lengths[0]
+
+
 def test_fallback_to_chat_completions_on_error(monkeypatch) -> None:
     call_urls: list[str] = []
 
@@ -232,6 +271,8 @@ def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
     assert raw_debug_payload["request_debug"]["prompt_total_chars"] >= 1
     assert raw_debug_payload["request_debug"]["timeout_seconds"] == provider.timeout_seconds
     assert isinstance(raw_debug_payload["request_debug"]["web_search_enabled"], bool)
+    assert isinstance(raw_debug_payload["request_debug"]["reduced_context_mode"], bool)
+    assert raw_debug_payload["request_debug"]["user_prompt_chars"] >= 1
     assert raw_debug_payload["request_debug"]["request_duration_ms"] >= 0
 
 

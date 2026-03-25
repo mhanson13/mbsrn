@@ -380,6 +380,7 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
 
     attempt_number: int = Field(ge=1)
     degraded_mode: bool = False
+    reduced_context_mode: bool = False
     requested_candidate_count: int = Field(ge=1)
     outcome: str = Field(min_length=1, max_length=64)
     failure_kind: str | None = Field(default=None, max_length=64)
@@ -387,6 +388,9 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
     timeout_seconds: int | None = Field(default=None, ge=1)
     web_search_enabled: bool | None = None
     prompt_size_risk: str | None = Field(default=None, max_length=32)
+    prompt_total_chars: int | None = Field(default=None, ge=0)
+    context_json_chars: int | None = Field(default=None, ge=0)
+    user_prompt_chars: int | None = Field(default=None, ge=0)
     endpoint_path: str | None = Field(default=None, max_length=64)
 
     @field_validator("outcome", mode="before")

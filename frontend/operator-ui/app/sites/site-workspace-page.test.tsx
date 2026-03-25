@@ -4630,6 +4630,7 @@ describe("site workspace ai competitor profile drafts", () => {
         {
           attempt_number: 1,
           degraded_mode: false,
+          reduced_context_mode: false,
           requested_candidate_count: 5,
           outcome: "timeout",
           failure_kind: "timeout",
@@ -4637,11 +4638,15 @@ describe("site workspace ai competitor profile drafts", () => {
           timeout_seconds: 30,
           web_search_enabled: true,
           prompt_size_risk: "normal",
+          prompt_total_chars: 11200,
+          context_json_chars: 4200,
+          user_prompt_chars: 10400,
           endpoint_path: "/responses",
         },
         {
           attempt_number: 2,
           degraded_mode: true,
+          reduced_context_mode: true,
           requested_candidate_count: 3,
           outcome: "success",
           failure_kind: null,
@@ -4649,6 +4654,9 @@ describe("site workspace ai competitor profile drafts", () => {
           timeout_seconds: 30,
           web_search_enabled: true,
           prompt_size_risk: "normal",
+          prompt_total_chars: 8200,
+          context_json_chars: 2600,
+          user_prompt_chars: 7600,
           endpoint_path: "/responses",
         },
       ],
@@ -4694,6 +4702,7 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(within(providerAttemptsDebug).getByText("degraded_retry")).toBeInTheDocument();
     expect(within(providerAttemptsDebug).getByText("Success")).toBeInTheDocument();
     expect(within(providerAttemptsDebug).getByText("timeout")).toBeInTheDocument();
+    expect(within(providerAttemptsDebug).getByText("11,200")).toBeInTheDocument();
   });
 
   it("triggers generation and refreshes visible drafts", async () => {

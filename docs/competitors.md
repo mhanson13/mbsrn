@@ -171,12 +171,18 @@ Competitor generation now applies a bounded timeout-only retry at the service la
 - retry triggers only when the first attempt is classified as `timeout`
 - exactly one retry is allowed
 - second attempt runs in deterministic degraded mode with a lower candidate-count target
+- second attempt also enables deterministic `reduced_context_mode` so optional prompt context is trimmed
 - non-timeout failures (`provider_request`, auth/config, malformed output) do not retry
 
 Degraded retry intent:
 - reduce request cost under provider/web-search latency
-- preserve core business/location/service context
+- preserve core business/location/service context while trimming optional context
 - avoid duplicate run artifacts or duplicate draft persistence
+
+Retry reduced-context behavior:
+- preserves business identity, service/trade context, and location/service-area context
+- trims optional context blocks such as oversized domain lists and non-essential hint arrays
+- is retry-only; first attempt behavior is unchanged
 
 ## Provider Attempt Debug Metadata
 
@@ -187,6 +193,7 @@ Competitor run detail debug payloads can include bounded provider-attempt teleme
 - `provider_attempts[]` with compact fields such as:
   - `attempt_number`
   - `degraded_mode`
+  - `reduced_context_mode`
   - `requested_candidate_count`
   - `outcome` / `failure_kind`
   - `request_duration_ms`
@@ -194,6 +201,9 @@ Competitor run detail debug payloads can include bounded provider-attempt teleme
   - `endpoint_path`
   - `web_search_enabled`
   - `prompt_size_risk`
+  - `prompt_total_chars`
+  - `context_json_chars`
+  - `user_prompt_chars`
 
 This metadata is debug-oriented only and does not change ranking/scoring behavior.
 

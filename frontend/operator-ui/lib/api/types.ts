@@ -354,6 +354,7 @@ export interface CompetitorCandidatePipelineSummary {
 export interface CompetitorProviderAttemptDebug {
   attempt_number: number;
   degraded_mode: boolean;
+  reduced_context_mode: boolean;
   requested_candidate_count: number;
   outcome: string;
   failure_kind: string | null;
@@ -361,6 +362,9 @@ export interface CompetitorProviderAttemptDebug {
   timeout_seconds: number | null;
   web_search_enabled: boolean | null;
   prompt_size_risk: string | null;
+  prompt_total_chars: number | null;
+  context_json_chars: number | null;
+  user_prompt_chars: number | null;
   endpoint_path: string | null;
 }
 

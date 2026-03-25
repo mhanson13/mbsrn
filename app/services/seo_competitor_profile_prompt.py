@@ -27,6 +27,13 @@ _MAX_EXISTING_COMPETITOR_DOMAINS_TOTAL_CHARS = 900
 _MAX_EXCLUDED_DOMAINS = 45
 _MAX_EXCLUDED_DOMAINS_TOTAL_CHARS = 1024
 _MAX_CONTEXT_JSON_CHARS = 4500
+_RETRY_REDUCED_CONTEXT_EXISTING_DOMAIN_CAP = 8
+_RETRY_REDUCED_CONTEXT_EXISTING_DOMAIN_TOTAL_CHARS = 220
+_RETRY_REDUCED_CONTEXT_EXCLUDED_DOMAIN_CAP = 12
+_RETRY_REDUCED_CONTEXT_EXCLUDED_DOMAIN_TOTAL_CHARS = 320
+_RETRY_REDUCED_CONTEXT_SERVICE_AREA_CAP = 4
+_RETRY_REDUCED_CONTEXT_NON_COMPETITOR_HINT_CAP = 4
+_RETRY_REDUCED_CONTEXT_SERVICE_FOCUS_TERMS_CAP = 6
 _BUDGET_CONTEXT_EXISTING_DOMAIN_CAP = 20
 _BUDGET_CONTEXT_EXISTING_DOMAIN_TOTAL_CHARS = 500
 _BUDGET_CONTEXT_EXCLUDED_DOMAIN_CAP = 25
@@ -63,6 +70,7 @@ def build_seo_competitor_profile_prompt(
     site: SEOSite,
     existing_domains: list[str],
     candidate_count: int,
+    reduced_context_mode: bool = False,
     prompt_version: str = SEO_COMPETITOR_PROFILE_PROMPT_VERSION,
     prompt_text_competitor: str | None = None,
     # DEPRECATED: use prompt_text_competitor.
@@ -159,6 +167,8 @@ def build_seo_competitor_profile_prompt(
         "existing_competitor_domains": normalized_domains,
         "non_competitor_domain_hints": list(_NON_COMPETITOR_DOMAIN_HINTS[:_MAX_NON_COMPETITOR_HINTS]),
     }
+    if reduced_context_mode:
+        context = _apply_retry_reduced_context_mode(context=context, site_domain=normalized_domain)
     context, context_json, context_budget_trimmed = _apply_context_budget(
         context=context,
         site_domain=normalized_domain,
@@ -240,6 +250,7 @@ def build_seo_competitor_profile_prompt(
         ),
         "supplemental_competitor_text_chars": supplemental_competitor_text_chars,
         "context_budget_trimmed": 1 if context_budget_trimmed else 0,
+        "reduced_context_mode": 1 if reduced_context_mode else 0,
     }
 
     return SEOCompetitorProfilePrompt(
@@ -381,6 +392,45 @@ def _apply_context_budget(
         context_json = _serialize_context_json(budgeted)
 
     return budgeted, context_json, True
+
+
+def _apply_retry_reduced_context_mode(
+    *,
+    context: dict[str, object],
+    site_domain: str,
+) -> dict[str, object]:
+    reduced = dict(context)
+
+    existing_domains = reduced.get("existing_competitor_domains")
+    if isinstance(existing_domains, list):
+        reduced["existing_competitor_domains"] = _limit_domains_for_prompt(
+            [str(item) for item in existing_domains],
+            max_items=_RETRY_REDUCED_CONTEXT_EXISTING_DOMAIN_CAP,
+            max_total_chars=_RETRY_REDUCED_CONTEXT_EXISTING_DOMAIN_TOTAL_CHARS,
+        )
+
+    excluded_domains = reduced.get("excluded_domains")
+    if isinstance(excluded_domains, list):
+        reduced["excluded_domains"] = _limit_domains_for_prompt(
+            [str(item) for item in excluded_domains],
+            max_items=_RETRY_REDUCED_CONTEXT_EXCLUDED_DOMAIN_CAP,
+            max_total_chars=_RETRY_REDUCED_CONTEXT_EXCLUDED_DOMAIN_TOTAL_CHARS,
+            required_first=site_domain,
+        )
+
+    service_areas = reduced.get("site_service_areas")
+    if isinstance(service_areas, list):
+        reduced["site_service_areas"] = service_areas[:_RETRY_REDUCED_CONTEXT_SERVICE_AREA_CAP]
+
+    non_competitor_hints = reduced.get("non_competitor_domain_hints")
+    if isinstance(non_competitor_hints, list):
+        reduced["non_competitor_domain_hints"] = non_competitor_hints[:_RETRY_REDUCED_CONTEXT_NON_COMPETITOR_HINT_CAP]
+
+    service_focus_terms = reduced.get("service_focus_terms")
+    if isinstance(service_focus_terms, list):
+        reduced["service_focus_terms"] = service_focus_terms[:_RETRY_REDUCED_CONTEXT_SERVICE_FOCUS_TERMS_CAP]
+
+    return reduced
 
 
 def _serialize_context_json(context: dict[str, object]) -> str:

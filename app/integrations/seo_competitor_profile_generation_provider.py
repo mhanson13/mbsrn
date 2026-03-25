@@ -68,8 +68,9 @@ class MisconfiguredSEOCompetitorProfileGenerationProvider:
         site: SEOSite,
         existing_domains: list[str],
         candidate_count: int,
+        reduced_context_mode: bool = False,
     ) -> SEOCompetitorProfileGenerationOutput:
-        del site, existing_domains, candidate_count
+        del site, existing_domains, candidate_count, reduced_context_mode
         raise SEOCompetitorProfileProviderError(
             code=_PROVIDER_ERROR_AUTH_CONFIG,
             safe_message=self.safe_message,
@@ -121,12 +122,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         site: SEOSite,
         existing_domains: list[str],
         candidate_count: int,
+        reduced_context_mode: bool = False,
     ) -> SEOCompetitorProfileGenerationOutput:
         self._log_prompt_resolution_metadata()
         prompt = build_seo_competitor_profile_prompt(
             site=site,
             existing_domains=existing_domains,
             candidate_count=candidate_count,
+            reduced_context_mode=reduced_context_mode,
             prompt_version=self.prompt_version,
             prompt_text_competitor=self.prompt_text_competitor,
         )
@@ -599,6 +602,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             maximum=250000,
             default=0,
         )
+        user_prompt_chars = _coerce_bounded_int(
+            metrics.get("user_prompt_chars"),
+            minimum=0,
+            maximum=250000,
+            default=0,
+        )
+        reduced_context_mode = bool(metrics.get("reduced_context_mode"))
         if prompt_total_chars >= _PROMPT_SIZE_HIGH_RISK_CHARS:
             prompt_size_risk = "high"
         elif prompt_total_chars >= _PROMPT_SIZE_WARN_THRESHOLD_CHARS:
@@ -611,6 +621,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "candidate_count": max(1, int(candidate_count)),
             "prompt_total_chars": prompt_total_chars,
             "context_json_chars": context_json_chars,
+            "user_prompt_chars": user_prompt_chars,
+            "reduced_context_mode": reduced_context_mode,
             "prompt_size_risk": prompt_size_risk,
             "timeout_seconds": self.timeout_seconds,
             "web_search_enabled": normalized_endpoint == "/responses",
@@ -637,6 +649,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "candidate_count": request_debug.get("candidate_count"),
                 "prompt_total_chars": request_debug.get("prompt_total_chars"),
                 "context_json_chars": request_debug.get("context_json_chars"),
+                "user_prompt_chars": request_debug.get("user_prompt_chars"),
+                "reduced_context_mode": request_debug.get("reduced_context_mode"),
                 "prompt_size_risk": request_debug.get("prompt_size_risk"),
                 "timeout_seconds": request_debug.get("timeout_seconds"),
                 "web_search_enabled": request_debug.get("web_search_enabled"),

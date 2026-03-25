@@ -465,11 +465,18 @@ function normalizeCompetitorProviderAttempts(
       const timeoutSeconds = Number.isFinite(timeoutRaw) ? Math.max(1, timeoutRaw) : null;
       const endpointPath = truncateOptionalText(attempt.endpoint_path, 64);
       const promptSizeRisk = truncateOptionalText(attempt.prompt_size_risk, 32);
+      const promptTotalCharsRaw = Number(attempt.prompt_total_chars);
+      const promptTotalChars = Number.isFinite(promptTotalCharsRaw) ? Math.max(0, promptTotalCharsRaw) : null;
+      const contextJsonCharsRaw = Number(attempt.context_json_chars);
+      const contextJsonChars = Number.isFinite(contextJsonCharsRaw) ? Math.max(0, contextJsonCharsRaw) : null;
+      const userPromptCharsRaw = Number(attempt.user_prompt_chars);
+      const userPromptChars = Number.isFinite(userPromptCharsRaw) ? Math.max(0, userPromptCharsRaw) : null;
       const webSearchEnabled =
         typeof attempt.web_search_enabled === "boolean" ? attempt.web_search_enabled : null;
       return {
         attempt_number: attemptNumber,
         degraded_mode: Boolean(attempt.degraded_mode),
+        reduced_context_mode: Boolean(attempt.reduced_context_mode),
         requested_candidate_count: requestedCandidateCount,
         outcome,
         failure_kind: failureKind,
@@ -477,6 +484,9 @@ function normalizeCompetitorProviderAttempts(
         timeout_seconds: timeoutSeconds,
         web_search_enabled: webSearchEnabled,
         prompt_size_risk: promptSizeRisk,
+        prompt_total_chars: promptTotalChars,
+        context_json_chars: contextJsonChars,
+        user_prompt_chars: userPromptChars,
         endpoint_path: endpointPath,
       };
     })
@@ -4570,8 +4580,10 @@ export default function SiteWorkspacePage() {
                   <tr>
                     <th>Attempt</th>
                     <th>Mode</th>
+                    <th>Reduced context</th>
                     <th>Outcome</th>
                     <th>Duration</th>
+                    <th>Prompt chars</th>
                     <th>Timeout</th>
                     <th>Endpoint</th>
                     <th>Web search</th>
@@ -4582,10 +4594,16 @@ export default function SiteWorkspacePage() {
                     <tr key={`provider-attempt-${attempt.attempt_number}`}>
                       <td>{attempt.attempt_number}</td>
                       <td>{attempt.degraded_mode ? "degraded_retry" : "standard"}</td>
+                      <td>{attempt.reduced_context_mode ? "yes" : "no"}</td>
                       <td>{formatProviderAttemptOutcome(attempt.outcome, attempt.failure_kind)}</td>
                       <td>
                         {typeof attempt.request_duration_ms === "number"
                           ? `${Math.max(0, Math.round(attempt.request_duration_ms))} ms`
+                          : "-"}
+                      </td>
+                      <td>
+                        {typeof attempt.prompt_total_chars === "number"
+                          ? Math.max(0, Math.round(attempt.prompt_total_chars)).toLocaleString()
                           : "-"}
                       </td>
                       <td>

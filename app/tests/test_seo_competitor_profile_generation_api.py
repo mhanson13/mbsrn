@@ -232,6 +232,7 @@ class _TimeoutThenSuccessCompetitorProfileProvider:
 
     def __init__(self) -> None:
         self.requested_candidate_counts: list[int] = []
+        self.reduced_context_modes: list[bool] = []
 
     def generate_competitor_profiles(
         self,
@@ -239,9 +240,11 @@ class _TimeoutThenSuccessCompetitorProfileProvider:
         site,  # noqa: ANN001
         existing_domains,  # noqa: ANN001
         candidate_count: int,
+        reduced_context_mode: bool = False,
     ) -> SEOCompetitorProfileGenerationOutput:
         del site, existing_domains
         self.requested_candidate_counts.append(candidate_count)
+        self.reduced_context_modes.append(bool(reduced_context_mode))
         if len(self.requested_candidate_counts) == 1:
             raise SEOCompetitorProfileProviderError(
                 code="timeout",
@@ -281,6 +284,7 @@ class _ProviderRequestFailureObservingProvider:
 
     def __init__(self) -> None:
         self.requested_candidate_counts: list[int] = []
+        self.reduced_context_modes: list[bool] = []
 
     def generate_competitor_profiles(
         self,
@@ -288,9 +292,11 @@ class _ProviderRequestFailureObservingProvider:
         site,  # noqa: ANN001
         existing_domains,  # noqa: ANN001
         candidate_count: int,
+        reduced_context_mode: bool = False,
     ) -> SEOCompetitorProfileGenerationOutput:
         del site, existing_domains
         self.requested_candidate_counts.append(candidate_count)
+        self.reduced_context_modes.append(bool(reduced_context_mode))
         raise SEOCompetitorProfileProviderError(
             code="provider_request",
             safe_message="provider request failed",
@@ -1177,12 +1183,17 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert len(payload["provider_attempts"]) == 2
     assert payload["provider_attempts"][0]["attempt_number"] == 1
     assert payload["provider_attempts"][0]["degraded_mode"] is False
+    assert payload["provider_attempts"][0]["reduced_context_mode"] is False
     assert payload["provider_attempts"][0]["failure_kind"] == "timeout"
     assert payload["provider_attempts"][1]["attempt_number"] == 2
     assert payload["provider_attempts"][1]["degraded_mode"] is True
+    assert payload["provider_attempts"][1]["reduced_context_mode"] is True
     assert payload["provider_attempts"][1]["outcome"] == "success"
     assert payload["provider_attempts"][1]["requested_candidate_count"] == 3
+    assert payload["provider_attempts"][0]["prompt_total_chars"] > payload["provider_attempts"][1]["prompt_total_chars"]
+    assert payload["provider_attempts"][0]["context_json_chars"] > payload["provider_attempts"][1]["context_json_chars"]
     assert provider.requested_candidate_counts == [5, 3]
+    assert provider.reduced_context_modes == [False, True]
 
 
 def test_non_timeout_provider_failure_does_not_retry(db_session, seeded_business) -> None:
@@ -1218,8 +1229,10 @@ def test_non_timeout_provider_failure_does_not_retry(db_session, seeded_business
     assert len(payload["provider_attempts"]) == 1
     assert payload["provider_attempts"][0]["attempt_number"] == 1
     assert payload["provider_attempts"][0]["degraded_mode"] is False
+    assert payload["provider_attempts"][0]["reduced_context_mode"] is False
     assert payload["provider_attempts"][0]["failure_kind"] == "provider_request"
     assert provider.requested_candidate_counts == [5]
+    assert provider.reduced_context_modes == [False]
 
 
 def test_list_runs_reconciles_stale_queued_and_running_runs(db_session, seeded_business) -> None:
