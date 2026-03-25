@@ -95,6 +95,10 @@ Competitor prompt supplemental text can now be managed in persisted admin settin
 
 - `ai_prompt_text_competitor` (business-scoped admin override)
 
+Persistence scope:
+- stored on the `businesses` table as a business-level override value
+- does not create global/shared prompt state across businesses
+
 Effective prompt resolution order is deterministic:
 
 1. persisted admin override (`ai_prompt_text_competitor`) when non-empty
@@ -104,6 +108,7 @@ Effective prompt resolution order is deterministic:
 Behavior notes:
 - Prompt edits apply to future runs and previews only.
 - Clearing the admin override returns behavior to deployment/default fallback.
+- Whitespace-only overrides are treated as unset and fall back safely.
 - Prompt preview/debug now includes `source` attribution (`admin_config`, `env`, `default`) so operators can verify which configuration path is active.
 
 ## Web Search Enabled Competitor Discovery

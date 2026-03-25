@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.deps import TenantContext, get_db, get_tenant_context
+from app.core.config import get_settings
 from app.core.time import utc_now
 from app.api.routes.seo import router as seo_router
 from app.api.routes.seo import router_v1 as seo_v1_router
@@ -1016,46 +1017,53 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
 def test_recommendation_workspace_summary_prompt_previews_use_admin_prompt_overrides(
     db_session,
     seeded_business,
+    monkeypatch,
 ) -> None:
-    client = _make_client(db_session, business_id=seeded_business.id)
-    site_id = _create_site(client, seeded_business.id)
-    audit_run_id = _seed_completed_audit_run(
-        db_session,
-        business_id=seeded_business.id,
-        site_id=site_id,
-    )
-    seeded_business.ai_prompt_text_competitor = "Prefer direct local competitors with service overlap."
-    seeded_business.ai_prompt_text_recommendations = "Prioritize concrete next-step recommendation guidance."
-    db_session.add(seeded_business)
-    db_session.commit()
-    reloaded_business = db_session.get(Business, seeded_business.id)
-    assert reloaded_business is not None
-    assert reloaded_business.ai_prompt_text_competitor == "Prefer direct local competitors with service overlap."
-    assert (
-        reloaded_business.ai_prompt_text_recommendations
-        == "Prioritize concrete next-step recommendation guidance."
-    )
+    monkeypatch.setenv("AI_PROMPT_TEXT_COMPETITOR", "Env competitor fallback guidance.")
+    monkeypatch.setenv("AI_PROMPT_TEXT_RECOMMENDATIONS", "Env recommendation fallback guidance.")
+    get_settings.cache_clear()
+    try:
+        client = _make_client(db_session, business_id=seeded_business.id)
+        site_id = _create_site(client, seeded_business.id)
+        audit_run_id = _seed_completed_audit_run(
+            db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+        )
+        seeded_business.ai_prompt_text_competitor = "Prefer direct local competitors with service overlap."
+        seeded_business.ai_prompt_text_recommendations = "Prioritize concrete next-step recommendation guidance."
+        db_session.add(seeded_business)
+        db_session.commit()
+        reloaded_business = db_session.get(Business, seeded_business.id)
+        assert reloaded_business is not None
+        assert reloaded_business.ai_prompt_text_competitor == "Prefer direct local competitors with service overlap."
+        assert (
+            reloaded_business.ai_prompt_text_recommendations
+            == "Prioritize concrete next-step recommendation guidance."
+        )
 
-    created = client.post(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
-        json={"audit_run_id": audit_run_id},
-    )
-    assert created.status_code == 201
+        created = client.post(
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+            json={"audit_run_id": audit_run_id},
+        )
+        assert created.status_code == 201
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
-    assert summary.status_code == 200
-    payload = summary.json()
+        summary = client.get(
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+        )
+        assert summary.status_code == 200
+        payload = summary.json()
 
-    competitor_preview = payload["competitor_prompt_preview"]
-    recommendation_preview = payload["recommendation_prompt_preview"]
-    assert competitor_preview is not None
-    assert recommendation_preview is not None
-    assert competitor_preview["source"] == "admin_config"
-    assert recommendation_preview["source"] == "admin_config"
-    assert "Prefer direct local competitors with service overlap." in competitor_preview["user_prompt"]
-    assert "Prioritize concrete next-step recommendation guidance." in recommendation_preview["user_prompt"]
+        competitor_preview = payload["competitor_prompt_preview"]
+        recommendation_preview = payload["recommendation_prompt_preview"]
+        assert competitor_preview is not None
+        assert recommendation_preview is not None
+        assert competitor_preview["source"] == "admin_config"
+        assert recommendation_preview["source"] == "admin_config"
+        assert "Prefer direct local competitors with service overlap." in competitor_preview["user_prompt"]
+        assert "Prioritize concrete next-step recommendation guidance." in recommendation_preview["user_prompt"]
+    finally:
+        get_settings.cache_clear()
 
 
 def test_recommendation_workspace_summary_reflects_primary_business_zip_location_context(

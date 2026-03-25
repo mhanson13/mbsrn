@@ -138,7 +138,7 @@ def test_patch_business_settings_accepts_and_clears_ai_prompt_text_overrides(db_
     clear_response = client.patch(
         f"/api/businesses/{seeded_business.id}/settings",
         json={
-            "ai_prompt_text_competitor": "   ",
+            "ai_prompt_text_competitor": " \n\t ",
             "ai_prompt_text_recommendations": "",
         },
     )

@@ -3682,7 +3682,7 @@ describe("site workspace timeline controls", () => {
 
     const competitorPanel = await screen.findByTestId("competitor-prompt-preview");
     expect(within(competitorPanel).getByText("View AI prompt")).toBeInTheDocument();
-    expect(within(competitorPanel).getByText(/Source: Admin override/)).toBeInTheDocument();
+    expect(within(competitorPanel).getByText(/Source: Business admin override/)).toBeInTheDocument();
     const recommendationPanel = await screen.findByTestId("recommendation-prompt-preview");
     expect(within(recommendationPanel).getByText(/Source: Deployment fallback/)).toBeInTheDocument();
     await user.click(within(recommendationPanel).getByText("View AI prompt"));

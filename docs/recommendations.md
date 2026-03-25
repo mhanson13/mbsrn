@@ -29,6 +29,10 @@ Recommendation narrative prompt supplemental text can now be managed in persiste
 
 - `ai_prompt_text_recommendations` (business-scoped admin override)
 
+Persistence scope:
+- stored on the `businesses` table as a business-level override value
+- independent per business (not global/shared)
+
 Effective prompt resolution order:
 
 1. persisted admin override (`ai_prompt_text_recommendations`) when non-empty
@@ -38,6 +42,7 @@ Effective prompt resolution order:
 Notes:
 - Admin edits affect future narrative runs and prompt previews only.
 - Clearing the override reverts to deployment/default fallback behavior.
+- Whitespace-only overrides are treated as unset and revert to fallback behavior.
 - Prompt preview payloads now include `source` attribution (`admin_config`, `env`, `default`) for operator/debug visibility.
 
 ## Admin Competitor Candidate Quality Controls (Operator Guidance)

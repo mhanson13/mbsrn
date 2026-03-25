@@ -67,7 +67,7 @@ from app.services.seo_competitor_profile_prompt import SEO_COMPETITOR_PROFILE_PR
 from app.services.seo_competitor_profile_prompt import (
     build_seo_competitor_profile_prompt,
 )
-from app.services.ai_prompt_settings import resolve_ai_prompt_text
+from app.services.ai_prompt_settings import ResolvedAIPromptText, resolve_ai_prompt_text
 from app.services.seo_crawler import SEOCrawler
 
 
@@ -1524,14 +1524,14 @@ class SEOCompetitorProfileGenerationService:
     def _provider_prompt_legacy_config_used(self) -> bool:
         return bool(getattr(self.provider, "legacy_config_used", False))
 
-    def _resolve_competitor_prompt_settings(self, business) -> object:
+    def _resolve_competitor_prompt_settings(self, business: Business) -> ResolvedAIPromptText:
         return resolve_ai_prompt_text(
             admin_prompt_text=getattr(business, "ai_prompt_text_competitor", None),
             env_prompt_text=self._provider_prompt_text_competitor(),
             env_legacy_config_used=self._provider_prompt_legacy_config_used(),
         )
 
-    def _apply_resolved_competitor_prompt_settings(self, business) -> None:
+    def _apply_resolved_competitor_prompt_settings(self, business: Business) -> None:
         resolved = self._resolve_competitor_prompt_settings(business)
         if hasattr(self.provider, "prompt_text_competitor"):
             setattr(self.provider, "prompt_text_competitor", resolved.prompt_text)

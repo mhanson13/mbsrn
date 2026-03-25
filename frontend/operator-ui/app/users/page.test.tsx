@@ -1046,6 +1046,7 @@ describe("admin page compatibility route", () => {
     render(<UsersCompatibilityPage />);
 
     await screen.findByText("operator-1");
+    expect(screen.getAllByText("Business admin override")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "Use Deployment Fallbacks" }));
 
     await waitFor(() =>
@@ -1055,5 +1056,6 @@ describe("admin page compatibility route", () => {
       }),
     );
     await screen.findByText("AI prompt overrides cleared. Deployment fallback/default is now active.");
+    expect(screen.getAllByText("Deployment/default fallback")).toHaveLength(2);
   });
 });

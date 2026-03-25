@@ -159,7 +159,7 @@ Safety and fallback:
 
 Prompt preview cards should show prompt source attribution from API payload `source`:
 
-- `admin_config` -> `Admin override`
+- `admin_config` -> `Business admin override`
 - `env` -> `Deployment fallback`
 - `default` -> `Built-in default`
 
@@ -176,6 +176,7 @@ Behavior:
 - saved non-empty values override deployment prompt text for future runs
 - empty/cleared values fall back to deployment/default behavior
 - saves are section-scoped and admin-only through existing business settings update flow
+- override persistence is business-level (stored on `businesses`), not global across tenants/businesses
 
 ## Apply Outcome Visibility
 

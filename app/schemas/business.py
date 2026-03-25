@@ -45,8 +45,22 @@ class BusinessSettingsUpdateRequest(BaseModel):
     competitor_candidate_big_box_penalty: int | None = Field(default=None, ge=0, le=50)
     competitor_candidate_directory_penalty: int | None = Field(default=None, ge=0, le=50)
     competitor_candidate_local_alignment_bonus: int | None = Field(default=None, ge=0, le=50)
-    ai_prompt_text_competitor: str | None = Field(default=None, max_length=20000)
-    ai_prompt_text_recommendations: str | None = Field(default=None, max_length=20000)
+    ai_prompt_text_competitor: str | None = Field(
+        default=None,
+        max_length=20000,
+        description=(
+            "Business-scoped competitor prompt override. Blank/whitespace values are treated "
+            "as unset and fall back to deployment/default prompt configuration."
+        ),
+    )
+    ai_prompt_text_recommendations: str | None = Field(
+        default=None,
+        max_length=20000,
+        description=(
+            "Business-scoped recommendation prompt override. Blank/whitespace values are treated "
+            "as unset and fall back to deployment/default prompt configuration."
+        ),
+    )
     competitor_tuning_preview_event_id: str | None = Field(default=None, min_length=1, max_length=36)
     timezone: str | None = None
 

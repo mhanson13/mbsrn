@@ -1220,10 +1220,11 @@ export default function AdminPage() {
         <FormContainer onSubmit={(event) => void handleSavePromptOverrides(event)} noValidate>
           <h2>AI Prompt Overrides</h2>
           <p className="hint muted">
-            Admin-managed prompt overrides for competitor and recommendation generation.
+            Business-level admin prompt overrides for competitor and recommendation generation.
           </p>
           <p className="hint muted">
-            Saved values override deployment defaults. Leave blank or clear overrides to use deployment fallback/default.
+            Saved values override deployment defaults for this business. Leave blank or clear overrides to use
+            deployment fallback/default.
           </p>
 
           <label htmlFor="ai-prompt-text-competitor">Competitor Prompt</label>
@@ -1236,7 +1237,11 @@ export default function AdminPage() {
           />
           <p className="hint muted">
             Current source:{" "}
-            <strong>{businessSettings?.ai_prompt_text_competitor ? "Admin override" : "Deployment/default fallback"}</strong>
+            <strong>
+              {businessSettings?.ai_prompt_text_competitor
+                ? "Business admin override"
+                : "Deployment/default fallback"}
+            </strong>
           </p>
 
           <label htmlFor="ai-prompt-text-recommendations">Recommendations Prompt</label>
@@ -1250,7 +1255,9 @@ export default function AdminPage() {
           <p className="hint muted">
             Current source:{" "}
             <strong>
-              {businessSettings?.ai_prompt_text_recommendations ? "Admin override" : "Deployment/default fallback"}
+              {businessSettings?.ai_prompt_text_recommendations
+                ? "Business admin override"
+                : "Deployment/default fallback"}
             </strong>
           </p>
 

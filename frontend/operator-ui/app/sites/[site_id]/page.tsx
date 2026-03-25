@@ -1389,7 +1389,7 @@ function promptPreviewTypeLabel(promptType: PromptPreviewType): string {
 function promptPreviewSourceLabel(source: PromptPreviewView["source"]): string {
   switch (source) {
     case "admin_config":
-      return "Admin override";
+      return "Business admin override";
     case "env":
       return "Deployment fallback";
     case "default":
