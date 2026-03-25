@@ -20,7 +20,8 @@ def resolve_ai_prompt_text(
     env_legacy_config_used: bool,
 ) -> ResolvedAIPromptText:
     # Business-level admin override wins when non-empty; blank values are treated
-    # as unset and safely fall back to deployment env/default behavior.
+    # as unset and safely fall back to deployment env when configured, otherwise
+    # the default prompt behavior.
     admin_override = _clean_optional_text(admin_prompt_text)
     if admin_override is not None:
         return ResolvedAIPromptText(

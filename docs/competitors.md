@@ -113,12 +113,12 @@ Persistence scope:
 Effective prompt resolution order is deterministic:
 
 1. persisted admin override (`ai_prompt_text_competitor`) when non-empty
-2. deployment env fallback (`AI_PROMPT_TEXT_COMPETITOR`, with legacy env compatibility handled in config)
-3. existing default/empty fallback behavior
+2. deployment env fallback (`AI_PROMPT_TEXT_COMPETITOR`) when configured
+3. existing default/empty fallback behavior when no override or env fallback exists
 
 Behavior notes:
 - Prompt edits apply to future runs and previews only.
-- Clearing the admin override returns behavior to deployment/default fallback.
+- Clearing the admin override returns behavior to deployment fallback when configured, otherwise built-in default behavior.
 - Whitespace-only overrides are treated as unset and fall back safely.
 - Prompt preview/debug now includes `source` attribution (`admin_config`, `env`, `default`) so operators can verify which configuration path is active.
 

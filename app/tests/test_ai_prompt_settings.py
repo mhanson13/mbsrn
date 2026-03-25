@@ -39,6 +39,30 @@ def test_resolve_ai_prompt_text_uses_default_when_all_unset() -> None:
     assert resolved.legacy_config_used is False
 
 
+def test_resolve_ai_prompt_text_uses_admin_override_when_env_missing() -> None:
+    resolved = resolve_ai_prompt_text(
+        admin_prompt_text="Business override prompt",
+        env_prompt_text=None,
+        env_legacy_config_used=False,
+    )
+
+    assert resolved.prompt_text == "Business override prompt"
+    assert resolved.prompt_source == "admin_config"
+    assert resolved.legacy_config_used is False
+
+
+def test_resolve_ai_prompt_text_uses_default_when_env_missing_and_admin_blank() -> None:
+    resolved = resolve_ai_prompt_text(
+        admin_prompt_text="  ",
+        env_prompt_text=None,
+        env_legacy_config_used=False,
+    )
+
+    assert resolved.prompt_text == ""
+    assert resolved.prompt_source == "default"
+    assert resolved.legacy_config_used is False
+
+
 def test_resolve_ai_prompt_text_trims_outer_whitespace_but_keeps_inner_formatting() -> None:
     resolved = resolve_ai_prompt_text(
         admin_prompt_text="  Keep line one.\n  Keep line two.  ",

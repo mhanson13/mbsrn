@@ -390,6 +390,18 @@ class SEOCompetitorProfileGenerationService:
         self.seo_competitor_repository = seo_competitor_repository
         self.seo_competitor_profile_generation_repository = seo_competitor_profile_generation_repository
         self.provider = provider
+        # Capture deployment-configured prompt fallback once. Provider prompt fields
+        # are later mutated with business overrides at runtime, so resolver fallback
+        # must never read the mutable provider state.
+        configured_prompt_text = getattr(self.provider, "prompt_text_competitor", None)
+        if configured_prompt_text is None:
+            configured_prompt_text = getattr(self.provider, "prompt_text_recommendation", "")
+        self._configured_prompt_text_competitor = (
+            self._clean_optional(str(configured_prompt_text or "")) or ""
+        )
+        self._configured_prompt_legacy_config_used = bool(
+            getattr(self.provider, "legacy_config_used", False)
+        )
         self.candidate_domain_probe = candidate_domain_probe
         self.retention_policy = retention_policy
         self.observability_lookback_days = max(1, int(observability_lookback_days))
@@ -553,12 +565,13 @@ class SEOCompetitorProfileGenerationService:
                 )
             ]
             self._attach_site_content_signals(site=site, business_id=business_id, site_id=site_id)
-            self._apply_resolved_competitor_prompt_settings(business)
+            resolved_prompt = self._apply_resolved_competitor_prompt_settings(business)
             output = self._generate_competitor_profiles_with_timeout_retry(
                 site=site,
                 existing_domains=existing_domains,
                 requested_candidate_count=run.requested_candidate_count,
                 provider_attempts=provider_attempts,
+                prompt_text_competitor=resolved_prompt.prompt_text,
             )
             provider_name = self._clean_required_value(output.provider_name, field_name="provider_name")
             model_name = self._clean_required_value(output.model_name, field_name="model_name")
@@ -1592,14 +1605,10 @@ class SEOCompetitorProfileGenerationService:
         return prompt_version or SEO_COMPETITOR_PROFILE_PROMPT_VERSION
 
     def _provider_prompt_text_competitor(self) -> str:
-        prompt_text = getattr(self.provider, "prompt_text_competitor", None)
-        if prompt_text is None:
-            prompt_text = getattr(self.provider, "prompt_text_recommendation", "")
-        cleaned = self._clean_optional(str(prompt_text or ""))
-        return cleaned or ""
+        return self._configured_prompt_text_competitor
 
     def _provider_prompt_legacy_config_used(self) -> bool:
-        return bool(getattr(self.provider, "legacy_config_used", False))
+        return self._configured_prompt_legacy_config_used
 
     def _resolve_competitor_prompt_settings(self, business: Business) -> ResolvedAIPromptText:
         return resolve_ai_prompt_text(
@@ -1608,7 +1617,7 @@ class SEOCompetitorProfileGenerationService:
             env_legacy_config_used=self._provider_prompt_legacy_config_used(),
         )
 
-    def _apply_resolved_competitor_prompt_settings(self, business: Business) -> None:
+    def _apply_resolved_competitor_prompt_settings(self, business: Business) -> ResolvedAIPromptText:
         resolved = self._resolve_competitor_prompt_settings(business)
         if hasattr(self.provider, "prompt_text_competitor"):
             setattr(self.provider, "prompt_text_competitor", resolved.prompt_text)
@@ -1619,6 +1628,7 @@ class SEOCompetitorProfileGenerationService:
             setattr(self.provider, "prompt_source", resolved.prompt_source)
         if hasattr(self.provider, "legacy_config_used"):
             setattr(self.provider, "legacy_config_used", resolved.legacy_config_used)
+        return resolved
 
     def _attach_site_content_signals(self, *, site: SEOSite, business_id: str, site_id: str) -> None:
         signals = self._load_site_content_signals(business_id=business_id, site_id=site_id)
@@ -1920,6 +1930,7 @@ class SEOCompetitorProfileGenerationService:
         existing_domains: list[str],
         requested_candidate_count: int,
         provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug],
+        prompt_text_competitor: str,
     ) -> SEOCompetitorProfileGenerationOutput:
         effective_requested_count = max(1, int(requested_candidate_count))
         first_prompt_metrics = self._build_provider_attempt_prompt_metrics(
@@ -1927,6 +1938,7 @@ class SEOCompetitorProfileGenerationService:
             existing_domains=existing_domains,
             candidate_count=effective_requested_count,
             reduced_context_mode=False,
+            prompt_text_competitor=prompt_text_competitor,
         )
         first_attempt_start = time.perf_counter()
         try:
@@ -1956,6 +1968,7 @@ class SEOCompetitorProfileGenerationService:
                 existing_domains=existing_domains,
                 candidate_count=degraded_candidate_count,
                 reduced_context_mode=True,
+                prompt_text_competitor=prompt_text_competitor,
             )
             if _TIMEOUT_RETRY_BACKOFF_SECONDS > 0:
                 time.sleep(_TIMEOUT_RETRY_BACKOFF_SECONDS)
@@ -2052,6 +2065,7 @@ class SEOCompetitorProfileGenerationService:
         existing_domains: list[str],
         candidate_count: int,
         reduced_context_mode: bool,
+        prompt_text_competitor: str,
     ) -> _ProviderAttemptPromptMetrics:
         try:
             prompt = build_seo_competitor_profile_prompt(
@@ -2060,7 +2074,7 @@ class SEOCompetitorProfileGenerationService:
                 candidate_count=max(1, int(candidate_count)),
                 reduced_context_mode=bool(reduced_context_mode),
                 prompt_version=self._default_prompt_version(),
-                prompt_text_competitor=self._provider_prompt_text_competitor(),
+                prompt_text_competitor=prompt_text_competitor,
             )
         except Exception:  # noqa: BLE001
             return _ProviderAttemptPromptMetrics(
