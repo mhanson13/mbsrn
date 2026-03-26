@@ -2824,7 +2824,7 @@ export default function SiteWorkspacePage() {
 
     if (!payload.audit_run_id && !payload.comparison_run_id) {
       setRecommendationGenerationError(
-        "Generate recommendations requires at least one completed audit run or competitor comparison run for this site.",
+        "Run site audit before generating recommendations.",
       );
       setRecommendationGenerationMessage(null);
       return;
@@ -5122,7 +5122,7 @@ export default function SiteWorkspacePage() {
           </p>
           {!loadingWorkspace && !recommendationGenerationPrerequisitesMet ? (
             <p className="hint warning">
-              Generate recommendations requires at least one completed audit run or competitor comparison run for this site.
+              Run site audit before generating recommendations.
             </p>
           ) : null}
           {recommendationGenerationError ? <p className="hint error">{recommendationGenerationError}</p> : null}
@@ -5138,7 +5138,7 @@ export default function SiteWorkspacePage() {
           <Link href="/recommendations">Open Recommendation Queue</Link>
         </p>
         {!queueError && (!queueResponse || queueResponse.items.length === 0) ? (
-          <p className="hint muted">No recommendations yet. Use Generate Recommendations to run analysis for this site.</p>
+          <p className="hint muted">No recommendations yet — generate recommendations to analyze this site.</p>
         ) : null}
         {queueResponse && queueResponse.items.length > 0 ? (
           <div className="table-container">
@@ -5236,7 +5236,7 @@ export default function SiteWorkspacePage() {
             ) : null}
             <h4>Deterministic Recommendations</h4>
             {!latestCompletedRecommendationsError && latestCompletedRecommendations.length === 0 ? (
-              <p className="hint muted">No recommendations yet. Use Generate Recommendations to run analysis for this site.</p>
+              <p className="hint muted">No recommendations yet — generate recommendations to analyze this site.</p>
             ) : null}
             {latestCompletedRecommendations.length > 0 ? (
               recommendationThemeSections.length <= 1 ? (

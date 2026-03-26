@@ -4597,7 +4597,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByText("No recommendations yet. Use Generate Recommendations to run analysis for this site.");
+    await screen.findByText("No recommendations yet — generate recommendations to analyze this site.");
     await waitFor(() => {
       expect(screen.queryByText("Loading workspace data...")).not.toBeInTheDocument();
     });
@@ -4666,11 +4666,12 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     const button = await screen.findByRole("button", { name: "Generate Recommendations" });
+    await waitFor(() => {
+      expect(screen.queryByText("Loading workspace data...")).not.toBeInTheDocument();
+    });
     expect(button).toBeDisabled();
     expect(
-      screen.getByText(
-        "Generate recommendations requires at least one completed audit run or competitor comparison run for this site.",
-      ),
+      screen.getByText(/Run site audit before generating recommendations/i),
     ).toBeInTheDocument();
     expect(mockCreateRecommendationRun).not.toHaveBeenCalled();
   });
