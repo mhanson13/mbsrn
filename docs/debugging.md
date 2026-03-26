@@ -60,3 +60,19 @@ Rejected competitor debug reasons now include specific invalid-input classificat
 - `low_usefulness_unknown`
 
 Use these to distinguish malformed model output from normal relevance/tuning exclusions.
+
+## Competitor Outcome Message Mapping
+
+Workspace competitor outcome messages map directly to run-detail telemetry:
+
+- `Run quality: proposed/returned/rejected...`
+  - `proposed`: `candidate_pipeline_summary.proposed_candidate_count` (fallback: `run.requested_candidate_count`)
+  - `returned`: `candidate_pipeline_summary.final_candidate_count` (fallback: `drafts.length`)
+  - `rejected`: `proposed - returned`
+- `degraded mode yes`
+  - `provider_degraded_retry_used=true` or any `provider_attempts[].degraded_mode=true`
+- `search-backed no`
+  - provider attempts include `web_search_enabled=false` and no attempt with `web_search_enabled=true`
+- low-result warning (`Only 0/1 valid competitor remained...`)
+  - terminal completed run with `returned <= 1`
+  - likely-cause clauses appear only when matching telemetry supports them

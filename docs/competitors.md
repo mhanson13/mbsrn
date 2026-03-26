@@ -227,6 +227,26 @@ Operator-facing interpretation:
 - `degraded_mode`: `true` means timeout retry mode was used for that attempt.
 - `reduced_context_mode`: `true` means optional context was trimmed to reduce prompt size during retry.
 
+## Workspace Run Quality Summary
+
+The workspace competitor panel now shows a compact run-quality summary for terminal runs:
+
+- proposed candidate count
+- returned candidate count
+- rejected candidate count
+- degraded mode used (`yes`/`no`)
+- search-backed discovery (`yes`/`no`)
+
+Low-result behavior:
+
+- when `returned <= 2`, the panel adds concise run notes
+- when `returned <= 1`, the panel adds a safety message with likely causes derived from real run telemetry only:
+  - strict validation filtered weak candidates
+  - search-backed discovery unavailable
+  - degraded retry occurred
+
+This message is operator-facing guidance only and does not alter ranking, filtering, or persistence.
+
 ## Competitor Prompt Context Hardening
 
 Competitor prompt context now prefers structured business/site metadata before any heuristic fallback.

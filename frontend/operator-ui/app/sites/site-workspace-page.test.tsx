@@ -4809,6 +4809,129 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(within(providerAttemptsDebug).getByText("Success")).toBeInTheDocument();
     expect(within(providerAttemptsDebug).getByText("timeout")).toBeInTheDocument();
     expect(within(providerAttemptsDebug).getByText("11,200")).toBeInTheDocument();
+
+    const outcomeSummary = screen.getByTestId("competitor-run-outcome-summary");
+    expect(within(outcomeSummary).getByText(/proposed 5 \| returned 1 \| rejected 4/i)).toHaveTextContent(
+      "proposed 5 | returned 1 | rejected 4 | degraded mode yes | search-backed yes",
+    );
+    expect(within(outcomeSummary).getByText(/Run notes:/i)).toHaveTextContent("degraded retry mode used");
+    expect(within(outcomeSummary).getByText(/Only 1 valid competitor remained after filtering\./i)).toHaveTextContent(
+      "strict validation filtered weak candidates",
+    );
+  });
+
+  it("renders search-unavailable low-result guidance from run telemetry", async () => {
+    seedCompetitorProfileGenerationWorkspaceData();
+    const run = buildCompetitorProfileGenerationRun({
+      id: "gen-run-search-unavailable",
+      status: "completed",
+      generated_draft_count: 1,
+    });
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
+      items: [run],
+      total: 1,
+    });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+      run,
+      drafts: [
+        {
+          id: "draft-valid-only",
+          business_id: "biz-1",
+          site_id: "site-1",
+          generation_run_id: run.id,
+          suggested_name: "Valid Candidate",
+          suggested_domain: "valid-only.example",
+          competitor_type: "direct",
+          summary: "Valid summary",
+          why_competitor: "Valid rationale",
+          evidence: "Valid evidence",
+          confidence_score: 0.78,
+          source: "ai_generated",
+          review_status: "pending",
+          edited_fields_json: null,
+          review_notes: null,
+          reviewed_by_principal_id: null,
+          reviewed_at: null,
+          accepted_competitor_set_id: null,
+          accepted_competitor_domain_id: null,
+          created_at: "2026-03-21T01:00:00Z",
+          updated_at: "2026-03-21T01:00:00Z",
+        },
+      ],
+      total_drafts: 1,
+      rejected_candidate_count: 3,
+      rejected_candidates: [
+        {
+          domain: "missing-name.example",
+          reasons: ["missing_business_name"],
+          summary: "Missing business name.",
+        },
+        {
+          domain: "malformed-domain",
+          reasons: ["malformed_url"],
+          summary: "Malformed URL.",
+        },
+      ],
+      candidate_pipeline_summary: {
+        proposed_candidate_count: 5,
+        rejected_by_eligibility_count: 3,
+        eligible_candidate_count: 2,
+        rejected_by_tuning_count: 1,
+        survived_tuning_count: 1,
+        removed_by_existing_domain_match_count: 0,
+        removed_by_deduplication_count: 0,
+        removed_by_final_limit_count: 0,
+        final_candidate_count: 1,
+      },
+      tuning_rejected_candidate_count: 1,
+      tuning_rejected_candidates: [
+        {
+          domain: "directory.example",
+          reasons: ["directory_or_aggregator_penalty"],
+          final_score: 42,
+          summary: "Directory-heavy listing site.",
+        },
+      ],
+      tuning_rejection_reason_counts: {
+        below_minimum_relevance_score: 0,
+        directory_or_aggregator_penalty: 1,
+        big_box_mismatch_penalty: 0,
+        insufficient_local_alignment: 0,
+      },
+      provider_attempt_count: 1,
+      provider_degraded_retry_used: false,
+      provider_attempts: [
+        {
+          attempt_number: 1,
+          degraded_mode: false,
+          reduced_context_mode: false,
+          requested_candidate_count: 5,
+          outcome: "success",
+          failure_kind: null,
+          request_duration_ms: 1900,
+          timeout_seconds: 30,
+          web_search_enabled: false,
+          prompt_size_risk: "normal",
+          prompt_total_chars: 9800,
+          context_json_chars: 3200,
+          user_prompt_chars: 8600,
+          endpoint_path: "/chat/completions",
+        },
+      ],
+    });
+
+    render(<SiteWorkspacePage />);
+
+    const outcomeSummary = await screen.findByTestId("competitor-run-outcome-summary");
+    expect(within(outcomeSummary).getByText(/proposed 5 \| returned 1 \| rejected 4/i)).toHaveTextContent(
+      "proposed 5 | returned 1 | rejected 4 | degraded mode no | search-backed no",
+    );
+    expect(within(outcomeSummary).getByText(/Run notes:/i)).toHaveTextContent(
+      "search-backed discovery unavailable",
+    );
+    expect(within(outcomeSummary).getByText(/Only 1 valid competitor remained after filtering\./i)).toHaveTextContent(
+      "This may indicate strict validation filtered weak candidates, search-backed discovery was unavailable.",
+    );
   });
 
   it("triggers generation and refreshes visible drafts", async () => {

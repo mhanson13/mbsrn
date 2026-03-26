@@ -399,6 +399,60 @@ class _ProviderEndpointMetadataSuccessProvider:
         )
 
 
+class _ProviderEndpointMetadataSearchUnavailableLowResultProvider:
+    provider_name = "openai"
+    model_name = "gpt-5-mini"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+        reduced_context_mode: bool = False,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, reduced_context_mode
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Valid Local Candidate",
+                    suggested_domain="valid-local-candidate.example",
+                    competitor_type="direct",
+                    summary="Serves the same local market for core services.",
+                    why_competitor="Competes for the same local transactional search demand.",
+                    evidence="Service overlap and local market overlap.",
+                    confidence_score=0.86,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="",
+                    suggested_domain="missing-name.example",
+                    competitor_type="direct",
+                    summary="Missing business name.",
+                    why_competitor="Missing business name.",
+                    evidence="Missing business name.",
+                    confidence_score=0.71,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Malformed Candidate",
+                    suggested_domain="malformed-domain",
+                    competitor_type="direct",
+                    summary="Malformed domain.",
+                    why_competitor="Malformed domain.",
+                    evidence="Malformed domain.",
+                    confidence_score=0.64,
+                ),
+            ][:candidate_count],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Valid Local Candidate"},{"name":"Missing Name"},{"name":"Malformed"}]}',
+            endpoint_path="/chat/completions",
+            web_search_enabled=False,
+            request_duration_ms=432,
+        )
+
+
 class _ProviderRequestFailureObservingProvider:
     provider_name = "openai"
     model_name = "gpt-4.1-mini"
@@ -1407,6 +1461,53 @@ def test_success_attempt_debug_captures_endpoint_and_web_search_metadata(db_sess
     assert attempt["endpoint_path"] == "/responses"
     assert attempt["web_search_enabled"] is True
     assert attempt["request_duration_ms"] == 187
+
+
+def test_run_detail_exposes_low_result_search_unavailable_quality_signals(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=3)["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_ProviderEndpointMetadataSearchUnavailableLowResultProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["included_candidate_count"] == 1
+    assert payload["run"]["excluded_candidate_count"] == 2
+    assert payload["candidate_pipeline_summary"] == {
+        "proposed_candidate_count": 3,
+        "rejected_by_eligibility_count": 2,
+        "eligible_candidate_count": 1,
+        "rejected_by_tuning_count": 0,
+        "survived_tuning_count": 1,
+        "removed_by_existing_domain_match_count": 0,
+        "removed_by_deduplication_count": 0,
+        "removed_by_final_limit_count": 0,
+        "final_candidate_count": 1,
+    }
+    assert payload["provider_degraded_retry_used"] is False
+    assert payload["provider_attempt_count"] == 1
+    assert len(payload["provider_attempts"]) == 1
+    attempt = payload["provider_attempts"][0]
+    assert attempt["endpoint_path"] == "/chat/completions"
+    assert attempt["web_search_enabled"] is False
+    assert attempt["request_duration_ms"] == 432
 
 
 def test_non_timeout_provider_failure_does_not_retry(db_session, seeded_business) -> None:

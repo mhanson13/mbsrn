@@ -184,6 +184,16 @@ interface RecentTuningChange {
   ai_attribution: AiOpportunityApplyAttribution | null;
 }
 
+interface CompetitorRunOutcomeSummaryView {
+  proposedCount: number;
+  returnedCount: number;
+  rejectedCount: number;
+  degradedModeUsed: boolean;
+  searchBacked: boolean;
+  statusNote: string | null;
+  lowResultNote: string | null;
+}
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return "-";
@@ -1851,6 +1861,98 @@ export default function SiteWorkspacePage() {
     [competitorProfileGenerationRuns],
   );
   const latestCompetitorProfileRunStatus = latestCompetitorProfileRun?.status || null;
+  const competitorRunOutcomeSummary = useMemo<CompetitorRunOutcomeSummaryView | null>(() => {
+    if (
+      !latestCompetitorProfileRun ||
+      !isCompetitorProfileRunTerminalStatus(latestCompetitorProfileRun.status)
+    ) {
+      return null;
+    }
+
+    const proposedCount = Math.max(
+      0,
+      competitorCandidatePipelineSummary?.proposed_candidate_count ||
+        latestCompetitorProfileRun.requested_candidate_count ||
+        0,
+    );
+    const returnedCount = Math.max(
+      0,
+      competitorCandidatePipelineSummary?.final_candidate_count || competitorProfileDrafts.length,
+    );
+    const rejectedCount = Math.max(0, proposedCount - returnedCount);
+    const degradedModeUsed =
+      competitorProviderDegradedRetryUsed || competitorProviderAttempts.some((attempt) => attempt.degraded_mode);
+    const hasSearchTelemetry = competitorProviderAttempts.some(
+      (attempt) => typeof attempt.web_search_enabled === "boolean",
+    );
+    const searchBacked = competitorProviderAttempts.some((attempt) => attempt.web_search_enabled === true);
+
+    const validationRejectedCount = Math.max(
+      0,
+      competitorCandidatePipelineSummary?.rejected_by_eligibility_count || rejectedCompetitorCandidateCount,
+    );
+    const tuningRejectedCount = Math.max(
+      0,
+      competitorCandidatePipelineSummary?.rejected_by_tuning_count || tuningRejectedCompetitorCandidateCount,
+    );
+    const manyValidationRejections =
+      proposedCount > 0 && validationRejectedCount >= Math.max(2, Math.ceil(proposedCount * 0.5));
+
+    const statusNotes: string[] = [];
+    if (returnedCount <= 2) {
+      statusNotes.push(`few valid competitors returned (${returnedCount}/${proposedCount})`);
+    }
+    if (manyValidationRejections) {
+      statusNotes.push(`${validationRejectedCount} candidates rejected by strict validation`);
+    }
+    if (degradedModeUsed) {
+      statusNotes.push("degraded retry mode used");
+    }
+    if (hasSearchTelemetry && !searchBacked) {
+      statusNotes.push("search-backed discovery unavailable");
+    }
+
+    let lowResultNote: string | null = null;
+    if (latestCompetitorProfileRun.status === "completed" && returnedCount <= 1) {
+      const causes: string[] = [];
+      if (validationRejectedCount + tuningRejectedCount > 0) {
+        causes.push("strict validation filtered weak candidates");
+      }
+      if (hasSearchTelemetry && !searchBacked) {
+        causes.push("search-backed discovery was unavailable");
+      }
+      if (degradedModeUsed) {
+        causes.push("degraded retry occurred");
+      }
+      if (causes.length > 0) {
+        lowResultNote = `Only ${returnedCount} valid competitor${
+          returnedCount === 1 ? "" : "s"
+        } remained after filtering. This may indicate ${causes.join(", ")}.`;
+      } else {
+        lowResultNote = `Only ${returnedCount} valid competitor${
+          returnedCount === 1 ? "" : "s"
+        } remained after filtering.`;
+      }
+    }
+
+    return {
+      proposedCount,
+      returnedCount,
+      rejectedCount,
+      degradedModeUsed,
+      searchBacked,
+      statusNote: statusNotes.length > 0 ? `Run notes: ${statusNotes.join("; ")}.` : null,
+      lowResultNote,
+    };
+  }, [
+    competitorCandidatePipelineSummary,
+    competitorProfileDrafts.length,
+    competitorProviderAttempts,
+    competitorProviderDegradedRetryUsed,
+    latestCompetitorProfileRun,
+    rejectedCompetitorCandidateCount,
+    tuningRejectedCompetitorCandidateCount,
+  ]);
 
   function toEditFormState(draft: CompetitorProfileDraft): DraftEditFormState {
     return {
@@ -4376,6 +4478,22 @@ export default function SiteWorkspacePage() {
             <code>{latestCompetitorProfileRun.model_name}</code> | Template:{" "}
             <code>{latestCompetitorProfileRun.prompt_version}</code>
           </p>
+        ) : null}
+        {competitorRunOutcomeSummary ? (
+          <div className="stack" data-testid="competitor-run-outcome-summary">
+            <p className="hint muted">
+              <strong>Run quality</strong>: proposed {competitorRunOutcomeSummary.proposedCount} | returned{" "}
+              {competitorRunOutcomeSummary.returnedCount} | rejected {competitorRunOutcomeSummary.rejectedCount} |
+              degraded mode {competitorRunOutcomeSummary.degradedModeUsed ? "yes" : "no"} | search-backed{" "}
+              {competitorRunOutcomeSummary.searchBacked ? "yes" : "no"}
+            </p>
+            {competitorRunOutcomeSummary.statusNote ? (
+              <p className="hint muted">{competitorRunOutcomeSummary.statusNote}</p>
+            ) : null}
+            {competitorRunOutcomeSummary.lowResultNote ? (
+              <p className="hint warning">{competitorRunOutcomeSummary.lowResultNote}</p>
+            ) : null}
+          </div>
         ) : null}
         {latestCompetitorPromptPreview ? (
           <PromptPreviewPanel
