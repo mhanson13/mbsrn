@@ -30,18 +30,28 @@ _PROMPT_INSTRUCTION_MARKERS = ("PROMPT_VERSION:", "TASK:", "RESPONSE RULES:")
 _RECOMMENDATION_CONTEXT_MARKERS = ("YOU ARE AN SEO", "TASK:", "OUTPUT STYLE", "WRITING RULES")
 
 
-def _override_tenant_context(business_id: str):
+def _override_tenant_context(
+    business_id: str,
+    *,
+    principal_role: PrincipalRole | None = None,
+):
     def _resolver() -> TenantContext:
         return TenantContext(
             business_id=business_id,
             principal_id=f"test-principal:{business_id}",
             auth_source="test",
+            principal_role=principal_role,
         )
 
     return _resolver
 
 
-def _make_client(db_session, *, business_id: str) -> TestClient:
+def _make_client(
+    db_session,
+    *,
+    business_id: str,
+    principal_role: PrincipalRole | None = None,
+) -> TestClient:
     app = FastAPI()
     app.include_router(seo_router)
     app.include_router(seo_v1_router)
@@ -53,7 +63,10 @@ def _make_client(db_session, *, business_id: str) -> TestClient:
             pass
 
     app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_tenant_context] = _override_tenant_context(business_id)
+    app.dependency_overrides[get_tenant_context] = _override_tenant_context(
+        business_id,
+        principal_role=principal_role,
+    )
     return TestClient(app)
 
 
@@ -1612,6 +1625,166 @@ def test_recommendation_workspace_summary_prefers_audit_page_content_for_industr
 
     prompt_preview = payload["competitor_prompt_preview"]
     assert prompt_preview is not None
+
+
+def test_recommendation_workspace_summary_does_not_bleed_stale_roofing_context_after_domain_change(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_role=PrincipalRole.ADMIN,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="legacy-roofing.example")
+
+    patch_industry = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={"industry": "Roofing services"},
+    )
+    assert patch_industry.status_code == 200
+    assert patch_industry.json()["industry"] == "Roofing services"
+
+    stale_audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        missing_title_count=1,
+    )
+    _seed_audit_pages(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=stale_audit_run_id,
+        pages=[
+            {
+                "url": "https://legacy-roofing.example/roof-repair",
+                "title": "Roof repair and roof replacement services",
+                "meta_description": "Local roofing contractor for residential roofs.",
+                "h1_json": ["Roofing services"],
+                "h2_json": ["Roof replacement", "Roof inspection"],
+            }
+        ],
+    )
+
+    repoint_site = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={"base_url": "https://vmsdata.com/"},
+    )
+    assert repoint_site.status_code == 200
+    assert repoint_site.json()["normalized_domain"] == "vmsdata.com"
+    assert repoint_site.json()["industry"] is None
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+
+    prompt_preview = payload["competitor_prompt_preview"]
+    assert prompt_preview is not None
+    context_json = _extract_site_context_json(prompt_preview["user_prompt"])
+    assert context_json["site_normalized_domain"] == "vmsdata.com"
+    assert context_json["site_industry"] is None
+    assert "roofing" not in str(context_json["site_industry_context"]).lower()
+    assert all("roofing" not in str(item).lower() for item in context_json.get("service_focus_terms", []))
+
+    context_health = payload["competitor_context_health"]
+    assert context_health is not None
+    check_statuses = {check["key"]: check["status"] for check in context_health["checks"]}
+    assert check_statuses["industry_context"] == "weak"
+    assert check_statuses["service_focus"] == "weak"
+
+
+def test_recommendation_workspace_summary_uses_new_domain_audit_signals_for_fresh_industry_context(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_role=PrincipalRole.ADMIN,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="legacy-roofing.example")
+
+    patch_industry = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={"industry": "Roofing services"},
+    )
+    assert patch_industry.status_code == 200
+
+    stale_audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        missing_title_count=1,
+    )
+    _seed_audit_pages(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=stale_audit_run_id,
+        pages=[
+            {
+                "url": "https://legacy-roofing.example/roof-repair",
+                "title": "Roof repair and roof replacement services",
+                "meta_description": "Local roofing contractor for residential roofs.",
+                "h1_json": ["Roofing services"],
+                "h2_json": ["Roof replacement", "Roof inspection"],
+            }
+        ],
+    )
+
+    repoint_site = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={"base_url": "https://vmsdata.com/"},
+    )
+    assert repoint_site.status_code == 200
+    assert repoint_site.json()["industry"] is None
+
+    fresh_audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        missing_title_count=1,
+    )
+    _seed_audit_pages(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=fresh_audit_run_id,
+        pages=[
+            {
+                "url": "https://vmsdata.com/managed-it-services",
+                "title": "Managed IT services and cloud hosting",
+                "meta_description": "SEO, digital marketing, and website hosting for SMB teams.",
+                "h1_json": ["Managed IT services", "Web hosting and SEO services"],
+                "h2_json": ["Digital marketing services", "Website development support"],
+            }
+        ],
+    )
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+
+    context_health = payload["competitor_context_health"]
+    assert context_health is not None
+    check_statuses = {check["key"]: check["status"] for check in context_health["checks"]}
+    assert check_statuses["industry_context"] == "strong"
+    assert check_statuses["service_focus"] == "strong"
+
+    prompt_preview = payload["competitor_prompt_preview"]
+    assert prompt_preview is not None
+    context_json = _extract_site_context_json(prompt_preview["user_prompt"])
+    industry_context = str(context_json.get("site_industry_context") or "").lower()
+    service_focus_terms = ",".join(str(item).lower() for item in context_json.get("service_focus_terms", []))
+    assert "roofing" not in industry_context
+    assert "roofing" not in service_focus_terms
+    assert any(token in industry_context for token in ("seo", "hosting", "digital", "managed it"))
+    assert any(token in service_focus_terms for token in ("seo", "hosting", "digital", "managed it", "web design"))
 
 
 def test_recommendation_workspace_summary_context_health_strong_when_location_industry_service_and_target_are_grounded(

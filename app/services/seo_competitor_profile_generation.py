@@ -1870,10 +1870,20 @@ class SEOCompetitorProfileGenerationService:
         return resolved
 
     def _attach_site_content_signals(self, *, site: SEOSite, business_id: str, site_id: str) -> None:
-        signals = self._load_site_content_signals(business_id=business_id, site_id=site_id)
+        signals = self._load_site_content_signals(
+            business_id=business_id,
+            site_id=site_id,
+            site_normalized_domain=site.normalized_domain,
+        )
         setattr(site, _SITE_CONTENT_SIGNALS_ATTR, signals)
 
-    def _load_site_content_signals(self, *, business_id: str, site_id: str) -> list[str]:
+    def _load_site_content_signals(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        site_normalized_domain: str | None,
+    ) -> list[str]:
         if self.seo_audit_repository is None:
             return []
         latest_completed_run = self.seo_audit_repository.get_latest_completed_run_for_business_site(
@@ -1888,7 +1898,59 @@ class SEOCompetitorProfileGenerationService:
         )
         if not pages:
             return []
-        return self._extract_site_content_signals_from_pages(pages[:_MAX_SITE_CONTENT_SIGNAL_PAGES])
+        filtered_pages = self._filter_site_content_pages_by_domain(
+            pages=pages,
+            site_normalized_domain=site_normalized_domain,
+        )
+        if not filtered_pages:
+            return []
+        return self._extract_site_content_signals_from_pages(filtered_pages[:_MAX_SITE_CONTENT_SIGNAL_PAGES])
+
+    def _filter_site_content_pages_by_domain(
+        self,
+        *,
+        pages: list[SEOAuditPage],
+        site_normalized_domain: str | None,
+    ) -> list[SEOAuditPage]:
+        normalized_site_domain = self._extract_hostname_for_domain_match(site_normalized_domain)
+        if normalized_site_domain is None:
+            return pages
+        matched_pages: list[SEOAuditPage] = []
+        for page in pages:
+            page_url_host = self._extract_hostname_for_domain_match(page.url)
+            canonical_url_host = self._extract_hostname_for_domain_match(page.canonical_url)
+            if self._domain_matches_site(page_url_host, normalized_site_domain) or self._domain_matches_site(
+                canonical_url_host,
+                normalized_site_domain,
+            ):
+                matched_pages.append(page)
+        return matched_pages
+
+    def _extract_hostname_for_domain_match(self, raw: str | None) -> str | None:
+        if raw is None:
+            return None
+        cleaned = self._clean_optional(raw)
+        if not cleaned:
+            return None
+        parsed_value = cleaned if "://" in cleaned else f"https://{cleaned}"
+        try:
+            parsed = urlsplit(parsed_value)
+        except ValueError:
+            return None
+        host = (parsed.hostname or "").strip().lower().strip(".")
+        if not host:
+            return None
+        if host.startswith("www."):
+            host = host[4:]
+        return host or None
+
+    @staticmethod
+    def _domain_matches_site(page_host: str | None, site_domain: str) -> bool:
+        if page_host is None:
+            return False
+        if page_host == site_domain:
+            return True
+        return page_host.endswith(f".{site_domain}")
 
     def _extract_site_content_signals_from_pages(self, pages: list[SEOAuditPage]) -> list[str]:
         signals: list[str] = []

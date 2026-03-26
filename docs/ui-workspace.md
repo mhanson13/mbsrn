@@ -18,6 +18,16 @@ Rules:
 - Do not combine `latest_run` data with `*_prompt_preview.user_prompt` or `*_prompt_preview.system_prompt`.
 - Do not preserve prior prompt body text across site changes or refreshes when new preview payload is received.
 
+## Site Repoint Context Behavior
+
+When a site is repointed to a different domain/vendor:
+
+- workspace competitor context is derived against the current `site_normalized_domain`
+- old-domain audit page signals are excluded from context inference
+- stale explicit site industry is cleared unless a new industry value is provided during the same domain update
+
+If no current-domain audit signals are available yet, competitor context health may temporarily show weak industry/service context until a fresh audit is completed.
+
 ## Competitor Run Quality States
 
 The workspace competitor panel includes a compact terminal-run quality summary line:

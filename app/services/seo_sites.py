@@ -62,6 +62,10 @@ _SITE_CONTEXT_FALLBACK_TARGET_CUSTOMER = (
 )
 _SITE_CONTEXT_FALLBACK_INDUSTRY = "Industry not yet confidently classified from available structured data."
 _SITE_CONTEXT_MAX_SERVICE_TERMS = 8
+_SITE_CONTEXT_EMBEDDED_DOMAIN_PATTERN = re.compile(
+    r"\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+\b",
+    re.IGNORECASE,
+)
 _SITE_CONTEXT_SERVICE_NOISE_TOKENS = {
     "about",
     "and",
@@ -107,6 +111,11 @@ _SITE_CONTEXT_DOMAIN_NOISE_TOKENS = {
     "www",
 }
 _SITE_CONTEXT_SERVICE_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("seo", ("seo", "search engine optimization")),
+    ("digital marketing", ("digital marketing", "online marketing", "marketing agency", "growth marketing")),
+    ("web design", ("web design", "website design", "web development", "website development")),
+    ("web hosting", ("web hosting", "managed hosting", "cloud hosting", "hosting provider", "website hosting")),
+    ("managed it services", ("managed it", "it services", "it support", "network support", "cybersecurity")),
     ("general contractor", ("general contractor", "general contracting")),
     ("construction", ("construction", "contracting", "builder", "builders")),
     ("remodeling", ("remodel", "renovation", "renovations")),
@@ -251,11 +260,15 @@ def build_site_business_context(
     effective_domain = _clean_location_text(normalized_domain) or _clean_location_text(
         getattr(site, "normalized_domain", None)
     )
+    inference_display_name = _display_name_for_structured_inference(
+        cleaned_display_name=cleaned_display_name,
+        effective_domain=effective_domain,
+    )
     content_sources = _normalize_context_sources(site_content_signals or [])
     structured_sources = _normalize_context_sources(
         [
             cleaned_industry or "",
-            cleaned_display_name or "",
+            inference_display_name or "",
             cleaned_business_name or "",
         ]
     )
@@ -336,6 +349,61 @@ def _normalize_context_sources(values: list[str]) -> list[str]:
         if cleaned:
             normalized.append(cleaned.lower())
     return normalized
+
+
+def _display_name_for_structured_inference(
+    *,
+    cleaned_display_name: str | None,
+    effective_domain: str | None,
+) -> str | None:
+    if cleaned_display_name is None:
+        return None
+    normalized_effective_domain = _normalize_site_domain_for_match(effective_domain)
+    if normalized_effective_domain is None:
+        return cleaned_display_name
+    embedded_domains = [
+        _normalize_site_domain_for_match(match.group(0))
+        for match in _SITE_CONTEXT_EMBEDDED_DOMAIN_PATTERN.finditer(cleaned_display_name)
+    ]
+    embedded_domains = [domain for domain in embedded_domains if domain is not None]
+    if not embedded_domains:
+        return cleaned_display_name
+    if any(
+        _is_matching_site_domain(
+            embedded_domain,
+            normalized_effective_domain,
+        )
+        for embedded_domain in embedded_domains
+    ):
+        return cleaned_display_name
+    return None
+
+
+def _normalize_site_domain_for_match(value: str | None) -> str | None:
+    cleaned = _clean_location_text(value)
+    if cleaned is None:
+        return None
+    lowered = cleaned.lower().strip().strip(".")
+    if not lowered:
+        return None
+    if "://" in lowered:
+        parsed = urlparse(lowered)
+        lowered = (parsed.hostname or "").lower().strip().strip(".")
+        if not lowered:
+            return None
+    if lowered.startswith("www."):
+        lowered = lowered[4:]
+    return lowered or None
+
+
+def _is_matching_site_domain(candidate_domain: str, effective_domain: str) -> bool:
+    if candidate_domain == effective_domain:
+        return True
+    if candidate_domain.endswith(f".{effective_domain}"):
+        return True
+    if effective_domain.endswith(f".{candidate_domain}"):
+        return True
+    return False
 
 
 def _tokenize_context(value: str) -> list[str]:
@@ -552,6 +620,8 @@ class SEOSiteService:
             raise SEOSiteNotFoundError("SEO site not found")
 
         changes = payload.model_dump(exclude_unset=True)
+        original_normalized_domain = (site.normalized_domain or "").strip().lower()
+        domain_changed = False
         if "display_name" in changes:
             site.display_name = changes["display_name"].strip()
         if "base_url" in changes:
@@ -563,6 +633,13 @@ class SEOSiteService:
             )
             site.base_url = normalized.url
             site.normalized_domain = normalized.domain
+            domain_changed = normalized.domain != original_normalized_domain
+        # When a site is repointed to a different domain/vendor, stale explicit
+        # industry assignments from the previous site identity can contaminate
+        # downstream context derivation. Clear only on real domain change unless
+        # a new industry was explicitly supplied in the same update.
+        if domain_changed and "industry" not in changes:
+            site.industry = None
         if "industry" in changes:
             site.industry = self._clean_optional(changes["industry"])
         if "primary_location" in changes:

@@ -283,6 +283,33 @@ def test_prompt_builder_derives_industry_and_services_from_site_content_signals(
     assert prompt.trusted_site_context["target_customer_context"].startswith("Customers in Denver, CO")
 
 
+def test_prompt_builder_derives_digital_service_context_without_roofing_cross_contamination() -> None:
+    site = _build_site(display_name="VMS Data")
+    site.industry = None
+    site.normalized_domain = "vmsdata.com"
+    _with_site_content_signals(
+        site,
+        "Managed IT services and cloud hosting for small businesses",
+        "SEO and digital marketing support for growth-stage teams",
+        "Web design and website development services",
+        "Managed IT services, web hosting, and cybersecurity advisory",
+    )
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[],
+        candidate_count=2,
+    )
+
+    industry_context = str(prompt.trusted_site_context["site_industry_context"]).lower()
+    terms = [term.lower() for term in prompt.trusted_site_context["service_focus_terms"]]
+    assert prompt.trusted_site_context["site_industry_context_strength"] == "strong"
+    assert "roofing" not in industry_context
+    assert "roofing" not in terms
+    assert any(token in industry_context for token in ("seo", "hosting", "digital", "managed it"))
+    assert any(token in terms for token in ("seo", "hosting", "digital marketing", "managed it services", "web design"))
+
+
 def test_prompt_builder_site_content_beats_weak_name_and_domain() -> None:
     site = _build_site(display_name="Acme Holdings")
     site.industry = None
@@ -324,6 +351,26 @@ def test_prompt_builder_thin_site_keeps_conservative_fallback() -> None:
     assert prompt.trusted_site_context["site_industry_context_strength"] == "weak"
     assert prompt.trusted_site_context["service_focus_terms"] == []
     assert "- Service Focus Terms: Unspecified" in prompt.user_prompt
+
+
+def test_prompt_builder_ignores_mismatched_domain_in_display_name_for_structured_industry_inference() -> None:
+    site = _build_site(display_name="Client Site legacy-roofing.example")
+    site.industry = None
+    site.normalized_domain = "vmsdata.com"
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[],
+        candidate_count=2,
+    )
+
+    assert (
+        prompt.trusted_site_context["site_industry_context"]
+        == "Industry not yet confidently classified from available structured data."
+    )
+    assert prompt.trusted_site_context["site_industry_context_strength"] == "weak"
+    assert "roofing" not in str(prompt.trusted_site_context["site_industry_context"]).lower()
+    assert all("roofing" not in term.lower() for term in prompt.trusted_site_context["service_focus_terms"])
 
 
 def test_prompt_builder_filters_navigation_noise_from_site_content_signals() -> None:

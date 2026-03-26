@@ -642,6 +642,65 @@ def test_admin_can_update_site_url_via_admin_endpoint(db_session, seeded_busines
     assert payload["normalized_domain"] == "example.com"
 
 
+def test_admin_site_domain_change_clears_stale_industry_when_not_explicitly_updated(db_session, seeded_business) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    client = _make_client(db_session, business_id=seeded_business.id, principal_id=admin_principal.id)
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={
+            "display_name": "Legacy Roofing Site",
+            "base_url": "https://legacy-roofing.example/",
+            "industry": "Roofing services",
+        },
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+    assert create_response.json()["industry"] == "Roofing services"
+
+    patch_response = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}",
+        json={"url": "https://vmsdata.com/"},
+    )
+    assert patch_response.status_code == 200
+    payload = patch_response.json()
+    assert payload["normalized_domain"] == "vmsdata.com"
+    assert payload["industry"] is None
+
+
+def test_site_patch_domain_change_keeps_industry_when_explicitly_supplied(db_session, seeded_business) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        principal_role=PrincipalRole.ADMIN,
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={
+            "display_name": "Legacy Roofing Site",
+            "base_url": "https://legacy-roofing.example/",
+            "industry": "Roofing services",
+        },
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    patch_response = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={
+            "base_url": "https://vmsdata.com/",
+            "industry": "Managed IT and cloud hosting services",
+        },
+    )
+    assert patch_response.status_code == 200
+    payload = patch_response.json()
+    assert payload["normalized_domain"] == "vmsdata.com"
+    assert payload["industry"] == "Managed IT and cloud hosting services"
+
+
 def test_admin_site_url_validation_rejects_invalid_url(db_session, seeded_business) -> None:
     admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
     client = _make_client(db_session, business_id=seeded_business.id, principal_id=admin_principal.id)

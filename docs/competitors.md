@@ -355,6 +355,10 @@ Competitor prompt context now prefers structured business/site metadata before a
 - Falls back to cautious deterministic inference from available business/site identity text only when site content is thin.
 - Falls back to:
   - `Industry not yet confidently classified from available structured data.`
+- Repoint safety for new vendors/sites:
+  - when a site domain is changed to a different domain, stale explicit `industry` is cleared unless a new industry is provided in the same update.
+  - audit-derived service/industry inference only uses audit pages that match the current site domain (old-domain pages are ignored).
+  - structured display-name inference ignores embedded domain text when it does not match the current site domain.
 
 ### Service focus term behavior
 - Prefers website-derived service cues from existing crawl metadata (titles, headings, service-page URL segments).
@@ -362,6 +366,12 @@ Competitor prompt context now prefers structured business/site metadata before a
 - Filters navigation/domain noise tokens (`home`, `about`, `contact`, `com`, `www`, TLD fragments).
 - Uses domain-derived hints only as last resort.
 - Keeps output compact and relevant for substitutable service intent.
+- Deterministic service hints include digital-service categories such as:
+  - `seo`
+  - `digital marketing`
+  - `web design`
+  - `web hosting`
+  - `managed it services`
 
 ### Weak-context safety behavior
 - If location and/or industry context is weak, prompt contract explicitly biases toward fewer high-confidence candidates instead of speculative broad matches.

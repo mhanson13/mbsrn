@@ -60,6 +60,23 @@ Pattern checks:
 - repeated first-attempt timeout with quick degraded recovery usually indicates primary timeout is too low.
 - repeated timeout on both attempts usually indicates network/provider latency pressure; consider raising both timeout settings within the allowed range.
 
+## Troubleshooting Incorrect Industry/Service Context
+
+If workspace competitor prompts show the wrong trade context (for example stale roofing context on a newly repointed site):
+
+1. Verify the site URL/domain was updated on the site record (`base_url`, `normalized_domain`).
+2. Check whether `industry` is explicitly set on the site:
+   - explicit `industry` is treated as strong context.
+   - when domain changes, stale explicit `industry` is now cleared unless a replacement value is supplied in the same update.
+3. Verify audit coverage for the current domain:
+   - competitor context inference now only uses audit pages whose host matches the current site domain.
+   - old-domain audit pages are ignored for context derivation.
+4. Regenerate workspace summary and inspect `competitor_prompt_preview` -> `SITE_CONTEXT_JSON` to confirm:
+   - `site_normalized_domain` matches the intended site/vendor.
+   - `site_industry_context` and `service_focus_terms` align with current-domain data.
+
+When no matching current-domain signals exist, context intentionally degrades to weak/unknown instead of preserving stale strong classifications.
+
 ## Invalid Candidate Diagnostics
 
 Rejected competitor debug reasons now include specific invalid-input classifications:
