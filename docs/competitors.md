@@ -146,9 +146,10 @@ Competitor generation now uses OpenAI `/responses` as the primary path with `web
   - `gpt-5-mini` request payload omits unsupported sampling fields (for example `temperature`, `top_p`)
 
 Safe fallback behavior:
-- If `/responses` fails or response parsing fails, provider retries once via `/chat/completions`.
-- Fallback preserves the existing structured JSON parsing contract used by downstream candidate handling.
-- This keeps production behavior backward-safe while enabling live-search discovery on the primary path.
+- `/responses` with `web_search` is the authoritative discovery path for competitor generation.
+- Fallback to `/chat/completions` is only used when the provider explicitly rejects `web_search` for the request/model.
+- Timeouts, malformed outputs, and non-search request failures stay on the `/responses` path and are surfaced directly.
+- This keeps prompt/runtime capability alignment explicit: search-backed when available, explicitly downgraded only on provider-declared `web_search` incompatibility.
 
 ## Provider Error Visibility
 
@@ -219,6 +220,12 @@ Competitor run detail debug payloads can include bounded provider-attempt teleme
   - `user_prompt_chars`
 
 This metadata is debug-oriented only and does not change ranking/scoring behavior.
+
+Operator-facing interpretation:
+- `endpoint_path`: the exact endpoint used for that attempt (`/responses` or `/chat/completions`).
+- `web_search_enabled`: whether search tooling was enabled on that attempt.
+- `degraded_mode`: `true` means timeout retry mode was used for that attempt.
+- `reduced_context_mode`: `true` means optional context was trimmed to reduce prompt size during retry.
 
 ## Competitor Prompt Context Hardening
 
@@ -306,12 +313,21 @@ Hard ineligibility reasons (internal):
 - `out_of_market`
 - `excluded_domain_pattern`
 - `insufficient_overlap_evidence`
+- `missing_domain`
+- `malformed_url`
+- `missing_business_name`
+- `unsupported_type`
+- `invalid_confidence_score`
+- `low_usefulness_unknown`
 
 Examples:
 - parked/for-sale domain pages are rejected
 - probe failures or non-live landing pages are rejected
 - clearly weak/no-business-identity shells are rejected
 - clearly out-of-market candidates are rejected when local context is strong
+- malformed/empty candidate domains are rejected with specific invalid-candidate reasons
+- unsupported competitor types are rejected instead of silently accepted as high-confidence unknowns
+- low-value unknown placeholders are rejected unless they meet a minimum usefulness threshold
 
 ### Stage 2: Existing admin tuning/scoring
 

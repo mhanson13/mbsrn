@@ -170,6 +170,92 @@ class _PartiallyInvalidCompetitorProfileProvider:
         )
 
 
+class _MixedInvalidReasonCompetitorProfileProvider:
+    provider_name = "mixed-invalid-reasons-provider"
+    model_name = "mixed-invalid-reasons-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="",
+                    suggested_domain="missing-name.example",
+                    competitor_type="direct",
+                    summary="Missing business name.",
+                    why_competitor="Missing business name.",
+                    evidence="Missing business name.",
+                    confidence_score=0.7,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Malformed URL Candidate",
+                    suggested_domain="malformed-domain",
+                    competitor_type="direct",
+                    summary="Malformed domain.",
+                    why_competitor="Malformed domain.",
+                    evidence="Malformed domain.",
+                    confidence_score=0.7,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Missing Domain Candidate",
+                    suggested_domain="",
+                    competitor_type="direct",
+                    summary="Missing domain.",
+                    why_competitor="Missing domain.",
+                    evidence="Missing domain.",
+                    confidence_score=0.7,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Unsupported Type Candidate",
+                    suggested_domain="unsupported-type.example",
+                    competitor_type="franchise",
+                    summary="Local provider with overlapping remodeling services and intent.",
+                    why_competitor="Targets the same conversion-driven local service queries.",
+                    evidence="Has similar service inventory and local service-area framing.",
+                    confidence_score=0.82,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Invalid Confidence Candidate",
+                    suggested_domain="invalid-confidence.example",
+                    competitor_type="direct",
+                    summary="Invalid confidence score.",
+                    why_competitor="Invalid confidence score.",
+                    evidence="Invalid confidence score.",
+                    confidence_score=1.2,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Unknown Competitor",
+                    suggested_domain="unknown-low-usefulness.example",
+                    competitor_type="unknown",
+                    summary=None,
+                    why_competitor=None,
+                    evidence=None,
+                    confidence_score=0.2,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Valid Local Candidate",
+                    suggested_domain="valid-local-candidate.example",
+                    competitor_type="direct",
+                    summary="Serves the same local market for core services.",
+                    why_competitor="Competes for the same local transactional search demand.",
+                    evidence="Service overlap, local coverage overlap, and similar conversion intent.",
+                    confidence_score=0.88,
+                ),
+            ],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"mixed-invalid-reasons"}]}',
+        )
+
+
 class _InvalidConfidenceCompetitorProfileProvider:
     provider_name = "invalid-confidence-provider"
     model_name = "invalid-confidence-model"
@@ -274,6 +360,42 @@ class _TimeoutThenSuccessCompetitorProfileProvider:
             model_name=self.model_name,
             prompt_version=self.prompt_version,
             raw_response="{\"candidates\":[{\"name\":\"Recovered Competitor\"}]}",
+        )
+
+
+class _ProviderEndpointMetadataSuccessProvider:
+    provider_name = "openai"
+    model_name = "gpt-5-mini"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+        reduced_context_mode: bool = False,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, reduced_context_mode
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Metadata Competitor",
+                    suggested_domain="metadata-competitor.example",
+                    competitor_type="direct",
+                    summary="Metadata-backed successful provider attempt.",
+                    why_competitor="Used to validate endpoint/debug telemetry.",
+                    evidence="Provider returned endpoint/tooling metadata on success.",
+                    confidence_score=0.83,
+                )
+            ][:candidate_count],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Metadata Competitor"}]}',
+            endpoint_path="/responses",
+            web_search_enabled=True,
+            request_duration_ms=187,
         )
 
 
@@ -470,7 +592,7 @@ class _ModerateCompetitorProfileProvider:
             SEOCompetitorProfileDraftCandidateOutput(
                 suggested_name="Unknown Competitor",
                 suggested_domain="genericservicesgroup.example",
-                competitor_type="unknown",
+                competitor_type="direct",
                 summary=None,
                 why_competitor=None,
                 evidence=None,
@@ -998,7 +1120,7 @@ def test_async_execution_failure_marks_run_failed_safely(db_session, seeded_busi
     assert "invalid-domain-without-tld" in persisted_run.raw_output
 
 
-def test_malformed_provider_output_results_in_failed_run_without_partial_drafts(db_session, seeded_business) -> None:
+def test_malformed_provider_output_skips_invalid_candidates_and_keeps_valid_drafts(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -1023,10 +1145,65 @@ def test_malformed_provider_output_results_in_failed_run_without_partial_drafts(
     )
     assert detail.status_code == 200
     payload = detail.json()
-    assert payload["run"]["status"] == "failed"
-    assert payload["run"]["error_summary"] == INVALID_OUTPUT_ERROR_SUMMARY
-    assert payload["run"]["failure_category"] == "malformed_output"
-    assert payload["total_drafts"] == 0
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["error_summary"] is None
+    assert payload["run"]["failure_category"] is None
+    assert payload["run"]["generated_draft_count"] == 1
+    assert payload["run"]["included_candidate_count"] == 1
+    assert payload["run"]["excluded_candidate_count"] == 1
+    assert payload["run"]["exclusion_counts_by_reason"]["invalid_candidate"] == 1
+    assert payload["total_drafts"] == 1
+    assert payload["drafts"][0]["suggested_domain"] == "valid-competitor.example"
+    assert payload["rejected_candidate_count"] == 1
+    assert payload["rejected_candidates"][0]["domain"] == "broken"
+    assert "malformed_url" in payload["rejected_candidates"][0]["reasons"]
+
+
+def test_invalid_candidate_reasons_are_classified_with_specific_codes(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id, candidate_count=5)
+    run_id = created["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_MixedInvalidReasonCompetitorProfileProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["raw_candidate_count"] == 7
+    assert payload["run"]["included_candidate_count"] == 1
+    assert payload["run"]["excluded_candidate_count"] == 6
+    assert payload["run"]["exclusion_counts_by_reason"]["invalid_candidate"] == 6
+    assert payload["rejected_candidate_count"] == 6
+    rejected_reason_set = {
+        reason
+        for item in payload["rejected_candidates"]
+        for reason in item["reasons"]
+    }
+    assert rejected_reason_set == {
+        "missing_business_name",
+        "malformed_url",
+        "missing_domain",
+        "unsupported_type",
+        "invalid_confidence_score",
+        "low_usefulness_unknown",
+    }
+    assert [item["suggested_domain"] for item in payload["drafts"]] == ["valid-local-candidate.example"]
 
 
 def test_invalid_confidence_output_fails_run_safely(db_session, seeded_business) -> None:
@@ -1194,6 +1371,42 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert payload["provider_attempts"][0]["context_json_chars"] > payload["provider_attempts"][1]["context_json_chars"]
     assert provider.requested_candidate_counts == [5, 3]
     assert provider.reduced_context_modes == [False, True]
+
+
+def test_success_attempt_debug_captures_endpoint_and_web_search_metadata(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=1)["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_ProviderEndpointMetadataSuccessProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["provider_attempt_count"] == 1
+    assert len(payload["provider_attempts"]) == 1
+    attempt = payload["provider_attempts"][0]
+    assert attempt["attempt_number"] == 1
+    assert attempt["degraded_mode"] is False
+    assert attempt["outcome"] == "success"
+    assert attempt["endpoint_path"] == "/responses"
+    assert attempt["web_search_enabled"] is True
+    assert attempt["request_duration_ms"] == 187
 
 
 def test_non_timeout_provider_failure_does_not_retry(db_session, seeded_business) -> None:
@@ -1683,27 +1896,23 @@ def test_generation_dedup_scoring_and_exclusion_are_applied_before_persistence(d
     assert payload["total_drafts"] == 2
     assert payload["run"]["exclusion_counts_by_reason"] == {
         "duplicate": 1,
-        "low_relevance": 1,
+        "low_relevance": 0,
         "directory_or_aggregator": 1,
         "big_box_mismatch": 1,
         "existing_domain_match": 0,
-        "invalid_candidate": 0,
+        "invalid_candidate": 1,
     }
-    assert payload["tuning_rejected_candidate_count"] == 3
+    assert payload["tuning_rejected_candidate_count"] == 2
     assert payload["tuning_rejection_reason_counts"] == {
-        "below_minimum_relevance_score": 1,
+        "below_minimum_relevance_score": 0,
         "directory_or_aggregator_penalty": 1,
         "big_box_mismatch_penalty": 1,
-        "insufficient_local_alignment": 1,
+        "insufficient_local_alignment": 0,
     }
     tuning_rejected_by_domain = {item["domain"]: item for item in payload["tuning_rejected_candidates"]}
-    assert set(tuning_rejected_by_domain.keys()) == {"yelp.com", "walmart.com", "unknown.example"}
+    assert set(tuning_rejected_by_domain.keys()) == {"yelp.com", "walmart.com"}
     assert tuning_rejected_by_domain["yelp.com"]["reasons"] == ["directory_or_aggregator_penalty"]
     assert tuning_rejected_by_domain["walmart.com"]["reasons"] == ["big_box_mismatch_penalty"]
-    assert tuning_rejected_by_domain["unknown.example"]["reasons"] == [
-        "below_minimum_relevance_score",
-        "insufficient_local_alignment",
-    ]
 
     returned_domains = [item["suggested_domain"] for item in payload["drafts"]]
     assert returned_domains == [
@@ -1712,9 +1921,9 @@ def test_generation_dedup_scoring_and_exclusion_are_applied_before_persistence(d
     ]
     assert payload["candidate_pipeline_summary"] == {
         "proposed_candidate_count": 6,
-        "rejected_by_eligibility_count": 0,
-        "eligible_candidate_count": 6,
-        "rejected_by_tuning_count": 3,
+        "rejected_by_eligibility_count": 1,
+        "eligible_candidate_count": 5,
+        "rejected_by_tuning_count": 2,
         "survived_tuning_count": 3,
         "removed_by_existing_domain_match_count": 0,
         "removed_by_deduplication_count": 1,
@@ -2026,11 +2235,11 @@ def test_generation_failure_with_all_candidates_excluded_persists_exclusion_tele
     assert payload["run"]["excluded_candidate_count"] == 2
     assert payload["run"]["exclusion_counts_by_reason"] == {
         "duplicate": 0,
-        "low_relevance": 1,
+        "low_relevance": 0,
         "directory_or_aggregator": 1,
         "big_box_mismatch": 0,
         "existing_domain_match": 0,
-        "invalid_candidate": 0,
+        "invalid_candidate": 1,
     }
     assert payload["total_drafts"] == 0
 
@@ -2251,16 +2460,16 @@ def test_generation_summary_endpoint_returns_status_failure_and_retry_metrics(db
     assert payload["failure_category_counts"]["timeout"] == 1
     assert payload["failure_category_counts"]["malformed_output"] == 1
     assert payload["total_runs"] == 4
-    assert payload["total_raw_candidate_count"] == 2
+    assert payload["total_raw_candidate_count"] == 3
     assert payload["total_included_candidate_count"] == 2
-    assert payload["total_excluded_candidate_count"] == 0
+    assert payload["total_excluded_candidate_count"] == 1
     assert payload["exclusion_counts_by_reason"] == {
         "duplicate": 0,
         "low_relevance": 0,
         "directory_or_aggregator": 0,
         "big_box_mismatch": 0,
         "existing_domain_match": 0,
-        "invalid_candidate": 0,
+        "invalid_candidate": 1,
     }
     assert payload["latest_run_created_at"] is not None
     assert payload["latest_run_completed_at"] is not None
@@ -2330,11 +2539,11 @@ def test_generation_summary_endpoint_aggregates_cross_run_exclusion_telemetry(db
     assert payload["total_excluded_candidate_count"] == 6
     assert payload["exclusion_counts_by_reason"] == {
         "duplicate": 1,
-        "low_relevance": 2,
+        "low_relevance": 0,
         "directory_or_aggregator": 2,
         "big_box_mismatch": 1,
         "existing_domain_match": 0,
-        "invalid_candidate": 0,
+        "invalid_candidate": 2,
     }
 
 

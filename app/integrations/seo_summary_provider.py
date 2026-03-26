@@ -67,6 +67,9 @@ class SEOCompetitorProfileGenerationOutput:
     model_name: str
     prompt_version: str
     raw_response: str | None = None
+    endpoint_path: str | None = None
+    web_search_enabled: bool | None = None
+    request_duration_ms: int | None = None
 
 
 class SEOCompetitorProfileGenerationProvider(Protocol):

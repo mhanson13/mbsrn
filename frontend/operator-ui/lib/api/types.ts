@@ -323,7 +323,13 @@ export type CompetitorCandidateIneligibilityReason =
   | "weak_business_identity"
   | "out_of_market"
   | "excluded_domain_pattern"
-  | "insufficient_overlap_evidence";
+  | "insufficient_overlap_evidence"
+  | "missing_domain"
+  | "malformed_url"
+  | "missing_business_name"
+  | "unsupported_type"
+  | "invalid_confidence_score"
+  | "low_usefulness_unknown";
 
 export type CompetitorCandidateTuningExclusionReason =
   | "below_minimum_relevance_score"

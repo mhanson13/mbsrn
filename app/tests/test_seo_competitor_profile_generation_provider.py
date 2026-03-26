@@ -117,6 +117,10 @@ def test_gpt5_mini_uses_responses_api_with_web_search(monkeypatch) -> None:
     assert captured_url.endswith("/responses")
     assert output.provider_name == "openai"
     assert output.model_name == "gpt-5-mini-2026-01-01"
+    assert output.endpoint_path == "/responses"
+    assert output.web_search_enabled is True
+    assert output.request_duration_ms is not None
+    assert output.request_duration_ms >= 0
     assert captured_payload["model"] == "gpt-5-mini"
     assert captured_payload["tools"] == [{"type": "web_search"}]
     assert "temperature" not in captured_payload
@@ -150,6 +154,9 @@ def test_response_parsing_still_returns_valid_candidates(monkeypatch) -> None:
     assert output.provider_name == "openai"
     assert output.model_name == "gpt-4.1-mini-2026-01-01"
     assert output.prompt_version == "seo-competitor-profile-v1"
+    assert output.endpoint_path == "/responses"
+    assert output.web_search_enabled is True
+    assert output.request_duration_ms is not None
     assert output.raw_response is not None
     assert len(output.candidates) == 1
     assert output.candidates[0].suggested_name == "Competitor One"
@@ -239,6 +246,9 @@ def test_fallback_to_chat_completions_on_error(monkeypatch) -> None:
 
     assert output.model_name == "gpt-4.1-mini-2026-01-01"
     assert len(output.candidates) == 1
+    assert output.endpoint_path == "/chat/completions"
+    assert output.web_search_enabled is False
+    assert output.request_duration_ms is not None
     assert call_urls == [
         "https://api.openai.com/v1/responses",
         "https://api.openai.com/v1/chat/completions",
@@ -263,10 +273,7 @@ def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
     assert exc_info.value.raw_output is not None
     raw_debug_payload = json.loads(exc_info.value.raw_output)
     assert raw_debug_payload["failure_kind"] == "timeout"
-    assert raw_debug_payload["endpoint_path"] in {
-        "/responses",
-        "/chat/completions",
-    }
+    assert raw_debug_payload["endpoint_path"] == "/responses"
     assert isinstance(raw_debug_payload.get("request_debug"), dict)
     assert raw_debug_payload["request_debug"]["prompt_total_chars"] >= 1
     assert raw_debug_payload["request_debug"]["timeout_seconds"] == provider.timeout_seconds
@@ -300,23 +307,17 @@ def test_openai_provider_auth_error_is_normalized(monkeypatch) -> None:
 
 
 def test_openai_provider_malformed_content_is_normalized(monkeypatch) -> None:
+    call_urls: list[str] = []
+
     def _invalid_content_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         del timeout
-        if request.full_url.endswith("/responses"):
-            return _FakeHTTPResponse(
-                json.dumps(
-                    {
-                        "model": "gpt-4.1-mini",
-                        "output": [{"content": [{"type": "output_text", "text": "not-json"}]}],
-                    }
-                )
-            )
-        assert request.full_url.endswith("/chat/completions")
+        call_urls.append(request.full_url)
+        assert request.full_url.endswith("/responses")
         return _FakeHTTPResponse(
             json.dumps(
                 {
                     "model": "gpt-4.1-mini",
-                    "choices": [{"message": {"content": "not-json"}}],
+                    "output": [{"content": [{"type": "output_text", "text": "not-json"}]}],
                 }
             )
         )
@@ -331,6 +332,7 @@ def test_openai_provider_malformed_content_is_normalized(monkeypatch) -> None:
         provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
 
     assert exc_info.value.code == "invalid_output"
+    assert call_urls == ["https://api.openai.com/v1/responses"]
 
 
 def test_openai_provider_logs_prompt_resolution_without_raw_prompt_text(monkeypatch, caplog) -> None:
@@ -416,11 +418,52 @@ def test_openai_provider_logs_bounded_provider_error_details(monkeypatch, caplog
     assert exc_info.value.raw_output is not None
     raw_debug_payload = json.loads(exc_info.value.raw_output)
     assert raw_debug_payload["failure_kind"] == "provider_request"
-    assert raw_debug_payload["endpoint_path"] in {"/responses", "/chat/completions"}
+    assert raw_debug_payload["endpoint_path"] == "/responses"
     assert "SEO competitor provider HTTP error status=400" in caplog.text
     assert "model_name=gpt-5-mini" in caplog.text
     assert "endpoint=/responses" in caplog.text
-    assert "endpoint=/chat/completions" in caplog.text
     assert "error_type=invalid_request_error" in caplog.text
     assert "error_code=unsupported_parameter" in caplog.text
     assert "Unsupported parameter: 'temperature' is not supported with this model." in caplog.text
+
+
+def test_non_web_search_request_error_does_not_fallback_to_chat(monkeypatch) -> None:
+    call_urls: list[str] = []
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del timeout
+        call_urls.append(request.full_url)
+        raise urllib.error.HTTPError(
+            url=request.full_url,
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "type": "invalid_request_error",
+                            "code": "unsupported_parameter",
+                            "message": "temperature is not supported for this request.",
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        timeout_seconds=20,
+    )
+
+    with pytest.raises(SEOCompetitorProfileProviderError) as exc_info:
+        provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=["known.example"],
+            candidate_count=1,
+        )
+
+    assert exc_info.value.code == "provider_request"
+    assert call_urls == ["https://api.openai.com/v1/responses"]

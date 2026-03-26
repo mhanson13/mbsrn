@@ -32,6 +32,12 @@ SEOCompetitorProfileIneligibilityReason = Literal[
     "out_of_market",
     "excluded_domain_pattern",
     "insufficient_overlap_evidence",
+    "missing_domain",
+    "malformed_url",
+    "missing_business_name",
+    "unsupported_type",
+    "invalid_confidence_score",
+    "low_usefulness_unknown",
 ]
 SEOCompetitorProfileTuningExclusionReason = Literal[
     "below_minimum_relevance_score",
@@ -66,6 +72,12 @@ _COMPETITOR_PROFILE_INELIGIBILITY_REASONS: tuple[str, ...] = (
     "out_of_market",
     "excluded_domain_pattern",
     "insufficient_overlap_evidence",
+    "missing_domain",
+    "malformed_url",
+    "missing_business_name",
+    "unsupported_type",
+    "invalid_confidence_score",
+    "low_usefulness_unknown",
 )
 _COMPETITOR_PROFILE_TUNING_EXCLUSION_REASONS: tuple[str, ...] = (
     "below_minimum_relevance_score",

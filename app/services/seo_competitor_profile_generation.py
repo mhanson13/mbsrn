@@ -17,6 +17,7 @@ from app.core.time import utc_now
 from app.integrations.seo_competitor_profile_generation_provider import SEOCompetitorProfileProviderError
 from app.integrations.seo_summary_provider import (
     SEOCompetitorProfileDraftCandidateOutput,
+    SEOCompetitorProfileGenerationOutput,
     SEOCompetitorProfileGenerationProvider,
 )
 from app.models.business import Business
@@ -127,6 +128,38 @@ _MAX_PROVIDER_ATTEMPTS_DEBUG_ITEMS = 2
 _TIMEOUT_RETRY_BACKOFF_SECONDS = 0.2
 _DEGRADED_RETRY_MAX_CANDIDATE_COUNT = 3
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
+_UNKNOWN_NAME_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
+_UNKNOWN_PLACEHOLDER_NAME_TOKENS = {
+    "business",
+    "company",
+    "competitor",
+    "example",
+    "generic",
+    "na",
+    "none",
+    "placeholder",
+    "unknown",
+}
+_UNKNOWN_MIN_CONFIDENCE_FLOOR = 0.35
+_UNKNOWN_MIN_DETAIL_CHARS = 40
+
+INELIGIBILITY_REASON_MISSING_DOMAIN = "missing_domain"
+INELIGIBILITY_REASON_MALFORMED_URL = "malformed_url"
+INELIGIBILITY_REASON_MISSING_BUSINESS_NAME = "missing_business_name"
+INELIGIBILITY_REASON_UNSUPPORTED_TYPE = "unsupported_type"
+INELIGIBILITY_REASON_INVALID_CONFIDENCE_SCORE = "invalid_confidence_score"
+INELIGIBILITY_REASON_LOW_USEFULNESS_UNKNOWN = "low_usefulness_unknown"
+_INVALID_INPUT_REASON_KEYS: tuple[str, ...] = (
+    INELIGIBILITY_REASON_MISSING_DOMAIN,
+    INELIGIBILITY_REASON_MALFORMED_URL,
+    INELIGIBILITY_REASON_MISSING_BUSINESS_NAME,
+    INELIGIBILITY_REASON_UNSUPPORTED_TYPE,
+    INELIGIBILITY_REASON_INVALID_CONFIDENCE_SCORE,
+    INELIGIBILITY_REASON_LOW_USEFULNESS_UNKNOWN,
+)
+_REJECTED_CANDIDATE_REASON_KEYS: tuple[str, ...] = tuple(
+    dict.fromkeys([*INELIGIBILITY_REASON_KEYS, *_INVALID_INPUT_REASON_KEYS])
+)
 
 FAILURE_CATEGORY_TIMEOUT = "timeout"
 FAILURE_CATEGORY_PROVIDER_AUTH = "provider_auth"
@@ -1239,31 +1272,29 @@ class SEOCompetitorProfileGenerationService:
         raw_candidates: list[SEOCompetitorProfileDraftCandidateOutput],
     ) -> SEOCompetitorProfileDraftBuildResult:
         prepared_candidates: list[CompetitorCandidateInput] = []
+        invalid_input_rejected_candidates: list[SEOCompetitorProfileRejectedCandidateDebug] = []
         for index, candidate in enumerate(raw_candidates):
-            suggested_name = self._clean_required_value(candidate.suggested_name, field_name="suggested_name")
-            suggested_domain = self._normalize_domain_value(candidate.suggested_domain)
-            competitor_type = self._normalize_competitor_type(candidate.competitor_type)
-            confidence_score = self._normalize_confidence_score(candidate.confidence_score)
-            prepared_candidates.append(
-                CompetitorCandidateInput(
-                    suggested_name=suggested_name,
-                    suggested_domain=suggested_domain,
-                    competitor_type=competitor_type,
-                    summary=self._clean_optional(candidate.summary),
-                    why_competitor=self._clean_optional(candidate.why_competitor),
-                    evidence=self._clean_optional(candidate.evidence),
-                    confidence_score=confidence_score,
-                    source_index=index,
-                )
+            prepared_candidate, rejected_candidate = self._prepare_candidate_input_for_pipeline(
+                candidate=candidate,
+                source_index=index,
             )
+            if prepared_candidate is not None:
+                prepared_candidates.append(prepared_candidate)
+                continue
+            if rejected_candidate is not None:
+                invalid_input_rejected_candidates.append(rejected_candidate)
 
         eligibility_result = filter_eligible_competitor_candidates(
             site=site,
             candidates=prepared_candidates,
             domain_probe=self.candidate_domain_probe,
         )
-        rejected_candidates = self._build_rejected_candidate_debug(
+        eligibility_rejected_candidates = self._build_rejected_candidate_debug(
             decisions=eligibility_result.decisions,
+        )
+        rejected_candidates = self._merge_rejected_candidate_debug(
+            primary=invalid_input_rejected_candidates,
+            secondary=eligibility_rejected_candidates,
         )
         quality_tuning = self._resolve_candidate_quality_tuning(business_id=run.business_id)
         candidate_processing = process_competitor_candidates(
@@ -1281,13 +1312,15 @@ class SEOCompetitorProfileGenerationService:
         exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(
             candidate_processing.exclusion_counts_by_reason
         )
+        invalid_candidate_input_count = len(invalid_input_rejected_candidates)
         exclusion_counts_by_reason["invalid_candidate"] = (
             int(exclusion_counts_by_reason.get("invalid_candidate", 0))
             + eligibility_result.ineligible_candidate_count
+            + invalid_candidate_input_count
         )
 
-        proposed_candidate_count = len(prepared_candidates)
-        rejected_by_eligibility_count = eligibility_result.ineligible_candidate_count
+        proposed_candidate_count = len(raw_candidates)
+        rejected_by_eligibility_count = eligibility_result.ineligible_candidate_count + invalid_candidate_input_count
         eligible_candidate_count = len(eligibility_result.eligible_candidates)
         rejected_by_tuning_count = max(0, len(candidate_processing.tuning_rejected_candidates))
         survived_tuning_count = max(0, eligible_candidate_count - rejected_by_tuning_count)
@@ -1330,10 +1363,10 @@ class SEOCompetitorProfileGenerationService:
             raw_candidate_count=proposed_candidate_count,
             included_candidate_count=len(drafts),
             deduped_candidate_count=candidate_processing.deduped_candidate_count,
-            ineligible_candidate_count=eligibility_result.ineligible_candidate_count,
+            ineligible_candidate_count=rejected_by_eligibility_count,
             excluded_candidate_count=(
                 candidate_processing.excluded_candidate_count
-                + eligibility_result.ineligible_candidate_count
+                + rejected_by_eligibility_count
                 + removed_by_final_limit_count
             ),
             exclusion_counts_by_reason=exclusion_counts_by_reason,
@@ -1353,6 +1386,153 @@ class SEOCompetitorProfileGenerationService:
                 final_candidate_count=len(drafts),
             ),
         )
+
+    def _prepare_candidate_input_for_pipeline(
+        self,
+        *,
+        candidate: SEOCompetitorProfileDraftCandidateOutput,
+        source_index: int,
+    ) -> tuple[CompetitorCandidateInput | None, SEOCompetitorProfileRejectedCandidateDebug | None]:
+        reasons: list[str] = []
+        suggested_name = self._clean_optional(candidate.suggested_name)
+        raw_domain = self._clean_optional(candidate.suggested_domain)
+        suggested_domain: str | None = None
+
+        if suggested_name is None:
+            reasons.append(INELIGIBILITY_REASON_MISSING_BUSINESS_NAME)
+
+        if raw_domain is None:
+            reasons.append(INELIGIBILITY_REASON_MISSING_DOMAIN)
+        else:
+            try:
+                suggested_domain = self._normalize_domain_value(raw_domain)
+            except SEOCompetitorProfileGenerationValidationError:
+                reasons.append(INELIGIBILITY_REASON_MALFORMED_URL)
+
+        raw_competitor_type = self._clean_optional(candidate.competitor_type)
+        competitor_type = self._normalize_competitor_type(raw_competitor_type or "")
+        if (
+            raw_competitor_type is not None
+            and competitor_type == "unknown"
+            and raw_competitor_type.lower() not in _ALLOWED_COMPETITOR_TYPES
+        ):
+            reasons.append(INELIGIBILITY_REASON_UNSUPPORTED_TYPE)
+
+        summary = self._clean_optional(candidate.summary)
+        why_competitor = self._clean_optional(candidate.why_competitor)
+        evidence = self._clean_optional(candidate.evidence)
+
+        confidence_score: float | None = None
+        try:
+            confidence_score = self._normalize_confidence_score(candidate.confidence_score)
+        except SEOCompetitorProfileGenerationValidationError:
+            reasons.append(INELIGIBILITY_REASON_INVALID_CONFIDENCE_SCORE)
+
+        if (
+            not reasons
+            and competitor_type == "unknown"
+            and suggested_name is not None
+            and confidence_score is not None
+            and not self._meets_unknown_usefulness_threshold(
+                suggested_name=suggested_name,
+                summary=summary,
+                why_competitor=why_competitor,
+                evidence=evidence,
+                confidence_score=confidence_score,
+            )
+        ):
+            reasons.append(INELIGIBILITY_REASON_LOW_USEFULNESS_UNKNOWN)
+
+        if reasons:
+            debug_domain = suggested_domain or raw_domain or "unknown-domain"
+            return (
+                None,
+                SEOCompetitorProfileRejectedCandidateDebug(
+                    domain=debug_domain,
+                    reasons=self._normalize_rejected_candidate_reasons(reasons),
+                    summary=self._build_rejected_candidate_summary_from_values(
+                        summary=summary,
+                        why_competitor=why_competitor,
+                        evidence=evidence,
+                    ),
+                ),
+            )
+
+        if suggested_name is None or suggested_domain is None or confidence_score is None:
+            return None, None
+
+        return (
+            CompetitorCandidateInput(
+                suggested_name=suggested_name,
+                suggested_domain=suggested_domain,
+                competitor_type=competitor_type,
+                summary=summary,
+                why_competitor=why_competitor,
+                evidence=evidence,
+                confidence_score=confidence_score,
+                source_index=source_index,
+            ),
+            None,
+        )
+
+    def _merge_rejected_candidate_debug(
+        self,
+        *,
+        primary: list[SEOCompetitorProfileRejectedCandidateDebug],
+        secondary: list[SEOCompetitorProfileRejectedCandidateDebug],
+    ) -> list[SEOCompetitorProfileRejectedCandidateDebug]:
+        merged: list[SEOCompetitorProfileRejectedCandidateDebug] = []
+        seen: set[tuple[str, tuple[str, ...]]] = set()
+        for item in [*primary, *secondary]:
+            if not item.reasons:
+                continue
+            normalized_domain = self._clean_optional(item.domain)
+            if normalized_domain is None:
+                continue
+            key = (normalized_domain.lower(), tuple(item.reasons))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(
+                SEOCompetitorProfileRejectedCandidateDebug(
+                    domain=normalized_domain,
+                    reasons=tuple(item.reasons),
+                    summary=item.summary,
+                )
+            )
+            if len(merged) >= REJECTED_CANDIDATE_DEBUG_MAX_ITEMS:
+                break
+        return merged
+
+    def _meets_unknown_usefulness_threshold(
+        self,
+        *,
+        suggested_name: str,
+        summary: str | None,
+        why_competitor: str | None,
+        evidence: str | None,
+        confidence_score: float,
+    ) -> bool:
+        tokens = self._tokenize_name_for_usefulness(suggested_name)
+        if not tokens:
+            return False
+        if all(token in _UNKNOWN_PLACEHOLDER_NAME_TOKENS for token in tokens):
+            return False
+        if confidence_score < _UNKNOWN_MIN_CONFIDENCE_FLOOR:
+            return False
+
+        detail_values = [value for value in [summary, why_competitor, evidence] if value]
+        detail_chars = sum(len(value) for value in detail_values)
+        if detail_chars >= _UNKNOWN_MIN_DETAIL_CHARS:
+            return True
+        if len(detail_values) >= 2 and any(len(value) >= 20 for value in detail_values):
+            return True
+        return False
+
+    @staticmethod
+    def _tokenize_name_for_usefulness(value: str) -> list[str]:
+        normalized = _UNKNOWN_NAME_TOKEN_PATTERN.sub(" ", value.lower())
+        return [token for token in normalized.split(" ") if token]
 
     def _apply_draft_updates(
         self,
@@ -1905,7 +2085,7 @@ class SEOCompetitorProfileGenerationService:
     def _normalize_rejected_candidate_reasons(raw_reasons: tuple[str, ...] | list[str] | object) -> tuple[str, ...]:
         if not isinstance(raw_reasons, (list, tuple)):
             return tuple()
-        allowed = set(INELIGIBILITY_REASON_KEYS)
+        allowed = set(_REJECTED_CANDIDATE_REASON_KEYS)
         normalized: list[str] = []
         seen: set[str] = set()
         for raw_reason in raw_reasons:
@@ -1932,7 +2112,20 @@ class SEOCompetitorProfileGenerationService:
         return tuple(normalized)
 
     def _build_rejected_candidate_summary(self, candidate: CompetitorCandidateInput) -> str | None:
-        for raw_value in (candidate.why_competitor, candidate.summary, candidate.evidence):
+        return self._build_rejected_candidate_summary_from_values(
+            summary=candidate.summary,
+            why_competitor=candidate.why_competitor,
+            evidence=candidate.evidence,
+        )
+
+    def _build_rejected_candidate_summary_from_values(
+        self,
+        *,
+        summary: str | None,
+        why_competitor: str | None,
+        evidence: str | None,
+    ) -> str | None:
+        for raw_value in (why_competitor, summary, evidence):
             cleaned = self._clean_optional(raw_value)
             if not cleaned:
                 continue
@@ -1974,6 +2167,7 @@ class SEOCompetitorProfileGenerationService:
                 prompt_metrics=first_prompt_metrics,
                 requested_candidate_count=effective_requested_count,
                 fallback_duration_ms=first_duration_ms,
+                provider_output=None,
                 provider_error=exc,
             )
             provider_attempts.append(first_attempt_debug)
@@ -2007,6 +2201,7 @@ class SEOCompetitorProfileGenerationService:
                         prompt_metrics=retry_prompt_metrics,
                         requested_candidate_count=degraded_candidate_count,
                         fallback_duration_ms=retry_duration_ms,
+                        provider_output=None,
                         provider_error=retry_exc,
                     )
                 )
@@ -2020,6 +2215,7 @@ class SEOCompetitorProfileGenerationService:
                     prompt_metrics=retry_prompt_metrics,
                     requested_candidate_count=degraded_candidate_count,
                     fallback_duration_ms=retry_duration_ms,
+                    provider_output=output,
                     provider_error=None,
                 )
             )
@@ -2045,6 +2241,7 @@ class SEOCompetitorProfileGenerationService:
                 prompt_metrics=first_prompt_metrics,
                 requested_candidate_count=effective_requested_count,
                 fallback_duration_ms=first_duration_ms,
+                provider_output=output,
                 provider_error=None,
             )
         )
@@ -2132,6 +2329,7 @@ class SEOCompetitorProfileGenerationService:
         prompt_metrics: _ProviderAttemptPromptMetrics,
         requested_candidate_count: int,
         fallback_duration_ms: int,
+        provider_output: SEOCompetitorProfileGenerationOutput | None,
         provider_error: SEOCompetitorProfileProviderError | None,
     ) -> SEOCompetitorProfileProviderAttemptDebug:
         failure_kind = "unknown"
@@ -2170,6 +2368,14 @@ class SEOCompetitorProfileGenerationService:
                 if provider_debug.request_duration_ms is not None:
                     request_duration_ms = provider_debug.request_duration_ms
             outcome = failure_kind
+        elif provider_output is not None:
+            output_endpoint_path = self._clean_optional(provider_output.endpoint_path)
+            if output_endpoint_path:
+                endpoint_path = output_endpoint_path
+            if isinstance(provider_output.web_search_enabled, bool):
+                web_search_enabled = provider_output.web_search_enabled
+            if provider_output.request_duration_ms is not None:
+                request_duration_ms = max(0, int(provider_output.request_duration_ms))
         return SEOCompetitorProfileProviderAttemptDebug(
             attempt_number=max(1, int(attempt_number)),
             degraded_mode=bool(degraded_mode),

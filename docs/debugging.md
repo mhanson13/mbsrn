@@ -31,3 +31,32 @@ Expected behavior:
 - Prompt body comes only from `system_prompt` + `user_prompt`.
 - `prompt_version` is metadata and should align with the effective prompt marker when present.
 - `truncated` must reflect actual payload truncation.
+
+## Competitor Runtime Debug Fields
+
+When diagnosing competitor-generation quality, use run-detail provider attempt metadata as runtime truth:
+
+- `endpoint_path`: actual endpoint used for the attempt.
+- `web_search_enabled`: whether search tooling was enabled.
+- `degraded_mode`: whether the attempt ran in timeout retry mode.
+- `reduced_context_mode`: whether optional context was trimmed for retry safety.
+- `request_duration_ms` and `timeout_seconds`: timeout pressure indicators.
+
+Common interpretations:
+
+- `/responses` + `web_search_enabled=true`: search-backed discovery path.
+- `/chat/completions` + `web_search_enabled=false`: explicit capability downgrade (web search unsupported for request/model).
+- `degraded_mode=true` and `reduced_context_mode=true`: timeout retry path was used.
+
+## Invalid Candidate Diagnostics
+
+Rejected competitor debug reasons now include specific invalid-input classifications:
+
+- `missing_domain`
+- `malformed_url`
+- `missing_business_name`
+- `unsupported_type`
+- `invalid_confidence_score`
+- `low_usefulness_unknown`
+
+Use these to distinguish malformed model output from normal relevance/tuning exclusions.

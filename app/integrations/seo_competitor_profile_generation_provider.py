@@ -48,6 +48,12 @@ class SEOCompetitorProfileProviderError(RuntimeError):
         return self.safe_message
 
 
+@dataclass(frozen=True)
+class _OpenAICompletionResponse:
+    body_text: str
+    request_duration_ms: int
+
+
 class MisconfiguredSEOCompetitorProfileGenerationProvider:
     def __init__(
         self,
@@ -156,13 +162,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         try:
             response_json: dict[str, object] | None = None
             assistant_content: str | None = None
-            raw_response = self._request_completion(
+            responses_response = self._request_completion(
                 responses_payload,
                 endpoint_path="/responses",
                 request_debug=responses_request_debug,
             )
             response_json = self._parse_json_object(
-                raw_response,
+                responses_response.body_text,
                 code=_PROVIDER_ERROR_PARSING,
                 safe_message="Competitor profile generation response could not be parsed.",
             )
@@ -184,11 +190,17 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 model_name=model_name,
                 prompt_version=prompt.prompt_version,
                 raw_response=assistant_content,
+                endpoint_path="/responses",
+                web_search_enabled=True,
+                request_duration_ms=responses_response.request_duration_ms,
             )
         except SEOCompetitorProfileProviderError as exc:
+            if not self._should_fallback_to_chat_completions(exc):
+                raise
             logger.warning(
                 (
-                    "SEO competitor provider responses path failed; falling back to chat completions "
+                    "SEO competitor provider responses path reported unsupported web search; "
+                    "falling back to chat completions "
                     "provider_name=%s model_name=%s endpoint=%s error_code=%s safe_message=%s "
                     "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
                 ),
@@ -201,13 +213,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 responses_request_debug.get("context_json_chars"),
                 responses_request_debug.get("prompt_size_risk"),
             )
-            raw_response = self._request_completion(
+            chat_response = self._request_completion(
                 chat_payload,
                 endpoint_path="/chat/completions",
                 request_debug=chat_request_debug,
             )
             response_json = self._parse_json_object(
-                raw_response,
+                chat_response.body_text,
                 code=_PROVIDER_ERROR_PARSING,
                 safe_message="Competitor profile generation response could not be parsed.",
             )
@@ -229,6 +241,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 model_name=model_name,
                 prompt_version=prompt.prompt_version,
                 raw_response=assistant_content,
+                endpoint_path="/chat/completions",
+                web_search_enabled=False,
+                request_duration_ms=chat_response.request_duration_ms,
             )
 
     def _parse_or_normalize_candidates(
@@ -352,7 +367,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         *,
         endpoint_path: str,
         request_debug: dict[str, object] | None = None,
-    ) -> str:
+    ) -> _OpenAICompletionResponse:
         normalized_endpoint = endpoint_path.strip() or "/chat/completions"
         if not normalized_endpoint.startswith("/"):
             normalized_endpoint = f"/{normalized_endpoint}"
@@ -370,7 +385,12 @@ class OpenAISEOCompetitorProfileGenerationProvider:
 
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                return response.read().decode("utf-8", errors="replace")
+                body_text = response.read().decode("utf-8", errors="replace")
+            request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
+            return _OpenAICompletionResponse(
+                body_text=body_text,
+                request_duration_ms=request_duration_ms,
+            )
         except urllib.error.HTTPError as exc:
             request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
             body_text = exc.read().decode("utf-8", errors="replace")
@@ -500,6 +520,43 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     request_duration_ms=request_duration_ms,
                 ),
             ) from exc
+
+    def _should_fallback_to_chat_completions(
+        self,
+        error: SEOCompetitorProfileProviderError,
+    ) -> bool:
+        if error.code != _PROVIDER_ERROR_REQUEST:
+            return False
+        raw_output = _clean_optional_value(error.raw_output)
+        if raw_output is None:
+            return False
+
+        endpoint_path: str | None = None
+        provider_error_message: str | None = None
+        try:
+            parsed = json.loads(raw_output)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            endpoint_path = _clean_optional_value(parsed.get("endpoint_path"))
+            provider_error_message = _clean_optional_value(parsed.get("provider_error_message"))
+
+        if endpoint_path and endpoint_path != "/responses":
+            return False
+
+        comparison_text = (provider_error_message or "").lower()
+        if not comparison_text:
+            # Backward compatibility for non-debug payloads.
+            comparison_text = raw_output.lower()
+        if "web_search" not in comparison_text:
+            return False
+        if "not supported" in comparison_text:
+            return True
+        if "unsupported_parameter" in comparison_text:
+            return True
+        if "unsupported parameter" in comparison_text:
+            return True
+        return False
 
     def _build_responses_request_payload(
         self,
