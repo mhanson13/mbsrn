@@ -88,6 +88,19 @@ def _chat_completions_payload(*, model: str) -> dict[str, object]:
     }
 
 
+def _structured_event_records(caplog) -> list[dict[str, object]]:  # noqa: ANN001
+    events: list[dict[str, object]] = []
+    for record in caplog.records:
+        message = record.getMessage()
+        try:
+            parsed = json.loads(message)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, dict) and isinstance(parsed.get("event"), str):
+            events.append(parsed)
+    return events
+
+
 def test_gpt5_mini_uses_responses_api_with_web_search(monkeypatch) -> None:
     captured_url: str | None = None
     captured_payload: dict[str, object] = {}
@@ -621,3 +634,150 @@ def test_non_web_search_request_error_does_not_fallback_to_chat(monkeypatch) -> 
 
     assert exc_info.value.code == "provider_request"
     assert call_urls == ["https://api.openai.com/v1/responses"]
+
+
+def test_structured_provider_logs_include_start_and_complete_trace_fields(monkeypatch, caplog) -> None:
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-4.1-mini")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        prompt_text_competitor="SENSITIVE_PROMPT_BLOCK",
+    )
+
+    with caplog.at_level(logging.INFO):
+        provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=1,
+            reduced_context_mode=True,
+            run_id="run-structured-123",
+            attempt_number=2,
+            degraded_mode=True,
+        )
+
+    structured_events = _structured_event_records(caplog)
+    start_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_start")
+    complete_event = next(
+        item for item in structured_events if item.get("event") == "competitor_provider_request_complete"
+    )
+
+    assert start_event["run_id"] == "run-structured-123"
+    assert start_event["attempt_number"] == 2
+    assert start_event["endpoint_path"] == "/responses"
+    assert start_event["web_search_enabled"] is True
+    assert start_event["degraded_mode"] is True
+    assert start_event["reduced_context_mode"] is True
+    assert start_event["prompt_chars"] >= 1
+
+    assert complete_event["run_id"] == "run-structured-123"
+    assert complete_event["attempt_number"] == 2
+    assert complete_event["endpoint_path"] == "/responses"
+    assert complete_event["web_search_enabled"] is True
+    assert complete_event["degraded_mode"] is True
+    assert complete_event["parsed_candidate_count"] == 1
+    assert complete_event["duration_ms"] >= 0
+
+    assert "SENSITIVE_PROMPT_BLOCK" not in caplog.text
+    assert _candidate_json_text() not in caplog.text
+
+
+def test_structured_provider_logs_include_malformed_reason_without_raw_response_text(monkeypatch, caplog) -> None:
+    malformed_response_text = "MALFORMED_RESPONSE_BODY_SHOULD_NOT_BE_LOGGED"
+
+    def _invalid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del timeout
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "output": [{"content": [{"type": "output_text", "text": malformed_response_text}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _invalid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(SEOCompetitorProfileProviderError):
+            provider.generate_competitor_profiles(
+                site=_site(),
+                existing_domains=[],
+                candidate_count=1,
+                run_id="run-malformed-1",
+                attempt_number=1,
+                degraded_mode=False,
+            )
+
+    structured_events = _structured_event_records(caplog)
+    error_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_error")
+
+    assert error_event["run_id"] == "run-malformed-1"
+    assert error_event["attempt_number"] == 1
+    assert error_event["endpoint_path"] == "/responses"
+    assert error_event["web_search_enabled"] is True
+    assert error_event["failure_kind"] == "malformed_output"
+    assert error_event["malformed_output_reason"] == "json_decode_error"
+    assert error_event["error_type"] == "invalid_output"
+    assert error_event["duration_ms"] >= 0
+    assert malformed_response_text not in caplog.text
+
+
+def test_structured_provider_error_log_includes_endpoint_and_search_metadata(monkeypatch, caplog) -> None:
+    def _bad_request_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del timeout
+        raise urllib.error.HTTPError(
+            url=request.full_url,
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "type": "invalid_request_error",
+                            "code": "unsupported_parameter",
+                            "message": "web_search is not supported for this request.",
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _bad_request_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+        prompt_text_competitor="SENSITIVE_PROVIDER_PROMPT_TEXT",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(SEOCompetitorProfileProviderError):
+            provider.generate_competitor_profiles(
+                site=_site(),
+                existing_domains=[],
+                candidate_count=1,
+                run_id="run-provider-error-1",
+                attempt_number=1,
+                degraded_mode=False,
+            )
+
+    structured_events = _structured_event_records(caplog)
+    error_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_error")
+
+    assert error_event["run_id"] == "run-provider-error-1"
+    assert error_event["attempt_number"] == 1
+    assert error_event["endpoint_path"] == "/responses"
+    assert error_event["web_search_enabled"] is True
+    assert error_event["failure_kind"] == "provider_request"
+    assert error_event["error_type"] == "invalid_request_error"
+    assert error_event["duration_ms"] >= 0
+    assert "SENSITIVE_PROVIDER_PROMPT_TEXT" not in caplog.text

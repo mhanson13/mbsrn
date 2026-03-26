@@ -34,6 +34,9 @@ _PROVIDER_ERROR_MESSAGE_MAX_CHARS = 320
 _ASSISTANT_CONTENT_EXCERPT_MAX_CHARS = 480
 _PROMPT_SIZE_WARN_THRESHOLD_CHARS = 10000
 _PROMPT_SIZE_HIGH_RISK_CHARS = 14000
+_STRUCTURED_LOG_EVENT_REQUEST_START = "competitor_provider_request_start"
+_STRUCTURED_LOG_EVENT_REQUEST_COMPLETE = "competitor_provider_request_complete"
+_STRUCTURED_LOG_EVENT_REQUEST_ERROR = "competitor_provider_request_error"
 _MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR = "json_decode_error"
 _MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN = "wrapped_in_markdown"
 _MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY = "missing_candidates_array"
@@ -75,6 +78,13 @@ class _StructuredPayloadRecoveryResult:
     payload: dict[str, object] | None
     reason: str | None
     recovery_actions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _ParsedCandidateResult:
+    candidates: list[SEOCompetitorProfileDraftCandidateOutput]
+    parsed_candidate_count: int
+    salvaged_candidate_count: int
 
 
 class MisconfiguredSEOCompetitorProfileGenerationProvider:
@@ -152,6 +162,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         existing_domains: list[str],
         candidate_count: int,
         reduced_context_mode: bool = False,
+        run_id: str | None = None,
+        attempt_number: int | None = None,
+        degraded_mode: bool = False,
     ) -> SEOCompetitorProfileGenerationOutput:
         self._log_prompt_resolution_metadata()
         prompt = build_seo_competitor_profile_prompt(
@@ -166,6 +179,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             endpoint_path="/responses",
             candidate_count=candidate_count,
             prompt_metrics=prompt.prompt_telemetry,
+            run_id=run_id,
+            attempt_number=attempt_number,
+            degraded_mode=degraded_mode,
         )
         self._log_prompt_telemetry(responses_request_debug)
         responses_payload = self._build_responses_request_payload(
@@ -177,6 +193,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             endpoint_path="/chat/completions",
             candidate_count=candidate_count,
             prompt_metrics=prompt.prompt_telemetry,
+            run_id=run_id,
+            attempt_number=attempt_number,
+            degraded_mode=degraded_mode,
         )
         chat_payload = self._build_chat_completions_request_payload(
             system_prompt=prompt.system_prompt,
@@ -197,12 +216,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 safe_message="Competitor profile generation response could not be parsed.",
             )
             assistant_content = self._extract_assistant_content_from_responses(response_json)
-            candidates = self._parse_or_normalize_candidates(
+            candidate_parse_result = self._parse_or_normalize_candidates(
                 assistant_content=assistant_content,
                 candidate_count=candidate_count,
                 endpoint_path="/responses",
                 request_debug=responses_request_debug,
+                request_duration_ms=responses_response.request_duration_ms,
             )
+            candidates = candidate_parse_result.candidates
             if not candidates:
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_INVALID_OUTPUT,
@@ -212,10 +233,18 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                         failure_kind="malformed_output",
                         request_debug=responses_request_debug,
                         provider_error_body=assistant_content,
+                        request_duration_ms=responses_response.request_duration_ms,
                         malformed_output_reason=_MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY,
                     ),
                 )
             model_name = _clean_optional_value(response_json.get("model")) or self.model_name
+            self._log_provider_request_complete(
+                endpoint_path="/responses",
+                request_debug=responses_request_debug,
+                request_duration_ms=responses_response.request_duration_ms,
+                parsed_candidate_count=candidate_parse_result.parsed_candidate_count,
+                salvaged_candidate_count=candidate_parse_result.salvaged_candidate_count,
+            )
             return SEOCompetitorProfileGenerationOutput(
                 candidates=candidates,
                 provider_name=self.provider_name,
@@ -227,6 +256,12 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 request_duration_ms=responses_response.request_duration_ms,
             )
         except SEOCompetitorProfileProviderError as exc:
+            if self._should_log_structured_error(exc):
+                self._log_provider_request_error_from_provider_error(
+                    provider_error=exc,
+                    endpoint_path="/responses",
+                    request_debug=responses_request_debug,
+                )
             if not self._should_fallback_to_chat_completions(exc):
                 raise
             logger.warning(
@@ -245,46 +280,65 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 responses_request_debug.get("context_json_chars"),
                 responses_request_debug.get("prompt_size_risk"),
             )
-            chat_response = self._request_completion(
-                chat_payload,
-                endpoint_path="/chat/completions",
-                request_debug=chat_request_debug,
-            )
-            response_json = self._parse_json_object(
-                chat_response.body_text,
-                code=_PROVIDER_ERROR_PARSING,
-                safe_message="Competitor profile generation response could not be parsed.",
-            )
-            assistant_content = self._extract_assistant_content(response_json)
-            candidates = self._parse_or_normalize_candidates(
-                assistant_content=assistant_content,
-                candidate_count=candidate_count,
-                endpoint_path="/chat/completions",
-                request_debug=chat_request_debug,
-            )
-            if not candidates:
-                raise self._provider_error(
-                    code=_PROVIDER_ERROR_INVALID_OUTPUT,
-                    safe_message="Competitor profile generation returned malformed output.",
-                    raw_output=self._build_request_failure_debug_payload(
-                        endpoint_path="/chat/completions",
-                        failure_kind="malformed_output",
-                        request_debug=chat_request_debug,
-                        provider_error_body=assistant_content,
-                        malformed_output_reason=_MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY,
-                    ),
+            try:
+                chat_response = self._request_completion(
+                    chat_payload,
+                    endpoint_path="/chat/completions",
+                    request_debug=chat_request_debug,
                 )
-            model_name = _clean_optional_value(response_json.get("model")) or self.model_name
-            return SEOCompetitorProfileGenerationOutput(
-                candidates=candidates,
-                provider_name=self.provider_name,
-                model_name=model_name,
-                prompt_version=prompt.prompt_version,
-                raw_response=assistant_content,
-                endpoint_path="/chat/completions",
-                web_search_enabled=False,
-                request_duration_ms=chat_response.request_duration_ms,
-            )
+                response_json = self._parse_json_object(
+                    chat_response.body_text,
+                    code=_PROVIDER_ERROR_PARSING,
+                    safe_message="Competitor profile generation response could not be parsed.",
+                )
+                assistant_content = self._extract_assistant_content(response_json)
+                candidate_parse_result = self._parse_or_normalize_candidates(
+                    assistant_content=assistant_content,
+                    candidate_count=candidate_count,
+                    endpoint_path="/chat/completions",
+                    request_debug=chat_request_debug,
+                    request_duration_ms=chat_response.request_duration_ms,
+                )
+                candidates = candidate_parse_result.candidates
+                if not candidates:
+                    raise self._provider_error(
+                        code=_PROVIDER_ERROR_INVALID_OUTPUT,
+                        safe_message="Competitor profile generation returned malformed output.",
+                        raw_output=self._build_request_failure_debug_payload(
+                            endpoint_path="/chat/completions",
+                            failure_kind="malformed_output",
+                            request_debug=chat_request_debug,
+                            provider_error_body=assistant_content,
+                            request_duration_ms=chat_response.request_duration_ms,
+                            malformed_output_reason=_MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY,
+                        ),
+                    )
+                model_name = _clean_optional_value(response_json.get("model")) or self.model_name
+                self._log_provider_request_complete(
+                    endpoint_path="/chat/completions",
+                    request_debug=chat_request_debug,
+                    request_duration_ms=chat_response.request_duration_ms,
+                    parsed_candidate_count=candidate_parse_result.parsed_candidate_count,
+                    salvaged_candidate_count=candidate_parse_result.salvaged_candidate_count,
+                )
+                return SEOCompetitorProfileGenerationOutput(
+                    candidates=candidates,
+                    provider_name=self.provider_name,
+                    model_name=model_name,
+                    prompt_version=prompt.prompt_version,
+                    raw_response=assistant_content,
+                    endpoint_path="/chat/completions",
+                    web_search_enabled=False,
+                    request_duration_ms=chat_response.request_duration_ms,
+                )
+            except SEOCompetitorProfileProviderError as chat_exc:
+                if self._should_log_structured_error(chat_exc):
+                    self._log_provider_request_error_from_provider_error(
+                        provider_error=chat_exc,
+                        endpoint_path="/chat/completions",
+                        request_debug=chat_request_debug,
+                    )
+                raise
 
     def _parse_or_normalize_candidates(
         self,
@@ -293,18 +347,20 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         candidate_count: int,
         endpoint_path: str,
         request_debug: dict[str, object] | None,
-    ) -> list[SEOCompetitorProfileDraftCandidateOutput]:
+        request_duration_ms: int | None = None,
+    ) -> _ParsedCandidateResult:
         bounded_count = max(1, candidate_count)
         recovery = self._recover_structured_payload(assistant_content)
         normalized_json_text = assistant_content
         has_candidate_array = False
         invalid_field_type_count = 0
+        coerced_candidate_count = 0
         if recovery.payload is not None:
             try:
                 normalized_json_text = json.dumps(recovery.payload, ensure_ascii=True, sort_keys=True)
             except (TypeError, ValueError):
                 normalized_json_text = assistant_content
-            structured_candidates, has_candidate_array, invalid_field_type_count = (
+            structured_candidates, has_candidate_array, invalid_field_type_count, coerced_candidate_count = (
                 self._coerce_candidates_from_structured_payload(
                     payload=recovery.payload,
                     candidate_count=bounded_count,
@@ -334,7 +390,16 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                         endpoint_path,
                         invalid_field_type_count,
                     )
-                return structured_candidates
+                salvaged_candidate_count = 0
+                if recovery.recovery_actions:
+                    salvaged_candidate_count = len(structured_candidates)
+                elif coerced_candidate_count > 0:
+                    salvaged_candidate_count = min(len(structured_candidates), coerced_candidate_count)
+                return _ParsedCandidateResult(
+                    candidates=structured_candidates,
+                    parsed_candidate_count=len(structured_candidates),
+                    salvaged_candidate_count=max(0, int(salvaged_candidate_count)),
+                )
 
             if has_candidate_array and invalid_field_type_count > 0:
                 logger.warning(
@@ -354,7 +419,12 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             candidate_count=bounded_count,
         )
         if normalized_candidates:
-            return normalized_candidates
+            salvaged_candidate_count = len(normalized_candidates) if recovery.recovery_actions else 0
+            return _ParsedCandidateResult(
+                candidates=normalized_candidates,
+                parsed_candidate_count=len(normalized_candidates),
+                salvaged_candidate_count=max(0, int(salvaged_candidate_count)),
+            )
 
         malformed_reason = recovery.reason
         if malformed_reason is None:
@@ -374,6 +444,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 failure_kind="malformed_output",
                 request_debug=request_debug,
                 provider_error_body=assistant_content,
+                request_duration_ms=request_duration_ms,
                 malformed_output_reason=malformed_reason,
                 recovery_actions=recovery.recovery_actions,
             ),
@@ -384,12 +455,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         *,
         payload: dict[str, object],
         candidate_count: int,
-    ) -> tuple[list[SEOCompetitorProfileDraftCandidateOutput], bool, int]:
+    ) -> tuple[list[SEOCompetitorProfileDraftCandidateOutput], bool, int, int]:
         raw_candidates = payload.get("candidates")
         if not isinstance(raw_candidates, list):
-            return [], False, 0
+            return [], False, 0, 0
         candidates: list[SEOCompetitorProfileDraftCandidateOutput] = []
         invalid_field_type_count = 0
+        coerced_candidate_count = 0
         for raw_candidate in raw_candidates:
             if len(candidates) >= candidate_count:
                 break
@@ -401,6 +473,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     invalid_field_type_count += 1
                     continue
                 invalid_field_type_count += 1
+                coerced_candidate_count += 1
                 candidates.append(coerced_candidate)
                 continue
             candidates.append(
@@ -414,7 +487,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     confidence_score=parsed_candidate.confidence_score,
                 )
             )
-        return candidates, True, invalid_field_type_count
+        return candidates, True, invalid_field_type_count, coerced_candidate_count
 
     def _coerce_candidate_from_structured_item(
         self,
@@ -668,6 +741,197 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 self.provider_name,
             )
 
+    def _emit_structured_provider_log(
+        self,
+        *,
+        level: int,
+        event: str,
+        payload: dict[str, object],
+    ) -> None:
+        structured_payload = {"event": event, "provider_name": self.provider_name}
+        structured_payload.update(payload)
+        safe_payload = {
+            key: value
+            for key, value in structured_payload.items()
+            if value is not None
+        }
+        try:
+            serialized = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True)
+        except (TypeError, ValueError):
+            serialized = event
+        logger.log(level, serialized, extra={"json_fields": safe_payload})
+
+    def _log_provider_request_start(
+        self,
+        *,
+        endpoint_path: str,
+        request_debug: dict[str, object] | None,
+    ) -> None:
+        debug = request_debug or {}
+        self._emit_structured_provider_log(
+            level=logging.INFO,
+            event=_STRUCTURED_LOG_EVENT_REQUEST_START,
+            payload={
+                "run_id": _clean_optional_value(debug.get("run_id")),
+                "attempt_number": _coerce_optional_bounded_int(
+                    debug.get("attempt_number"),
+                    minimum=1,
+                    maximum=1000,
+                ),
+                "endpoint_path": endpoint_path,
+                "model": self.model_name,
+                "web_search_enabled": debug.get("web_search_enabled"),
+                "degraded_mode": bool(debug.get("degraded_mode")),
+                "reduced_context_mode": bool(debug.get("reduced_context_mode")),
+                "prompt_chars": _coerce_optional_bounded_int(
+                    debug.get("prompt_total_chars"),
+                    minimum=0,
+                    maximum=250000,
+                ),
+            },
+        )
+
+    def _log_provider_request_complete(
+        self,
+        *,
+        endpoint_path: str,
+        request_debug: dict[str, object] | None,
+        request_duration_ms: int | None,
+        parsed_candidate_count: int,
+        salvaged_candidate_count: int,
+    ) -> None:
+        debug = request_debug or {}
+        payload: dict[str, object] = {
+            "run_id": _clean_optional_value(debug.get("run_id")),
+            "attempt_number": _coerce_optional_bounded_int(
+                debug.get("attempt_number"),
+                minimum=1,
+                maximum=1000,
+            ),
+            "endpoint_path": endpoint_path,
+            "duration_ms": _coerce_optional_bounded_int(
+                request_duration_ms,
+                minimum=0,
+                maximum=3_600_000,
+            ),
+            "model": self.model_name,
+            "web_search_enabled": debug.get("web_search_enabled"),
+            "degraded_mode": bool(debug.get("degraded_mode")),
+            "reduced_context_mode": bool(debug.get("reduced_context_mode")),
+            "parsed_candidate_count": max(0, int(parsed_candidate_count)),
+        }
+        if salvaged_candidate_count > 0:
+            payload["salvaged_candidate_count"] = max(0, int(salvaged_candidate_count))
+        self._emit_structured_provider_log(
+            level=logging.INFO,
+            event=_STRUCTURED_LOG_EVENT_REQUEST_COMPLETE,
+            payload=payload,
+        )
+
+    def _log_provider_request_error(
+        self,
+        *,
+        endpoint_path: str,
+        request_debug: dict[str, object] | None,
+        error_type: str | None,
+        failure_kind: str,
+        malformed_output_reason: str | None = None,
+        request_duration_ms: int | None = None,
+    ) -> None:
+        debug = request_debug or {}
+        payload: dict[str, object] = {
+            "run_id": _clean_optional_value(debug.get("run_id")),
+            "attempt_number": _coerce_optional_bounded_int(
+                debug.get("attempt_number"),
+                minimum=1,
+                maximum=1000,
+            ),
+            "endpoint_path": endpoint_path,
+            "duration_ms": _coerce_optional_bounded_int(
+                request_duration_ms,
+                minimum=0,
+                maximum=3_600_000,
+            ),
+            "model": self.model_name,
+            "web_search_enabled": debug.get("web_search_enabled"),
+            "degraded_mode": bool(debug.get("degraded_mode")),
+            "reduced_context_mode": bool(debug.get("reduced_context_mode")),
+            "error_type": _sanitize_log_error_type(error_type),
+            "failure_kind": failure_kind,
+        }
+        normalized_reason = _clean_optional_value(
+            str(malformed_output_reason or "").strip().lower()
+        )
+        if normalized_reason in _MALFORMED_OUTPUT_ALLOWED_REASONS:
+            payload["malformed_output_reason"] = normalized_reason
+        self._emit_structured_provider_log(
+            level=logging.WARNING,
+            event=_STRUCTURED_LOG_EVENT_REQUEST_ERROR,
+            payload=payload,
+        )
+
+    def _should_log_structured_error(self, provider_error: SEOCompetitorProfileProviderError) -> bool:
+        if provider_error.code in {_PROVIDER_ERROR_INVALID_OUTPUT, _PROVIDER_ERROR_SCHEMA_VALIDATION, _PROVIDER_ERROR_PARSING}:
+            return True
+        failure_kind, _, _, _ = self._extract_structured_failure_details(provider_error.raw_output)
+        return failure_kind == "malformed_output"
+
+    def _log_provider_request_error_from_provider_error(
+        self,
+        *,
+        provider_error: SEOCompetitorProfileProviderError,
+        endpoint_path: str,
+        request_debug: dict[str, object] | None,
+    ) -> None:
+        failure_kind, malformed_output_reason, duration_ms, parsed_endpoint = self._extract_structured_failure_details(
+            provider_error.raw_output
+        )
+        effective_failure_kind = failure_kind or "malformed_output"
+        effective_endpoint = parsed_endpoint or endpoint_path
+        if effective_failure_kind not in {"timeout", "provider_request", "malformed_output"}:
+            effective_failure_kind = "provider_request"
+        if effective_failure_kind == "malformed_output":
+            error_type = provider_error.code or _PROVIDER_ERROR_INVALID_OUTPUT
+        else:
+            error_type = provider_error.code or _PROVIDER_ERROR_REQUEST
+        self._log_provider_request_error(
+            endpoint_path=effective_endpoint,
+            request_debug=request_debug,
+            error_type=error_type,
+            failure_kind=effective_failure_kind,
+            malformed_output_reason=malformed_output_reason,
+            request_duration_ms=duration_ms,
+        )
+
+    def _extract_structured_failure_details(
+        self,
+        raw_output: str | None,
+    ) -> tuple[str | None, str | None, int | None, str | None]:
+        if not raw_output:
+            return None, None, None, None
+        try:
+            parsed = json.loads(raw_output)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None, None, None, None
+        if not isinstance(parsed, dict):
+            return None, None, None, None
+        failure_kind = _clean_optional_value(parsed.get("failure_kind"))
+        if failure_kind not in {"timeout", "provider_request", "malformed_output"}:
+            failure_kind = None
+        malformed_output_reason = _clean_optional_value(parsed.get("malformed_output_reason"))
+        if malformed_output_reason not in _MALFORMED_OUTPUT_ALLOWED_REASONS:
+            malformed_output_reason = None
+        endpoint_path = _clean_optional_value(parsed.get("endpoint_path"))
+        request_debug = parsed.get("request_debug")
+        request_duration_ms = None
+        if isinstance(request_debug, dict):
+            request_duration_ms = _coerce_optional_bounded_int(
+                request_debug.get("request_duration_ms"),
+                minimum=0,
+                maximum=3_600_000,
+            )
+        return failure_kind, malformed_output_reason, request_duration_ms, endpoint_path
+
     def _request_completion(
         self,
         payload: dict[str, object],
@@ -689,6 +953,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             },
         )
         request_started_at = time.perf_counter()
+        self._log_provider_request_start(
+            endpoint_path=normalized_endpoint,
+            request_debug=request_debug,
+        )
 
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
@@ -718,6 +986,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 request_debug.get("prompt_total_chars") if request_debug else None,
                 request_debug.get("context_json_chars") if request_debug else None,
                 request_debug.get("prompt_size_risk") if request_debug else None,
+            )
+            failure_kind = "timeout" if exc.code in {408, 504} else "provider_request"
+            self._log_provider_request_error(
+                endpoint_path=normalized_endpoint,
+                request_debug=request_debug,
+                error_type=error_type or error_code or "http_error",
+                failure_kind=failure_kind,
+                request_duration_ms=request_duration_ms,
             )
             if exc.code in {401, 403}:
                 raise self._provider_error(
@@ -765,6 +1041,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 request_debug.get("context_json_chars") if request_debug else None,
                 request_debug.get("prompt_size_risk") if request_debug else None,
             )
+            self._log_provider_request_error(
+                endpoint_path=normalized_endpoint,
+                request_debug=request_debug,
+                error_type="timeout",
+                failure_kind="timeout",
+                request_duration_ms=request_duration_ms,
+            )
             raise self._provider_error(
                 code=_PROVIDER_ERROR_TIMEOUT,
                 safe_message="Competitor profile generation timed out while calling the AI provider.",
@@ -792,6 +1075,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     request_debug.get("context_json_chars") if request_debug else None,
                     request_debug.get("prompt_size_risk") if request_debug else None,
                 )
+                self._log_provider_request_error(
+                    endpoint_path=normalized_endpoint,
+                    request_debug=request_debug,
+                    error_type="timeout",
+                    failure_kind="timeout",
+                    request_duration_ms=request_duration_ms,
+                )
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_TIMEOUT,
                     safe_message="Competitor profile generation timed out while calling the AI provider.",
@@ -815,6 +1105,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 request_debug.get("prompt_total_chars") if request_debug else None,
                 request_debug.get("context_json_chars") if request_debug else None,
                 request_debug.get("prompt_size_risk") if request_debug else None,
+            )
+            self._log_provider_request_error(
+                endpoint_path=normalized_endpoint,
+                request_debug=request_debug,
+                error_type=exc.reason.__class__.__name__ if exc.reason is not None else "url_error",
+                failure_kind="provider_request",
+                request_duration_ms=request_duration_ms,
             )
             raise self._provider_error(
                 code=_PROVIDER_ERROR_REQUEST,
@@ -961,6 +1258,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         endpoint_path: str,
         candidate_count: int,
         prompt_metrics: dict[str, int] | None,
+        run_id: str | None,
+        attempt_number: int | None,
+        degraded_mode: bool,
     ) -> dict[str, object]:
         metrics = prompt_metrics or {}
         prompt_total_chars = _coerce_bounded_int(
@@ -989,7 +1289,16 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         else:
             prompt_size_risk = "normal"
         normalized_endpoint = endpoint_path.strip() or "/chat/completions"
+        normalized_run_id = _clean_optional_value(run_id)
+        normalized_attempt_number = _coerce_optional_bounded_int(
+            attempt_number,
+            minimum=1,
+            maximum=1000,
+        )
         return {
+            "run_id": normalized_run_id,
+            "attempt_number": normalized_attempt_number,
+            "degraded_mode": bool(degraded_mode),
             "endpoint_path": normalized_endpoint,
             "candidate_count": max(1, int(candidate_count)),
             "prompt_total_chars": prompt_total_chars,
@@ -1021,6 +1330,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         }
         if request_debug:
             payload["request_debug"] = {
+                "run_id": request_debug.get("run_id"),
+                "attempt_number": request_debug.get("attempt_number"),
+                "degraded_mode": request_debug.get("degraded_mode"),
                 "candidate_count": request_debug.get("candidate_count"),
                 "prompt_total_chars": request_debug.get("prompt_total_chars"),
                 "context_json_chars": request_debug.get("context_json_chars"),
@@ -1275,12 +1587,33 @@ def _normalize_text_list(value: object) -> list[str]:
     return normalized
 
 
+def _coerce_optional_bounded_int(value: object, *, minimum: int, maximum: int) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(minimum, min(maximum, parsed))
+
+
 def _coerce_bounded_int(value: object, *, minimum: int, maximum: int, default: int) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, parsed))
+
+
+def _sanitize_log_error_type(value: object) -> str | None:
+    normalized = _clean_optional_value(value)
+    if normalized is None:
+        return None
+    compact = re.sub(r"[^a-zA-Z0-9_.:/-]+", "_", normalized)
+    compact = compact.strip("_")
+    if not compact:
+        return None
+    if len(compact) <= 96:
+        return compact
+    return compact[:96]
 
 
 def _compact_log_message(value: str | None) -> str | None:

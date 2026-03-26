@@ -605,6 +605,7 @@ class SEOCompetitorProfileGenerationService:
             output = self._generate_competitor_profiles_with_timeout_retry(
                 site=site,
                 existing_domains=existing_domains,
+                run_id=run.id,
                 requested_candidate_count=run.requested_candidate_count,
                 provider_attempts=provider_attempts,
                 prompt_text_competitor=resolved_prompt.prompt_text,
@@ -2140,6 +2141,7 @@ class SEOCompetitorProfileGenerationService:
         *,
         site: SEOSite,
         existing_domains: list[str],
+        run_id: str,
         requested_candidate_count: int,
         provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug],
         prompt_text_competitor: str,
@@ -2159,6 +2161,9 @@ class SEOCompetitorProfileGenerationService:
                 existing_domains=existing_domains,
                 candidate_count=effective_requested_count,
                 reduced_context_mode=False,
+                run_id=run_id,
+                attempt_number=1,
+                degraded_mode=False,
             )
         except SEOCompetitorProfileProviderError as exc:
             first_duration_ms = max(0, int((time.perf_counter() - first_attempt_start) * 1000))
@@ -2192,6 +2197,9 @@ class SEOCompetitorProfileGenerationService:
                     existing_domains=existing_domains,
                     candidate_count=degraded_candidate_count,
                     reduced_context_mode=True,
+                    run_id=run_id,
+                    attempt_number=2,
+                    degraded_mode=True,
                 )
             except SEOCompetitorProfileProviderError as retry_exc:
                 retry_duration_ms = max(0, int((time.perf_counter() - retry_start) * 1000))
@@ -2255,24 +2263,32 @@ class SEOCompetitorProfileGenerationService:
         existing_domains: list[str],
         candidate_count: int,
         reduced_context_mode: bool,
+        run_id: str | None = None,
+        attempt_number: int | None = None,
+        degraded_mode: bool = False,
     ) -> SEOCompetitorProfileGenerationOutput:
         provider_method = self.provider.generate_competitor_profiles
         try:
             signature = inspect.signature(provider_method)
         except (TypeError, ValueError):
             signature = None
-        if signature is not None and "reduced_context_mode" in signature.parameters:
-            return provider_method(
-                site=site,
-                existing_domains=existing_domains,
-                candidate_count=candidate_count,
-                reduced_context_mode=reduced_context_mode,
-            )
-        return provider_method(
-            site=site,
-            existing_domains=existing_domains,
-            candidate_count=candidate_count,
-        )
+        kwargs: dict[str, object] = {
+            "site": site,
+            "existing_domains": existing_domains,
+            "candidate_count": candidate_count,
+        }
+        if signature is not None:
+            parameters = signature.parameters
+            if "reduced_context_mode" in parameters:
+                kwargs["reduced_context_mode"] = reduced_context_mode
+            if "run_id" in parameters:
+                kwargs["run_id"] = run_id
+            if "attempt_number" in parameters:
+                kwargs["attempt_number"] = attempt_number
+            if "degraded_mode" in parameters:
+                kwargs["degraded_mode"] = degraded_mode
+            return provider_method(**kwargs)
+        return provider_method(**kwargs)
 
     def _build_provider_attempt_prompt_metrics(
         self,

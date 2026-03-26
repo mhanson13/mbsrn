@@ -101,3 +101,40 @@ Failure vs salvage rule:
 
 - If at least one safe candidate can be recovered, generation proceeds with partial salvage.
 - If no safe usable candidate payload can be recovered, the run fails as malformed output.
+
+## Cloud Logging Queries (Competitor Provider)
+
+Competitor provider attempts now emit structured request lifecycle events:
+
+- `competitor_provider_request_start`
+- `competitor_provider_request_complete`
+- `competitor_provider_request_error`
+
+Primary structured fields:
+
+- `event`
+- `run_id`
+- `attempt_number`
+- `endpoint_path`
+- `model`
+- `web_search_enabled`
+- `degraded_mode`
+- `reduced_context_mode`
+- `failure_kind` (error events)
+- `malformed_output_reason` (malformed-output errors)
+- `duration_ms`
+
+Safety notes:
+
+- raw prompt text is never logged
+- raw model response text is never logged
+- credentials/headers are never logged
+
+Sample Logs Explorer queries:
+
+- `jsonPayload.event="competitor_provider_request_start"`
+- `jsonPayload.event="competitor_provider_request_complete"`
+- `jsonPayload.event="competitor_provider_request_error"`
+- `jsonPayload.event="competitor_provider_request_error" AND jsonPayload.failure_kind="malformed_output"`
+- `jsonPayload.event="competitor_provider_request_error" AND jsonPayload.endpoint_path="/responses"`
+- `jsonPayload.event="competitor_provider_request_error" AND jsonPayload.run_id="<run_id>"`

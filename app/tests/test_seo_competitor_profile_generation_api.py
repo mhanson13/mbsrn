@@ -319,6 +319,9 @@ class _TimeoutThenSuccessCompetitorProfileProvider:
     def __init__(self) -> None:
         self.requested_candidate_counts: list[int] = []
         self.reduced_context_modes: list[bool] = []
+        self.run_ids: list[str | None] = []
+        self.attempt_numbers: list[int | None] = []
+        self.degraded_modes: list[bool] = []
 
     def generate_competitor_profiles(
         self,
@@ -327,10 +330,16 @@ class _TimeoutThenSuccessCompetitorProfileProvider:
         existing_domains,  # noqa: ANN001
         candidate_count: int,
         reduced_context_mode: bool = False,
+        run_id: str | None = None,
+        attempt_number: int | None = None,
+        degraded_mode: bool = False,
     ) -> SEOCompetitorProfileGenerationOutput:
         del site, existing_domains
         self.requested_candidate_counts.append(candidate_count)
         self.reduced_context_modes.append(bool(reduced_context_mode))
+        self.run_ids.append(run_id)
+        self.attempt_numbers.append(attempt_number)
+        self.degraded_modes.append(bool(degraded_mode))
         if len(self.requested_candidate_counts) == 1:
             raise SEOCompetitorProfileProviderError(
                 code="timeout",
@@ -1453,6 +1462,9 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert payload["provider_attempts"][0]["context_json_chars"] > payload["provider_attempts"][1]["context_json_chars"]
     assert provider.requested_candidate_counts == [5, 3]
     assert provider.reduced_context_modes == [False, True]
+    assert provider.run_ids == [run_id, run_id]
+    assert provider.attempt_numbers == [1, 2]
+    assert provider.degraded_modes == [False, True]
 
 
 def test_success_attempt_debug_captures_endpoint_and_web_search_metadata(db_session, seeded_business) -> None:

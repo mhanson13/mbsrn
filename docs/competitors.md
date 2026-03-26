@@ -187,9 +187,29 @@ Competitor provider failures now emit bounded backend log metadata to improve de
   - `timeout`: provider call timed out
   - `provider_request`: provider returned/raised a non-timeout request failure
 
+Competitor provider request lifecycle logs are also emitted as structured events for Cloud Logging correlation:
+
+- `competitor_provider_request_start`
+- `competitor_provider_request_complete`
+- `competitor_provider_request_error`
+
+These structured events include bounded correlation/runtime fields such as:
+
+- `run_id`
+- `attempt_number`
+- `endpoint_path`
+- `web_search_enabled`
+- `degraded_mode`
+- `reduced_context_mode`
+- `failure_kind`
+- `malformed_output_reason` (when applicable)
+- `duration_ms`
+
 Safety:
 - no secrets, auth headers, or key material are logged
 - no raw environment dumps are logged
+- no raw prompt body is logged
+- no raw model response body is logged
 
 Operator interpretation guidance:
 - `timeout` with `high`/`elevated` prompt-size risk usually indicates latency pressure; rerun is safe and context trimming is already applied.
