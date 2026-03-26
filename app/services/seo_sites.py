@@ -92,6 +92,21 @@ _SITE_CONTEXT_SERVICE_NOISE_TOKENS = {
     "welcome",
     "www",
 }
+_SITE_CONTEXT_GENERIC_INDUSTRY_TOKENS = {
+    "business",
+    "company",
+    "expert",
+    "experts",
+    "group",
+    "professional",
+    "professionals",
+    "provider",
+    "providers",
+    "service",
+    "services",
+    "solutions",
+    "support",
+}
 _SITE_CONTEXT_DOMAIN_NOISE_TOKENS = {
     "app",
     "biz",
@@ -163,6 +178,13 @@ _SITE_PERMANENT_DELETE_MODELS = (
 
 
 SEOIndustryContextStrength = Literal["strong", "weak"]
+SEOServiceFocusSource = Literal[
+    "site_content",
+    "structured_metadata",
+    "domain_hints",
+    "explicit_industry",
+    "fallback",
+]
 
 
 @dataclass(frozen=True)
@@ -171,6 +193,8 @@ class SEOSiteBusinessContext:
     industry_context_strength: SEOIndustryContextStrength
     service_focus_terms: list[str]
     target_customer_context: str
+    service_focus_terms_sources: list[SEOServiceFocusSource]
+    service_focus_terms_dropped: list[str]
 
 
 @dataclass(frozen=True)
@@ -290,17 +314,52 @@ def build_site_business_context(
         allow_token_fallback=False,
     )
 
+    primary_service_terms: list[str]
+    primary_service_source: SEOServiceFocusSource
+    if content_terms:
+        primary_service_terms = content_terms
+        primary_service_source = "site_content"
+    elif structured_terms:
+        primary_service_terms = structured_terms
+        primary_service_source = "structured_metadata"
+    elif domain_terms:
+        primary_service_terms = domain_terms
+        primary_service_source = "domain_hints"
+    else:
+        primary_service_terms = []
+        primary_service_source = "fallback"
+
     service_focus_terms = _dedupe_terms(
-        content_terms or structured_terms or domain_terms,
+        primary_service_terms,
         max_terms=_SITE_CONTEXT_MAX_SERVICE_TERMS,
     )
+    service_focus_terms_sources: list[SEOServiceFocusSource] = []
+    if service_focus_terms:
+        service_focus_terms_sources.append(primary_service_source)
+    service_focus_terms_dropped: list[str] = []
+    explicit_industry_conflicted = False
     if cleaned_industry:
-        service_focus_terms = _dedupe_terms(
-            [cleaned_industry, *service_focus_terms],
-            max_terms=_SITE_CONTEXT_MAX_SERVICE_TERMS,
+        explicit_industry_conflicted = (
+            bool(content_terms)
+            and not _is_explicit_industry_supported_by_content(
+                cleaned_industry=cleaned_industry,
+                content_sources=content_sources,
+                content_terms=content_terms,
+            )
         )
+        if explicit_industry_conflicted:
+            service_focus_terms_dropped.append(cleaned_industry)
+        else:
+            service_focus_terms = _dedupe_terms(
+                [cleaned_industry, *service_focus_terms],
+                max_terms=_SITE_CONTEXT_MAX_SERVICE_TERMS,
+            )
+            if "explicit_industry" not in service_focus_terms_sources:
+                service_focus_terms_sources.append("explicit_industry")
+    if not service_focus_terms_sources:
+        service_focus_terms_sources.append("fallback")
 
-    if cleaned_industry:
+    if cleaned_industry and not explicit_industry_conflicted:
         industry_context = cleaned_industry
         industry_context_strength: SEOIndustryContextStrength = "strong"
     elif content_terms:
@@ -332,6 +391,8 @@ def build_site_business_context(
         industry_context_strength=industry_context_strength,
         service_focus_terms=service_focus_terms,
         target_customer_context=target_customer_context,
+        service_focus_terms_sources=service_focus_terms_sources,
+        service_focus_terms_dropped=service_focus_terms_dropped,
     )
 
 
@@ -349,6 +410,40 @@ def _normalize_context_sources(values: list[str]) -> list[str]:
         if cleaned:
             normalized.append(cleaned.lower())
     return normalized
+
+
+def _is_explicit_industry_supported_by_content(
+    *,
+    cleaned_industry: str,
+    content_sources: list[str],
+    content_terms: list[str],
+) -> bool:
+    normalized_content_terms = {term.lower() for term in content_terms if term}
+    explicit_hint_terms = _infer_service_terms_from_sources(
+        [cleaned_industry.lower()],
+        max_terms=_SITE_CONTEXT_MAX_SERVICE_TERMS,
+        allow_token_fallback=False,
+    )
+    if explicit_hint_terms:
+        for term in explicit_hint_terms:
+            if term.lower() in normalized_content_terms:
+                return True
+
+    explicit_tokens = [
+        token
+        for token in _tokenize_context(cleaned_industry.lower())
+        if len(token) >= 4
+        and token not in _SITE_CONTEXT_SERVICE_NOISE_TOKENS
+        and token not in _SITE_CONTEXT_GENERIC_INDUSTRY_TOKENS
+    ]
+    if not explicit_tokens:
+        return False
+
+    for source in content_sources:
+        for token in explicit_tokens:
+            if token in source:
+                return True
+    return False
 
 
 def _display_name_for_structured_inference(

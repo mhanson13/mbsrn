@@ -1787,6 +1787,65 @@ def test_recommendation_workspace_summary_uses_new_domain_audit_signals_for_fres
     assert any(token in service_focus_terms for token in ("seo", "hosting", "digital", "managed it", "web design"))
 
 
+def test_workspace_competitor_preview_drops_conflicting_stale_industry_term_from_service_focus(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_role=PrincipalRole.ADMIN,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="vmsdata.com")
+
+    patch_site = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={"industry": "Roofing services"},
+    )
+    assert patch_site.status_code == 200
+
+    audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        missing_title_count=1,
+    )
+    _seed_audit_pages(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=audit_run_id,
+        pages=[
+            {
+                "url": "https://vmsdata.com/managed-it-services",
+                "title": "Managed IT services and cloud hosting",
+                "meta_description": "SEO and digital marketing for growth-focused businesses.",
+                "h1_json": ["Managed IT and web hosting"],
+                "h2_json": ["Digital marketing services", "Website development"],
+            }
+        ],
+    )
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+
+    preview = payload["competitor_prompt_preview"]
+    assert preview is not None
+    context_json = _extract_site_context_json(preview["user_prompt"])
+    service_focus_terms = [str(term).lower() for term in context_json.get("service_focus_terms", [])]
+    assert "roofing" not in service_focus_terms
+    assert "roofing services" not in service_focus_terms
+    assert any(token in service_focus_terms for token in ("seo", "digital marketing", "web hosting", "managed it services"))
+
+    metrics = preview.get("prompt_metrics") or {}
+    assert int(metrics.get("service_focus_source_site_content", 0)) == 1
+    assert int(metrics.get("service_focus_source_explicit_industry", 0)) == 0
+    assert int(metrics.get("service_focus_terms_dropped_count", 0)) >= 1
+
+
 def test_recommendation_workspace_summary_context_health_strong_when_location_industry_service_and_target_are_grounded(
     db_session, seeded_business
 ) -> None:

@@ -310,6 +310,34 @@ def test_prompt_builder_derives_digital_service_context_without_roofing_cross_co
     assert any(token in terms for token in ("seo", "hosting", "digital marketing", "managed it services", "web design"))
 
 
+def test_prompt_builder_drops_conflicting_explicit_industry_from_service_focus_terms_when_content_disagrees() -> None:
+    site = _build_site(display_name="VMS Data")
+    site.industry = "Roofing services"
+    site.normalized_domain = "vmsdata.com"
+    _with_site_content_signals(
+        site,
+        "Managed IT services and cloud hosting for SMB teams",
+        "SEO and digital marketing execution",
+        "Web design and website development support",
+    )
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[],
+        candidate_count=2,
+    )
+
+    terms = [term.lower() for term in prompt.trusted_site_context["service_focus_terms"]]
+    assert "roofing services" not in terms
+    assert "roofing" not in terms
+    assert any(token in terms for token in ("seo", "digital marketing", "web design", "managed it services"))
+
+    telemetry = prompt.prompt_telemetry
+    assert telemetry["service_focus_source_site_content"] == 1
+    assert telemetry["service_focus_source_explicit_industry"] == 0
+    assert telemetry["service_focus_terms_dropped_count"] >= 1
+
+
 def test_prompt_builder_site_content_beats_weak_name_and_domain() -> None:
     site = _build_site(display_name="Acme Holdings")
     site.industry = None

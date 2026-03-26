@@ -11,6 +11,7 @@ import {
   acceptCompetitorProfileDraft,
   ApiRequestError,
   createCompetitorProfileGenerationRun,
+  createRecommendationRun,
   editCompetitorProfileDraft,
   fetchAuditRuns,
   fetchBusinessSettings,
@@ -60,6 +61,7 @@ import type {
   Recommendation,
   RecommendationListResponse,
   RecommendationNarrative,
+  RecommendationRunCreateRequest,
   RecommendationTuningImpactPreview,
   RecommendationRun,
   RecommendationTuningSuggestion,
@@ -1753,6 +1755,10 @@ export default function SiteWorkspacePage() {
 
   const [recommendationRuns, setRecommendationRuns] = useState<RecommendationRun[]>([]);
   const [recommendationRunError, setRecommendationRunError] = useState<string | null>(null);
+  const [recommendationGenerationInFlight, setRecommendationGenerationInFlight] = useState(false);
+  const [recommendationGenerationMessage, setRecommendationGenerationMessage] = useState<string | null>(null);
+  const [recommendationGenerationError, setRecommendationGenerationError] = useState<string | null>(null);
+  const [workspaceRefreshNonce, setWorkspaceRefreshNonce] = useState(0);
   const [latestNarrativesByRunId, setLatestNarrativesByRunId] = useState<Record<string, RecommendationNarrative>>({});
   const [narrativeLookupError, setNarrativeLookupError] = useState<string | null>(null);
   const [latestCompletedRecommendationRun, setLatestCompletedRecommendationRun] = useState<RecommendationRun | null>(null);
@@ -2035,6 +2041,21 @@ export default function SiteWorkspacePage() {
     () => recommendationRuns[0] || null,
     [recommendationRuns],
   );
+  const latestCompletedAuditRun = useMemo(() => {
+    const completedRuns = auditRuns.filter((run) => (run.status || "").trim().toLowerCase() === "completed");
+    if (completedRuns.length === 0) {
+      return null;
+    }
+    return [...completedRuns].sort((left, right) => {
+      return timestampToMs(deriveLifecycleTimestamp(right).value) - timestampToMs(deriveLifecycleTimestamp(left).value);
+    })[0];
+  }, [auditRuns]);
+  const latestCompletedComparisonRunForRecommendations = useMemo(
+    () => latestByActivity(comparisonRuns.filter((run) => (run.status || "").trim().toLowerCase() === "completed")),
+    [comparisonRuns],
+  );
+  const recommendationGenerationPrerequisitesMet =
+    Boolean(latestCompletedAuditRun) || Boolean(latestCompletedComparisonRunForRecommendations);
 
   const actionableRecommendationCount = useMemo(
     () =>
@@ -2788,6 +2809,67 @@ export default function SiteWorkspacePage() {
     );
   }
 
+  async function handleGenerateRecommendations(): Promise<void> {
+    if (!context.token || !context.businessId || !siteId) {
+      return;
+    }
+
+    const payload: RecommendationRunCreateRequest = {};
+    if (latestCompletedAuditRun) {
+      payload.audit_run_id = latestCompletedAuditRun.id;
+    }
+    if (latestCompletedComparisonRunForRecommendations) {
+      payload.comparison_run_id = latestCompletedComparisonRunForRecommendations.id;
+    }
+
+    if (!payload.audit_run_id && !payload.comparison_run_id) {
+      setRecommendationGenerationError(
+        "Generate recommendations requires at least one completed audit run or competitor comparison run for this site.",
+      );
+      setRecommendationGenerationMessage(null);
+      return;
+    }
+
+    setRecommendationGenerationInFlight(true);
+    setRecommendationGenerationError(null);
+    setRecommendationGenerationMessage(null);
+    try {
+      const run = await createRecommendationRun(
+        context.token,
+        context.businessId,
+        siteId,
+        payload,
+      );
+      setRecommendationRuns((current) => {
+        const next = [run, ...current.filter((item) => item.id !== run.id)];
+        return next
+          .sort((left, right) => right.created_at.localeCompare(left.created_at))
+          .slice(0, MAX_RECOMMENDATION_RUN_ROWS);
+      });
+      const normalizedStatus = (run.status || "").trim().toLowerCase();
+      if (normalizedStatus === "completed") {
+        setRecommendationGenerationMessage(
+          "Recommendation run completed. Refreshing workspace state.",
+        );
+      } else if (normalizedStatus === "failed") {
+        setRecommendationGenerationMessage(
+          "Recommendation run failed. Refreshing workspace state for latest details.",
+        );
+      } else {
+        setRecommendationGenerationMessage(
+          `Recommendation run ${normalizedStatus || "queued"}. Refreshing workspace state.`,
+        );
+      }
+      setWorkspaceRefreshNonce((current) => current + 1);
+    } catch (error) {
+      setRecommendationGenerationError(
+        safeActionErrorMessage("generate recommendations", error),
+      );
+    } finally {
+      setRecommendationGenerationInFlight(false);
+    }
+  }
+
   async function handleGenerateCompetitorProfiles(): Promise<void> {
     if (!context.token || !context.businessId || !siteId) {
       return;
@@ -3197,6 +3279,9 @@ export default function SiteWorkspacePage() {
       setQueueError(null);
       setRecommendationRuns([]);
       setRecommendationRunError(null);
+      setRecommendationGenerationInFlight(false);
+      setRecommendationGenerationMessage(null);
+      setRecommendationGenerationError(null);
       setLatestNarrativesByRunId({});
       setNarrativeLookupError(null);
       setLatestCompletedRecommendationRun(null);
@@ -3265,6 +3350,9 @@ export default function SiteWorkspacePage() {
       setLoadingWorkspace(false);
       setRecommendationRuns([]);
       setRecommendationRunError(null);
+      setRecommendationGenerationInFlight(false);
+      setRecommendationGenerationMessage(null);
+      setRecommendationGenerationError(null);
       setLatestNarrativesByRunId({});
       setNarrativeLookupError(null);
       setLatestCompletedRecommendationRun(null);
@@ -3693,6 +3781,7 @@ export default function SiteWorkspacePage() {
     context.token,
     siteId,
     selectedSite,
+    workspaceRefreshNonce,
   ]);
 
   useEffect(() => {
@@ -5017,6 +5106,28 @@ export default function SiteWorkspacePage() {
 
       <SectionCard>
         <h2>Recommendation Queue</h2>
+        <div className="stack-tight">
+          <div className="form-actions">
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => void handleGenerateRecommendations()}
+              disabled={loadingWorkspace || recommendationGenerationInFlight || !recommendationGenerationPrerequisitesMet}
+            >
+              {recommendationGenerationInFlight ? "Generating..." : "Generate Recommendations"}
+            </button>
+          </div>
+          <p className="hint muted">
+            Creates a recommendation run from the latest completed audit and/or competitor comparison inputs.
+          </p>
+          {!loadingWorkspace && !recommendationGenerationPrerequisitesMet ? (
+            <p className="hint warning">
+              Generate recommendations requires at least one completed audit run or competitor comparison run for this site.
+            </p>
+          ) : null}
+          {recommendationGenerationError ? <p className="hint error">{recommendationGenerationError}</p> : null}
+          {recommendationGenerationMessage ? <p className="hint success">{recommendationGenerationMessage}</p> : null}
+        </div>
         {queueError ? <p className="hint error">{queueError}</p> : null}
         <p>Total: {recommendationQueueSummary.total}</p>
         <p>Open: {recommendationQueueSummary.open}</p>
@@ -5027,7 +5138,7 @@ export default function SiteWorkspacePage() {
           <Link href="/recommendations">Open Recommendation Queue</Link>
         </p>
         {!queueError && (!queueResponse || queueResponse.items.length === 0) ? (
-          <p className="hint muted">No recommendations yet — run analysis to generate insights.</p>
+          <p className="hint muted">No recommendations yet. Use Generate Recommendations to run analysis for this site.</p>
         ) : null}
         {queueResponse && queueResponse.items.length > 0 ? (
           <div className="table-container">
@@ -5125,7 +5236,7 @@ export default function SiteWorkspacePage() {
             ) : null}
             <h4>Deterministic Recommendations</h4>
             {!latestCompletedRecommendationsError && latestCompletedRecommendations.length === 0 ? (
-              <p className="hint muted">No recommendations yet — run analysis to generate insights.</p>
+              <p className="hint muted">No recommendations yet. Use Generate Recommendations to run analysis for this site.</p>
             ) : null}
             {latestCompletedRecommendations.length > 0 ? (
               recommendationThemeSections.length <= 1 ? (

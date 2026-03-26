@@ -65,6 +65,8 @@ Behavior is intentionally conservative:
   where competitor-backed gaps can surface under operator-facing buckets such as
   `authority_and_visibility` or `trust_and_legitimacy`, depending on existing structured
   recommendation metadata.
+- Site workspace now exposes a direct `Generate Recommendations` action so operators can
+  create recommendation runs from the same page used for competitor investigation.
 
 ## Prompt Preview (Debug / Inspection)
 
@@ -282,6 +284,13 @@ Operator-facing interpretation:
 - `web_search_enabled`: whether search tooling was enabled on that attempt.
 - `degraded_mode`: `true` means timeout retry mode was used for that attempt.
 - `reduced_context_mode`: `true` means optional context was trimmed to reduce prompt size during retry.
+- service-focus derivation debug metrics in prompt preview payloads:
+  - `service_focus_source_site_content`
+  - `service_focus_source_structured_metadata`
+  - `service_focus_source_domain_hints`
+  - `service_focus_source_explicit_industry`
+  - `service_focus_source_fallback`
+  - `service_focus_terms_dropped_count`
 
 ## Workspace Run Quality Summary
 
@@ -366,6 +375,10 @@ Competitor prompt context now prefers structured business/site metadata before a
 - Filters navigation/domain noise tokens (`home`, `about`, `contact`, `com`, `www`, TLD fragments).
 - Uses domain-derived hints only as last resort.
 - Keeps output compact and relevant for substitutable service intent.
+- Service-focus precedence is deterministic:
+  - primary source order: `site_content` -> `structured_metadata` -> `domain_hints` -> `fallback`
+  - explicit `site.industry` is not blindly merged when strong current site-content signals contradict it
+  - contradictory explicit industry terms are dropped from `service_focus_terms` instead of unioned
 - Deterministic service hints include digital-service categories such as:
   - `seo`
   - `digital marketing`

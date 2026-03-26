@@ -32,6 +32,19 @@ Expected behavior:
 - `prompt_version` is metadata and should align with the effective prompt marker when present.
 - `truncated` must reflect actual payload truncation.
 
+## Verifying Recommendation Run Creation From Workspace
+
+When operators use `Generate Recommendations` in the site workspace:
+
+1. Confirm the recommendation sections show a status message after click (`queued`, `running`, `completed`, or `failed`).
+2. Confirm a new row appears in `Recommendation Runs and Narratives` with the expected run ID/status.
+3. Confirm queue counts and latest workspace summary refresh after run creation.
+
+If generation is blocked, the workspace should show one of:
+
+- prerequisite warning: no completed audit/comparison input is available
+- actionable API validation error returned by the backend (HTTP 422 detail)
+
 ## Competitor Runtime Debug Fields
 
 When diagnosing competitor-generation quality, use run-detail provider attempt metadata as runtime truth:
@@ -74,6 +87,19 @@ If workspace competitor prompts show the wrong trade context (for example stale 
 4. Regenerate workspace summary and inspect `competitor_prompt_preview` -> `SITE_CONTEXT_JSON` to confirm:
    - `site_normalized_domain` matches the intended site/vendor.
    - `site_industry_context` and `service_focus_terms` align with current-domain data.
+5. Inspect `competitor_prompt_preview.prompt_metrics` for service-focus provenance:
+   - `service_focus_source_site_content`
+   - `service_focus_source_structured_metadata`
+   - `service_focus_source_domain_hints`
+   - `service_focus_source_explicit_industry`
+   - `service_focus_source_fallback`
+   - `service_focus_terms_dropped_count`
+
+Interpretation for contaminated `service_focus_terms`:
+
+- `service_focus_source_site_content=1` with `service_focus_terms_dropped_count>0` indicates contradictory fallback/explicit terms were filtered.
+- `service_focus_source_explicit_industry=1` with no site-content source indicates service focus is currently driven by explicit industry/fallback signals (verify if this is intentional).
+- `service_focus_source_domain_hints=1` means only low-confidence identity hints were available; run a fresh audit for stronger grounding.
 
 When no matching current-domain signals exist, context intentionally degrades to weak/unknown instead of preserving stale strong classifications.
 

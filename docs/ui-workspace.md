@@ -28,6 +28,17 @@ When a site is repointed to a different domain/vendor:
 
 If no current-domain audit signals are available yet, competitor context health may temporarily show weak industry/service context until a fresh audit is completed.
 
+Service-focus provenance is available in `competitor_prompt_preview.prompt_metrics` for debug workflows:
+
+- `service_focus_source_site_content`
+- `service_focus_source_structured_metadata`
+- `service_focus_source_domain_hints`
+- `service_focus_source_explicit_industry`
+- `service_focus_source_fallback`
+- `service_focus_terms_dropped_count`
+
+These fields are intended for diagnostics and API-level inspection.
+
 ## Competitor Run Quality States
 
 The workspace competitor panel includes a compact terminal-run quality summary line:
@@ -46,6 +57,17 @@ Operator-facing notes are shown when telemetry indicates risk:
 - search-backed discovery unavailable
 
 For very low outcomes (`<= 1` returned), the panel renders a concise explanatory message using only observed run metadata and does not invent remediation steps.
+
+## Recommendation Generation Action
+
+The workspace recommendations area now includes a primary `Generate Recommendations` action.
+
+Behavior:
+
+- The action creates a recommendation run via `POST /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs`.
+- The workspace passes the latest completed audit/comparison run lineage IDs when available.
+- If no completed audit or comparison input exists, the action remains visible and the UI shows a prerequisite message instead of hiding the control.
+- On success, the workspace refreshes recommendation queue/run/summary sections and shows a concise run-status message (`queued`, `running`, `completed`, or `failed`).
 
 ## Admin Competitor Timeout Controls
 

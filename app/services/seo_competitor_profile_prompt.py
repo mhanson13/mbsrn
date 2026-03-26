@@ -21,6 +21,8 @@ _MAX_SERVICE_AREA_LENGTH = 120
 _MAX_SERVICE_AREAS = 25
 _MAX_SERVICE_FOCUS_TERM_LENGTH = 32
 _MAX_SERVICE_FOCUS_TERMS = 8
+_MAX_SERVICE_FOCUS_DEBUG_SOURCES = 5
+_MAX_SERVICE_FOCUS_DROPPED_TERMS = 8
 _MAX_TARGET_CUSTOMER_CONTEXT_LENGTH = 220
 _MAX_PROMPT_TEXT_COMPETITOR_LENGTH = 20000
 _MAX_NON_COMPETITOR_HINTS = 12
@@ -150,6 +152,12 @@ def build_seo_competitor_profile_prompt(
         for sanitized in [_sanitize_optional(term, max_length=_MAX_SERVICE_FOCUS_TERM_LENGTH)]
         if sanitized
     ][:_MAX_SERVICE_FOCUS_TERMS]
+    service_focus_term_sources = _sanitize_service_focus_debug_sources(
+        site_context_details.service_focus_terms_sources,
+    )
+    service_focus_terms_dropped = _sanitize_service_focus_debug_terms(
+        site_context_details.service_focus_terms_dropped,
+    )
     target_customer_context = _sanitize_required(
         site_context_details.target_customer_context,
         max_length=_MAX_TARGET_CUSTOMER_CONTEXT_LENGTH,
@@ -259,6 +267,12 @@ def build_seo_competitor_profile_prompt(
         "supplemental_competitor_text_chars": supplemental_competitor_text_chars,
         "context_budget_trimmed": 1 if context_budget_trimmed else 0,
         "reduced_context_mode": 1 if reduced_context_mode else 0,
+        "service_focus_source_site_content": 1 if "site_content" in service_focus_term_sources else 0,
+        "service_focus_source_structured_metadata": 1 if "structured_metadata" in service_focus_term_sources else 0,
+        "service_focus_source_domain_hints": 1 if "domain_hints" in service_focus_term_sources else 0,
+        "service_focus_source_explicit_industry": 1 if "explicit_industry" in service_focus_term_sources else 0,
+        "service_focus_source_fallback": 1 if "fallback" in service_focus_term_sources else 0,
+        "service_focus_terms_dropped_count": len(service_focus_terms_dropped),
     }
 
     return SEOCompetitorProfilePrompt(
@@ -787,6 +801,51 @@ def _sanitize_data_domain_list(raw: object) -> list[str]:
         if not normalized:
             continue
         cleaned.append(normalized.lower())
+    return cleaned
+
+
+def _sanitize_service_focus_debug_sources(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    allowed = {"site_content", "structured_metadata", "domain_hints", "explicit_industry", "fallback"}
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        normalized = _sanitize_optional(item, max_length=32)
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered not in allowed or lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned.append(lowered)
+        if len(cleaned) >= _MAX_SERVICE_FOCUS_DEBUG_SOURCES:
+            break
+    return cleaned
+
+
+def _sanitize_service_focus_debug_terms(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        if _contains_prompt_instruction_markers(item):
+            continue
+        normalized = _sanitize_optional(item, max_length=_MAX_SERVICE_FOCUS_TERM_LENGTH)
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned.append(normalized)
+        if len(cleaned) >= _MAX_SERVICE_FOCUS_DROPPED_TERMS:
+            break
     return cleaned
 
 

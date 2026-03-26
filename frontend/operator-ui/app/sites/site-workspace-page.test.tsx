@@ -20,6 +20,7 @@ import type {
   RecommendationListResponse,
   RecommendationNarrative,
   RecommendationTuningImpactPreview,
+  RecommendationRun,
   RecommendationRunListResponse,
   RecommendationWorkspaceSummaryResponse,
   SEOAuditRunListResponse,
@@ -54,6 +55,7 @@ const mockFetchSiteCompetitorComparisonRuns = jest.fn<
 const mockFetchRecommendations = jest.fn<Promise<RecommendationListResponse>, unknown[]>();
 const mockFetchRecommendationWorkspaceSummary = jest.fn<Promise<RecommendationWorkspaceSummaryResponse>, unknown[]>();
 const mockFetchRecommendationRuns = jest.fn<Promise<RecommendationRunListResponse>, unknown[]>();
+const mockCreateRecommendationRun = jest.fn<Promise<RecommendationRun>, unknown[]>();
 const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<RecommendationNarrative>, unknown[]>();
 const mockPreviewRecommendationTuningImpact = jest.fn<Promise<RecommendationTuningImpactPreview>, unknown[]>();
 const mockFetchBusinessSettings = jest.fn<Promise<BusinessSettings>, unknown[]>();
@@ -103,6 +105,7 @@ jest.mock("../../lib/api/client", () => {
     fetchRecommendations: (...args: unknown[]) => mockFetchRecommendations(...args),
     fetchRecommendationWorkspaceSummary: (...args: unknown[]) => mockFetchRecommendationWorkspaceSummary(...args),
     fetchRecommendationRuns: (...args: unknown[]) => mockFetchRecommendationRuns(...args),
+    createRecommendationRun: (...args: unknown[]) => mockCreateRecommendationRun(...args),
     fetchLatestRecommendationRunNarrative: (...args: unknown[]) =>
       mockFetchLatestRecommendationRunNarrative(...args),
     previewRecommendationTuningImpact: (...args: unknown[]) => mockPreviewRecommendationTuningImpact(...args),
@@ -4443,6 +4446,249 @@ describe("site workspace timeline controls", () => {
     expect(screen.queryByRole("button", { name: /Focus Recommendation|Preview and Focus|Focus Tuning Suggestion/i })).not.toBeInTheDocument();
     await screen.findByText(/No completed recommendation run is available yet\./);
     expect(mockFetchRecommendationWorkspaceSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
+  });
+
+  it("renders Generate Recommendations action in recommendation sections", async () => {
+    seedRichWorkspaceData();
+    render(<SiteWorkspacePage />);
+
+    expect(await screen.findByRole("button", { name: "Generate Recommendations" })).toBeInTheDocument();
+  });
+
+  it("creates a recommendation run and refreshes recommendation workspace state", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+
+    const queuedRun: RecommendationRun = {
+      id: "run-queued-1",
+      business_id: "biz-1",
+      site_id: "site-1",
+      audit_run_id: "audit-1",
+      comparison_run_id: "comparison-1",
+      status: "queued",
+      total_recommendations: 0,
+      critical_recommendations: 0,
+      warning_recommendations: 0,
+      info_recommendations: 0,
+      category_counts_json: {},
+      effort_bucket_counts_json: {},
+      started_at: null,
+      completed_at: null,
+      duration_ms: null,
+      error_summary: null,
+      created_by_principal_id: "principal-1",
+      created_at: "2026-03-21T00:35:00Z",
+      updated_at: "2026-03-21T00:35:00Z",
+    };
+
+    mockCreateRecommendationRun.mockResolvedValue(queuedRun);
+    mockFetchRecommendationRuns.mockReset();
+    mockFetchRecommendationRuns
+      .mockResolvedValueOnce({
+        items: [
+          {
+            ...queuedRun,
+            id: "run-1",
+            status: "completed",
+            total_recommendations: 4,
+            critical_recommendations: 1,
+            warning_recommendations: 2,
+            info_recommendations: 1,
+            started_at: "2026-03-21T00:29:00Z",
+            completed_at: "2026-03-21T00:30:00Z",
+            duration_ms: 60000,
+            created_at: "2026-03-21T00:29:00Z",
+            updated_at: "2026-03-21T00:30:00Z",
+          },
+        ],
+        total: 1,
+      })
+      .mockResolvedValue({
+        items: [queuedRun],
+        total: 1,
+      });
+
+    mockFetchRecommendations.mockReset();
+    mockFetchRecommendations
+      .mockResolvedValueOnce({
+        items: [buildRecommendation()],
+        total: 1,
+        filtered_summary: {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      })
+      .mockResolvedValue({
+        items: [],
+        total: 0,
+        filtered_summary: {
+          total: 0,
+          open: 0,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 0,
+        },
+      });
+
+    mockFetchRecommendationWorkspaceSummary.mockReset();
+    mockFetchRecommendationWorkspaceSummary
+      .mockResolvedValueOnce(buildRecommendationWorkspaceSummary())
+      .mockResolvedValue(
+        buildRecommendationWorkspaceSummary({
+          state: "no_completed_runs",
+          latest_run: queuedRun,
+          latest_completed_run: null,
+          recommendations: { items: [], total: 0 },
+          latest_narrative: null,
+          tuning_suggestions: [],
+        }),
+      );
+
+    render(<SiteWorkspacePage />);
+
+    const button = await screen.findByRole("button", { name: "Generate Recommendations" });
+    await user.click(button);
+
+    await waitFor(() => {
+      expect(mockCreateRecommendationRun).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          audit_run_id: "audit-1",
+          comparison_run_id: "comparison-1",
+        },
+      );
+    });
+
+    expect(await screen.findByText("Recommendation run queued. Refreshing workspace state.")).toBeInTheDocument();
+    await waitFor(() => expect(mockFetchRecommendationWorkspaceSummary.mock.calls.length).toBeGreaterThanOrEqual(2));
+    const queuedRunLinks = await screen.findAllByRole("link", { name: "run-queued-1" });
+    expect(queuedRunLinks.length).toBeGreaterThan(0);
+  });
+
+  it("keeps Generate Recommendations visible in empty recommendation state", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendations.mockResolvedValue({
+      items: [],
+      total: 0,
+      filtered_summary: {
+        total: 0,
+        open: 0,
+        accepted: 0,
+        dismissed: 0,
+        high_priority: 0,
+      },
+    });
+    mockFetchRecommendationRuns.mockResolvedValue({ items: [], total: 0 });
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
+      business_id: "biz-1",
+      site_id: "site-1",
+      state: "no_runs",
+      latest_run: null,
+      latest_completed_run: null,
+      recommendations: { items: [], total: 0 },
+      latest_narrative: null,
+      tuning_suggestions: [],
+    });
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByText("No recommendations yet. Use Generate Recommendations to run analysis for this site.");
+    await waitFor(() => {
+      expect(screen.queryByText("Loading workspace data...")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Generate Recommendations" })).toBeEnabled();
+  });
+
+  it("shows prerequisite messaging when no completed recommendation inputs are available", async () => {
+    seedRichWorkspaceData();
+
+    mockFetchAuditRuns.mockResolvedValue({
+      items: [
+        {
+          id: "audit-running-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "running",
+          max_pages: 25,
+          max_depth: 2,
+          pages_discovered: 5,
+          pages_crawled: 2,
+          pages_skipped: 0,
+          duplicate_urls_skipped: 0,
+          errors_encountered: 0,
+          started_at: "2026-03-21T00:29:00Z",
+          completed_at: null,
+          crawl_duration_ms: null,
+          error_summary: null,
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-21T00:29:00Z",
+          updated_at: "2026-03-21T00:30:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchSiteCompetitorComparisonRuns.mockResolvedValue({
+      items: [
+        {
+          id: "comparison-failed-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          competitor_set_id: "set-1",
+          snapshot_run_id: "snapshot-1",
+          baseline_audit_run_id: "audit-running-1",
+          status: "failed",
+          total_findings: 0,
+          critical_findings: 0,
+          warning_findings: 0,
+          info_findings: 0,
+          client_pages_analyzed: 0,
+          competitor_pages_analyzed: 0,
+          finding_type_counts_json: {},
+          category_counts_json: {},
+          severity_counts_json: {},
+          started_at: "2026-03-21T00:31:00Z",
+          completed_at: "2026-03-21T00:32:00Z",
+          duration_ms: 60000,
+          error_summary: "comparison failed",
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-21T00:31:00Z",
+          updated_at: "2026-03-21T00:32:00Z",
+        },
+      ],
+      total: 1,
+    });
+
+    render(<SiteWorkspacePage />);
+
+    const button = await screen.findByRole("button", { name: "Generate Recommendations" });
+    expect(button).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Generate recommendations requires at least one completed audit run or competitor comparison run for this site.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockCreateRecommendationRun).not.toHaveBeenCalled();
+  });
+
+  it("shows backend validation errors when Generate Recommendations fails", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    mockCreateRecommendationRun.mockRejectedValue(
+      new ApiRequestError("Audit run must be completed", {
+        status: 422,
+        detail: null,
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await user.click(await screen.findByRole("button", { name: "Generate Recommendations" }));
+    expect(await screen.findByText("Audit run must be completed")).toBeInTheDocument();
   });
 
   it("renders safe latest-run narrative missing state", async () => {
