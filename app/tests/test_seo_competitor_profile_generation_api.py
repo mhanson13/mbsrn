@@ -453,6 +453,34 @@ class _ProviderEndpointMetadataSearchUnavailableLowResultProvider:
         )
 
 
+class _MalformedOutputReasonDebugProvider:
+    provider_name = "openai"
+    model_name = "gpt-5-mini"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+        reduced_context_mode: bool = False,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count, reduced_context_mode
+        raise SEOCompetitorProfileProviderError(
+            code="invalid_output",
+            safe_message="Competitor profile generation returned malformed output.",
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_output=(
+                '{"endpoint_path":"/responses","failure_kind":"malformed_output",'
+                '"malformed_output_reason":"missing_candidates_array",'
+                '"request_debug":{"request_duration_ms":321,"timeout_seconds":30,"web_search_enabled":true}}'
+            ),
+        )
+
+
 class _ProviderRequestFailureObservingProvider:
     provider_name = "openai"
     model_name = "gpt-4.1-mini"
@@ -1508,6 +1536,41 @@ def test_run_detail_exposes_low_result_search_unavailable_quality_signals(db_ses
     assert attempt["endpoint_path"] == "/chat/completions"
     assert attempt["web_search_enabled"] is False
     assert attempt["request_duration_ms"] == 432
+
+
+def test_run_detail_exposes_malformed_output_reason_in_provider_attempt_debug(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=2)["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_MalformedOutputReasonDebugProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "failed"
+    assert payload["run"]["failure_category"] == "malformed_output"
+    assert payload["provider_attempt_count"] == 1
+    assert len(payload["provider_attempts"]) == 1
+    attempt = payload["provider_attempts"][0]
+    assert attempt["failure_kind"] == "malformed_output"
+    assert attempt["malformed_output_reason"] == "missing_candidates_array"
+    assert attempt["endpoint_path"] == "/responses"
+    assert attempt["web_search_enabled"] is True
 
 
 def test_non_timeout_provider_failure_does_not_retry(db_session, seeded_business) -> None:

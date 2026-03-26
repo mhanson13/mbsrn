@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import logging
+import re
 import socket
 import time
 import urllib.error
@@ -30,8 +31,23 @@ _PROVIDER_ERROR_PARSING = "parsing_error"
 _PROVIDER_ERROR_REQUEST = "provider_request"
 _LEGACY_PROMPT_CONFIG_KEY = "ai_prompt_text_recommendation"
 _PROVIDER_ERROR_MESSAGE_MAX_CHARS = 320
+_ASSISTANT_CONTENT_EXCERPT_MAX_CHARS = 480
 _PROMPT_SIZE_WARN_THRESHOLD_CHARS = 10000
 _PROMPT_SIZE_HIGH_RISK_CHARS = 14000
+_MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR = "json_decode_error"
+_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN = "wrapped_in_markdown"
+_MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY = "missing_candidates_array"
+_MALFORMED_OUTPUT_REASON_INVALID_TOP_LEVEL_SHAPE = "invalid_top_level_shape"
+_MALFORMED_OUTPUT_REASON_PARTIAL_JSON = "partial_json"
+_MALFORMED_OUTPUT_REASON_INVALID_FIELD_TYPES = "invalid_field_types"
+_MALFORMED_OUTPUT_ALLOWED_REASONS = {
+    _MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR,
+    _MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,
+    _MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY,
+    _MALFORMED_OUTPUT_REASON_INVALID_TOP_LEVEL_SHAPE,
+    _MALFORMED_OUTPUT_REASON_PARTIAL_JSON,
+    _MALFORMED_OUTPUT_REASON_INVALID_FIELD_TYPES,
+}
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +68,13 @@ class SEOCompetitorProfileProviderError(RuntimeError):
 class _OpenAICompletionResponse:
     body_text: str
     request_duration_ms: int
+
+
+@dataclass(frozen=True)
+class _StructuredPayloadRecoveryResult:
+    payload: dict[str, object] | None
+    reason: str | None
+    recovery_actions: tuple[str, ...]
 
 
 class MisconfiguredSEOCompetitorProfileGenerationProvider:
@@ -148,6 +171,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         responses_payload = self._build_responses_request_payload(
             system_prompt=prompt.system_prompt,
             user_prompt=prompt.user_prompt,
+            candidate_count=candidate_count,
         )
         chat_request_debug = self._build_request_debug_metadata(
             endpoint_path="/chat/completions",
@@ -176,12 +200,20 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             candidates = self._parse_or_normalize_candidates(
                 assistant_content=assistant_content,
                 candidate_count=candidate_count,
+                endpoint_path="/responses",
+                request_debug=responses_request_debug,
             )
             if not candidates:
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_INVALID_OUTPUT,
                     safe_message="Competitor profile generation returned malformed output.",
-                    raw_output=assistant_content,
+                    raw_output=self._build_request_failure_debug_payload(
+                        endpoint_path="/responses",
+                        failure_kind="malformed_output",
+                        request_debug=responses_request_debug,
+                        provider_error_body=assistant_content,
+                        malformed_output_reason=_MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY,
+                    ),
                 )
             model_name = _clean_optional_value(response_json.get("model")) or self.model_name
             return SEOCompetitorProfileGenerationOutput(
@@ -227,12 +259,20 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             candidates = self._parse_or_normalize_candidates(
                 assistant_content=assistant_content,
                 candidate_count=candidate_count,
+                endpoint_path="/chat/completions",
+                request_debug=chat_request_debug,
             )
             if not candidates:
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_INVALID_OUTPUT,
                     safe_message="Competitor profile generation returned malformed output.",
-                    raw_output=assistant_content,
+                    raw_output=self._build_request_failure_debug_payload(
+                        endpoint_path="/chat/completions",
+                        failure_kind="malformed_output",
+                        request_debug=chat_request_debug,
+                        provider_error_body=assistant_content,
+                        malformed_output_reason=_MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY,
+                    ),
                 )
             model_name = _clean_optional_value(response_json.get("model")) or self.model_name
             return SEOCompetitorProfileGenerationOutput(
@@ -251,44 +291,311 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         *,
         assistant_content: str,
         candidate_count: int,
+        endpoint_path: str,
+        request_debug: dict[str, object] | None,
     ) -> list[SEOCompetitorProfileDraftCandidateOutput]:
         bounded_count = max(1, candidate_count)
-        structured_json: dict[str, object] | None = None
-        try:
-            structured_json = self._parse_json_object(
-                assistant_content,
-                code=_PROVIDER_ERROR_INVALID_OUTPUT,
-                safe_message="Competitor profile generation returned malformed output.",
-                raw_output=assistant_content,
-            )
-        except SEOCompetitorProfileProviderError:
-            structured_json = None
-
-        if structured_json is not None:
+        recovery = self._recover_structured_payload(assistant_content)
+        normalized_json_text = assistant_content
+        has_candidate_array = False
+        invalid_field_type_count = 0
+        if recovery.payload is not None:
             try:
-                parsed = _OpenAICompetitorProfileResponse.model_validate(structured_json)
-                return [
-                    SEOCompetitorProfileDraftCandidateOutput(
-                        suggested_name=item.name,
-                        suggested_domain=item.domain,
-                        competitor_type=item.competitor_type,
-                        summary=item.summary,
-                        why_competitor=item.why_competitor,
-                        evidence=item.evidence,
-                        confidence_score=item.confidence_score,
-                    )
-                    for item in parsed.candidates[:bounded_count]
-                ]
-            except ValidationError:
-                logger.warning(
-                    "Competitor profile generation strict schema validation failed; applying normalizer fallback."
+                normalized_json_text = json.dumps(recovery.payload, ensure_ascii=True, sort_keys=True)
+            except (TypeError, ValueError):
+                normalized_json_text = assistant_content
+            structured_candidates, has_candidate_array, invalid_field_type_count = (
+                self._coerce_candidates_from_structured_payload(
+                    payload=recovery.payload,
+                    candidate_count=bounded_count,
                 )
+            )
+            if structured_candidates:
+                if recovery.recovery_actions:
+                    logger.info(
+                        (
+                            "Competitor profile payload recovered from wrapped output "
+                            "provider_name=%s model_name=%s endpoint=%s recovery_actions=%s"
+                        ),
+                        self.provider_name,
+                        self.model_name,
+                        endpoint_path,
+                        ",".join(recovery.recovery_actions),
+                    )
+                if invalid_field_type_count > 0:
+                    logger.warning(
+                        (
+                            "Competitor profile payload included malformed candidate entries; "
+                            "valid entries were preserved provider_name=%s model_name=%s endpoint=%s "
+                            "invalid_field_type_count=%s"
+                        ),
+                        self.provider_name,
+                        self.model_name,
+                        endpoint_path,
+                        invalid_field_type_count,
+                    )
+                return structured_candidates
 
-        normalized_payload = normalize_competitor_response(assistant_content)
-        return self._coerce_candidates_from_normalized_payload(
+            if has_candidate_array and invalid_field_type_count > 0:
+                logger.warning(
+                    (
+                        "Competitor profile payload candidate entries failed strict typing; "
+                        "attempting normalized salvage provider_name=%s model_name=%s endpoint=%s "
+                        "invalid_field_type_count=%s"
+                    ),
+                    self.provider_name,
+                    self.model_name,
+                    endpoint_path,
+                    invalid_field_type_count,
+                )
+        normalized_payload = normalize_competitor_response(normalized_json_text)
+        normalized_candidates = self._coerce_candidates_from_normalized_payload(
             normalized_payload=normalized_payload,
             candidate_count=bounded_count,
         )
+        if normalized_candidates:
+            return normalized_candidates
+
+        malformed_reason = recovery.reason
+        if malformed_reason is None:
+            if has_candidate_array and invalid_field_type_count > 0:
+                malformed_reason = _MALFORMED_OUTPUT_REASON_INVALID_FIELD_TYPES
+            elif recovery.payload is not None and not has_candidate_array:
+                malformed_reason = _MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY
+            else:
+                malformed_reason = _MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR
+        if malformed_reason not in _MALFORMED_OUTPUT_ALLOWED_REASONS:
+            malformed_reason = _MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR
+        raise self._provider_error(
+            code=_PROVIDER_ERROR_INVALID_OUTPUT,
+            safe_message="Competitor profile generation returned malformed output.",
+            raw_output=self._build_request_failure_debug_payload(
+                endpoint_path=endpoint_path,
+                failure_kind="malformed_output",
+                request_debug=request_debug,
+                provider_error_body=assistant_content,
+                malformed_output_reason=malformed_reason,
+                recovery_actions=recovery.recovery_actions,
+            ),
+        )
+
+    def _coerce_candidates_from_structured_payload(
+        self,
+        *,
+        payload: dict[str, object],
+        candidate_count: int,
+    ) -> tuple[list[SEOCompetitorProfileDraftCandidateOutput], bool, int]:
+        raw_candidates = payload.get("candidates")
+        if not isinstance(raw_candidates, list):
+            return [], False, 0
+        candidates: list[SEOCompetitorProfileDraftCandidateOutput] = []
+        invalid_field_type_count = 0
+        for raw_candidate in raw_candidates:
+            if len(candidates) >= candidate_count:
+                break
+            try:
+                parsed_candidate = _OpenAICompetitorProfileCandidate.model_validate(raw_candidate)
+            except ValidationError:
+                coerced_candidate = self._coerce_candidate_from_structured_item(raw_candidate)
+                if coerced_candidate is None:
+                    invalid_field_type_count += 1
+                    continue
+                invalid_field_type_count += 1
+                candidates.append(coerced_candidate)
+                continue
+            candidates.append(
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name=parsed_candidate.name,
+                    suggested_domain=parsed_candidate.domain,
+                    competitor_type=parsed_candidate.competitor_type,
+                    summary=parsed_candidate.summary,
+                    why_competitor=parsed_candidate.why_competitor,
+                    evidence=parsed_candidate.evidence,
+                    confidence_score=parsed_candidate.confidence_score,
+                )
+            )
+        return candidates, True, invalid_field_type_count
+
+    def _coerce_candidate_from_structured_item(
+        self,
+        raw_candidate: object,
+    ) -> SEOCompetitorProfileDraftCandidateOutput | None:
+        if not isinstance(raw_candidate, dict):
+            return None
+        suggested_name = _clean_optional_value(
+            raw_candidate.get("name") if raw_candidate.get("name") is not None else raw_candidate.get("suggested_name")
+        ) or ""
+        suggested_domain = _clean_optional_value(
+            raw_candidate.get("domain")
+            if raw_candidate.get("domain") is not None
+            else raw_candidate.get("suggested_domain")
+        ) or ""
+        competitor_type = _clean_optional_value(raw_candidate.get("competitor_type")) or "unknown"
+        summary = _clean_optional_value(raw_candidate.get("summary"))
+        why_competitor = _clean_optional_value(raw_candidate.get("why_competitor"))
+        evidence = _clean_optional_value(raw_candidate.get("evidence"))
+        confidence_score = self._coerce_confidence_score_for_recovery(raw_candidate)
+        return SEOCompetitorProfileDraftCandidateOutput(
+            suggested_name=suggested_name,
+            suggested_domain=suggested_domain,
+            competitor_type=competitor_type,
+            summary=summary,
+            why_competitor=why_competitor,
+            evidence=evidence,
+            confidence_score=confidence_score,
+        )
+
+    def _coerce_confidence_score_for_recovery(self, raw_candidate: dict[str, object]) -> float:
+        if "confidence_score" in raw_candidate:
+            direct_score = self._coerce_optional_float(raw_candidate.get("confidence_score"))
+            if direct_score is not None:
+                return direct_score
+            return -1.0
+        relevance = _coerce_bounded_int(raw_candidate.get("relevance_score"), minimum=1, maximum=5, default=3)
+        visibility = _coerce_bounded_int(raw_candidate.get("visibility_score"), minimum=1, maximum=5, default=3)
+        return max(0.0, min(1.0, (relevance + visibility) / 10.0))
+
+    def _coerce_optional_float(self, value: object) -> float | None:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed != parsed:  # NaN
+            return None
+        if parsed in {float("inf"), float("-inf")}:
+            return None
+        return parsed
+
+    def _recover_structured_payload(self, raw_text: str) -> _StructuredPayloadRecoveryResult:
+        normalized = raw_text.strip()
+        if not normalized:
+            return _StructuredPayloadRecoveryResult(
+                payload=None,
+                reason=_MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR,
+                recovery_actions=(),
+            )
+
+        parsed = self._parse_candidate_json_value(normalized)
+        if parsed is not None:
+            payload, payload_reason = self._normalize_payload_shape(parsed)
+            return _StructuredPayloadRecoveryResult(payload=payload, reason=payload_reason, recovery_actions=())
+
+        fenced = self._extract_markdown_fenced_json(normalized)
+        if fenced is not None:
+            fenced_parsed = self._parse_candidate_json_value(fenced)
+            if fenced_parsed is not None:
+                payload, payload_reason = self._normalize_payload_shape(fenced_parsed)
+                if payload is not None:
+                    return _StructuredPayloadRecoveryResult(
+                        payload=payload,
+                        reason=None,
+                        recovery_actions=(_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,),
+                    )
+                return _StructuredPayloadRecoveryResult(
+                    payload=None,
+                    reason=payload_reason,
+                    recovery_actions=(_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,),
+                )
+
+        extracted_json_fragment, fragment_partial = self._extract_first_json_fragment(normalized)
+        if extracted_json_fragment is not None:
+            extracted_parsed = self._parse_candidate_json_value(extracted_json_fragment)
+            if extracted_parsed is not None:
+                payload, payload_reason = self._normalize_payload_shape(extracted_parsed)
+                return _StructuredPayloadRecoveryResult(
+                    payload=payload,
+                    reason=payload_reason,
+                    recovery_actions=(_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,)
+                    if fenced is not None
+                    else (),
+                )
+        if fragment_partial:
+            return _StructuredPayloadRecoveryResult(
+                payload=None,
+                reason=_MALFORMED_OUTPUT_REASON_PARTIAL_JSON,
+                recovery_actions=(_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,)
+                if fenced is not None
+                else (),
+            )
+
+        if fenced is not None:
+            return _StructuredPayloadRecoveryResult(
+                payload=None,
+                reason=_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,
+                recovery_actions=(_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,),
+            )
+
+        return _StructuredPayloadRecoveryResult(
+            payload=None,
+            reason=_MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR,
+            recovery_actions=(),
+        )
+
+    def _parse_candidate_json_value(self, raw_text: str) -> object | None:
+        try:
+            return json.loads(raw_text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _normalize_payload_shape(self, parsed: object) -> tuple[dict[str, object] | None, str | None]:
+        if isinstance(parsed, dict):
+            return parsed, None
+        if isinstance(parsed, list):
+            return {"candidates": parsed}, None
+        return None, _MALFORMED_OUTPUT_REASON_INVALID_TOP_LEVEL_SHAPE
+
+    def _extract_markdown_fenced_json(self, raw_text: str) -> str | None:
+        matches = re.findall(r"```(?:json)?\s*(.*?)```", raw_text, flags=re.IGNORECASE | re.DOTALL)
+        if not matches:
+            return None
+        return matches[0].strip()
+
+    def _extract_first_json_fragment(self, raw_text: str) -> tuple[str | None, bool]:
+        candidates = [index for index, ch in enumerate(raw_text) if ch in "{["][:32]
+        partial = False
+        for start_index in candidates:
+            extracted, is_partial = self._scan_balanced_json_fragment(raw_text, start_index=start_index)
+            if extracted is not None:
+                return extracted, False
+            if is_partial:
+                partial = True
+        return None, partial
+
+    def _scan_balanced_json_fragment(self, raw_text: str, *, start_index: int) -> tuple[str | None, bool]:
+        if start_index < 0 or start_index >= len(raw_text):
+            return None, False
+        opening = raw_text[start_index]
+        if opening not in "{[":
+            return None, False
+        closing_for_opening = {"{": "}", "[": "]"}
+        stack: list[str] = [closing_for_opening[opening]]
+        in_string = False
+        escaped = False
+        for index in range(start_index + 1, len(raw_text)):
+            char = raw_text[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\":
+                    escaped = True
+                    continue
+                if char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+                continue
+            if char in "{[":
+                stack.append(closing_for_opening[char])
+                continue
+            if char in "}]":
+                if not stack or char != stack[-1]:
+                    return None, False
+                stack.pop()
+                if not stack:
+                    return raw_text[start_index : index + 1], False
+        return None, bool(stack)
 
     def _coerce_candidates_from_normalized_payload(
         self,
@@ -563,10 +870,19 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         *,
         system_prompt: str,
         user_prompt: str,
+        candidate_count: int,
     ) -> dict[str, object]:
         return {
             "model": self.model_name,
             "tools": [{"type": "web_search"}],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "seo_competitor_profile_generation_response",
+                    "strict": True,
+                    "schema": _build_candidate_json_schema(candidate_count),
+                }
+            },
             "input": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -693,9 +1009,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         request_debug: dict[str, object] | None,
         provider_error_body: str | None,
         request_duration_ms: int | None = None,
+        malformed_output_reason: str | None = None,
+        recovery_actions: tuple[str, ...] | None = None,
     ) -> str | None:
         normalized_failure_kind = (failure_kind or "").strip().lower()
-        if normalized_failure_kind not in {"timeout", "provider_request"}:
+        if normalized_failure_kind not in {"timeout", "provider_request", "malformed_output"}:
             normalized_failure_kind = "provider_request"
         payload: dict[str, object] = {
             "failure_kind": normalized_failure_kind,
@@ -716,9 +1034,24 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             payload.setdefault("request_debug", {})
             if isinstance(payload["request_debug"], dict):
                 payload["request_debug"]["request_duration_ms"] = max(0, int(request_duration_ms))
+        if normalized_failure_kind == "malformed_output":
+            normalized_reason = _clean_optional_value((malformed_output_reason or "").strip().lower())
+            if normalized_reason in _MALFORMED_OUTPUT_ALLOWED_REASONS:
+                payload["malformed_output_reason"] = normalized_reason
+            if recovery_actions:
+                normalized_actions = [
+                    action
+                    for action in recovery_actions
+                    if action in _MALFORMED_OUTPUT_ALLOWED_REASONS
+                ]
+                if normalized_actions:
+                    payload["recovery_actions"] = normalized_actions
         compact_error = _compact_log_message(_clean_optional_value(provider_error_body))
         if compact_error:
-            payload["provider_error_message"] = compact_error
+            if normalized_failure_kind == "malformed_output":
+                payload["assistant_content_excerpt"] = compact_error[:_ASSISTANT_CONTENT_EXCERPT_MAX_CHARS]
+            else:
+                payload["provider_error_message"] = compact_error
         try:
             return json.dumps(payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):

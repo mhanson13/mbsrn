@@ -396,6 +396,7 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
     requested_candidate_count: int = Field(ge=1)
     outcome: str = Field(min_length=1, max_length=64)
     failure_kind: str | None = Field(default=None, max_length=64)
+    malformed_output_reason: str | None = Field(default=None, max_length=64)
     request_duration_ms: int | None = Field(default=None, ge=0)
     timeout_seconds: int | None = Field(default=None, ge=1)
     web_search_enabled: bool | None = None
@@ -413,7 +414,7 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
             return "success"
         return cleaned[:64]
 
-    @field_validator("failure_kind", "prompt_size_risk", "endpoint_path", mode="before")
+    @field_validator("failure_kind", "malformed_output_reason", "prompt_size_risk", "endpoint_path", mode="before")
     @classmethod
     def normalize_optional_compact_strings(cls, value: Any) -> str | None:
         return _strip_or_none(str(value) if value is not None else None)

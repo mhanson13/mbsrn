@@ -151,6 +151,24 @@ Safe fallback behavior:
 - Timeouts, malformed outputs, and non-search request failures stay on the `/responses` path and are surfaced directly.
 - This keeps prompt/runtime capability alignment explicit: search-backed when available, explicitly downgraded only on provider-declared `web_search` incompatibility.
 
+## Structured Output Hardening
+
+Competitor generation now applies stricter structured-output handling with deterministic recovery:
+
+- `/responses` requests include explicit JSON schema format constraints, matching the structured-output contract used for chat fallback.
+- The same structured-output contract is used for both:
+  - standard attempt
+  - degraded timeout-retry attempt
+- Parser recovery handles narrow, safe cases:
+  - JSON wrapped in markdown fences
+  - JSON wrapped in extra prose, when a single unambiguous JSON object/array can be extracted
+
+Partial-salvage behavior:
+
+- If a payload includes multiple candidates and some entries are malformed, valid entries are preserved.
+- Runs prefer fewer valid candidates over whole-run failure when safe recovery is possible.
+- Whole-run malformed-output failure is reserved for unrecoverable payloads (no safe usable candidate payload).
+
 ## Provider Error Visibility
 
 Competitor provider failures now emit bounded backend log metadata to improve debugging:

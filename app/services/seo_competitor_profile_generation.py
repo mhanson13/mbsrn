@@ -272,6 +272,7 @@ class SEOCompetitorProfileProviderAttemptDebug:
     requested_candidate_count: int
     outcome: str
     failure_kind: str | None
+    malformed_output_reason: str | None
     request_duration_ms: int | None
     timeout_seconds: int | None
     web_search_enabled: bool | None
@@ -2333,6 +2334,7 @@ class SEOCompetitorProfileGenerationService:
         provider_error: SEOCompetitorProfileProviderError | None,
     ) -> SEOCompetitorProfileProviderAttemptDebug:
         failure_kind = "unknown"
+        malformed_output_reason: str | None = None
         endpoint_path: str | None = None
         prompt_size_risk: str | None = None
         timeout_seconds: int | None = None
@@ -2349,10 +2351,14 @@ class SEOCompetitorProfileGenerationService:
                 failure_kind = "timeout"
             elif provider_error.code == "provider_request":
                 failure_kind = "provider_request"
+            elif provider_error.code in {"invalid_output", "schema_validation", "parsing_error"}:
+                failure_kind = "malformed_output"
             provider_debug = self._extract_provider_failure_debug(provider_error.raw_output)
             if provider_debug is not None:
-                if provider_debug.failure_kind in {"timeout", "provider_request"}:
+                if provider_debug.failure_kind in {"timeout", "provider_request", "malformed_output"}:
                     failure_kind = provider_debug.failure_kind
+                if provider_debug.malformed_output_reason:
+                    malformed_output_reason = provider_debug.malformed_output_reason
                 endpoint_path = provider_debug.endpoint_path
                 prompt_size_risk = provider_debug.prompt_size_risk
                 timeout_seconds = provider_debug.timeout_seconds
@@ -2383,6 +2389,7 @@ class SEOCompetitorProfileGenerationService:
             requested_candidate_count=max(1, int(requested_candidate_count)),
             outcome=outcome,
             failure_kind=None if provider_error is None else failure_kind,
+            malformed_output_reason=malformed_output_reason,
             request_duration_ms=request_duration_ms,
             timeout_seconds=timeout_seconds,
             web_search_enabled=web_search_enabled,
@@ -2396,6 +2403,7 @@ class SEOCompetitorProfileGenerationService:
     @dataclass(frozen=True)
     class _ProviderFailureDebug:
         failure_kind: str
+        malformed_output_reason: str | None
         endpoint_path: str | None
         prompt_size_risk: str | None
         timeout_seconds: int | None
@@ -2416,8 +2424,11 @@ class SEOCompetitorProfileGenerationService:
         if not isinstance(parsed, dict):
             return None
         raw_failure_kind = self._clean_optional(str(parsed.get("failure_kind") or "")) or "unknown"
-        if raw_failure_kind not in {"timeout", "provider_request"}:
+        if raw_failure_kind not in {"timeout", "provider_request", "malformed_output"}:
             raw_failure_kind = "unknown"
+        malformed_output_reason = self._clean_optional(str(parsed.get("malformed_output_reason") or ""))
+        if malformed_output_reason and len(malformed_output_reason) > 64:
+            malformed_output_reason = malformed_output_reason[:64]
         endpoint_path = self._clean_optional(str(parsed.get("endpoint_path") or ""))
         request_debug = parsed.get("request_debug") if isinstance(parsed.get("request_debug"), dict) else {}
         prompt_size_risk = self._clean_optional(str(request_debug.get("prompt_size_risk") or ""))
@@ -2462,6 +2473,7 @@ class SEOCompetitorProfileGenerationService:
                 user_prompt_chars = None
         return self._ProviderFailureDebug(
             failure_kind=raw_failure_kind,
+            malformed_output_reason=malformed_output_reason,
             endpoint_path=endpoint_path,
             prompt_size_risk=prompt_size_risk,
             timeout_seconds=timeout_seconds,
@@ -2490,6 +2502,8 @@ class SEOCompetitorProfileGenerationService:
             }
             if item.failure_kind:
                 payload["failure_kind"] = item.failure_kind
+            if item.malformed_output_reason:
+                payload["malformed_output_reason"] = item.malformed_output_reason
             if item.request_duration_ms is not None:
                 payload["request_duration_ms"] = max(0, int(item.request_duration_ms))
             if item.timeout_seconds is not None:
@@ -2537,8 +2551,11 @@ class SEOCompetitorProfileGenerationService:
                 )
                 outcome = self._clean_optional(str(raw_item.get("outcome") or "")) or "success"
                 failure_kind = self._clean_optional(str(raw_item.get("failure_kind") or ""))
-                if failure_kind not in {"timeout", "provider_request", "unknown"}:
+                if failure_kind not in {"timeout", "provider_request", "malformed_output", "unknown"}:
                     failure_kind = None
+                malformed_output_reason = self._clean_optional(str(raw_item.get("malformed_output_reason") or ""))
+                if malformed_output_reason and len(malformed_output_reason) > 64:
+                    malformed_output_reason = malformed_output_reason[:64]
                 request_duration_ms: int | None = None
                 timeout_seconds: int | None = None
                 try:
@@ -2584,6 +2601,7 @@ class SEOCompetitorProfileGenerationService:
                         requested_candidate_count=requested_candidate_count,
                         outcome=outcome,
                         failure_kind=failure_kind,
+                        malformed_output_reason=malformed_output_reason,
                         request_duration_ms=request_duration_ms,
                         timeout_seconds=timeout_seconds,
                         web_search_enabled=web_search_enabled,

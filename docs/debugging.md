@@ -76,3 +76,28 @@ Workspace competitor outcome messages map directly to run-detail telemetry:
 - low-result warning (`Only 0/1 valid competitor remained...`)
   - terminal completed run with `returned <= 1`
   - likely-cause clauses appear only when matching telemetry supports them
+
+## Malformed Output Reason Codes
+
+When a competitor run fails with `failure_category=malformed_output`, provider-attempt debug may include:
+
+- `failure_kind=malformed_output`
+- `malformed_output_reason` with one of:
+  - `json_decode_error`
+  - `wrapped_in_markdown`
+  - `missing_candidates_array`
+  - `invalid_top_level_shape`
+  - `partial_json`
+  - `invalid_field_types`
+
+Interpretation:
+
+- `json_decode_error` / `partial_json`: no safe JSON payload could be recovered.
+- `wrapped_in_markdown`: model response was wrapped and could not be safely recovered as valid payload.
+- `missing_candidates_array` / `invalid_top_level_shape`: payload shape did not match the required top-level candidate contract.
+- `invalid_field_types`: payload structure existed but candidate entries failed required field typing/coercion safety.
+
+Failure vs salvage rule:
+
+- If at least one safe candidate can be recovered, generation proceeds with partial salvage.
+- If no safe usable candidate payload can be recovered, the run fails as malformed output.

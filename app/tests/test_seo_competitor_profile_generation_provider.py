@@ -123,6 +123,9 @@ def test_gpt5_mini_uses_responses_api_with_web_search(monkeypatch) -> None:
     assert output.request_duration_ms >= 0
     assert captured_payload["model"] == "gpt-5-mini"
     assert captured_payload["tools"] == [{"type": "web_search"}]
+    assert captured_payload["text"]["format"]["type"] == "json_schema"
+    assert captured_payload["text"]["format"]["name"] == "seo_competitor_profile_generation_response"
+    assert captured_payload["text"]["format"]["strict"] is True
     assert "temperature" not in captured_payload
     assert "top_p" not in captured_payload
     assert "response_format" not in captured_payload
@@ -165,6 +168,7 @@ def test_response_parsing_still_returns_valid_candidates(monkeypatch) -> None:
 
 def test_reduced_context_mode_builds_smaller_retry_prompt(monkeypatch) -> None:
     captured_user_prompt_lengths: list[int] = []
+    captured_response_format_types: list[str | None] = []
     existing_domains = [f"example-{index}.example" for index in range(1, 140)]
     site = _site()
     site.service_areas_json = [f"service-area-{index}-{'x' * 80}" for index in range(1, 30)]
@@ -172,6 +176,13 @@ def test_reduced_context_mode_builds_smaller_retry_prompt(monkeypatch) -> None:
     def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         assert timeout == 20
         payload = json.loads(request.data.decode("utf-8")) if isinstance(request.data, bytes) else {}
+        text_payload = payload.get("text")
+        response_format_type = None
+        if isinstance(text_payload, dict):
+            format_payload = text_payload.get("format")
+            if isinstance(format_payload, dict):
+                response_format_type = str(format_payload.get("type") or "")
+        captured_response_format_types.append(response_format_type)
         input_items = payload.get("input")
         assert isinstance(input_items, list)
         user_prompt = input_items[1]["content"]
@@ -200,6 +211,7 @@ def test_reduced_context_mode_builds_smaller_retry_prompt(monkeypatch) -> None:
 
     assert len(captured_user_prompt_lengths) == 2
     assert captured_user_prompt_lengths[1] < captured_user_prompt_lengths[0]
+    assert captured_response_format_types == ["json_schema", "json_schema"]
 
 
 def test_fallback_to_chat_completions_on_error(monkeypatch) -> None:
@@ -332,7 +344,149 @@ def test_openai_provider_malformed_content_is_normalized(monkeypatch) -> None:
         provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
 
     assert exc_info.value.code == "invalid_output"
+    assert exc_info.value.raw_output is not None
+    raw_debug_payload = json.loads(exc_info.value.raw_output)
+    assert raw_debug_payload["failure_kind"] == "malformed_output"
+    assert raw_debug_payload["malformed_output_reason"] == "json_decode_error"
     assert call_urls == ["https://api.openai.com/v1/responses"]
+
+
+def test_openai_provider_recovers_json_wrapped_in_markdown_fence(monkeypatch) -> None:
+    wrapped = f"```json\n{_candidate_json_text()}\n```"
+
+    def _wrapped_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "output": [{"content": [{"type": "output_text", "text": wrapped}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _wrapped_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    output = provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
+
+    assert len(output.candidates) == 1
+    assert output.candidates[0].suggested_domain == "competitor-one.example"
+
+
+def test_openai_provider_recovers_json_wrapped_in_prose(monkeypatch) -> None:
+    wrapped = f"Here is the requested payload:\n{_candidate_json_text()}\nThanks."
+
+    def _wrapped_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "output": [{"content": [{"type": "output_text", "text": wrapped}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _wrapped_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    output = provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
+
+    assert len(output.candidates) == 1
+    assert output.candidates[0].suggested_name == "Competitor One"
+
+
+def test_openai_provider_salvages_valid_candidates_from_partially_malformed_payload(monkeypatch) -> None:
+    partial_payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "Competitor One",
+                    "domain": "competitor-one.example",
+                    "competitor_type": "direct",
+                    "summary": "Direct overlap",
+                    "why_competitor": "Competes on service intent",
+                    "evidence": "Search result overlap",
+                    "confidence_score": 0.81,
+                },
+                {
+                    "name": 12345,
+                    "domain": None,
+                    "competitor_type": 7,
+                    "summary": {"invalid": True},
+                    "why_competitor": ["invalid"],
+                    "evidence": None,
+                    "confidence_score": "not-a-number",
+                },
+            ]
+        }
+    )
+
+    def _partial_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "output": [{"content": [{"type": "output_text", "text": partial_payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _partial_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    output = provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=2)
+
+    assert len(output.candidates) == 2
+    assert output.candidates[0].suggested_domain == "competitor-one.example"
+    assert output.candidates[1].suggested_name == "12345"
+    assert output.candidates[1].suggested_domain == ""
+    assert output.candidates[1].confidence_score == -1.0
+
+
+def test_openai_provider_reports_partial_json_reason_when_no_recovery_is_possible(monkeypatch) -> None:
+    truncated_payload = '{"candidates":[{"name":"Broken Candidate"'
+
+    def _partial_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "output": [{"content": [{"type": "output_text", "text": truncated_payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _partial_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    with pytest.raises(SEOCompetitorProfileProviderError) as exc_info:
+        provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
+
+    assert exc_info.value.code == "invalid_output"
+    assert exc_info.value.raw_output is not None
+    raw_debug_payload = json.loads(exc_info.value.raw_output)
+    assert raw_debug_payload["failure_kind"] == "malformed_output"
+    assert raw_debug_payload["malformed_output_reason"] == "partial_json"
 
 
 def test_openai_provider_logs_prompt_resolution_without_raw_prompt_text(monkeypatch, caplog) -> None:

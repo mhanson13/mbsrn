@@ -369,6 +369,7 @@ export interface CompetitorProviderAttemptDebug {
   requested_candidate_count: number;
   outcome: string;
   failure_kind: string | null;
+  malformed_output_reason?: string | null;
   request_duration_ms: number | null;
   timeout_seconds: number | null;
   web_search_enabled: boolean | null;
