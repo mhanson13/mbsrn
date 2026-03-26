@@ -179,6 +179,32 @@ def test_response_parsing_still_returns_valid_candidates(monkeypatch) -> None:
     assert output.candidates[0].suggested_domain == "competitor-one.example"
 
 
+def test_per_request_timeout_override_is_used_when_provided(monkeypatch) -> None:
+    observed_timeouts: list[int] = []
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        observed_timeouts.append(timeout)
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-4.1-mini-2026-01-01")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        timeout_seconds=30,
+    )
+
+    output = provider.generate_competitor_profiles(
+        site=_site(),
+        existing_domains=["known.example"],
+        candidate_count=1,
+        timeout_seconds=12,
+    )
+
+    assert len(output.candidates) == 1
+    assert observed_timeouts == [12]
+
+
 def test_reduced_context_mode_builds_smaller_retry_prompt(monkeypatch) -> None:
     captured_user_prompt_lengths: list[int] = []
     captured_response_format_types: list[str | None] = []
@@ -679,6 +705,8 @@ def test_structured_provider_logs_include_start_and_complete_trace_fields(monkey
     assert complete_event["web_search_enabled"] is True
     assert complete_event["degraded_mode"] is True
     assert complete_event["parsed_candidate_count"] == 1
+    assert complete_event["discovery_candidate_count"] == 1
+    assert complete_event["post_parse_candidate_count"] == 1
     assert complete_event["duration_ms"] >= 0
 
     assert "SENSITIVE_PROMPT_BLOCK" not in caplog.text

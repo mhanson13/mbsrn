@@ -156,6 +156,8 @@ function buildBusinessSettings(overrides: Partial<BusinessSettings> = {}): Busin
     competitor_candidate_big_box_penalty: 20,
     competitor_candidate_directory_penalty: 35,
     competitor_candidate_local_alignment_bonus: 10,
+    competitor_primary_timeout_seconds: null,
+    competitor_degraded_timeout_seconds: null,
     ai_prompt_text_competitor: null,
     ai_prompt_text_recommendations: null,
     timezone: "America/Denver",

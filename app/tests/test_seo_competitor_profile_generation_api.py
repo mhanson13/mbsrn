@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import timedelta
+import json
+import logging
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -369,6 +371,105 @@ class _TimeoutThenSuccessCompetitorProfileProvider:
             model_name=self.model_name,
             prompt_version=self.prompt_version,
             raw_response="{\"candidates\":[{\"name\":\"Recovered Competitor\"}]}",
+        )
+
+
+class _TimeoutConfiguredThenSuccessCompetitorProfileProvider:
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    prompt_version = "seo-competitor-profile-v1"
+    timeout_seconds = 30
+
+    def __init__(self) -> None:
+        self.timeout_seconds_by_attempt: list[int] = []
+        self.degraded_modes: list[bool] = []
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+        reduced_context_mode: bool = False,
+        run_id: str | None = None,
+        attempt_number: int | None = None,
+        degraded_mode: bool = False,
+        timeout_seconds: int | None = None,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count, reduced_context_mode, run_id, attempt_number
+        effective_timeout_seconds = int(timeout_seconds) if timeout_seconds is not None else int(self.timeout_seconds)
+        self.timeout_seconds_by_attempt.append(effective_timeout_seconds)
+        self.degraded_modes.append(bool(degraded_mode))
+        if len(self.timeout_seconds_by_attempt) == 1:
+            raise SEOCompetitorProfileProviderError(
+                code="timeout",
+                safe_message="provider timeout",
+                provider_name=self.provider_name,
+                model_name=self.model_name,
+                prompt_version=self.prompt_version,
+                raw_output=(
+                    "{\"failure_kind\":\"timeout\",\"endpoint_path\":\"/responses\","
+                    "\"request_debug\":{\"request_duration_ms\":1500,"
+                    f"\"timeout_seconds\":{effective_timeout_seconds},"
+                    "\"web_search_enabled\":true,\"prompt_size_risk\":\"normal\"}}"
+                ),
+            )
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Recovered Timeout Candidate",
+                    suggested_domain="recovered-timeout.example",
+                    competitor_type="direct",
+                    summary="Recovered after timeout configuration test.",
+                    why_competitor="Used to validate timeout settings are passed per attempt.",
+                    evidence="Deterministic provider test fixture.",
+                    confidence_score=0.83,
+                )
+            ],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Recovered Timeout Candidate"}]}',
+        )
+
+
+class _TimeoutCaptureSuccessCompetitorProfileProvider:
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    prompt_version = "seo-competitor-profile-v1"
+    timeout_seconds = 37
+
+    def __init__(self) -> None:
+        self.timeout_seconds_by_attempt: list[int] = []
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+        reduced_context_mode: bool = False,
+        timeout_seconds: int | None = None,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count, reduced_context_mode
+        effective_timeout_seconds = int(timeout_seconds) if timeout_seconds is not None else int(self.timeout_seconds)
+        self.timeout_seconds_by_attempt.append(effective_timeout_seconds)
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Timeout Default Candidate",
+                    suggested_domain="timeout-default.example",
+                    competitor_type="direct",
+                    summary="Valid candidate for timeout default fallback test.",
+                    why_competitor="Ensures default provider timeout remains in effect when unset.",
+                    evidence="Deterministic provider fixture.",
+                    confidence_score=0.79,
+                )
+            ],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Timeout Default Candidate"}]}',
         )
 
 
@@ -1094,6 +1195,19 @@ def _set_run_stale(
     db_session.commit()
 
 
+def _structured_event_records(caplog) -> list[dict[str, object]]:  # noqa: ANN001
+    events: list[dict[str, object]] = []
+    for record in caplog.records:
+        message = record.getMessage()
+        try:
+            parsed = json.loads(message)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, dict) and isinstance(parsed.get("event"), str):
+            events.append(parsed)
+    return events
+
+
 def test_generate_endpoint_queues_run_and_schedules_executor(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
@@ -1367,8 +1481,8 @@ def test_timeout_provider_failure_marks_run_failed_safely(db_session, seeded_bus
     assert payload["provider_attempts"][1]["attempt_number"] == 2
     assert payload["provider_attempts"][1]["degraded_mode"] is True
     assert payload["provider_attempts"][1]["failure_kind"] == "timeout"
-    assert payload["provider_attempts"][0]["requested_candidate_count"] == 2
-    assert payload["provider_attempts"][1]["requested_candidate_count"] == 1
+    assert payload["provider_attempts"][0]["requested_candidate_count"] == 4
+    assert payload["provider_attempts"][1]["requested_candidate_count"] == 3
     persisted_run = (
         db_session.query(SEOCompetitorProfileGenerationRun)
         .filter(SEOCompetitorProfileGenerationRun.business_id == seeded_business.id)
@@ -1457,14 +1571,119 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert payload["provider_attempts"][1]["degraded_mode"] is True
     assert payload["provider_attempts"][1]["reduced_context_mode"] is True
     assert payload["provider_attempts"][1]["outcome"] == "success"
-    assert payload["provider_attempts"][1]["requested_candidate_count"] == 3
+    assert payload["provider_attempts"][1]["requested_candidate_count"] == 6
     assert payload["provider_attempts"][0]["prompt_total_chars"] > payload["provider_attempts"][1]["prompt_total_chars"]
     assert payload["provider_attempts"][0]["context_json_chars"] > payload["provider_attempts"][1]["context_json_chars"]
-    assert provider.requested_candidate_counts == [5, 3]
+    assert provider.requested_candidate_counts == [7, 6]
     assert provider.reduced_context_modes == [False, True]
     assert provider.run_ids == [run_id, run_id]
     assert provider.attempt_numbers == [1, 2]
     assert provider.degraded_modes == [False, True]
+
+
+def test_timeout_retry_uses_business_scoped_primary_and_degraded_timeouts(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    seeded_business.competitor_primary_timeout_seconds = 41
+    seeded_business.competitor_degraded_timeout_seconds = 19
+    db_session.add(seeded_business)
+    db_session.commit()
+
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id, candidate_count=4)
+    run_id = created["run"]["id"]
+    provider = _TimeoutConfiguredThenSuccessCompetitorProfileProvider()
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert provider.timeout_seconds_by_attempt == [41, 19]
+    assert provider.degraded_modes == [False, True]
+    assert payload["provider_attempt_count"] == 2
+    assert payload["provider_attempts"][0]["timeout_seconds"] == 41
+    assert payload["provider_attempts"][1]["timeout_seconds"] == 19
+
+
+def test_timeout_defaults_fall_back_to_provider_default_when_business_settings_absent(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    seeded_business.competitor_primary_timeout_seconds = None
+    seeded_business.competitor_degraded_timeout_seconds = None
+    db_session.add(seeded_business)
+    db_session.commit()
+
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id, candidate_count=1)
+    run_id = created["run"]["id"]
+    provider = _TimeoutCaptureSuccessCompetitorProfileProvider()
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["run"]["status"] == "completed"
+    assert provider.timeout_seconds_by_attempt == [37]
+
+
+def test_generation_logs_discovery_pipeline_counts(db_session, seeded_business, caplog) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=2)["run"]["id"]
+
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=_DeterministicCompetitorProfileProvider(),
+        )
+
+    events = _structured_event_records(caplog)
+    discovery_event = next(item for item in events if item.get("event") == "competitor_discovery_pipeline_counts")
+    assert discovery_event["run_id"] == run_id
+    assert discovery_event["business_id"] == seeded_business.id
+    assert discovery_event["site_id"] == site_id
+    assert discovery_event["requested_candidate_count"] == 2
+    assert discovery_event["discovery_candidate_count"] == 2
+    assert discovery_event["post_parse_candidate_count"] == 2
+    assert discovery_event["post_filter_candidate_count"] >= 0
+    assert discovery_event["final_candidate_count"] == 2
 
 
 def test_success_attempt_debug_captures_endpoint_and_web_search_metadata(db_session, seeded_business) -> None:
@@ -1620,7 +1839,7 @@ def test_non_timeout_provider_failure_does_not_retry(db_session, seeded_business
     assert payload["provider_attempts"][0]["degraded_mode"] is False
     assert payload["provider_attempts"][0]["reduced_context_mode"] is False
     assert payload["provider_attempts"][0]["failure_kind"] == "provider_request"
-    assert provider.requested_candidate_counts == [5]
+    assert provider.requested_candidate_counts == [7]
     assert provider.reduced_context_modes == [False]
 
 

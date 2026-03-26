@@ -108,8 +108,9 @@ class MisconfiguredSEOCompetitorProfileGenerationProvider:
         existing_domains: list[str],
         candidate_count: int,
         reduced_context_mode: bool = False,
+        timeout_seconds: int | None = None,
     ) -> SEOCompetitorProfileGenerationOutput:
-        del site, existing_domains, candidate_count, reduced_context_mode
+        del site, existing_domains, candidate_count, reduced_context_mode, timeout_seconds
         raise SEOCompetitorProfileProviderError(
             code=_PROVIDER_ERROR_AUTH_CONFIG,
             safe_message=self.safe_message,
@@ -165,7 +166,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         run_id: str | None = None,
         attempt_number: int | None = None,
         degraded_mode: bool = False,
+        timeout_seconds: int | None = None,
     ) -> SEOCompetitorProfileGenerationOutput:
+        effective_timeout_seconds = self._resolve_timeout_seconds(timeout_seconds)
         self._log_prompt_resolution_metadata()
         prompt = build_seo_competitor_profile_prompt(
             site=site,
@@ -182,6 +185,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             run_id=run_id,
             attempt_number=attempt_number,
             degraded_mode=degraded_mode,
+            timeout_seconds=effective_timeout_seconds,
         )
         self._log_prompt_telemetry(responses_request_debug)
         responses_payload = self._build_responses_request_payload(
@@ -196,6 +200,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             run_id=run_id,
             attempt_number=attempt_number,
             degraded_mode=degraded_mode,
+            timeout_seconds=effective_timeout_seconds,
         )
         chat_payload = self._build_chat_completions_request_payload(
             system_prompt=prompt.system_prompt,
@@ -209,6 +214,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 responses_payload,
                 endpoint_path="/responses",
                 request_debug=responses_request_debug,
+                timeout_seconds=effective_timeout_seconds,
             )
             response_json = self._parse_json_object(
                 responses_response.body_text,
@@ -285,6 +291,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     chat_payload,
                     endpoint_path="/chat/completions",
                     request_debug=chat_request_debug,
+                    timeout_seconds=effective_timeout_seconds,
                 )
                 response_json = self._parse_json_object(
                     chat_response.body_text,
@@ -788,6 +795,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     minimum=0,
                     maximum=250000,
                 ),
+                "timeout_seconds_used": _coerce_optional_bounded_int(
+                    debug.get("timeout_seconds"),
+                    minimum=1,
+                    maximum=3600,
+                ),
             },
         )
 
@@ -818,7 +830,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "web_search_enabled": debug.get("web_search_enabled"),
             "degraded_mode": bool(debug.get("degraded_mode")),
             "reduced_context_mode": bool(debug.get("reduced_context_mode")),
+            "timeout_seconds_used": _coerce_optional_bounded_int(
+                debug.get("timeout_seconds"),
+                minimum=1,
+                maximum=3600,
+            ),
             "parsed_candidate_count": max(0, int(parsed_candidate_count)),
+            "discovery_candidate_count": max(0, int(parsed_candidate_count)),
+            "post_parse_candidate_count": max(0, int(parsed_candidate_count)),
         }
         if salvaged_candidate_count > 0:
             payload["salvaged_candidate_count"] = max(0, int(salvaged_candidate_count))
@@ -856,6 +875,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "web_search_enabled": debug.get("web_search_enabled"),
             "degraded_mode": bool(debug.get("degraded_mode")),
             "reduced_context_mode": bool(debug.get("reduced_context_mode")),
+            "timeout_seconds_used": _coerce_optional_bounded_int(
+                debug.get("timeout_seconds"),
+                minimum=1,
+                maximum=3600,
+            ),
             "error_type": _sanitize_log_error_type(error_type),
             "failure_kind": failure_kind,
         }
@@ -938,10 +962,12 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         *,
         endpoint_path: str,
         request_debug: dict[str, object] | None = None,
+        timeout_seconds: int | None = None,
     ) -> _OpenAICompletionResponse:
         normalized_endpoint = endpoint_path.strip() or "/chat/completions"
         if not normalized_endpoint.startswith("/"):
             normalized_endpoint = f"/{normalized_endpoint}"
+        effective_timeout_seconds = self._resolve_timeout_seconds(timeout_seconds)
         body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
         request = urllib.request.Request(
             url=f"{self.api_base_url}{normalized_endpoint}",
@@ -959,7 +985,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            with urllib.request.urlopen(request, timeout=effective_timeout_seconds) as response:
                 body_text = response.read().decode("utf-8", errors="replace")
             request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
             return _OpenAICompletionResponse(
@@ -1215,6 +1241,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
     def _model_supports_temperature(self) -> bool:
         return not self.model_name.strip().lower().startswith("gpt-5-mini")
 
+    def _resolve_timeout_seconds(self, timeout_seconds: int | None) -> int:
+        if timeout_seconds is None:
+            return self.timeout_seconds
+        try:
+            return max(1, int(timeout_seconds))
+        except (TypeError, ValueError):
+            return self.timeout_seconds
+
     def _extract_provider_error_details(self, body_text: str) -> tuple[str | None, str | None, str | None]:
         normalized_body = body_text.strip()
         if not normalized_body:
@@ -1261,6 +1295,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         run_id: str | None,
         attempt_number: int | None,
         degraded_mode: bool,
+        timeout_seconds: int,
     ) -> dict[str, object]:
         metrics = prompt_metrics or {}
         prompt_total_chars = _coerce_bounded_int(
@@ -1306,7 +1341,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "user_prompt_chars": user_prompt_chars,
             "reduced_context_mode": reduced_context_mode,
             "prompt_size_risk": prompt_size_risk,
-            "timeout_seconds": self.timeout_seconds,
+            "timeout_seconds": timeout_seconds,
             "web_search_enabled": normalized_endpoint == "/responses",
         }
 

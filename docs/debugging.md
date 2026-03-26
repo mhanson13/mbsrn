@@ -48,6 +48,18 @@ Common interpretations:
 - `/chat/completions` + `web_search_enabled=false`: explicit capability downgrade (web search unsupported for request/model).
 - `degraded_mode=true` and `reduced_context_mode=true`: timeout retry path was used.
 
+Timeout tuning notes:
+
+- `timeout_seconds` reflects the effective timeout used for that attempt.
+- Primary attempts use `competitor_primary_timeout_seconds` when configured.
+- Degraded retry attempts use `competitor_degraded_timeout_seconds` when configured.
+- If a timeout setting is unset, runtime falls back to deployment/provider default timeout behavior.
+
+Pattern checks:
+
+- repeated first-attempt timeout with quick degraded recovery usually indicates primary timeout is too low.
+- repeated timeout on both attempts usually indicates network/provider latency pressure; consider raising both timeout settings within the allowed range.
+
 ## Invalid Candidate Diagnostics
 
 Rejected competitor debug reasons now include specific invalid-input classifications:

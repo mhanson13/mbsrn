@@ -108,6 +108,8 @@ DEFAULT_PREVIEW_ACCURACY_LAST_N = 10
 COMPETITOR_DOMAIN_PROBE_TIMEOUT_SECONDS = 4
 COMPETITOR_DOMAIN_PROBE_MAX_RESPONSE_BYTES = 200_000
 COMPETITOR_DOMAIN_PROBE_MAX_REDIRECTS = 3
+COMPETITOR_TIMEOUT_SECONDS_MIN = 10
+COMPETITOR_TIMEOUT_SECONDS_MAX = 90
 COMPETITOR_DOMAIN_PROBE_TEST_TLDS = (".example", ".invalid", ".test", ".localhost")
 REJECTED_CANDIDATE_DEBUG_MAX_ITEMS = 20
 REJECTED_CANDIDATE_DEBUG_SUMMARY_MAX_CHARS = 240
@@ -126,7 +128,9 @@ _MAX_SITE_CONTENT_SIGNALS = 120
 _MAX_SITE_CONTENT_SIGNAL_LENGTH = 200
 _MAX_PROVIDER_ATTEMPTS_DEBUG_ITEMS = 2
 _TIMEOUT_RETRY_BACKOFF_SECONDS = 0.2
-_DEGRADED_RETRY_MAX_CANDIDATE_COUNT = 3
+_DISCOVERY_CANDIDATE_BUFFER = 2
+_MAX_DISCOVERY_CANDIDATE_COUNT = 20
+_MIN_DEGRADED_DISCOVERY_CANDIDATE_COUNT = 2
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
 _UNKNOWN_NAME_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 _UNKNOWN_PLACEHOLDER_NAME_TOKENS = {
@@ -603,6 +607,7 @@ class SEOCompetitorProfileGenerationService:
             self._attach_site_content_signals(site=site, business_id=business_id, site_id=site_id)
             resolved_prompt = self._apply_resolved_competitor_prompt_settings(business)
             output = self._generate_competitor_profiles_with_timeout_retry(
+                business=business,
                 site=site,
                 existing_domains=existing_domains,
                 run_id=run.id,
@@ -620,6 +625,11 @@ class SEOCompetitorProfileGenerationService:
                 existing_domains=existing_domains,
                 run=run,
                 raw_candidates=output.candidates,
+            )
+            self._log_discovery_pipeline_telemetry(
+                run=run,
+                draft_result=draft_result,
+                parsed_candidate_count=len(output.candidates),
             )
             drafts = draft_result.drafts
             if not drafts:
@@ -825,6 +835,35 @@ class SEOCompetitorProfileGenerationService:
                 exclusion_counts_by_reason=draft_result.exclusion_counts_by_reason if draft_result else None,
             )
             return None
+
+    def _log_discovery_pipeline_telemetry(
+        self,
+        *,
+        run: SEOCompetitorProfileGenerationRun,
+        draft_result: SEOCompetitorProfileDraftBuildResult,
+        parsed_candidate_count: int,
+    ) -> None:
+        post_filter_candidate_count = max(
+            0,
+            int(draft_result.candidate_pipeline_summary.final_candidate_count)
+            + int(draft_result.candidate_pipeline_summary.removed_by_final_limit_count),
+        )
+        payload = {
+            "event": "competitor_discovery_pipeline_counts",
+            "run_id": run.id,
+            "business_id": run.business_id,
+            "site_id": run.site_id,
+            "requested_candidate_count": max(1, int(run.requested_candidate_count or 1)),
+            "discovery_candidate_count": max(0, int(draft_result.raw_candidate_count)),
+            "post_parse_candidate_count": max(0, int(parsed_candidate_count)),
+            "post_filter_candidate_count": post_filter_candidate_count,
+            "final_candidate_count": max(0, len(draft_result.drafts)),
+        }
+        try:
+            message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+        except (TypeError, ValueError):
+            message = "competitor_discovery_pipeline_counts"
+        logger.info(message, extra={"json_fields": payload})
 
     def list_runs(
         self,
@@ -2139,6 +2178,7 @@ class SEOCompetitorProfileGenerationService:
     def _generate_competitor_profiles_with_timeout_retry(
         self,
         *,
+        business: Business,
         site: SEOSite,
         existing_domains: list[str],
         run_id: str,
@@ -2147,10 +2187,15 @@ class SEOCompetitorProfileGenerationService:
         prompt_text_competitor: str,
     ) -> SEOCompetitorProfileGenerationOutput:
         effective_requested_count = max(1, int(requested_candidate_count))
+        discovery_candidate_count = self._discovery_candidate_count(effective_requested_count)
+        primary_timeout_seconds = self._resolve_competitor_attempt_timeout_seconds(
+            business=business,
+            degraded_mode=False,
+        )
         first_prompt_metrics = self._build_provider_attempt_prompt_metrics(
             site=site,
             existing_domains=existing_domains,
-            candidate_count=effective_requested_count,
+            candidate_count=discovery_candidate_count,
             reduced_context_mode=False,
             prompt_text_competitor=prompt_text_competitor,
         )
@@ -2159,11 +2204,12 @@ class SEOCompetitorProfileGenerationService:
             output = self._invoke_provider_generate_competitor_profiles(
                 site=site,
                 existing_domains=existing_domains,
-                candidate_count=effective_requested_count,
+                candidate_count=discovery_candidate_count,
                 reduced_context_mode=False,
                 run_id=run_id,
                 attempt_number=1,
                 degraded_mode=False,
+                attempt_timeout_seconds=primary_timeout_seconds,
             )
         except SEOCompetitorProfileProviderError as exc:
             first_duration_ms = max(0, int((time.perf_counter() - first_attempt_start) * 1000))
@@ -2171,8 +2217,9 @@ class SEOCompetitorProfileGenerationService:
                 attempt_number=1,
                 degraded_mode=False,
                 prompt_metrics=first_prompt_metrics,
-                requested_candidate_count=effective_requested_count,
+                requested_candidate_count=discovery_candidate_count,
                 fallback_duration_ms=first_duration_ms,
+                fallback_timeout_seconds=primary_timeout_seconds,
                 provider_output=None,
                 provider_error=exc,
             )
@@ -2180,7 +2227,14 @@ class SEOCompetitorProfileGenerationService:
             if first_attempt_debug.failure_kind != "timeout":
                 raise exc
 
-            degraded_candidate_count = self._degraded_retry_candidate_count(effective_requested_count)
+            degraded_candidate_count = self._degraded_retry_candidate_count(
+                requested_candidate_count=effective_requested_count,
+                initial_discovery_candidate_count=discovery_candidate_count,
+            )
+            degraded_timeout_seconds = self._resolve_competitor_attempt_timeout_seconds(
+                business=business,
+                degraded_mode=True,
+            )
             retry_prompt_metrics = self._build_provider_attempt_prompt_metrics(
                 site=site,
                 existing_domains=existing_domains,
@@ -2200,6 +2254,7 @@ class SEOCompetitorProfileGenerationService:
                     run_id=run_id,
                     attempt_number=2,
                     degraded_mode=True,
+                    attempt_timeout_seconds=degraded_timeout_seconds,
                 )
             except SEOCompetitorProfileProviderError as retry_exc:
                 retry_duration_ms = max(0, int((time.perf_counter() - retry_start) * 1000))
@@ -2210,6 +2265,7 @@ class SEOCompetitorProfileGenerationService:
                         prompt_metrics=retry_prompt_metrics,
                         requested_candidate_count=degraded_candidate_count,
                         fallback_duration_ms=retry_duration_ms,
+                        fallback_timeout_seconds=degraded_timeout_seconds,
                         provider_output=None,
                         provider_error=retry_exc,
                     )
@@ -2224,6 +2280,7 @@ class SEOCompetitorProfileGenerationService:
                     prompt_metrics=retry_prompt_metrics,
                     requested_candidate_count=degraded_candidate_count,
                     fallback_duration_ms=retry_duration_ms,
+                    fallback_timeout_seconds=degraded_timeout_seconds,
                     provider_output=output,
                     provider_error=None,
                 )
@@ -2231,11 +2288,13 @@ class SEOCompetitorProfileGenerationService:
             logger.info(
                 (
                     "SEO competitor timeout retry recovered business_id=%s site_id=%s "
-                    "attempts=%s degraded_candidate_count=%s first_attempt_duration_ms=%s retry_duration_ms=%s"
+                    "attempts=%s first_discovery_candidate_count=%s degraded_candidate_count=%s "
+                    "first_attempt_duration_ms=%s retry_duration_ms=%s"
                 ),
                 site.business_id,
                 site.id,
                 2,
+                discovery_candidate_count,
                 degraded_candidate_count,
                 first_attempt_debug.request_duration_ms,
                 provider_attempts[-1].request_duration_ms,
@@ -2248,8 +2307,9 @@ class SEOCompetitorProfileGenerationService:
                 attempt_number=1,
                 degraded_mode=False,
                 prompt_metrics=first_prompt_metrics,
-                requested_candidate_count=effective_requested_count,
+                requested_candidate_count=discovery_candidate_count,
                 fallback_duration_ms=first_duration_ms,
+                fallback_timeout_seconds=primary_timeout_seconds,
                 provider_output=output,
                 provider_error=None,
             )
@@ -2266,6 +2326,7 @@ class SEOCompetitorProfileGenerationService:
         run_id: str | None = None,
         attempt_number: int | None = None,
         degraded_mode: bool = False,
+        attempt_timeout_seconds: int | None = None,
     ) -> SEOCompetitorProfileGenerationOutput:
         provider_method = self.provider.generate_competitor_profiles
         try:
@@ -2287,6 +2348,8 @@ class SEOCompetitorProfileGenerationService:
                 kwargs["attempt_number"] = attempt_number
             if "degraded_mode" in parameters:
                 kwargs["degraded_mode"] = degraded_mode
+            if "timeout_seconds" in parameters and attempt_timeout_seconds is not None:
+                kwargs["timeout_seconds"] = attempt_timeout_seconds
             return provider_method(**kwargs)
         return provider_method(**kwargs)
 
@@ -2332,11 +2395,48 @@ class SEOCompetitorProfileGenerationService:
         return max(0, parsed)
 
     @staticmethod
-    def _degraded_retry_candidate_count(requested_candidate_count: int) -> int:
+    def _discovery_candidate_count(requested_candidate_count: int) -> int:
         normalized = max(1, int(requested_candidate_count))
-        if normalized <= 1:
-            return 1
-        return max(1, min(_DEGRADED_RETRY_MAX_CANDIDATE_COUNT, normalized - 1))
+        boosted = normalized + _DISCOVERY_CANDIDATE_BUFFER
+        return max(1, min(_MAX_DISCOVERY_CANDIDATE_COUNT, boosted))
+
+    @staticmethod
+    def _degraded_retry_candidate_count(
+        *,
+        requested_candidate_count: int,
+        initial_discovery_candidate_count: int,
+    ) -> int:
+        requested = max(1, int(requested_candidate_count))
+        initial_discovery = max(requested, int(initial_discovery_candidate_count))
+        degraded_target = max(requested, initial_discovery - 1)
+        if requested <= 1:
+            degraded_target = max(_MIN_DEGRADED_DISCOVERY_CANDIDATE_COUNT, degraded_target)
+        return max(1, min(_MAX_DISCOVERY_CANDIDATE_COUNT, degraded_target))
+
+    def _resolve_competitor_attempt_timeout_seconds(self, *, business: Business, degraded_mode: bool) -> int | None:
+        configured_timeout_raw: object | None
+        if degraded_mode:
+            configured_timeout_raw = business.competitor_degraded_timeout_seconds
+        else:
+            configured_timeout_raw = business.competitor_primary_timeout_seconds
+
+        configured_timeout_seconds = self._coerce_competitor_timeout_seconds(configured_timeout_raw)
+        if configured_timeout_seconds is not None:
+            return configured_timeout_seconds
+
+        return self._coerce_competitor_timeout_seconds(
+            getattr(self.provider, "timeout_seconds", None)
+        )
+
+    @staticmethod
+    def _coerce_competitor_timeout_seconds(value: object) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed < COMPETITOR_TIMEOUT_SECONDS_MIN or parsed > COMPETITOR_TIMEOUT_SECONDS_MAX:
+            return None
+        return parsed
 
     def _build_provider_attempt_debug(
         self,
@@ -2346,6 +2446,7 @@ class SEOCompetitorProfileGenerationService:
         prompt_metrics: _ProviderAttemptPromptMetrics,
         requested_candidate_count: int,
         fallback_duration_ms: int,
+        fallback_timeout_seconds: int | None,
         provider_output: SEOCompetitorProfileGenerationOutput | None,
         provider_error: SEOCompetitorProfileProviderError | None,
     ) -> SEOCompetitorProfileProviderAttemptDebug:
@@ -2398,6 +2499,8 @@ class SEOCompetitorProfileGenerationService:
                 web_search_enabled = provider_output.web_search_enabled
             if provider_output.request_duration_ms is not None:
                 request_duration_ms = max(0, int(provider_output.request_duration_ms))
+        if timeout_seconds is None and fallback_timeout_seconds is not None:
+            timeout_seconds = max(1, int(fallback_timeout_seconds))
         return SEOCompetitorProfileProviderAttemptDebug(
             attempt_number=max(1, int(attempt_number)),
             degraded_mode=bool(degraded_mode),

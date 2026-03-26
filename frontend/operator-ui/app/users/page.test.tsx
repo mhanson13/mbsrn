@@ -14,6 +14,8 @@ import {
   COMPETITOR_DIRECTORY_PENALTY_MAX,
   COMPETITOR_MIN_RELEVANCE_SCORE_MIN,
   COMPETITOR_MIN_RELEVANCE_SCORE_MAX,
+  COMPETITOR_TIMEOUT_SECONDS_MAX,
+  COMPETITOR_TIMEOUT_SECONDS_MIN,
   CRAWL_PAGE_LIMIT_MAX,
   CRAWL_PAGE_LIMIT_MIN,
 } from "../../lib/validation/constants";
@@ -53,6 +55,8 @@ const COMPETITOR_MIN_RELEVANCE_INPUT_RANGE_ERROR =
   `Minimum relevance score must be an integer between ${COMPETITOR_MIN_RELEVANCE_SCORE_MIN} and ${COMPETITOR_MIN_RELEVANCE_SCORE_MAX}.`;
 const COMPETITOR_DIRECTORY_INPUT_RANGE_ERROR =
   `Directory/aggregator penalty must be an integer between ${COMPETITOR_DIRECTORY_PENALTY_MIN} and ${COMPETITOR_DIRECTORY_PENALTY_MAX}.`;
+const COMPETITOR_PRIMARY_TIMEOUT_INPUT_RANGE_ERROR =
+  `Primary timeout must be blank or an integer between ${COMPETITOR_TIMEOUT_SECONDS_MIN} and ${COMPETITOR_TIMEOUT_SECONDS_MAX}.`;
 
 jest.mock("../../components/useOperatorContext", () => ({
   useOperatorContext: () => mockUseOperatorContext(),
@@ -126,6 +130,8 @@ function buildBusinessSettings(overrides: Partial<BusinessSettings> = {}): Busin
     competitor_candidate_big_box_penalty: 20,
     competitor_candidate_directory_penalty: 35,
     competitor_candidate_local_alignment_bonus: 10,
+    competitor_primary_timeout_seconds: null,
+    competitor_degraded_timeout_seconds: null,
     ai_prompt_text_competitor: null,
     ai_prompt_text_recommendations: null,
     timezone: "America/Denver",
@@ -847,6 +853,70 @@ describe("admin page compatibility route", () => {
       }),
     );
     await screen.findByText("AI competitor candidate quality settings updated.");
+  });
+
+  it("renders competitor timeout controls with allowed range guidance", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+    mockFetchBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        competitor_primary_timeout_seconds: 45,
+        competitor_degraded_timeout_seconds: 25,
+      }),
+    );
+
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    expect(screen.getByLabelText("Competitor Primary Timeout Seconds")).toHaveValue(45);
+    expect(screen.getByLabelText("Competitor Degraded Retry Timeout Seconds")).toHaveValue(25);
+    expect(
+      screen.getByText(
+        `Allowed range: ${COMPETITOR_TIMEOUT_SECONDS_MIN}-${COMPETITOR_TIMEOUT_SECONDS_MAX} seconds.`,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("updates competitor timeout settings for admins", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+    mockUpdateBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        competitor_primary_timeout_seconds: 42,
+        competitor_degraded_timeout_seconds: 24,
+      }),
+    );
+
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    fireEvent.change(screen.getByLabelText("Competitor Primary Timeout Seconds"), { target: { value: "42" } });
+    fireEvent.change(screen.getByLabelText("Competitor Degraded Retry Timeout Seconds"), { target: { value: "24" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Competitor Timeouts" }));
+
+    await waitFor(() =>
+      expect(mockUpdateBusinessSettings).toHaveBeenCalledWith("token-1", "biz-1", {
+        competitor_primary_timeout_seconds: 42,
+        competitor_degraded_timeout_seconds: 24,
+      }),
+    );
+    await screen.findByText("Competitor generation timeout settings updated.");
+  });
+
+  it("rejects competitor timeout values outside allowed bounds", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    fireEvent.change(screen.getByLabelText("Competitor Primary Timeout Seconds"), {
+      target: { value: String(COMPETITOR_TIMEOUT_SECONDS_MAX + 1) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Competitor Timeouts" }));
+
+    expect(mockUpdateBusinessSettings).not.toHaveBeenCalled();
+    expect(screen.getByText(COMPETITOR_PRIMARY_TIMEOUT_INPUT_RANGE_ERROR)).toBeInTheDocument();
   });
 
   it("does not block crawl saves when competitor quality persisted values are invalid", async () => {

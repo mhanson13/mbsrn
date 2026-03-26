@@ -29,6 +29,8 @@ _COMPETITOR_CANDIDATE_DIRECTORY_PENALTY_MIN = 0
 _COMPETITOR_CANDIDATE_DIRECTORY_PENALTY_MAX = 50
 _COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MIN = 0
 _COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MAX = 50
+_COMPETITOR_TIMEOUT_SECONDS_MIN = 10
+_COMPETITOR_TIMEOUT_SECONDS_MAX = 90
 _NOTIFICATION_SETTING_FIELDS = {
     "notification_phone",
     "notification_email",
@@ -42,6 +44,10 @@ _COMPETITOR_CANDIDATE_SETTING_FIELDS = {
     "competitor_candidate_big_box_penalty",
     "competitor_candidate_directory_penalty",
     "competitor_candidate_local_alignment_bonus",
+}
+_COMPETITOR_TIMEOUT_SETTING_FIELDS = {
+    "competitor_primary_timeout_seconds",
+    "competitor_degraded_timeout_seconds",
 }
 _COMPETITOR_PREVIEW_MATCH_LOOKBACK_DAYS = 14
 
@@ -249,6 +255,14 @@ class BusinessSettingsService:
                 "competitor_candidate_local_alignment_bonus",
                 business.competitor_candidate_local_alignment_bonus,
             ),
+            "competitor_primary_timeout_seconds": updates.get(
+                "competitor_primary_timeout_seconds",
+                business.competitor_primary_timeout_seconds,
+            ),
+            "competitor_degraded_timeout_seconds": updates.get(
+                "competitor_degraded_timeout_seconds",
+                business.competitor_degraded_timeout_seconds,
+            ),
             "ai_prompt_text_competitor": updates.get(
                 "ai_prompt_text_competitor",
                 business.ai_prompt_text_competitor,
@@ -267,6 +281,8 @@ class BusinessSettingsService:
             self._validate_crawl_page_limit(effective)
         if _COMPETITOR_CANDIDATE_SETTING_FIELDS.intersection(updates.keys()):
             self._validate_competitor_candidate_quality_settings(effective)
+        if _COMPETITOR_TIMEOUT_SETTING_FIELDS.intersection(updates.keys()):
+            self._validate_competitor_timeout_settings(effective)
 
     def _validate_notification_settings(self, effective: dict) -> None:
         sms_enabled = bool(effective["sms_enabled"])
@@ -356,6 +372,29 @@ class BusinessSettingsService:
                     "competitor_candidate_local_alignment_bonus must be between "
                     f"{_COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MIN} and "
                     f"{_COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MAX}."
+                )
+            )
+
+    def _validate_competitor_timeout_settings(self, effective: dict) -> None:
+        self._validate_optional_competitor_timeout_field(
+            effective=effective,
+            field_name="competitor_primary_timeout_seconds",
+        )
+        self._validate_optional_competitor_timeout_field(
+            effective=effective,
+            field_name="competitor_degraded_timeout_seconds",
+        )
+
+    def _validate_optional_competitor_timeout_field(self, *, effective: dict, field_name: str) -> None:
+        raw_value = effective.get(field_name)
+        if raw_value is None:
+            return
+        timeout_seconds = int(raw_value)
+        if timeout_seconds < _COMPETITOR_TIMEOUT_SECONDS_MIN or timeout_seconds > _COMPETITOR_TIMEOUT_SECONDS_MAX:
+            raise BusinessSettingsValidationError(
+                (
+                    f"{field_name} must be between "
+                    f"{_COMPETITOR_TIMEOUT_SECONDS_MIN} and {_COMPETITOR_TIMEOUT_SECONDS_MAX}."
                 )
             )
 

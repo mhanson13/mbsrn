@@ -32,8 +32,11 @@ import {
   COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN,
   COMPETITOR_MIN_RELEVANCE_SCORE_MAX,
   COMPETITOR_MIN_RELEVANCE_SCORE_MIN,
+  COMPETITOR_TIMEOUT_SECONDS_MAX,
+  COMPETITOR_TIMEOUT_SECONDS_MIN,
   CRAWL_PAGE_LIMIT_MAX,
   CRAWL_PAGE_LIMIT_MIN,
+  DEFAULT_COMPETITOR_TIMEOUT_SECONDS,
   DEFAULT_CRAWL_PAGE_LIMIT,
   NOTIFICATION_EMAIL_REGEX,
   NOTIFICATION_PHONE_E164_REGEX,
@@ -55,6 +58,7 @@ interface SettingsSectionHealth {
 interface SettingsHealthSummary {
   crawl: SettingsSectionHealth;
   competitorQuality: SettingsSectionHealth;
+  competitorTimeouts: SettingsSectionHealth;
   notifications: SettingsSectionHealth;
 }
 
@@ -74,11 +78,33 @@ function parseBoundedInteger(input: string, bounds: { min: number; max: number }
   return parsed;
 }
 
+function parseOptionalBoundedInteger(
+  input: string,
+  bounds: { min: number; max: number },
+): number | null | "invalid" {
+  const normalized = input.trim();
+  if (!normalized) {
+    return null;
+  }
+  const parsed = parseBoundedInteger(normalized, bounds);
+  if (parsed === null) {
+    return "invalid";
+  }
+  return parsed;
+}
+
 function parseCrawlPageLimit(input: string): number | null {
   return parseBoundedInteger(input, {
     min: CRAWL_PAGE_LIMIT_MIN,
     max: CRAWL_PAGE_LIMIT_MAX,
   });
+}
+
+function timeoutSettingToInput(value: number | null): string {
+  if (typeof value === "number" && Number.isSafeInteger(value)) {
+    return String(value);
+  }
+  return "";
 }
 
 function isBoundedIntegerValue(value: number, bounds: { min: number; max: number }): boolean {
@@ -107,6 +133,7 @@ function evaluateSettingsHealth(settings: BusinessSettings | null): SettingsHeal
     return {
       crawl: { status: "valid", message: null },
       competitorQuality: { status: "valid", message: null },
+      competitorTimeouts: { status: "valid", message: null },
       notifications: { status: "valid", message: null },
     };
   }
@@ -133,6 +160,17 @@ function evaluateSettingsHealth(settings: BusinessSettings | null): SettingsHeal
       min: COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN,
       max: COMPETITOR_LOCAL_ALIGNMENT_BONUS_MAX,
     });
+  const competitorTimeoutsAreValid =
+    (settings.competitor_primary_timeout_seconds === null ||
+      isBoundedIntegerValue(settings.competitor_primary_timeout_seconds, {
+        min: COMPETITOR_TIMEOUT_SECONDS_MIN,
+        max: COMPETITOR_TIMEOUT_SECONDS_MAX,
+      })) &&
+    (settings.competitor_degraded_timeout_seconds === null ||
+      isBoundedIntegerValue(settings.competitor_degraded_timeout_seconds, {
+        min: COMPETITOR_TIMEOUT_SECONDS_MIN,
+        max: COMPETITOR_TIMEOUT_SECONDS_MAX,
+      }));
 
   const smsEnabled = settings.sms_enabled;
   const emailEnabled = settings.email_enabled;
@@ -152,6 +190,10 @@ function evaluateSettingsHealth(settings: BusinessSettings | null): SettingsHeal
     competitorQuality: {
       status: competitorQualityIsValid ? "valid" : "invalid",
       message: competitorQualityIsValid ? null : "One or more saved values need review.",
+    },
+    competitorTimeouts: {
+      status: competitorTimeoutsAreValid ? "valid" : "invalid",
+      message: competitorTimeoutsAreValid ? null : "One or more saved values need review.",
     },
     notifications: {
       status: notificationsAreValid ? "valid" : "invalid",
@@ -328,6 +370,36 @@ function safeCandidateQualitySettingsUpdateErrorMessage(error: unknown): string 
   return "Failed to update competitor quality settings.";
 }
 
+function safeCompetitorTimeoutSettingsUpdateErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "Only admin principals can update competitor generation timeout settings.";
+    }
+    if (error.status === 404) {
+      return "Business settings were not found in this tenant scope.";
+    }
+    if (error.status === 422) {
+      if (apiErrorMessageContains(error, "competitor_primary_timeout_seconds")) {
+        return (
+          "Primary timeout must be blank or an integer between " +
+          `${COMPETITOR_TIMEOUT_SECONDS_MIN} and ${COMPETITOR_TIMEOUT_SECONDS_MAX}.`
+        );
+      }
+      if (apiErrorMessageContains(error, "competitor_degraded_timeout_seconds")) {
+        return (
+          "Degraded retry timeout must be blank or an integer between " +
+          `${COMPETITOR_TIMEOUT_SECONDS_MIN} and ${COMPETITOR_TIMEOUT_SECONDS_MAX}.`
+        );
+      }
+      return "Unable to save competitor timeout settings. Please review the entered values.";
+    }
+  }
+  return "Failed to update competitor timeout settings.";
+}
+
 function safePromptSettingsUpdateErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 401) {
@@ -454,6 +526,11 @@ export default function AdminPage() {
   const [candidateQualitySubmitting, setCandidateQualitySubmitting] = useState(false);
   const [candidateQualityMessage, setCandidateQualityMessage] = useState<string | null>(null);
   const [candidateQualityError, setCandidateQualityError] = useState<string | null>(null);
+  const [competitorPrimaryTimeoutInput, setCompetitorPrimaryTimeoutInput] = useState("");
+  const [competitorDegradedTimeoutInput, setCompetitorDegradedTimeoutInput] = useState("");
+  const [competitorTimeoutSubmitting, setCompetitorTimeoutSubmitting] = useState(false);
+  const [competitorTimeoutMessage, setCompetitorTimeoutMessage] = useState<string | null>(null);
+  const [competitorTimeoutError, setCompetitorTimeoutError] = useState<string | null>(null);
   const [competitorPromptOverrideInput, setCompetitorPromptOverrideInput] = useState("");
   const [recommendationsPromptOverrideInput, setRecommendationsPromptOverrideInput] = useState("");
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
@@ -598,6 +675,8 @@ export default function AdminPage() {
         setCandidateBigBoxPenaltyInput(String(settings.competitor_candidate_big_box_penalty));
         setCandidateDirectoryPenaltyInput(String(settings.competitor_candidate_directory_penalty));
         setCandidateLocalAlignmentBonusInput(String(settings.competitor_candidate_local_alignment_bonus));
+        setCompetitorPrimaryTimeoutInput(timeoutSettingToInput(settings.competitor_primary_timeout_seconds));
+        setCompetitorDegradedTimeoutInput(timeoutSettingToInput(settings.competitor_degraded_timeout_seconds));
         setCompetitorPromptOverrideInput(settings.ai_prompt_text_competitor || "");
         setRecommendationsPromptOverrideInput(settings.ai_prompt_text_recommendations || "");
       } catch (err) {
@@ -739,6 +818,7 @@ export default function AdminPage() {
     event.preventDefault();
     setCrawlPageLimitMessage(null);
     setCrawlPageLimitError(null);
+    setCompetitorTimeoutMessage(null);
 
     const parsed = parseCrawlPageLimit(crawlPageLimitInput);
     if (parsed === null) {
@@ -769,6 +849,7 @@ export default function AdminPage() {
     setCrawlPageLimitMessage(null);
     setCandidateQualityMessage(null);
     setPromptOverrideMessage(null);
+    setCompetitorTimeoutMessage(null);
 
     const minRelevanceScore = parseBoundedInteger(candidateMinRelevanceScoreInput, {
       min: COMPETITOR_MIN_RELEVANCE_SCORE_MIN,
@@ -847,12 +928,66 @@ export default function AdminPage() {
     }
   };
 
+  const handleUpdateCompetitorTimeoutSettings = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCompetitorTimeoutError(null);
+    setCompetitorTimeoutMessage(null);
+    setCrawlPageLimitMessage(null);
+    setCandidateQualityMessage(null);
+    setPromptOverrideMessage(null);
+
+    const primaryTimeout = parseOptionalBoundedInteger(competitorPrimaryTimeoutInput, {
+      min: COMPETITOR_TIMEOUT_SECONDS_MIN,
+      max: COMPETITOR_TIMEOUT_SECONDS_MAX,
+    });
+    if (primaryTimeout === "invalid") {
+      setCompetitorTimeoutError(
+        (
+          "Primary timeout must be blank or an integer between " +
+          `${COMPETITOR_TIMEOUT_SECONDS_MIN} and ${COMPETITOR_TIMEOUT_SECONDS_MAX}.`
+        ),
+      );
+      return;
+    }
+
+    const degradedTimeout = parseOptionalBoundedInteger(competitorDegradedTimeoutInput, {
+      min: COMPETITOR_TIMEOUT_SECONDS_MIN,
+      max: COMPETITOR_TIMEOUT_SECONDS_MAX,
+    });
+    if (degradedTimeout === "invalid") {
+      setCompetitorTimeoutError(
+        (
+          "Degraded retry timeout must be blank or an integer between " +
+          `${COMPETITOR_TIMEOUT_SECONDS_MIN} and ${COMPETITOR_TIMEOUT_SECONDS_MAX}.`
+        ),
+      );
+      return;
+    }
+
+    setCompetitorTimeoutSubmitting(true);
+    try {
+      const updated = await updateBusinessSettings(context.token, context.businessId, {
+        competitor_primary_timeout_seconds: primaryTimeout,
+        competitor_degraded_timeout_seconds: degradedTimeout,
+      });
+      setBusinessSettings(updated);
+      setCompetitorPrimaryTimeoutInput(timeoutSettingToInput(updated.competitor_primary_timeout_seconds));
+      setCompetitorDegradedTimeoutInput(timeoutSettingToInput(updated.competitor_degraded_timeout_seconds));
+      setCompetitorTimeoutMessage("Competitor generation timeout settings updated.");
+    } catch (err) {
+      setCompetitorTimeoutError(safeCompetitorTimeoutSettingsUpdateErrorMessage(err));
+    } finally {
+      setCompetitorTimeoutSubmitting(false);
+    }
+  };
+
   const handleSavePromptOverrides = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setPromptOverrideMessage(null);
     setPromptOverrideError(null);
     setCrawlPageLimitMessage(null);
     setCandidateQualityMessage(null);
+    setCompetitorTimeoutMessage(null);
 
     setPromptOverrideSubmitting(true);
     try {
@@ -876,6 +1011,7 @@ export default function AdminPage() {
     setPromptOverrideError(null);
     setCrawlPageLimitMessage(null);
     setCandidateQualityMessage(null);
+    setCompetitorTimeoutMessage(null);
     setPromptOverrideSubmitting(true);
     try {
       const updated = await updateBusinessSettings(context.token, context.businessId, {
@@ -1361,6 +1497,65 @@ export default function AdminPage() {
           </div>
           {candidateQualityMessage ? <p className="hint">{candidateQualityMessage}</p> : null}
           {candidateQualityError ? <p className="hint error">{candidateQualityError}</p> : null}
+        </FormContainer>
+
+        <FormContainer onSubmit={(event) => void handleUpdateCompetitorTimeoutSettings(event)} noValidate>
+          <h2>AI Competitor Generation Timeouts</h2>
+          <p className="hint muted">
+            Admin-controlled timeouts for competitor generation attempts at the business scope.
+          </p>
+          {settingsHealth.competitorTimeouts.status === "invalid" ? (
+            <p className="hint warning">
+              Settings health: {settingsHealth.competitorTimeouts.message}
+            </p>
+          ) : null}
+
+          <label htmlFor="competitor-primary-timeout-seconds">Competitor Primary Timeout Seconds</label>
+          <input
+            id="competitor-primary-timeout-seconds"
+            type="number"
+            min={COMPETITOR_TIMEOUT_SECONDS_MIN}
+            max={COMPETITOR_TIMEOUT_SECONDS_MAX}
+            step={1}
+            value={competitorPrimaryTimeoutInput}
+            onChange={(event) => setCompetitorPrimaryTimeoutInput(event.target.value)}
+            disabled={businessSettingsLoading || competitorTimeoutSubmitting}
+            placeholder={String(DEFAULT_COMPETITOR_TIMEOUT_SECONDS)}
+          />
+          <p className="hint muted">
+            First full search-backed attempt timeout. Leave blank to use the deployment default.
+          </p>
+
+          <label htmlFor="competitor-degraded-timeout-seconds">Competitor Degraded Retry Timeout Seconds</label>
+          <input
+            id="competitor-degraded-timeout-seconds"
+            type="number"
+            min={COMPETITOR_TIMEOUT_SECONDS_MIN}
+            max={COMPETITOR_TIMEOUT_SECONDS_MAX}
+            step={1}
+            value={competitorDegradedTimeoutInput}
+            onChange={(event) => setCompetitorDegradedTimeoutInput(event.target.value)}
+            disabled={businessSettingsLoading || competitorTimeoutSubmitting}
+            placeholder={String(DEFAULT_COMPETITOR_TIMEOUT_SECONDS)}
+          />
+          <p className="hint muted">
+            Reduced-context degraded retry timeout. Leave blank to use the deployment default.
+          </p>
+
+          <p className="hint muted">
+            Allowed range: {COMPETITOR_TIMEOUT_SECONDS_MIN}-{COMPETITOR_TIMEOUT_SECONDS_MAX} seconds.
+          </p>
+          <div className="form-actions">
+            <button
+              className="button button-primary"
+              type="submit"
+              disabled={businessSettingsLoading || competitorTimeoutSubmitting}
+            >
+              {competitorTimeoutSubmitting ? "Saving..." : "Save Competitor Timeouts"}
+            </button>
+          </div>
+          {competitorTimeoutMessage ? <p className="hint">{competitorTimeoutMessage}</p> : null}
+          {competitorTimeoutError ? <p className="hint error">{competitorTimeoutError}</p> : null}
         </FormContainer>
 
         <FormContainer onSubmit={(event) => void handleSavePromptOverrides(event)} noValidate>

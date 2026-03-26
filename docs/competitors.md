@@ -236,6 +236,22 @@ Retry reduced-context behavior:
 - trims optional context blocks such as oversized domain lists and non-essential hint arrays
 - is retry-only; first attempt behavior is unchanged
 
+## Business-Scoped Competitor Timeout Settings
+
+Competitor generation timeout behavior is now tunable per business from admin settings with two persisted fields:
+
+- `competitor_primary_timeout_seconds`
+- `competitor_degraded_timeout_seconds`
+
+Behavior:
+
+- `competitor_primary_timeout_seconds` controls the first full search-backed attempt timeout.
+- `competitor_degraded_timeout_seconds` controls the reduced-context degraded retry timeout.
+- Allowed range for each setting: `10..90` seconds.
+- When a setting is unset (`null`), competitor generation keeps deployment/provider default timeout behavior for that attempt type.
+
+This change is scoped only to competitor profile generation and does not alter recommendation timeout behavior.
+
 ## Provider Attempt Debug Metadata
 
 Competitor run detail debug payloads can include bounded provider-attempt telemetry:
@@ -284,6 +300,30 @@ Low-result behavior:
   - degraded retry occurred
 
 This message is operator-facing guidance only and does not alter ranking, filtering, or persistence.
+
+## Discovery vs Filtering Stages
+
+Competitor generation uses a two-stage yield model:
+
+1. Discovery stage (provider output):
+   - runtime may request a slightly larger candidate pool than the final run request
+   - this improves odds that enough valid candidates survive strict filtering
+2. Filtering stage (deterministic validation + eligibility + tuning):
+   - invalid/malformed/low-relevance candidates are removed
+   - final output is still capped to the run `requested_candidate_count`
+
+Why returned candidates can be lower than discovered candidates:
+
+- strict domain/business validation rejects malformed entries
+- eligibility filters remove non-substitutable or low-usefulness candidates
+- tuning and deduplication remove weak or duplicate candidates
+- final run limit truncates any excess survivors above requested count
+
+Operator telemetry now distinguishes stage counts in logs:
+
+- `discovery_candidate_count`
+- `post_parse_candidate_count`
+- `post_filter_candidate_count`
 
 ## Competitor Prompt Context Hardening
 

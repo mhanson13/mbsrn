@@ -84,6 +84,8 @@ export interface BusinessSettings {
   competitor_candidate_big_box_penalty: number;
   competitor_candidate_directory_penalty: number;
   competitor_candidate_local_alignment_bonus: number;
+  competitor_primary_timeout_seconds: number | null;
+  competitor_degraded_timeout_seconds: number | null;
   ai_prompt_text_competitor: string | null;
   ai_prompt_text_recommendations: string | null;
   timezone: string;
@@ -103,6 +105,8 @@ export interface BusinessSettingsUpdateRequest {
   competitor_candidate_big_box_penalty?: number;
   competitor_candidate_directory_penalty?: number;
   competitor_candidate_local_alignment_bonus?: number;
+  competitor_primary_timeout_seconds?: number | null;
+  competitor_degraded_timeout_seconds?: number | null;
   ai_prompt_text_competitor?: string | null;
   ai_prompt_text_recommendations?: string | null;
   competitor_tuning_preview_event_id?: string;

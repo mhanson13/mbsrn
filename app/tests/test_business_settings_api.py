@@ -88,6 +88,8 @@ def test_get_business_settings_endpoint(db_session, seeded_business) -> None:
     assert payload["competitor_candidate_big_box_penalty"] == 20
     assert payload["competitor_candidate_directory_penalty"] == 35
     assert payload["competitor_candidate_local_alignment_bonus"] == 10
+    assert payload["competitor_primary_timeout_seconds"] is None
+    assert payload["competitor_degraded_timeout_seconds"] is None
     assert payload["ai_prompt_text_competitor"] is None
     assert payload["ai_prompt_text_recommendations"] is None
 
@@ -105,6 +107,8 @@ def test_patch_business_settings_valid_partial_update_succeeds(db_session, seede
             "competitor_candidate_big_box_penalty": 18,
             "competitor_candidate_directory_penalty": 30,
             "competitor_candidate_local_alignment_bonus": 14,
+            "competitor_primary_timeout_seconds": 45,
+            "competitor_degraded_timeout_seconds": 25,
         },
     )
 
@@ -117,6 +121,8 @@ def test_patch_business_settings_valid_partial_update_succeeds(db_session, seede
     assert payload["competitor_candidate_big_box_penalty"] == 18
     assert payload["competitor_candidate_directory_penalty"] == 30
     assert payload["competitor_candidate_local_alignment_bonus"] == 14
+    assert payload["competitor_primary_timeout_seconds"] == 45
+    assert payload["competitor_degraded_timeout_seconds"] == 25
     assert payload["sms_enabled"] is True
 
 
@@ -432,6 +438,67 @@ def test_patch_business_settings_rejects_candidate_local_bonus_out_of_range(db_s
 
     assert response.status_code == 422
     assert _detail_contains_field(response.json()["detail"], "competitor_candidate_local_alignment_bonus")
+
+
+def test_patch_business_settings_accepts_competitor_timeout_values_in_range(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "competitor_primary_timeout_seconds": 40,
+            "competitor_degraded_timeout_seconds": 20,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["competitor_primary_timeout_seconds"] == 40
+    assert payload["competitor_degraded_timeout_seconds"] == 20
+
+
+def test_patch_business_settings_rejects_primary_timeout_out_of_range(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={"competitor_primary_timeout_seconds": 9},
+    )
+
+    assert response.status_code == 422
+    assert _detail_contains_field(response.json()["detail"], "competitor_primary_timeout_seconds")
+
+
+def test_patch_business_settings_rejects_degraded_timeout_out_of_range(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={"competitor_degraded_timeout_seconds": 91},
+    )
+
+    assert response.status_code == 422
+    assert _detail_contains_field(response.json()["detail"], "competitor_degraded_timeout_seconds")
+
+
+def test_patch_business_settings_can_clear_competitor_timeout_values(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    seeded_business.competitor_primary_timeout_seconds = 44
+    seeded_business.competitor_degraded_timeout_seconds = 22
+    db_session.commit()
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "competitor_primary_timeout_seconds": None,
+            "competitor_degraded_timeout_seconds": None,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["competitor_primary_timeout_seconds"] is None
+    assert payload["competitor_degraded_timeout_seconds"] is None
 
 
 def test_patch_business_settings_links_matching_tuning_preview_event(db_session, seeded_business) -> None:

@@ -36,3 +36,17 @@ Operator-facing notes are shown when telemetry indicates risk:
 - search-backed discovery unavailable
 
 For very low outcomes (`<= 1` returned), the panel renders a concise explanatory message using only observed run metadata and does not invent remediation steps.
+
+## Admin Competitor Timeout Controls
+
+Admin settings include two competitor-generation timeout controls:
+
+- `Competitor Primary Timeout Seconds`
+- `Competitor Degraded Retry Timeout Seconds`
+
+Control semantics:
+
+- Primary timeout applies to the first full search-backed attempt.
+- Degraded retry timeout applies to reduced-context timeout recovery attempts.
+- Allowed range: `10-90` seconds.
+- Blank value keeps deployment/provider default timeout behavior.
