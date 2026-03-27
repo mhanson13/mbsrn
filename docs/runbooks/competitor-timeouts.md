@@ -48,5 +48,16 @@ Use these filters in Logs Explorer:
 - Degraded retry uses non-tool provider call and no web search.
 - No repeated timeout loops beyond the designed attempt sequence.
 
+### Regression Indicators
+- Any `fast_path` or `degraded` event with `provider_call_type="tool_enabled"`.
+- Any `fast_path` or `degraded` event with `web_search_enabled=true`.
+- Missing `execution_mode` or `provider_call_type` on provider start/complete/error events.
+- Missing `duration_ms` on provider complete/error events.
+
+### Inspect First If Timeouts Recur
+- `competitor_provider_request_start`/`complete`/`error` events for the same `run_id`.
+- Attempt ordering (`attempt_number` 0 -> 1 -> 2) and routing mode per attempt.
+- `duration_ms` vs `timeout_seconds_used` to confirm true timeout pressure vs routing regression.
+
 ## TODO
 - Formalize provider abstraction with explicit `tool_enabled` and `non_tool` interfaces.

@@ -662,6 +662,52 @@ def test_non_web_search_request_error_does_not_fallback_to_chat(monkeypatch) -> 
     assert call_urls == ["https://api.openai.com/v1/responses"]
 
 
+def test_explicit_tool_enabled_call_does_not_legacy_fallback_on_web_search_unsupported(monkeypatch) -> None:
+    call_urls: list[str] = []
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del timeout
+        call_urls.append(request.full_url)
+        raise urllib.error.HTTPError(
+            url=request.full_url,
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "type": "invalid_request_error",
+                            "code": "unsupported_parameter",
+                            "message": "web_search is not supported for this request.",
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        timeout_seconds=20,
+    )
+
+    with pytest.raises(SEOCompetitorProfileProviderError) as exc_info:
+        provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=["known.example"],
+            candidate_count=1,
+            execution_mode="full",
+            provider_call_type="tool_enabled",
+            web_search_enabled=True,
+        )
+
+    assert exc_info.value.code == "provider_request"
+    # Service path supplies explicit call-type intent; legacy auto-fallback must not trigger.
+    assert call_urls == ["https://api.openai.com/v1/responses"]
+
+
 def test_structured_provider_logs_include_start_and_complete_trace_fields(monkeypatch, caplog) -> None:
     def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         assert timeout == 30
@@ -694,6 +740,8 @@ def test_structured_provider_logs_include_start_and_complete_trace_fields(monkey
     assert start_event["run_id"] == "run-structured-123"
     assert start_event["attempt_number"] == 2
     assert start_event["endpoint_path"] == "/responses"
+    assert start_event["execution_mode"] == "degraded"
+    assert start_event["provider_call_type"] == "tool_enabled"
     assert start_event["web_search_enabled"] is True
     assert start_event["degraded_mode"] is True
     assert start_event["reduced_context_mode"] is True
@@ -702,6 +750,8 @@ def test_structured_provider_logs_include_start_and_complete_trace_fields(monkey
     assert complete_event["run_id"] == "run-structured-123"
     assert complete_event["attempt_number"] == 2
     assert complete_event["endpoint_path"] == "/responses"
+    assert complete_event["execution_mode"] == "degraded"
+    assert complete_event["provider_call_type"] == "tool_enabled"
     assert complete_event["web_search_enabled"] is True
     assert complete_event["degraded_mode"] is True
     assert complete_event["parsed_candidate_count"] == 1
@@ -751,6 +801,8 @@ def test_structured_provider_logs_include_malformed_reason_without_raw_response_
     assert error_event["run_id"] == "run-malformed-1"
     assert error_event["attempt_number"] == 1
     assert error_event["endpoint_path"] == "/responses"
+    assert error_event["execution_mode"] == "full"
+    assert error_event["provider_call_type"] == "tool_enabled"
     assert error_event["web_search_enabled"] is True
     assert error_event["failure_kind"] == "malformed_output"
     assert error_event["malformed_output_reason"] == "json_decode_error"
@@ -804,8 +856,58 @@ def test_structured_provider_error_log_includes_endpoint_and_search_metadata(mon
     assert error_event["run_id"] == "run-provider-error-1"
     assert error_event["attempt_number"] == 1
     assert error_event["endpoint_path"] == "/responses"
+    assert error_event["execution_mode"] == "full"
+    assert error_event["provider_call_type"] == "tool_enabled"
     assert error_event["web_search_enabled"] is True
     assert error_event["failure_kind"] == "provider_request"
     assert error_event["error_type"] == "invalid_request_error"
     assert error_event["duration_ms"] >= 0
     assert "SENSITIVE_PROVIDER_PROMPT_TEXT" not in caplog.text
+
+
+def test_structured_provider_logs_allow_attempt_zero_non_tool_fast_path(monkeypatch, caplog) -> None:
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/chat/completions")
+        return _FakeHTTPResponse(json.dumps(_chat_completions_payload(model="gpt-4.1-mini")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=1,
+            reduced_context_mode=True,
+            run_id="run-fast-path-0",
+            attempt_number=0,
+            degraded_mode=False,
+            execution_mode="fast_path",
+            provider_call_type="non_tool",
+            web_search_enabled=False,
+        )
+
+    structured_events = _structured_event_records(caplog)
+    start_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_start")
+    complete_event = next(
+        item for item in structured_events if item.get("event") == "competitor_provider_request_complete"
+    )
+
+    assert start_event["run_id"] == "run-fast-path-0"
+    assert start_event["attempt_number"] == 0
+    assert start_event["execution_mode"] == "fast_path"
+    assert start_event["provider_call_type"] == "non_tool"
+    assert start_event["endpoint_path"] == "/chat/completions"
+    assert start_event["web_search_enabled"] is False
+
+    assert complete_event["run_id"] == "run-fast-path-0"
+    assert complete_event["attempt_number"] == 0
+    assert complete_event["execution_mode"] == "fast_path"
+    assert complete_event["provider_call_type"] == "non_tool"
+    assert complete_event["endpoint_path"] == "/chat/completions"
+    assert complete_event["web_search_enabled"] is False
+    assert complete_event["duration_ms"] >= 0

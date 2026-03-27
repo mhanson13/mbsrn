@@ -517,6 +517,58 @@ class _TimeoutCaptureSuccessCompetitorProfileProvider:
         )
 
 
+class _ExplicitCallTypeRequiredProvider:
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def __init__(self) -> None:
+        self.execution_modes: list[str | None] = []
+        self.provider_call_types: list[str | None] = []
+        self.web_search_enabled_flags: list[bool | None] = []
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+        reduced_context_mode: bool = False,
+        execution_mode: str | None = None,
+        provider_call_type: str | None = None,
+        web_search_enabled: bool | None = None,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count, reduced_context_mode
+        self.execution_modes.append(execution_mode)
+        self.provider_call_types.append(provider_call_type)
+        self.web_search_enabled_flags.append(web_search_enabled)
+        if provider_call_type is None:
+            raise AssertionError("Service must pass explicit provider_call_type intent for provider-capable signatures")
+        if execution_mode in {"fast_path", "degraded"} and bool(web_search_enabled):
+            raise AssertionError("fast_path/degraded calls must not enable web search")
+        endpoint_path = "/responses" if provider_call_type == "tool_enabled" else "/chat/completions"
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Explicit Intent Candidate",
+                    suggested_domain="explicit-intent-candidate.example",
+                    competitor_type="direct",
+                    summary="Used to validate explicit provider call-type routing intent.",
+                    why_competitor="Service forwards explicit call intent to provider.",
+                    evidence="Provider signature receives provider_call_type and web_search_enabled.",
+                    confidence_score=0.8,
+                )
+            ],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Explicit Intent Candidate"}]}',
+            provider_call_type=provider_call_type,
+            endpoint_path=endpoint_path,
+            web_search_enabled=bool(web_search_enabled),
+        )
+
+
 class _ProviderEndpointMetadataSuccessProvider:
     provider_name = "openai"
     model_name = "gpt-5-mini"
@@ -1571,17 +1623,26 @@ def test_timeout_provider_failure_marks_run_failed_safely(db_session, seeded_bus
     assert payload["provider_attempts"][0]["execution_mode"] == "fast_path"
     assert payload["provider_attempts"][0]["provider_call_type"] == "non_tool"
     assert payload["provider_attempts"][0]["degraded_mode"] is False
+    assert payload["provider_attempts"][0]["web_search_enabled"] is False
     assert payload["provider_attempts"][0]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][0]["request_duration_ms"] is not None
+    assert payload["provider_attempts"][0]["request_duration_ms"] >= 0
     assert payload["provider_attempts"][1]["attempt_number"] == 1
     assert payload["provider_attempts"][1]["execution_mode"] == "full"
     assert payload["provider_attempts"][1]["provider_call_type"] == "tool_enabled"
     assert payload["provider_attempts"][1]["degraded_mode"] is False
+    assert payload["provider_attempts"][1]["web_search_enabled"] is True
     assert payload["provider_attempts"][1]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][1]["request_duration_ms"] is not None
+    assert payload["provider_attempts"][1]["request_duration_ms"] >= 0
     assert payload["provider_attempts"][2]["attempt_number"] == 2
     assert payload["provider_attempts"][2]["execution_mode"] == "degraded"
     assert payload["provider_attempts"][2]["provider_call_type"] == "non_tool"
     assert payload["provider_attempts"][2]["degraded_mode"] is True
+    assert payload["provider_attempts"][2]["web_search_enabled"] is False
     assert payload["provider_attempts"][2]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][2]["request_duration_ms"] is not None
+    assert payload["provider_attempts"][2]["request_duration_ms"] >= 0
     assert payload["provider_attempts"][0]["requested_candidate_count"] == 4
     assert payload["provider_attempts"][1]["requested_candidate_count"] == 4
     assert payload["provider_attempts"][2]["requested_candidate_count"] == 3
@@ -1635,6 +1696,45 @@ def test_provider_auth_failure_marks_run_failed_safely(db_session, seeded_busine
     assert payload["provider_attempts"][0]["failure_kind"] in {"unknown", None}
 
 
+def test_service_passes_explicit_provider_call_type_intent_for_provider_capable_signature(
+    db_session,
+    seeded_business,
+) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=2)["run"]["id"]
+    provider = _ExplicitCallTypeRequiredProvider()
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert provider.execution_modes == ["fast_path"]
+    assert provider.provider_call_types == ["non_tool"]
+    assert provider.web_search_enabled_flags == [False]
+    assert payload["provider_attempt_count"] == 1
+    assert payload["provider_attempts"][0]["attempt_number"] == 0
+    assert payload["provider_attempts"][0]["execution_mode"] == "fast_path"
+    assert payload["provider_attempts"][0]["provider_call_type"] == "non_tool"
+    assert payload["provider_attempts"][0]["web_search_enabled"] is False
+
+
 def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
@@ -1672,19 +1772,28 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert payload["provider_attempts"][0]["provider_call_type"] == "non_tool"
     assert payload["provider_attempts"][0]["degraded_mode"] is False
     assert payload["provider_attempts"][0]["reduced_context_mode"] is True
+    assert payload["provider_attempts"][0]["web_search_enabled"] is False
     assert payload["provider_attempts"][0]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][0]["request_duration_ms"] is not None
+    assert payload["provider_attempts"][0]["request_duration_ms"] >= 0
     assert payload["provider_attempts"][1]["attempt_number"] == 1
     assert payload["provider_attempts"][1]["execution_mode"] == "full"
     assert payload["provider_attempts"][1]["provider_call_type"] == "tool_enabled"
     assert payload["provider_attempts"][1]["degraded_mode"] is False
     assert payload["provider_attempts"][1]["reduced_context_mode"] is False
+    assert payload["provider_attempts"][1]["web_search_enabled"] is True
     assert payload["provider_attempts"][1]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][1]["request_duration_ms"] is not None
+    assert payload["provider_attempts"][1]["request_duration_ms"] >= 0
     assert payload["provider_attempts"][2]["attempt_number"] == 2
     assert payload["provider_attempts"][2]["execution_mode"] == "degraded"
     assert payload["provider_attempts"][2]["provider_call_type"] == "non_tool"
     assert payload["provider_attempts"][2]["degraded_mode"] is True
     assert payload["provider_attempts"][2]["reduced_context_mode"] is True
+    assert payload["provider_attempts"][2]["web_search_enabled"] is False
     assert payload["provider_attempts"][2]["outcome"] == "success"
+    assert payload["provider_attempts"][2]["request_duration_ms"] is not None
+    assert payload["provider_attempts"][2]["request_duration_ms"] >= 0
     assert payload["provider_attempts"][2]["requested_candidate_count"] == 6
     assert payload["provider_attempts"][1]["prompt_total_chars"] > payload["provider_attempts"][2]["prompt_total_chars"]
     assert payload["provider_attempts"][1]["context_json_chars"] > payload["provider_attempts"][2]["context_json_chars"]
