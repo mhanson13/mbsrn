@@ -197,6 +197,9 @@ Competitor provider request lifecycle logs are also emitted as structured events
 
 Admins can query these events directly from the in-app admin panel (`GCP Logs Query`) without granting end users direct GCP project access. The tool uses backend proxying with runtime ADC and fixed project scope.
 
+Deployment prerequisite note:
+- API runtime must expose project-id env `GCP_PROJECT_ID` and run with Workload Identity-enabled `mbsrn-api` KSA mapped to a GSA with Cloud Logging read access.
+
 These structured events include bounded correlation/runtime fields such as:
 
 - `run_id`

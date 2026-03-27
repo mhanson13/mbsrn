@@ -440,6 +440,7 @@ jobs:
             --from-literal=DATABASE_URL="${DATABASE_URL}" \
             --from-literal=APP_SESSION_SECRET="${APP_SESSION_SECRET}" \
             --from-literal=GOOGLE_OAUTH_CLIENT_SECRET="${GOOGLE_OAUTH_CLIENT_SECRET}" \
+            --from-literal=GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
             --from-literal=AI_PROVIDER_API_KEY="${AI_PROVIDER_API_KEY}" \
             --from-literal=AI_PROVIDER_NAME="${AI_PROVIDER_NAME}" \
             --from-literal=AI_MODEL_NAME="${AI_MODEL_NAME}" \

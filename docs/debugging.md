@@ -206,9 +206,7 @@ Auth and runtime model:
 
 Required backend project configuration:
 
-- `GCP_PROJECT_ID` (preferred existing project-id setting)
-- optional logs-specific override: `GCP_LOGGING_PROJECT_ID`
-- fallback: `GOOGLE_CLOUD_PROJECT` or `GCLOUD_PROJECT`
+- `GCP_PROJECT_ID`
 - value format: GCP project id string, for example `my-prod-project-123`
 
 If project configuration is missing, the API returns a 503 with an actionable message naming the expected env vars.
@@ -223,6 +221,66 @@ Scope and paging limits:
 Runtime IAM requirement:
 
 - deployed runtime service account must have Cloud Logging read permission on the configured project (for example `logging.logEntries.list`, commonly provided by Logs Viewer or equivalent custom role)
+
+Deployment prerequisites (Workload Identity + env wiring):
+
+- GKE cluster has Workload Identity enabled (`workloadIdentityConfig.workloadPool` is set).
+- API deployment uses Kubernetes service account `mbsrn-api`.
+- KSA `mbsrn-api` is annotated with runtime GSA:
+  - `iam.gke.io/gcp-service-account=<runtime-gsa>@<project>.iam.gserviceaccount.com`
+- Runtime GSA policy includes:
+  - `roles/iam.workloadIdentityUser` for `serviceAccount:<project>.svc.id.goog[mbsrn/mbsrn-api]`
+  - `roles/logging.viewer` (or approved equivalent) on the logging project
+- API pod env includes project id:
+  - `GCP_PROJECT_ID`
+
+Repo/cluster preflight helper (read-only):
+
+- `python scripts/verify_gcp_logs_wiring.py`
+- `python scripts/verify_gcp_logs_wiring.py --cluster --project-id <PROJECT_ID> --gsa-email <RUNTIME_GSA_EMAIL>`
+
+Manual cluster verification commands:
+
+```bash
+# API deployment must use expected KSA
+kubectl -n mbsrn get deploy mbsrn-api -o jsonpath='{.spec.template.spec.serviceAccountName}{"\n"}'
+
+# KSA must be mapped to a GSA
+kubectl -n mbsrn get sa mbsrn-api -o jsonpath='{.metadata.annotations.iam\.gke\.io/gcp-service-account}{"\n"}'
+
+# Workload Identity must be enabled on cluster
+gcloud container clusters describe <CLUSTER_NAME> --location <CLUSTER_LOCATION> \
+  --project <PROJECT_ID> \
+  --format='value(workloadIdentityConfig.workloadPool)'
+
+# Runtime env wiring in pod
+kubectl -n mbsrn exec deploy/mbsrn-api -- sh -c \
+  'env | egrep "GCP_PROJECT_ID"'
+```
+
+Manual setup commands (no automatic IAM mutation in app deploy):
+
+```bash
+# Annotate KSA -> GSA mapping
+kubectl -n mbsrn annotate sa mbsrn-api \
+  iam.gke.io/gcp-service-account=<RUNTIME_GSA_EMAIL> \
+  --overwrite
+
+# Allow KSA to impersonate GSA via Workload Identity
+gcloud iam service-accounts add-iam-policy-binding <RUNTIME_GSA_EMAIL> \
+  --project <PROJECT_ID> \
+  --role roles/iam.workloadIdentityUser \
+  --member "serviceAccount:<PROJECT_ID>.svc.id.goog[mbsrn/mbsrn-api]"
+
+# Grant Cloud Logging read access to runtime GSA
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member "serviceAccount:<RUNTIME_GSA_EMAIL>" \
+  --role roles/logging.viewer
+
+# Restart API so refreshed identity/env are picked up
+kubectl -n mbsrn rollout restart deployment/mbsrn-api
+kubectl -n mbsrn rollout status deployment/mbsrn-api --timeout=300s
+```
 
 Returned rows are sanitized and compact:
 

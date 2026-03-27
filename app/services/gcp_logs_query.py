@@ -24,7 +24,7 @@ _MAX_PAYLOAD_SUMMARY_CHARS = 900
 _MAX_PAGE_TOKEN_CHARS = 2048
 _PROJECT_CONFIG_ERROR_MESSAGE = (
     "Cloud Logging query is not configured: missing GCP project id. "
-    "Set GCP_PROJECT_ID (preferred) or GCP_LOGGING_PROJECT_ID/GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT."
+    "Set GCP_PROJECT_ID."
 )
 _ADC_CONFIG_ERROR_MESSAGE = (
     "Cloud Logging query is not configured: runtime Application Default Credentials are unavailable. "

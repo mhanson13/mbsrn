@@ -238,7 +238,7 @@ def test_gcp_logs_query_surfaces_actionable_missing_project_configuration_error(
     stub_service = _StubGCPLogsQueryService()
     stub_service.error = GCPLogsQueryConfigurationError(
         "Cloud Logging query is not configured: missing GCP project id. "
-        "Set GCP_PROJECT_ID (preferred) or GCP_LOGGING_PROJECT_ID/GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT."
+        "Set GCP_PROJECT_ID."
     )
     client = _make_client(
         db_session,
@@ -253,6 +253,4 @@ def test_gcp_logs_query_surfaces_actionable_missing_project_configuration_error(
 
     assert response.status_code == 503
     detail = response.json()["detail"]
-    assert "GCP_PROJECT_ID" in detail
-    assert "GCP_LOGGING_PROJECT_ID" in detail
-    assert "GOOGLE_CLOUD_PROJECT" in detail
+    assert detail == "Cloud Logging query is not configured: missing GCP project id. Set GCP_PROJECT_ID."

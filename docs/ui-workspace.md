@@ -105,8 +105,11 @@ Backend behavior remains admin-only and uses runtime ADC via attached service ac
 
 Configuration prerequisites:
 
-- backend project scope env var: `GCP_PROJECT_ID` (preferred)
-- optional logs-specific override: `GCP_LOGGING_PROJECT_ID`
-- fallback: `GOOGLE_CLOUD_PROJECT` / `GCLOUD_PROJECT`
+- backend project scope env var: `GCP_PROJECT_ID`
 - value should be a valid project id (for example `my-prod-project-123`)
 - runtime service account must have Cloud Logging read permission on that project
+- API deployment must run as `serviceAccountName: mbsrn-api` with Workload Identity mapping annotation on KSA:
+  - `iam.gke.io/gcp-service-account=<runtime-gsa>@<project>.iam.gserviceaccount.com`
+- preflight verification helper:
+  - `python scripts/verify_gcp_logs_wiring.py`
+  - `python scripts/verify_gcp_logs_wiring.py --cluster --project-id <PROJECT_ID> --gsa-email <RUNTIME_GSA_EMAIL>`

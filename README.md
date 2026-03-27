@@ -76,6 +76,25 @@ npm run build
 
 Coverage and test suites include SEO audit/crawl behavior, competitor candidate quality/deduplication, recommendation+narrative APIs, tuning preview/attribution flows, and business settings validation.
 
+## GCP Logs Query Deployment Prerequisites
+The admin `GCP Logs Query` feature relies on runtime Application Default Credentials (Workload Identity) and project-id wiring in the API pod.
+
+Required deployment wiring:
+- API deployment must use `serviceAccountName: mbsrn-api`.
+- Kubernetes service account `mbsrn-api` must be mapped to a Google service account via annotation:
+  - `iam.gke.io/gcp-service-account=<runtime-gsa>@<project>.iam.gserviceaccount.com`
+- Runtime project-id env must be present in API pod:
+  - `GCP_PROJECT_ID`
+- Runtime GSA must have:
+  - `roles/iam.workloadIdentityUser` binding for `serviceAccount:<project>.svc.id.goog[mbsrn/mbsrn-api]`
+  - Cloud Logging read access (`roles/logging.viewer` or approved equivalent)
+
+Preflight verification (read-only):
+```powershell
+python scripts/verify_gcp_logs_wiring.py
+python scripts/verify_gcp_logs_wiring.py --cluster --project-id <PROJECT_ID> --gsa-email <RUNTIME_GSA_EMAIL>
+```
+
 ## Documentation
 Start with [docs/README.md](docs/README.md) for canonical navigation.
 
