@@ -1580,6 +1580,29 @@ class SEOCompetitorProfileGenerationService:
             0,
             len(candidate_processing.included_candidates) - len(final_candidates),
         )
+        unsupported_type_allowed_count = sum(
+            1 for candidate in final_candidates if bool(candidate.classification_mismatch)
+        )
+        no_domain_allowed_count = sum(
+            1 for candidate in final_candidates if bool(candidate.weak_or_missing_domain)
+        )
+        if (
+            eligibility_result.relaxed_filtering_applied
+            or unsupported_type_allowed_count > 0
+            or no_domain_allowed_count > 0
+        ):
+            self._emit_structured_service_log(
+                payload={
+                    "event": "competitor_filtering_relaxation",
+                    "run_id": run.id,
+                    "business_id": run.business_id,
+                    "site_id": run.site_id,
+                    "relaxed_filtering_applied": bool(eligibility_result.relaxed_filtering_applied),
+                    "unsupported_type_allowed": unsupported_type_allowed_count,
+                    "no_domain_allowed": no_domain_allowed_count,
+                },
+                fallback_message="competitor_filtering_relaxation",
+            )
 
         drafts: list[SEOCompetitorProfileDraft] = []
         for candidate in final_candidates:
@@ -1638,27 +1661,29 @@ class SEOCompetitorProfileGenerationService:
         reasons: list[str] = []
         suggested_name = self._clean_optional(candidate.suggested_name)
         raw_domain = self._clean_optional(candidate.suggested_domain)
-        suggested_domain: str | None = None
+        suggested_domain = ""
+        weak_or_missing_domain = False
 
         if suggested_name is None:
             reasons.append(INELIGIBILITY_REASON_MISSING_BUSINESS_NAME)
 
         if raw_domain is None:
-            reasons.append(INELIGIBILITY_REASON_MISSING_DOMAIN)
+            weak_or_missing_domain = True
         else:
             try:
                 suggested_domain = self._normalize_domain_value(raw_domain)
             except SEOCompetitorProfileGenerationValidationError:
-                reasons.append(INELIGIBILITY_REASON_MALFORMED_URL)
+                weak_or_missing_domain = True
 
         raw_competitor_type = self._clean_optional(candidate.competitor_type)
         competitor_type = self._normalize_competitor_type(raw_competitor_type or "")
+        classification_mismatch = False
         if (
             raw_competitor_type is not None
             and competitor_type == "unknown"
             and raw_competitor_type.lower() not in _ALLOWED_COMPETITOR_TYPES
         ):
-            reasons.append(INELIGIBILITY_REASON_UNSUPPORTED_TYPE)
+            classification_mismatch = True
 
         summary = self._clean_optional(candidate.summary)
         why_competitor = self._clean_optional(candidate.why_competitor)
@@ -1669,6 +1694,8 @@ class SEOCompetitorProfileGenerationService:
             confidence_score = self._normalize_confidence_score(candidate.confidence_score)
         except SEOCompetitorProfileGenerationValidationError:
             reasons.append(INELIGIBILITY_REASON_INVALID_CONFIDENCE_SCORE)
+        if confidence_score is not None and weak_or_missing_domain:
+            confidence_score = min(confidence_score, 0.6)
 
         if (
             not reasons
@@ -1700,7 +1727,7 @@ class SEOCompetitorProfileGenerationService:
                 ),
             )
 
-        if suggested_name is None or suggested_domain is None or confidence_score is None:
+        if suggested_name is None or confidence_score is None:
             return None, None
 
         return (
@@ -1713,6 +1740,8 @@ class SEOCompetitorProfileGenerationService:
                 evidence=evidence,
                 confidence_score=confidence_score,
                 source_index=source_index,
+                classification_mismatch=classification_mismatch,
+                weak_or_missing_domain=weak_or_missing_domain,
             ),
             None,
         )
@@ -2336,7 +2365,7 @@ class SEOCompetitorProfileGenerationService:
                 continue
             domain = self._clean_optional(decision.candidate.suggested_domain)
             if domain is None:
-                continue
+                domain = f"unknown-domain-{max(0, int(decision.candidate.source_index))}"
             reasons = self._normalize_rejected_candidate_reasons(decision.ineligibility_reasons)
             if not reasons:
                 continue

@@ -168,10 +168,21 @@ Competitor prompt execution and preview use the same resolved prompt assembly pi
 ## Competitor Candidate Validation
 - Candidate parsing applies an early required-field filter before service-layer draft construction:
   - candidates missing `name` are dropped
-  - candidates missing `domain` are dropped
   - domains are normalized to hostname form (for example, `https://example.com/` becomes `example.com`)
 - Empty candidate arrays are valid provider outcomes and do not automatically fail a run.
 - `malformed_output` is reserved for true structured-output failures (for example, unparseable or invalid top-level JSON shape), not for "zero valid candidates after filtering".
+
+## Relaxed Competitor Eligibility
+- Unsupported competitor type labels are treated as a soft classification mismatch signal instead of an automatic hard reject.
+- Candidates with weak/missing domains can still pass when local/industry overlap evidence is strong; confidence is capped for weak-domain candidates.
+- `no_live_site` outcomes can be relaxed for strong local evidence instead of always hard-failing the candidate.
+- Over-filter safety fallback applies when all candidates would otherwise be rejected only for relaxable reasons (`no_live_site` / unsupported-type context):
+  - allow up to top 3 candidates by confidence/detail
+  - mark `relaxed_filtering_applied=true`
+- Service telemetry emits `competitor_filtering_relaxation` with:
+  - `unsupported_type_allowed`
+  - `no_domain_allowed`
+  - `relaxed_filtering_applied`
 
 ## Competitor Candidate Pipeline Observability
 - Post-provider pipeline stages are tracked as:

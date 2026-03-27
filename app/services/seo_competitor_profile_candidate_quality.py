@@ -109,6 +109,12 @@ INELIGIBILITY_REASON_KEYS: tuple[str, ...] = (
     INELIGIBILITY_REASON_EXCLUDED_DOMAIN_PATTERN,
     INELIGIBILITY_REASON_INSUFFICIENT_OVERLAP_EVIDENCE,
 )
+_RELAXED_ELIGIBILITY_REASON_UNSUPPORTED_TYPE = "unsupported_type"
+_RELAXED_ELIGIBILITY_REASON_SET = {
+    INELIGIBILITY_REASON_NO_LIVE_SITE,
+    _RELAXED_ELIGIBILITY_REASON_UNSUPPORTED_TYPE,
+}
+_RELAXED_ELIGIBILITY_MAX_CANDIDATES = 3
 
 _PARKED_DOMAIN_TEXT_MARKERS = (
     "domain is for sale",
@@ -265,6 +271,8 @@ class CompetitorCandidateInput:
     evidence: str | None
     confidence_score: float
     source_index: int
+    classification_mismatch: bool = False
+    weak_or_missing_domain: bool = False
 
 
 @dataclass(frozen=True)
@@ -281,6 +289,8 @@ class RankedCompetitorCandidate:
     canonical_domain: str
     exclusion_reason: str | None
     source_index: int
+    classification_mismatch: bool
+    weak_or_missing_domain: bool
 
 
 @dataclass(frozen=True)
@@ -317,6 +327,7 @@ class CompetitorCandidateEligibilityResult:
     decisions: list[CompetitorCandidateEligibilityDecision]
     ineligible_candidate_count: int
     ineligibility_counts_by_reason: dict[str, int]
+    relaxed_filtering_applied: bool = False
 
 
 @dataclass(frozen=True)
@@ -411,6 +422,8 @@ class _ScoredCandidateState:
     is_directory_domain: bool
     is_big_box_candidate: bool
     source_index: int
+    classification_mismatch: bool
+    weak_or_missing_domain: bool
 
 
 def filter_eligible_competitor_candidates(
@@ -422,8 +435,8 @@ def filter_eligible_competitor_candidates(
     context = _build_eligibility_context(site)
     eligible_candidates: list[CompetitorCandidateInput] = []
     decisions: list[CompetitorCandidateEligibilityDecision] = []
-    reason_counts = _new_ineligibility_reason_counts()
     probe_cache: dict[str, CompetitorCandidateDomainProbeResult | None] = {}
+    relaxed_filtering_applied = False
 
     for candidate in candidates:
         domain = _canonicalize_domain(candidate.suggested_domain)
@@ -439,8 +452,6 @@ def filter_eligible_competitor_candidates(
             domain_probe_result=domain_probe_result,
         )
         if reasons:
-            for reason in reasons:
-                reason_counts[reason] += 1
             decisions.append(
                 CompetitorCandidateEligibilityDecision(
                     candidate=candidate,
@@ -459,12 +470,41 @@ def filter_eligible_competitor_candidates(
             )
         )
 
+    relaxed_candidates = _select_relaxed_candidates_when_overfiltered(decisions)
+    if relaxed_candidates:
+        relaxed_filtering_applied = True
+        relaxed_keys = {
+            (item.suggested_name, item.suggested_domain, item.source_index)
+            for item in relaxed_candidates
+        }
+        adjusted_decisions: list[CompetitorCandidateEligibilityDecision] = []
+        for decision in decisions:
+            key = (
+                decision.candidate.suggested_name,
+                decision.candidate.suggested_domain,
+                decision.candidate.source_index,
+            )
+            if key in relaxed_keys:
+                adjusted_decisions.append(
+                    CompetitorCandidateEligibilityDecision(
+                        candidate=decision.candidate,
+                        is_eligible=True,
+                        ineligibility_reasons=tuple(),
+                    )
+                )
+                continue
+            adjusted_decisions.append(decision)
+        decisions = adjusted_decisions
+        eligible_candidates = [item.candidate for item in decisions if item.is_eligible]
+
+    reason_counts = _count_ineligibility_reasons(decisions)
     ineligible_count = sum(1 for item in decisions if not item.is_eligible)
     return CompetitorCandidateEligibilityResult(
         eligible_candidates=eligible_candidates,
         decisions=decisions,
         ineligible_candidate_count=ineligible_count,
         ineligibility_counts_by_reason=reason_counts,
+        relaxed_filtering_applied=relaxed_filtering_applied,
     )
 
 
@@ -544,6 +584,8 @@ def process_competitor_candidates(
                 canonical_domain=candidate.canonical_domain,
                 exclusion_reason=None,
                 source_index=candidate.source_index,
+                classification_mismatch=candidate.classification_mismatch,
+                weak_or_missing_domain=candidate.weak_or_missing_domain,
             )
         )
 
@@ -674,6 +716,8 @@ def _to_scored_state(
         is_directory_domain=is_directory_domain,
         is_big_box_candidate=is_big_box_candidate,
         source_index=candidate.source_index,
+        classification_mismatch=bool(candidate.classification_mismatch),
+        weak_or_missing_domain=bool(candidate.weak_or_missing_domain),
     )
 
 
@@ -784,6 +828,8 @@ def _merge_duplicate_candidates(
         evidence=merged_evidence,
         confidence_score=merged_confidence,
         source_index=merged_source_index,
+        classification_mismatch=bool(stronger.classification_mismatch or weaker.classification_mismatch),
+        weak_or_missing_domain=bool(stronger.weak_or_missing_domain or weaker.weak_or_missing_domain),
     )
     return _to_scored_state(
         candidate=merged_input,
@@ -950,14 +996,20 @@ def _determine_ineligibility_reasons(
         reasons.append(INELIGIBILITY_REASON_PARKED_DOMAIN)
 
     if _is_no_live_site(domain_probe_result):
-        reasons.append(INELIGIBILITY_REASON_NO_LIVE_SITE)
+        if not _allow_no_live_site_with_strong_local_evidence(
+            candidate=candidate,
+            context=context,
+            combined_text=combined_text,
+        ):
+            reasons.append(INELIGIBILITY_REASON_NO_LIVE_SITE)
     elif domain_probe_result is not None and _has_weak_business_identity(combined_text):
         reasons.append(INELIGIBILITY_REASON_WEAK_BUSINESS_IDENTITY)
 
     if _is_out_of_market_candidate(context=context, combined_text=combined_text):
         reasons.append(INELIGIBILITY_REASON_OUT_OF_MARKET)
 
-    if domain_probe_result is not None and _has_insufficient_overlap_evidence(
+    should_enforce_overlap = domain_probe_result is not None or candidate.weak_or_missing_domain or not bool(domain)
+    if should_enforce_overlap and _has_insufficient_overlap_evidence(
         candidate=candidate,
         context=context,
         combined_text=combined_text,
@@ -1034,14 +1086,46 @@ def _has_insufficient_overlap_evidence(
     text_terms = _extract_terms(combined_text, minimum_length=3)
     has_industry_overlap = bool(context.industry_terms.intersection(text_terms))
     has_location_overlap = bool(context.location_terms.intersection(text_terms))
+    has_state_overlap = bool(context.state_tokens.intersection(_extract_explicit_state_tokens(combined_text)))
     rationale_length = len(_normalize_text(candidate.why_competitor or "")) + len(
         _normalize_text(candidate.evidence or "")
     )
-    if has_industry_overlap or has_location_overlap:
+    domain_is_weak_or_missing = bool(candidate.weak_or_missing_domain) or not bool(
+        _canonicalize_domain(candidate.suggested_domain)
+    )
+    if domain_is_weak_or_missing:
+        if has_industry_overlap and (has_location_overlap or has_state_overlap):
+            return False
+        if rationale_length >= 80 and (has_location_overlap or has_state_overlap):
+            return False
+        return True
+    if has_industry_overlap or has_location_overlap or has_state_overlap:
         return False
     if rationale_length >= 40:
         return False
     return candidate.confidence_score < 0.55
+
+
+def _allow_no_live_site_with_strong_local_evidence(
+    *,
+    candidate: CompetitorCandidateInput,
+    context: _EligibilitySiteContext,
+    combined_text: str,
+) -> bool:
+    text_terms = _extract_terms(combined_text, minimum_length=3)
+    has_industry_overlap = bool(context.industry_terms.intersection(text_terms))
+    has_location_overlap = bool(context.location_terms.intersection(text_terms))
+    has_state_overlap = bool(context.state_tokens.intersection(_extract_explicit_state_tokens(combined_text)))
+    if not (has_location_overlap or has_state_overlap):
+        return False
+    if not has_industry_overlap:
+        return False
+    rationale_length = (
+        len(_normalize_text(candidate.summary or ""))
+        + len(_normalize_text(candidate.why_competitor or ""))
+        + len(_normalize_text(candidate.evidence or ""))
+    )
+    return rationale_length >= 40 and candidate.confidence_score >= 0.55
 
 
 def _dedupe_reasons(reasons: list[str]) -> list[str]:
@@ -1053,6 +1137,52 @@ def _dedupe_reasons(reasons: list[str]) -> list[str]:
         seen.add(reason)
         ordered.append(reason)
     return ordered
+
+
+def _select_relaxed_candidates_when_overfiltered(
+    decisions: list[CompetitorCandidateEligibilityDecision],
+) -> list[CompetitorCandidateInput]:
+    if not decisions:
+        return []
+    if any(item.is_eligible for item in decisions):
+        return []
+    relaxable: list[CompetitorCandidateInput] = []
+    for item in decisions:
+        reasons = set(item.ineligibility_reasons)
+        if not reasons:
+            return []
+        if not reasons.issubset(_RELAXED_ELIGIBILITY_REASON_SET):
+            return []
+        relaxable.append(item.candidate)
+    relaxable.sort(
+        key=lambda candidate: (
+            -candidate.confidence_score,
+            -_candidate_detail_length(candidate),
+            candidate.source_index,
+        )
+    )
+    return relaxable[:_RELAXED_ELIGIBILITY_MAX_CANDIDATES]
+
+
+def _candidate_detail_length(candidate: CompetitorCandidateInput) -> int:
+    return (
+        len(_normalize_text(candidate.summary or ""))
+        + len(_normalize_text(candidate.why_competitor or ""))
+        + len(_normalize_text(candidate.evidence or ""))
+    )
+
+
+def _count_ineligibility_reasons(
+    decisions: list[CompetitorCandidateEligibilityDecision],
+) -> dict[str, int]:
+    counts = _new_ineligibility_reason_counts()
+    for decision in decisions:
+        if decision.is_eligible:
+            continue
+        for reason in decision.ineligibility_reasons:
+            if reason in counts:
+                counts[reason] += 1
+    return counts
 
 
 def _extract_explicit_state_tokens(value: str) -> set[str]:

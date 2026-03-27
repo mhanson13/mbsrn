@@ -1218,6 +1218,45 @@ class _EligibilityGateCompetitorProfileProvider:
         )
 
 
+class _MissingDomainStrongReasonCompetitorProfileProvider:
+    provider_name = "missing-domain-strong-provider"
+    model_name = "missing-domain-strong-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains
+        candidates = [
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Denver Fire Alarm Services",
+                suggested_domain="",
+                competitor_type="direct",
+                summary=(
+                    "Denver and Aurora fire alarm inspection, installation, and ongoing service support."
+                ),
+                why_competitor=(
+                    "Competes on local fire system service and inspection demand across Denver metro."
+                ),
+                evidence=(
+                    "Business profile signals include service scheduling, local coverage references, and direct contact intent."
+                ),
+                confidence_score=0.91,
+            ),
+        ]
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=candidates[:candidate_count],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Denver Fire Alarm Services"}]}',
+        )
+
+
 class _StatusObservingProvider(_DeterministicCompetitorProfileProvider):
     def __init__(self, *, db_session: Session, business_id: str, run_id: str) -> None:
         self._db_session = db_session
@@ -1703,11 +1742,11 @@ def test_malformed_provider_output_skips_invalid_candidates_and_keeps_valid_draf
     assert payload["total_drafts"] == 1
     assert payload["drafts"][0]["suggested_domain"] == "valid-competitor.example"
     assert payload["rejected_candidate_count"] == 1
-    assert payload["rejected_candidates"][0]["domain"] == "broken"
-    assert "malformed_url" in payload["rejected_candidates"][0]["reasons"]
+    assert payload["rejected_candidates"][0]["domain"].startswith("unknown-domain-")
+    assert "insufficient_overlap_evidence" in payload["rejected_candidates"][0]["reasons"]
 
 
-def test_invalid_candidate_reasons_are_classified_with_specific_codes(db_session, seeded_business) -> None:
+def test_invalid_candidate_reasons_are_classified_with_specific_codes(db_session, seeded_business, caplog) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -1719,13 +1758,14 @@ def test_invalid_candidate_reasons_are_classified_with_specific_codes(db_session
     created = _create_generation_run(client, seeded_business.id, site_id, candidate_count=5)
     run_id = created["run"]["id"]
 
-    _execute_generation_run(
-        db_session=db_session,
-        business_id=seeded_business.id,
-        site_id=site_id,
-        run_id=run_id,
-        provider=_MixedInvalidReasonCompetitorProfileProvider(),
-    )
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=_MixedInvalidReasonCompetitorProfileProvider(),
+        )
 
     detail = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
@@ -1734,10 +1774,10 @@ def test_invalid_candidate_reasons_are_classified_with_specific_codes(db_session
     payload = detail.json()
     assert payload["run"]["status"] == "completed"
     assert payload["run"]["raw_candidate_count"] == 7
-    assert payload["run"]["included_candidate_count"] == 1
-    assert payload["run"]["excluded_candidate_count"] == 6
-    assert payload["run"]["exclusion_counts_by_reason"]["invalid_candidate"] == 6
-    assert payload["rejected_candidate_count"] == 6
+    assert payload["run"]["included_candidate_count"] == 2
+    assert payload["run"]["excluded_candidate_count"] == 5
+    assert payload["run"]["exclusion_counts_by_reason"]["invalid_candidate"] == 5
+    assert payload["rejected_candidate_count"] == 5
     rejected_reason_set = {
         reason
         for item in payload["rejected_candidates"]
@@ -1745,13 +1785,19 @@ def test_invalid_candidate_reasons_are_classified_with_specific_codes(db_session
     }
     assert rejected_reason_set == {
         "missing_business_name",
-        "malformed_url",
-        "missing_domain",
-        "unsupported_type",
+        "insufficient_overlap_evidence",
         "invalid_confidence_score",
         "low_usefulness_unknown",
     }
-    assert [item["suggested_domain"] for item in payload["drafts"]] == ["valid-local-candidate.example"]
+    assert {item["suggested_domain"] for item in payload["drafts"]} == {
+        "unsupported-type.example",
+        "valid-local-candidate.example",
+    }
+    events = _structured_event_records(caplog)
+    relaxation_event = next(item for item in events if item.get("event") == "competitor_filtering_relaxation")
+    assert relaxation_event["run_id"] == run_id
+    assert relaxation_event["unsupported_type_allowed"] >= 1
+    assert relaxation_event["no_domain_allowed"] == 0
 
 
 def test_invalid_confidence_output_fails_run_safely(db_session, seeded_business) -> None:
@@ -3272,6 +3318,58 @@ def test_generation_applies_eligibility_filter_before_admin_tuning(db_session, s
     assert rejected_by_domain["parked-candidate.com"]["summary"] == "Unclear overlap."
     assert "no_live_site" in rejected_by_domain["offline-candidate.com"]["reasons"]
     assert rejected_by_domain["offline-candidate.com"]["summary"] == "Unknown overlap."
+
+
+def test_generation_allows_missing_domain_with_strong_local_reasoning_and_caps_confidence(
+    db_session, seeded_business, caplog
+) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _MissingDomainStrongReasonCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    site = (
+        db_session.query(SEOSite)
+        .filter(SEOSite.business_id == seeded_business.id)
+        .filter(SEOSite.id == site_id)
+        .one()
+    )
+    site.industry = "Fire alarm services"
+    site.primary_location = "Denver, CO"
+    site.service_areas_json = ["Denver", "Aurora"]
+    db_session.add(site)
+    db_session.commit()
+
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=1)["run"]["id"]
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=provider,
+            candidate_domain_probe=lambda _domain: None,
+        )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["included_candidate_count"] == 1
+    assert payload["drafts"][0]["suggested_name"] == "Denver Fire Alarm Services"
+    assert payload["drafts"][0]["suggested_domain"] == ""
+    assert payload["drafts"][0]["confidence_score"] == 0.6
+    events = _structured_event_records(caplog)
+    relaxation_event = next(item for item in events if item.get("event") == "competitor_filtering_relaxation")
+    assert relaxation_event["run_id"] == run_id
+    assert relaxation_event["no_domain_allowed"] == 1
+    assert relaxation_event["unsupported_type_allowed"] == 0
 
 
 def test_generation_failure_with_all_candidates_excluded_persists_exclusion_telemetry(

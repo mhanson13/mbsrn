@@ -524,7 +524,15 @@ def test_eligibility_gate_rejects_excluded_domain_patterns() -> None:
 
 
 def test_eligibility_gate_rejects_no_live_site_when_probe_fails() -> None:
-    candidate = _candidate(name="Offline Site", domain="offline-site.com", index=0)
+    candidate = _candidate(
+        name="Offline Site",
+        domain="offline-site.com",
+        summary="Generic services.",
+        why="Unknown overlap.",
+        evidence="Unknown.",
+        confidence=0.4,
+        index=0,
+    )
     result = filter_eligible_competitor_candidates(
         site=_site(),
         candidates=[candidate],
@@ -539,6 +547,133 @@ def test_eligibility_gate_rejects_no_live_site_when_probe_fails() -> None:
         ),
     )
     assert result.eligible_candidates == []
+    assert result.ineligibility_counts_by_reason[INELIGIBILITY_REASON_NO_LIVE_SITE] == 1
+    assert result.ineligibility_counts_by_reason[INELIGIBILITY_REASON_INSUFFICIENT_OVERLAP_EVIDENCE] == 1
+    assert result.relaxed_filtering_applied is False
+
+
+def test_eligibility_gate_allows_no_live_site_with_strong_local_evidence() -> None:
+    candidate = _candidate(
+        name="Denver Emergency Plumbing Services",
+        domain="denver-emergency-plumbing-services.com",
+        summary="Denver and Aurora plumbing inspection, installation, and emergency repair services.",
+        why="Competes on local plumbing service intent for Denver-area residential and commercial customers.",
+        evidence="Service pages reference Denver and Aurora markets, plumbing support plans, and dispatch scheduling.",
+        confidence=0.82,
+        index=0,
+    )
+    result = filter_eligible_competitor_candidates(
+        site=_site(),
+        candidates=[candidate],
+        domain_probe=_probe_by_domain(
+            {
+                "denver-emergency-plumbing-services.com": CompetitorCandidateDomainProbeResult(
+                    status_code=None,
+                    body_text=None,
+                    fetch_error="Request failed after retries",
+                )
+            }
+        ),
+    )
+    assert len(result.eligible_candidates) == 1
+    assert result.eligible_candidates[0].suggested_name == "Denver Emergency Plumbing Services"
+    assert result.ineligibility_counts_by_reason[INELIGIBILITY_REASON_NO_LIVE_SITE] == 0
+    assert result.relaxed_filtering_applied is False
+
+
+def test_eligibility_gate_rejects_missing_domain_with_weak_overlap() -> None:
+    candidate = _candidate(
+        name="Generic Provider",
+        domain="",
+        summary="General services.",
+        why="Unknown overlap.",
+        evidence="Unknown.",
+        confidence=0.6,
+        index=0,
+    )
+    result = filter_eligible_competitor_candidates(
+        site=_site(),
+        candidates=[candidate],
+        domain_probe=None,
+    )
+    assert result.eligible_candidates == []
+    assert result.ineligibility_counts_by_reason[INELIGIBILITY_REASON_INSUFFICIENT_OVERLAP_EVIDENCE] == 1
+
+
+def test_eligibility_gate_relaxes_when_all_candidates_fail_for_no_live_site() -> None:
+    candidates = [
+        _candidate(
+            name="Offline Candidate One",
+            domain="offline-one.com",
+            summary="Denver service team with scheduling and contact workflows for home projects.",
+            why="Provides services in Denver and Aurora neighborhoods with local customer focus.",
+            evidence="Service pages and local coverage language indicate business operations.",
+            confidence=0.91,
+            index=0,
+        ),
+        _candidate(
+            name="Offline Candidate Two",
+            domain="offline-two.com",
+            summary="Denver service team with scheduling and contact workflows for home projects.",
+            why="Provides services in Denver and Aurora neighborhoods with local customer focus.",
+            evidence="Service pages and local coverage language indicate business operations.",
+            confidence=0.88,
+            index=1,
+        ),
+        _candidate(
+            name="Offline Candidate Three",
+            domain="offline-three.com",
+            summary="Denver service team with scheduling and contact workflows for home projects.",
+            why="Provides services in Denver and Aurora neighborhoods with local customer focus.",
+            evidence="Service pages and local coverage language indicate business operations.",
+            confidence=0.84,
+            index=2,
+        ),
+        _candidate(
+            name="Offline Candidate Four",
+            domain="offline-four.com",
+            summary="Denver service team with scheduling and contact workflows for home projects.",
+            why="Provides services in Denver and Aurora neighborhoods with local customer focus.",
+            evidence="Service pages and local coverage language indicate business operations.",
+            confidence=0.79,
+            index=3,
+        ),
+    ]
+    result = filter_eligible_competitor_candidates(
+        site=_site(),
+        candidates=candidates,
+        domain_probe=_probe_by_domain(
+            {
+                "offline-one.com": CompetitorCandidateDomainProbeResult(
+                    status_code=None,
+                    body_text=None,
+                    fetch_error="Request failed after retries",
+                ),
+                "offline-two.com": CompetitorCandidateDomainProbeResult(
+                    status_code=None,
+                    body_text=None,
+                    fetch_error="Request failed after retries",
+                ),
+                "offline-three.com": CompetitorCandidateDomainProbeResult(
+                    status_code=None,
+                    body_text=None,
+                    fetch_error="Request failed after retries",
+                ),
+                "offline-four.com": CompetitorCandidateDomainProbeResult(
+                    status_code=None,
+                    body_text=None,
+                    fetch_error="Request failed after retries",
+                ),
+            }
+        ),
+    )
+    assert result.relaxed_filtering_applied is True
+    assert len(result.eligible_candidates) == 3
+    assert [item.suggested_name for item in result.eligible_candidates] == [
+        "Offline Candidate One",
+        "Offline Candidate Two",
+        "Offline Candidate Three",
+    ]
     assert result.ineligibility_counts_by_reason[INELIGIBILITY_REASON_NO_LIVE_SITE] == 1
 
 

@@ -71,6 +71,10 @@ Interpretation guide:
 - High `removed_by_existing_domain_match`: many candidates already exist in the site competitor set.
 - High `removed_by_deduplication`: many near-duplicate domains were collapsed.
 - High `removed_by_final_limit`: discovery produced more viable candidates than requested; no failure implied.
+- If `event="competitor_filtering_relaxation"` appears:
+  - `unsupported_type_allowed` shows how many adjacent/mismatched-type candidates were allowed with soft penalties.
+  - `no_domain_allowed` shows how many weak-domain candidates were allowed with capped confidence.
+  - `relaxed_filtering_applied=true` means over-filter fallback admitted up to 3 candidates when all rejects were relaxable.
 
 ### Regression Indicators
 - Any `fast_path` or `degraded` event with `provider_call_type="tool_enabled"`.
