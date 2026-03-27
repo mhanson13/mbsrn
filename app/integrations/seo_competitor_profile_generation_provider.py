@@ -67,6 +67,7 @@ _EXECUTION_MODES = {
     _EXECUTION_MODE_FULL,
     _EXECUTION_MODE_DEGRADED,
 }
+_PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
 logger = logging.getLogger(__name__)
 
 
@@ -199,6 +200,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             prompt_version=self.prompt_version,
             prompt_text_competitor=self.prompt_text_competitor,
         )
+        resolved_prompt_version = self._resolve_prompt_version_from_user_prompt(
+            prompt.user_prompt,
+            fallback=prompt.prompt_version,
+        )
         normalized_execution_mode = self._normalize_execution_mode(
             execution_mode=execution_mode,
             degraded_mode=degraded_mode,
@@ -232,6 +237,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 provider_call_type=normalized_provider_call_type,
                 request_debug=request_debug,
                 timeout_seconds=effective_timeout_seconds,
+                resolved_prompt_version=resolved_prompt_version,
             )
         except SEOCompetitorProfileProviderError as exc:
             if self._should_log_structured_error(exc):
@@ -279,6 +285,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     provider_call_type=fallback_call_type,
                     request_debug=fallback_request_debug,
                     timeout_seconds=effective_timeout_seconds,
+                    resolved_prompt_version=resolved_prompt_version,
                 )
             except SEOCompetitorProfileProviderError as chat_exc:
                 if self._should_log_structured_error(chat_exc):
@@ -297,6 +304,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         provider_call_type: str,
         request_debug: dict[str, object] | None,
         timeout_seconds: int,
+        resolved_prompt_version: str,
     ) -> SEOCompetitorProfileGenerationOutput:
         endpoint_path = self._endpoint_path_for_provider_call_type(provider_call_type)
         if provider_call_type == _PROVIDER_CALL_TYPE_TOOL_ENABLED:
@@ -353,13 +361,22 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             candidates=candidates,
             provider_name=self.provider_name,
             model_name=model_name,
-            prompt_version=prompt.prompt_version,
+            prompt_version=resolved_prompt_version,
             raw_response=assistant_content,
             provider_call_type=provider_call_type,
             endpoint_path=endpoint_path,
             web_search_enabled=self._web_search_enabled_for_provider_call_type(provider_call_type),
             request_duration_ms=response.request_duration_ms,
         )
+
+    def _resolve_prompt_version_from_user_prompt(self, user_prompt: str, *, fallback: str) -> str:
+        if not user_prompt:
+            return fallback
+        match = _PROMPT_VERSION_MARKER_PATTERN.search(user_prompt)
+        if not match:
+            return fallback
+        extracted = _clean_optional_value(match.group(1))
+        return extracted or fallback
 
     def _parse_or_normalize_candidates(
         self,

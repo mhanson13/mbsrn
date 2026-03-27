@@ -806,7 +806,7 @@ export interface AIPromptPreview {
   system_prompt: string;
   user_prompt: string;
   model: string | null;
-  // Legacy/template compatibility identifier. Display as template metadata only.
+  // Effective prompt version extracted from the resolved prompt body when available.
   prompt_version: string | null;
   // Operator-facing effective prompt identity label.
   prompt_label?: string | null;

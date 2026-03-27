@@ -1505,7 +1505,7 @@ function promptPreviewSourceLabel(source: PromptPreviewView["source"]): string {
 function buildPromptPreviewExportText(preview: PromptPreviewView): string {
   const modelLabel = preview.model || "n/a";
   const promptIdentityLabel = preview.promptLabel || "resolved prompt";
-  const promptTemplateLabel = preview.promptVersion || null;
+  const promptVersionLabel = preview.promptVersion || null;
   const sourceLabel = promptPreviewSourceLabel(preview.source);
   const truncationLine = preview.truncated ? "Truncated: yes" : "Truncated: no";
   const totalChars =
@@ -1521,7 +1521,7 @@ function buildPromptPreviewExportText(preview: PromptPreviewView): string {
     `Source: ${sourceLabel}`,
     `Model: ${modelLabel}`,
     `Prompt: ${promptIdentityLabel}`,
-    ...(promptTemplateLabel ? [`Prompt Template: ${promptTemplateLabel}`] : []),
+    ...(promptVersionLabel ? [`Prompt Version: ${promptVersionLabel}`] : []),
     ...(promptSizeLine ? [promptSizeLine] : []),
     truncationLine,
     "",
@@ -1549,7 +1549,7 @@ function PromptPreviewPanel({
   testId,
 }: PromptPreviewPanelProps) {
   const promptIdentityLabel = preview.promptLabel || "resolved prompt";
-  const promptTemplateLabel = preview.promptVersion || null;
+  const promptVersionLabel = preview.promptVersion || null;
   const promptTotalChars =
     preview.promptMetrics && typeof preview.promptMetrics.total_prompt_chars === "number"
       ? preview.promptMetrics.total_prompt_chars
@@ -1569,7 +1569,7 @@ function PromptPreviewPanel({
       <span className="hint muted">
         Source: {promptPreviewSourceLabel(preview.source)} | Model: {preview.model || "n/a"} | Prompt:{" "}
         {promptIdentityLabel}
-        {promptTemplateLabel ? ` | Template: ${promptTemplateLabel}` : ""}
+        {promptVersionLabel ? ` | Prompt Version: ${promptVersionLabel}` : ""}
         {typeof promptTotalChars === "number" ? ` | Size: ${promptTotalChars} chars` : ""}
         {typeof promptContextChars === "number" ? ` | Context: ${promptContextChars} chars` : ""}
         {preview.truncated ? " | Preview is truncated for safety." : ""}
@@ -4564,7 +4564,7 @@ export default function SiteWorkspacePage() {
         {latestCompetitorProfileRun ? (
           <p className="hint muted">
             Provider: <code>{latestCompetitorProfileRun.provider_name}</code> | Model:{" "}
-            <code>{latestCompetitorProfileRun.model_name}</code> | Template:{" "}
+            <code>{latestCompetitorProfileRun.model_name}</code> | Prompt Version:{" "}
             <code>{latestCompetitorProfileRun.prompt_version}</code>
           </p>
         ) : null}

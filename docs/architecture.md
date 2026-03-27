@@ -133,6 +133,25 @@ Latency tradeoff:
 - Non-tool calls are generally faster and more deterministic.
 - Tool-enabled calls are higher-latency but improve real-time competitor discovery quality.
 
+## Prompt Resolution Model
+Competitor prompt execution and preview use the same resolved prompt assembly pipeline.
+
+- Resolved prompt composition:
+  - `system_prompt`
+  - normalized business admin override instruction body when present, otherwise default template instruction body
+  - platform constraints
+  - structured context injection
+- Admin override precedence:
+  - non-empty business admin override text wins over deployment/default template text
+  - override text is normalized and placeholder-rendered before final prompt assembly
+- Version/source metadata:
+  - prompt source comes from resolved settings (`admin_config`, `env`, `default`)
+  - prompt version is extracted from the resolved user prompt marker (`PROMPT_VERSION: ...`) when present
+  - if no marker exists, prompt version falls back to the configured template/provider version
+- UI/debug behavior:
+  - workspace prompt preview and run metadata should display resolved prompt source + resolved prompt version
+  - template metadata is secondary and must not override resolved prompt identity
+
 ## Competitor Candidate Validation
 - Candidate parsing applies an early required-field filter before service-layer draft construction:
   - candidates missing `name` are dropped

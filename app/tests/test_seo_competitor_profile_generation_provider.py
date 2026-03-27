@@ -179,6 +179,65 @@ def test_response_parsing_still_returns_valid_candidates(monkeypatch) -> None:
     assert output.candidates[0].suggested_domain == "competitor-one.example"
 
 
+def test_output_prompt_version_uses_resolved_prompt_marker_when_override_is_present(monkeypatch) -> None:
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 20
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-4.1-mini-2026-01-01")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        timeout_seconds=20,
+        prompt_version="seo-competitor-profile-v1",
+        prompt_text_competitor=(
+            "PROMPT_VERSION: seo-competitor-profile-v4\n"
+            "TASK: Use the business admin override as the primary instruction body.\n"
+            "OUTPUT FORMAT:\n"
+            '{"candidates":[{"domain":"hostname","competitor_type":"direct","confidence_score":0.0}]}\n'
+        ),
+        prompt_source="admin_config",
+    )
+
+    output = provider.generate_competitor_profiles(
+        site=_site(),
+        existing_domains=["known.example"],
+        candidate_count=1,
+    )
+
+    assert output.prompt_version == "seo-competitor-profile-v4"
+
+
+def test_output_prompt_version_falls_back_to_provider_version_without_prompt_marker(monkeypatch) -> None:
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 20
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-4.1-mini-2026-01-01")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        timeout_seconds=20,
+        prompt_version="seo-competitor-profile-v1",
+        prompt_text_competitor=(
+            "TASK: Use the business admin override as the primary instruction body.\n"
+            "OUTPUT FORMAT:\n"
+            '{"candidates":[{"domain":"hostname","competitor_type":"direct","confidence_score":0.0}]}\n'
+        ),
+        prompt_source="admin_config",
+    )
+
+    output = provider.generate_competitor_profiles(
+        site=_site(),
+        existing_domains=["known.example"],
+        candidate_count=1,
+    )
+
+    assert output.prompt_version == "seo-competitor-profile-v1"
+
+
 def test_per_request_timeout_override_is_used_when_provided(monkeypatch) -> None:
     observed_timeouts: list[int] = []
 

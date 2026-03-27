@@ -91,6 +91,34 @@ def test_recommendation_prompt_fallback_resolution_uses_immutable_snapshot_not_m
     assert resolved.prompt_source == "env"
 
 
+def test_competitor_prompt_apply_resolution_uses_normalized_admin_override_for_execution(
+    db_session,
+    seeded_business,
+) -> None:
+    provider = _MutablePromptProvider(competitor_prompt_text="Configured fallback prompt.")
+    service = SEOCompetitorProfileGenerationService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_site_repository=SEOSiteRepository(db_session),
+        seo_competitor_repository=SEOCompetitorRepository(db_session),
+        seo_competitor_profile_generation_repository=SEOCompetitorProfileGenerationRepository(db_session),
+        provider=provider,
+    )
+    seeded_business.ai_prompt_text_competitor = (
+        " \n"
+        "PROMPT_VERSION: seo-competitor-profile-v4\n"
+        "TASK: Use the admin override prompt.\n"
+        " "
+    )
+
+    resolved = service._apply_resolved_competitor_prompt_settings(seeded_business)
+
+    assert resolved.prompt_source == "admin_config"
+    assert resolved.prompt_text.startswith("PROMPT_VERSION: seo-competitor-profile-v4")
+    assert provider.prompt_text_competitor == resolved.prompt_text
+    assert provider.prompt_source == "admin_config"
+
+
 def test_competitor_prompt_preview_matches_runtime_prompt_assembly(
     db_session,
     seeded_business,

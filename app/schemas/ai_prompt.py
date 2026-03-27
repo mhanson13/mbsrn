@@ -50,8 +50,7 @@ class AIPromptPreviewRead(BaseModel):
     system_prompt: str = ""
     user_prompt: str = ""
     model: str | None = None
-    # Compatibility field: template/version identifier retained for existing clients.
-    # This may remain a legacy value and should not be treated as operator-facing prompt identity.
+    # Effective prompt version extracted from the resolved prompt body when available.
     prompt_version: str | None = None
     # Operator-facing effective prompt identity label.
     prompt_label: str | None = None

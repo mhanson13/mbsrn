@@ -3694,11 +3694,15 @@ describe("site workspace timeline controls", () => {
     const competitorPanel = await screen.findByTestId("competitor-prompt-preview");
     expect(within(competitorPanel).getByText("View AI prompt")).toBeInTheDocument();
     expect(within(competitorPanel).getByText(/Source: Business admin override/)).toBeInTheDocument();
+    expect(within(competitorPanel).getByText(/Prompt Version:\s*seo-competitor-profile-v1/)).toBeInTheDocument();
     expect(within(competitorPanel).getByText(/Prompt:\s*resolved competitor prompt/)).toBeInTheDocument();
     expect(within(competitorPanel).queryByText(/Prompt:\s*seo-competitor-profile-v1/)).not.toBeInTheDocument();
     expect(within(competitorPanel).getByText(/Size:\s*2048 chars/)).toBeInTheDocument();
     const recommendationPanel = await screen.findByTestId("recommendation-prompt-preview");
     expect(within(recommendationPanel).getByText(/Source: Deployment fallback/)).toBeInTheDocument();
+    expect(
+      within(recommendationPanel).getByText(/Prompt Version:\s*seo-recommendation-narrative-v2/),
+    ).toBeInTheDocument();
     expect(within(recommendationPanel).getByText(/Prompt:\s*resolved recommendation prompt/)).toBeInTheDocument();
     expect(
       within(recommendationPanel).queryByText(/Prompt:\s*seo-recommendation-narrative-v2/),
@@ -3817,7 +3821,7 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     const competitorPanel = await screen.findByTestId("competitor-prompt-preview");
-    expect(within(competitorPanel).getByText(/Template: seo-competitor-profile-v2/)).toBeInTheDocument();
+    expect(within(competitorPanel).getByText(/Prompt Version: seo-competitor-profile-v2/)).toBeInTheDocument();
     await user.click(within(competitorPanel).getByText("View AI prompt"));
     const userPromptBlocks = within(competitorPanel).getAllByText(
       (_, node) => node?.tagName.toLowerCase() === "pre" && (node.textContent || "").includes("PROMPT_VERSION:"),
@@ -4824,12 +4828,12 @@ describe("site workspace ai competitor profile drafts", () => {
       return (
         text.includes("Provider:") &&
         text.includes("Model:") &&
-        text.includes("Template:")
+        text.includes("Prompt Version:")
       );
     });
     expect(metadataLine).toHaveTextContent(/Provider:\s*mock/);
     expect(metadataLine).toHaveTextContent(/Model:\s*mock-seo-competitor-profile-v1/);
-    expect(metadataLine).toHaveTextContent(/Template:\s*seo-competitor-profile-v1/);
+    expect(metadataLine).toHaveTextContent(/Prompt Version:\s*seo-competitor-profile-v1/);
     expect(screen.getByText(/Last 30d: queued 0 \| running 0 \| completed 1 \| failed 0/)).toBeInTheDocument();
     expect(screen.getByText(/Candidate telemetry \(1 runs\): raw 2 \| included 2 \| excluded 0/)).toBeInTheDocument();
     expect(screen.queryByText(/Exclusion reasons:/i)).not.toBeInTheDocument();
