@@ -407,6 +407,8 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
     context_json_chars: int | None = Field(default=None, ge=0)
     user_prompt_chars: int | None = Field(default=None, ge=0)
     endpoint_path: str | None = Field(default=None, max_length=64)
+    search_escalation_triggered: bool = False
+    escalation_reason: str | None = Field(default=None, max_length=64)
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -430,6 +432,7 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
         "malformed_output_reason",
         "prompt_size_risk",
         "endpoint_path",
+        "escalation_reason",
         mode="before",
     )
     @classmethod

@@ -80,7 +80,7 @@ const AI_OPPORTUNITY_INITIAL_COUNT = 3;
 const AI_ACTION_HIGHLIGHT_DURATION_MS = 1800;
 const MAX_RECENT_TUNING_CHANGES = 8;
 const COMPETITOR_PROFILE_DRAFT_CANDIDATE_COUNT = 5;
-const COMPETITOR_PROFILE_POLL_INTERVAL_MS = 2000;
+const COMPETITOR_PROFILE_POLL_INTERVAL_MS = 3000;
 const COMPETITOR_PROFILE_POLL_MAX_ATTEMPTS = 30;
 const MAX_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
 const MAX_TUNING_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
@@ -1670,6 +1670,29 @@ function isCompetitorProfileRunTerminalStatus(status: CompetitorProfileGeneratio
   return status === "completed" || status === "failed";
 }
 
+function competitorProfileTerminalMessage(status: CompetitorProfileGenerationRun["status"]): string | null {
+  if (status === "completed") {
+    return "Competitor profile generation completed. Results refreshed automatically.";
+  }
+  if (status === "failed") {
+    return "Competitor profile generation failed. Latest run details are shown.";
+  }
+  return null;
+}
+
+function sortCompetitorProfileGenerationRuns(
+  runs: CompetitorProfileGenerationRun[],
+): CompetitorProfileGenerationRun[] {
+  return [...runs].sort((left, right) => right.created_at.localeCompare(left.created_at));
+}
+
+function upsertCompetitorProfileGenerationRun(
+  runs: CompetitorProfileGenerationRun[],
+  run: CompetitorProfileGenerationRun,
+): CompetitorProfileGenerationRun[] {
+  return sortCompetitorProfileGenerationRuns([run, ...runs.filter((item) => item.id !== run.id)]);
+}
+
 function recommendationSourceType(item: Recommendation): string {
   if (item.audit_run_id && item.comparison_run_id) {
     return "mixed";
@@ -1850,6 +1873,7 @@ export default function SiteWorkspacePage() {
   const [generationInFlight, setGenerationInFlight] = useState(false);
   const [retryInFlight, setRetryInFlight] = useState(false);
   const [competitorProfilePolling, setCompetitorProfilePolling] = useState(false);
+  const [competitorProfilePollingTargetRunId, setCompetitorProfilePollingTargetRunId] = useState<string | null>(null);
   const [draftActionTargetId, setDraftActionTargetId] = useState<string | null>(null);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [editFormState, setEditFormState] = useState<DraftEditFormState | null>(null);
@@ -1863,10 +1887,17 @@ export default function SiteWorkspacePage() {
   const [expandedTimeline, setExpandedTimeline] = useState(false);
 
   const latestCompetitorProfileRun = useMemo(
-    () => competitorProfileGenerationRuns[0] || null,
-    [competitorProfileGenerationRuns],
+    () => {
+      if (latestCompetitorProfileRunId) {
+        const matchingRun = competitorProfileGenerationRuns.find((run) => run.id === latestCompetitorProfileRunId);
+        if (matchingRun) {
+          return matchingRun;
+        }
+      }
+      return competitorProfileGenerationRuns[0] || null;
+    },
+    [competitorProfileGenerationRuns, latestCompetitorProfileRunId],
   );
-  const latestCompetitorProfileRunStatus = latestCompetitorProfileRun?.status || null;
   const competitorRunOutcomeSummary = useMemo<CompetitorRunOutcomeSummaryView | null>(() => {
     if (
       !latestCompetitorProfileRun ||
@@ -2885,10 +2916,14 @@ export default function SiteWorkspacePage() {
         { candidate_count: COMPETITOR_PROFILE_DRAFT_CANDIDATE_COUNT },
       );
       setCompetitorProfileGenerationRuns((current) => {
-        const next = [detail.run, ...current.filter((item) => item.id !== detail.run.id)];
-        return next.sort((left, right) => right.created_at.localeCompare(left.created_at));
+        return upsertCompetitorProfileGenerationRun(current, detail.run);
       });
       setLatestCompetitorProfileRunId(detail.run.id);
+      if (!isCompetitorProfileRunTerminalStatus(detail.run.status)) {
+        setCompetitorProfilePollingTargetRunId(detail.run.id);
+      } else {
+        setCompetitorProfilePollingTargetRunId(null);
+      }
       setCompetitorProfileDrafts(detail.drafts);
       setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
       setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
@@ -2905,8 +2940,10 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderAttemptCount(Math.max(0, detail.provider_attempt_count || 0));
       setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
       setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
+      const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
       setCompetitorProfileActionMessage(
-        "Competitor profile generation queued. Drafts will appear after the run completes.",
+        terminalMessage ||
+          "Competitor profile generation queued. Drafts will appear after the run completes.",
       );
       setEditingDraftId(null);
       setEditFormState(null);
@@ -2938,10 +2975,14 @@ export default function SiteWorkspacePage() {
         latestCompetitorProfileRun.id,
       );
       setCompetitorProfileGenerationRuns((current) => {
-        const next = [detail.run, ...current.filter((item) => item.id !== detail.run.id)];
-        return next.sort((left, right) => right.created_at.localeCompare(left.created_at));
+        return upsertCompetitorProfileGenerationRun(current, detail.run);
       });
       setLatestCompetitorProfileRunId(detail.run.id);
+      if (!isCompetitorProfileRunTerminalStatus(detail.run.status)) {
+        setCompetitorProfilePollingTargetRunId(detail.run.id);
+      } else {
+        setCompetitorProfilePollingTargetRunId(null);
+      }
       setCompetitorProfileDrafts(detail.drafts);
       setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
       setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
@@ -2958,8 +2999,10 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderAttemptCount(Math.max(0, detail.provider_attempt_count || 0));
       setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
       setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
+      const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
       setCompetitorProfileActionMessage(
-        "Retry queued. Drafts will appear after the run completes.",
+        terminalMessage ||
+          "Retry queued. Drafts will appear after the run completes.",
       );
       setEditingDraftId(null);
       setEditFormState(null);
@@ -3337,6 +3380,7 @@ export default function SiteWorkspacePage() {
       setGenerationInFlight(false);
       setRetryInFlight(false);
       setCompetitorProfilePolling(false);
+      setCompetitorProfilePollingTargetRunId(null);
       setDraftActionTargetId(null);
       setEditingDraftId(null);
       setEditFormState(null);
@@ -3405,6 +3449,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProfileSummaryError(null);
       setRetryInFlight(false);
       setCompetitorProfilePolling(false);
+      setCompetitorProfilePollingTargetRunId(null);
       return;
     }
 
@@ -3450,6 +3495,7 @@ export default function SiteWorkspacePage() {
       setAiActionFocusedTargetId(null);
       setPendingAiApplyAttributionByPreviewKey({});
       setRecentTuningChanges([]);
+      setCompetitorProfilePollingTargetRunId(null);
       setCompetitorProfileSummaryError(null);
       setRejectedCompetitorCandidateCount(0);
       setRejectedCompetitorCandidates([]);
@@ -3675,13 +3721,14 @@ export default function SiteWorkspacePage() {
       }
 
       if (competitorProfileRunsResult.status === "fulfilled") {
-        const sortedRuns = [...competitorProfileRunsResult.value.items].sort((left, right) =>
-          right.created_at.localeCompare(left.created_at),
-        );
+        const sortedRuns = sortCompetitorProfileGenerationRuns(competitorProfileRunsResult.value.items);
         setCompetitorProfileGenerationRuns(sortedRuns);
         setCompetitorProfileError(null);
         const latestRun = sortedRuns[0] || null;
         setLatestCompetitorProfileRunId(latestRun ? latestRun.id : null);
+        setCompetitorProfilePollingTargetRunId(
+          latestRun && !isCompetitorProfileRunTerminalStatus(latestRun.status) ? latestRun.id : null,
+        );
         if (latestRun) {
           setCompetitorProfileLoading(true);
           try {
@@ -3747,6 +3794,7 @@ export default function SiteWorkspacePage() {
       } else {
         setCompetitorProfileGenerationRuns([]);
         setLatestCompetitorProfileRunId(null);
+        setCompetitorProfilePollingTargetRunId(null);
         setCompetitorProfileDrafts([]);
         setRejectedCompetitorCandidateCount(0);
         setRejectedCompetitorCandidates([]);
@@ -3789,9 +3837,7 @@ export default function SiteWorkspacePage() {
       !context.token ||
       !context.businessId ||
       !siteId ||
-      !latestCompetitorProfileRunId ||
-      !latestCompetitorProfileRunStatus ||
-      isCompetitorProfileRunTerminalStatus(latestCompetitorProfileRunStatus)
+      !competitorProfilePollingTargetRunId
     ) {
       setCompetitorProfilePolling(false);
       return;
@@ -3808,6 +3854,7 @@ export default function SiteWorkspacePage() {
       }
       if (attempts >= COMPETITOR_PROFILE_POLL_MAX_ATTEMPTS) {
         setCompetitorProfilePolling(false);
+        setCompetitorProfilePollingTargetRunId(null);
         return;
       }
       attempts += 1;
@@ -3839,37 +3886,21 @@ export default function SiteWorkspacePage() {
             );
           }
         }
-        const sortedRuns = [...runsResponse.items].sort((left, right) =>
-          right.created_at.localeCompare(left.created_at),
-        );
+        const sortedRuns = sortCompetitorProfileGenerationRuns(runsResponse.items);
         setCompetitorProfileGenerationRuns(sortedRuns);
-        const latestRun = sortedRuns[0] || null;
-        setLatestCompetitorProfileRunId(latestRun ? latestRun.id : null);
-        if (!latestRun) {
-          setCompetitorProfileDrafts([]);
-          setRejectedCompetitorCandidateCount(0);
-          setRejectedCompetitorCandidates([]);
-          setTuningRejectedCompetitorCandidateCount(0);
-          setTuningRejectedCompetitorCandidates([]);
-          setTuningRejectionReasonCounts({});
-          setCompetitorCandidatePipelineSummary(null);
-          setCompetitorProviderAttemptCount(0);
-          setCompetitorProviderDegradedRetryUsed(false);
-          setCompetitorProviderAttempts([]);
-          setCompetitorProfilePolling(false);
-          return;
-        }
 
         setCompetitorProfileLoading(true);
         const detail = await fetchCompetitorProfileGenerationRunDetail(
           context.token,
           context.businessId,
           siteId,
-          latestRun.id,
+          competitorProfilePollingTargetRunId,
         );
         if (cancelled) {
           return;
         }
+        setCompetitorProfileGenerationRuns(upsertCompetitorProfileGenerationRun(sortedRuns, detail.run));
+        setLatestCompetitorProfileRunId(detail.run.id);
         setCompetitorProfileDrafts(detail.drafts);
         setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
         setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
@@ -3888,7 +3919,13 @@ export default function SiteWorkspacePage() {
         setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
         setCompetitorProfileError(null);
         if (isCompetitorProfileRunTerminalStatus(detail.run.status)) {
+          const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
+          if (terminalMessage) {
+            setCompetitorProfileActionError(null);
+            setCompetitorProfileActionMessage(terminalMessage);
+          }
           setCompetitorProfilePolling(false);
+          setCompetitorProfilePollingTargetRunId(null);
         }
       } catch (error) {
         if (cancelled) {
@@ -3905,6 +3942,7 @@ export default function SiteWorkspacePage() {
         setCompetitorProviderDegradedRetryUsed(false);
         setCompetitorProviderAttempts([]);
         setCompetitorProfilePolling(false);
+        setCompetitorProfilePollingTargetRunId(null);
       } finally {
         inFlight = false;
         if (!cancelled) {
@@ -3925,8 +3963,7 @@ export default function SiteWorkspacePage() {
   }, [
     context.businessId,
     context.token,
-    latestCompetitorProfileRunId,
-    latestCompetitorProfileRunStatus,
+    competitorProfilePollingTargetRunId,
     siteId,
   ]);
 

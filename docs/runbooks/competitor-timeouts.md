@@ -47,6 +47,9 @@ Use these filters in Logs Explorer:
 - Full attempt is the only tool-enabled call.
 - Degraded retry uses non-tool provider call and no web search.
 - No repeated timeout loops beyond the designed attempt sequence.
+- If fast_path returns zero valid candidates, a full search-backed attempt should follow with
+  `provider_attempts[0].search_escalation_triggered=true` and
+  `provider_attempts[0].escalation_reason="zero_valid_competitors"`.
 
 ## Candidate Filtering Checklist
 If competitor volume is low, inspect candidate pipeline observability before changing prompts or timeouts.

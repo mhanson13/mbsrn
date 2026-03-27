@@ -773,6 +773,71 @@ class _ProviderEndpointMetadataSearchUnavailableLowResultProvider:
         )
 
 
+class _ZeroResultEscalationCompetitorProfileProvider:
+    provider_name = "openai"
+    model_name = "gpt-5-mini"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def __init__(self) -> None:
+        self.execution_modes: list[str | None] = []
+        self.provider_call_types: list[str | None] = []
+        self.web_search_enabled_flags: list[bool | None] = []
+        self.reduced_context_modes: list[bool] = []
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+        reduced_context_mode: bool = False,
+        execution_mode: str | None = None,
+        provider_call_type: str | None = None,
+        web_search_enabled: bool | None = None,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count
+        normalized_call_type = provider_call_type or "non_tool"
+        self.execution_modes.append(execution_mode)
+        self.provider_call_types.append(normalized_call_type)
+        self.web_search_enabled_flags.append(web_search_enabled)
+        self.reduced_context_modes.append(bool(reduced_context_mode))
+
+        if normalized_call_type == "non_tool":
+            return SEOCompetitorProfileGenerationOutput(
+                candidates=[],
+                provider_name=self.provider_name,
+                model_name=self.model_name,
+                prompt_version=self.prompt_version,
+                raw_response='{"candidates":[]}',
+                provider_call_type="non_tool",
+                endpoint_path="/chat/completions",
+                web_search_enabled=False,
+                request_duration_ms=211,
+            )
+
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Escalated Search Competitor",
+                    suggested_domain="escalated-search-competitor.example",
+                    competitor_type="direct",
+                    summary="Recovered from search escalation.",
+                    why_competitor="Search-backed attempt produced a valid competitor.",
+                    evidence="Tool-enabled discovery pass returned usable candidate data.",
+                    confidence_score=0.84,
+                )
+            ],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Escalated Search Competitor"}]}',
+            provider_call_type="tool_enabled",
+            endpoint_path="/responses",
+            web_search_enabled=True,
+            request_duration_ms=644,
+        )
+
+
 class _MalformedOutputReasonDebugProvider:
     provider_name = "openai"
     model_name = "gpt-5-mini"
@@ -1867,6 +1932,8 @@ def test_service_passes_explicit_provider_call_type_intent_for_provider_capable_
     assert payload["provider_attempts"][0]["execution_mode"] == "fast_path"
     assert payload["provider_attempts"][0]["provider_call_type"] == "non_tool"
     assert payload["provider_attempts"][0]["web_search_enabled"] is False
+    assert payload["provider_attempts"][0]["search_escalation_triggered"] is False
+    assert payload["provider_attempts"][0]["escalation_reason"] is None
 
 
 def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_business) -> None:
@@ -2314,6 +2381,66 @@ def test_run_detail_exposes_low_result_search_unavailable_quality_signals(db_ses
     assert attempt["endpoint_path"] == "/chat/completions"
     assert attempt["web_search_enabled"] is False
     assert attempt["request_duration_ms"] == 432
+
+
+def test_zero_result_fast_path_escalates_to_search_backed_attempt(db_session, seeded_business, caplog) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _ZeroResultEscalationCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=3)["run"]["id"]
+
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=provider,
+        )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["provider_attempt_count"] == 2
+    assert payload["provider_degraded_retry_used"] is False
+    assert len(payload["provider_attempts"]) == 2
+
+    first_attempt = payload["provider_attempts"][0]
+    assert first_attempt["attempt_number"] == 0
+    assert first_attempt["execution_mode"] == "fast_path"
+    assert first_attempt["provider_call_type"] == "non_tool"
+    assert first_attempt["web_search_enabled"] is False
+    assert first_attempt["search_escalation_triggered"] is True
+    assert first_attempt["escalation_reason"] == "zero_valid_competitors"
+
+    second_attempt = payload["provider_attempts"][1]
+    assert second_attempt["attempt_number"] == 1
+    assert second_attempt["execution_mode"] == "full"
+    assert second_attempt["provider_call_type"] == "tool_enabled"
+    assert second_attempt["web_search_enabled"] is True
+    assert second_attempt["search_escalation_triggered"] is False
+    assert second_attempt["escalation_reason"] is None
+
+    assert provider.execution_modes == ["fast_path", "full"]
+    assert provider.provider_call_types == ["non_tool", "tool_enabled"]
+    assert provider.web_search_enabled_flags == [False, True]
+    assert provider.reduced_context_modes == [True, False]
+    events = _structured_event_records(caplog)
+    escalation_event = next(item for item in events if item.get("event") == "competitor_search_escalation")
+    assert escalation_event["run_id"] == run_id
+    assert escalation_event["attempt_number"] == 0
+    assert escalation_event["provider_call_type"] == "non_tool"
+    assert escalation_event["search_escalation_triggered"] is True
+    assert escalation_event["escalation_reason"] == "zero_valid_competitors"
 
 
 def test_run_detail_exposes_malformed_output_reason_in_provider_attempt_debug(db_session, seeded_business) -> None:

@@ -1,6 +1,8 @@
 # MBSRN Operator Platform
 
-MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO operations, competitor intelligence, and operator-driven recommendation workflows.
+[Feature Overview](docs/features/features.md)
+
+MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO operations, competitor intelligence, and operator-driven recommendation workflows. Ultimately, we're trying to democratize AI for small businesses who have GoDaddy(-like) generated sites but no SEO / EATT skills, or frankly time, because their time is spent on a ladder or servicing clients.
 
 ## What Is Shipped
 - Business-scoped operator auth (Google identity exchange to internal principal authorization)

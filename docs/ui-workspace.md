@@ -58,6 +58,21 @@ Operator-facing notes are shown when telemetry indicates risk:
 
 For very low outcomes (`<= 1` returned), the panel renders a concise explanatory message using only observed run metadata and does not invent remediation steps.
 
+## Competitor Generation UI Behavior
+
+The `Generate Competitor Profiles` flow refreshes automatically after run creation.
+
+Behavior:
+
+- After `Generate Competitor Profiles` (or `Retry`), the workspace starts bounded polling against the latest run id.
+- Poll cadence: every `3` seconds.
+- Safety bound: polling stops after `30` attempts (about `90` seconds) or when the run reaches `completed`/`failed`.
+- Polling refreshes both:
+  - competitor run status/history
+  - latest run detail payload (drafts, rejection/debug counts, provider attempt telemetry)
+- On terminal status, the workspace updates action messaging and clears in-progress polling state.
+- No manual page refresh is required for completed-run draft visibility.
+
 ## Recommendation Generation Action
 
 The workspace recommendations area now includes a primary `Generate Recommendations` action.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 import inspect
 import json
@@ -305,6 +305,8 @@ class SEOCompetitorProfileProviderAttemptDebug:
     context_json_chars: int | None
     user_prompt_chars: int | None
     endpoint_path: str | None
+    search_escalation_triggered: bool = False
+    escalation_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2489,7 +2491,29 @@ class SEOCompetitorProfileGenerationService:
                     provider_error=None,
                 )
             )
-            return output
+            if len(output.candidates) > 0:
+                return output
+            provider_attempts[-1] = replace(
+                provider_attempts[-1],
+                search_escalation_triggered=True,
+                escalation_reason="zero_valid_competitors",
+            )
+            self._emit_structured_service_log(
+                payload={
+                    "event": "competitor_search_escalation",
+                    "run_id": run_id,
+                    "business_id": site.business_id,
+                    "site_id": site.id,
+                    "attempt_number": 0,
+                    "execution_mode": _EXECUTION_MODE_FAST_PATH,
+                    "provider_call_type": _PROVIDER_CALL_TYPE_NON_TOOL,
+                    "web_search_enabled": False,
+                    "search_escalation_triggered": True,
+                    "escalation_reason": "zero_valid_competitors",
+                    "candidate_count": len(output.candidates),
+                },
+                fallback_message="competitor_search_escalation",
+            )
         except SEOCompetitorProfileProviderError as fast_path_exc:
             fast_path_duration_ms = max(0, int((time.perf_counter() - fast_path_attempt_start) * 1000))
             fast_path_attempt_debug = self._build_provider_attempt_debug(
@@ -3023,6 +3047,10 @@ class SEOCompetitorProfileGenerationService:
                 payload["user_prompt_chars"] = max(0, int(item.user_prompt_chars))
             if item.endpoint_path:
                 payload["endpoint_path"] = item.endpoint_path
+            if item.search_escalation_triggered:
+                payload["search_escalation_triggered"] = True
+            if item.escalation_reason:
+                payload["escalation_reason"] = item.escalation_reason
             serialized.append(payload)
         return serialized
 
@@ -3102,6 +3130,10 @@ class SEOCompetitorProfileGenerationService:
                 if prompt_size_risk not in {"normal", "elevated", "high"}:
                     prompt_size_risk = None
                 endpoint_path = self._clean_optional(str(raw_item.get("endpoint_path") or ""))
+                search_escalation_triggered = bool(raw_item.get("search_escalation_triggered"))
+                escalation_reason = self._clean_optional(str(raw_item.get("escalation_reason") or ""))
+                if escalation_reason and len(escalation_reason) > 64:
+                    escalation_reason = escalation_reason[:64]
                 provider_attempts.append(
                     SEOCompetitorProfileProviderAttemptDebug(
                         attempt_number=attempt_number,
@@ -3121,6 +3153,8 @@ class SEOCompetitorProfileGenerationService:
                         context_json_chars=context_json_chars,
                         user_prompt_chars=user_prompt_chars,
                         endpoint_path=endpoint_path,
+                        search_escalation_triggered=search_escalation_triggered,
+                        escalation_reason=escalation_reason,
                     )
                 )
 

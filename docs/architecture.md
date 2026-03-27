@@ -133,6 +133,19 @@ Latency tradeoff:
 - Non-tool calls are generally faster and more deterministic.
 - Tool-enabled calls are higher-latency but improve real-time competitor discovery quality.
 
+## Competitor Search Escalation
+Competitor generation now applies both timeout-based and quality-based escalation.
+
+- Timeout-based escalation remains unchanged:
+  - fast_path (`attempt_number=0`) failure falls through to full (`attempt_number=1`)
+  - full timeout falls through to degraded (`attempt_number=2`)
+- Quality-based escalation (conservative guardrail):
+  - if fast_path completes successfully but returns zero valid candidates, the run escalates to full search-backed execution before finalizing
+  - escalation reason is recorded as `zero_valid_competitors` in provider attempt debug metadata
+- Re-escalation guardrails:
+  - full attempts do not trigger another full/search escalation
+  - degraded remains timeout-recovery only and still uses non-tool calls with web search disabled
+
 ## Prompt Resolution Model
 Competitor prompt execution and preview use the same resolved prompt assembly pipeline.
 

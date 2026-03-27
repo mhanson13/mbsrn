@@ -5190,6 +5190,79 @@ describe("site workspace ai competitor profile drafts", () => {
   it("triggers generation and refreshes visible drafts", async () => {
     seedCompetitorProfileGenerationWorkspaceData();
     const user = userEvent.setup();
+    const initialRun = buildCompetitorProfileGenerationRun({
+      id: "gen-run-existing",
+      status: "completed",
+      generated_draft_count: 0,
+      completed_at: "2026-03-21T01:00:00Z",
+      created_at: "2026-03-21T00:59:00Z",
+      updated_at: "2026-03-21T01:00:00Z",
+    });
+    const queuedRun = buildCompetitorProfileGenerationRun({
+      id: "gen-run-new",
+      status: "queued",
+      generated_draft_count: 0,
+      completed_at: null,
+      created_at: "2026-03-21T01:15:00Z",
+      updated_at: "2026-03-21T01:15:00Z",
+    });
+    const completedRun = buildCompetitorProfileGenerationRun({
+      ...queuedRun,
+      status: "completed",
+      generated_draft_count: 1,
+      completed_at: "2026-03-21T01:16:00Z",
+      updated_at: "2026-03-21T01:16:00Z",
+    });
+    const completedDraft: CompetitorProfileDraft = {
+      id: "draft-new-1",
+      business_id: "biz-1",
+      site_id: "site-1",
+      generation_run_id: queuedRun.id,
+      suggested_name: "Auto Refreshed Competitor",
+      suggested_domain: "auto-refreshed.example",
+      competitor_type: "direct",
+      summary: "Auto-refreshed summary",
+      why_competitor: "Auto-refreshed rationale",
+      evidence: "Auto-refreshed evidence",
+      confidence_score: 0.81,
+      source: "ai_generated",
+      review_status: "pending",
+      edited_fields_json: null,
+      review_notes: null,
+      reviewed_by_principal_id: null,
+      reviewed_at: null,
+      accepted_competitor_set_id: null,
+      accepted_competitor_domain_id: null,
+      created_at: "2026-03-21T01:16:00Z",
+      updated_at: "2026-03-21T01:16:00Z",
+    };
+
+    mockCreateCompetitorProfileGenerationRun.mockResolvedValue({
+      run: queuedRun,
+      drafts: [],
+      total_drafts: 0,
+    });
+    mockFetchCompetitorProfileGenerationRuns
+      .mockResolvedValueOnce({ items: [initialRun], total: 1 })
+      .mockResolvedValueOnce({ items: [queuedRun], total: 1 })
+      .mockResolvedValue({ items: [completedRun], total: 1 });
+    mockFetchCompetitorProfileGenerationRunDetail
+      .mockResolvedValueOnce({
+        run: initialRun,
+        drafts: [],
+        total_drafts: 0,
+      })
+      .mockResolvedValueOnce({
+        run: queuedRun,
+        drafts: [],
+        total_drafts: 0,
+      })
+      .mockResolvedValue({
+        run: completedRun,
+        drafts: [completedDraft],
+        total_drafts: 1,
+      });
+
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("button", { name: "Generate Competitor Profiles" });
@@ -5201,6 +5274,21 @@ describe("site workspace ai competitor profile drafts", () => {
       "biz-1",
       "site-1",
       { candidate_count: 5 },
+    );
+    await waitFor(
+      () => {
+        expect(
+          screen.getByText("Competitor profile generation completed. Results refreshed automatically."),
+        ).toBeInTheDocument();
+      },
+      { timeout: 12000 },
+    );
+    expect(screen.queryByText("Competitor profile generation queued. Drafts will appear after the run completes.")).not.toBeInTheDocument();
+    await waitFor(
+      () => {
+        expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(1);
+      },
+      { timeout: 12000 },
     );
   });
 
@@ -5287,6 +5375,9 @@ describe("site workspace ai competitor profile drafts", () => {
       },
       { timeout: 8000 },
     );
+    expect(
+      screen.getByText("Competitor profile generation completed. Results refreshed automatically."),
+    ).toBeInTheDocument();
   });
 
   it("accept/reject/edit actions update draft states", async () => {
