@@ -478,6 +478,8 @@ jobs:
 
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/ui-deployment.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/ui-service.yaml"
+          kubectl delete deployment mbsrn-api -n "${K8S_NAMESPACE}" --ignore-not-found=true
+          kubectl wait --for=delete deployment/mbsrn-api -n "${K8S_NAMESPACE}" --timeout=120s || true
           kubectl apply --dry-run=server -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-deployment.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-deployment.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-service.yaml"

@@ -248,6 +248,10 @@ Rendered-manifest env source rule:
 - treat empty optional literals as unset and omit that `value` branch entirely
 - deploy render validation now enforces this via:
   - `python scripts/validate_k8s_env_sources.py <rendered-manifest...>`
+- if env source conflicts persist after template fixes, delete and recreate the Deployment before apply to reset strategic-merge state for the `env` array:
+  - `kubectl delete deployment mbsrn-api -n <NAMESPACE> --ignore-not-found=true`
+  - `kubectl wait --for=delete deployment/mbsrn-api -n <NAMESPACE> --timeout=120s || true`
+- Kubernetes strategic merge can retain legacy `env` entry shape across updates, and mixed legacy/new field forms can trigger `value` vs `valueFrom` validation errors.
 
 Inspect rendered env entries by index/name before apply:
 
