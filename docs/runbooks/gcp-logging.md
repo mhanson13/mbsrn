@@ -10,6 +10,7 @@ The admin `GCP Logs Query` tool always sends an explicit time constraint to Clou
 - If both are provided, both constraints are applied.
 
 The backend response includes `effective_filter`, and the UI displays it so operators can confirm the exact filter sent to `entries.list`.
+When either `Start Time` or `End Time` is supplied, `default_time_range_applied` is `false` and the default 24-hour window is not used.
 
 ## Override The Default Window
 

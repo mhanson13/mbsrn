@@ -229,7 +229,21 @@ def test_gcp_logs_query_round_trips_pagination_token(db_session, seeded_business
 
 
 def test_gcp_logs_query_round_trips_optional_time_range_fields(db_session, seeded_business) -> None:
-    stub_service = _StubGCPLogsQueryService()
+    stub_service = _StubGCPLogsQueryService(
+        response=GCPLogsQueryResponse(
+            entries=[],
+            next_page_token=None,
+            page_size=25,
+            order_by="timestamp desc",
+            resource_scope=["projects/test-project"],
+            effective_filter=(
+                '(jsonPayload.event="competitor_provider_request_complete") '
+                'AND timestamp >= "2026-03-20T00:00:00Z" '
+                'AND timestamp <= "2026-03-27T00:00:00Z"'
+            ),
+            default_time_range_applied=False,
+        )
+    )
     client = _make_client(
         db_session,
         business_id=seeded_business.id,
@@ -248,6 +262,10 @@ def test_gcp_logs_query_round_trips_optional_time_range_fields(db_session, seede
     assert response.status_code == 200
     assert stub_service.calls[0].start_time == "2026-03-20T00:00:00Z"
     assert stub_service.calls[0].end_time == "2026-03-27T00:00:00Z"
+    payload = response.json()
+    assert payload["default_time_range_applied"] is False
+    assert 'timestamp >= "2026-03-20T00:00:00Z"' in payload["effective_filter"]
+    assert 'timestamp <= "2026-03-27T00:00:00Z"' in payload["effective_filter"]
 
 
 def test_gcp_logs_query_handles_provider_error_with_sanitized_message(db_session, seeded_business) -> None:

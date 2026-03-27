@@ -1341,6 +1341,10 @@ describe("admin page compatibility route", () => {
       }),
     );
     expect(screen.getByText("No logs matched this filter.")).toBeInTheDocument();
+    expect(screen.getByText(/Effective Filter:/)).toBeInTheDocument();
+    expect(screen.getByText(/timestamp >= "2026-03-20T00:00:00Z"/)).toBeInTheDocument();
+    expect(screen.getByText(/timestamp <= "2026-03-21T00:00:00Z"/)).toBeInTheDocument();
+    expect(screen.queryByText(/default last 24h applied/i)).not.toBeInTheDocument();
   });
 
   it("shows a clear validation error when logs query is invalid", async () => {

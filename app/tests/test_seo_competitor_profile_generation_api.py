@@ -131,6 +131,28 @@ class _InvalidCompetitorProfileProvider:
         )
 
 
+class _EmptyCompetitorProfileProvider:
+    provider_name = "empty-provider"
+    model_name = "empty-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{}]}',
+        )
+
+
 class _PartiallyInvalidCompetitorProfileProvider:
     provider_name = "partial-invalid-provider"
     model_name = "partial-invalid-model"
@@ -169,6 +191,82 @@ class _PartiallyInvalidCompetitorProfileProvider:
             model_name=self.model_name,
             prompt_version=self.prompt_version,
             raw_response='{\"candidates\":[{\"domain\":\"valid-competitor.example\"},{\"domain\":\"broken\"}]}',
+        )
+
+
+class _ExcludedDomainHintCompetitorProfileProvider:
+    provider_name = "excluded-domain-hint-provider"
+    model_name = "excluded-domain-hint-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Valid Local Contractor",
+                    suggested_domain="valid-local-contractor.com",
+                    competitor_type="direct",
+                    summary="Local residential contractor services.",
+                    why_competitor="Competes on overlapping services.",
+                    evidence="Service pages and local market overlap.",
+                    confidence_score=0.87,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Buy This Domain Listing",
+                    suggested_domain="buy-this-domain-remodeling.com",
+                    competitor_type="direct",
+                    summary="Domain resale listing.",
+                    why_competitor="Not a real competitor site.",
+                    evidence="Excluded domain hint pattern.",
+                    confidence_score=0.2,
+                ),
+            ],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"domain":"valid-local-contractor.com"},{"domain":"buy-this-domain-remodeling.com"}]}',
+        )
+
+
+class _ManyInvalidCompetitorProfileProvider:
+    provider_name = "many-invalid-provider"
+    model_name = "many-invalid-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count
+        candidates: list[SEOCompetitorProfileDraftCandidateOutput] = []
+        for index in range(20):
+            candidates.append(
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="",
+                    suggested_domain=f"invalid-{index}.example.com",
+                    competitor_type="direct",
+                    summary="Missing business name.",
+                    why_competitor="Invalid candidate",
+                    evidence="Missing required name field.",
+                    confidence_score=0.4,
+                )
+            )
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=candidates,
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":""}]}',
         )
 
 
@@ -1469,6 +1567,42 @@ def test_async_execution_failure_marks_run_failed_safely(db_session, seeded_busi
     assert "invalid-domain-without-tld" in persisted_run.raw_output
 
 
+def test_empty_candidate_output_completes_run_without_malformed_failure(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id)
+    run_id = created["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_EmptyCompetitorProfileProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["generated_draft_count"] == 0
+    assert payload["run"]["failure_category"] is None
+    assert payload["run"]["error_summary"] is None
+    assert payload["run"]["raw_candidate_count"] == 0
+    assert payload["run"]["included_candidate_count"] == 0
+    assert payload["run"]["excluded_candidate_count"] == 0
+    assert payload["total_drafts"] == 0
+    assert payload["rejected_candidate_count"] == 0
+
+
 def test_malformed_provider_output_skips_invalid_candidates_and_keeps_valid_drafts(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
@@ -1905,6 +2039,9 @@ def test_generation_logs_discovery_pipeline_counts(db_session, seeded_business, 
 
     events = _structured_event_records(caplog)
     discovery_event = next(item for item in events if item.get("event") == "competitor_discovery_pipeline_counts")
+    rejection_summary_event = next(
+        item for item in events if item.get("event") == "competitor_candidate_rejection_summary"
+    )
     assert discovery_event["run_id"] == run_id
     assert discovery_event["business_id"] == seeded_business.id
     assert discovery_event["site_id"] == site_id
@@ -1913,6 +2050,185 @@ def test_generation_logs_discovery_pipeline_counts(db_session, seeded_business, 
     assert discovery_event["post_parse_candidate_count"] == 2
     assert discovery_event["post_filter_candidate_count"] >= 0
     assert discovery_event["final_candidate_count"] == 2
+    assert rejection_summary_event["run_id"] == run_id
+    assert rejection_summary_event["raw_count"] == 2
+    assert rejection_summary_event["valid_count"] == 2
+    assert rejection_summary_event["rejected_by_eligibility"] == 0
+    assert rejection_summary_event["removed_by_existing_domain_match"] == 0
+    assert rejection_summary_event["removed_by_deduplication"] == 0
+    assert rejection_summary_event["removed_by_final_limit"] == 0
+    assert rejection_summary_event["final_count"] == 2
+    assert rejection_summary_event["rejection_events_truncated"] == 0
+    assert rejection_summary_event["reason_histogram"]["other"] == 0
+
+
+def test_generation_logs_rejection_summary_for_excluded_domain_hint(db_session, seeded_business, caplog) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=2)["run"]["id"]
+
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=_ExcludedDomainHintCompetitorProfileProvider(),
+        )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["included_candidate_count"] == 1
+
+    events = _structured_event_records(caplog)
+    rejection_summary_event = next(
+        item for item in events if item.get("event") == "competitor_candidate_rejection_summary"
+    )
+    assert rejection_summary_event["run_id"] == run_id
+    assert rejection_summary_event["rejected_by_eligibility"] >= 1
+    assert rejection_summary_event["final_count"] == 1
+    assert rejection_summary_event["reason_histogram"]["excluded_domain"] >= 1
+    assert rejection_summary_event["reason_histogram"]["non_competitor_hint"] >= 1
+
+
+def test_generation_logs_rejection_summary_for_duplicate_and_final_limit_stages(db_session, seeded_business, caplog) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _OverProducingCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    site = (
+        db_session.query(SEOSite)
+        .filter(SEOSite.business_id == seeded_business.id)
+        .filter(SEOSite.id == site_id)
+        .one()
+    )
+    site.primary_location = "Denver, CO"
+    site.service_areas_json = ["Denver", "Aurora"]
+    site.industry = "Construction and remodeling"
+    db_session.add(site)
+    competitor_set = SEOCompetitorSet(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        name="Known Competitors",
+        city="Denver",
+        state="CO",
+        is_active=True,
+    )
+    db_session.add(competitor_set)
+    db_session.add(
+        SEOCompetitorDomain(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            competitor_set_id=competitor_set.id,
+            domain="northern-range-contractors.example",
+            base_url="https://northern-range-contractors.example/",
+            display_name="Northern Range Contractors",
+            source="manual",
+            is_active=True,
+        )
+    )
+    db_session.commit()
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=2)["run"]["id"]
+
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=provider,
+        )
+
+    events = _structured_event_records(caplog)
+    rejection_summary_event = next(
+        item for item in events if item.get("event") == "competitor_candidate_rejection_summary"
+    )
+    assert rejection_summary_event["run_id"] == run_id
+    assert rejection_summary_event["removed_by_existing_domain_match"] == 1
+    assert rejection_summary_event["removed_by_final_limit"] == 1
+    assert rejection_summary_event["final_count"] == 2
+    assert rejection_summary_event["reason_histogram"]["duplicate_domain"] >= 0
+
+
+def test_generation_logs_candidate_rejected_events_with_cap(db_session, seeded_business, caplog) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=3)["run"]["id"]
+
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=_ManyInvalidCompetitorProfileProvider(),
+        )
+
+    events = _structured_event_records(caplog)
+    rejected_events = [item for item in events if item.get("event") == "competitor_candidate_rejected"]
+    rejection_summary_event = next(
+        item for item in events if item.get("event") == "competitor_candidate_rejection_summary"
+    )
+    assert len(rejected_events) == 12
+    assert rejected_events[0]["run_id"] == run_id
+    assert rejected_events[0]["rejection_reason"] == "missing_business_name"
+    assert rejected_events[0]["candidate_domain_preview"] is not None
+    assert rejection_summary_event["rejection_event_cap"] == 12
+    assert rejection_summary_event["rejection_events_emitted"] == 12
+    assert rejection_summary_event["rejection_events_truncated"] > 0
+
+
+def test_generation_logs_rejection_summary_for_deduplication_stage(db_session, seeded_business, caplog) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _DedupScoringCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=6)["run"]["id"]
+
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=provider,
+        )
+
+    events = _structured_event_records(caplog)
+    rejection_summary_event = next(
+        item for item in events if item.get("event") == "competitor_candidate_rejection_summary"
+    )
+    assert rejection_summary_event["run_id"] == run_id
+    assert rejection_summary_event["removed_by_deduplication"] >= 1
+    assert rejection_summary_event["reason_histogram"]["duplicate_domain"] >= 1
 
 
 def test_success_attempt_debug_captures_endpoint_and_web_search_metadata(db_session, seeded_business) -> None:

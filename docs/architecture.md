@@ -133,6 +133,37 @@ Latency tradeoff:
 - Non-tool calls are generally faster and more deterministic.
 - Tool-enabled calls are higher-latency but improve real-time competitor discovery quality.
 
+## Competitor Candidate Validation
+- Candidate parsing applies an early required-field filter before service-layer draft construction:
+  - candidates missing `name` are dropped
+  - candidates missing `domain` are dropped
+  - domains are normalized to hostname form (for example, `https://example.com/` becomes `example.com`)
+- Empty candidate arrays are valid provider outcomes and do not automatically fail a run.
+- `malformed_output` is reserved for true structured-output failures (for example, unparseable or invalid top-level JSON shape), not for "zero valid candidates after filtering".
+
+## Competitor Candidate Pipeline Observability
+- Post-provider pipeline stages are tracked as:
+  - raw provider candidates
+  - valid parsed candidates
+  - eligibility filtering
+  - tuning/pruning
+  - existing-domain removal and deduplication
+  - final candidate-limit trimming
+- Service telemetry emits `competitor_candidate_rejection_summary` with:
+  - `raw_count`
+  - `valid_count`
+  - `rejected_by_eligibility`
+  - `removed_by_existing_domain_match`
+  - `removed_by_deduplication`
+  - `removed_by_final_limit`
+  - `final_count`
+  - reason histogram
+- `competitor_candidate_rejected` events provide capped per-candidate rejection visibility for diagnosis.
+- Failure semantics:
+  - malformed provider output: parsing/shape failure only
+  - zero provider candidates: valid empty outcome
+  - later-stage filtering to zero drafts: non-provider pipeline rejection outcome
+
 ## Admin Site Maintenance
 - Admin-only site maintenance endpoints are exposed under business-scoped SEO routes:
   - `PATCH /api/businesses/{business_id}/seo/admin/sites/{site_id}`

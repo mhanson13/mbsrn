@@ -7,6 +7,7 @@ import re
 import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -37,6 +38,7 @@ _PROMPT_SIZE_HIGH_RISK_CHARS = 14000
 _STRUCTURED_LOG_EVENT_REQUEST_START = "competitor_provider_request_start"
 _STRUCTURED_LOG_EVENT_REQUEST_COMPLETE = "competitor_provider_request_complete"
 _STRUCTURED_LOG_EVENT_REQUEST_ERROR = "competitor_provider_request_error"
+_STRUCTURED_LOG_EVENT_CANDIDATE_PIPELINE = "competitor_candidate_pipeline"
 _MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR = "json_decode_error"
 _MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN = "wrapped_in_markdown"
 _MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY = "missing_candidates_array"
@@ -99,6 +101,8 @@ class _ParsedCandidateResult:
     candidates: list[SEOCompetitorProfileDraftCandidateOutput]
     parsed_candidate_count: int
     salvaged_candidate_count: int
+    raw_candidate_count: int
+    dropped_missing_fields_count: int
 
 
 class MisconfiguredSEOCompetitorProfileGenerationProvider:
@@ -330,19 +334,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             request_duration_ms=response.request_duration_ms,
         )
         candidates = candidate_parse_result.candidates
-        if not candidates:
-            raise self._provider_error(
-                code=_PROVIDER_ERROR_INVALID_OUTPUT,
-                safe_message="Competitor profile generation returned malformed output.",
-                raw_output=self._build_request_failure_debug_payload(
-                    endpoint_path=endpoint_path,
-                    failure_kind="malformed_output",
-                    request_debug=request_debug,
-                    provider_error_body=assistant_content,
-                    request_duration_ms=response.request_duration_ms,
-                    malformed_output_reason=_MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY,
-                ),
-            )
+        self._log_candidate_pipeline(
+            endpoint_path=endpoint_path,
+            request_debug=request_debug,
+            raw_candidate_count=candidate_parse_result.raw_candidate_count,
+            valid_candidate_count=candidate_parse_result.parsed_candidate_count,
+            dropped_missing_fields_count=candidate_parse_result.dropped_missing_fields_count,
+        )
         model_name = _clean_optional_value(response_json.get("model")) or self.model_name
         self._log_provider_request_complete(
             endpoint_path=endpoint_path,
@@ -376,20 +374,30 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         recovery = self._recover_structured_payload(assistant_content)
         normalized_json_text = assistant_content
         has_candidate_array = False
+        raw_candidate_count = 0
         invalid_field_type_count = 0
         coerced_candidate_count = 0
+
         if recovery.payload is not None:
             try:
                 normalized_json_text = json.dumps(recovery.payload, ensure_ascii=True, sort_keys=True)
             except (TypeError, ValueError):
                 normalized_json_text = assistant_content
-            structured_candidates, has_candidate_array, invalid_field_type_count, coerced_candidate_count = (
-                self._coerce_candidates_from_structured_payload(
-                    payload=recovery.payload,
-                    candidate_count=bounded_count,
-                )
+
+            (
+                structured_candidates,
+                has_candidate_array,
+                invalid_field_type_count,
+                coerced_candidate_count,
+                raw_candidate_count,
+            ) = self._coerce_candidates_from_structured_payload(
+                payload=recovery.payload,
+                candidate_count=bounded_count,
             )
-            if structured_candidates:
+            filtered_structured_candidates, dropped_missing_fields_count = self._filter_candidates_with_required_fields(
+                structured_candidates
+            )
+            if has_candidate_array:
                 if recovery.recovery_actions:
                     logger.info(
                         (
@@ -415,16 +423,18 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     )
                 salvaged_candidate_count = 0
                 if recovery.recovery_actions:
-                    salvaged_candidate_count = len(structured_candidates)
+                    salvaged_candidate_count = len(filtered_structured_candidates)
                 elif coerced_candidate_count > 0:
-                    salvaged_candidate_count = min(len(structured_candidates), coerced_candidate_count)
+                    salvaged_candidate_count = min(len(filtered_structured_candidates), coerced_candidate_count)
                 return _ParsedCandidateResult(
-                    candidates=structured_candidates,
-                    parsed_candidate_count=len(structured_candidates),
+                    candidates=filtered_structured_candidates,
+                    parsed_candidate_count=len(filtered_structured_candidates),
                     salvaged_candidate_count=max(0, int(salvaged_candidate_count)),
+                    raw_candidate_count=max(0, int(raw_candidate_count)),
+                    dropped_missing_fields_count=max(0, int(dropped_missing_fields_count)),
                 )
 
-            if has_candidate_array and invalid_field_type_count > 0:
+            if invalid_field_type_count > 0:
                 logger.warning(
                     (
                         "Competitor profile payload candidate entries failed strict typing; "
@@ -436,17 +446,25 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     endpoint_path,
                     invalid_field_type_count,
                 )
+
         normalized_payload = normalize_competitor_response(normalized_json_text)
-        normalized_candidates = self._coerce_candidates_from_normalized_payload(
+        normalized_candidates, normalized_raw_candidate_count = self._coerce_candidates_from_normalized_payload(
             normalized_payload=normalized_payload,
             candidate_count=bounded_count,
         )
-        if normalized_candidates:
-            salvaged_candidate_count = len(normalized_candidates) if recovery.recovery_actions else 0
+        filtered_normalized_candidates, dropped_missing_fields_count = self._filter_candidates_with_required_fields(
+            normalized_candidates
+        )
+        if normalized_raw_candidate_count > 0:
+            salvaged_candidate_count = 0
+            if recovery.recovery_actions or invalid_field_type_count > 0:
+                salvaged_candidate_count = len(filtered_normalized_candidates)
             return _ParsedCandidateResult(
-                candidates=normalized_candidates,
-                parsed_candidate_count=len(normalized_candidates),
+                candidates=filtered_normalized_candidates,
+                parsed_candidate_count=len(filtered_normalized_candidates),
                 salvaged_candidate_count=max(0, int(salvaged_candidate_count)),
+                raw_candidate_count=max(0, int(normalized_raw_candidate_count)),
+                dropped_missing_fields_count=max(0, int(dropped_missing_fields_count)),
             )
 
         malformed_reason = recovery.reason
@@ -478,10 +496,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         *,
         payload: dict[str, object],
         candidate_count: int,
-    ) -> tuple[list[SEOCompetitorProfileDraftCandidateOutput], bool, int, int]:
+    ) -> tuple[list[SEOCompetitorProfileDraftCandidateOutput], bool, int, int, int]:
         raw_candidates = payload.get("candidates")
         if not isinstance(raw_candidates, list):
-            return [], False, 0, 0
+            return [], False, 0, 0, 0
         candidates: list[SEOCompetitorProfileDraftCandidateOutput] = []
         invalid_field_type_count = 0
         coerced_candidate_count = 0
@@ -510,7 +528,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     confidence_score=parsed_candidate.confidence_score,
                 )
             )
-        return candidates, True, invalid_field_type_count, coerced_candidate_count
+        return candidates, True, invalid_field_type_count, coerced_candidate_count, len(raw_candidates)
 
     def _coerce_candidate_from_structured_item(
         self,
@@ -698,17 +716,17 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         *,
         normalized_payload: dict[str, object],
         candidate_count: int,
-    ) -> list[SEOCompetitorProfileDraftCandidateOutput]:
+    ) -> tuple[list[SEOCompetitorProfileDraftCandidateOutput], int]:
         raw_competitors = normalized_payload.get("competitors")
         if not isinstance(raw_competitors, list):
-            return []
+            return [], 0
 
         candidates: list[SEOCompetitorProfileDraftCandidateOutput] = []
         for raw_competitor in raw_competitors:
             if not isinstance(raw_competitor, dict):
                 continue
 
-            suggested_name = _clean_optional_value(raw_competitor.get("name")) or "Unknown"
+            suggested_name = _clean_optional_value(raw_competitor.get("name")) or ""
             suggested_domain = _clean_optional_value(raw_competitor.get("domain")) or ""
             summary = _clean_optional_value(raw_competitor.get("summary"))
             opportunities = _normalize_text_list(raw_competitor.get("opportunities"))
@@ -736,7 +754,32 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             )
             if len(candidates) >= candidate_count:
                 break
-        return candidates
+        return candidates, len(raw_competitors)
+
+    def _filter_candidates_with_required_fields(
+        self,
+        candidates: list[SEOCompetitorProfileDraftCandidateOutput],
+    ) -> tuple[list[SEOCompetitorProfileDraftCandidateOutput], int]:
+        filtered: list[SEOCompetitorProfileDraftCandidateOutput] = []
+        dropped_missing_fields_count = 0
+        for candidate in candidates:
+            normalized_name = _clean_optional_value(candidate.suggested_name)
+            normalized_domain = _normalize_domain_hostname(candidate.suggested_domain)
+            if normalized_name is None or normalized_domain is None:
+                dropped_missing_fields_count += 1
+                continue
+            filtered.append(
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name=normalized_name,
+                    suggested_domain=normalized_domain,
+                    competitor_type=candidate.competitor_type,
+                    summary=candidate.summary,
+                    why_competitor=candidate.why_competitor,
+                    evidence=candidate.evidence,
+                    confidence_score=candidate.confidence_score,
+                )
+            )
+        return filtered, dropped_missing_fields_count
 
     def _log_prompt_resolution_metadata(self) -> None:
         logger.info(
@@ -783,6 +826,37 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         except (TypeError, ValueError):
             serialized = event
         logger.log(level, serialized, extra={"json_fields": safe_payload})
+
+    def _log_candidate_pipeline(
+        self,
+        *,
+        endpoint_path: str,
+        request_debug: dict[str, object] | None,
+        raw_candidate_count: int,
+        valid_candidate_count: int,
+        dropped_missing_fields_count: int,
+    ) -> None:
+        debug = request_debug or {}
+        self._emit_structured_provider_log(
+            level=logging.INFO,
+            event=_STRUCTURED_LOG_EVENT_CANDIDATE_PIPELINE,
+            payload={
+                "run_id": _clean_optional_value(debug.get("run_id")),
+                "attempt_number": _coerce_optional_bounded_int(
+                    debug.get("attempt_number"),
+                    minimum=0,
+                    maximum=1000,
+                ),
+                "execution_mode": _clean_optional_value(debug.get("execution_mode")),
+                "provider_call_type": _clean_optional_value(debug.get("provider_call_type")),
+                "endpoint_path": endpoint_path,
+                "raw_count": max(0, int(raw_candidate_count)),
+                "valid_count": max(0, int(valid_candidate_count)),
+                "dropped_missing_fields": max(0, int(dropped_missing_fields_count)),
+                "web_search_enabled": debug.get("web_search_enabled"),
+                "degraded_mode": bool(debug.get("degraded_mode")),
+            },
+        )
 
     def _log_provider_request_start(
         self,
@@ -1698,6 +1772,26 @@ def _clean_optional_value(value: object) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _normalize_domain_hostname(value: object) -> str | None:
+    normalized = _clean_optional_value(value)
+    if normalized is None:
+        return None
+    candidate = normalized.strip()
+    if not candidate:
+        return None
+    parse_target = candidate if "://" in candidate else f"//{candidate}"
+    parsed = urllib.parse.urlsplit(parse_target)
+    hostname = parsed.hostname
+    if hostname is None:
+        return None
+    clean_hostname = hostname.strip().lower().rstrip(".")
+    if not clean_hostname:
+        return None
+    if any(char.isspace() for char in clean_hostname):
+        return None
+    return clean_hostname
 
 
 def _normalize_text_list(value: object) -> list[str]:

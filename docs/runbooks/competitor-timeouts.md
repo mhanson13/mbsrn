@@ -48,6 +48,27 @@ Use these filters in Logs Explorer:
 - Degraded retry uses non-tool provider call and no web search.
 - No repeated timeout loops beyond the designed attempt sequence.
 
+## Candidate Filtering Checklist
+If competitor volume is low, inspect candidate pipeline observability before changing prompts or timeouts.
+
+1. Query `jsonPayload.event="competitor_candidate_rejection_summary"` for the run id.
+2. Compare:
+   - `raw_count` vs `valid_count` (provider-side candidate quality)
+   - `rejected_by_eligibility`
+   - `removed_by_existing_domain_match`
+   - `removed_by_deduplication`
+   - `removed_by_final_limit`
+3. Query `jsonPayload.event="competitor_candidate_rejected"` for candidate-level reason samples.
+
+Interpretation guide:
+- `raw_count=0` and `valid_count=0`: provider returned an empty candidate set (valid empty outcome).
+- `valid_count>0` and `final_count=0`: candidates were filtered out post-provider; check rejection reasons before retrying.
+- High `raw_count` with low `valid_count`: provider returned mostly unusable candidates.
+- High `rejected_by_eligibility`: local eligibility rules filtered many candidates.
+- High `removed_by_existing_domain_match`: many candidates already exist in the site competitor set.
+- High `removed_by_deduplication`: many near-duplicate domains were collapsed.
+- High `removed_by_final_limit`: discovery produced more viable candidates than requested; no failure implied.
+
 ### Regression Indicators
 - Any `fast_path` or `degraded` event with `provider_call_type="tool_enabled"`.
 - Any `fast_path` or `degraded` event with `web_search_enabled=true`.

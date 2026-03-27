@@ -122,6 +122,44 @@ def test_gcp_logs_query_service_respects_explicit_time_range_without_default(mon
     assert fake_client.calls[0]["filter_text"] == response.effective_filter
 
 
+def test_gcp_logs_query_service_start_time_only_disables_default_window(monkeypatch) -> None:
+    fixed_now = datetime(2026, 3, 27, 12, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("app.services.gcp_logs_query.utc_now", lambda: fixed_now)
+    fake_client = _FakeCloudLoggingClient(payload={"entries": []})
+    service = GCPLogsQueryService(client=fake_client, project_id="test-project")
+
+    response = service.query_logs(
+        payload=GCPLogsQueryRequest(
+            filter='severity="ERROR"',
+            start_time="2026-03-20T00:00:00Z",
+        )
+    )
+
+    assert response.default_time_range_applied is False
+    assert 'timestamp >= "2026-03-20T00:00:00Z"' in response.effective_filter
+    assert "timestamp <=" not in response.effective_filter
+    assert fake_client.calls[0]["filter_text"] == response.effective_filter
+
+
+def test_gcp_logs_query_service_end_time_only_disables_default_window(monkeypatch) -> None:
+    fixed_now = datetime(2026, 3, 27, 12, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("app.services.gcp_logs_query.utc_now", lambda: fixed_now)
+    fake_client = _FakeCloudLoggingClient(payload={"entries": []})
+    service = GCPLogsQueryService(client=fake_client, project_id="test-project")
+
+    response = service.query_logs(
+        payload=GCPLogsQueryRequest(
+            filter='severity="ERROR"',
+            end_time="2026-03-27T00:00:00Z",
+        )
+    )
+
+    assert response.default_time_range_applied is False
+    assert 'timestamp <= "2026-03-27T00:00:00Z"' in response.effective_filter
+    assert "timestamp >=" not in response.effective_filter
+    assert fake_client.calls[0]["filter_text"] == response.effective_filter
+
+
 def test_gcp_logs_query_service_rejects_invalid_time_range_order() -> None:
     service = GCPLogsQueryService(client=_FakeCloudLoggingClient(), project_id="test-project")
 

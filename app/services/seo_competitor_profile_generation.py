@@ -139,6 +139,7 @@ _TIMEOUT_RETRY_BACKOFF_SECONDS = 0.2
 _DISCOVERY_CANDIDATE_BUFFER = 2
 _MAX_DISCOVERY_CANDIDATE_COUNT = 20
 _MIN_DEGRADED_DISCOVERY_CANDIDATE_COUNT = 2
+_CANDIDATE_REJECTION_LOG_MAX_ITEMS = 12
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
 _UNKNOWN_NAME_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 _UNKNOWN_PLACEHOLDER_NAME_TOKENS = {
@@ -171,6 +172,15 @@ _INVALID_INPUT_REASON_KEYS: tuple[str, ...] = (
 )
 _REJECTED_CANDIDATE_REASON_KEYS: tuple[str, ...] = tuple(
     dict.fromkeys([*INELIGIBILITY_REASON_KEYS, *_INVALID_INPUT_REASON_KEYS])
+)
+_REJECTION_SUMMARY_REASON_KEYS: tuple[str, ...] = (
+    "missing_domain",
+    "missing_name",
+    "excluded_domain",
+    "non_competitor_hint",
+    "duplicate_domain",
+    "invalid_candidate",
+    "other",
 )
 
 FAILURE_CATEGORY_TIMEOUT = "timeout"
@@ -642,7 +652,7 @@ class SEOCompetitorProfileGenerationService:
                 parsed_candidate_count=len(output.candidates),
             )
             drafts = draft_result.drafts
-            if not drafts:
+            if not drafts and output.candidates:
                 raise SEOCompetitorProfileGenerationValidationError(
                     "No valid competitor profile drafts were generated"
                 )
@@ -853,12 +863,13 @@ class SEOCompetitorProfileGenerationService:
         draft_result: SEOCompetitorProfileDraftBuildResult,
         parsed_candidate_count: int,
     ) -> None:
+        pipeline_summary = draft_result.candidate_pipeline_summary
         post_filter_candidate_count = max(
             0,
-            int(draft_result.candidate_pipeline_summary.final_candidate_count)
-            + int(draft_result.candidate_pipeline_summary.removed_by_final_limit_count),
+            int(pipeline_summary.final_candidate_count)
+            + int(pipeline_summary.removed_by_final_limit_count),
         )
-        payload = {
+        discovery_payload = {
             "event": "competitor_discovery_pipeline_counts",
             "run_id": run.id,
             "business_id": run.business_id,
@@ -869,11 +880,185 @@ class SEOCompetitorProfileGenerationService:
             "post_filter_candidate_count": post_filter_candidate_count,
             "final_candidate_count": max(0, len(draft_result.drafts)),
         }
+        self._emit_structured_service_log(
+            payload=discovery_payload,
+            fallback_message="competitor_discovery_pipeline_counts",
+        )
+        reason_histogram, raw_reason_counts = self._build_candidate_rejection_reason_histogram(draft_result)
+        total_rejected_candidates = max(
+            0,
+            len(draft_result.rejected_candidates) + len(draft_result.tuning_rejected_candidates),
+        )
+        rejection_events_emitted = min(total_rejected_candidates, _CANDIDATE_REJECTION_LOG_MAX_ITEMS)
+        rejection_summary_payload = {
+            "event": "competitor_candidate_rejection_summary",
+            "run_id": run.id,
+            "business_id": run.business_id,
+            "site_id": run.site_id,
+            "requested_candidate_count": max(1, int(run.requested_candidate_count or 1)),
+            "raw_count": max(0, int(draft_result.raw_candidate_count)),
+            "valid_count": max(0, int(parsed_candidate_count)),
+            "rejected_by_eligibility": max(0, int(pipeline_summary.rejected_by_eligibility_count)),
+            "removed_by_existing_domain_match": max(0, int(pipeline_summary.removed_by_existing_domain_match_count)),
+            "removed_by_deduplication": max(0, int(pipeline_summary.removed_by_deduplication_count)),
+            "removed_by_final_limit": max(0, int(pipeline_summary.removed_by_final_limit_count)),
+            "final_count": max(0, int(pipeline_summary.final_candidate_count)),
+            "reason_histogram": reason_histogram,
+            "raw_reason_counts": raw_reason_counts,
+            "rejection_event_cap": _CANDIDATE_REJECTION_LOG_MAX_ITEMS,
+            "rejection_events_emitted": rejection_events_emitted,
+            "rejection_events_truncated": max(0, total_rejected_candidates - rejection_events_emitted),
+        }
+        self._emit_structured_service_log(
+            payload=rejection_summary_payload,
+            fallback_message="competitor_candidate_rejection_summary",
+        )
+        self._log_candidate_rejection_events(
+            run=run,
+            draft_result=draft_result,
+        )
+
+    def _emit_structured_service_log(
+        self,
+        *,
+        payload: dict[str, object],
+        fallback_message: str,
+    ) -> None:
         try:
             message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
-            message = "competitor_discovery_pipeline_counts"
+            message = fallback_message
         logger.info(message, extra={"json_fields": payload})
+
+    def _build_candidate_rejection_reason_histogram(
+        self,
+        draft_result: SEOCompetitorProfileDraftBuildResult,
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        raw_reason_counts: dict[str, int] = {}
+
+        for reason, count in draft_result.ineligibility_counts_by_reason.items():
+            normalized_reason = self._clean_optional(reason)
+            if normalized_reason is None:
+                continue
+            raw_reason_counts[normalized_reason] = (
+                raw_reason_counts.get(normalized_reason, 0)
+                + max(0, self._coerce_int(count, default=0))
+            )
+
+        for reason, count in draft_result.exclusion_counts_by_reason.items():
+            normalized_reason = self._clean_optional(reason)
+            if normalized_reason is None:
+                continue
+            raw_reason_counts[normalized_reason] = (
+                raw_reason_counts.get(normalized_reason, 0)
+                + max(0, self._coerce_int(count, default=0))
+            )
+
+        for candidate in draft_result.rejected_candidates:
+            for reason in candidate.reasons:
+                normalized_reason = self._clean_optional(reason)
+                if normalized_reason is None or normalized_reason not in _INVALID_INPUT_REASON_KEYS:
+                    continue
+                raw_reason_counts[normalized_reason] = raw_reason_counts.get(normalized_reason, 0) + 1
+
+        histogram = {reason: 0 for reason in _REJECTION_SUMMARY_REASON_KEYS}
+        for reason, count in raw_reason_counts.items():
+            normalized_count = max(0, self._coerce_int(count, default=0))
+            if normalized_count <= 0:
+                continue
+            mapped_reasons = self._map_reason_for_rejection_summary(reason)
+            if not mapped_reasons:
+                histogram["other"] += normalized_count
+                continue
+            for mapped_reason in mapped_reasons:
+                histogram[mapped_reason] = histogram.get(mapped_reason, 0) + normalized_count
+
+        return histogram, dict(sorted(raw_reason_counts.items()))
+
+    @staticmethod
+    def _map_reason_for_rejection_summary(reason: str) -> tuple[str, ...]:
+        normalized_reason = str(reason or "").strip().lower()
+        if normalized_reason == INELIGIBILITY_REASON_MISSING_DOMAIN:
+            return ("missing_domain",)
+        if normalized_reason == INELIGIBILITY_REASON_MISSING_BUSINESS_NAME:
+            return ("missing_name",)
+        if normalized_reason == "excluded_domain_pattern":
+            return ("excluded_domain", "non_competitor_hint")
+        if normalized_reason == "duplicate":
+            return ("duplicate_domain",)
+        if normalized_reason == "invalid_candidate":
+            return ("invalid_candidate",)
+        return tuple()
+
+    def _log_candidate_rejection_events(
+        self,
+        *,
+        run: SEOCompetitorProfileGenerationRun,
+        draft_result: SEOCompetitorProfileDraftBuildResult,
+    ) -> None:
+        emitted = 0
+
+        for candidate in draft_result.rejected_candidates:
+            if emitted >= _CANDIDATE_REJECTION_LOG_MAX_ITEMS:
+                return
+            rejection_reason = candidate.reasons[0] if candidate.reasons else "other"
+            payload = {
+                "event": "competitor_candidate_rejected",
+                "run_id": run.id,
+                "business_id": run.business_id,
+                "site_id": run.site_id,
+                "rejection_stage": "eligibility",
+                "rejection_reason": rejection_reason,
+                "candidate_name_preview": self._candidate_name_preview(candidate.domain),
+                "candidate_domain_preview": self._candidate_domain_preview(candidate.domain),
+            }
+            self._emit_structured_service_log(
+                payload=payload,
+                fallback_message="competitor_candidate_rejected",
+            )
+            emitted += 1
+
+        for candidate in draft_result.tuning_rejected_candidates:
+            if emitted >= _CANDIDATE_REJECTION_LOG_MAX_ITEMS:
+                return
+            rejection_reason = candidate.reasons[0] if candidate.reasons else "other"
+            payload = {
+                "event": "competitor_candidate_rejected",
+                "run_id": run.id,
+                "business_id": run.business_id,
+                "site_id": run.site_id,
+                "rejection_stage": "tuning",
+                "rejection_reason": rejection_reason,
+                "candidate_name_preview": self._candidate_name_preview(candidate.domain),
+                "candidate_domain_preview": self._candidate_domain_preview(candidate.domain),
+            }
+            self._emit_structured_service_log(
+                payload=payload,
+                fallback_message="competitor_candidate_rejected",
+            )
+            emitted += 1
+
+    def _candidate_name_preview(self, domain: str | None) -> str | None:
+        normalized_domain = self._clean_optional(domain)
+        if normalized_domain is None:
+            return None
+        root = normalized_domain.split(".", 1)[0].strip()
+        if not root:
+            return None
+        compact = root.replace("-", " ").replace("_", " ").strip()
+        if not compact:
+            return None
+        if len(compact) > 60:
+            compact = compact[:57] + "..."
+        return compact
+
+    def _candidate_domain_preview(self, domain: str | None) -> str | None:
+        normalized_domain = self._clean_optional(domain)
+        if normalized_domain is None:
+            return None
+        if len(normalized_domain) <= 120:
+            return normalized_domain
+        return normalized_domain[:117] + "..."
 
     def list_runs(
         self,
@@ -1322,6 +1507,10 @@ class SEOCompetitorProfileGenerationService:
         run: SEOCompetitorProfileGenerationRun,
         raw_candidates: list[SEOCompetitorProfileDraftCandidateOutput],
     ) -> SEOCompetitorProfileDraftBuildResult:
+        # Pipeline stages after provider parsing:
+        # 1) normalize/prepare candidate input, 2) eligibility filter,
+        # 3) quality tuning and pruning, 4) existing-domain exclusion + deduplication,
+        # 5) final requested-count trim.
         prepared_candidates: list[CompetitorCandidateInput] = []
         invalid_input_rejected_candidates: list[SEOCompetitorProfileRejectedCandidateDebug] = []
         for index, candidate in enumerate(raw_candidates):

@@ -490,11 +490,142 @@ def test_openai_provider_salvages_valid_candidates_from_partially_malformed_payl
 
     output = provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=2)
 
-    assert len(output.candidates) == 2
+    assert len(output.candidates) == 1
     assert output.candidates[0].suggested_domain == "competitor-one.example"
-    assert output.candidates[1].suggested_name == "12345"
-    assert output.candidates[1].suggested_domain == ""
-    assert output.candidates[1].confidence_score == -1.0
+
+
+def test_openai_provider_filters_empty_candidate_objects_without_failing_run(monkeypatch) -> None:
+    payload = json.dumps({"candidates": [{}]})
+
+    def _partial_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _partial_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    output = provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=2)
+
+    assert output.candidates == []
+
+
+def test_openai_provider_accepts_explicit_empty_candidate_list(monkeypatch) -> None:
+    payload = json.dumps({"candidates": []})
+
+    def _partial_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _partial_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    output = provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=2)
+
+    assert output.candidates == []
+
+
+def test_openai_provider_filters_blank_name_and_domain_candidates_without_failing_run(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "",
+                    "domain": "",
+                    "competitor_type": "direct",
+                    "summary": None,
+                    "why_competitor": None,
+                    "evidence": None,
+                    "confidence_score": 0.5,
+                }
+            ]
+        }
+    )
+
+    def _partial_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _partial_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    output = provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=2)
+
+    assert output.candidates == []
+
+
+def test_openai_provider_normalizes_domain_hostname_before_candidate_validation(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "ABC",
+                    "domain": "https://abc.com/",
+                    "competitor_type": "direct",
+                    "summary": "Domain has a scheme.",
+                    "why_competitor": "Valid competitor.",
+                    "evidence": "Public site.",
+                    "confidence_score": 0.8,
+                }
+            ]
+        }
+    )
+
+    def _partial_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _partial_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    output = provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=2)
+
+    assert len(output.candidates) == 1
+    assert output.candidates[0].suggested_name == "ABC"
+    assert output.candidates[0].suggested_domain == "abc.com"
 
 
 def test_openai_provider_reports_partial_json_reason_when_no_recovery_is_possible(monkeypatch) -> None:
@@ -911,3 +1042,58 @@ def test_structured_provider_logs_allow_attempt_zero_non_tool_fast_path(monkeypa
     assert complete_event["endpoint_path"] == "/chat/completions"
     assert complete_event["web_search_enabled"] is False
     assert complete_event["duration_ms"] >= 0
+
+
+def test_structured_candidate_pipeline_log_reports_raw_valid_and_dropped_counts(monkeypatch, caplog) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "ABC",
+                    "domain": "abc.com",
+                    "competitor_type": "direct",
+                    "summary": "valid",
+                    "why_competitor": "valid",
+                    "evidence": "valid",
+                    "confidence_score": 0.9,
+                },
+                {},
+            ]
+        }
+    )
+
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-4.1-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        output = provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=2,
+            run_id="run-candidate-pipeline",
+            attempt_number=1,
+            execution_mode="full",
+        )
+
+    assert len(output.candidates) == 1
+    structured_events = _structured_event_records(caplog)
+    pipeline_event = next(item for item in structured_events if item.get("event") == "competitor_candidate_pipeline")
+    assert pipeline_event["run_id"] == "run-candidate-pipeline"
+    assert pipeline_event["raw_count"] == 2
+    assert pipeline_event["valid_count"] == 1
+    assert pipeline_event["dropped_missing_fields"] == 1

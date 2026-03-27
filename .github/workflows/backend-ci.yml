@@ -35,8 +35,9 @@ jobs:
       contents: read
     services:
       postgres:
-        # Use public ECR mirror to avoid Docker Hub auth/rate-limit failures on CI service startup.
-        image: public.ecr.aws/docker/library/postgres:16
+        # CI uses ephemeral Postgres for migration validation; prefer the standard image source
+        # and avoid rate-limited mirror sources unless explicitly required.
+        image: postgres:16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

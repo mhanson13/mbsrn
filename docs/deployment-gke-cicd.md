@@ -46,7 +46,7 @@ This produces OCI-compatible images suitable for containerd on GKE.
 - `backend-ci.yml`
   - Python dependency install
   - Alembic migration-chain validation (`alembic upgrade head`) against CI Postgres
-  - CI Postgres service image is pulled from `public.ecr.aws/docker/library/postgres:16` (no Docker Hub login required)
+  - CI uses ephemeral Postgres for migration validation via `postgres:16` in GitHub Actions.
   - pytest
 
 - `frontend-ci.yml`
