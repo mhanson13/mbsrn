@@ -25,6 +25,12 @@ spec:
             - secretRef:
                 name: work-boots-secrets
           env:
+            - name: REDIS_URL
+              value: redis://mbsrn-redis:6379/0
+            - name: SESSION_STATE_BACKEND
+              value: redis
+            - name: SESSION_STATE_ALLOW_INMEMORY_FALLBACK
+              value: "false"
             - name: AI_PROVIDER_API_KEY
               valueFrom:
                 secretKeyRef:

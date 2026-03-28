@@ -19,6 +19,7 @@ Kustomize manifests live under:
 
 Base resources are namespace-neutral and include:
 - API deployment + service
+- Redis deployment + service (internal ClusterIP only)
 - Operator UI deployment + service
 - Ingress (same-host path routing: `/` -> UI, `/api` -> API)
 - FrontendConfig (HTTP -> HTTPS redirect)
@@ -70,6 +71,19 @@ This produces OCI-compatible images suitable for containerd on GKE.
   - deployment image updates to exact image refs produced by build jobs
   - rollout verification
 
+- `deploy-prod.yml`
+  - push-to-main/workflow-dispatch production rollout path using `k8s/` manifests
+  - includes explicit Redis apply for `mbsrn-redis` prior to API rollout
+
+### Deployment Path Precedence
+- Production-authoritative path:
+  - `.github/workflows/deploy-prod.yml` + `k8s/*`
+- Secondary/manual path:
+  - `.github/workflows/deploy-gke.yml` + `infra/k8s/overlays/*`
+- Session/Redis contract is standardized across both paths:
+  - Redis workload/service name: `mbsrn-redis`
+  - API Redis URL: `redis://mbsrn-redis:6379/0`
+
 ## Required GitHub Secrets/Variables
 
 GitHub variable:
@@ -110,7 +124,6 @@ Schema management policy:
 
 Kubernetes Secret handles sensitive values including:
 - `DATABASE_URL` (recommended for production instead of ConfigMap default)
-- `REDIS_URL`
 - `API_TOKEN_HASH_PEPPER`
 - `APP_SESSION_SECRET`
 - `GOOGLE_OIDC_CLIENT_ID`
@@ -125,6 +138,10 @@ Kubernetes Secret handles sensitive values including:
 Session backend behavior:
 - Supported backends: `SESSION_STATE_BACKEND=auto|redis|inmemory`.
 - Redis-backed session state is required for correctness in multi-replica production.
+- Redis is deployed in-cluster by manifests:
+  - `infra/k8s/base/redis-deployment.yaml`
+  - `infra/k8s/base/redis-service.yaml`
+  - API runtime uses `REDIS_URL=redis://mbsrn-redis:6379/0`
 - In-memory session state is process-local and non-shared across replicas; it is acceptable for local/dev/test only.
 - `SESSION_STATE_ALLOW_INMEMORY_FALLBACK` controls whether in-memory fallback is allowed when Redis is unavailable/misconfigured.
 - Production/staging fallback to in-memory emits degraded runtime logs:
@@ -133,24 +150,91 @@ Session backend behavior:
 
 Session production readiness checklist:
 - `SESSION_STATE_BACKEND=redis`
-- `REDIS_URL` is configured and reachable by API pods
+- API pods resolve in-cluster Redis service (`mbsrn-redis:6379`)
 - `SESSION_STATE_FAIL_OPEN=false`
 - `SESSION_STATE_ALLOW_INMEMORY_FALLBACK=false`
+- `mbsrn-redis` Deployment/Service are present in target namespace
 - Startup/steady-state logs include:
   - `event=session_state_backend_selection ... selected_backend=redis`
 - No production/staging logs with:
   - `event=session_state_backend_selection ... selected_backend=inmemory ... degraded_mode=True`
 
-Session backend troubleshooting signals:
-- Degraded fallback in production/staging:
-  - `event=session_state_backend_selection`
-  - `selected_backend=inmemory`
-  - `degraded_mode=True`
-  - inspect `reason=...` for root cause classification (`redis_not_configured_auto_fallback`, `redis_unavailable_fail_open:*`, etc.)
-- Healthy shared backend:
+### Redis-Backed Session Verification (Production-Authoritative Path)
+Use the namespace configured for `deploy-prod.yml` (`K8S_NAMESPACE`; currently `mbsrn`).
+
+1. Verify Redis workload and service are present/running:
+
+```bash
+kubectl -n <namespace> get deploy mbsrn-redis
+kubectl -n <namespace> rollout status deploy/mbsrn-redis --timeout=120s
+kubectl -n <namespace> get svc mbsrn-redis
+kubectl -n <namespace> get pods -l app=mbsrn-redis -o wide
+```
+
+2. Verify API deployment and live pod env wiring:
+
+```bash
+kubectl -n <namespace> get deploy mbsrn-api -o jsonpath="{range .spec.template.spec.containers[?(@.name=='mbsrn-api')].env[*]}{.name}={.value}{'\n'}{end}" | grep -E '^(REDIS_URL|SESSION_STATE_BACKEND|SESSION_STATE_ALLOW_INMEMORY_FALLBACK)='
+
+kubectl -n <namespace> describe deploy mbsrn-api | grep -A5 -E 'SESSION_STATE_BACKEND|SESSION_STATE_ALLOW_INMEMORY_FALLBACK|REDIS_URL'
+
+API_POD=$(kubectl -n <namespace> get pods -l app=mbsrn-api -o jsonpath='{.items[0].metadata.name}')
+kubectl -n <namespace> exec "$API_POD" -- sh -c 'printenv | grep -E "^(REDIS_URL|SESSION_STATE_BACKEND|SESSION_STATE_ALLOW_INMEMORY_FALLBACK)="'
+```
+
+3. Verify backend selection logs from API:
+
+```bash
+kubectl -n <namespace> logs deploy/mbsrn-api --tail=500 | grep "session_state_backend_selection"
+```
+
+Expected healthy runtime:
+- `REDIS_URL=redis://mbsrn-redis:6379/0`
+- `SESSION_STATE_BACKEND=redis`
+- `SESSION_STATE_ALLOW_INMEMORY_FALLBACK=false`
+- log line contains:
   - `event=session_state_backend_selection`
   - `selected_backend=redis`
   - `degraded_mode=False`
+
+Degraded fallback signal (production/staging; investigate immediately):
+- `event=session_state_backend_selection`
+- `selected_backend=inmemory`
+- `degraded_mode=True`
+- inspect `reason=...` for classification (`redis_not_configured_auto_fallback`, `redis_unavailable_fail_open:*`, etc.)
+
+### Cloud Logging Queries (Session Backend)
+Use Logs Explorer with these exact filters (adjust namespace if needed):
+
+Healthy Redis selection:
+```text
+resource.type="k8s_container"
+resource.labels.namespace_name="mbsrn"
+resource.labels.container_name="mbsrn-api"
+textPayload:"session_state_backend_selection"
+textPayload:"selected_backend=redis"
+textPayload:"degraded_mode=False"
+```
+
+Degraded in-memory fallback detection:
+```text
+resource.type="k8s_container"
+resource.labels.namespace_name="mbsrn"
+resource.labels.container_name="mbsrn-api"
+textPayload:"session_state_backend_selection"
+textPayload:"selected_backend=inmemory"
+textPayload:"degraded_mode=True"
+```
+
+Session backend selection errors:
+```text
+resource.type="k8s_container"
+resource.labels.namespace_name="mbsrn"
+resource.labels.container_name="mbsrn-api"
+severity>=ERROR
+textPayload:"session_state_backend_selection"
+(textPayload:"selected_backend=none" OR textPayload:"selected_backend=inmemory")
+```
 
 Prompt configuration note:
 - production prompt overrides are managed in persisted business admin settings.

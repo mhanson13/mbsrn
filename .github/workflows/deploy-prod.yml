@@ -180,6 +180,8 @@ jobs:
             k8s/namespace.yaml
             k8s/ui-serviceaccount.yaml
             k8s/api-serviceaccount.yaml
+            k8s/redis-deployment.yaml
+            k8s/redis-service.yaml
             k8s/ui-deployment.yaml
             k8s/ui-service.yaml
             k8s/api-deployment.yaml
@@ -284,6 +286,8 @@ jobs:
           cp k8s/namespace.yaml "${render_dir}/namespace.yaml"
           cp k8s/ui-serviceaccount.yaml "${render_dir}/ui-serviceaccount.yaml"
           cp k8s/api-serviceaccount.yaml "${render_dir}/api-serviceaccount.yaml"
+          cp k8s/redis-deployment.yaml "${render_dir}/redis-deployment.yaml"
+          cp k8s/redis-service.yaml "${render_dir}/redis-service.yaml"
           cp k8s/ui-service.yaml "${render_dir}/ui-service.yaml"
           cp k8s/api-service.yaml "${render_dir}/api-service.yaml"
 
@@ -453,6 +457,8 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/ui-serviceaccount.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-serviceaccount.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/redis-service.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/redis-deployment.yaml"
 
           if [[ "${DB_ALIGNMENT_MODE}" == "baseline_existing" ]]; then
             kubectl delete job mbsrn-api-migrate-baseline -n "${K8S_NAMESPACE}" --ignore-not-found=true

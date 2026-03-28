@@ -224,10 +224,9 @@ Google Cloud Console -> IAM & Admin -> Service Accounts -> select deployer SA ->
 **Used In:**
 - Allows GitHub OIDC tokens to impersonate the deployer SA.
 
-### 3.9 Provision Redis (Applicable For Pilot/Prod Security Controls)
-This repo does not deploy Redis manifests in `infra/k8s`. You must provide Redis separately.
-
-Recommended managed option: Memorystore for Redis.
+### 3.9 Redis Runtime For Session/Rate-Limit Controls
+Default repo deployment now includes in-cluster Redis manifests (`mbsrn-redis`) for session/rate-limit controls.
+Managed Redis is optional only for custom environments that intentionally override the default runtime wiring.
 
 **Console Path:**
 Google Cloud Console -> Memorystore for Redis -> `Create Instance`
@@ -235,21 +234,22 @@ Google Cloud Console -> Memorystore for Redis -> `Create Instance`
 **Steps:**
 1. Click `Create Instance`.
 2. Choose Redis version supported by your org policy.
-3. Name: `work-boots-redis` (example).
+3. Name: `mbsrn-redis` (example).
 4. Region: same region as GKE cluster when possible.
 5. Tier: choose pilot-appropriate tier.
 6. Configure network connectivity so GKE workloads can reach Redis.
 7. Click `Create`.
 
-**Copy This Value:**
+**Copy This Value (only if overriding default in-cluster Redis):**
 - Redis host/IP
 - Redis port (usually `6379`)
 - Redis URI:
   - `redis://<HOST>:6379/0`
   - or `rediss://<HOST>:6379/0` when TLS is enabled
 
-**Used In:**
-- Kubernetes Secret `work-boots-secrets` key `REDIS_URL` (`infra/k8s/base/secrets.template.yaml`)
+**Default Runtime Wiring In This Repo:**
+- Redis service name: `mbsrn-redis`
+- API Redis URL: `redis://mbsrn-redis:6379/0`
 - Runtime controls in `infra/k8s/base/configmap.yaml`:
   - `RATE_LIMIT_BACKEND=redis`
   - `SESSION_STATE_BACKEND=redis`
@@ -531,12 +531,12 @@ Google Cloud Console -> Kubernetes Engine -> Workloads -> your cluster -> Config
    ```
 2. Edit `infra/k8s/base/secrets.yaml` and set real values.
 3. Include at minimum:
-   - `REDIS_URL`
    - `API_TOKEN_HASH_PEPPER`
    - `APP_SESSION_SECRET`
    - `GOOGLE_OIDC_CLIENT_ID`
    - `GOOGLE_OIDC_CLIENT_SECRET` (if your Google flow requires it)
    - `DATABASE_URL` (recommended to add here to avoid DB credentials in ConfigMap)
+   - `REDIS_URL` only if intentionally overriding `redis://mbsrn-redis:6379/0`
 4. Apply to dev namespace:
    ```bash
    kubectl -n work-boots-dev apply -f infra/k8s/base/secrets.yaml
@@ -562,8 +562,9 @@ Google Cloud Console -> Kubernetes Engine -> Workloads -> your cluster -> Config
 ### 7.3 Configure Runtime Env Keys (What Matters Most)
 Required key guidance for pilot/prod:
 
-- `REDIS_URL`
-  - Source: managed Redis endpoint
+- `REDIS_URL` (optional override)
+  - Default source: in-cluster service `redis://mbsrn-redis:6379/0`
+  - Override only when intentionally pointing at an external managed Redis endpoint
   - Used by distributed rate limit and session state
 - `DATABASE_URL`
   - Source: PostgreSQL endpoint/user/pass/db
@@ -659,7 +660,7 @@ SESSION_STATE_FAIL_OPEN=false
 
 Where to set:
 - Base defaults exist in `infra/k8s/base/configmap.yaml`
-- Secret provides `REDIS_URL` in `work-boots-secrets`
+- API deployment defaults `REDIS_URL` to `redis://mbsrn-redis:6379/0`; secret override is optional
 - `.env.example` documents the same production posture
 
 Consequences if misconfigured:
