@@ -336,6 +336,8 @@ export interface CompetitorProfileDraft {
   evidence: string | null;
   confidence_score: number;
   source: string;
+  provenance_classification?: "places_ai_enriched" | "ai_only" | "synthetic_fallback" | null;
+  provenance_explanation?: string | null;
   forced_inclusion?: boolean;
   forced_reason?: string | null;
   review_status: "pending" | "edited" | "accepted" | "rejected";
@@ -422,6 +424,17 @@ export interface CompetitorProviderAttemptDebug {
   escalation_reason?: string | null;
 }
 
+export type CompetitorRunOutcomeStatusLevel = "normal" | "recovered" | "degraded" | "failed";
+
+export interface CompetitorRunOutcomeSummary {
+  status_level: CompetitorRunOutcomeStatusLevel;
+  message: string;
+  used_synthetic_fallback: boolean;
+  used_timeout_recovery: boolean;
+  had_schema_repair_or_discard: boolean;
+  used_google_places_seeds: boolean;
+}
+
 export interface CompetitorProfileGenerationRunDetailResponse {
   run: CompetitorProfileGenerationRun;
   drafts: CompetitorProfileDraft[];
@@ -432,6 +445,7 @@ export interface CompetitorProfileGenerationRunDetailResponse {
   tuning_rejected_candidates?: TuningRejectedCompetitorCandidateDebug[];
   tuning_rejection_reason_counts?: Partial<Record<CompetitorCandidateTuningExclusionReason, number>>;
   candidate_pipeline_summary?: CompetitorCandidatePipelineSummary | null;
+  outcome_summary?: CompetitorRunOutcomeSummary | null;
   provider_attempt_count?: number;
   provider_degraded_retry_used?: boolean;
   provider_attempts?: CompetitorProviderAttemptDebug[];

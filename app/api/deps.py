@@ -16,9 +16,12 @@ from app.core.token_cipher import FernetTokenCipher
 from app.db.session import SessionLocal, get_db_session
 from app.integrations import (
     DevEmailProvider,
+    DisabledGooglePlacesSeedDiscoveryClient,
     DevSMSProvider,
     EmailProvider,
     GoogleBusinessProfileClient,
+    GooglePlacesSeedDiscoveryClient,
+    GooglePlacesTextSearchClient,
     MisconfiguredSEOCompetitorProfileGenerationProvider,
     MisconfiguredSEORecommendationNarrativeProvider,
     MockSEOCompetitorComparisonSummaryProvider,
@@ -478,13 +481,28 @@ def get_seo_competitor_profile_generation_provider() -> SEOCompetitorProfileGene
     )
 
 
+def get_google_places_seed_discovery_client() -> GooglePlacesSeedDiscoveryClient:
+    settings = get_settings()
+    api_key = (settings.google_places_api_key or "").strip()
+    if not api_key:
+        logger.info("google_places_seed_discovery_disabled reason=missing_api_key")
+        return DisabledGooglePlacesSeedDiscoveryClient()
+    return GooglePlacesTextSearchClient(
+        api_key=api_key,
+        api_base_url=settings.google_places_api_base_url,
+        timeout_seconds=settings.google_places_api_timeout_seconds,
+    )
+
+
 SEOCompetitorProfileGenerationRunExecutor = Callable[[str, str, str], None]
 
 
 def get_seo_competitor_profile_generation_run_executor(
     provider: SEOCompetitorProfileGenerationProvider = Depends(get_seo_competitor_profile_generation_provider),
+    google_places_seed_client: GooglePlacesSeedDiscoveryClient = Depends(get_google_places_seed_discovery_client),
 ) -> SEOCompetitorProfileGenerationRunExecutor:
     candidate_domain_probe = build_default_competitor_candidate_domain_probe()
+    settings = get_settings()
 
     def _execute_generation_run(business_id: str, site_id: str, generation_run_id: str) -> None:
         session = SessionLocal()
@@ -498,6 +516,9 @@ def get_seo_competitor_profile_generation_run_executor(
                 seo_competitor_profile_generation_repository=SEOCompetitorProfileGenerationRepository(session),
                 provider=provider,
                 candidate_domain_probe=candidate_domain_probe,
+                google_places_seed_client=google_places_seed_client,
+                google_places_seed_max_candidates=settings.google_places_seed_max_candidates,
+                google_places_seed_query_limit=settings.google_places_seed_query_limit,
             )
             service.execute_queued_run(
                 business_id=business_id,
@@ -716,6 +737,7 @@ def get_seo_competitor_profile_generation_service(
         get_seo_competitor_profile_generation_repository
     ),
     provider: SEOCompetitorProfileGenerationProvider = Depends(get_seo_competitor_profile_generation_provider),
+    google_places_seed_client: GooglePlacesSeedDiscoveryClient = Depends(get_google_places_seed_discovery_client),
 ) -> SEOCompetitorProfileGenerationService:
     settings = get_settings()
     return SEOCompetitorProfileGenerationService(
@@ -727,6 +749,9 @@ def get_seo_competitor_profile_generation_service(
         seo_competitor_profile_generation_repository=seo_competitor_profile_generation_repository,
         provider=provider,
         candidate_domain_probe=build_default_competitor_candidate_domain_probe(),
+        google_places_seed_client=google_places_seed_client,
+        google_places_seed_max_candidates=settings.google_places_seed_max_candidates,
+        google_places_seed_query_limit=settings.google_places_seed_query_limit,
         retention_policy=SEOCompetitorProfileRetentionPolicy(
             raw_output_retention_days=settings.seo_competitor_profile_raw_output_retention_days,
             run_retention_days=settings.seo_competitor_profile_run_retention_days,

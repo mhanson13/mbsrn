@@ -86,6 +86,7 @@ jobs:
           APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           AI_PROVIDER_API_KEY: ${{ secrets.AI_PROVIDER_API_KEY }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -432,6 +433,7 @@ jobs:
           APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           AI_PROVIDER_API_KEY: ${{ secrets.AI_PROVIDER_API_KEY }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -451,6 +453,7 @@ jobs:
             --from-literal=GOOGLE_OAUTH_CLIENT_SECRET="${GOOGLE_OAUTH_CLIENT_SECRET}" \
             --from-literal=GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
             --from-literal=AI_PROVIDER_API_KEY="${AI_PROVIDER_API_KEY}" \
+            --from-literal=GOOGLE_PLACES_API_KEY="${GOOGLE_PLACES_API_KEY}" \
             --from-literal=AI_PROVIDER_NAME="${AI_PROVIDER_NAME}" \
             --from-literal=AI_MODEL_NAME="${AI_MODEL_NAME}" \
             --from-literal=AI_TIMEOUT_VALUE="${AI_TIMEOUT_VALUE}" \

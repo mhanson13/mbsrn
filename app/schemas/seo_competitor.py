@@ -47,6 +47,8 @@ SEOCompetitorProfileTuningExclusionReason = Literal[
 ]
 SEOCompetitorProfileDraftReviewStatus = Literal["pending", "edited", "accepted", "rejected"]
 SEOCompetitorProfileCleanupExecutionStatus = Literal["completed", "failed"]
+SEOCompetitorProfileOutcomeStatusLevel = Literal["normal", "recovered", "degraded", "failed"]
+SEOCompetitorDraftProvenanceClassification = Literal["places_ai_enriched", "ai_only", "synthetic_fallback"]
 SEOSummaryStatus = Literal["completed", "failed"]
 SEOFindingCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
 SEOFindingSeverity = Literal["INFO", "WARNING", "CRITICAL"]
@@ -85,6 +87,14 @@ _COMPETITOR_PROFILE_TUNING_EXCLUSION_REASONS: tuple[str, ...] = (
     "big_box_mismatch_penalty",
     "insufficient_local_alignment",
 )
+_DRAFT_SOURCE_AI_GENERATED = "ai_generated"
+_DRAFT_SOURCE_AI_FORCED_FALLBACK = "ai_forced_fallback"
+_DRAFT_SOURCE_AI_PLACES_ENRICHED = "ai_places_enriched"
+_DRAFT_PROVENANCE_EXPLANATIONS: dict[str, str] = {
+    "places_ai_enriched": "Discovered from nearby business seed data and enriched for service/location fit.",
+    "ai_only": "Selected from AI discovery based on service/location relevance.",
+    "synthetic_fallback": "Synthetic fallback candidate generated because reliable live competitor discovery was unavailable.",
+}
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -311,6 +321,8 @@ class SEOCompetitorProfileDraftRead(BaseModel):
     evidence: str | None
     confidence_score: float
     source: str
+    provenance_classification: SEOCompetitorDraftProvenanceClassification | None = None
+    provenance_explanation: str | None = Field(default=None, max_length=240)
     forced_inclusion: bool = False
     forced_reason: str | None = None
     review_status: SEOCompetitorProfileDraftReviewStatus
@@ -330,6 +342,43 @@ class SEOCompetitorProfileDraftRead(BaseModel):
         if normalized not in _COMPETITOR_PROFILE_TYPES:
             return "unknown"
         return normalized  # type: ignore[return-value]
+
+    @field_validator("provenance_classification", mode="before")
+    @classmethod
+    def normalize_provenance_classification(
+        cls,
+        value: Any,
+    ) -> SEOCompetitorDraftProvenanceClassification | None:
+        if value is None:
+            return None
+        normalized = str(value or "").strip().lower()
+        if normalized not in _DRAFT_PROVENANCE_EXPLANATIONS:
+            return None
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("provenance_explanation", mode="before")
+    @classmethod
+    def normalize_provenance_explanation(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _strip_or_none(str(value))
+
+    @model_validator(mode="after")
+    def derive_provenance_fields(self) -> "SEOCompetitorProfileDraftRead":
+        classification = self.provenance_classification
+        source_normalized = _strip_or_none(str(self.source or "").lower())
+        if classification is None:
+            if source_normalized == _DRAFT_SOURCE_AI_FORCED_FALLBACK:
+                classification = "synthetic_fallback"
+            elif source_normalized == _DRAFT_SOURCE_AI_PLACES_ENRICHED:
+                classification = "places_ai_enriched"
+            elif source_normalized == _DRAFT_SOURCE_AI_GENERATED:
+                classification = "ai_only"
+        if classification is not None:
+            self.provenance_classification = classification
+            if self.provenance_explanation is None:
+                self.provenance_explanation = _DRAFT_PROVENANCE_EXPLANATIONS.get(classification)
+        return self
 
 
 class SEOCompetitorProfileGenerationRunListResponse(BaseModel):
@@ -454,6 +503,25 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
         return cleaned
 
 
+class SEOCompetitorProfileOutcomeSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    status_level: SEOCompetitorProfileOutcomeStatusLevel
+    message: str = Field(min_length=1, max_length=280)
+    used_synthetic_fallback: bool = False
+    used_timeout_recovery: bool = False
+    had_schema_repair_or_discard: bool = False
+    used_google_places_seeds: bool = False
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def normalize_message(cls, value: Any) -> str:
+        cleaned = _strip_or_none(str(value) if value is not None else None)
+        if cleaned is None:
+            raise ValueError("message is required")
+        return cleaned
+
+
 class SEOCompetitorProfileTuningRejectedCandidateRead(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
@@ -518,6 +586,7 @@ class SEOCompetitorProfileGenerationRunDetailRead(BaseModel):
     tuning_rejected_candidates: list[SEOCompetitorProfileTuningRejectedCandidateRead] = Field(default_factory=list)
     tuning_rejection_reason_counts: dict[SEOCompetitorProfileTuningExclusionReason, int] = Field(default_factory=dict)
     candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummaryRead | None = None
+    outcome_summary: SEOCompetitorProfileOutcomeSummaryRead | None = None
     provider_attempt_count: int = Field(default=0, ge=0)
     provider_degraded_retry_used: bool = False
     provider_attempts: list[SEOCompetitorProfileProviderAttemptRead] = Field(default_factory=list)

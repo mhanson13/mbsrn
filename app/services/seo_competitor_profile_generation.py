@@ -20,6 +20,10 @@ from app.integrations.seo_summary_provider import (
     SEOCompetitorProfileGenerationOutput,
     SEOCompetitorProfileGenerationProvider,
 )
+from app.integrations.google_places import (
+    GooglePlacesSeedCandidate,
+    GooglePlacesSeedDiscoveryClient,
+)
 from app.models.business import Business
 from app.models.seo_audit_page import SEOAuditPage
 from app.models.seo_competitor_domain import SEOCompetitorDomain
@@ -119,6 +123,7 @@ _TUNING_REJECTED_CANDIDATE_DEBUG_KEY = "tuning_rejected_candidates_debug"
 _TUNING_REJECTED_CANDIDATE_DEBUG_COUNT_KEY = "tuning_rejected_candidate_count"
 _TUNING_REJECTION_REASON_COUNTS_KEY = "tuning_rejection_reason_counts"
 _CANDIDATE_PIPELINE_SUMMARY_KEY = "candidate_pipeline_summary_debug"
+_SCHEMA_DIAGNOSTICS_SUMMARY_KEY = "schema_diagnostics_summary"
 _PROVIDER_ATTEMPTS_DEBUG_KEY = "provider_attempts_debug"
 _PROVIDER_ATTEMPT_COUNT_KEY = "provider_attempt_count"
 _PROVIDER_DEGRADED_RETRY_USED_KEY = "provider_degraded_retry_used"
@@ -146,8 +151,18 @@ _DISCOVERY_CANDIDATE_BUFFER = 2
 _MAX_DISCOVERY_CANDIDATE_COUNT = 20
 _MIN_DEGRADED_DISCOVERY_CANDIDATE_COUNT = 2
 _CANDIDATE_REJECTION_LOG_MAX_ITEMS = 12
+_GOOGLE_PLACES_SEED_MAX_CANDIDATES = 5
+_GOOGLE_PLACES_SEED_MIN_CANDIDATES = 3
+_GOOGLE_PLACES_SEED_QUERY_LIMIT = 3
+_GOOGLE_PLACES_QUERY_MAX_LENGTH = 120
+_GOOGLE_PLACES_SEED_MAX_NAME_LENGTH = 140
+_GOOGLE_PLACES_SEED_MAX_ADDRESS_LENGTH = 220
+_GOOGLE_PLACES_SEED_MAX_LOCALITY_LENGTH = 100
+_GOOGLE_PLACES_SEED_MAX_TYPE_LENGTH = 64
+_GOOGLE_PLACES_SEED_MAX_TYPES = 8
 _FORCED_OUTPUT_REASON_NO_VALID_DRAFTS = "no_valid_drafts_after_filtering"
 _FORCED_DRAFT_SOURCE = "ai_forced_fallback"
+_PLACES_ENRICHED_DRAFT_SOURCE = "ai_places_enriched"
 _FORCED_DRAFT_MIN_COUNT = 3
 _FORCED_DRAFT_MAX_COUNT = 5
 _SYNTHETIC_FALLBACK_RECOVERY_PATH = "synthetic_fallback"
@@ -170,6 +185,10 @@ _UNKNOWN_PLACEHOLDER_NAME_TOKENS = {
 }
 _UNKNOWN_MIN_CONFIDENCE_FLOOR = 0.35
 _UNKNOWN_MIN_DETAIL_CHARS = 40
+_OUTCOME_STATUS_NORMAL = "normal"
+_OUTCOME_STATUS_RECOVERED = "recovered"
+_OUTCOME_STATUS_DEGRADED = "degraded"
+_OUTCOME_STATUS_FAILED = "failed"
 
 INELIGIBILITY_REASON_MISSING_DOMAIN = "missing_domain"
 INELIGIBILITY_REASON_MALFORMED_URL = "malformed_url"
@@ -259,6 +278,7 @@ class SEOCompetitorProfileGenerationRunDetail:
     provider_attempt_count: int = 0
     provider_degraded_retry_used: bool = False
     provider_attempts: list["SEOCompetitorProfileProviderAttemptDebug"] = field(default_factory=list)
+    outcome_summary: "SEOCompetitorProfileOutcomeSummary | None" = None
 
 
 @dataclass(frozen=True)
@@ -328,6 +348,17 @@ class SEOCompetitorProfileProviderAttemptDebug:
     final_outcome: str | None = None
     search_escalation_triggered: bool = False
     escalation_reason: str | None = None
+    google_places_seed_count: int = 0
+
+
+@dataclass(frozen=True)
+class SEOCompetitorProfileOutcomeSummary:
+    status_level: str
+    message: str
+    used_synthetic_fallback: bool
+    used_timeout_recovery: bool
+    had_schema_repair_or_discard: bool
+    used_google_places_seeds: bool
 
 
 @dataclass(frozen=True)
@@ -464,6 +495,9 @@ class SEOCompetitorProfileGenerationService:
         seo_competitor_profile_generation_repository: SEOCompetitorProfileGenerationRepository,
         provider: SEOCompetitorProfileGenerationProvider,
         candidate_domain_probe: CompetitorCandidateDomainProbe | None = None,
+        google_places_seed_client: GooglePlacesSeedDiscoveryClient | None = None,
+        google_places_seed_max_candidates: int = _GOOGLE_PLACES_SEED_MAX_CANDIDATES,
+        google_places_seed_query_limit: int = _GOOGLE_PLACES_SEED_QUERY_LIMIT,
         retention_policy: SEOCompetitorProfileRetentionPolicy = SEOCompetitorProfileRetentionPolicy(),
         observability_lookback_days: int = DEFAULT_OBSERVABILITY_LOOKBACK_DAYS,
     ) -> None:
@@ -487,6 +521,12 @@ class SEOCompetitorProfileGenerationService:
             getattr(self.provider, "legacy_config_used", False)
         )
         self.candidate_domain_probe = candidate_domain_probe
+        self.google_places_seed_client = google_places_seed_client
+        self.google_places_seed_max_candidates = max(
+            _GOOGLE_PLACES_SEED_MIN_CANDIDATES,
+            min(_GOOGLE_PLACES_SEED_MAX_CANDIDATES, int(google_places_seed_max_candidates)),
+        )
+        self.google_places_seed_query_limit = max(1, min(_GOOGLE_PLACES_SEED_QUERY_LIMIT, int(google_places_seed_query_limit)))
         self.retention_policy = retention_policy
         self.observability_lookback_days = max(1, int(observability_lookback_days))
 
@@ -650,6 +690,13 @@ class SEOCompetitorProfileGenerationService:
             ]
             self._attach_site_content_signals(site=site, business_id=business_id, site_id=site_id)
             resolved_prompt = self._apply_resolved_competitor_prompt_settings(business)
+            google_places_seed_candidates = self._discover_google_places_seed_candidates(
+                site=site,
+                existing_domains=existing_domains,
+                requested_candidate_count=run.requested_candidate_count,
+                prompt_text_competitor=resolved_prompt.prompt_text,
+                run_id=run.id,
+            )
             output = self._generate_competitor_profiles_with_timeout_retry(
                 business=business,
                 site=site,
@@ -658,6 +705,7 @@ class SEOCompetitorProfileGenerationService:
                 requested_candidate_count=run.requested_candidate_count,
                 provider_attempts=provider_attempts,
                 prompt_text_competitor=resolved_prompt.prompt_text,
+                google_places_seed_candidates=google_places_seed_candidates,
             )
             provider_name = self._clean_required_value(output.provider_name, field_name="provider_name")
             model_name = self._clean_required_value(output.model_name, field_name="model_name")
@@ -669,6 +717,7 @@ class SEOCompetitorProfileGenerationService:
                 existing_domains=existing_domains,
                 run=run,
                 raw_candidates=output.candidates,
+                used_google_places_seeds=bool(google_places_seed_candidates),
             )
             if not draft_result.drafts:
                 synthetic_fallback_result = self._build_synthetic_fallback_draft_result(
@@ -721,6 +770,19 @@ class SEOCompetitorProfileGenerationService:
                 tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
                 candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
                 provider_attempts=provider_attempts,
+                schema_had_repair_or_discard=(
+                    True if bool(output.had_schema_repair_or_discard) else None
+                ),
+                schema_invalid_candidate_count=(
+                    max(0, int(output.schema_invalid_candidate_count))
+                    if int(output.schema_invalid_candidate_count) > 0
+                    else None
+                ),
+                schema_invalid_field_type_count=(
+                    max(0, int(output.schema_invalid_field_type_count))
+                    if int(output.schema_invalid_field_type_count) > 0
+                    else None
+                ),
             )
             raw_output = self._sanitize_raw_output(raw_output)
             run.raw_output = raw_output
@@ -778,6 +840,11 @@ class SEOCompetitorProfileGenerationService:
                     run.id,
                     draft_result.ineligibility_counts_by_reason,
                 )
+            outcome_summary = self._build_operator_outcome_summary(
+                run=run,
+                provider_attempts=provider_attempts,
+                had_schema_repair_or_discard=bool(output.had_schema_repair_or_discard),
+            )
             return SEOCompetitorProfileGenerationRunDetail(
                 run=run,
                 drafts=drafts,
@@ -790,6 +857,7 @@ class SEOCompetitorProfileGenerationService:
                 provider_attempt_count=max(0, len(provider_attempts)),
                 provider_degraded_retry_used=any(item.degraded_mode for item in provider_attempts),
                 provider_attempts=provider_attempts,
+                outcome_summary=outcome_summary,
             )
         except SEOCompetitorProfileProviderError as exc:
             self.session.rollback()
@@ -1162,8 +1230,14 @@ class SEOCompetitorProfileGenerationService:
         provider_attempt_count, provider_degraded_retry_used, provider_attempts = (
             self._extract_provider_attempts_debug_from_raw_output(run.raw_output)
         )
+        had_schema_repair_or_discard = self._extract_schema_repair_flag_from_raw_output(run.raw_output)
         if candidate_pipeline_summary is None:
             candidate_pipeline_summary = self._derive_candidate_pipeline_summary_from_run(run)
+        outcome_summary = self._build_operator_outcome_summary(
+            run=run,
+            provider_attempts=provider_attempts,
+            had_schema_repair_or_discard=had_schema_repair_or_discard,
+        )
         return SEOCompetitorProfileGenerationRunDetail(
             run=run,
             drafts=drafts,
@@ -1176,6 +1250,7 @@ class SEOCompetitorProfileGenerationService:
             provider_attempt_count=provider_attempt_count,
             provider_degraded_retry_used=provider_degraded_retry_used,
             provider_attempts=provider_attempts,
+            outcome_summary=outcome_summary,
         )
 
     def build_prompt_preview(
@@ -1565,6 +1640,7 @@ class SEOCompetitorProfileGenerationService:
         existing_domains: list[str],
         run: SEOCompetitorProfileGenerationRun,
         raw_candidates: list[SEOCompetitorProfileDraftCandidateOutput],
+        used_google_places_seeds: bool = False,
     ) -> SEOCompetitorProfileDraftBuildResult:
         # Pipeline stages after provider parsing:
         # 1) normalize/prepare candidate input, 2) eligibility filter,
@@ -1682,6 +1758,7 @@ class SEOCompetitorProfileGenerationService:
             )
 
         drafts: list[SEOCompetitorProfileDraft] = []
+        ai_draft_source = _PLACES_ENRICHED_DRAFT_SOURCE if used_google_places_seeds else "ai_generated"
         for candidate in final_candidates:
             draft = SEOCompetitorProfileDraft(
                 id=str(uuid4()),
@@ -1696,7 +1773,7 @@ class SEOCompetitorProfileGenerationService:
                 evidence=candidate.evidence,
                 confidence_score=candidate.confidence_score,
                 relevance_score=candidate.relevance_score,
-                source="ai_generated",
+                source=ai_draft_source,
                 review_status="pending",
             )
             drafts.append(draft)
@@ -2260,6 +2337,11 @@ class SEOCompetitorProfileGenerationService:
             len(draft_result.drafts),
             fallback_reason,
         )
+        outcome_summary = self._build_operator_outcome_summary(
+            run=run,
+            provider_attempts=provider_attempts,
+            had_schema_repair_or_discard=False,
+        )
         return SEOCompetitorProfileGenerationRunDetail(
             run=run,
             drafts=draft_result.drafts,
@@ -2272,6 +2354,7 @@ class SEOCompetitorProfileGenerationService:
             provider_attempt_count=max(0, len(provider_attempts)),
             provider_degraded_retry_used=any(item.degraded_mode for item in provider_attempts),
             provider_attempts=provider_attempts,
+            outcome_summary=outcome_summary,
         )
 
     def _prepare_candidate_input_for_pipeline(
@@ -3086,8 +3169,247 @@ class SEOCompetitorProfileGenerationService:
                 continue
             if len(cleaned) <= REJECTED_CANDIDATE_DEBUG_SUMMARY_MAX_CHARS:
                 return cleaned
-            return cleaned[: REJECTED_CANDIDATE_DEBUG_SUMMARY_MAX_CHARS - 3] + "..."
+                return cleaned[: REJECTED_CANDIDATE_DEBUG_SUMMARY_MAX_CHARS - 3] + "..."
         return None
+
+    def _discover_google_places_seed_candidates(
+        self,
+        *,
+        site: SEOSite,
+        existing_domains: list[str],
+        requested_candidate_count: int,
+        prompt_text_competitor: str,
+        run_id: str,
+    ) -> list[dict[str, object]]:
+        if self.google_places_seed_client is None:
+            return []
+
+        try:
+            prompt = build_seo_competitor_profile_prompt(
+                site=site,
+                existing_domains=existing_domains,
+                candidate_count=max(1, int(requested_candidate_count)),
+                reduced_context_mode=False,
+                prompt_version=self._default_prompt_version(),
+                prompt_text_competitor=prompt_text_competitor,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "SEO competitor Google Places seed discovery skipped run_id=%s site_id=%s reason=prompt_context_build_failed detail=%s",
+                run_id,
+                site.id,
+                str(exc),
+            )
+            return []
+
+        queries = self._build_google_places_seed_queries(context=prompt.trusted_site_context)
+        if not queries:
+            return []
+
+        seed_target = min(
+            self.google_places_seed_max_candidates,
+            max(_GOOGLE_PLACES_SEED_MIN_CANDIDATES, int(requested_candidate_count or 1)),
+        )
+        try:
+            discovered = self.google_places_seed_client.discover_seed_candidates(
+                queries=queries,
+                max_results=seed_target,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "SEO competitor Google Places seed discovery failed run_id=%s site_id=%s reason=client_error detail=%s",
+                run_id,
+                site.id,
+                str(exc),
+            )
+            return []
+
+        normalized = self._normalize_google_places_seed_candidates(
+            candidates=discovered,
+            existing_domains=existing_domains,
+            site_domain=site.normalized_domain,
+            max_results=seed_target,
+        )
+        self._emit_structured_service_log(
+            payload={
+                "event": "competitor_google_places_seed_discovery",
+                "run_id": run_id,
+                "business_id": site.business_id,
+                "site_id": site.id,
+                "query_count": len(queries),
+                "seed_target": seed_target,
+                "discovered_count": len(discovered),
+                "normalized_seed_count": len(normalized),
+                "seed_source": "google_places",
+            },
+            fallback_message="competitor_google_places_seed_discovery",
+        )
+        return normalized
+
+    def _build_google_places_seed_queries(self, *, context: dict[str, object]) -> list[str]:
+        queries: list[str] = []
+        seen: set[str] = set()
+
+        raw_hints = context.get("competitor_search_hints")
+        if isinstance(raw_hints, list):
+            for raw_hint in raw_hints:
+                cleaned = self._clean_optional(str(raw_hint) if raw_hint is not None else None)
+                if not cleaned:
+                    continue
+                normalized = cleaned[:_GOOGLE_PLACES_QUERY_MAX_LENGTH]
+                lowered = normalized.lower()
+                if lowered in seen:
+                    continue
+                seen.add(lowered)
+                queries.append(normalized)
+                if len(queries) >= self.google_places_seed_query_limit:
+                    return queries
+
+        service_terms: list[str] = []
+        raw_terms = context.get("service_focus_terms")
+        if isinstance(raw_terms, list):
+            for raw_term in raw_terms:
+                cleaned = self._clean_optional(str(raw_term) if raw_term is not None else None)
+                if not cleaned:
+                    continue
+                if "." in cleaned:
+                    continue
+                lowered = cleaned.lower()
+                if lowered in {item.lower() for item in service_terms}:
+                    continue
+                service_terms.append(cleaned)
+                if len(service_terms) >= 3:
+                    break
+
+        if not service_terms:
+            industry_context = self._clean_optional(
+                str(context.get("site_industry_context")) if context.get("site_industry_context") is not None else None
+            )
+            if industry_context:
+                service_terms.append(industry_context)
+
+        location_phrase = self._derive_google_places_query_location(context=context)
+        if not service_terms or not location_phrase:
+            return queries
+
+        for service_term in service_terms:
+            for template in (
+                "{service} near {location}",
+                "{service} in {location}",
+                "{service} company {location}",
+            ):
+                candidate = template.format(service=service_term, location=location_phrase).strip()
+                cleaned = self._clean_optional(candidate)
+                if not cleaned:
+                    continue
+                normalized = cleaned[:_GOOGLE_PLACES_QUERY_MAX_LENGTH]
+                lowered = normalized.lower()
+                if lowered in seen:
+                    continue
+                seen.add(lowered)
+                queries.append(normalized)
+                if len(queries) >= self.google_places_seed_query_limit:
+                    return queries
+        return queries
+
+    def _derive_google_places_query_location(self, *, context: dict[str, object]) -> str | None:
+        zip_code = self._clean_optional(
+            str(context.get("site_primary_business_zip")) if context.get("site_primary_business_zip") is not None else None
+        )
+        if zip_code and len(zip_code) == 5 and zip_code.isdigit():
+            return zip_code
+
+        raw_location = self._clean_optional(
+            str(context.get("site_primary_location")) if context.get("site_primary_location") is not None else None
+        )
+        if not raw_location:
+            raw_location = self._clean_optional(
+                str(context.get("site_location_context")) if context.get("site_location_context") is not None else None
+            )
+        if not raw_location:
+            return None
+
+        lowered = raw_location.lower()
+        for marker in (" and nearby service areas", " and service areas", " serving "):
+            marker_index = lowered.find(marker)
+            if marker_index > 0:
+                raw_location = raw_location[:marker_index].strip()
+                break
+        if raw_location.lower().startswith("serves "):
+            raw_location = raw_location[7:].strip()
+        cleaned = self._clean_optional(raw_location)
+        if not cleaned:
+            return None
+        return cleaned[:_GOOGLE_PLACES_QUERY_MAX_LENGTH]
+
+    def _normalize_google_places_seed_candidates(
+        self,
+        *,
+        candidates: list[GooglePlacesSeedCandidate],
+        existing_domains: list[str],
+        site_domain: str | None,
+        max_results: int,
+    ) -> list[dict[str, object]]:
+        normalized: list[dict[str, object]] = []
+        seen_place_ids: set[str] = set()
+        known_domains = {
+            candidate_domain
+            for raw_domain in [*(existing_domains or []), site_domain]
+            for candidate_domain in [self._normalize_domain_value(raw_domain)]
+            if candidate_domain
+        }
+        bounded_max_results = max(1, min(_GOOGLE_PLACES_SEED_MAX_CANDIDATES, int(max_results)))
+        bounded_max_results = min(bounded_max_results, self.google_places_seed_max_candidates)
+
+        for candidate in candidates:
+            place_id = self._clean_optional(candidate.place_id)
+            name = self._clean_optional(candidate.name)
+            if not place_id or not name:
+                continue
+            place_key = place_id.lower()
+            if place_key in seen_place_ids:
+                continue
+            seen_place_ids.add(place_key)
+
+            website_domain = self._normalize_domain_value(candidate.website_domain)
+            if website_domain and website_domain in known_domains:
+                continue
+
+            types: list[str] = []
+            seen_types: set[str] = set()
+            for raw_type in candidate.types:
+                cleaned_type = self._clean_optional(raw_type)
+                if not cleaned_type:
+                    continue
+                lowered = cleaned_type.lower()
+                if lowered in seen_types:
+                    continue
+                seen_types.add(lowered)
+                types.append(lowered[:_GOOGLE_PLACES_SEED_MAX_TYPE_LENGTH])
+                if len(types) >= _GOOGLE_PLACES_SEED_MAX_TYPES:
+                    break
+
+            normalized.append(
+                {
+                    "source": "google_places",
+                    "place_id": place_id[:255],
+                    "name": name[:_GOOGLE_PLACES_SEED_MAX_NAME_LENGTH],
+                    "formatted_address": (
+                        self._clean_optional(candidate.formatted_address) or ""
+                    )[:_GOOGLE_PLACES_SEED_MAX_ADDRESS_LENGTH],
+                    "locality": (
+                        self._clean_optional(candidate.locality) or ""
+                    )[:_GOOGLE_PLACES_SEED_MAX_LOCALITY_LENGTH],
+                    "primary_type": (
+                        self._clean_optional(candidate.primary_type) or ""
+                    )[:_GOOGLE_PLACES_SEED_MAX_TYPE_LENGTH],
+                    "types": types,
+                    "website_domain": website_domain or "",
+                }
+            )
+            if len(normalized) >= bounded_max_results:
+                break
+        return normalized
 
     def _generate_competitor_profiles_with_timeout_retry(
         self,
@@ -3099,7 +3421,9 @@ class SEOCompetitorProfileGenerationService:
         requested_candidate_count: int,
         provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug],
         prompt_text_competitor: str,
+        google_places_seed_candidates: list[dict[str, object]] | None = None,
     ) -> SEOCompetitorProfileGenerationOutput:
+        normalized_google_places_seed_candidates = list(google_places_seed_candidates or [])
         effective_requested_count = max(1, int(requested_candidate_count))
         discovery_candidate_count = self._discovery_candidate_count(effective_requested_count)
         max_attempts = _MAX_PROVIDER_TIMEOUT_ATTEMPTS
@@ -3146,6 +3470,7 @@ class SEOCompetitorProfileGenerationService:
             candidate_count=discovery_candidate_count,
             reduced_context_mode=True,
             prompt_text_competitor=prompt_text_competitor,
+            google_places_seed_candidates=normalized_google_places_seed_candidates,
         )
         fast_path_attempt_start = time.perf_counter()
         try:
@@ -3160,6 +3485,7 @@ class SEOCompetitorProfileGenerationService:
                 execution_mode=_EXECUTION_MODE_FAST_PATH,
                 provider_call_type=_PROVIDER_CALL_TYPE_NON_TOOL,
                 attempt_timeout_seconds=primary_timeout_seconds,
+                seed_candidates=normalized_google_places_seed_candidates,
             )
             fast_path_duration_ms = max(0, int((time.perf_counter() - fast_path_attempt_start) * 1000))
             provider_attempts.append(
@@ -3170,6 +3496,7 @@ class SEOCompetitorProfileGenerationService:
                     degraded_mode=False,
                     prompt_metrics=fast_path_prompt_metrics,
                     requested_candidate_count=discovery_candidate_count,
+                    fallback_google_places_seed_count=len(normalized_google_places_seed_candidates),
                     fallback_duration_ms=fast_path_duration_ms,
                     fallback_timeout_seconds=primary_timeout_seconds,
                     provider_output=output,
@@ -3210,6 +3537,7 @@ class SEOCompetitorProfileGenerationService:
                 degraded_mode=False,
                 prompt_metrics=fast_path_prompt_metrics,
                 requested_candidate_count=discovery_candidate_count,
+                fallback_google_places_seed_count=len(normalized_google_places_seed_candidates),
                 fallback_duration_ms=fast_path_duration_ms,
                 fallback_timeout_seconds=primary_timeout_seconds,
                 provider_output=None,
@@ -3226,6 +3554,7 @@ class SEOCompetitorProfileGenerationService:
             candidate_count=discovery_candidate_count,
             reduced_context_mode=False,
             prompt_text_competitor=prompt_text_competitor,
+            google_places_seed_candidates=normalized_google_places_seed_candidates,
         )
         full_attempt_start = time.perf_counter()
         try:
@@ -3240,6 +3569,7 @@ class SEOCompetitorProfileGenerationService:
                 execution_mode=_EXECUTION_MODE_FULL,
                 provider_call_type=_PROVIDER_CALL_TYPE_TOOL_ENABLED,
                 attempt_timeout_seconds=primary_timeout_seconds,
+                seed_candidates=normalized_google_places_seed_candidates,
             )
             full_duration_ms = max(0, int((time.perf_counter() - full_attempt_start) * 1000))
             provider_attempts.append(
@@ -3250,6 +3580,7 @@ class SEOCompetitorProfileGenerationService:
                     degraded_mode=False,
                     prompt_metrics=full_prompt_metrics,
                     requested_candidate_count=discovery_candidate_count,
+                    fallback_google_places_seed_count=len(normalized_google_places_seed_candidates),
                     fallback_duration_ms=full_duration_ms,
                     fallback_timeout_seconds=primary_timeout_seconds,
                     provider_output=output,
@@ -3274,6 +3605,7 @@ class SEOCompetitorProfileGenerationService:
                 degraded_mode=False,
                 prompt_metrics=full_prompt_metrics,
                 requested_candidate_count=discovery_candidate_count,
+                fallback_google_places_seed_count=len(normalized_google_places_seed_candidates),
                 fallback_duration_ms=full_duration_ms,
                 fallback_timeout_seconds=primary_timeout_seconds,
                 provider_output=None,
@@ -3299,6 +3631,7 @@ class SEOCompetitorProfileGenerationService:
             candidate_count=degraded_candidate_count,
             reduced_context_mode=True,
             prompt_text_competitor=prompt_text_competitor,
+            google_places_seed_candidates=normalized_google_places_seed_candidates,
         )
         if _TIMEOUT_RETRY_BACKOFF_SECONDS > 0:
             time.sleep(_TIMEOUT_RETRY_BACKOFF_SECONDS)
@@ -3315,6 +3648,7 @@ class SEOCompetitorProfileGenerationService:
                 execution_mode=_EXECUTION_MODE_DEGRADED,
                 provider_call_type=_PROVIDER_CALL_TYPE_NON_TOOL,
                 attempt_timeout_seconds=degraded_timeout_seconds,
+                seed_candidates=normalized_google_places_seed_candidates,
             )
         except SEOCompetitorProfileProviderError as degraded_exc:
             degraded_duration_ms = max(0, int((time.perf_counter() - degraded_attempt_start) * 1000))
@@ -3326,6 +3660,7 @@ class SEOCompetitorProfileGenerationService:
                     degraded_mode=True,
                     prompt_metrics=degraded_prompt_metrics,
                     requested_candidate_count=degraded_candidate_count,
+                    fallback_google_places_seed_count=len(normalized_google_places_seed_candidates),
                     fallback_duration_ms=degraded_duration_ms,
                     fallback_timeout_seconds=degraded_timeout_seconds,
                     provider_output=None,
@@ -3345,6 +3680,7 @@ class SEOCompetitorProfileGenerationService:
                 degraded_mode=True,
                 prompt_metrics=degraded_prompt_metrics,
                 requested_candidate_count=degraded_candidate_count,
+                fallback_google_places_seed_count=len(normalized_google_places_seed_candidates),
                 fallback_duration_ms=degraded_duration_ms,
                 fallback_timeout_seconds=degraded_timeout_seconds,
                 provider_output=output,
@@ -3379,6 +3715,7 @@ class SEOCompetitorProfileGenerationService:
         existing_domains: list[str],
         candidate_count: int,
         reduced_context_mode: bool,
+        seed_candidates: list[dict[str, object]] | None = None,
         run_id: str | None = None,
         attempt_number: int | None = None,
         degraded_mode: bool = False,
@@ -3427,6 +3764,8 @@ class SEOCompetitorProfileGenerationService:
                 kwargs["provider_call_type"] = normalized_provider_call_type
             if "web_search_enabled" in parameters:
                 kwargs["web_search_enabled"] = normalized_provider_call_type == _PROVIDER_CALL_TYPE_TOOL_ENABLED
+            if "seed_candidates" in parameters:
+                kwargs["seed_candidates"] = list(seed_candidates or [])
             if "timeout_seconds" in parameters and attempt_timeout_seconds is not None:
                 kwargs["timeout_seconds"] = attempt_timeout_seconds
             return provider_method(**kwargs)
@@ -3440,6 +3779,7 @@ class SEOCompetitorProfileGenerationService:
         candidate_count: int,
         reduced_context_mode: bool,
         prompt_text_competitor: str,
+        google_places_seed_candidates: list[dict[str, object]] | None = None,
     ) -> _ProviderAttemptPromptMetrics:
         try:
             prompt = build_seo_competitor_profile_prompt(
@@ -3449,6 +3789,7 @@ class SEOCompetitorProfileGenerationService:
                 reduced_context_mode=bool(reduced_context_mode),
                 prompt_version=self._default_prompt_version(),
                 prompt_text_competitor=prompt_text_competitor,
+                seed_candidates=list(google_places_seed_candidates or []),
             )
         except Exception:  # noqa: BLE001
             return _ProviderAttemptPromptMetrics(
@@ -3526,6 +3867,7 @@ class SEOCompetitorProfileGenerationService:
         degraded_mode: bool,
         prompt_metrics: _ProviderAttemptPromptMetrics,
         requested_candidate_count: int,
+        fallback_google_places_seed_count: int,
         fallback_duration_ms: int,
         fallback_timeout_seconds: int | None,
         provider_output: SEOCompetitorProfileGenerationOutput | None,
@@ -3549,6 +3891,7 @@ class SEOCompetitorProfileGenerationService:
         prompt_total_chars = prompt_metrics.prompt_total_chars
         context_json_chars = prompt_metrics.context_json_chars
         user_prompt_chars = prompt_metrics.user_prompt_chars
+        google_places_seed_count = max(0, int(fallback_google_places_seed_count))
 
         if provider_error is not None:
             if provider_error.code == "timeout":
@@ -3580,6 +3923,11 @@ class SEOCompetitorProfileGenerationService:
                     user_prompt_chars = provider_debug.user_prompt_chars
                 if provider_debug.request_duration_ms is not None:
                     request_duration_ms = provider_debug.request_duration_ms
+                if provider_debug.google_places_seed_count is not None:
+                    google_places_seed_count = max(
+                        google_places_seed_count,
+                        max(0, int(provider_debug.google_places_seed_count)),
+                    )
             outcome = failure_kind
         elif provider_output is not None:
             output_endpoint_path = self._clean_optional(provider_output.endpoint_path)
@@ -3592,6 +3940,10 @@ class SEOCompetitorProfileGenerationService:
                 resolved_provider_call_type = output_provider_call_type
             if provider_output.request_duration_ms is not None:
                 request_duration_ms = max(0, int(provider_output.request_duration_ms))
+            google_places_seed_count = max(
+                google_places_seed_count,
+                max(0, int(getattr(provider_output, "google_places_seed_count", 0) or 0)),
+            )
         if timeout_seconds is None and fallback_timeout_seconds is not None:
             timeout_seconds = max(1, int(fallback_timeout_seconds))
         if resolved_provider_call_type is None and isinstance(web_search_enabled, bool):
@@ -3633,6 +3985,7 @@ class SEOCompetitorProfileGenerationService:
             endpoint_path=endpoint_path,
             max_attempts=normalized_max_attempts,
             timeout_type=timeout_type,
+            google_places_seed_count=google_places_seed_count,
         )
 
     @dataclass(frozen=True)
@@ -3650,6 +4003,7 @@ class SEOCompetitorProfileGenerationService:
         context_json_chars: int | None
         user_prompt_chars: int | None
         request_duration_ms: int | None
+        google_places_seed_count: int | None
 
     def _extract_provider_failure_debug(self, raw_output: str | None) -> _ProviderFailureDebug | None:
         if not raw_output:
@@ -3682,6 +4036,7 @@ class SEOCompetitorProfileGenerationService:
         prompt_total_chars = None
         context_json_chars = None
         user_prompt_chars = None
+        google_places_seed_count = None
         if isinstance(request_debug, dict):
             raw_provider_call_type = self._clean_optional(str(request_debug.get("provider_call_type") or ""))
             if raw_provider_call_type in _PROVIDER_CALL_TYPES:
@@ -3715,6 +4070,11 @@ class SEOCompetitorProfileGenerationService:
                     user_prompt_chars = max(0, int(request_debug.get("user_prompt_chars")))
             except (TypeError, ValueError):
                 user_prompt_chars = None
+            try:
+                if request_debug.get("google_places_seed_count") is not None:
+                    google_places_seed_count = max(0, int(request_debug.get("google_places_seed_count")))
+            except (TypeError, ValueError):
+                google_places_seed_count = None
         return self._ProviderFailureDebug(
             failure_kind=raw_failure_kind,
             malformed_output_reason=malformed_output_reason,
@@ -3729,6 +4089,7 @@ class SEOCompetitorProfileGenerationService:
             context_json_chars=context_json_chars,
             user_prompt_chars=user_prompt_chars,
             request_duration_ms=request_duration_ms,
+            google_places_seed_count=google_places_seed_count,
         )
 
     def _finalize_provider_attempt_timeout_outcome(
@@ -3890,6 +4251,8 @@ class SEOCompetitorProfileGenerationService:
                 payload["search_escalation_triggered"] = True
             if item.escalation_reason:
                 payload["escalation_reason"] = item.escalation_reason
+            if item.google_places_seed_count > 0:
+                payload["google_places_seed_count"] = max(0, int(item.google_places_seed_count))
             serialized.append(payload)
         return serialized
 
@@ -3924,6 +4287,10 @@ class SEOCompetitorProfileGenerationService:
                 requested_candidate_count = max(
                     1,
                     self._coerce_int(raw_item.get("requested_candidate_count"), default=1),
+                )
+                google_places_seed_count = max(
+                    0,
+                    self._coerce_int(raw_item.get("google_places_seed_count"), default=0),
                 )
                 outcome = self._clean_optional(str(raw_item.get("outcome") or "")) or "success"
                 failure_kind = self._clean_optional(str(raw_item.get("failure_kind") or ""))
@@ -4017,6 +4384,7 @@ class SEOCompetitorProfileGenerationService:
                         final_outcome=final_outcome,
                         search_escalation_triggered=search_escalation_triggered,
                         escalation_reason=escalation_reason,
+                        google_places_seed_count=google_places_seed_count,
                     )
                 )
 
@@ -4031,6 +4399,84 @@ class SEOCompetitorProfileGenerationService:
             provider_degraded_retry_used = any(item.degraded_mode for item in provider_attempts)
         return provider_attempt_count, provider_degraded_retry_used, provider_attempts
 
+    def _extract_schema_repair_flag_from_raw_output(self, raw_output: str | None) -> bool:
+        if not raw_output:
+            return False
+        try:
+            parsed = json.loads(raw_output)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        if not isinstance(parsed, dict):
+            return False
+        raw_summary = parsed.get(_SCHEMA_DIAGNOSTICS_SUMMARY_KEY)
+        if not isinstance(raw_summary, dict):
+            invalid_candidate_count = max(0, self._coerce_int(parsed.get("invalid_candidate_count"), default=0))
+            invalid_field_type_count = max(0, self._coerce_int(parsed.get("invalid_field_type_count"), default=0))
+            return bool(invalid_candidate_count > 0 or invalid_field_type_count > 0)
+        if bool(raw_summary.get("had_schema_repair_or_discard")):
+            return True
+        invalid_candidate_count = max(0, self._coerce_int(raw_summary.get("invalid_candidate_count"), default=0))
+        invalid_field_type_count = max(0, self._coerce_int(raw_summary.get("invalid_field_type_count"), default=0))
+        return bool(invalid_candidate_count > 0 or invalid_field_type_count > 0)
+
+    def _build_operator_outcome_summary(
+        self,
+        *,
+        run: SEOCompetitorProfileGenerationRun,
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug],
+        had_schema_repair_or_discard: bool,
+    ) -> SEOCompetitorProfileOutcomeSummary | None:
+        if run.status not in {"completed", "failed"}:
+            return None
+
+        used_synthetic_fallback = any(
+            (
+                item.recovery_path == _SYNTHETIC_FALLBACK_RECOVERY_PATH
+                or item.execution_mode == _EXECUTION_MODE_FALLBACK
+            )
+            for item in provider_attempts
+        )
+        used_timeout_recovery = any(item.recovered_after_timeout is True for item in provider_attempts)
+        if not used_timeout_recovery:
+            timeout_observed = any(item.failure_kind == "timeout" for item in provider_attempts)
+            successful_outcome_observed = any(
+                (item.final_outcome in {"success", "degraded_success"} or (item.outcome or "").lower() == "success")
+                for item in provider_attempts
+            )
+            used_timeout_recovery = bool(timeout_observed and successful_outcome_observed and run.status == "completed")
+
+        used_provider_recovery = bool(
+            run.status == "completed"
+            and any(item.failure_kind for item in provider_attempts)
+            and any((item.outcome or "").lower() == "success" for item in provider_attempts)
+        )
+        used_google_places_seeds = any(item.google_places_seed_count > 0 for item in provider_attempts)
+
+        if run.status == "failed":
+            status_level = _OUTCOME_STATUS_FAILED
+            message = "Competitor generation failed. Start a new run to continue."
+        elif used_synthetic_fallback:
+            status_level = _OUTCOME_STATUS_DEGRADED
+            message = (
+                "Fallback placeholders were generated from local context. "
+                "Review and confirm before accepting."
+            )
+        elif used_provider_recovery or used_timeout_recovery:
+            status_level = _OUTCOME_STATUS_RECOVERED
+            message = "Competitor generation recovered after provider instability."
+        else:
+            status_level = _OUTCOME_STATUS_NORMAL
+            message = "Competitor generation completed normally with provider output."
+
+        return SEOCompetitorProfileOutcomeSummary(
+            status_level=status_level,
+            message=message,
+            used_synthetic_fallback=used_synthetic_fallback,
+            used_timeout_recovery=used_timeout_recovery,
+            had_schema_repair_or_discard=bool(had_schema_repair_or_discard),
+            used_google_places_seeds=used_google_places_seeds,
+        )
+
     def _embed_competitor_debug_in_raw_output(
         self,
         *,
@@ -4040,6 +4486,9 @@ class SEOCompetitorProfileGenerationService:
         tuning_rejection_reason_counts: dict[str, int],
         candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummary | None,
         provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug] | None = None,
+        schema_had_repair_or_discard: bool | None = None,
+        schema_invalid_candidate_count: int | None = None,
+        schema_invalid_field_type_count: int | None = None,
     ) -> str | None:
         serialized_provider_attempts = self._serialize_provider_attempts_for_debug(provider_attempts)
         if (
@@ -4048,6 +4497,9 @@ class SEOCompetitorProfileGenerationService:
             and not any(value > 0 for value in tuning_rejection_reason_counts.values())
             and candidate_pipeline_summary is None
             and not serialized_provider_attempts
+            and schema_had_repair_or_discard is None
+            and schema_invalid_candidate_count is None
+            and schema_invalid_field_type_count is None
         ):
             return raw_output
         if raw_output:
@@ -4114,6 +4566,16 @@ class SEOCompetitorProfileGenerationService:
                 "removed_by_final_limit_count": max(0, int(candidate_pipeline_summary.removed_by_final_limit_count)),
                 "final_candidate_count": max(0, int(candidate_pipeline_summary.final_candidate_count)),
                 "relaxed_filtering_applied": bool(candidate_pipeline_summary.relaxed_filtering_applied),
+            }
+        if (
+            schema_had_repair_or_discard is not None
+            or schema_invalid_candidate_count is not None
+            or schema_invalid_field_type_count is not None
+        ):
+            parsed[_SCHEMA_DIAGNOSTICS_SUMMARY_KEY] = {
+                "had_schema_repair_or_discard": bool(schema_had_repair_or_discard),
+                "invalid_candidate_count": max(0, self._coerce_int(schema_invalid_candidate_count, default=0)),
+                "invalid_field_type_count": max(0, self._coerce_int(schema_invalid_field_type_count, default=0)),
             }
         try:
             return json.dumps(parsed, ensure_ascii=True, sort_keys=True)

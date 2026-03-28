@@ -52,6 +52,12 @@ from app.integrations.google_business_profile import (
     GoogleBusinessProfileAPIError,
     GoogleBusinessProfileClient,
 )
+from app.integrations.google_places import (
+    DisabledGooglePlacesSeedDiscoveryClient,
+    GooglePlacesSeedCandidate,
+    GooglePlacesSeedDiscoveryClient,
+    GooglePlacesTextSearchClient,
+)
 
 __all__ = [
     "DevEmailProvider",
@@ -91,5 +97,9 @@ __all__ = [
     "GoogleOAuthWebClient",
     "GoogleBusinessProfileAPIError",
     "GoogleBusinessProfileClient",
+    "DisabledGooglePlacesSeedDiscoveryClient",
+    "GooglePlacesSeedCandidate",
+    "GooglePlacesSeedDiscoveryClient",
+    "GooglePlacesTextSearchClient",
     "TwilioSMSProvider",
 ]

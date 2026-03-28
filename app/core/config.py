@@ -38,6 +38,11 @@ class Settings:
     google_business_profile_business_information_api_base_url: str
     google_business_profile_verifications_api_base_url: str
     google_business_profile_api_timeout_seconds: int
+    google_places_api_key: str | None
+    google_places_api_base_url: str
+    google_places_api_timeout_seconds: int
+    google_places_seed_max_candidates: int
+    google_places_seed_query_limit: int
     gcp_logging_project_id: str | None
     gcp_logging_api_timeout_seconds: int
     google_oauth_token_encryption_secret: str | None
@@ -290,6 +295,14 @@ def get_settings() -> Settings:
             "https://mybusinessverifications.googleapis.com",
         ),
         google_business_profile_api_timeout_seconds=int(os.getenv("GOOGLE_BUSINESS_PROFILE_API_TIMEOUT_SECONDS", "10")),
+        google_places_api_key=os.getenv("GOOGLE_PLACES_API_KEY"),
+        google_places_api_base_url=os.getenv(
+            "GOOGLE_PLACES_API_BASE_URL",
+            "https://places.googleapis.com/v1",
+        ).strip(),
+        google_places_api_timeout_seconds=_env_int("GOOGLE_PLACES_API_TIMEOUT_SECONDS", 8, min_value=1),
+        google_places_seed_max_candidates=_env_int("GOOGLE_PLACES_SEED_MAX_CANDIDATES", 5, min_value=1),
+        google_places_seed_query_limit=_env_int("GOOGLE_PLACES_SEED_QUERY_LIMIT", 3, min_value=1),
         gcp_logging_project_id=(os.getenv("GCP_PROJECT_ID") or None),
         gcp_logging_api_timeout_seconds=_env_int("GCP_LOGGING_API_TIMEOUT_SECONDS", 10, min_value=1),
         google_oauth_token_encryption_secret=google_oauth_token_encryption_secret,

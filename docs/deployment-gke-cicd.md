@@ -131,9 +131,14 @@ Kubernetes Secret handles sensitive values including:
 - `GOOGLE_OAUTH_CLIENT_ID`
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEYS_JSON`
+- `GOOGLE_PLACES_API_KEY` (optional but recommended for Google Places seed discovery)
 - provider credentials (Twilio/SMTP) when enabled
 
 `work-boots-secrets` is required by both API/UI Deployments and migration Job (`envFrom.secretRef`).
+
+Production-authoritative path (`deploy-prod.yml` + `k8s/*`) injects `GOOGLE_PLACES_API_KEY` into
+Kubernetes Secret `mbsrn-api-auth`, and API runtime consumes it via
+`valueFrom.secretKeyRef` as `GOOGLE_PLACES_API_KEY`.
 
 Session backend behavior:
 - Supported backends: `SESSION_STATE_BACKEND=auto|redis|inmemory`.

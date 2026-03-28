@@ -71,6 +71,10 @@ class SEOCompetitorProfileGenerationOutput:
     endpoint_path: str | None = None
     web_search_enabled: bool | None = None
     request_duration_ms: int | None = None
+    had_schema_repair_or_discard: bool = False
+    schema_invalid_candidate_count: int = 0
+    schema_invalid_field_type_count: int = 0
+    google_places_seed_count: int = 0
 
 
 class SEOCompetitorProfileGenerationProvider(Protocol):
@@ -81,6 +85,7 @@ class SEOCompetitorProfileGenerationProvider(Protocol):
         existing_domains: list[str],
         candidate_count: int,
         reduced_context_mode: bool = False,
+        seed_candidates: list[dict[str, object]] | None = None,
     ) -> SEOCompetitorProfileGenerationOutput: ...
 
 
@@ -222,8 +227,9 @@ class MockSEOCompetitorProfileGenerationProvider:
         existing_domains: list[str],
         candidate_count: int,
         reduced_context_mode: bool = False,
+        seed_candidates: list[dict[str, object]] | None = None,
     ) -> SEOCompetitorProfileGenerationOutput:
-        del reduced_context_mode
+        del reduced_context_mode, seed_candidates
         existing = {item.strip().lower() for item in existing_domains if item.strip()}
         normalized_domain = (site.normalized_domain or "").strip().lower() or "example.com"
         root = normalized_domain.split(".")[0] or "example"

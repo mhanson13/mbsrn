@@ -5058,6 +5058,9 @@ describe("site workspace ai competitor profile drafts", () => {
           evidence: "Valid evidence",
           confidence_score: 0.7,
           source: "ai_generated",
+          provenance_classification: "places_ai_enriched",
+          provenance_explanation:
+            "Discovered from nearby business seed data and enriched for service/location fit.",
           review_status: "pending",
           edited_fields_json: null,
           review_notes: null,
@@ -5160,6 +5163,14 @@ describe("site workspace ai competitor profile drafts", () => {
           escalation_reason: null,
         },
       ],
+      outcome_summary: {
+        status_level: "recovered",
+        message: "Competitor generation recovered after provider instability.",
+        used_synthetic_fallback: false,
+        used_timeout_recovery: true,
+        had_schema_repair_or_discard: false,
+        used_google_places_seeds: true,
+      },
     });
 
     render(<SiteWorkspacePage />);
@@ -5185,7 +5196,12 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(within(pipelineDebug).getByText("Removed by deduplication: 0")).toBeInTheDocument();
     expect(within(pipelineDebug).getByText("Removed by final limit: 0")).toBeInTheDocument();
     expect(within(pipelineDebug).getByText("Final returned: 1")).toBeInTheDocument();
-    expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(1);
+    const draftRows = screen.getAllByTestId("competitor-profile-draft-row");
+    expect(draftRows).toHaveLength(1);
+    expect(within(draftRows[0]).getByText(/Nearby seed \+ AI enrichment/i)).toBeInTheDocument();
+    expect(
+      within(draftRows[0]).getByText(/Discovered from nearby business seed data and enriched/i),
+    ).toBeInTheDocument();
 
     const tuningDebug = screen.getByTestId("tuning-rejected-competitor-candidates-debug");
     expect(within(tuningDebug).getByText(/Removed by tuning \(debug\)/i)).toBeInTheDocument();
@@ -5208,6 +5224,15 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(within(outcomeSummary).getByText(/proposed 5 \| returned 1 \| rejected 4/i)).toHaveTextContent(
       "proposed 5 | returned 1 | rejected 4 | degraded mode yes | search-backed yes",
     );
+    expect(within(outcomeSummary).getByTestId("competitor-operator-outcome-summary")).toHaveTextContent(
+      "Outcome: Recovered. Competitor generation recovered after provider instability.",
+    );
+    expect(within(outcomeSummary).getByText("Recovered after provider timeout during this run.")).toBeInTheDocument();
+    expect(
+      within(outcomeSummary).getByText(
+        "Nearby business seed discovery was used before AI enrichment in this run.",
+      ),
+    ).toBeInTheDocument();
     expect(within(outcomeSummary).getByText(/Run notes:/i)).toHaveTextContent("degraded retry mode used");
     expect(within(outcomeSummary).getByText(/Filtering:/i)).toHaveTextContent(
       "Filtering: proposed 5 | filtered out 4 | duplicates removed 0 | final returned 1",
@@ -5323,6 +5348,14 @@ describe("site workspace ai competitor profile drafts", () => {
           endpoint_path: "/chat/completions",
         },
       ],
+      outcome_summary: {
+        status_level: "normal",
+        message: "Competitor generation completed normally with provider output.",
+        used_synthetic_fallback: false,
+        used_timeout_recovery: false,
+        had_schema_repair_or_discard: true,
+        used_google_places_seeds: false,
+      },
     });
 
     render(<SiteWorkspacePage />);
@@ -5334,6 +5367,14 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(within(outcomeSummary).getByText(/Filtering:/i)).toHaveTextContent(
       "Filtering: proposed 5 | filtered out 4 | duplicates removed 0 | final returned 1",
     );
+    expect(within(outcomeSummary).getByTestId("competitor-operator-outcome-summary")).toHaveTextContent(
+      "Outcome: Normal. Competitor generation completed normally with provider output.",
+    );
+    expect(
+      within(outcomeSummary).getByText(
+        "Some malformed provider candidate entries were safely discarded during parsing.",
+      ),
+    ).toBeInTheDocument();
     expect(within(outcomeSummary).getByText(/Run notes:/i)).toHaveTextContent(
       "search-backed discovery unavailable",
     );
@@ -5344,8 +5385,179 @@ describe("site workspace ai competitor profile drafts", () => {
       screen.queryByText("Expanded search was used after the initial pass returned no usable competitors."),
     ).not.toBeInTheDocument();
     expect(
+      screen.queryByText("Nearby business seed discovery was used before AI enrichment in this run."),
+    ).not.toBeInTheDocument();
+    expect(
       screen.queryByText("Some competitors were included under relaxed local-service matching rules."),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows a synthetic fallback indicator when degraded fallback output was used", async () => {
+    seedCompetitorProfileGenerationWorkspaceData();
+    const run = buildCompetitorProfileGenerationRun({
+      id: "gen-run-synthetic-fallback",
+      status: "completed",
+      generated_draft_count: 1,
+    });
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
+      items: [run],
+      total: 1,
+    });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+      run,
+      drafts: [
+        {
+          id: "draft-fallback-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          generation_run_id: run.id,
+          suggested_name: "Local Service Option 1",
+          suggested_domain: "local-service-option-1.mbsrn-fallback.local",
+          competitor_type: "local",
+          summary: "Fallback placeholder generated from local context.",
+          why_competitor: "Deterministic fallback output for operator review.",
+          evidence: "Synthetic fallback path.",
+          confidence_score: 0.28,
+          source: "ai_forced_fallback",
+          provenance_classification: "synthetic_fallback",
+          provenance_explanation:
+            "Synthetic fallback candidate generated because reliable live competitor discovery was unavailable.",
+          review_status: "pending",
+          edited_fields_json: null,
+          review_notes: null,
+          reviewed_by_principal_id: null,
+          reviewed_at: null,
+          accepted_competitor_set_id: null,
+          accepted_competitor_domain_id: null,
+          created_at: "2026-03-21T01:00:00Z",
+          updated_at: "2026-03-21T01:00:00Z",
+        },
+      ],
+      total_drafts: 1,
+      provider_attempt_count: 1,
+      provider_degraded_retry_used: true,
+      provider_attempts: [
+        {
+          attempt_number: 2,
+          execution_mode: "fallback",
+          provider_call_type: "non_tool",
+          degraded_mode: true,
+          reduced_context_mode: true,
+          requested_candidate_count: 5,
+          outcome: "success",
+          failure_kind: null,
+          request_duration_ms: 1600,
+          timeout_seconds: 30,
+          web_search_enabled: false,
+          prompt_size_risk: "normal",
+          prompt_total_chars: 7200,
+          context_json_chars: 2400,
+          user_prompt_chars: 6800,
+          endpoint_path: "/chat/completions",
+        },
+      ],
+      outcome_summary: {
+        status_level: "degraded",
+        message: "Fallback placeholders were generated from local context. Review and confirm before accepting.",
+        used_synthetic_fallback: true,
+        used_timeout_recovery: false,
+        had_schema_repair_or_discard: false,
+        used_google_places_seeds: false,
+      },
+    });
+
+    render(<SiteWorkspacePage />);
+
+    const outcomeSummary = await screen.findByTestId("competitor-run-outcome-summary");
+    expect(within(outcomeSummary).getByTestId("competitor-operator-outcome-summary")).toHaveTextContent(
+      "Outcome: Degraded (synthetic fallback). Fallback placeholders were generated from local context.",
+    );
+    const rows = screen.getAllByTestId("competitor-profile-draft-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("Source: Synthetic fallback");
+    expect(rows[0]).toHaveTextContent(
+      "Selection basis: Synthetic fallback candidate generated because reliable live competitor",
+    );
+    expect(
+      screen.queryByText("Nearby business seed discovery was used before AI enrichment in this run."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("handles missing per-competitor provenance fields without showing misleading labels", async () => {
+    seedCompetitorProfileGenerationWorkspaceData();
+    const run = buildCompetitorProfileGenerationRun({
+      id: "gen-run-no-provenance-fields",
+      status: "completed",
+      generated_draft_count: 1,
+    });
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
+      items: [run],
+      total: 1,
+    });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+      run,
+      drafts: [
+        {
+          id: "draft-no-provenance",
+          business_id: "biz-1",
+          site_id: "site-1",
+          generation_run_id: run.id,
+          suggested_name: "Legacy Draft Without Provenance",
+          suggested_domain: "legacy-no-provenance.example",
+          competitor_type: "direct",
+          summary: "Legacy summary",
+          why_competitor: "Legacy rationale",
+          evidence: "Legacy evidence",
+          confidence_score: 0.61,
+          source: "ai_generated",
+          review_status: "pending",
+          edited_fields_json: null,
+          review_notes: null,
+          reviewed_by_principal_id: null,
+          reviewed_at: null,
+          accepted_competitor_set_id: null,
+          accepted_competitor_domain_id: null,
+          created_at: "2026-03-21T01:00:00Z",
+          updated_at: "2026-03-21T01:00:00Z",
+        },
+      ],
+      total_drafts: 1,
+      provider_attempt_count: 1,
+      provider_degraded_retry_used: false,
+      provider_attempts: [
+        {
+          attempt_number: 1,
+          degraded_mode: false,
+          reduced_context_mode: false,
+          requested_candidate_count: 5,
+          outcome: "success",
+          failure_kind: null,
+          request_duration_ms: 1200,
+          timeout_seconds: 30,
+          web_search_enabled: false,
+          prompt_size_risk: "normal",
+          prompt_total_chars: 9000,
+          context_json_chars: 3000,
+          user_prompt_chars: 7600,
+          endpoint_path: "/chat/completions",
+        },
+      ],
+      outcome_summary: {
+        status_level: "normal",
+        message: "Competitor generation completed normally with provider output.",
+        used_synthetic_fallback: false,
+        used_timeout_recovery: false,
+        had_schema_repair_or_discard: false,
+        used_google_places_seeds: false,
+      },
+    });
+
+    render(<SiteWorkspacePage />);
+
+    const rows = await screen.findAllByTestId("competitor-profile-draft-row");
+    expect(rows).toHaveLength(1);
+    expect(within(rows[0]).queryByText(/Source:/i)).not.toBeInTheDocument();
+    expect(within(rows[0]).queryByText(/Selection basis:/i)).not.toBeInTheDocument();
   });
 
   it("triggers generation and refreshes visible drafts", async () => {

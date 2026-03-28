@@ -66,6 +66,12 @@ spec:
                 secretKeyRef:
                   name: mbsrn-api-auth
                   key: AI_PROVIDER_API_KEY
+            - name: GOOGLE_PLACES_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: GOOGLE_PLACES_API_KEY
+                  optional: true
             - name: AI_PROVIDER_NAME
               valueFrom:
                 secretKeyRef:

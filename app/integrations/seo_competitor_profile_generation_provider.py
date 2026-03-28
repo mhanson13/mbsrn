@@ -176,9 +176,10 @@ class MisconfiguredSEOCompetitorProfileGenerationProvider:
         existing_domains: list[str],
         candidate_count: int,
         reduced_context_mode: bool = False,
+        seed_candidates: list[dict[str, object]] | None = None,
         timeout_seconds: int | None = None,
     ) -> SEOCompetitorProfileGenerationOutput:
-        del site, existing_domains, candidate_count, reduced_context_mode, timeout_seconds
+        del site, existing_domains, candidate_count, reduced_context_mode, seed_candidates, timeout_seconds
         raise SEOCompetitorProfileProviderError(
             code=_PROVIDER_ERROR_AUTH_CONFIG,
             safe_message=self.safe_message,
@@ -231,6 +232,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         existing_domains: list[str],
         candidate_count: int,
         reduced_context_mode: bool = False,
+        seed_candidates: list[dict[str, object]] | None = None,
         run_id: str | None = None,
         attempt_number: int | None = None,
         degraded_mode: bool = False,
@@ -248,6 +250,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             reduced_context_mode=reduced_context_mode,
             prompt_version=self.prompt_version,
             prompt_text_competitor=self.prompt_text_competitor,
+            seed_candidates=list(seed_candidates or []),
         )
         resolved_prompt_version = self._resolve_prompt_version_from_user_prompt(
             prompt.user_prompt,
@@ -271,6 +274,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             attempt_number=attempt_number,
             degraded_mode=degraded_mode,
             timeout_seconds=effective_timeout_seconds,
+            google_places_seed_count=len(seed_candidates or []),
         )
         self._log_prompt_telemetry(request_debug)
         allow_legacy_responses_fallback = (
@@ -307,6 +311,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 attempt_number=attempt_number,
                 degraded_mode=degraded_mode,
                 timeout_seconds=effective_timeout_seconds,
+                google_places_seed_count=len(seed_candidates or []),
             )
             logger.warning(
                 (
@@ -419,6 +424,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             endpoint_path=endpoint_path,
             web_search_enabled=self._web_search_enabled_for_provider_call_type(provider_call_type),
             request_duration_ms=response.request_duration_ms,
+            had_schema_repair_or_discard=bool(
+                candidate_parse_result.salvaged_candidate_count > 0
+                or candidate_parse_result.invalid_candidate_count > 0
+                or candidate_parse_result.invalid_field_type_count > 0
+            ),
+            schema_invalid_candidate_count=max(0, int(candidate_parse_result.invalid_candidate_count)),
+            schema_invalid_field_type_count=max(0, int(candidate_parse_result.invalid_field_type_count)),
+            google_places_seed_count=max(0, int((request_debug or {}).get("google_places_seed_count") or 0)),
         )
 
     def _resolve_prompt_version_from_user_prompt(self, user_prompt: str, *, fallback: str) -> str:
@@ -1799,7 +1812,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             (
                 "SEO competitor prompt assembly telemetry provider_name=%s model_name=%s "
                 "provider_call_type=%s execution_mode=%s endpoint=%s "
-                "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
+                "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s "
+                "google_places_seed_count=%s"
             ),
             self.provider_name,
             self.model_name,
@@ -1809,6 +1823,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             prompt_total_chars,
             context_json_chars,
             prompt_size_risk,
+            request_debug.get("google_places_seed_count"),
         )
 
     def _build_request_debug_metadata(
@@ -1822,6 +1837,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         attempt_number: int | None,
         degraded_mode: bool,
         timeout_seconds: int,
+        google_places_seed_count: int = 0,
     ) -> dict[str, object]:
         metrics = prompt_metrics or {}
         prompt_total_chars = _coerce_bounded_int(
@@ -1880,6 +1896,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "prompt_size_risk": prompt_size_risk,
             "timeout_seconds": timeout_seconds,
             "web_search_enabled": self._web_search_enabled_for_provider_call_type(normalized_provider_call_type),
+            "google_places_seed_count": max(0, int(google_places_seed_count)),
         }
 
     def _build_request_failure_debug_payload(
@@ -1923,6 +1940,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "prompt_size_risk": request_debug.get("prompt_size_risk"),
                 "timeout_seconds": request_debug.get("timeout_seconds"),
                 "web_search_enabled": request_debug.get("web_search_enabled"),
+                "google_places_seed_count": request_debug.get("google_places_seed_count"),
             }
         if request_duration_ms is not None:
             payload.setdefault("request_debug", {})

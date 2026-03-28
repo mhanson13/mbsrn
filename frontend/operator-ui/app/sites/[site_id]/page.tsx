@@ -41,6 +41,7 @@ import type {
   CompetitorProviderAttemptDebug,
   CompetitorProfileDraft,
   CompetitorProfileGenerationRun,
+  CompetitorRunOutcomeSummary,
   CompetitorProfileGenerationSummaryResponse,
   RejectedCompetitorCandidateDebug,
   TuningRejectedCompetitorCandidateDebug,
@@ -212,6 +213,54 @@ function formatDateTime(value: string | null): string {
     return value;
   }
   return parsed.toLocaleString();
+}
+
+function formatCompetitorOutcomeStatusLevel(level: CompetitorRunOutcomeSummary["status_level"]): string {
+  switch (level) {
+    case "recovered":
+      return "Recovered";
+    case "degraded":
+      return "Degraded";
+    case "failed":
+      return "Failed";
+    case "normal":
+    default:
+      return "Normal";
+  }
+}
+
+function competitorOutcomeHintClass(level: CompetitorRunOutcomeSummary["status_level"]): string {
+  if (level === "failed") {
+    return "hint error";
+  }
+  if (level === "degraded" || level === "recovered") {
+    return "hint warning";
+  }
+  return "hint muted";
+}
+
+function formatCompetitorDraftProvenanceLabel(
+  classification: CompetitorProfileDraft["provenance_classification"],
+): string | null {
+  switch (classification) {
+    case "places_ai_enriched":
+      return "Nearby seed + AI enrichment";
+    case "synthetic_fallback":
+      return "Synthetic fallback";
+    case "ai_only":
+      return "AI discovery";
+    default:
+      return null;
+  }
+}
+
+function competitorDraftProvenanceHintClass(
+  classification: CompetitorProfileDraft["provenance_classification"],
+): string {
+  if (classification === "synthetic_fallback") {
+    return "hint warning";
+  }
+  return "hint muted";
 }
 
 function runActivityTimestamp(
@@ -1890,6 +1939,7 @@ export default function SiteWorkspacePage() {
   const [competitorProviderAttempts, setCompetitorProviderAttempts] = useState<CompetitorProviderAttemptDebug[]>([]);
   const [competitorCandidatePipelineSummary, setCompetitorCandidatePipelineSummary] =
     useState<CompetitorCandidatePipelineSummary | null>(null);
+  const [competitorOutcomeSummary, setCompetitorOutcomeSummary] = useState<CompetitorRunOutcomeSummary | null>(null);
   const [competitorProfileLoading, setCompetitorProfileLoading] = useState(false);
   const [competitorProfileError, setCompetitorProfileError] = useState<string | null>(null);
   const [competitorProfileSummaryError, setCompetitorProfileSummaryError] = useState<string | null>(null);
@@ -2988,6 +3038,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderAttemptCount(Math.max(0, detail.provider_attempt_count || 0));
       setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
       setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
+      setCompetitorOutcomeSummary(detail.outcome_summary || null);
       const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
       setCompetitorProfileActionMessage(
         terminalMessage ||
@@ -3047,6 +3098,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderAttemptCount(Math.max(0, detail.provider_attempt_count || 0));
       setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
       setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
+      setCompetitorOutcomeSummary(detail.outcome_summary || null);
       const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
       setCompetitorProfileActionMessage(
         terminalMessage ||
@@ -3420,6 +3472,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderAttemptCount(0);
       setCompetitorProviderDegradedRetryUsed(false);
       setCompetitorProviderAttempts([]);
+      setCompetitorOutcomeSummary(null);
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
       setCompetitorProfileSummaryError(null);
@@ -3492,6 +3545,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderAttemptCount(0);
       setCompetitorProviderDegradedRetryUsed(false);
       setCompetitorProviderAttempts([]);
+      setCompetitorOutcomeSummary(null);
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
       setCompetitorProfileSummaryError(null);
@@ -3557,6 +3611,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderAttemptCount(0);
       setCompetitorProviderDegradedRetryUsed(false);
       setCompetitorProviderAttempts([]);
+      setCompetitorOutcomeSummary(null);
 
       const [
         auditResult,
@@ -3815,6 +3870,7 @@ export default function SiteWorkspacePage() {
             setCompetitorProviderAttemptCount(Math.max(0, detail.provider_attempt_count || 0));
             setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
             setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
+            setCompetitorOutcomeSummary(detail.outcome_summary || null);
             setCompetitorProfileError(null);
           } catch (error) {
             if (cancelled) {
@@ -3830,6 +3886,7 @@ export default function SiteWorkspacePage() {
             setCompetitorProviderAttemptCount(0);
             setCompetitorProviderDegradedRetryUsed(false);
             setCompetitorProviderAttempts([]);
+            setCompetitorOutcomeSummary(null);
             setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", error));
           } finally {
             if (!cancelled) {
@@ -3847,6 +3904,7 @@ export default function SiteWorkspacePage() {
           setCompetitorProviderAttemptCount(0);
           setCompetitorProviderDegradedRetryUsed(false);
           setCompetitorProviderAttempts([]);
+          setCompetitorOutcomeSummary(null);
           setCompetitorProfileLoading(false);
         }
       } else {
@@ -3863,6 +3921,7 @@ export default function SiteWorkspacePage() {
         setCompetitorProviderAttemptCount(0);
         setCompetitorProviderDegradedRetryUsed(false);
         setCompetitorProviderAttempts([]);
+        setCompetitorOutcomeSummary(null);
         setCompetitorProfileLoading(false);
         setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", competitorProfileRunsResult.reason));
       }
@@ -3986,6 +4045,7 @@ export default function SiteWorkspacePage() {
         setCompetitorProviderAttemptCount(Math.max(0, detail.provider_attempt_count || 0));
         setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
         setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
+        setCompetitorOutcomeSummary(detail.outcome_summary || null);
         setCompetitorProfileError(null);
         if (isCompetitorProfileRunTerminalStatus(detail.run.status)) {
           const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
@@ -4010,6 +4070,7 @@ export default function SiteWorkspacePage() {
         setCompetitorProviderAttemptCount(0);
         setCompetitorProviderDegradedRetryUsed(false);
         setCompetitorProviderAttempts([]);
+        setCompetitorOutcomeSummary(null);
         setCompetitorProfilePolling(false);
         setCompetitorProfilePollingTargetRunId(null);
       } finally {
@@ -4682,6 +4743,29 @@ export default function SiteWorkspacePage() {
               degraded mode {competitorRunOutcomeSummary.degradedModeUsed ? "yes" : "no"} | search-backed{" "}
               {competitorRunOutcomeSummary.searchBacked ? "yes" : "no"}
             </p>
+            {competitorOutcomeSummary ? (
+              <p
+                className={competitorOutcomeHintClass(competitorOutcomeSummary.status_level)}
+                data-testid="competitor-operator-outcome-summary"
+              >
+                <strong>Outcome:</strong> {formatCompetitorOutcomeStatusLevel(competitorOutcomeSummary.status_level)}
+                {competitorOutcomeSummary.used_synthetic_fallback ? " (synthetic fallback)" : ""}.{" "}
+                {competitorOutcomeSummary.message}
+              </p>
+            ) : null}
+            {competitorOutcomeSummary?.used_timeout_recovery ? (
+              <p className="hint muted">Recovered after provider timeout during this run.</p>
+            ) : null}
+            {competitorOutcomeSummary?.used_google_places_seeds ? (
+              <p className="hint muted">
+                Nearby business seed discovery was used before AI enrichment in this run.
+              </p>
+            ) : null}
+            {competitorOutcomeSummary?.had_schema_repair_or_discard ? (
+              <p className="hint muted">
+                Some malformed provider candidate entries were safely discarded during parsing.
+              </p>
+            ) : null}
             {competitorRunOutcomeSummary.statusNote ? (
               <p className="hint muted">{competitorRunOutcomeSummary.statusNote}</p>
             ) : null}
@@ -4999,6 +5083,7 @@ export default function SiteWorkspacePage() {
                   const actionDisabled =
                     draftActionTargetId === draft.id || editActionInFlight || generationInFlight || retryInFlight;
                   const editable = draft.review_status === "pending" || draft.review_status === "edited";
+                  const provenanceLabel = formatCompetitorDraftProvenanceLabel(draft.provenance_classification);
                   return (
                     <Fragment key={draft.id}>
                       <tr data-testid="competitor-profile-draft-row">
@@ -5006,6 +5091,14 @@ export default function SiteWorkspacePage() {
                           <strong>{draft.suggested_name}</strong>
                           <br />
                           <code>{draft.suggested_domain}</code>
+                          {provenanceLabel ? (
+                            <>
+                              <br />
+                              <span className={competitorDraftProvenanceHintClass(draft.provenance_classification)}>
+                                <strong>Source:</strong> {provenanceLabel}
+                              </span>
+                            </>
+                          ) : null}
                         </td>
                         <td>{draft.competitor_type}</td>
                         <td>{draft.confidence_score.toFixed(2)}</td>
@@ -5016,6 +5109,14 @@ export default function SiteWorkspacePage() {
                             <strong>Why this competitor:</strong>{" "}
                             {truncateText(draft.why_competitor || "Reasoning not provided.", 140)}
                           </span>
+                          {draft.provenance_explanation ? (
+                            <>
+                              <br />
+                              <span className={competitorDraftProvenanceHintClass(draft.provenance_classification)}>
+                                <strong>Selection basis:</strong> {truncateText(draft.provenance_explanation, 160)}
+                              </span>
+                            </>
+                          ) : null}
                         </td>
                         <td>{draft.review_status}</td>
                         <td>

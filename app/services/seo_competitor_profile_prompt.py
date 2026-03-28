@@ -23,6 +23,13 @@ _MAX_SERVICE_FOCUS_TERM_LENGTH = 32
 _MAX_SERVICE_FOCUS_TERMS = 8
 _MAX_COMPETITOR_SEARCH_HINT_LENGTH = 120
 _MAX_COMPETITOR_SEARCH_HINTS = 5
+_MAX_GOOGLE_PLACES_SEED_CANDIDATES = 5
+_MAX_GOOGLE_PLACES_SEED_NAME_LENGTH = 140
+_MAX_GOOGLE_PLACES_SEED_PLACE_ID_LENGTH = 255
+_MAX_GOOGLE_PLACES_SEED_ADDRESS_LENGTH = 220
+_MAX_GOOGLE_PLACES_SEED_LOCALITY_LENGTH = 100
+_MAX_GOOGLE_PLACES_SEED_TYPE_LENGTH = 64
+_MAX_GOOGLE_PLACES_SEED_TYPES = 8
 _MAX_SERVICE_FOCUS_DEBUG_SOURCES = 5
 _MAX_SERVICE_FOCUS_DROPPED_TERMS = 8
 _MAX_TARGET_CUSTOMER_CONTEXT_LENGTH = 220
@@ -41,6 +48,7 @@ _RETRY_REDUCED_CONTEXT_SERVICE_AREA_CAP = 4
 _RETRY_REDUCED_CONTEXT_NON_COMPETITOR_HINT_CAP = 4
 _RETRY_REDUCED_CONTEXT_COMPETITOR_SEARCH_HINT_CAP = 4
 _RETRY_REDUCED_CONTEXT_SERVICE_FOCUS_TERMS_CAP = 6
+_RETRY_REDUCED_CONTEXT_GOOGLE_PLACES_SEED_CAP = 3
 _BUDGET_CONTEXT_EXISTING_DOMAIN_CAP = 20
 _BUDGET_CONTEXT_EXISTING_DOMAIN_TOTAL_CHARS = 500
 _BUDGET_CONTEXT_EXCLUDED_DOMAIN_CAP = 25
@@ -48,6 +56,7 @@ _BUDGET_CONTEXT_EXCLUDED_DOMAIN_TOTAL_CHARS = 600
 _BUDGET_CONTEXT_SERVICE_AREA_CAP = 10
 _BUDGET_CONTEXT_NON_COMPETITOR_HINT_CAP = 6
 _BUDGET_CONTEXT_COMPETITOR_SEARCH_HINT_CAP = 4
+_BUDGET_CONTEXT_GOOGLE_PLACES_SEED_CAP = 3
 _LOCATION_FALLBACK_TEXT = "Location not yet established from available business/site data."
 _INDUSTRY_FALLBACK_TEXT = "Industry not yet confidently classified from available structured data."
 _TARGET_CUSTOMER_CONTEXT_FALLBACK = "Customers seeking clearly substitutable services in the same market context."
@@ -146,6 +155,7 @@ def build_seo_competitor_profile_prompt(
     site: SEOSite,
     existing_domains: list[str],
     candidate_count: int,
+    seed_candidates: list[dict[str, object]] | None = None,
     reduced_context_mode: bool = False,
     prompt_version: str = SEO_COMPETITOR_PROFILE_PROMPT_VERSION,
     prompt_text_competitor: str | None = None,
@@ -234,6 +244,7 @@ def build_seo_competitor_profile_prompt(
         location_context=location_context,
         service_focus_terms=service_focus_terms,
     )
+    google_places_seed_candidates = _sanitize_google_places_seed_candidates(seed_candidates)
 
     context: dict[str, object] = {
         "site_display_name": display_name,
@@ -252,6 +263,7 @@ def build_seo_competitor_profile_prompt(
         "service_focus_terms": service_focus_terms,
         "target_customer_context": target_customer_context,
         "competitor_search_hints": competitor_search_hints,
+        "google_places_seed_candidates": google_places_seed_candidates,
         "excluded_domains": excluded_domains,
         "existing_competitor_domains": normalized_domains,
         "non_competitor_domain_hints": list(_NON_COMPETITOR_DOMAIN_HINTS[:_MAX_NON_COMPETITOR_HINTS]),
@@ -315,6 +327,7 @@ def build_seo_competitor_profile_prompt(
     context_excluded_domains = context.get("excluded_domains")
     context_non_competitor_hints = context.get("non_competitor_domain_hints")
     context_competitor_search_hints = context.get("competitor_search_hints")
+    context_google_places_seed_candidates = context.get("google_places_seed_candidates")
     prompt_telemetry: dict[str, int] = {
         "system_prompt_chars": system_prompt_chars,
         "user_prompt_chars": user_prompt_chars,
@@ -333,6 +346,11 @@ def build_seo_competitor_profile_prompt(
         ),
         "competitor_search_hints_count": (
             len(context_competitor_search_hints) if isinstance(context_competitor_search_hints, list) else 0
+        ),
+        "google_places_seed_candidates_count": (
+            len(context_google_places_seed_candidates)
+            if isinstance(context_google_places_seed_candidates, list)
+            else 0
         ),
         "supplemental_competitor_text_chars": supplemental_competitor_text_chars,
         "context_budget_trimmed": 1 if context_budget_trimmed else 0,
@@ -407,7 +425,8 @@ def _build_default_competitor_instruction_body(
         "4. Avoid any candidate domain matching non_competitor_domain_hints unless there is clear substitute evidence.\n"
         "5. Domain must be a hostname only (no protocol/path).\n"
         "6. confidence_score must be a number between 0 and 1.\n"
-        "7. Keep summaries concise and evidence specific."
+        "7. If google_places_seed_candidates are provided, treat them as seed hypotheses and enrich/validate before final selection.\n"
+        "8. Keep summaries concise and evidence specific."
     )
 
 
@@ -726,6 +745,11 @@ def _apply_context_budget(
     competitor_search_hints = budgeted.get("competitor_search_hints")
     if isinstance(competitor_search_hints, list):
         budgeted["competitor_search_hints"] = competitor_search_hints[:_BUDGET_CONTEXT_COMPETITOR_SEARCH_HINT_CAP]
+    google_places_seed_candidates = budgeted.get("google_places_seed_candidates")
+    if isinstance(google_places_seed_candidates, list):
+        budgeted["google_places_seed_candidates"] = (
+            google_places_seed_candidates[:_BUDGET_CONTEXT_GOOGLE_PLACES_SEED_CAP]
+        )
 
     context_json = _serialize_context_json(budgeted)
     if len(context_json) > _MAX_CONTEXT_JSON_CHARS:
@@ -734,6 +758,7 @@ def _apply_context_budget(
         budgeted["site_service_areas"] = []
         budgeted["non_competitor_domain_hints"] = []
         budgeted["competitor_search_hints"] = []
+        budgeted["google_places_seed_candidates"] = []
         service_focus_terms = budgeted.get("service_focus_terms")
         if isinstance(service_focus_terms, list):
             budgeted["service_focus_terms"] = service_focus_terms[:4]
@@ -753,6 +778,7 @@ def _apply_context_budget(
             "service_focus_terms": budgeted.get("service_focus_terms"),
             "target_customer_context": budgeted.get("target_customer_context"),
             "competitor_search_hints": budgeted.get("competitor_search_hints"),
+            "google_places_seed_candidates": budgeted.get("google_places_seed_candidates"),
             "excluded_domains": [site_domain],
             "existing_competitor_domains": [],
         }
@@ -796,6 +822,11 @@ def _apply_retry_reduced_context_mode(
     if isinstance(competitor_search_hints, list):
         reduced["competitor_search_hints"] = (
             competitor_search_hints[:_RETRY_REDUCED_CONTEXT_COMPETITOR_SEARCH_HINT_CAP]
+        )
+    google_places_seed_candidates = reduced.get("google_places_seed_candidates")
+    if isinstance(google_places_seed_candidates, list):
+        reduced["google_places_seed_candidates"] = (
+            google_places_seed_candidates[:_RETRY_REDUCED_CONTEXT_GOOGLE_PLACES_SEED_CAP]
         )
 
     service_focus_terms = reduced.get("service_focus_terms")
@@ -926,6 +957,9 @@ def _sanitize_structured_context_data(
         max_length=_MAX_COMPETITOR_SEARCH_HINT_LENGTH,
         max_items=_MAX_COMPETITOR_SEARCH_HINTS,
     )
+    sanitized["google_places_seed_candidates"] = _sanitize_google_places_seed_candidates(
+        sanitized.get("google_places_seed_candidates")
+    )
     sanitized["existing_competitor_domains"] = _limit_domains_for_prompt(
         _sanitize_data_domain_list(sanitized.get("existing_competitor_domains")),
         max_items=_MAX_EXISTING_COMPETITOR_DOMAINS,
@@ -992,6 +1026,81 @@ def _sanitize_data_domain_list(raw: object) -> list[str]:
             continue
         cleaned.append(normalized.lower())
     return cleaned
+
+
+def _sanitize_google_places_seed_candidates(raw: object) -> list[dict[str, object]]:
+    if not isinstance(raw, list):
+        return []
+    sanitized: list[dict[str, object]] = []
+    seen_place_ids: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        place_id = _sanitize_text_if_data_only(
+            item.get("place_id"),
+            max_length=_MAX_GOOGLE_PLACES_SEED_PLACE_ID_LENGTH,
+        )
+        name = _sanitize_text_if_data_only(
+            item.get("name"),
+            max_length=_MAX_GOOGLE_PLACES_SEED_NAME_LENGTH,
+        )
+        if not place_id or not name:
+            continue
+        place_key = place_id.lower()
+        if place_key in seen_place_ids:
+            continue
+        seen_place_ids.add(place_key)
+        source = _sanitize_text_if_data_only(item.get("source"), max_length=32) or "google_places"
+        if source.lower() != "google_places":
+            source = "google_places"
+        formatted_address = _sanitize_text_if_data_only(
+            item.get("formatted_address"),
+            max_length=_MAX_GOOGLE_PLACES_SEED_ADDRESS_LENGTH,
+        )
+        locality = _sanitize_text_if_data_only(
+            item.get("locality"),
+            max_length=_MAX_GOOGLE_PLACES_SEED_LOCALITY_LENGTH,
+        )
+        primary_type = _sanitize_text_if_data_only(
+            item.get("primary_type"),
+            max_length=_MAX_GOOGLE_PLACES_SEED_TYPE_LENGTH,
+        )
+        raw_types = _sanitize_data_string_list(
+            item.get("types"),
+            max_length=_MAX_GOOGLE_PLACES_SEED_TYPE_LENGTH,
+            max_items=_MAX_GOOGLE_PLACES_SEED_TYPES,
+        )
+        types: list[str] = []
+        seen_types: set[str] = set()
+        for raw_type in raw_types:
+            lowered = raw_type.lower()
+            if lowered in seen_types:
+                continue
+            seen_types.add(lowered)
+            types.append(raw_type)
+            if len(types) >= _MAX_GOOGLE_PLACES_SEED_TYPES:
+                break
+        website_domain = _sanitize_text_if_data_only(
+            item.get("website_domain"),
+            max_length=_MAX_DOMAIN_LENGTH,
+        )
+        if website_domain:
+            website_domain = website_domain.lower()
+        sanitized.append(
+            {
+                "source": source,
+                "place_id": place_id,
+                "name": name,
+                "formatted_address": formatted_address or "",
+                "locality": locality or "",
+                "primary_type": (primary_type or "").lower(),
+                "types": [item_type.lower() for item_type in types],
+                "website_domain": website_domain or "",
+            }
+        )
+        if len(sanitized) >= _MAX_GOOGLE_PLACES_SEED_CANDIDATES:
+            break
+    return sanitized
 
 
 def _sanitize_service_focus_debug_sources(raw: object) -> list[str]:

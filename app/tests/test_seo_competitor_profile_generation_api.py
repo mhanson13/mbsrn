@@ -21,6 +21,7 @@ from app.api.routes.seo import router as seo_router
 from app.api.routes.seo import router_v1 as seo_v1_router
 from app.core.time import utc_now
 from app.integrations.seo_competitor_profile_generation_provider import SEOCompetitorProfileProviderError
+from app.integrations.google_places import GooglePlacesSeedCandidate
 from app.integrations.seo_summary_provider import (
     SEOCompetitorProfileDraftCandidateOutput,
     SEOCompetitorProfileGenerationOutput,
@@ -191,6 +192,9 @@ class _PartiallyInvalidCompetitorProfileProvider:
             model_name=self.model_name,
             prompt_version=self.prompt_version,
             raw_response='{\"candidates\":[{\"domain\":\"valid-competitor.example\"},{\"domain\":\"broken\"}]}',
+            had_schema_repair_or_discard=True,
+            schema_invalid_candidate_count=1,
+            schema_invalid_field_type_count=0,
         )
 
 
@@ -1353,6 +1357,54 @@ class _StatusObservingProvider(_DeterministicCompetitorProfileProvider):
         )
 
 
+class _SeedAwareCompetitorProfileProvider(_DeterministicCompetitorProfileProvider):
+    def __init__(self) -> None:
+        self.received_seed_candidates: list[dict[str, object]] = []
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+        seed_candidates: list[dict[str, object]] | None = None,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        self.received_seed_candidates = list(seed_candidates or [])
+        return super().generate_competitor_profiles(
+            site=site,
+            existing_domains=existing_domains,
+            candidate_count=candidate_count,
+        )
+
+
+class _StubGooglePlacesSeedClient:
+    def __init__(self, *, candidates: list[GooglePlacesSeedCandidate]) -> None:
+        self.candidates = candidates
+        self.queries: list[str] = []
+        self.max_results: int | None = None
+
+    def discover_seed_candidates(
+        self,
+        *,
+        queries: list[str],
+        max_results: int,
+    ) -> list[GooglePlacesSeedCandidate]:
+        self.queries = list(queries)
+        self.max_results = max_results
+        return list(self.candidates)
+
+
+class _FailingGooglePlacesSeedClient:
+    def discover_seed_candidates(
+        self,
+        *,
+        queries: list[str],
+        max_results: int,
+    ) -> list[GooglePlacesSeedCandidate]:
+        del queries, max_results
+        raise RuntimeError("places unavailable")
+
+
 class _DeferredRunExecutor:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
@@ -1447,6 +1499,7 @@ def _execute_generation_run(
     run_id: str,
     provider: SEOCompetitorProfileGenerationProvider,
     candidate_domain_probe: CompetitorCandidateDomainProbe | None = None,
+    google_places_seed_client=None,  # noqa: ANN001
 ):
     service = SEOCompetitorProfileGenerationService(
         session=db_session,
@@ -1456,12 +1509,187 @@ def _execute_generation_run(
         seo_competitor_profile_generation_repository=SEOCompetitorProfileGenerationRepository(db_session),
         provider=provider,
         candidate_domain_probe=candidate_domain_probe,
+        google_places_seed_client=google_places_seed_client,
     )
     return service.execute_queued_run(
         business_id=business_id,
         site_id=site_id,
         generation_run_id=run_id,
     )
+
+
+def test_google_places_seed_queries_are_generated_from_service_and_location_context(db_session, seeded_business) -> None:
+    provider = _SeedAwareCompetitorProfileProvider()
+    deferred_executor = _DeferredRunExecutor()
+    seed_client = _StubGooglePlacesSeedClient(
+        candidates=[
+            GooglePlacesSeedCandidate(
+                source="google_places",
+                place_id="place-1",
+                name="Front Range Fire Protection",
+                formatted_address="100 Main St, Longmont, CO 80501",
+                locality="Longmont",
+                primary_type="fire_protection_service",
+                types=("fire_protection_service", "point_of_interest"),
+                website_domain="fr-fire.example",
+            )
+        ]
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="tnmfire.example")
+    site = db_session.get(SEOSite, site_id)
+    assert site is not None
+    site.industry = "Fire Protection Services"
+    site.primary_location = "Serving area around ZIP code 80501"
+    site.service_areas_json = None
+    db_session.add(site)
+    db_session.commit()
+
+    run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    detail = _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+        google_places_seed_client=seed_client,
+    )
+    assert detail is not None
+    assert detail.run.status == "completed"
+    assert detail.outcome_summary is not None
+    assert detail.outcome_summary.used_google_places_seeds is True
+    assert detail.outcome_summary.used_synthetic_fallback is False
+    detail_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["drafts"]
+    assert detail_payload["drafts"][0]["provenance_classification"] == "places_ai_enriched"
+    assert (
+        detail_payload["drafts"][0]["provenance_explanation"]
+        == "Discovered from nearby business seed data and enriched for service/location fit."
+    )
+    assert seed_client.queries
+    assert len(seed_client.queries) <= 3
+    joined_queries = " | ".join(seed_client.queries).lower()
+    assert "80501" in joined_queries or "longmont" in joined_queries
+    assert "fire protection services" in joined_queries
+    assert seed_client.max_results == 3
+
+
+def test_google_places_seeds_are_passed_to_ai_enrichment_with_minimal_fields(db_session, seeded_business) -> None:
+    provider = _SeedAwareCompetitorProfileProvider()
+    deferred_executor = _DeferredRunExecutor()
+    seed_client = _StubGooglePlacesSeedClient(
+        candidates=[
+            GooglePlacesSeedCandidate(
+                source="google_places",
+                place_id="place-2",
+                name="Acme Alarm and Fire",
+                formatted_address="200 Example Ave, Denver, CO 80202",
+                locality="Denver",
+                primary_type="fire_alarm_supplier",
+                types=("fire_alarm_supplier", "point_of_interest"),
+                website_domain="www.acmealarm.example",
+            )
+        ]
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="client-fire.example")
+    site = db_session.get(SEOSite, site_id)
+    assert site is not None
+    site.industry = "Fire Protection Services"
+    site.primary_location = "Denver, CO"
+    db_session.add(site)
+    db_session.commit()
+
+    run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+        google_places_seed_client=seed_client,
+    )
+
+    detail_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["outcome_summary"]["used_google_places_seeds"] is True
+    assert detail_payload["outcome_summary"]["used_synthetic_fallback"] is False
+    assert detail_payload["drafts"]
+    assert detail_payload["drafts"][0]["provenance_classification"] == "places_ai_enriched"
+    assert (
+        detail_payload["drafts"][0]["provenance_explanation"]
+        == "Discovered from nearby business seed data and enriched for service/location fit."
+    )
+
+    assert provider.received_seed_candidates
+    first_seed = provider.received_seed_candidates[0]
+    assert set(first_seed.keys()) == {
+        "source",
+        "place_id",
+        "name",
+        "formatted_address",
+        "locality",
+        "primary_type",
+        "types",
+        "website_domain",
+    }
+    assert first_seed["source"] == "google_places"
+    assert first_seed["website_domain"] == "www.acmealarm.example"
+
+
+def test_google_places_unavailable_falls_back_to_existing_competitor_flow(db_session, seeded_business) -> None:
+    provider = _SeedAwareCompetitorProfileProvider()
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="no-places.example")
+    run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+
+    detail = _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+        google_places_seed_client=_FailingGooglePlacesSeedClient(),
+    )
+    assert detail is not None
+    assert detail.run.status == "completed"
+    assert detail.outcome_summary is not None
+    assert detail.outcome_summary.used_google_places_seeds is False
+    detail_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["drafts"]
+    assert detail_payload["drafts"][0]["provenance_classification"] == "ai_only"
+    assert (
+        detail_payload["drafts"][0]["provenance_explanation"]
+        == "Selected from AI discovery based on service/location relevance."
+    )
+    assert provider.received_seed_candidates == []
 
 
 def _seed_tuning_preview_event(
@@ -1688,6 +1916,19 @@ def test_async_execution_transitions_running_to_completed_and_persists_drafts(db
     assert payload["total_drafts"] == 2
     assert all(item["forced_inclusion"] is False for item in payload["drafts"])
     assert all(item["forced_reason"] is None for item in payload["drafts"])
+    assert all(item["provenance_classification"] == "ai_only" for item in payload["drafts"])
+    assert all(
+        item["provenance_explanation"] == "Selected from AI discovery based on service/location relevance."
+        for item in payload["drafts"]
+    )
+    assert payload["outcome_summary"] == {
+        "status_level": "normal",
+        "message": "Competitor generation completed normally with provider output.",
+        "used_synthetic_fallback": False,
+        "used_timeout_recovery": False,
+        "had_schema_repair_or_discard": False,
+        "used_google_places_seeds": False,
+    }
 
     persisted_runs = db_session.query(SEOCompetitorProfileGenerationRun).all()
     persisted_drafts = db_session.query(SEOCompetitorProfileDraft).all()
@@ -1741,6 +1982,11 @@ def test_async_execution_forces_minimal_drafts_when_all_candidates_were_filtered
     assert payload["drafts"][0]["forced_inclusion"] is True
     assert payload["drafts"][0]["forced_reason"] == "no_valid_drafts_after_filtering"
     assert payload["drafts"][0]["source"] == "ai_forced_fallback"
+    assert payload["drafts"][0]["provenance_classification"] == "synthetic_fallback"
+    assert (
+        payload["drafts"][0]["provenance_explanation"]
+        == "Synthetic fallback candidate generated because reliable live competitor discovery was unavailable."
+    )
     assert payload["drafts"][0]["suggested_domain"].startswith("unknown-domain-")
     persisted_run = (
         db_session.query(SEOCompetitorProfileGenerationRun)
@@ -1796,8 +2042,22 @@ def test_empty_candidate_output_uses_synthetic_fallback_drafts(db_session, seede
     assert payload["provider_attempts"][-1]["degraded_mode"] is True
     assert payload["provider_attempts"][-1]["recovery_path"] == "synthetic_fallback"
     assert payload["provider_attempts"][-1]["final_outcome"] == "degraded_success"
+    assert payload["outcome_summary"] == {
+        "status_level": "degraded",
+        "message": "Fallback placeholders were generated from local context. Review and confirm before accepting.",
+        "used_synthetic_fallback": True,
+        "used_timeout_recovery": False,
+        "had_schema_repair_or_discard": False,
+        "used_google_places_seeds": False,
+    }
     assert all(item["forced_inclusion"] is True for item in payload["drafts"])
     assert all(item["source"] == "ai_forced_fallback" for item in payload["drafts"])
+    assert all(item["provenance_classification"] == "synthetic_fallback" for item in payload["drafts"])
+    assert all(
+        item["provenance_explanation"]
+        == "Synthetic fallback candidate generated because reliable live competitor discovery was unavailable."
+        for item in payload["drafts"]
+    )
 
 
 def test_malformed_provider_output_skips_invalid_candidates_and_keeps_valid_drafts(db_session, seeded_business) -> None:
@@ -1837,6 +2097,7 @@ def test_malformed_provider_output_skips_invalid_candidates_and_keeps_valid_draf
     assert payload["rejected_candidate_count"] == 1
     assert payload["rejected_candidates"][0]["domain"].startswith("unknown-domain-")
     assert "insufficient_overlap_evidence" in payload["rejected_candidates"][0]["reasons"]
+    assert payload["outcome_summary"]["had_schema_repair_or_discard"] is True
 
 
 def test_invalid_candidate_reasons_are_classified_with_specific_codes(db_session, seeded_business, caplog) -> None:
@@ -1973,6 +2234,14 @@ def test_timeout_provider_failure_uses_synthetic_fallback(db_session, seeded_bus
     assert fallback_attempt["recovered_after_timeout"] is True
     assert fallback_attempt["escalation_reason"] == "provider_timeout_exhausted"
     assert payload["total_drafts"] == 3
+    assert payload["outcome_summary"] == {
+        "status_level": "degraded",
+        "message": "Fallback placeholders were generated from local context. Review and confirm before accepting.",
+        "used_synthetic_fallback": True,
+        "used_timeout_recovery": True,
+        "had_schema_repair_or_discard": False,
+        "used_google_places_seeds": False,
+    }
     assert all(item["forced_inclusion"] is True for item in payload["drafts"])
     events = _structured_event_records(caplog)
     timeout_outcome_event = [item for item in events if item.get("event") == "competitor_timeout_outcome"][-1]
@@ -2028,6 +2297,14 @@ def test_provider_auth_failure_marks_run_failed_safely(db_session, seeded_busine
     assert payload["provider_attempts"][0]["provider_call_type"] == "non_tool"
     assert payload["provider_attempts"][0]["degraded_mode"] is False
     assert payload["provider_attempts"][0]["failure_kind"] in {"unknown", None}
+    assert payload["outcome_summary"] == {
+        "status_level": "failed",
+        "message": "Competitor generation failed. Start a new run to continue.",
+        "used_synthetic_fallback": False,
+        "used_timeout_recovery": False,
+        "had_schema_repair_or_discard": False,
+        "used_google_places_seeds": False,
+    }
 
 
 def test_service_passes_explicit_provider_call_type_intent_for_provider_capable_signature(
@@ -2143,6 +2420,14 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert payload["provider_attempts"][2]["final_outcome"] == "degraded_success"
     assert payload["provider_attempts"][1]["prompt_total_chars"] > payload["provider_attempts"][2]["prompt_total_chars"]
     assert payload["provider_attempts"][1]["context_json_chars"] > payload["provider_attempts"][2]["context_json_chars"]
+    assert payload["outcome_summary"] == {
+        "status_level": "recovered",
+        "message": "Competitor generation recovered after provider instability.",
+        "used_synthetic_fallback": False,
+        "used_timeout_recovery": True,
+        "had_schema_repair_or_discard": False,
+        "used_google_places_seeds": False,
+    }
     assert provider.requested_candidate_counts == [7, 7, 6]
     assert provider.reduced_context_modes == [True, False, True]
     assert provider.run_ids == [run_id, run_id, run_id]
