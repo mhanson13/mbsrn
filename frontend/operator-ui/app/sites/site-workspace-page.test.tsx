@@ -4841,6 +4841,13 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(screen.queryByTestId("tuning-rejected-competitor-candidates-debug")).not.toBeInTheDocument();
     expect(screen.queryByTestId("competitor-candidate-pipeline-summary-debug")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(2);
+    expect(screen.getAllByText(/Why this competitor:/i).length).toBeGreaterThan(0);
+    expect(
+      screen.queryByText("Expanded search was used after the initial pass returned no usable competitors."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Some competitors were included under relaxed local-service matching rules."),
+    ).not.toBeInTheDocument();
     expect(mockFetchCompetitorProfileGenerationRuns).toHaveBeenCalled();
     expect(mockFetchCompetitorProfileGenerationRunDetail).toHaveBeenCalled();
     expect(mockFetchCompetitorProfileGenerationSummary).toHaveBeenCalled();
@@ -5086,6 +5093,7 @@ describe("site workspace ai competitor profile drafts", () => {
         removed_by_deduplication_count: 0,
         removed_by_final_limit_count: 0,
         final_candidate_count: 1,
+        relaxed_filtering_applied: true,
       },
       tuning_rejected_candidate_count: 3,
       tuning_rejected_candidates: [
@@ -5113,6 +5121,8 @@ describe("site workspace ai competitor profile drafts", () => {
       provider_attempts: [
         {
           attempt_number: 1,
+          execution_mode: "fast_path",
+          provider_call_type: "non_tool",
           degraded_mode: false,
           reduced_context_mode: false,
           requested_candidate_count: 5,
@@ -5126,9 +5136,13 @@ describe("site workspace ai competitor profile drafts", () => {
           context_json_chars: 4200,
           user_prompt_chars: 10400,
           endpoint_path: "/responses",
+          search_escalation_triggered: true,
+          escalation_reason: "zero_valid_competitors",
         },
         {
           attempt_number: 2,
+          execution_mode: "full",
+          provider_call_type: "tool_enabled",
           degraded_mode: true,
           reduced_context_mode: true,
           requested_candidate_count: 3,
@@ -5142,6 +5156,8 @@ describe("site workspace ai competitor profile drafts", () => {
           context_json_chars: 2600,
           user_prompt_chars: 7600,
           endpoint_path: "/responses",
+          search_escalation_triggered: false,
+          escalation_reason: null,
         },
       ],
     });
@@ -5193,6 +5209,17 @@ describe("site workspace ai competitor profile drafts", () => {
       "proposed 5 | returned 1 | rejected 4 | degraded mode yes | search-backed yes",
     );
     expect(within(outcomeSummary).getByText(/Run notes:/i)).toHaveTextContent("degraded retry mode used");
+    expect(within(outcomeSummary).getByText(/Filtering:/i)).toHaveTextContent(
+      "Filtering: proposed 5 | filtered out 4 | duplicates removed 0 | final returned 1",
+    );
+    expect(
+      within(outcomeSummary).getByText(
+        "Expanded search was used after the initial pass returned no usable competitors.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(outcomeSummary).getByText("Some competitors were included under relaxed local-service matching rules."),
+    ).toBeInTheDocument();
     expect(within(outcomeSummary).getByText(/Only 1 valid competitor remained after filtering\./i)).toHaveTextContent(
       "strict validation filtered weak candidates",
     );
@@ -5304,12 +5331,21 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(within(outcomeSummary).getByText(/proposed 5 \| returned 1 \| rejected 4/i)).toHaveTextContent(
       "proposed 5 | returned 1 | rejected 4 | degraded mode no | search-backed no",
     );
+    expect(within(outcomeSummary).getByText(/Filtering:/i)).toHaveTextContent(
+      "Filtering: proposed 5 | filtered out 4 | duplicates removed 0 | final returned 1",
+    );
     expect(within(outcomeSummary).getByText(/Run notes:/i)).toHaveTextContent(
       "search-backed discovery unavailable",
     );
     expect(within(outcomeSummary).getByText(/Only 1 valid competitor remained after filtering\./i)).toHaveTextContent(
       "This may indicate strict validation filtered weak candidates, search-backed discovery was unavailable.",
     );
+    expect(
+      screen.queryByText("Expanded search was used after the initial pass returned no usable competitors."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Some competitors were included under relaxed local-service matching rules."),
+    ).not.toBeInTheDocument();
   });
 
   it("triggers generation and refreshes visible drafts", async () => {

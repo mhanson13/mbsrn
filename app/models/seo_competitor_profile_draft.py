@@ -112,3 +112,13 @@ class SEOCompetitorProfileDraft(Base):
     )
 
     generation_run = relationship("SEOCompetitorProfileGenerationRun", back_populates="drafts")
+
+    @property
+    def forced_inclusion(self) -> bool:
+        return self.source == "ai_forced_fallback"
+
+    @property
+    def forced_reason(self) -> str | None:
+        if self.forced_inclusion:
+            return "no_valid_drafts_after_filtering"
+        return None

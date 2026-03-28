@@ -1619,6 +1619,8 @@ def test_async_execution_transitions_running_to_completed_and_persists_drafts(db
     assert payload["run"]["model_name"] == "deterministic-test-model"
     assert payload["run"]["prompt_version"] == "seo-competitor-profile-v1"
     assert payload["total_drafts"] == 2
+    assert all(item["forced_inclusion"] is False for item in payload["drafts"])
+    assert all(item["forced_reason"] is None for item in payload["drafts"])
 
     persisted_runs = db_session.query(SEOCompetitorProfileGenerationRun).all()
     persisted_drafts = db_session.query(SEOCompetitorProfileDraft).all()
@@ -1628,7 +1630,11 @@ def test_async_execution_transitions_running_to_completed_and_persists_drafts(db
     assert "Draft Competitor One" in persisted_runs[0].raw_output
 
 
-def test_async_execution_failure_marks_run_failed_safely(db_session, seeded_business) -> None:
+def test_async_execution_forces_minimal_drafts_when_all_candidates_were_filtered(
+    db_session,
+    seeded_business,
+    caplog,
+) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -1640,27 +1646,35 @@ def test_async_execution_failure_marks_run_failed_safely(db_session, seeded_busi
     created = _create_generation_run(client, seeded_business.id, site_id)
     run_id = created["run"]["id"]
 
-    _execute_generation_run(
-        db_session=db_session,
-        business_id=seeded_business.id,
-        site_id=site_id,
-        run_id=run_id,
-        provider=_InvalidCompetitorProfileProvider(),
-    )
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=_InvalidCompetitorProfileProvider(),
+        )
 
     detail = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
     )
     assert detail.status_code == 200
     payload = detail.json()
-    assert payload["run"]["status"] == "failed"
-    assert payload["run"]["generated_draft_count"] == 0
-    assert payload["run"]["error_summary"] == INVALID_OUTPUT_ERROR_SUMMARY
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["generated_draft_count"] == 1
+    assert payload["run"]["raw_candidate_count"] == 1
+    assert payload["run"]["included_candidate_count"] == 1
+    assert payload["run"]["excluded_candidate_count"] == 0
+    assert payload["run"]["error_summary"] is None
     assert payload["run"]["provider_name"] == "invalid-test-provider"
     assert payload["run"]["model_name"] == "invalid-test-model"
     assert payload["run"]["prompt_version"] == "seo-competitor-profile-v1"
-    assert payload["run"]["failure_category"] == "malformed_output"
-    assert payload["total_drafts"] == 0
+    assert payload["run"]["failure_category"] is None
+    assert payload["total_drafts"] == 1
+    assert payload["drafts"][0]["forced_inclusion"] is True
+    assert payload["drafts"][0]["forced_reason"] == "no_valid_drafts_after_filtering"
+    assert payload["drafts"][0]["source"] == "ai_forced_fallback"
+    assert payload["drafts"][0]["suggested_domain"].startswith("unknown-domain-")
     persisted_run = (
         db_session.query(SEOCompetitorProfileGenerationRun)
         .filter(SEOCompetitorProfileGenerationRun.business_id == seeded_business.id)
@@ -1669,6 +1683,11 @@ def test_async_execution_failure_marks_run_failed_safely(db_session, seeded_busi
     )
     assert persisted_run.raw_output is not None
     assert "invalid-domain-without-tld" in persisted_run.raw_output
+    events = _structured_event_records(caplog)
+    forced_output_event = next(item for item in events if item.get("event") == "competitor_forced_output")
+    assert forced_output_event["run_id"] == run_id
+    assert forced_output_event["raw_candidates"] == 1
+    assert forced_output_event["forced_drafts"] == 1
 
 
 def test_empty_candidate_output_completes_run_without_malformed_failure(db_session, seeded_business) -> None:
@@ -2419,6 +2438,7 @@ def test_run_detail_exposes_low_result_search_unavailable_quality_signals(db_ses
         "removed_by_deduplication_count": 0,
         "removed_by_final_limit_count": 0,
         "final_candidate_count": 1,
+        "relaxed_filtering_applied": False,
     }
     assert payload["provider_degraded_retry_used"] is False
     assert payload["provider_attempt_count"] == 1
@@ -3064,6 +3084,7 @@ def test_generation_dedup_scoring_and_exclusion_are_applied_before_persistence(d
         "removed_by_deduplication_count": 1,
         "removed_by_final_limit_count": 0,
         "final_candidate_count": len(payload["drafts"]),
+        "relaxed_filtering_applied": False,
     }
 
     persisted_drafts = (
@@ -3222,6 +3243,7 @@ def test_generation_pipeline_summary_tracks_final_limit_stage(db_session, seeded
         "removed_by_deduplication_count": 0,
         "removed_by_final_limit_count": 1,
         "final_candidate_count": 2,
+        "relaxed_filtering_applied": False,
     }
     assert payload["candidate_pipeline_summary"]["final_candidate_count"] == len(payload["drafts"])
 
@@ -3302,6 +3324,7 @@ def test_generation_applies_eligibility_filter_before_admin_tuning(db_session, s
         "removed_by_deduplication_count": 0,
         "removed_by_final_limit_count": 0,
         "final_candidate_count": 1,
+        "relaxed_filtering_applied": False,
     }
     assert payload["rejected_candidate_count"] == 2
     assert payload["tuning_rejected_candidate_count"] == 0
@@ -3372,7 +3395,7 @@ def test_generation_allows_missing_domain_with_strong_local_reasoning_and_caps_c
     assert relaxation_event["unsupported_type_allowed"] == 0
 
 
-def test_generation_failure_with_all_candidates_excluded_persists_exclusion_telemetry(
+def test_generation_forces_output_when_all_candidates_would_be_excluded_and_persists_telemetry(
     db_session, seeded_business
 ) -> None:
     deferred_executor = _DeferredRunExecutor()
@@ -3415,11 +3438,11 @@ def test_generation_failure_with_all_candidates_excluded_persists_exclusion_tele
     )
     assert detail.status_code == 200
     payload = detail.json()
-    assert payload["run"]["status"] == "failed"
-    assert payload["run"]["generated_draft_count"] == 0
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["generated_draft_count"] >= 1
     assert payload["run"]["raw_candidate_count"] == 2
-    assert payload["run"]["included_candidate_count"] == 0
-    assert payload["run"]["excluded_candidate_count"] == 2
+    assert payload["run"]["included_candidate_count"] >= 1
+    assert payload["run"]["excluded_candidate_count"] == 1
     assert payload["run"]["exclusion_counts_by_reason"] == {
         "duplicate": 0,
         "low_relevance": 0,
@@ -3428,7 +3451,10 @@ def test_generation_failure_with_all_candidates_excluded_persists_exclusion_tele
         "existing_domain_match": 0,
         "invalid_candidate": 1,
     }
-    assert payload["total_drafts"] == 0
+    assert payload["total_drafts"] == payload["run"]["generated_draft_count"]
+    assert payload["drafts"][0]["forced_inclusion"] is True
+    assert payload["drafts"][0]["forced_reason"] == "no_valid_drafts_after_filtering"
+    assert payload["drafts"][0]["source"] == "ai_forced_fallback"
 
 
 def test_generation_uses_business_quality_tuning_threshold_settings(db_session, seeded_business) -> None:
@@ -3500,9 +3526,9 @@ def test_generation_uses_business_quality_tuning_threshold_settings(db_session, 
     )
     assert high_threshold_detail.status_code == 200
     high_payload = high_threshold_detail.json()
-    assert high_payload["run"]["status"] == "failed"
-    assert high_payload["run"]["included_candidate_count"] == 0
-    assert high_payload["run"]["excluded_candidate_count"] == 1
+    assert high_payload["run"]["status"] == "completed"
+    assert high_payload["run"]["included_candidate_count"] == 1
+    assert high_payload["run"]["excluded_candidate_count"] == 0
     assert high_payload["run"]["exclusion_counts_by_reason"]["low_relevance"] == 1
     assert high_payload["candidate_pipeline_summary"] == {
         "proposed_candidate_count": 1,
@@ -3513,11 +3539,14 @@ def test_generation_uses_business_quality_tuning_threshold_settings(db_session, 
         "removed_by_existing_domain_match_count": 0,
         "removed_by_deduplication_count": 0,
         "removed_by_final_limit_count": 0,
-        "final_candidate_count": 0,
+        "final_candidate_count": 1,
+        "relaxed_filtering_applied": False,
     }
     assert high_payload["tuning_rejected_candidate_count"] == 1
     assert high_payload["tuning_rejection_reason_counts"]["below_minimum_relevance_score"] == 1
     assert high_payload["tuning_rejection_reason_counts"]["insufficient_local_alignment"] == 1
+    assert high_payload["drafts"][0]["forced_inclusion"] is True
+    assert high_payload["drafts"][0]["forced_reason"] == "no_valid_drafts_after_filtering"
 
 
 def test_generation_fails_safely_when_business_quality_tuning_is_invalid(db_session, seeded_business) -> None:
@@ -3639,17 +3668,17 @@ def test_generation_summary_endpoint_returns_status_failure_and_retry_metrics(db
 
     assert payload["queued_count"] == 1
     assert payload["running_count"] == 0
-    assert payload["completed_count"] == 1
-    assert payload["failed_count"] == 2
+    assert payload["completed_count"] == 2
+    assert payload["failed_count"] == 1
     assert payload["retry_child_runs"] == 1
     assert payload["retried_parent_runs"] == 1
     assert payload["failed_runs_retried"] == 1
     assert payload["failure_category_counts"]["timeout"] == 1
-    assert payload["failure_category_counts"]["malformed_output"] == 1
+    assert payload["failure_category_counts"].get("malformed_output", 0) == 0
     assert payload["total_runs"] == 4
     assert payload["total_raw_candidate_count"] == 3
-    assert payload["total_included_candidate_count"] == 2
-    assert payload["total_excluded_candidate_count"] == 1
+    assert payload["total_included_candidate_count"] == 3
+    assert payload["total_excluded_candidate_count"] == 0
     assert payload["exclusion_counts_by_reason"] == {
         "duplicate": 0,
         "low_relevance": 0,
@@ -3722,8 +3751,8 @@ def test_generation_summary_endpoint_aggregates_cross_run_exclusion_telemetry(db
 
     assert payload["total_runs"] == 3
     assert payload["total_raw_candidate_count"] == 8
-    assert payload["total_included_candidate_count"] == 2
-    assert payload["total_excluded_candidate_count"] == 6
+    assert payload["total_included_candidate_count"] == 3
+    assert payload["total_excluded_candidate_count"] == 5
     assert payload["exclusion_counts_by_reason"] == {
         "duplicate": 1,
         "low_relevance": 0,

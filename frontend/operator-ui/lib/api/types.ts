@@ -336,6 +336,8 @@ export interface CompetitorProfileDraft {
   evidence: string | null;
   confidence_score: number;
   source: string;
+  forced_inclusion?: boolean;
+  forced_reason?: string | null;
   review_status: "pending" | "edited" | "accepted" | "rejected";
   edited_fields_json: Record<string, unknown> | null;
   review_notes: string | null;
@@ -395,10 +397,13 @@ export interface CompetitorCandidatePipelineSummary {
   removed_by_deduplication_count: number;
   removed_by_final_limit_count: number;
   final_candidate_count: number;
+  relaxed_filtering_applied?: boolean;
 }
 
 export interface CompetitorProviderAttemptDebug {
   attempt_number: number;
+  execution_mode?: string | null;
+  provider_call_type?: string | null;
   degraded_mode: boolean;
   reduced_context_mode: boolean;
   requested_candidate_count: number;
@@ -413,6 +418,8 @@ export interface CompetitorProviderAttemptDebug {
   context_json_chars: number | null;
   user_prompt_chars: number | null;
   endpoint_path: string | null;
+  search_escalation_triggered?: boolean;
+  escalation_reason?: string | null;
 }
 
 export interface CompetitorProfileGenerationRunDetailResponse {

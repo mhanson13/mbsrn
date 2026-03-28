@@ -172,6 +172,19 @@ Competitor prompt execution and preview use the same resolved prompt assembly pi
 - Empty candidate arrays are valid provider outcomes and do not automatically fail a run.
 - `malformed_output` is reserved for true structured-output failures (for example, unparseable or invalid top-level JSON shape), not for "zero valid candidates after filtering".
 
+## Final Output Guarantee
+- Final-stage guarantee prevents avoidable zero-draft completions when upstream candidates were discovered.
+- If strict filtering produces zero drafts but upstream parsed candidates exist, the service selects a bounded forced fallback set (up to 3-5, depending on requested count).
+- Forced fallback only relaxes final draft emission requirements:
+  - allows weak/missing domain
+  - allows classification mismatch
+  - allows low confidence values in-range
+  - still rejects clearly invalid entries (for example missing name)
+- Forced drafts are tagged for review transparency:
+  - `forced_inclusion=true`
+  - `forced_reason=no_valid_drafts_after_filtering`
+- If provider candidates are truly empty, the run still completes with an empty draft list (valid zero-result outcome).
+
 ## Relaxed Competitor Eligibility
 - Unsupported competitor type labels are treated as a soft classification mismatch signal instead of an automatic hard reject.
 - Candidates with weak/missing domains can still pass when local/industry overlap evidence is strong; confidence is capped for weak-domain candidates.

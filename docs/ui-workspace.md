@@ -85,6 +85,23 @@ Behavior:
 - If latest run status is `completed`/`failed`, polling is not required and terminal state renders immediately.
 - Stale local running indicators are cleared whenever backend run detail reports a terminal status.
 
+## Competitor Review Clarity
+
+The workspace now surfaces concise operator-facing competitor review context above debug details:
+
+- each draft row shows a labeled `Why this competitor` explanation using existing run reasoning fields
+- terminal run summary includes a compact filtering line:
+  - proposed
+  - filtered out
+  - duplicates removed
+  - final returned
+- when search escalation is used after an initial zero-result pass, the panel shows:
+  - `Expanded search was used after the initial pass returned no usable competitors.`
+- when relaxed local-service matching was applied, the panel shows:
+  - `Some competitors were included under relaxed local-service matching rules.`
+
+These notes are informational trust signals and do not replace existing debug telemetry.
+
 ## Recommendation Generation Action
 
 The workspace recommendations area now includes a primary `Generate Recommendations` action.

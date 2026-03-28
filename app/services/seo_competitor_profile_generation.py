@@ -140,6 +140,10 @@ _DISCOVERY_CANDIDATE_BUFFER = 2
 _MAX_DISCOVERY_CANDIDATE_COUNT = 20
 _MIN_DEGRADED_DISCOVERY_CANDIDATE_COUNT = 2
 _CANDIDATE_REJECTION_LOG_MAX_ITEMS = 12
+_FORCED_OUTPUT_REASON_NO_VALID_DRAFTS = "no_valid_drafts_after_filtering"
+_FORCED_DRAFT_SOURCE = "ai_forced_fallback"
+_FORCED_DRAFT_MIN_COUNT = 3
+_FORCED_DRAFT_MAX_COUNT = 5
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
 _UNKNOWN_NAME_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 _UNKNOWN_PLACEHOLDER_NAME_TOKENS = {
@@ -284,6 +288,7 @@ class SEOCompetitorProfileCandidatePipelineSummary:
     removed_by_deduplication_count: int
     removed_by_final_limit_count: int
     final_candidate_count: int
+    relaxed_filtering_applied: bool = False
 
 
 @dataclass(frozen=True)
@@ -334,6 +339,7 @@ class SEOCompetitorProfileRetentionCleanupSummary:
 @dataclass(frozen=True)
 class SEOCompetitorProfileDraftBuildResult:
     drafts: list[SEOCompetitorProfileDraft]
+    forced_draft_count: int
     raw_candidate_count: int
     included_candidate_count: int
     deduped_candidate_count: int
@@ -654,9 +660,13 @@ class SEOCompetitorProfileGenerationService:
                 parsed_candidate_count=len(output.candidates),
             )
             drafts = draft_result.drafts
-            if not drafts and output.candidates:
+            if (
+                not drafts
+                and draft_result.raw_candidate_count > 0
+                and draft_result.forced_draft_count <= 0
+            ):
                 raise SEOCompetitorProfileGenerationValidationError(
-                    "No valid competitor profile drafts were generated"
+                    "No viable competitor candidates were available for draft output"
                 )
 
             run.status = "completed"
@@ -1576,6 +1586,26 @@ class SEOCompetitorProfileGenerationService:
         )
         bounded_requested_candidate_count = max(1, int(run.requested_candidate_count or 1))
         final_candidates = candidate_processing.included_candidates[:bounded_requested_candidate_count]
+        forced_fallback_candidates: list[CompetitorCandidateInput] = []
+        if not final_candidates and proposed_candidate_count > 0:
+            forced_fallback_candidates = self._select_forced_fallback_candidates(
+                prepared_candidates=prepared_candidates,
+                eligible_candidates=eligibility_result.eligible_candidates,
+                requested_candidate_count=bounded_requested_candidate_count,
+            )
+            if forced_fallback_candidates:
+                self._emit_structured_service_log(
+                    payload={
+                        "event": "competitor_forced_output",
+                        "run_id": run.id,
+                        "business_id": run.business_id,
+                        "site_id": run.site_id,
+                        "raw_candidates": proposed_candidate_count,
+                        "forced_drafts": len(forced_fallback_candidates),
+                        "forced_reason": _FORCED_OUTPUT_REASON_NO_VALID_DRAFTS,
+                    },
+                    fallback_message="competitor_forced_output",
+                )
         removed_by_final_limit_count = max(
             0,
             len(candidate_processing.included_candidates) - len(final_candidates),
@@ -1623,17 +1653,47 @@ class SEOCompetitorProfileGenerationService:
                 review_status="pending",
             )
             drafts.append(draft)
-        return SEOCompetitorProfileDraftBuildResult(
-            drafts=drafts,
-            raw_candidate_count=proposed_candidate_count,
-            included_candidate_count=len(drafts),
-            deduped_candidate_count=candidate_processing.deduped_candidate_count,
-            ineligible_candidate_count=rejected_by_eligibility_count,
-            excluded_candidate_count=(
+        for candidate in forced_fallback_candidates:
+            forced_domain = self._forced_fallback_domain(
+                domain=candidate.suggested_domain,
+                source_index=candidate.source_index,
+            )
+            forced_relevance = max(0, min(100, int(round(candidate.confidence_score * 100))))
+            draft = SEOCompetitorProfileDraft(
+                id=str(uuid4()),
+                business_id=run.business_id,
+                site_id=run.site_id,
+                generation_run_id=run.id,
+                suggested_name=candidate.suggested_name,
+                suggested_domain=forced_domain,
+                competitor_type=candidate.competitor_type,
+                summary=candidate.summary,
+                why_competitor=candidate.why_competitor,
+                evidence=candidate.evidence,
+                confidence_score=candidate.confidence_score,
+                relevance_score=forced_relevance,
+                source=_FORCED_DRAFT_SOURCE,
+                review_status="pending",
+            )
+            drafts.append(draft)
+        included_count = len(drafts)
+        excluded_count = (
+            max(0, proposed_candidate_count - included_count)
+            if forced_fallback_candidates
+            else (
                 candidate_processing.excluded_candidate_count
                 + rejected_by_eligibility_count
                 + removed_by_final_limit_count
-            ),
+            )
+        )
+        return SEOCompetitorProfileDraftBuildResult(
+            drafts=drafts,
+            forced_draft_count=len(forced_fallback_candidates),
+            raw_candidate_count=proposed_candidate_count,
+            included_candidate_count=included_count,
+            deduped_candidate_count=candidate_processing.deduped_candidate_count,
+            ineligible_candidate_count=rejected_by_eligibility_count,
+            excluded_candidate_count=excluded_count,
             exclusion_counts_by_reason=exclusion_counts_by_reason,
             ineligibility_counts_by_reason=eligibility_result.ineligibility_counts_by_reason,
             rejected_candidates=rejected_candidates,
@@ -1648,9 +1708,61 @@ class SEOCompetitorProfileGenerationService:
                 removed_by_existing_domain_match_count=removed_by_existing_domain_match_count,
                 removed_by_deduplication_count=removed_by_deduplication_count,
                 removed_by_final_limit_count=removed_by_final_limit_count,
-                final_candidate_count=len(drafts),
+                final_candidate_count=included_count,
+                relaxed_filtering_applied=bool(eligibility_result.relaxed_filtering_applied),
             ),
         )
+
+    def _select_forced_fallback_candidates(
+        self,
+        *,
+        prepared_candidates: list[CompetitorCandidateInput],
+        eligible_candidates: list[CompetitorCandidateInput],
+        requested_candidate_count: int,
+    ) -> list[CompetitorCandidateInput]:
+        forced_limit = min(
+            _FORCED_DRAFT_MAX_COUNT,
+            max(_FORCED_DRAFT_MIN_COUNT, max(1, int(requested_candidate_count))),
+        )
+        if forced_limit <= 0:
+            return []
+
+        eligible_ids = {id(candidate) for candidate in eligible_candidates}
+        overflow_candidates = [
+            candidate for candidate in prepared_candidates if id(candidate) not in eligible_ids
+        ]
+        candidate_pool = [*eligible_candidates, *overflow_candidates]
+        if not candidate_pool:
+            return []
+
+        sorted_pool = sorted(
+            candidate_pool,
+            key=lambda candidate: (-float(candidate.confidence_score), int(candidate.source_index)),
+        )
+        forced_candidates: list[CompetitorCandidateInput] = []
+        seen: set[tuple[str, str]] = set()
+        for candidate in sorted_pool:
+            normalized_name = (candidate.suggested_name or "").strip().lower()
+            if not normalized_name:
+                continue
+            normalized_domain = (candidate.suggested_domain or "").strip().lower()
+            dedupe_key = (
+                normalized_name,
+                normalized_domain or f"unknown-domain-{max(0, int(candidate.source_index))}",
+            )
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            forced_candidates.append(candidate)
+            if len(forced_candidates) >= forced_limit:
+                break
+        return forced_candidates
+
+    def _forced_fallback_domain(self, *, domain: str, source_index: int) -> str:
+        cleaned = self._clean_optional(domain)
+        if cleaned:
+            return cleaned.lower()
+        return f"unknown-domain-{max(0, int(source_index)) + 1}"
 
     def _prepare_candidate_input_for_pipeline(
         self,
@@ -3280,6 +3392,7 @@ class SEOCompetitorProfileGenerationService:
                 ),
                 "removed_by_final_limit_count": max(0, int(candidate_pipeline_summary.removed_by_final_limit_count)),
                 "final_candidate_count": max(0, int(candidate_pipeline_summary.final_candidate_count)),
+                "relaxed_filtering_applied": bool(candidate_pipeline_summary.relaxed_filtering_applied),
             }
         try:
             return json.dumps(parsed, ensure_ascii=True, sort_keys=True)
@@ -3432,6 +3545,7 @@ class SEOCompetitorProfileGenerationService:
             self._coerce_int(raw_summary.get("removed_by_final_limit_count"), default=0),
         )
         final_candidate_count = max(0, self._coerce_int(raw_summary.get("final_candidate_count"), default=0))
+        relaxed_filtering_applied = bool(raw_summary.get("relaxed_filtering_applied"))
 
         if (
             proposed_candidate_count <= 0
@@ -3443,6 +3557,7 @@ class SEOCompetitorProfileGenerationService:
             and removed_by_deduplication_count <= 0
             and removed_by_final_limit_count <= 0
             and final_candidate_count <= 0
+            and not relaxed_filtering_applied
         ):
             return None
 
@@ -3456,6 +3571,7 @@ class SEOCompetitorProfileGenerationService:
             removed_by_deduplication_count=removed_by_deduplication_count,
             removed_by_final_limit_count=removed_by_final_limit_count,
             final_candidate_count=final_candidate_count,
+            relaxed_filtering_applied=relaxed_filtering_applied,
         )
 
     def _evaluate_pending_preview_accuracy_for_completed_run(

@@ -86,6 +86,10 @@ const MAX_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
 const MAX_TUNING_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
 const MAX_PROVIDER_ATTEMPT_DEBUG_ROWS = 2;
 const ZIP_PROMPT_SESSION_KEY_PREFIX = "workspace:zip-prompt-dismissed";
+const SEARCH_ESCALATION_NOTE =
+  "Expanded search was used after the initial pass returned no usable competitors.";
+const RELAXED_FILTERING_NOTE =
+  "Some competitors were included under relaxed local-service matching rules.";
 
 type SiteTimelineEventType =
   | "audit_run"
@@ -192,6 +196,9 @@ interface CompetitorRunOutcomeSummaryView {
   rejectedCount: number;
   degradedModeUsed: boolean;
   searchBacked: boolean;
+  filteringSummary: string | null;
+  searchEscalationNote: string | null;
+  relaxedFilteringNote: string | null;
   statusNote: string | null;
   lowResultNote: string | null;
 }
@@ -446,6 +453,7 @@ function normalizeCompetitorCandidatePipelineSummary(
   const removedByDeduplication = Math.max(0, Number(value.removed_by_deduplication_count || 0));
   const removedByFinalLimit = Math.max(0, Number(value.removed_by_final_limit_count || 0));
   const finalCount = Math.max(0, Number(value.final_candidate_count || 0));
+  const relaxedFilteringApplied = Boolean(value.relaxed_filtering_applied);
   return {
     proposed_candidate_count: proposed,
     rejected_by_eligibility_count: rejectedByEligibility,
@@ -456,6 +464,7 @@ function normalizeCompetitorCandidatePipelineSummary(
     removed_by_deduplication_count: removedByDeduplication,
     removed_by_final_limit_count: removedByFinalLimit,
     final_candidate_count: finalCount,
+    relaxed_filtering_applied: relaxedFilteringApplied,
   };
 }
 
@@ -468,9 +477,12 @@ function normalizeCompetitorProviderAttempts(
   return value
     .map((attempt) => {
       const attemptNumber = Math.max(1, Number(attempt.attempt_number || 1));
+      const executionMode = truncateOptionalText(attempt.execution_mode, 32);
+      const providerCallType = truncateOptionalText(attempt.provider_call_type, 32);
       const requestedCandidateCount = Math.max(1, Number(attempt.requested_candidate_count || 1));
       const outcome = truncateOptionalText(attempt.outcome, 64) || "success";
       const failureKind = truncateOptionalText(attempt.failure_kind, 64);
+      const malformedOutputReason = truncateOptionalText(attempt.malformed_output_reason, 64);
       const requestDurationRaw = Number(attempt.request_duration_ms);
       const requestDurationMs = Number.isFinite(requestDurationRaw) ? Math.max(0, requestDurationRaw) : null;
       const timeoutRaw = Number(attempt.timeout_seconds);
@@ -485,13 +497,18 @@ function normalizeCompetitorProviderAttempts(
       const userPromptChars = Number.isFinite(userPromptCharsRaw) ? Math.max(0, userPromptCharsRaw) : null;
       const webSearchEnabled =
         typeof attempt.web_search_enabled === "boolean" ? attempt.web_search_enabled : null;
+      const searchEscalationTriggered = Boolean(attempt.search_escalation_triggered);
+      const escalationReason = truncateOptionalText(attempt.escalation_reason, 64);
       return {
         attempt_number: attemptNumber,
+        execution_mode: executionMode,
+        provider_call_type: providerCallType,
         degraded_mode: Boolean(attempt.degraded_mode),
         reduced_context_mode: Boolean(attempt.reduced_context_mode),
         requested_candidate_count: requestedCandidateCount,
         outcome,
         failure_kind: failureKind,
+        malformed_output_reason: malformedOutputReason,
         request_duration_ms: requestDurationMs,
         timeout_seconds: timeoutSeconds,
         web_search_enabled: webSearchEnabled,
@@ -500,6 +517,8 @@ function normalizeCompetitorProviderAttempts(
         context_json_chars: contextJsonChars,
         user_prompt_chars: userPromptChars,
         endpoint_path: endpointPath,
+        search_escalation_triggered: searchEscalationTriggered,
+        escalation_reason: escalationReason,
       };
     })
     .sort((left, right) => left.attempt_number - right.attempt_number)
@@ -1923,12 +1942,29 @@ export default function SiteWorkspacePage() {
       competitorCandidatePipelineSummary?.final_candidate_count || competitorProfileDrafts.length,
     );
     const rejectedCount = Math.max(0, proposedCount - returnedCount);
+    const filteredOutCount = Math.max(
+      0,
+      competitorCandidatePipelineSummary
+        ? competitorCandidatePipelineSummary.proposed_candidate_count -
+            competitorCandidatePipelineSummary.final_candidate_count
+        : rejectedCount,
+    );
+    const duplicatesRemovedCount = Math.max(
+      0,
+      competitorCandidatePipelineSummary?.removed_by_deduplication_count || 0,
+    );
     const degradedModeUsed =
       competitorProviderDegradedRetryUsed || competitorProviderAttempts.some((attempt) => attempt.degraded_mode);
     const hasSearchTelemetry = competitorProviderAttempts.some(
       (attempt) => typeof attempt.web_search_enabled === "boolean",
     );
     const searchBacked = competitorProviderAttempts.some((attempt) => attempt.web_search_enabled === true);
+    const searchEscalationTriggered = competitorProviderAttempts.some(
+      (attempt) =>
+        attempt.search_escalation_triggered ||
+        (attempt.escalation_reason || "").trim().toLowerCase() === "zero_valid_competitors",
+    );
+    const relaxedFilteringApplied = Boolean(competitorCandidatePipelineSummary?.relaxed_filtering_applied);
 
     const validationRejectedCount = Math.max(
       0,
@@ -1984,6 +2020,12 @@ export default function SiteWorkspacePage() {
       rejectedCount,
       degradedModeUsed,
       searchBacked,
+      filteringSummary:
+        proposedCount > 0
+          ? `Filtering: proposed ${proposedCount} | filtered out ${filteredOutCount} | duplicates removed ${duplicatesRemovedCount} | final returned ${returnedCount}`
+          : null,
+      searchEscalationNote: searchEscalationTriggered ? SEARCH_ESCALATION_NOTE : null,
+      relaxedFilteringNote: relaxedFilteringApplied ? RELAXED_FILTERING_NOTE : null,
       statusNote: statusNotes.length > 0 ? `Run notes: ${statusNotes.join("; ")}.` : null,
       lowResultNote,
     };
@@ -4643,6 +4685,15 @@ export default function SiteWorkspacePage() {
             {competitorRunOutcomeSummary.statusNote ? (
               <p className="hint muted">{competitorRunOutcomeSummary.statusNote}</p>
             ) : null}
+            {competitorRunOutcomeSummary.filteringSummary ? (
+              <p className="hint muted">{competitorRunOutcomeSummary.filteringSummary}</p>
+            ) : null}
+            {competitorRunOutcomeSummary.searchEscalationNote ? (
+              <p className="hint muted">{competitorRunOutcomeSummary.searchEscalationNote}</p>
+            ) : null}
+            {competitorRunOutcomeSummary.relaxedFilteringNote ? (
+              <p className="hint muted">{competitorRunOutcomeSummary.relaxedFilteringNote}</p>
+            ) : null}
             {competitorRunOutcomeSummary.lowResultNote ? (
               <p className="hint warning">{competitorRunOutcomeSummary.lowResultNote}</p>
             ) : null}
@@ -4959,9 +5010,12 @@ export default function SiteWorkspacePage() {
                         <td>{draft.competitor_type}</td>
                         <td>{draft.confidence_score.toFixed(2)}</td>
                         <td className="table-cell-wrap">
-                          {truncateText(draft.summary, 140)}
+                          {truncateText(draft.summary || "No summary provided.", 140)}
                           <br />
-                          <span className="hint muted">{truncateText(draft.why_competitor, 140)}</span>
+                          <span className="hint muted">
+                            <strong>Why this competitor:</strong>{" "}
+                            {truncateText(draft.why_competitor || "Reasoning not provided.", 140)}
+                          </span>
                         </td>
                         <td>{draft.review_status}</td>
                         <td>

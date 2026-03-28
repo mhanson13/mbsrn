@@ -311,6 +311,8 @@ class SEOCompetitorProfileDraftRead(BaseModel):
     evidence: str | None
     confidence_score: float
     source: str
+    forced_inclusion: bool = False
+    forced_reason: str | None = None
     review_status: SEOCompetitorProfileDraftReviewStatus
     edited_fields_json: dict[str, object] | None
     review_notes: str | None
@@ -385,6 +387,7 @@ class SEOCompetitorProfileCandidatePipelineSummaryRead(BaseModel):
     removed_by_deduplication_count: int = Field(ge=0)
     removed_by_final_limit_count: int = Field(ge=0)
     final_candidate_count: int = Field(ge=0)
+    relaxed_filtering_applied: bool = False
 
 
 class SEOCompetitorProfileProviderAttemptRead(BaseModel):
