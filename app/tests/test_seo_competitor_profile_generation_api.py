@@ -1757,7 +1757,7 @@ def test_async_execution_forces_minimal_drafts_when_all_candidates_were_filtered
     assert forced_output_event["forced_drafts"] == 1
 
 
-def test_empty_candidate_output_completes_run_without_malformed_failure(db_session, seeded_business) -> None:
+def test_empty_candidate_output_uses_synthetic_fallback_drafts(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -1783,14 +1783,21 @@ def test_empty_candidate_output_completes_run_without_malformed_failure(db_sessi
     assert detail.status_code == 200
     payload = detail.json()
     assert payload["run"]["status"] == "completed"
-    assert payload["run"]["generated_draft_count"] == 0
+    assert payload["run"]["generated_draft_count"] == 3
     assert payload["run"]["failure_category"] is None
     assert payload["run"]["error_summary"] is None
     assert payload["run"]["raw_candidate_count"] == 0
-    assert payload["run"]["included_candidate_count"] == 0
+    assert payload["run"]["included_candidate_count"] == 3
     assert payload["run"]["excluded_candidate_count"] == 0
-    assert payload["total_drafts"] == 0
+    assert payload["total_drafts"] == 3
     assert payload["rejected_candidate_count"] == 0
+    assert payload["provider_attempt_count"] == 3
+    assert payload["provider_attempts"][-1]["execution_mode"] == "fallback"
+    assert payload["provider_attempts"][-1]["degraded_mode"] is True
+    assert payload["provider_attempts"][-1]["recovery_path"] == "synthetic_fallback"
+    assert payload["provider_attempts"][-1]["final_outcome"] == "degraded_success"
+    assert all(item["forced_inclusion"] is True for item in payload["drafts"])
+    assert all(item["source"] == "ai_forced_fallback" for item in payload["drafts"])
 
 
 def test_malformed_provider_output_skips_invalid_candidates_and_keeps_valid_drafts(db_session, seeded_business) -> None:
@@ -1886,7 +1893,7 @@ def test_invalid_candidate_reasons_are_classified_with_specific_codes(db_session
     assert relaxation_event["no_domain_allowed"] == 0
 
 
-def test_invalid_confidence_output_fails_run_safely(db_session, seeded_business) -> None:
+def test_invalid_confidence_output_uses_synthetic_fallback(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -1911,13 +1918,15 @@ def test_invalid_confidence_output_fails_run_safely(db_session, seeded_business)
     )
     assert detail.status_code == 200
     payload = detail.json()
-    assert payload["run"]["status"] == "failed"
-    assert payload["run"]["error_summary"] == INVALID_OUTPUT_ERROR_SUMMARY
-    assert payload["run"]["failure_category"] == "malformed_output"
-    assert payload["total_drafts"] == 0
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["error_summary"] is None
+    assert payload["run"]["failure_category"] is None
+    assert payload["total_drafts"] == 3
+    assert payload["provider_attempts"][-1]["execution_mode"] == "fallback"
+    assert payload["provider_attempts"][-1]["escalation_reason"] == "zero_usable_candidates_after_validation"
 
 
-def test_timeout_provider_failure_marks_run_failed_safely(db_session, seeded_business, caplog) -> None:
+def test_timeout_provider_failure_uses_synthetic_fallback(db_session, seeded_business, caplog) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -1943,58 +1952,34 @@ def test_timeout_provider_failure_marks_run_failed_safely(db_session, seeded_bus
     )
     assert detail.status_code == 200
     payload = detail.json()
-    assert payload["run"]["status"] == "failed"
-    assert payload["run"]["error_summary"] == PROVIDER_TIMEOUT_ERROR_SUMMARY
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["error_summary"] is None
     assert payload["run"]["provider_name"] == "openai"
     assert payload["run"]["model_name"] == "gpt-4.1-mini"
-    assert payload["run"]["failure_category"] == "timeout"
-    assert payload["provider_attempt_count"] == 3
+    assert payload["run"]["failure_category"] is None
+    assert payload["provider_attempt_count"] == 4
     assert payload["provider_degraded_retry_used"] is True
     assert len(payload["provider_attempts"]) == 3
-    assert payload["provider_attempts"][0]["attempt_number"] == 0
-    assert payload["provider_attempts"][0]["execution_mode"] == "fast_path"
-    assert payload["provider_attempts"][0]["provider_call_type"] == "non_tool"
-    assert payload["provider_attempts"][0]["degraded_mode"] is False
-    assert payload["provider_attempts"][0]["web_search_enabled"] is False
-    assert payload["provider_attempts"][0]["failure_kind"] == "timeout"
-    assert payload["provider_attempts"][0]["request_duration_ms"] is not None
-    assert payload["provider_attempts"][0]["request_duration_ms"] >= 0
-    assert payload["provider_attempts"][1]["attempt_number"] == 1
-    assert payload["provider_attempts"][1]["execution_mode"] == "full"
-    assert payload["provider_attempts"][1]["provider_call_type"] == "tool_enabled"
-    assert payload["provider_attempts"][1]["degraded_mode"] is False
-    assert payload["provider_attempts"][1]["web_search_enabled"] is True
-    assert payload["provider_attempts"][1]["failure_kind"] == "timeout"
-    assert payload["provider_attempts"][1]["request_duration_ms"] is not None
-    assert payload["provider_attempts"][1]["request_duration_ms"] >= 0
-    assert payload["provider_attempts"][2]["attempt_number"] == 2
-    assert payload["provider_attempts"][2]["execution_mode"] == "degraded"
-    assert payload["provider_attempts"][2]["provider_call_type"] == "non_tool"
-    assert payload["provider_attempts"][2]["degraded_mode"] is True
-    assert payload["provider_attempts"][2]["web_search_enabled"] is False
-    assert payload["provider_attempts"][2]["failure_kind"] == "timeout"
-    assert payload["provider_attempts"][2]["request_duration_ms"] is not None
-    assert payload["provider_attempts"][2]["request_duration_ms"] >= 0
-    assert payload["provider_attempts"][0]["requested_candidate_count"] == 4
-    assert payload["provider_attempts"][1]["requested_candidate_count"] == 4
-    assert payload["provider_attempts"][2]["requested_candidate_count"] == 3
-    assert payload["provider_attempts"][0]["max_attempts"] == 3
-    assert payload["provider_attempts"][1]["max_attempts"] == 3
-    assert payload["provider_attempts"][2]["max_attempts"] == 3
-    assert payload["provider_attempts"][0]["recovered_after_timeout"] is False
-    assert payload["provider_attempts"][0]["recovery_path"] == "none"
-    assert payload["provider_attempts"][0]["final_outcome"] == "failure"
-    assert payload["provider_attempts"][2]["final_outcome"] == "failure"
+    assert all(item["max_attempts"] == 4 for item in payload["provider_attempts"])
+    assert any(item["failure_kind"] == "timeout" for item in payload["provider_attempts"])
+    fallback_attempt = payload["provider_attempts"][-1]
+    assert fallback_attempt["execution_mode"] == "fallback"
+    assert fallback_attempt["provider_call_type"] == "non_tool"
+    assert fallback_attempt["degraded_mode"] is True
+    assert fallback_attempt["web_search_enabled"] is False
+    assert fallback_attempt["failure_kind"] is None
+    assert fallback_attempt["recovery_path"] == "synthetic_fallback"
+    assert fallback_attempt["final_outcome"] == "degraded_success"
+    assert fallback_attempt["recovered_after_timeout"] is True
+    assert fallback_attempt["escalation_reason"] == "provider_timeout_exhausted"
+    assert payload["total_drafts"] == 3
+    assert all(item["forced_inclusion"] is True for item in payload["drafts"])
     events = _structured_event_records(caplog)
-    timeout_outcome_event = next(item for item in events if item.get("event") == "competitor_timeout_outcome")
+    timeout_outcome_event = [item for item in events if item.get("event") == "competitor_timeout_outcome"][-1]
     assert timeout_outcome_event["run_id"] == run_id
-    assert timeout_outcome_event["final_outcome"] == "failure"
-    assert timeout_outcome_event["recovered_after_timeout"] is False
-    assert timeout_outcome_event["recovery_path"] == "none"
-    timeout_outcome_record = next(
-        record for record in caplog.records if "\"event\": \"competitor_timeout_outcome\"" in record.getMessage()
-    )
-    assert timeout_outcome_record.levelname == "ERROR"
+    assert timeout_outcome_event["final_outcome"] == "degraded_success"
+    assert timeout_outcome_event["recovered_after_timeout"] is True
+    assert timeout_outcome_event["recovery_path"] == "synthetic_fallback"
     persisted_run = (
         db_session.query(SEOCompetitorProfileGenerationRun)
         .filter(SEOCompetitorProfileGenerationRun.business_id == seeded_business.id)
@@ -3816,8 +3801,17 @@ def test_generation_summary_endpoint_returns_status_failure_and_retry_metrics(db
         provider=_InvalidCompetitorProfileProvider(),
     )
 
+    failed_run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=failed_run_id,
+        provider=_ProviderAuthCompetitorProfileProvider(),
+    )
+
     retry_response = client.post(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{timeout_run_id}/retry"
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{failed_run_id}/retry"
     )
     assert retry_response.status_code == 201
 
@@ -3829,16 +3823,17 @@ def test_generation_summary_endpoint_returns_status_failure_and_retry_metrics(db
 
     assert payload["queued_count"] == 1
     assert payload["running_count"] == 0
-    assert payload["completed_count"] == 2
+    assert payload["completed_count"] == 3
     assert payload["failed_count"] == 1
     assert payload["retry_child_runs"] == 1
     assert payload["retried_parent_runs"] == 1
     assert payload["failed_runs_retried"] == 1
-    assert payload["failure_category_counts"]["timeout"] == 1
+    assert payload["failure_category_counts"]["provider_config"] == 1
+    assert payload["failure_category_counts"].get("timeout", 0) == 0
     assert payload["failure_category_counts"].get("malformed_output", 0) == 0
-    assert payload["total_runs"] == 4
+    assert payload["total_runs"] == 5
     assert payload["total_raw_candidate_count"] == 3
-    assert payload["total_included_candidate_count"] == 3
+    assert payload["total_included_candidate_count"] == 6
     assert payload["total_excluded_candidate_count"] == 0
     assert payload["exclusion_counts_by_reason"] == {
         "duplicate": 0,
@@ -3912,7 +3907,7 @@ def test_generation_summary_endpoint_aggregates_cross_run_exclusion_telemetry(db
 
     assert payload["total_runs"] == 3
     assert payload["total_raw_candidate_count"] == 8
-    assert payload["total_included_candidate_count"] == 3
+    assert payload["total_included_candidate_count"] == 6
     assert payload["total_excluded_candidate_count"] == 5
     assert payload["exclusion_counts_by_reason"] == {
         "duplicate": 1,

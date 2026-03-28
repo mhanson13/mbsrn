@@ -1332,7 +1332,7 @@ def test_malformed_candidate_diagnostics_capture_multiple_invalid_indexes(monkey
         item for item in structured_events if item.get("event") == "competitor_candidate_schema_diagnostics"
     )
     assert diagnostics_event["invalid_candidate_count"] == 2
-    assert diagnostics_event["invalid_field_type_count"] >= 2
+    assert diagnostics_event["invalid_field_type_count"] == 1
     assert diagnostics_event["invalid_candidate_indexes"] == [1, 2]
 
 
@@ -1373,8 +1373,12 @@ def test_fully_invalid_candidate_entries_emit_error_severity_diagnostics(monkeyp
     )
     assert diagnostics_event["valid_candidate_count"] == 0
     assert diagnostics_event["invalid_candidate_count"] == 2
-    assert diagnostics_event["invalid_field_type_count"] >= 2
+    assert diagnostics_event["invalid_field_type_count"] == 0
     assert diagnostics_event["recoverable"] is False
+    invalid_fields = diagnostics_event["invalid_fields"]
+    assert isinstance(invalid_fields, list)
+    assert invalid_fields
+    assert all(item["discard_reason"] in {"missing_required_field", "invalid_string_value"} for item in invalid_fields)
     diagnostics_records = [
         record
         for record in caplog.records
@@ -1619,3 +1623,130 @@ def test_non_confidence_collection_type_drift_emits_schema_diagnostics(monkeypat
     assert invalid_fields[0]["field_name"] == "summary"
     assert invalid_fields[0]["expected_type"] == "string|null"
     assert invalid_fields[0]["actual_type"] == "object"
+
+
+def test_blank_required_string_fields_are_classified_as_value_errors_not_type_errors(monkeypatch, caplog) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "Valid Candidate",
+                    "domain": "valid-candidate.example",
+                    "competitor_type": "direct",
+                    "summary": "valid",
+                    "why_competitor": "valid",
+                    "evidence": "valid",
+                    "confidence_score": 0.8,
+                },
+                {
+                    "name": "   ",
+                    "domain": "   ",
+                    "competitor_type": "direct",
+                    "summary": "blank required strings",
+                    "why_competitor": "name/domain blank",
+                    "evidence": "deterministic semantic invalidity",
+                    "confidence_score": 0.7,
+                },
+            ]
+        }
+    )
+
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        output = provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=2,
+            run_id="run-blank-string-classification",
+            attempt_number=1,
+            execution_mode="full",
+        )
+
+    assert len(output.candidates) == 1
+    structured_events = _structured_event_records(caplog)
+    diagnostics_event = next(
+        item for item in structured_events if item.get("event") == "competitor_candidate_schema_diagnostics"
+    )
+    assert diagnostics_event["valid_candidate_count"] == 1
+    assert diagnostics_event["invalid_candidate_count"] == 1
+    assert diagnostics_event["invalid_field_type_count"] == 0
+    invalid_fields = diagnostics_event["invalid_fields"]
+    assert isinstance(invalid_fields, list)
+    assert invalid_fields
+    assert any(item["field_name"] == "name" for item in invalid_fields)
+    assert all(item["discard_reason"] != "invalid_field_type" for item in invalid_fields)
+    assert all(
+        not (
+            item["expected_type"] == "string"
+            and item["actual_type"] == "string"
+            and item["discard_reason"] == "invalid_field_type"
+        )
+        for item in invalid_fields
+    )
+
+
+def test_valid_required_string_fields_do_not_emit_schema_diagnostics(monkeypatch, caplog) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "  Trimmed Name  ",
+                    "domain": " https://Valid-Domain.example/path ",
+                    "competitor_type": " direct ",
+                    "summary": "valid",
+                    "why_competitor": "valid required strings",
+                    "evidence": "deterministic valid fixture",
+                    "confidence_score": 0.73,
+                }
+            ]
+        }
+    )
+
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        output = provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=1,
+            run_id="run-valid-required-strings",
+            attempt_number=1,
+            execution_mode="full",
+        )
+
+    assert len(output.candidates) == 1
+    assert output.candidates[0].suggested_name == "Trimmed Name"
+    assert output.candidates[0].suggested_domain == "valid-domain.example"
+    structured_events = _structured_event_records(caplog)
+    assert not any(item.get("event") == "competitor_candidate_schema_diagnostics" for item in structured_events)

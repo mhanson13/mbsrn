@@ -46,6 +46,7 @@ _MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY = "missing_candidates_array"
 _MALFORMED_OUTPUT_REASON_INVALID_TOP_LEVEL_SHAPE = "invalid_top_level_shape"
 _MALFORMED_OUTPUT_REASON_PARTIAL_JSON = "partial_json"
 _MALFORMED_OUTPUT_REASON_INVALID_FIELD_TYPES = "invalid_field_types"
+_MALFORMED_OUTPUT_REASON_INVALID_CANDIDATE_VALUES = "invalid_candidate_values"
 _MALFORMED_OUTPUT_ALLOWED_REASONS = {
     _MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR,
     _MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,
@@ -53,6 +54,7 @@ _MALFORMED_OUTPUT_ALLOWED_REASONS = {
     _MALFORMED_OUTPUT_REASON_INVALID_TOP_LEVEL_SHAPE,
     _MALFORMED_OUTPUT_REASON_PARTIAL_JSON,
     _MALFORMED_OUTPUT_REASON_INVALID_FIELD_TYPES,
+    _MALFORMED_OUTPUT_REASON_INVALID_CANDIDATE_VALUES,
 }
 _PROVIDER_CALL_TYPE_TOOL_ENABLED = "tool_enabled"
 _PROVIDER_CALL_TYPE_NON_TOOL = "non_tool"
@@ -89,6 +91,12 @@ _CANDIDATE_FIELD_EXPECTED_TYPES = {
     "why_competitor": "string|null",
     "evidence": "string|null",
     "confidence_score": "number",
+}
+_TYPE_MISMATCH_DISCARD_REASONS = {
+    "invalid_field_type",
+    "invalid_numeric_type",
+    "invalid_string_type",
+    "invalid_candidate_shape",
 }
 
 
@@ -477,7 +485,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                         endpoint_path,
                         ",".join(recovery.recovery_actions),
                     )
-                if invalid_field_type_count > 0:
+                if invalid_candidate_count > 0:
                     self._log_candidate_schema_diagnostics(
                         endpoint_path=endpoint_path,
                         request_debug=request_debug,
@@ -504,7 +512,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     invalid_field_diagnostics=invalid_field_diagnostics,
                 )
 
-            if invalid_field_type_count > 0:
+            if invalid_candidate_count > 0:
                 self._log_candidate_schema_diagnostics(
                     endpoint_path=endpoint_path,
                     request_debug=request_debug,
@@ -541,8 +549,12 @@ class OpenAISEOCompetitorProfileGenerationProvider:
 
         malformed_reason = recovery.reason
         if malformed_reason is None:
-            if has_candidate_array and invalid_field_type_count > 0:
-                malformed_reason = _MALFORMED_OUTPUT_REASON_INVALID_FIELD_TYPES
+            if has_candidate_array and invalid_candidate_count > 0:
+                malformed_reason = (
+                    _MALFORMED_OUTPUT_REASON_INVALID_FIELD_TYPES
+                    if invalid_field_type_count > 0
+                    else _MALFORMED_OUTPUT_REASON_INVALID_CANDIDATE_VALUES
+                )
             elif recovery.payload is not None and not has_candidate_array:
                 malformed_reason = _MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY
             else:
@@ -604,17 +616,16 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             except ValidationError as exc:
                 coerced_candidate = self._coerce_candidate_from_structured_item(raw_candidate)
                 invalid_candidate_indexes.append(candidate_index)
-                invalid_field_diagnostics.extend(
-                    self._build_candidate_validation_diagnostics(
-                        candidate_index=candidate_index,
-                        raw_candidate=raw_candidate,
-                        validation_error=exc,
-                    )
+                candidate_diagnostics = self._build_candidate_validation_diagnostics(
+                    candidate_index=candidate_index,
+                    raw_candidate=raw_candidate,
+                    validation_error=exc,
                 )
-                if coerced_candidate is None:
+                invalid_field_diagnostics.extend(candidate_diagnostics)
+                if self._candidate_diagnostics_include_type_mismatch(candidate_diagnostics):
                     invalid_field_type_count += 1
+                if coerced_candidate is None:
                     continue
-                invalid_field_type_count += 1
                 coerced_candidate_count += 1
                 candidates.append(coerced_candidate)
                 continue
@@ -918,13 +929,20 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             field_name = loc_items[-1] if loc_items else "candidate"
             expected_type = _CANDIDATE_FIELD_EXPECTED_TYPES.get(field_name, "schema")
             actual_value = self._value_for_error_location(raw_candidate=raw_candidate, loc=loc_items)
-            discard_reason = self._map_candidate_validation_discard_reason(error_item.get("type"))
+            actual_type = self._describe_value_type(actual_value)
+            discard_reason = self._map_candidate_validation_discard_reason(
+                raw_error_type=error_item.get("type"),
+                error_message=error_item.get("msg"),
+                field_name=field_name,
+                expected_type=expected_type,
+                actual_type=actual_type,
+            )
             diagnostics.append(
                 {
                     "candidate_index": max(0, int(candidate_index)),
                     "field_name": field_name,
                     "expected_type": expected_type,
-                    "actual_type": self._describe_value_type(actual_value),
+                    "actual_type": actual_type,
                     "discard_reason": discard_reason,
                     "required_or_optional": (
                         "required"
@@ -947,6 +965,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "required_or_optional": "required",
             }
         ]
+
+    def _candidate_diagnostics_include_type_mismatch(self, diagnostics: list[dict[str, object]]) -> bool:
+        for item in diagnostics:
+            discard_reason = _clean_optional_value(item.get("discard_reason"))
+            if discard_reason in _TYPE_MISMATCH_DISCARD_REASONS:
+                return True
+        return False
 
     def _value_for_error_location(self, *, raw_candidate: object, loc: list[str]) -> object:
         current: object = raw_candidate
@@ -983,18 +1008,59 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             return "object"
         return type(value).__name__
 
-    def _map_candidate_validation_discard_reason(self, raw_error_type: object) -> str:
+    def _map_candidate_validation_discard_reason(
+        self,
+        *,
+        raw_error_type: object,
+        error_message: object,
+        field_name: str,
+        expected_type: str,
+        actual_type: str,
+    ) -> str:
         error_type = str(raw_error_type or "").strip().lower()
+        message = str(error_message or "").strip().lower()
+        expected = expected_type.strip().lower()
+        field = field_name.strip().lower()
         if not error_type:
+            if expected.startswith("string") and actual_type == "string":
+                return "invalid_string_value"
+            if expected == "number" and actual_type == "string":
+                return "invalid_numeric_value"
             return "invalid_field_type"
         if "missing" in error_type:
             return "missing_required_field"
-        if "float" in error_type or "number" in error_type:
-            return "invalid_numeric_type"
-        if "string" in error_type:
-            return "invalid_string_type"
         if "dict" in error_type or "model_type" in error_type:
             return "invalid_candidate_shape"
+        if "float" in error_type or "number" in error_type or "int" in error_type:
+            if actual_type in {"string", "null", "missing"}:
+                return "invalid_numeric_value"
+            return "invalid_numeric_type"
+        if "string" in error_type:
+            if actual_type == "string":
+                return "invalid_string_value"
+            return "invalid_string_type"
+        if "value_error" in error_type:
+            if "required" in message or "empty" in message or "blank" in message:
+                if actual_type in {"missing", "null"}:
+                    return "missing_required_field"
+                if expected.startswith("string"):
+                    return "invalid_string_value"
+                return "invalid_field_value"
+            if "numeric" in message or "number" in message or "float" in message:
+                if actual_type in {"string", "null", "missing"}:
+                    return "invalid_numeric_value"
+                return "invalid_numeric_type"
+            if "string" in message:
+                if actual_type == "string":
+                    return "invalid_string_value"
+                return "invalid_string_type"
+            if field in {"name", "domain", "competitor_type"} and actual_type == "string":
+                return "invalid_string_value"
+            return "invalid_field_value"
+        if expected.startswith("string") and actual_type == "string":
+            return "invalid_string_value"
+        if expected == "number" and actual_type == "string":
+            return "invalid_numeric_value"
         return "invalid_field_type"
 
     def _log_candidate_schema_diagnostics(

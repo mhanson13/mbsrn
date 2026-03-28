@@ -179,7 +179,7 @@ Recoverable schema-drift behavior:
 - Structured diagnostics event: `competitor_candidate_schema_diagnostics` with bounded fields:
   - `valid_candidate_count`
   - `invalid_candidate_count`
-  - `invalid_field_type_count`
+  - `invalid_field_type_count` (type mismatches only)
   - `invalid_candidate_indexes`
   - `invalid_fields[]` entries containing:
     - `candidate_index`
@@ -188,6 +188,10 @@ Recoverable schema-drift behavior:
     - `actual_type`
     - `discard_reason`
     - `required_or_optional`
+  - `discard_reason` values are semantic where applicable:
+    - `invalid_string_value` / `invalid_numeric_value` for content-invalid values with otherwise valid primitive types
+    - `invalid_string_type` / `invalid_numeric_type` for true type mismatches
+    - `missing_required_field` for omitted required fields
 
 Deterministic normalization:
 
@@ -209,7 +213,7 @@ Trigger/level semantics:
 First fields to inspect:
 - `valid_candidate_count`
 - `invalid_candidate_count`
-- `invalid_field_type_count`
+- `invalid_field_type_count` (true type mismatches only)
 - `invalid_candidate_indexes`
 - `invalid_fields[].field_name`
 - `invalid_fields[].actual_type`
@@ -308,8 +312,33 @@ Structured timeout outcome event:
   - `context_json_chars`
   - `prompt_size_risk`
   - `recovered_after_timeout`
-  - `recovery_path` (`retry_success`, `fallback_success`, `degraded_success`, `none`)
+  - `recovery_path` (`retry_success`, `fallback_success`, `degraded_success`, `synthetic_fallback`, `none`)
   - `final_outcome`
+
+### Last-Resort Synthetic Fallback
+
+To prevent empty operator output in worst-case runs, competitor generation now applies a final deterministic local fallback when either condition is true:
+
+- all provider attempts exhausted on timeout
+- provider attempts complete, but zero usable drafts remain after validation/filtering
+
+Behavior:
+
+- generates `3..5` schema-valid draft candidates from local site/business context only
+- uses deterministic service/location naming patterns (no external calls)
+- does not claim provider verification or web-search evidence
+- marks output as degraded fallback in run metadata:
+  - provider attempt `execution_mode=fallback`
+  - `degraded_mode=true`
+  - `recovery_path=synthetic_fallback`
+  - `final_outcome=degraded_success`
+  - draft `source=ai_forced_fallback`
+
+Safety intent:
+
+- keep operator review moving when provider output is unavailable or unusable
+- preserve bounded runtime and deterministic behavior
+- avoid silently presenting synthetic output as provider-verified discovery
 
 Degraded retry intent:
 - reduce request cost under provider/web-search latency

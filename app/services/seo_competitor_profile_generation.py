@@ -122,17 +122,18 @@ _CANDIDATE_PIPELINE_SUMMARY_KEY = "candidate_pipeline_summary_debug"
 _PROVIDER_ATTEMPTS_DEBUG_KEY = "provider_attempts_debug"
 _PROVIDER_ATTEMPT_COUNT_KEY = "provider_attempt_count"
 _PROVIDER_DEGRADED_RETRY_USED_KEY = "provider_degraded_retry_used"
-_EXECUTION_MODES = {"fast_path", "full", "degraded"}
+_EXECUTION_MODES = {"fast_path", "full", "degraded", "fallback"}
 _EXECUTION_MODE_FAST_PATH = "fast_path"
 _EXECUTION_MODE_FULL = "full"
 _EXECUTION_MODE_DEGRADED = "degraded"
+_EXECUTION_MODE_FALLBACK = "fallback"
 _PROVIDER_CALL_TYPE_TOOL_ENABLED = "tool_enabled"
 _PROVIDER_CALL_TYPE_NON_TOOL = "non_tool"
 _PROVIDER_CALL_TYPES = {_PROVIDER_CALL_TYPE_TOOL_ENABLED, _PROVIDER_CALL_TYPE_NON_TOOL}
 # Fast path (0), full (1), degraded (2).
 _MAX_PROVIDER_TIMEOUT_ATTEMPTS = 3
 _TIMEOUT_TYPE_VALUES = {"read", "connect", "overall", "unknown"}
-_TIMEOUT_RECOVERY_PATHS = {"retry_success", "fallback_success", "degraded_success", "none"}
+_TIMEOUT_RECOVERY_PATHS = {"retry_success", "fallback_success", "degraded_success", "synthetic_fallback", "none"}
 _TIMEOUT_FINAL_OUTCOMES = {"success", "degraded_success", "failure"}
 # TODO: formalize provider abstraction with explicit tool/no-tool interfaces.
 _SITE_CONTENT_SIGNALS_ATTR = "_seo_site_content_signals"
@@ -149,6 +150,11 @@ _FORCED_OUTPUT_REASON_NO_VALID_DRAFTS = "no_valid_drafts_after_filtering"
 _FORCED_DRAFT_SOURCE = "ai_forced_fallback"
 _FORCED_DRAFT_MIN_COUNT = 3
 _FORCED_DRAFT_MAX_COUNT = 5
+_SYNTHETIC_FALLBACK_RECOVERY_PATH = "synthetic_fallback"
+_SYNTHETIC_FALLBACK_REASON_TIMEOUT_EXHAUSTED = "provider_timeout_exhausted"
+_SYNTHETIC_FALLBACK_REASON_ZERO_USABLE_CANDIDATES = "zero_usable_candidates_after_validation"
+_SYNTHETIC_FALLBACK_DOMAIN_SUFFIX = "mbsrn-fallback.local"
+_SYNTHETIC_FALLBACK_MIN_CONFIDENCE = 0.28
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
 _UNKNOWN_NAME_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 _UNKNOWN_PLACEHOLDER_NAME_TOKENS = {
@@ -664,6 +670,23 @@ class SEOCompetitorProfileGenerationService:
                 run=run,
                 raw_candidates=output.candidates,
             )
+            if not draft_result.drafts:
+                synthetic_fallback_result = self._build_synthetic_fallback_draft_result(
+                    site=site,
+                    run=run,
+                    existing_domains=existing_domains,
+                    fallback_reason=_SYNTHETIC_FALLBACK_REASON_ZERO_USABLE_CANDIDATES,
+                    baseline_result=draft_result,
+                )
+                if synthetic_fallback_result is not None:
+                    draft_result = synthetic_fallback_result
+                    self._apply_synthetic_fallback_attempt_metadata(
+                        provider_attempts=provider_attempts,
+                        run_id=run.id,
+                        site=site,
+                        requested_candidate_count=run.requested_candidate_count,
+                        fallback_reason=_SYNTHETIC_FALLBACK_REASON_ZERO_USABLE_CANDIDATES,
+                    )
             self._log_discovery_pipeline_telemetry(
                 run=run,
                 draft_result=draft_result,
@@ -770,6 +793,20 @@ class SEOCompetitorProfileGenerationService:
             )
         except SEOCompetitorProfileProviderError as exc:
             self.session.rollback()
+            if exc.code == "timeout":
+                timeout_fallback_detail = self._complete_run_with_synthetic_fallback(
+                    business_id=business_id,
+                    site=site,
+                    run_id=generation_run_id,
+                    provider_name=exc.provider_name,
+                    model_name=exc.model_name,
+                    prompt_version=exc.prompt_version,
+                    raw_output=exc.raw_output,
+                    provider_attempts=provider_attempts,
+                    fallback_reason=_SYNTHETIC_FALLBACK_REASON_TIMEOUT_EXHAUSTED,
+                )
+                if timeout_fallback_detail is not None:
+                    return timeout_fallback_detail
             failure_raw_output = self._embed_competitor_debug_in_raw_output(
                 raw_output=exc.raw_output,
                 rejected_candidates=[],
@@ -1773,6 +1810,469 @@ class SEOCompetitorProfileGenerationService:
         if cleaned:
             return cleaned.lower()
         return f"unknown-domain-{max(0, int(source_index)) + 1}"
+
+    def _build_synthetic_fallback_draft_result(
+        self,
+        *,
+        site: SEOSite,
+        run: SEOCompetitorProfileGenerationRun,
+        existing_domains: list[str],
+        fallback_reason: str,
+        baseline_result: SEOCompetitorProfileDraftBuildResult | None = None,
+    ) -> SEOCompetitorProfileDraftBuildResult | None:
+        fallback_candidates = self._build_synthetic_fallback_candidates(
+            site=site,
+            requested_candidate_count=run.requested_candidate_count,
+            existing_domains=existing_domains,
+        )
+        if not fallback_candidates:
+            return None
+
+        drafts: list[SEOCompetitorProfileDraft] = []
+        for index, candidate in enumerate(fallback_candidates):
+            confidence_score = max(0.0, min(1.0, float(candidate["confidence_score"])))
+            relevance_score = max(0, min(100, int(round(confidence_score * 100))))
+            drafts.append(
+                SEOCompetitorProfileDraft(
+                    id=str(uuid4()),
+                    business_id=run.business_id,
+                    site_id=run.site_id,
+                    generation_run_id=run.id,
+                    suggested_name=str(candidate["suggested_name"]),
+                    suggested_domain=str(candidate["suggested_domain"]),
+                    competitor_type=str(candidate["competitor_type"]),
+                    summary=self._clean_optional(str(candidate["summary"])),
+                    why_competitor=self._clean_optional(str(candidate["why_competitor"])),
+                    evidence=self._clean_optional(str(candidate["evidence"])),
+                    confidence_score=confidence_score,
+                    relevance_score=relevance_score,
+                    source=_FORCED_DRAFT_SOURCE,
+                    review_status="pending",
+                )
+            )
+            if index >= _FORCED_DRAFT_MAX_COUNT:
+                break
+
+        draft_count = len(drafts)
+        if draft_count <= 0:
+            return None
+        self._emit_structured_service_log(
+            payload={
+                "event": "competitor_synthetic_fallback",
+                "run_id": run.id,
+                "business_id": run.business_id,
+                "site_id": run.site_id,
+                "fallback_reason": fallback_reason,
+                "fallback_candidate_count": draft_count,
+                "provider_raw_candidate_count": (
+                    int(baseline_result.raw_candidate_count)
+                    if baseline_result is not None
+                    else 0
+                ),
+            },
+            fallback_message="competitor_synthetic_fallback",
+        )
+        if baseline_result is not None:
+            summary = baseline_result.candidate_pipeline_summary
+            return SEOCompetitorProfileDraftBuildResult(
+                drafts=drafts,
+                forced_draft_count=draft_count,
+                raw_candidate_count=baseline_result.raw_candidate_count,
+                included_candidate_count=draft_count,
+                deduped_candidate_count=baseline_result.deduped_candidate_count,
+                ineligible_candidate_count=baseline_result.ineligible_candidate_count,
+                excluded_candidate_count=baseline_result.excluded_candidate_count,
+                exclusion_counts_by_reason=baseline_result.exclusion_counts_by_reason,
+                ineligibility_counts_by_reason=baseline_result.ineligibility_counts_by_reason,
+                rejected_candidates=baseline_result.rejected_candidates,
+                tuning_rejected_candidates=baseline_result.tuning_rejected_candidates,
+                tuning_rejection_reason_counts=baseline_result.tuning_rejection_reason_counts,
+                candidate_pipeline_summary=SEOCompetitorProfileCandidatePipelineSummary(
+                    proposed_candidate_count=summary.proposed_candidate_count,
+                    rejected_by_eligibility_count=summary.rejected_by_eligibility_count,
+                    eligible_candidate_count=summary.eligible_candidate_count,
+                    rejected_by_tuning_count=summary.rejected_by_tuning_count,
+                    survived_tuning_count=summary.survived_tuning_count,
+                    removed_by_existing_domain_match_count=summary.removed_by_existing_domain_match_count,
+                    removed_by_deduplication_count=summary.removed_by_deduplication_count,
+                    removed_by_final_limit_count=summary.removed_by_final_limit_count,
+                    final_candidate_count=draft_count,
+                    relaxed_filtering_applied=summary.relaxed_filtering_applied,
+                ),
+            )
+        return SEOCompetitorProfileDraftBuildResult(
+            drafts=drafts,
+            forced_draft_count=draft_count,
+            raw_candidate_count=0,
+            included_candidate_count=draft_count,
+            deduped_candidate_count=0,
+            ineligible_candidate_count=0,
+            excluded_candidate_count=0,
+            exclusion_counts_by_reason=self._normalize_exclusion_counts_by_reason(default_exclusion_reason_counts()),
+            ineligibility_counts_by_reason={reason: 0 for reason in INELIGIBILITY_REASON_KEYS},
+            rejected_candidates=[],
+            tuning_rejected_candidates=[],
+            tuning_rejection_reason_counts=self._normalize_tuning_rejection_reason_counts({}),
+            candidate_pipeline_summary=SEOCompetitorProfileCandidatePipelineSummary(
+                proposed_candidate_count=0,
+                rejected_by_eligibility_count=0,
+                eligible_candidate_count=0,
+                rejected_by_tuning_count=0,
+                survived_tuning_count=0,
+                removed_by_existing_domain_match_count=0,
+                removed_by_deduplication_count=0,
+                removed_by_final_limit_count=0,
+                final_candidate_count=draft_count,
+                relaxed_filtering_applied=False,
+            ),
+        )
+
+    def _build_synthetic_fallback_candidates(
+        self,
+        *,
+        site: SEOSite,
+        requested_candidate_count: int,
+        existing_domains: list[str],
+    ) -> list[dict[str, object]]:
+        target_count = min(
+            _FORCED_DRAFT_MAX_COUNT,
+            max(_FORCED_DRAFT_MIN_COUNT, max(1, int(requested_candidate_count or 1))),
+        )
+        if target_count <= 0:
+            return []
+
+        context: dict[str, object] = {}
+        try:
+            context = build_seo_competitor_profile_prompt(
+                site=site,
+                existing_domains=existing_domains,
+                candidate_count=target_count,
+                reduced_context_mode=True,
+            ).trusted_site_context
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to build trusted site context for synthetic competitor fallback site_id=%s reason=%s",
+                site.id,
+                str(exc),
+            )
+
+        location_label = self._clean_optional(
+            str(context.get("site_location_context")) if context.get("site_location_context") is not None else None
+        ) or self._clean_optional(site.primary_location) or "local area"
+        if "unspecified" in location_label.lower():
+            location_label = self._clean_optional(site.primary_location) or "local area"
+
+        business_name = self._clean_optional(
+            str(context.get("site_business_name")) if context.get("site_business_name") is not None else None
+        ) or self._clean_optional(site.display_name) or "Local Business"
+        industry_context = self._clean_optional(
+            str(context.get("site_industry_context")) if context.get("site_industry_context") is not None else None
+        ) or self._clean_optional(site.industry) or "local services"
+        service_terms_raw = context.get("service_focus_terms")
+        service_terms: list[str] = []
+        if isinstance(service_terms_raw, list):
+            for item in service_terms_raw:
+                cleaned = self._clean_optional(str(item) if item is not None else None)
+                if cleaned and cleaned.lower() not in {term.lower() for term in service_terms}:
+                    service_terms.append(cleaned)
+        if not service_terms:
+            service_terms.append(industry_context)
+        service_terms = service_terms[:3]
+
+        reserved_domains = {
+            normalized
+            for raw in [*existing_domains, site.normalized_domain]
+            for normalized in [self._clean_optional(raw)]
+            if normalized
+        }
+        generated: list[dict[str, object]] = []
+        templates = (
+            "{service} in {location}",
+            "{service} near {location}",
+            "{service} company {location}",
+            "{location} {service} services",
+            "{service} specialists {location}",
+        )
+        for service in service_terms:
+            title_service = service.title()
+            for template in templates:
+                if len(generated) >= target_count:
+                    break
+                suggested_name = template.format(service=title_service, location=location_label).strip()
+                suggested_domain = self._build_synthetic_fallback_domain(
+                    seed_name=suggested_name,
+                    reserved_domains=reserved_domains,
+                    sequence=len(generated) + 1,
+                )
+                generated.append(
+                    self._build_synthetic_fallback_candidate_payload(
+                        suggested_name=suggested_name,
+                        suggested_domain=suggested_domain,
+                        business_name=business_name,
+                        location_label=location_label,
+                        service_term=service,
+                    )
+                )
+                reserved_domains.add(suggested_domain.lower())
+            if len(generated) >= target_count:
+                break
+
+        sequence = len(generated) + 1
+        while len(generated) < target_count:
+            fallback_service = service_terms[(sequence - 1) % len(service_terms)]
+            fallback_name = f"{fallback_service.title()} provider {location_label} {sequence}"
+            fallback_domain = self._build_synthetic_fallback_domain(
+                seed_name=fallback_name,
+                reserved_domains=reserved_domains,
+                sequence=sequence,
+            )
+            generated.append(
+                self._build_synthetic_fallback_candidate_payload(
+                    suggested_name=fallback_name,
+                    suggested_domain=fallback_domain,
+                    business_name=business_name,
+                    location_label=location_label,
+                    service_term=fallback_service,
+                )
+            )
+            reserved_domains.add(fallback_domain.lower())
+            sequence += 1
+        return generated[:target_count]
+
+    def _build_synthetic_fallback_candidate_payload(
+        self,
+        *,
+        suggested_name: str,
+        suggested_domain: str,
+        business_name: str,
+        location_label: str,
+        service_term: str,
+    ) -> dict[str, object]:
+        clean_name = self._clean_required_value(suggested_name, field_name="synthetic_suggested_name")
+        clean_domain = self._normalize_domain_value(suggested_domain)
+        normalized_service = self._clean_optional(service_term) or "local services"
+        summary = (
+            "Deterministic fallback candidate generated from local site context "
+            "after provider attempts returned no usable competitors."
+        )
+        why_competitor = (
+            f"Fallback pattern '{normalized_service}' in '{location_label}' was used for operator review."
+        )
+        evidence = (
+            f"Synthetic fallback result for {business_name}; manually verify business fit and live website."
+        )
+        return {
+            "suggested_name": clean_name,
+            "suggested_domain": clean_domain,
+            "competitor_type": "local",
+            "summary": summary,
+            "why_competitor": why_competitor,
+            "evidence": evidence,
+            "confidence_score": _SYNTHETIC_FALLBACK_MIN_CONFIDENCE,
+        }
+
+    def _build_synthetic_fallback_domain(
+        self,
+        *,
+        seed_name: str,
+        reserved_domains: set[str],
+        sequence: int,
+    ) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "-", seed_name.lower()).strip("-")
+        if not slug:
+            slug = f"local-competitor-{max(1, int(sequence))}"
+        slug = slug[:48]
+        if not slug:
+            slug = f"local-competitor-{max(1, int(sequence))}"
+
+        candidate = f"{slug}.{_SYNTHETIC_FALLBACK_DOMAIN_SUFFIX}"
+        if candidate.lower() not in reserved_domains:
+            return candidate
+        counter = 2
+        while True:
+            suffix = f"-{counter}"
+            truncated = slug[: max(1, 48 - len(suffix))]
+            candidate = f"{truncated}{suffix}.{_SYNTHETIC_FALLBACK_DOMAIN_SUFFIX}"
+            if candidate.lower() not in reserved_domains:
+                return candidate
+            counter += 1
+
+    def _apply_synthetic_fallback_attempt_metadata(
+        self,
+        *,
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug],
+        run_id: str,
+        site: SEOSite,
+        requested_candidate_count: int,
+        fallback_reason: str,
+    ) -> None:
+        timeout_observed = any(item.failure_kind == "timeout" for item in provider_attempts)
+        max_attempts = max(_MAX_PROVIDER_TIMEOUT_ATTEMPTS, len(provider_attempts) + 1)
+
+        if timeout_observed:
+            self._finalize_provider_attempt_timeout_outcome(
+                provider_attempts=provider_attempts,
+                final_outcome="degraded_success",
+                recovery_path=_SYNTHETIC_FALLBACK_RECOVERY_PATH,
+                max_attempts=max_attempts,
+            )
+            self._emit_timeout_outcome_summary_log(
+                run_id=run_id,
+                site=site,
+                provider_attempts=provider_attempts,
+                final_outcome="degraded_success",
+                recovery_path=_SYNTHETIC_FALLBACK_RECOVERY_PATH,
+                max_attempts=max_attempts,
+            )
+        else:
+            for index, attempt in enumerate(provider_attempts):
+                provider_attempts[index] = replace(
+                    attempt,
+                    max_attempts=attempt.max_attempts or max(1, len(provider_attempts)),
+                    recovered_after_timeout=False,
+                    recovery_path=_SYNTHETIC_FALLBACK_RECOVERY_PATH,
+                    final_outcome="degraded_success",
+                )
+
+        provider_attempts.append(
+            SEOCompetitorProfileProviderAttemptDebug(
+                attempt_number=max(0, len(provider_attempts)),
+                execution_mode=_EXECUTION_MODE_FALLBACK,
+                provider_call_type=_PROVIDER_CALL_TYPE_NON_TOOL,
+                degraded_mode=True,
+                reduced_context_mode=True,
+                requested_candidate_count=max(1, int(requested_candidate_count or 1)),
+                outcome="success",
+                failure_kind=None,
+                malformed_output_reason=None,
+                request_duration_ms=0,
+                timeout_seconds=None,
+                web_search_enabled=False,
+                prompt_size_risk="normal",
+                prompt_total_chars=None,
+                context_json_chars=None,
+                user_prompt_chars=None,
+                endpoint_path=None,
+                max_attempts=max_attempts,
+                timeout_type=None,
+                recovered_after_timeout=bool(timeout_observed),
+                recovery_path=_SYNTHETIC_FALLBACK_RECOVERY_PATH,
+                final_outcome="degraded_success",
+                search_escalation_triggered=False,
+                escalation_reason=fallback_reason,
+            )
+        )
+        self._emit_structured_service_log(
+            payload={
+                "event": "competitor_synthetic_fallback_applied",
+                "run_id": run_id,
+                "business_id": site.business_id,
+                "site_id": site.id,
+                "timeout_observed": timeout_observed,
+                "fallback_reason": fallback_reason,
+                "provider_attempt_count": len(provider_attempts),
+                "recovery_path": _SYNTHETIC_FALLBACK_RECOVERY_PATH,
+                "final_outcome": "degraded_success",
+            },
+            fallback_message="competitor_synthetic_fallback_applied",
+        )
+
+    def _complete_run_with_synthetic_fallback(
+        self,
+        *,
+        business_id: str,
+        site: SEOSite,
+        run_id: str,
+        provider_name: str,
+        model_name: str,
+        prompt_version: str,
+        raw_output: str | None,
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug],
+        fallback_reason: str,
+    ) -> SEOCompetitorProfileGenerationRunDetail | None:
+        run = self._get_run_for_site(
+            business_id=business_id,
+            site_id=site.id,
+            generation_run_id=run_id,
+        )
+        existing_domains = [
+            item.domain
+            for item in self.seo_competitor_repository.list_domains_for_business_site(
+                business_id,
+                site.id,
+            )
+        ]
+        draft_result = self._build_synthetic_fallback_draft_result(
+            site=site,
+            run=run,
+            existing_domains=existing_domains,
+            fallback_reason=fallback_reason,
+        )
+        if draft_result is None:
+            return None
+
+        self._apply_synthetic_fallback_attempt_metadata(
+            provider_attempts=provider_attempts,
+            run_id=run.id,
+            site=site,
+            requested_candidate_count=run.requested_candidate_count,
+            fallback_reason=fallback_reason,
+        )
+        self._log_discovery_pipeline_telemetry(
+            run=run,
+            draft_result=draft_result,
+            parsed_candidate_count=0,
+        )
+        run.status = "completed"
+        run.generated_draft_count = len(draft_result.drafts)
+        run.raw_candidate_count = draft_result.raw_candidate_count
+        run.included_candidate_count = draft_result.included_candidate_count
+        run.excluded_candidate_count = draft_result.excluded_candidate_count
+        run.exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(
+            draft_result.exclusion_counts_by_reason
+        )
+        run.provider_name = self._clean_required_value(provider_name, field_name="provider_name")
+        run.model_name = self._clean_required_value(model_name, field_name="model_name")
+        run.prompt_version = self._clean_required_value(prompt_version, field_name="prompt_version")
+        run.failure_category = None
+        run.error_summary = None
+        run.completed_at = utc_now()
+        run.raw_output = self._sanitize_raw_output(
+            self._embed_competitor_debug_in_raw_output(
+                raw_output=raw_output,
+                rejected_candidates=draft_result.rejected_candidates,
+                tuning_rejected_candidates=draft_result.tuning_rejected_candidates,
+                tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
+                candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
+                provider_attempts=provider_attempts,
+            )
+        )
+        self.seo_competitor_profile_generation_repository.save_run(run)
+        for draft in draft_result.drafts:
+            self.seo_competitor_profile_generation_repository.create_draft(draft)
+        self.session.commit()
+        self.session.refresh(run)
+        logger.warning(
+            "SEO competitor profile generation run completed via synthetic fallback business_id=%s site_id=%s run_id=%s drafts=%s reason=%s",
+            business_id,
+            site.id,
+            run.id,
+            len(draft_result.drafts),
+            fallback_reason,
+        )
+        return SEOCompetitorProfileGenerationRunDetail(
+            run=run,
+            drafts=draft_result.drafts,
+            rejected_candidate_count=max(0, len(draft_result.rejected_candidates)),
+            rejected_candidates=draft_result.rejected_candidates,
+            tuning_rejected_candidate_count=max(0, len(draft_result.tuning_rejected_candidates)),
+            tuning_rejected_candidates=draft_result.tuning_rejected_candidates,
+            tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
+            candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
+            provider_attempt_count=max(0, len(provider_attempts)),
+            provider_degraded_retry_used=any(item.degraded_mode for item in provider_attempts),
+            provider_attempts=provider_attempts,
+        )
 
     def _prepare_candidate_input_for_pipeline(
         self,
@@ -3255,7 +3755,8 @@ class SEOCompetitorProfileGenerationService:
         recovered_after_timeout = bool(
             timeout_observed
             and normalized_final_outcome in {"success", "degraded_success"}
-            and normalized_recovery_path in {"retry_success", "fallback_success", "degraded_success"}
+            and normalized_recovery_path
+            in {"retry_success", "fallback_success", "degraded_success", _SYNTHETIC_FALLBACK_RECOVERY_PATH}
         )
         normalized_max_attempts = max(1, int(max_attempts))
         for index, attempt in enumerate(provider_attempts):
@@ -3292,7 +3793,8 @@ class SEOCompetitorProfileGenerationService:
         )
         recovered_after_timeout = bool(
             normalized_final_outcome in {"success", "degraded_success"}
-            and normalized_recovery_path in {"retry_success", "fallback_success", "degraded_success"}
+            and normalized_recovery_path
+            in {"retry_success", "fallback_success", "degraded_success", _SYNTHETIC_FALLBACK_RECOVERY_PATH}
         )
         latest_attempt = provider_attempts[-1]
         latest_timeout_attempt = timeout_attempts[-1]
@@ -3342,7 +3844,7 @@ class SEOCompetitorProfileGenerationService:
         if not provider_attempts:
             return []
         serialized: list[dict[str, object]] = []
-        for item in provider_attempts[:_MAX_PROVIDER_ATTEMPTS_DEBUG_ITEMS]:
+        for item in provider_attempts[-_MAX_PROVIDER_ATTEMPTS_DEBUG_ITEMS:]:
             payload: dict[str, object] = {
                 "attempt_number": max(0, int(item.attempt_number)),
                 "execution_mode": self._clean_optional(item.execution_mode) or _EXECUTION_MODE_FULL,
