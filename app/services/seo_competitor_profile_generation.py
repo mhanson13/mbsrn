@@ -129,6 +129,11 @@ _EXECUTION_MODE_DEGRADED = "degraded"
 _PROVIDER_CALL_TYPE_TOOL_ENABLED = "tool_enabled"
 _PROVIDER_CALL_TYPE_NON_TOOL = "non_tool"
 _PROVIDER_CALL_TYPES = {_PROVIDER_CALL_TYPE_TOOL_ENABLED, _PROVIDER_CALL_TYPE_NON_TOOL}
+# Fast path (0), full (1), degraded (2).
+_MAX_PROVIDER_TIMEOUT_ATTEMPTS = 3
+_TIMEOUT_TYPE_VALUES = {"read", "connect", "overall", "unknown"}
+_TIMEOUT_RECOVERY_PATHS = {"retry_success", "fallback_success", "degraded_success", "none"}
+_TIMEOUT_FINAL_OUTCOMES = {"success", "degraded_success", "failure"}
 # TODO: formalize provider abstraction with explicit tool/no-tool interfaces.
 _SITE_CONTENT_SIGNALS_ATTR = "_seo_site_content_signals"
 _MAX_SITE_CONTENT_SIGNAL_PAGES = 40
@@ -310,6 +315,11 @@ class SEOCompetitorProfileProviderAttemptDebug:
     context_json_chars: int | None
     user_prompt_chars: int | None
     endpoint_path: str | None
+    max_attempts: int | None = None
+    timeout_type: str | None = None
+    recovered_after_timeout: bool | None = None
+    recovery_path: str | None = None
+    final_outcome: str | None = None
     search_escalation_triggered: bool = False
     escalation_reason: str | None = None
 
@@ -2592,6 +2602,40 @@ class SEOCompetitorProfileGenerationService:
     ) -> SEOCompetitorProfileGenerationOutput:
         effective_requested_count = max(1, int(requested_candidate_count))
         discovery_candidate_count = self._discovery_candidate_count(effective_requested_count)
+        max_attempts = _MAX_PROVIDER_TIMEOUT_ATTEMPTS
+
+        def _recovery_path_for_success_attempt(
+            attempt: SEOCompetitorProfileProviderAttemptDebug,
+        ) -> str:
+            if attempt.execution_mode == _EXECUTION_MODE_DEGRADED:
+                return "degraded_success"
+            if (
+                attempt.execution_mode == _EXECUTION_MODE_FULL
+                and attempt.provider_call_type == _PROVIDER_CALL_TYPE_NON_TOOL
+            ):
+                return "fallback_success"
+            return "retry_success"
+
+        def _finalize_timeout_outcome(
+            *,
+            final_outcome: str,
+            recovery_path: str = "none",
+        ) -> None:
+            self._finalize_provider_attempt_timeout_outcome(
+                provider_attempts=provider_attempts,
+                final_outcome=final_outcome,
+                recovery_path=recovery_path,
+                max_attempts=max_attempts,
+            )
+            self._emit_timeout_outcome_summary_log(
+                run_id=run_id,
+                site=site,
+                provider_attempts=provider_attempts,
+                final_outcome=final_outcome,
+                recovery_path=recovery_path,
+                max_attempts=max_attempts,
+            )
+
         primary_timeout_seconds = self._resolve_competitor_attempt_timeout_seconds(
             business=business,
             degraded_mode=False,
@@ -2630,9 +2674,11 @@ class SEOCompetitorProfileGenerationService:
                     fallback_timeout_seconds=primary_timeout_seconds,
                     provider_output=output,
                     provider_error=None,
+                    max_attempts=max_attempts,
                 )
             )
             if len(output.candidates) > 0:
+                _finalize_timeout_outcome(final_outcome="success")
                 return output
             provider_attempts[-1] = replace(
                 provider_attempts[-1],
@@ -2668,6 +2714,7 @@ class SEOCompetitorProfileGenerationService:
                 fallback_timeout_seconds=primary_timeout_seconds,
                 provider_output=None,
                 provider_error=fast_path_exc,
+                max_attempts=max_attempts,
             )
             provider_attempts.append(fast_path_attempt_debug)
             if fast_path_exc.code == "provider_auth_config":
@@ -2707,8 +2754,16 @@ class SEOCompetitorProfileGenerationService:
                     fallback_timeout_seconds=primary_timeout_seconds,
                     provider_output=output,
                     provider_error=None,
+                    max_attempts=max_attempts,
                 )
             )
+            if any(item.failure_kind == "timeout" for item in provider_attempts):
+                _finalize_timeout_outcome(
+                    final_outcome="success",
+                    recovery_path=_recovery_path_for_success_attempt(provider_attempts[-1]),
+                )
+            else:
+                _finalize_timeout_outcome(final_outcome="success")
             return output
         except SEOCompetitorProfileProviderError as full_exc:
             full_duration_ms = max(0, int((time.perf_counter() - full_attempt_start) * 1000))
@@ -2723,9 +2778,11 @@ class SEOCompetitorProfileGenerationService:
                 fallback_timeout_seconds=primary_timeout_seconds,
                 provider_output=None,
                 provider_error=full_exc,
+                max_attempts=max_attempts,
             )
             provider_attempts.append(full_attempt_debug)
             if full_attempt_debug.failure_kind != "timeout":
+                _finalize_timeout_outcome(final_outcome="failure")
                 raise full_exc
 
         degraded_candidate_count = self._degraded_retry_candidate_count(
@@ -2773,8 +2830,10 @@ class SEOCompetitorProfileGenerationService:
                     fallback_timeout_seconds=degraded_timeout_seconds,
                     provider_output=None,
                     provider_error=degraded_exc,
+                    max_attempts=max_attempts,
                 )
             )
+            _finalize_timeout_outcome(final_outcome="failure")
             raise degraded_exc
 
         degraded_duration_ms = max(0, int((time.perf_counter() - degraded_attempt_start) * 1000))
@@ -2790,7 +2849,12 @@ class SEOCompetitorProfileGenerationService:
                 fallback_timeout_seconds=degraded_timeout_seconds,
                 provider_output=output,
                 provider_error=None,
+                max_attempts=max_attempts,
             )
+        )
+        _finalize_timeout_outcome(
+            final_outcome="degraded_success",
+            recovery_path="degraded_success",
         )
         logger.info(
             (
@@ -2966,12 +3030,14 @@ class SEOCompetitorProfileGenerationService:
         fallback_timeout_seconds: int | None,
         provider_output: SEOCompetitorProfileGenerationOutput | None,
         provider_error: SEOCompetitorProfileProviderError | None,
+        max_attempts: int | None = None,
     ) -> SEOCompetitorProfileProviderAttemptDebug:
         failure_kind = "unknown"
         malformed_output_reason: str | None = None
         endpoint_path: str | None = None
         prompt_size_risk: str | None = None
         timeout_seconds: int | None = None
+        timeout_type: str | None = None
         web_search_enabled: bool | None = None
         resolved_provider_call_type: str | None = (
             provider_call_type if provider_call_type in _PROVIDER_CALL_TYPES else None
@@ -3000,6 +3066,7 @@ class SEOCompetitorProfileGenerationService:
                 endpoint_path = provider_debug.endpoint_path
                 prompt_size_risk = provider_debug.prompt_size_risk
                 timeout_seconds = provider_debug.timeout_seconds
+                timeout_type = provider_debug.timeout_type
                 web_search_enabled = provider_debug.web_search_enabled
                 if provider_debug.provider_call_type in _PROVIDER_CALL_TYPES:
                     resolved_provider_call_type = provider_debug.provider_call_type
@@ -3038,6 +3105,14 @@ class SEOCompetitorProfileGenerationService:
         if resolved_execution_mode in {_EXECUTION_MODE_FAST_PATH, _EXECUTION_MODE_DEGRADED}:
             resolved_provider_call_type = _PROVIDER_CALL_TYPE_NON_TOOL
             web_search_enabled = False
+        normalized_max_attempts: int | None = None
+        if max_attempts is not None:
+            try:
+                normalized_max_attempts = max(1, int(max_attempts))
+            except (TypeError, ValueError):
+                normalized_max_attempts = None
+        if timeout_type not in _TIMEOUT_TYPE_VALUES:
+            timeout_type = None
         return SEOCompetitorProfileProviderAttemptDebug(
             attempt_number=max(0, int(attempt_number)),
             execution_mode=resolved_execution_mode,
@@ -3056,6 +3131,8 @@ class SEOCompetitorProfileGenerationService:
             context_json_chars=context_json_chars,
             user_prompt_chars=user_prompt_chars,
             endpoint_path=endpoint_path,
+            max_attempts=normalized_max_attempts,
+            timeout_type=timeout_type,
         )
 
     @dataclass(frozen=True)
@@ -3066,6 +3143,7 @@ class SEOCompetitorProfileGenerationService:
         provider_call_type: str | None
         prompt_size_risk: str | None
         timeout_seconds: int | None
+        timeout_type: str | None
         web_search_enabled: bool | None
         reduced_context_mode: bool | None
         prompt_total_chars: int | None
@@ -3088,6 +3166,9 @@ class SEOCompetitorProfileGenerationService:
         malformed_output_reason = self._clean_optional(str(parsed.get("malformed_output_reason") or ""))
         if malformed_output_reason and len(malformed_output_reason) > 64:
             malformed_output_reason = malformed_output_reason[:64]
+        timeout_type = self._clean_optional(str(parsed.get("timeout_type") or ""))
+        if timeout_type not in _TIMEOUT_TYPE_VALUES:
+            timeout_type = None
         endpoint_path = self._clean_optional(str(parsed.get("endpoint_path") or ""))
         request_debug = parsed.get("request_debug") if isinstance(parsed.get("request_debug"), dict) else {}
         provider_call_type = None
@@ -3141,6 +3222,7 @@ class SEOCompetitorProfileGenerationService:
             provider_call_type=provider_call_type,
             prompt_size_risk=prompt_size_risk,
             timeout_seconds=timeout_seconds,
+            timeout_type=timeout_type,
             web_search_enabled=web_search_enabled,
             reduced_context_mode=reduced_context_mode,
             prompt_total_chars=prompt_total_chars,
@@ -3148,6 +3230,110 @@ class SEOCompetitorProfileGenerationService:
             user_prompt_chars=user_prompt_chars,
             request_duration_ms=request_duration_ms,
         )
+
+    def _finalize_provider_attempt_timeout_outcome(
+        self,
+        *,
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug],
+        final_outcome: str,
+        recovery_path: str,
+        max_attempts: int,
+    ) -> None:
+        if not provider_attempts:
+            return
+        normalized_final_outcome = (
+            final_outcome
+            if final_outcome in _TIMEOUT_FINAL_OUTCOMES
+            else "failure"
+        )
+        normalized_recovery_path = (
+            recovery_path
+            if recovery_path in _TIMEOUT_RECOVERY_PATHS
+            else "none"
+        )
+        timeout_observed = any(item.failure_kind == "timeout" for item in provider_attempts)
+        recovered_after_timeout = bool(
+            timeout_observed
+            and normalized_final_outcome in {"success", "degraded_success"}
+            and normalized_recovery_path in {"retry_success", "fallback_success", "degraded_success"}
+        )
+        normalized_max_attempts = max(1, int(max_attempts))
+        for index, attempt in enumerate(provider_attempts):
+            provider_attempts[index] = replace(
+                attempt,
+                max_attempts=normalized_max_attempts,
+                recovered_after_timeout=(recovered_after_timeout if timeout_observed else False),
+                recovery_path=(normalized_recovery_path if timeout_observed else "none"),
+                final_outcome=normalized_final_outcome,
+            )
+
+    def _emit_timeout_outcome_summary_log(
+        self,
+        *,
+        run_id: str,
+        site: SEOSite,
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug],
+        final_outcome: str,
+        recovery_path: str,
+        max_attempts: int,
+    ) -> None:
+        timeout_attempts = [item for item in provider_attempts if item.failure_kind == "timeout"]
+        if not timeout_attempts:
+            return
+        normalized_final_outcome = (
+            final_outcome
+            if final_outcome in _TIMEOUT_FINAL_OUTCOMES
+            else "failure"
+        )
+        normalized_recovery_path = (
+            recovery_path
+            if recovery_path in _TIMEOUT_RECOVERY_PATHS
+            else "none"
+        )
+        recovered_after_timeout = bool(
+            normalized_final_outcome in {"success", "degraded_success"}
+            and normalized_recovery_path in {"retry_success", "fallback_success", "degraded_success"}
+        )
+        latest_attempt = provider_attempts[-1]
+        latest_timeout_attempt = timeout_attempts[-1]
+        total_elapsed_ms = 0
+        for item in provider_attempts:
+            if item.request_duration_ms is not None:
+                total_elapsed_ms += max(0, int(item.request_duration_ms))
+        if normalized_final_outcome == "failure":
+            level = logging.ERROR
+        elif normalized_final_outcome == "degraded_success":
+            level = logging.WARNING
+        else:
+            level = logging.INFO
+        payload: dict[str, object] = {
+            "event": "competitor_timeout_outcome",
+            "run_id": run_id,
+            "business_id": site.business_id,
+            "site_id": site.id,
+            "attempt_number": latest_attempt.attempt_number,
+            "attempt_count": len(provider_attempts),
+            "max_attempts": max(1, int(max_attempts)),
+            "provider_name": self._clean_optional(getattr(self.provider, "provider_name", None)),
+            "model_name": self._clean_optional(getattr(self.provider, "model_name", None)),
+            "endpoint_path": latest_attempt.endpoint_path,
+            "provider_call_type": latest_attempt.provider_call_type,
+            "web_search_enabled": latest_attempt.web_search_enabled,
+            "timeout_type": latest_timeout_attempt.timeout_type or "unknown",
+            "elapsed_ms": latest_attempt.request_duration_ms,
+            "total_elapsed_ms": total_elapsed_ms,
+            "prompt_total_chars": latest_attempt.prompt_total_chars,
+            "context_json_chars": latest_attempt.context_json_chars,
+            "prompt_size_risk": latest_attempt.prompt_size_risk,
+            "recovered_after_timeout": recovered_after_timeout,
+            "recovery_path": normalized_recovery_path,
+            "final_outcome": normalized_final_outcome,
+        }
+        try:
+            message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+        except (TypeError, ValueError):
+            message = "competitor_timeout_outcome"
+        logger.log(level, message, extra={"json_fields": payload})
 
     def _serialize_provider_attempts_for_debug(
         self,
@@ -3188,6 +3374,16 @@ class SEOCompetitorProfileGenerationService:
                 payload["user_prompt_chars"] = max(0, int(item.user_prompt_chars))
             if item.endpoint_path:
                 payload["endpoint_path"] = item.endpoint_path
+            if item.max_attempts is not None:
+                payload["max_attempts"] = max(1, int(item.max_attempts))
+            if item.timeout_type in _TIMEOUT_TYPE_VALUES:
+                payload["timeout_type"] = item.timeout_type
+            if item.recovered_after_timeout is not None:
+                payload["recovered_after_timeout"] = bool(item.recovered_after_timeout)
+            if item.recovery_path in _TIMEOUT_RECOVERY_PATHS:
+                payload["recovery_path"] = item.recovery_path
+            if item.final_outcome in _TIMEOUT_FINAL_OUTCOMES:
+                payload["final_outcome"] = item.final_outcome
             if item.search_escalation_triggered:
                 payload["search_escalation_triggered"] = True
             if item.escalation_reason:
@@ -3236,6 +3432,7 @@ class SEOCompetitorProfileGenerationService:
                     malformed_output_reason = malformed_output_reason[:64]
                 request_duration_ms: int | None = None
                 timeout_seconds: int | None = None
+                max_attempts: int | None = None
                 try:
                     if raw_item.get("request_duration_ms") is not None:
                         request_duration_ms = max(0, int(raw_item.get("request_duration_ms")))
@@ -3246,6 +3443,11 @@ class SEOCompetitorProfileGenerationService:
                         timeout_seconds = max(1, int(raw_item.get("timeout_seconds")))
                 except (TypeError, ValueError):
                     timeout_seconds = None
+                try:
+                    if raw_item.get("max_attempts") is not None:
+                        max_attempts = max(1, int(raw_item.get("max_attempts")))
+                except (TypeError, ValueError):
+                    max_attempts = None
                 web_search_enabled = raw_item.get("web_search_enabled")
                 if not isinstance(web_search_enabled, bool):
                     web_search_enabled = None
@@ -3270,6 +3472,18 @@ class SEOCompetitorProfileGenerationService:
                 prompt_size_risk = self._clean_optional(str(raw_item.get("prompt_size_risk") or ""))
                 if prompt_size_risk not in {"normal", "elevated", "high"}:
                     prompt_size_risk = None
+                timeout_type = self._clean_optional(str(raw_item.get("timeout_type") or ""))
+                if timeout_type not in _TIMEOUT_TYPE_VALUES:
+                    timeout_type = None
+                recovered_after_timeout = raw_item.get("recovered_after_timeout")
+                if not isinstance(recovered_after_timeout, bool):
+                    recovered_after_timeout = None
+                recovery_path = self._clean_optional(str(raw_item.get("recovery_path") or ""))
+                if recovery_path not in _TIMEOUT_RECOVERY_PATHS:
+                    recovery_path = None
+                final_outcome = self._clean_optional(str(raw_item.get("final_outcome") or ""))
+                if final_outcome not in _TIMEOUT_FINAL_OUTCOMES:
+                    final_outcome = None
                 endpoint_path = self._clean_optional(str(raw_item.get("endpoint_path") or ""))
                 search_escalation_triggered = bool(raw_item.get("search_escalation_triggered"))
                 escalation_reason = self._clean_optional(str(raw_item.get("escalation_reason") or ""))
@@ -3294,6 +3508,11 @@ class SEOCompetitorProfileGenerationService:
                         context_json_chars=context_json_chars,
                         user_prompt_chars=user_prompt_chars,
                         endpoint_path=endpoint_path,
+                        max_attempts=max_attempts,
+                        timeout_type=timeout_type,
+                        recovered_after_timeout=recovered_after_timeout,
+                        recovery_path=recovery_path,
+                        final_outcome=final_outcome,
                         search_escalation_triggered=search_escalation_triggered,
                         escalation_reason=escalation_reason,
                     )

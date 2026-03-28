@@ -97,6 +97,17 @@ python scripts/verify_gcp_logs_wiring.py
 python scripts/verify_gcp_logs_wiring.py --cluster --project-id <PROJECT_ID> --gsa-email <RUNTIME_GSA_EMAIL>
 ```
 
+## Session Backend Runtime Note
+- Session state supports `SESSION_STATE_BACKEND=auto|redis|inmemory`.
+- Redis-backed session state is required for correctness in multi-replica production; in-memory is process-local and non-shared across replicas.
+- If production/staging falls back to in-memory, API logs emit:
+  - `event=session_state_backend_selection ... selected_backend=inmemory ... degraded_mode=True`
+- Production-safe posture:
+  - `SESSION_STATE_BACKEND=redis`
+  - valid `REDIS_URL`
+  - `SESSION_STATE_FAIL_OPEN=false`
+  - `SESSION_STATE_ALLOW_INMEMORY_FALLBACK=false`
+
 ## Documentation
 Start with [docs/README.md](docs/README.md) for canonical navigation.
 

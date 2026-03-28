@@ -55,6 +55,7 @@ class Settings:
     redis_url: str | None
     session_state_backend: str
     session_state_fail_open: bool
+    session_state_allow_inmemory_fallback: bool
     sms_provider: str
     email_provider: str
     ai_provider_api_key: str | None = field(repr=False)
@@ -215,6 +216,10 @@ def get_settings() -> Settings:
         "SESSION_STATE_FAIL_OPEN",
         env_normalized in {"development", "dev", "test", "local"},
     )
+    session_state_allow_inmemory_fallback = _env_bool(
+        "SESSION_STATE_ALLOW_INMEMORY_FALLBACK",
+        True,
+    )
     rate_limit_fail_open = _env_bool(
         "RATE_LIMIT_FAIL_OPEN",
         env_normalized in {"development", "dev", "test", "local"},
@@ -302,6 +307,7 @@ def get_settings() -> Settings:
         redis_url=redis_url,
         session_state_backend=session_state_backend,
         session_state_fail_open=session_state_fail_open,
+        session_state_allow_inmemory_fallback=session_state_allow_inmemory_fallback,
         sms_provider=os.getenv("SMS_PROVIDER", "mock").strip().lower(),
         email_provider=os.getenv("EMAIL_PROVIDER", "mock").strip().lower(),
         ai_provider_api_key=os.getenv("AI_PROVIDER_API_KEY"),

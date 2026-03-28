@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 ConsumeRefreshStatus = Literal["ok", "missing", "reused"]
+_PRODUCTION_LIKE_ENVS = {"production", "staging"}
 
 
 @dataclass(frozen=True)
@@ -267,22 +268,35 @@ def _build_store() -> SessionStateStore:
     backend = settings.session_state_backend
     redis_url = (settings.redis_url or "").strip()
     env = settings.environment.strip().lower()
+    app_env = settings.app_env.strip().lower()
     fail_open = settings.session_state_fail_open
+    allow_inmemory_fallback = settings.session_state_allow_inmemory_fallback
 
     logger.info(
-        "session_state_backend_init backend=%s env=%s redis_configured=%s fail_open=%s",
+        "session_state_backend_init backend=%s env=%s app_env=%s redis_configured=%s fail_open=%s "
+        "allow_inmemory_fallback=%s",
         backend,
         env,
+        app_env,
         bool(redis_url),
         fail_open,
+        allow_inmemory_fallback,
     )
 
     if backend not in {"auto", "inmemory", "redis"}:
         raise RuntimeError("SESSION_STATE_BACKEND must be one of: auto, inmemory, redis.")
 
     if backend == "inmemory":
-        logger.warning("Session state backend using in-memory store (single-instance scope).")
-        return InMemorySessionStateStore()
+        return _select_inmemory_store(
+            configured_backend=backend,
+            env=env,
+            app_env=app_env,
+            redis_configured=bool(redis_url),
+            fail_open=fail_open,
+            allow_inmemory_fallback=allow_inmemory_fallback,
+            reason="explicit_inmemory_backend",
+            fallback_occurred=False,
+        )
 
     if backend == "redis" and not redis_url:
         raise RuntimeError("SESSION_STATE_BACKEND=redis requires REDIS_URL.")
@@ -290,23 +304,46 @@ def _build_store() -> SessionStateStore:
     if backend == "redis" or (backend == "auto" and redis_url):
         if Redis is None:
             if backend == "auto":
-                logger.warning(
-                    "Redis client unavailable with SESSION_STATE_BACKEND=auto; falling back to in-memory store."
+                return _select_inmemory_store(
+                    configured_backend=backend,
+                    env=env,
+                    app_env=app_env,
+                    redis_configured=bool(redis_url),
+                    fail_open=fail_open,
+                    allow_inmemory_fallback=allow_inmemory_fallback,
+                    reason="redis_client_unavailable_auto_fallback",
+                    fallback_occurred=True,
                 )
-                return InMemorySessionStateStore()
             raise RuntimeError("Redis backend configured for session state but redis client is unavailable.")
         try:
             client = Redis.from_url(redis_url, decode_responses=True)
             client.ping()
-            logger.info("Session state backend initialized with Redis.")
+            _emit_backend_selection_event(
+                configured_backend=backend,
+                selected_backend="redis",
+                env=env,
+                app_env=app_env,
+                redis_configured=bool(redis_url),
+                fail_open=fail_open,
+                allow_inmemory_fallback=allow_inmemory_fallback,
+                reason="redis_connected",
+                fallback_occurred=False,
+                degraded_mode=False,
+                level=logging.INFO,
+            )
             return RedisSessionStateStore(client=client)
         except RedisError as exc:
             if fail_open:
-                logger.warning(
-                    "Redis session state unavailable; fail-open enabled. Falling back to in-memory store. error=%s",
-                    exc,
+                return _select_inmemory_store(
+                    configured_backend=backend,
+                    env=env,
+                    app_env=app_env,
+                    redis_configured=bool(redis_url),
+                    fail_open=fail_open,
+                    allow_inmemory_fallback=allow_inmemory_fallback,
+                    reason=f"redis_unavailable_fail_open:{exc.__class__.__name__}",
+                    fallback_occurred=True,
                 )
-                return InMemorySessionStateStore()
             logger.error(
                 "Redis session state unavailable; fail-open disabled. backend=%s env=%s",
                 backend,
@@ -314,8 +351,110 @@ def _build_store() -> SessionStateStore:
             )
             raise RuntimeError("Unable to initialize Redis session state store.") from exc
 
-    logger.warning("Session state backend defaulted to in-memory store (Redis not configured).")
+    return _select_inmemory_store(
+        configured_backend=backend,
+        env=env,
+        app_env=app_env,
+        redis_configured=bool(redis_url),
+        fail_open=fail_open,
+        allow_inmemory_fallback=allow_inmemory_fallback,
+        reason="redis_not_configured_auto_fallback",
+        fallback_occurred=True,
+    )
+
+
+def _select_inmemory_store(
+    *,
+    configured_backend: str,
+    env: str,
+    app_env: str,
+    redis_configured: bool,
+    fail_open: bool,
+    allow_inmemory_fallback: bool,
+    reason: str,
+    fallback_occurred: bool,
+) -> InMemorySessionStateStore:
+    degraded_mode = env in _PRODUCTION_LIKE_ENVS
+    risk_level = "high" if degraded_mode else "normal"
+    if degraded_mode and not allow_inmemory_fallback:
+        _emit_backend_selection_event(
+            configured_backend=configured_backend,
+            selected_backend="none",
+            env=env,
+            app_env=app_env,
+            redis_configured=redis_configured,
+            fail_open=fail_open,
+            allow_inmemory_fallback=allow_inmemory_fallback,
+            reason=f"{reason}:blocked_by_session_state_allow_inmemory_fallback",
+            fallback_occurred=fallback_occurred,
+            degraded_mode=True,
+            level=logging.ERROR,
+        )
+        raise RuntimeError(
+            "Session state backend resolved to in-memory in production/staging while "
+            "SESSION_STATE_ALLOW_INMEMORY_FALLBACK=false."
+        )
+
+    level = logging.ERROR if degraded_mode else logging.WARNING
+    _emit_backend_selection_event(
+        configured_backend=configured_backend,
+        selected_backend="inmemory",
+        env=env,
+        app_env=app_env,
+        redis_configured=redis_configured,
+        fail_open=fail_open,
+        allow_inmemory_fallback=allow_inmemory_fallback,
+        reason=reason,
+        fallback_occurred=fallback_occurred,
+        degraded_mode=degraded_mode,
+        level=level,
+    )
+    if degraded_mode:
+        logger.error(
+            "Session state backend resolved to in-memory store in production/staging. "
+            "This is degraded for multi-replica production runtime. "
+            "risk_level=%s fallback_occurred=%s reason=%s",
+            risk_level,
+            fallback_occurred,
+            reason,
+        )
+    else:
+        logger.warning("Session state backend using in-memory store (single-instance scope).")
     return InMemorySessionStateStore()
+
+
+def _emit_backend_selection_event(
+    *,
+    configured_backend: str,
+    selected_backend: str,
+    env: str,
+    app_env: str,
+    redis_configured: bool,
+    fail_open: bool,
+    allow_inmemory_fallback: bool,
+    reason: str,
+    fallback_occurred: bool,
+    degraded_mode: bool,
+    level: int,
+) -> None:
+    risk_level = "high" if degraded_mode else "normal"
+    logger.log(
+        level,
+        "session_state_backend_selection event=session_state_backend_selection "
+        "configured_backend=%s selected_backend=%s reason=%s env=%s app_env=%s redis_configured=%s "
+        "fail_open=%s allow_inmemory_fallback=%s fallback_occurred=%s degraded_mode=%s risk_level=%s",
+        configured_backend,
+        selected_backend,
+        reason,
+        env,
+        app_env,
+        redis_configured,
+        fail_open,
+        allow_inmemory_fallback,
+        fallback_occurred,
+        degraded_mode,
+        risk_level,
+    )
 
 
 def _epoch_now() -> int:

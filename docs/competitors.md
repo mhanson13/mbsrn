@@ -171,6 +171,59 @@ Partial-salvage behavior:
 - Runs prefer fewer valid candidates over whole-run failure when safe recovery is possible.
 - Whole-run malformed-output failure is reserved for unrecoverable payloads (no safe usable candidate payload).
 
+Recoverable schema-drift behavior:
+
+- Candidate-entry type drift is now classified separately from full malformed-output failures.
+- When at least one valid candidate is preserved, schema-drift diagnostics are logged as recoverable (`WARNING`) instead of pipeline failure (`ERROR`).
+- When no valid candidates remain, diagnostics are logged as non-recoverable (`ERROR`) and downstream behavior remains unchanged.
+- Structured diagnostics event: `competitor_candidate_schema_diagnostics` with bounded fields:
+  - `valid_candidate_count`
+  - `invalid_candidate_count`
+  - `invalid_field_type_count`
+  - `invalid_candidate_indexes`
+  - `invalid_fields[]` entries containing:
+    - `candidate_index`
+    - `field_name`
+    - `expected_type`
+    - `actual_type`
+    - `discard_reason`
+    - `required_or_optional`
+
+Deterministic normalization:
+
+- `confidence_score` now accepts deterministic single-value wrappers during candidate parsing:
+  - single-item array (for example `["0.73"]`)
+  - object wrappers with common score keys (`confidence_score`, `confidence`, `score`, `value`)
+- This narrows recurring field-type drift without changing provider contracts or prompt shape.
+- Normalization is intentionally narrow at schema-intake only for `confidence_score`; no broad cross-field coercion is applied.
+
+### Production triage: schema diagnostics
+
+Event:
+- `event=competitor_candidate_schema_diagnostics`
+
+Trigger/level semantics:
+- `valid_candidate_count > 0` => recoverable schema drift (`WARNING`)
+- `valid_candidate_count == 0` => non-recoverable schema drift (`ERROR`)
+
+First fields to inspect:
+- `valid_candidate_count`
+- `invalid_candidate_count`
+- `invalid_field_type_count`
+- `invalid_candidate_indexes`
+- `invalid_fields[].field_name`
+- `invalid_fields[].actual_type`
+- `invalid_fields[].discard_reason`
+- `recoverable`
+
+Cloud Logging filters:
+- recoverable warnings:
+  - `jsonPayload.event="competitor_candidate_schema_diagnostics" AND severity=WARNING`
+- non-recoverable errors:
+  - `jsonPayload.event="competitor_candidate_schema_diagnostics" AND severity=ERROR`
+- confidence-score-specific type drift:
+  - `jsonPayload.event="competitor_candidate_schema_diagnostics" AND jsonPayload.invalid_fields.field_name="confidence_score"`
+
 ## Provider Error Visibility
 
 Competitor provider failures now emit bounded backend log metadata to improve debugging:
@@ -233,6 +286,31 @@ Competitor generation now applies a bounded timeout-only retry at the service la
 - second attempt also enables deterministic `reduced_context_mode` so optional prompt context is trimmed
 - non-timeout failures (`provider_request`, auth/config, malformed output) do not retry
 
+Timeout outcome semantics are explicit:
+- `final_outcome=success`: timeout occurred but a non-degraded retry recovered
+- `final_outcome=degraded_success`: timeout occurred and degraded retry recovered
+- `final_outcome=failure`: timeout path exhausted without recovery
+
+Structured timeout outcome event:
+- `event=competitor_timeout_outcome`
+- includes bounded runtime context such as:
+  - `attempt_number`
+  - `attempt_count`
+  - `max_attempts`
+  - `endpoint_path`
+  - `provider_call_type`
+  - `provider_name`
+  - `model_name`
+  - `timeout_type` (`read`, `connect`, `overall`, `unknown`)
+  - `elapsed_ms`
+  - `total_elapsed_ms`
+  - `prompt_total_chars`
+  - `context_json_chars`
+  - `prompt_size_risk`
+  - `recovered_after_timeout`
+  - `recovery_path` (`retry_success`, `fallback_success`, `degraded_success`, `none`)
+  - `final_outcome`
+
 Degraded retry intent:
 - reduce request cost under provider/web-search latency
 - preserve core business/location/service context while trimming optional context
@@ -267,10 +345,12 @@ Competitor run detail debug payloads can include bounded provider-attempt teleme
 - `provider_degraded_retry_used`
 - `provider_attempts[]` with compact fields such as:
   - `attempt_number`
+  - `max_attempts`
   - `degraded_mode`
   - `reduced_context_mode`
   - `requested_candidate_count`
   - `outcome` / `failure_kind`
+  - `timeout_type`
   - `request_duration_ms`
   - `timeout_seconds`
   - `endpoint_path`
@@ -279,6 +359,9 @@ Competitor run detail debug payloads can include bounded provider-attempt teleme
   - `prompt_total_chars`
   - `context_json_chars`
   - `user_prompt_chars`
+  - `recovered_after_timeout`
+  - `recovery_path`
+  - `final_outcome`
 
 This metadata is debug-oriented only and does not change ranking/scoring behavior.
 

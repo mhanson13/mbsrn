@@ -122,6 +122,36 @@ Kubernetes Secret handles sensitive values including:
 
 `work-boots-secrets` is required by both API/UI Deployments and migration Job (`envFrom.secretRef`).
 
+Session backend behavior:
+- Supported backends: `SESSION_STATE_BACKEND=auto|redis|inmemory`.
+- Redis-backed session state is required for correctness in multi-replica production.
+- In-memory session state is process-local and non-shared across replicas; it is acceptable for local/dev/test only.
+- `SESSION_STATE_ALLOW_INMEMORY_FALLBACK` controls whether in-memory fallback is allowed when Redis is unavailable/misconfigured.
+- Production/staging fallback to in-memory emits degraded runtime logs:
+  - `event=session_state_backend_selection ... selected_backend=inmemory ... degraded_mode=True`
+- Operators should verify production pods are selecting `selected_backend=redis`.
+
+Session production readiness checklist:
+- `SESSION_STATE_BACKEND=redis`
+- `REDIS_URL` is configured and reachable by API pods
+- `SESSION_STATE_FAIL_OPEN=false`
+- `SESSION_STATE_ALLOW_INMEMORY_FALLBACK=false`
+- Startup/steady-state logs include:
+  - `event=session_state_backend_selection ... selected_backend=redis`
+- No production/staging logs with:
+  - `event=session_state_backend_selection ... selected_backend=inmemory ... degraded_mode=True`
+
+Session backend troubleshooting signals:
+- Degraded fallback in production/staging:
+  - `event=session_state_backend_selection`
+  - `selected_backend=inmemory`
+  - `degraded_mode=True`
+  - inspect `reason=...` for root cause classification (`redis_not_configured_auto_fallback`, `redis_unavailable_fail_open:*`, etc.)
+- Healthy shared backend:
+  - `event=session_state_backend_selection`
+  - `selected_backend=redis`
+  - `degraded_mode=False`
+
 Prompt configuration note:
 - production prompt overrides are managed in persisted business admin settings.
 - deprecated legacy env prompt `AI_PROMPT_TEXT_RECOMMENDATION` is not required for API deployment wiring.

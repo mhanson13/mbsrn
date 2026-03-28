@@ -394,6 +394,7 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
     attempt_number: int = Field(ge=0)
+    max_attempts: int | None = Field(default=None, ge=1)
     execution_mode: str = Field(default="full", min_length=1, max_length=32)
     provider_call_type: str | None = Field(default=None, max_length=32)
     degraded_mode: bool = False
@@ -410,6 +411,10 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
     context_json_chars: int | None = Field(default=None, ge=0)
     user_prompt_chars: int | None = Field(default=None, ge=0)
     endpoint_path: str | None = Field(default=None, max_length=64)
+    timeout_type: str | None = Field(default=None, max_length=32)
+    recovered_after_timeout: bool | None = None
+    recovery_path: str | None = Field(default=None, max_length=32)
+    final_outcome: str | None = Field(default=None, max_length=32)
     search_escalation_triggered: bool = False
     escalation_reason: str | None = Field(default=None, max_length=64)
 
@@ -435,6 +440,9 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
         "malformed_output_reason",
         "prompt_size_risk",
         "endpoint_path",
+        "timeout_type",
+        "recovery_path",
+        "final_outcome",
         "escalation_reason",
         mode="before",
     )

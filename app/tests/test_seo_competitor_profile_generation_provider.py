@@ -368,7 +368,7 @@ def test_fallback_to_chat_completions_on_error(monkeypatch) -> None:
 def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
     def _timeout_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         del request, timeout
-        raise TimeoutError("timeout")
+        raise TimeoutError("The read operation timed out")
 
     monkeypatch.setattr(urllib.request, "urlopen", _timeout_urlopen)
     provider = OpenAISEOCompetitorProfileGenerationProvider(
@@ -383,6 +383,7 @@ def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
     assert exc_info.value.raw_output is not None
     raw_debug_payload = json.loads(exc_info.value.raw_output)
     assert raw_debug_payload["failure_kind"] == "timeout"
+    assert raw_debug_payload["timeout_type"] == "read"
     assert raw_debug_payload["endpoint_path"] == "/responses"
     assert isinstance(raw_debug_payload.get("request_debug"), dict)
     assert raw_debug_payload["request_debug"]["prompt_total_chars"] >= 1
@@ -1055,6 +1056,37 @@ def test_structured_provider_error_log_includes_endpoint_and_search_metadata(mon
     assert "SENSITIVE_PROVIDER_PROMPT_TEXT" not in caplog.text
 
 
+def test_structured_provider_timeout_error_log_includes_timeout_type(monkeypatch, caplog) -> None:
+    def _timeout_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _timeout_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(SEOCompetitorProfileProviderError):
+            provider.generate_competitor_profiles(
+                site=_site(),
+                existing_domains=[],
+                candidate_count=1,
+                run_id="run-timeout-1",
+                attempt_number=1,
+                degraded_mode=False,
+                execution_mode="full",
+                provider_call_type="tool_enabled",
+            )
+
+    structured_events = _structured_event_records(caplog)
+    error_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_error")
+    assert error_event["run_id"] == "run-timeout-1"
+    assert error_event["failure_kind"] == "timeout"
+    assert error_event["timeout_type"] == "read"
+
+
 def test_structured_provider_logs_allow_attempt_zero_non_tool_fast_path(monkeypatch, caplog) -> None:
     def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         assert timeout == 30
@@ -1156,3 +1188,434 @@ def test_structured_candidate_pipeline_log_reports_raw_valid_and_dropped_counts(
     assert pipeline_event["raw_count"] == 2
     assert pipeline_event["valid_count"] == 1
     assert pipeline_event["dropped_missing_fields"] == 1
+
+
+def test_malformed_candidate_fields_are_recoverable_warning_with_diagnostics(monkeypatch, caplog) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "ABC",
+                    "domain": "abc.com",
+                    "competitor_type": "direct",
+                    "summary": "valid",
+                    "why_competitor": "valid",
+                    "evidence": "valid",
+                    "confidence_score": 0.9,
+                },
+                {
+                    "name": "Malformed Confidence Candidate",
+                    "domain": "malformed-confidence.example",
+                    "competitor_type": "direct",
+                    "summary": "valid domain and name",
+                    "why_competitor": "type drift on confidence",
+                    "evidence": "deterministic mismatch",
+                    "confidence_score": {"unexpected": "shape"},
+                },
+            ]
+        }
+    )
+
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        output = provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=2,
+            run_id="run-schema-drift-recoverable",
+            attempt_number=1,
+            execution_mode="full",
+        )
+
+    assert len(output.candidates) == 2
+    structured_events = _structured_event_records(caplog)
+    diagnostics_event = next(
+        item for item in structured_events if item.get("event") == "competitor_candidate_schema_diagnostics"
+    )
+    assert diagnostics_event["run_id"] == "run-schema-drift-recoverable"
+    assert diagnostics_event["valid_candidate_count"] == 2
+    assert diagnostics_event["invalid_candidate_count"] == 1
+    assert diagnostics_event["invalid_field_type_count"] == 1
+    assert diagnostics_event["invalid_candidate_indexes"] == [1]
+    assert diagnostics_event["recoverable"] is True
+    invalid_fields = diagnostics_event["invalid_fields"]
+    assert isinstance(invalid_fields, list)
+    assert invalid_fields
+    assert invalid_fields[0]["candidate_index"] == 1
+    assert invalid_fields[0]["field_name"] == "confidence_score"
+    assert invalid_fields[0]["expected_type"] == "number"
+    assert invalid_fields[0]["actual_type"] == "object"
+    assert invalid_fields[0]["required_or_optional"] == "required"
+    diagnostics_records = [
+        record
+        for record in caplog.records
+        if isinstance(getattr(record, "json_fields", None), dict)
+        and record.json_fields.get("event") == "competitor_candidate_schema_diagnostics"
+    ]
+    assert diagnostics_records
+    assert all(record.levelno < logging.ERROR for record in diagnostics_records)
+
+
+def test_malformed_candidate_diagnostics_capture_multiple_invalid_indexes(monkeypatch, caplog) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "Valid Candidate",
+                    "domain": "valid-candidate.example",
+                    "competitor_type": "direct",
+                    "summary": "valid",
+                    "why_competitor": "valid",
+                    "evidence": "valid",
+                    "confidence_score": 0.8,
+                },
+                {
+                    "name": "Invalid Confidence Dict",
+                    "domain": "invalid-confidence-dict.example",
+                    "competitor_type": "direct",
+                    "summary": "invalid confidence",
+                    "why_competitor": "invalid confidence type",
+                    "evidence": "dict",
+                    "confidence_score": {"raw": "bad"},
+                },
+                {},
+            ]
+        }
+    )
+
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        output = provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=3,
+            run_id="run-schema-drift-multi",
+            attempt_number=1,
+            execution_mode="full",
+        )
+
+    assert len(output.candidates) >= 1
+    structured_events = _structured_event_records(caplog)
+    diagnostics_event = next(
+        item for item in structured_events if item.get("event") == "competitor_candidate_schema_diagnostics"
+    )
+    assert diagnostics_event["invalid_candidate_count"] == 2
+    assert diagnostics_event["invalid_field_type_count"] >= 2
+    assert diagnostics_event["invalid_candidate_indexes"] == [1, 2]
+
+
+def test_fully_invalid_candidate_entries_emit_error_severity_diagnostics(monkeypatch, caplog) -> None:
+    payload = json.dumps({"candidates": [{}, {}]})
+
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        output = provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=2,
+            run_id="run-schema-drift-unrecoverable",
+            attempt_number=1,
+            execution_mode="full",
+        )
+
+    assert output.candidates == []
+    structured_events = _structured_event_records(caplog)
+    diagnostics_event = next(
+        item for item in structured_events if item.get("event") == "competitor_candidate_schema_diagnostics"
+    )
+    assert diagnostics_event["valid_candidate_count"] == 0
+    assert diagnostics_event["invalid_candidate_count"] == 2
+    assert diagnostics_event["invalid_field_type_count"] >= 2
+    assert diagnostics_event["recoverable"] is False
+    diagnostics_records = [
+        record
+        for record in caplog.records
+        if isinstance(getattr(record, "json_fields", None), dict)
+        and record.json_fields.get("event") == "competitor_candidate_schema_diagnostics"
+    ]
+    assert diagnostics_records
+    assert any(record.levelno >= logging.ERROR for record in diagnostics_records)
+
+
+def test_confidence_score_list_is_normalized_without_invalid_field_type_drift(monkeypatch, caplog) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "Array Confidence Candidate",
+                    "domain": "array-confidence.example",
+                    "competitor_type": "direct",
+                    "summary": "confidence list drift",
+                    "why_competitor": "confidence_score as single-item array",
+                    "evidence": "deterministic model drift",
+                    "confidence_score": ["0.73"],
+                }
+            ]
+        }
+    )
+
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        output = provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=1,
+            run_id="run-confidence-array-normalized",
+            attempt_number=1,
+            execution_mode="full",
+        )
+
+    assert len(output.candidates) == 1
+    assert output.candidates[0].confidence_score == pytest.approx(0.73)
+    structured_events = _structured_event_records(caplog)
+    assert not any(
+        item.get("event") == "competitor_candidate_schema_diagnostics" for item in structured_events
+    )
+
+
+@pytest.mark.parametrize(
+    ("wrapper_key", "expected_score"),
+    [
+        ("confidence_score", 0.67),
+        ("confidence", 0.68),
+        ("score", 0.69),
+        ("value", 0.70),
+    ],
+)
+def test_confidence_score_object_wrapper_keys_are_normalized_without_diagnostics(
+    monkeypatch,
+    caplog,
+    wrapper_key: str,
+    expected_score: float,
+) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "Object Confidence Wrapper Candidate",
+                    "domain": "object-confidence-wrapper.example",
+                    "competitor_type": "direct",
+                    "summary": "confidence object wrapper drift",
+                    "why_competitor": "tests supported confidence wrapper key normalization",
+                    "evidence": "deterministic drift fixture",
+                    "confidence_score": {wrapper_key: str(expected_score)},
+                }
+            ]
+        }
+    )
+
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        output = provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=1,
+            run_id=f"run-confidence-object-{wrapper_key}",
+            attempt_number=1,
+            execution_mode="full",
+        )
+
+    assert len(output.candidates) == 1
+    assert output.candidates[0].confidence_score == pytest.approx(expected_score)
+    structured_events = _structured_event_records(caplog)
+    assert not any(
+        item.get("event") == "competitor_candidate_schema_diagnostics" for item in structured_events
+    )
+
+
+def test_confidence_score_unsupported_object_wrapper_emits_schema_diagnostics(monkeypatch, caplog) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "Unsupported Confidence Wrapper Candidate",
+                    "domain": "unsupported-confidence-wrapper.example",
+                    "competitor_type": "direct",
+                    "summary": "unsupported confidence wrapper",
+                    "why_competitor": "should emit diagnostics",
+                    "evidence": "deterministic drift fixture",
+                    "confidence_score": {"unexpected": "shape"},
+                }
+            ]
+        }
+    )
+
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        output = provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=1,
+            run_id="run-confidence-unsupported-object",
+            attempt_number=1,
+            execution_mode="full",
+        )
+
+    assert len(output.candidates) == 1
+    structured_events = _structured_event_records(caplog)
+    diagnostics_event = next(
+        item for item in structured_events if item.get("event") == "competitor_candidate_schema_diagnostics"
+    )
+    assert diagnostics_event["recoverable"] is True
+    assert diagnostics_event["invalid_candidate_count"] == 1
+    assert diagnostics_event["invalid_field_type_count"] == 1
+    invalid_fields = diagnostics_event["invalid_fields"]
+    assert isinstance(invalid_fields, list)
+    assert invalid_fields[0]["field_name"] == "confidence_score"
+    assert invalid_fields[0]["expected_type"] == "number"
+    assert invalid_fields[0]["actual_type"] == "object"
+
+
+def test_non_confidence_collection_type_drift_emits_schema_diagnostics(monkeypatch, caplog) -> None:
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "name": "Non Confidence Drift Candidate",
+                    "domain": "non-confidence-drift.example",
+                    "competitor_type": "direct",
+                    "summary": {"unexpected": "shape"},
+                    "why_competitor": "non-confidence malformed field should be visible",
+                    "evidence": "deterministic drift fixture",
+                    "confidence_score": 0.72,
+                }
+            ]
+        }
+    )
+
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5-mini",
+                    "output": [{"content": [{"type": "output_text", "text": payload}]}],
+                }
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with caplog.at_level(logging.INFO):
+        output = provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=1,
+            run_id="run-non-confidence-drift",
+            attempt_number=1,
+            execution_mode="full",
+        )
+
+    assert len(output.candidates) == 1
+    structured_events = _structured_event_records(caplog)
+    diagnostics_event = next(
+        item for item in structured_events if item.get("event") == "competitor_candidate_schema_diagnostics"
+    )
+    assert diagnostics_event["recoverable"] is True
+    assert diagnostics_event["invalid_candidate_count"] == 1
+    assert diagnostics_event["invalid_field_type_count"] == 1
+    invalid_fields = diagnostics_event["invalid_fields"]
+    assert isinstance(invalid_fields, list)
+    assert invalid_fields[0]["field_name"] == "summary"
+    assert invalid_fields[0]["expected_type"] == "string|null"
+    assert invalid_fields[0]["actual_type"] == "object"

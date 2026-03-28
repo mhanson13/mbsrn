@@ -39,6 +39,7 @@ _STRUCTURED_LOG_EVENT_REQUEST_START = "competitor_provider_request_start"
 _STRUCTURED_LOG_EVENT_REQUEST_COMPLETE = "competitor_provider_request_complete"
 _STRUCTURED_LOG_EVENT_REQUEST_ERROR = "competitor_provider_request_error"
 _STRUCTURED_LOG_EVENT_CANDIDATE_PIPELINE = "competitor_candidate_pipeline"
+_STRUCTURED_LOG_EVENT_CANDIDATE_SCHEMA_DIAGNOSTICS = "competitor_candidate_schema_diagnostics"
 _MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR = "json_decode_error"
 _MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN = "wrapped_in_markdown"
 _MALFORMED_OUTPUT_REASON_MISSING_CANDIDATES_ARRAY = "missing_candidates_array"
@@ -67,7 +68,35 @@ _EXECUTION_MODES = {
     _EXECUTION_MODE_FULL,
     _EXECUTION_MODE_DEGRADED,
 }
+_TIMEOUT_TYPE_READ = "read"
+_TIMEOUT_TYPE_CONNECT = "connect"
+_TIMEOUT_TYPE_OVERALL = "overall"
+_TIMEOUT_TYPE_UNKNOWN = "unknown"
+_TIMEOUT_TYPE_VALUES = {
+    _TIMEOUT_TYPE_READ,
+    _TIMEOUT_TYPE_CONNECT,
+    _TIMEOUT_TYPE_OVERALL,
+    _TIMEOUT_TYPE_UNKNOWN,
+}
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
+_INVALID_FIELD_DIAGNOSTIC_MAX_ITEMS = 32
+_CANDIDATE_REQUIRED_FIELDS = {"name", "domain", "competitor_type", "confidence_score"}
+_CANDIDATE_FIELD_EXPECTED_TYPES = {
+    "name": "string",
+    "domain": "string",
+    "competitor_type": "string",
+    "summary": "string|null",
+    "why_competitor": "string|null",
+    "evidence": "string|null",
+    "confidence_score": "number",
+}
+
+
+class _MissingValueType:
+    pass
+
+
+_MissingValue = _MissingValueType()
 logger = logging.getLogger(__name__)
 
 
@@ -104,6 +133,18 @@ class _ParsedCandidateResult:
     salvaged_candidate_count: int
     raw_candidate_count: int
     dropped_missing_fields_count: int
+    invalid_field_type_count: int = 0
+    invalid_candidate_count: int = 0
+    invalid_candidate_indexes: tuple[int, ...] = ()
+    invalid_field_diagnostics: tuple[dict[str, object], ...] = ()
+
+
+@dataclass(frozen=True)
+class _StructuredCandidateParseDiagnostics:
+    invalid_field_type_count: int
+    invalid_candidate_count: int
+    invalid_candidate_indexes: tuple[int, ...]
+    invalid_field_diagnostics: tuple[dict[str, object], ...]
 
 
 class MisconfiguredSEOCompetitorProfileGenerationProvider:
@@ -348,6 +389,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             raw_candidate_count=candidate_parse_result.raw_candidate_count,
             valid_candidate_count=candidate_parse_result.parsed_candidate_count,
             dropped_missing_fields_count=candidate_parse_result.dropped_missing_fields_count,
+            invalid_field_type_count=candidate_parse_result.invalid_field_type_count,
+            invalid_candidate_count=candidate_parse_result.invalid_candidate_count,
+            invalid_candidate_indexes=candidate_parse_result.invalid_candidate_indexes,
         )
         model_name = _clean_optional_value(response_json.get("model")) or self.model_name
         self._log_provider_request_complete(
@@ -394,6 +438,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         raw_candidate_count = 0
         invalid_field_type_count = 0
         coerced_candidate_count = 0
+        invalid_candidate_count = 0
+        invalid_candidate_indexes: tuple[int, ...] = ()
+        invalid_field_diagnostics: tuple[dict[str, object], ...] = ()
 
         if recovery.payload is not None:
             try:
@@ -407,10 +454,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 invalid_field_type_count,
                 coerced_candidate_count,
                 raw_candidate_count,
+                structured_parse_diagnostics,
             ) = self._coerce_candidates_from_structured_payload(
                 payload=recovery.payload,
                 candidate_count=bounded_count,
             )
+            invalid_candidate_count = structured_parse_diagnostics.invalid_candidate_count
+            invalid_candidate_indexes = structured_parse_diagnostics.invalid_candidate_indexes
+            invalid_field_diagnostics = structured_parse_diagnostics.invalid_field_diagnostics
             filtered_structured_candidates, dropped_missing_fields_count = self._filter_candidates_with_required_fields(
                 structured_candidates
             )
@@ -427,16 +478,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                         ",".join(recovery.recovery_actions),
                     )
                 if invalid_field_type_count > 0:
-                    logger.warning(
-                        (
-                            "Competitor profile payload included malformed candidate entries; "
-                            "valid entries were preserved provider_name=%s model_name=%s endpoint=%s "
-                            "invalid_field_type_count=%s"
-                        ),
-                        self.provider_name,
-                        self.model_name,
-                        endpoint_path,
-                        invalid_field_type_count,
+                    self._log_candidate_schema_diagnostics(
+                        endpoint_path=endpoint_path,
+                        request_debug=request_debug,
+                        valid_candidate_count=len(filtered_structured_candidates),
+                        invalid_candidate_count=invalid_candidate_count,
+                        invalid_field_type_count=invalid_field_type_count,
+                        invalid_candidate_indexes=invalid_candidate_indexes,
+                        invalid_field_diagnostics=invalid_field_diagnostics,
                     )
                 salvaged_candidate_count = 0
                 if recovery.recovery_actions:
@@ -449,19 +498,21 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     salvaged_candidate_count=max(0, int(salvaged_candidate_count)),
                     raw_candidate_count=max(0, int(raw_candidate_count)),
                     dropped_missing_fields_count=max(0, int(dropped_missing_fields_count)),
+                    invalid_field_type_count=max(0, int(invalid_field_type_count)),
+                    invalid_candidate_count=max(0, int(invalid_candidate_count)),
+                    invalid_candidate_indexes=invalid_candidate_indexes,
+                    invalid_field_diagnostics=invalid_field_diagnostics,
                 )
 
             if invalid_field_type_count > 0:
-                logger.warning(
-                    (
-                        "Competitor profile payload candidate entries failed strict typing; "
-                        "attempting normalized salvage provider_name=%s model_name=%s endpoint=%s "
-                        "invalid_field_type_count=%s"
-                    ),
-                    self.provider_name,
-                    self.model_name,
-                    endpoint_path,
-                    invalid_field_type_count,
+                self._log_candidate_schema_diagnostics(
+                    endpoint_path=endpoint_path,
+                    request_debug=request_debug,
+                    valid_candidate_count=0,
+                    invalid_candidate_count=invalid_candidate_count,
+                    invalid_field_type_count=invalid_field_type_count,
+                    invalid_candidate_indexes=invalid_candidate_indexes,
+                    invalid_field_diagnostics=invalid_field_diagnostics,
                 )
 
         normalized_payload = normalize_competitor_response(normalized_json_text)
@@ -482,6 +533,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 salvaged_candidate_count=max(0, int(salvaged_candidate_count)),
                 raw_candidate_count=max(0, int(normalized_raw_candidate_count)),
                 dropped_missing_fields_count=max(0, int(dropped_missing_fields_count)),
+                invalid_field_type_count=max(0, int(invalid_field_type_count)),
+                invalid_candidate_count=max(0, int(invalid_candidate_count)),
+                invalid_candidate_indexes=invalid_candidate_indexes,
+                invalid_field_diagnostics=invalid_field_diagnostics,
             )
 
         malformed_reason = recovery.reason
@@ -513,20 +568,49 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         *,
         payload: dict[str, object],
         candidate_count: int,
-    ) -> tuple[list[SEOCompetitorProfileDraftCandidateOutput], bool, int, int, int]:
+    ) -> tuple[
+        list[SEOCompetitorProfileDraftCandidateOutput],
+        bool,
+        int,
+        int,
+        int,
+        _StructuredCandidateParseDiagnostics,
+    ]:
         raw_candidates = payload.get("candidates")
         if not isinstance(raw_candidates, list):
-            return [], False, 0, 0, 0
+            return (
+                [],
+                False,
+                0,
+                0,
+                0,
+                _StructuredCandidateParseDiagnostics(
+                    invalid_field_type_count=0,
+                    invalid_candidate_count=0,
+                    invalid_candidate_indexes=(),
+                    invalid_field_diagnostics=(),
+                ),
+            )
         candidates: list[SEOCompetitorProfileDraftCandidateOutput] = []
         invalid_field_type_count = 0
         coerced_candidate_count = 0
-        for raw_candidate in raw_candidates:
+        invalid_candidate_indexes: list[int] = []
+        invalid_field_diagnostics: list[dict[str, object]] = []
+        for candidate_index, raw_candidate in enumerate(raw_candidates):
             if len(candidates) >= candidate_count:
                 break
             try:
                 parsed_candidate = _OpenAICompetitorProfileCandidate.model_validate(raw_candidate)
-            except ValidationError:
+            except ValidationError as exc:
                 coerced_candidate = self._coerce_candidate_from_structured_item(raw_candidate)
+                invalid_candidate_indexes.append(candidate_index)
+                invalid_field_diagnostics.extend(
+                    self._build_candidate_validation_diagnostics(
+                        candidate_index=candidate_index,
+                        raw_candidate=raw_candidate,
+                        validation_error=exc,
+                    )
+                )
                 if coerced_candidate is None:
                     invalid_field_type_count += 1
                     continue
@@ -545,7 +629,20 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     confidence_score=parsed_candidate.confidence_score,
                 )
             )
-        return candidates, True, invalid_field_type_count, coerced_candidate_count, len(raw_candidates)
+        diagnostics = _StructuredCandidateParseDiagnostics(
+            invalid_field_type_count=max(0, int(invalid_field_type_count)),
+            invalid_candidate_count=max(0, len(set(invalid_candidate_indexes))),
+            invalid_candidate_indexes=tuple(sorted(set(invalid_candidate_indexes))),
+            invalid_field_diagnostics=tuple(invalid_field_diagnostics[:_INVALID_FIELD_DIAGNOSTIC_MAX_ITEMS]),
+        )
+        return (
+            candidates,
+            True,
+            invalid_field_type_count,
+            coerced_candidate_count,
+            len(raw_candidates),
+            diagnostics,
+        )
 
     def _coerce_candidate_from_structured_item(
         self,
@@ -587,6 +684,15 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         return max(0.0, min(1.0, (relevance + visibility) / 10.0))
 
     def _coerce_optional_float(self, value: object) -> float | None:
+        if isinstance(value, (list, tuple)):
+            if not value:
+                return None
+            value = value[0]
+        elif isinstance(value, dict):
+            for key in ("confidence_score", "confidence", "score", "value"):
+                if key in value:
+                    value = value.get(key)
+                    break
         try:
             parsed = float(value)
         except (TypeError, ValueError):
@@ -798,6 +904,159 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             )
         return filtered, dropped_missing_fields_count
 
+    def _build_candidate_validation_diagnostics(
+        self,
+        *,
+        candidate_index: int,
+        raw_candidate: object,
+        validation_error: ValidationError,
+    ) -> list[dict[str, object]]:
+        diagnostics: list[dict[str, object]] = []
+        for error_item in validation_error.errors():
+            loc = error_item.get("loc")
+            loc_items = [str(item) for item in loc] if isinstance(loc, (list, tuple)) else []
+            field_name = loc_items[-1] if loc_items else "candidate"
+            expected_type = _CANDIDATE_FIELD_EXPECTED_TYPES.get(field_name, "schema")
+            actual_value = self._value_for_error_location(raw_candidate=raw_candidate, loc=loc_items)
+            discard_reason = self._map_candidate_validation_discard_reason(error_item.get("type"))
+            diagnostics.append(
+                {
+                    "candidate_index": max(0, int(candidate_index)),
+                    "field_name": field_name,
+                    "expected_type": expected_type,
+                    "actual_type": self._describe_value_type(actual_value),
+                    "discard_reason": discard_reason,
+                    "required_or_optional": (
+                        "required"
+                        if field_name in _CANDIDATE_REQUIRED_FIELDS
+                        else "optional"
+                    ),
+                }
+            )
+            if len(diagnostics) >= _INVALID_FIELD_DIAGNOSTIC_MAX_ITEMS:
+                break
+        if diagnostics:
+            return diagnostics
+        return [
+            {
+                "candidate_index": max(0, int(candidate_index)),
+                "field_name": "candidate",
+                "expected_type": "object",
+                "actual_type": self._describe_value_type(raw_candidate),
+                "discard_reason": "invalid_candidate_shape",
+                "required_or_optional": "required",
+            }
+        ]
+
+    def _value_for_error_location(self, *, raw_candidate: object, loc: list[str]) -> object:
+        current: object = raw_candidate
+        for item in loc:
+            if isinstance(current, dict) and item in current:
+                current = current[item]
+                continue
+            if isinstance(current, list):
+                try:
+                    index = int(item)
+                except (TypeError, ValueError):
+                    return _MissingValue
+                if index < 0 or index >= len(current):
+                    return _MissingValue
+                current = current[index]
+                continue
+            return _MissingValue
+        return current
+
+    def _describe_value_type(self, value: object) -> str:
+        if value is _MissingValue:
+            return "missing"
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, (int, float)):
+            return "number"
+        if isinstance(value, str):
+            return "string"
+        if isinstance(value, list):
+            return "array"
+        if isinstance(value, dict):
+            return "object"
+        return type(value).__name__
+
+    def _map_candidate_validation_discard_reason(self, raw_error_type: object) -> str:
+        error_type = str(raw_error_type or "").strip().lower()
+        if not error_type:
+            return "invalid_field_type"
+        if "missing" in error_type:
+            return "missing_required_field"
+        if "float" in error_type or "number" in error_type:
+            return "invalid_numeric_type"
+        if "string" in error_type:
+            return "invalid_string_type"
+        if "dict" in error_type or "model_type" in error_type:
+            return "invalid_candidate_shape"
+        return "invalid_field_type"
+
+    def _log_candidate_schema_diagnostics(
+        self,
+        *,
+        endpoint_path: str,
+        request_debug: dict[str, object] | None,
+        valid_candidate_count: int,
+        invalid_candidate_count: int,
+        invalid_field_type_count: int,
+        invalid_candidate_indexes: tuple[int, ...],
+        invalid_field_diagnostics: tuple[dict[str, object], ...],
+    ) -> None:
+        debug = request_debug or {}
+        level = logging.WARNING if valid_candidate_count > 0 else logging.ERROR
+        self._emit_structured_provider_log(
+            level=level,
+            event=_STRUCTURED_LOG_EVENT_CANDIDATE_SCHEMA_DIAGNOSTICS,
+            payload={
+                "run_id": _clean_optional_value(debug.get("run_id")),
+                "attempt_number": _coerce_optional_bounded_int(
+                    debug.get("attempt_number"),
+                    minimum=0,
+                    maximum=1000,
+                ),
+                "execution_mode": _clean_optional_value(debug.get("execution_mode")),
+                "provider_call_type": _clean_optional_value(debug.get("provider_call_type")),
+                "endpoint_path": endpoint_path,
+                "web_search_enabled": debug.get("web_search_enabled"),
+                "degraded_mode": bool(debug.get("degraded_mode")),
+                "valid_candidate_count": max(0, int(valid_candidate_count)),
+                "invalid_candidate_count": max(0, int(invalid_candidate_count)),
+                "invalid_field_type_count": max(0, int(invalid_field_type_count)),
+                "invalid_candidate_indexes": [int(index) for index in invalid_candidate_indexes],
+                "invalid_fields": [dict(item) for item in invalid_field_diagnostics],
+                "recoverable": bool(valid_candidate_count > 0),
+            },
+        )
+        if valid_candidate_count > 0:
+            logger.warning(
+                (
+                    "Competitor profile payload included malformed candidate entries; "
+                    "valid entries were preserved provider_name=%s model_name=%s endpoint=%s "
+                    "invalid_field_type_count=%s"
+                ),
+                self.provider_name,
+                self.model_name,
+                endpoint_path,
+                invalid_field_type_count,
+            )
+        else:
+            logger.error(
+                (
+                    "Competitor profile payload candidate entries were malformed and no valid candidates remained "
+                    "provider_name=%s model_name=%s endpoint=%s invalid_field_type_count=%s"
+                ),
+                self.provider_name,
+                self.model_name,
+                endpoint_path,
+                invalid_field_type_count,
+            )
+
     def _log_prompt_resolution_metadata(self) -> None:
         logger.info(
             (
@@ -852,6 +1111,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         raw_candidate_count: int,
         valid_candidate_count: int,
         dropped_missing_fields_count: int,
+        invalid_field_type_count: int = 0,
+        invalid_candidate_count: int = 0,
+        invalid_candidate_indexes: tuple[int, ...] = (),
     ) -> None:
         debug = request_debug or {}
         self._emit_structured_provider_log(
@@ -870,6 +1132,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "raw_count": max(0, int(raw_candidate_count)),
                 "valid_count": max(0, int(valid_candidate_count)),
                 "dropped_missing_fields": max(0, int(dropped_missing_fields_count)),
+                "invalid_field_type_count": max(0, int(invalid_field_type_count)),
+                "invalid_candidate_count": max(0, int(invalid_candidate_count)),
+                "invalid_candidate_indexes": [int(index) for index in invalid_candidate_indexes],
                 "web_search_enabled": debug.get("web_search_enabled"),
                 "degraded_mode": bool(debug.get("degraded_mode")),
             },
@@ -966,6 +1231,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         error_type: str | None,
         failure_kind: str,
         malformed_output_reason: str | None = None,
+        timeout_type: str | None = None,
         request_duration_ms: int | None = None,
     ) -> None:
         debug = request_debug or {}
@@ -996,6 +1262,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "error_type": _sanitize_log_error_type(error_type),
             "failure_kind": failure_kind,
         }
+        normalized_timeout_type = _clean_optional_value((timeout_type or "").strip().lower())
+        if failure_kind == "timeout":
+            payload["timeout_type"] = (
+                normalized_timeout_type
+                if normalized_timeout_type in _TIMEOUT_TYPE_VALUES
+                else _TIMEOUT_TYPE_UNKNOWN
+            )
         normalized_reason = _clean_optional_value(
             str(malformed_output_reason or "").strip().lower()
         )
@@ -1010,7 +1283,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
     def _should_log_structured_error(self, provider_error: SEOCompetitorProfileProviderError) -> bool:
         if provider_error.code in {_PROVIDER_ERROR_INVALID_OUTPUT, _PROVIDER_ERROR_SCHEMA_VALIDATION, _PROVIDER_ERROR_PARSING}:
             return True
-        failure_kind, _, _, _ = self._extract_structured_failure_details(provider_error.raw_output)
+        failure_kind, _, _, _, _ = self._extract_structured_failure_details(provider_error.raw_output)
         return failure_kind == "malformed_output"
 
     def _log_provider_request_error_from_provider_error(
@@ -1020,7 +1293,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         endpoint_path: str,
         request_debug: dict[str, object] | None,
     ) -> None:
-        failure_kind, malformed_output_reason, duration_ms, parsed_endpoint = self._extract_structured_failure_details(
+        (
+            failure_kind,
+            malformed_output_reason,
+            timeout_type,
+            duration_ms,
+            parsed_endpoint,
+        ) = self._extract_structured_failure_details(
             provider_error.raw_output
         )
         effective_failure_kind = failure_kind or "malformed_output"
@@ -1037,27 +1316,31 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             error_type=error_type,
             failure_kind=effective_failure_kind,
             malformed_output_reason=malformed_output_reason,
+            timeout_type=timeout_type,
             request_duration_ms=duration_ms,
         )
 
     def _extract_structured_failure_details(
         self,
         raw_output: str | None,
-    ) -> tuple[str | None, str | None, int | None, str | None]:
+    ) -> tuple[str | None, str | None, str | None, int | None, str | None]:
         if not raw_output:
-            return None, None, None, None
+            return None, None, None, None, None
         try:
             parsed = json.loads(raw_output)
         except (TypeError, ValueError, json.JSONDecodeError):
-            return None, None, None, None
+            return None, None, None, None, None
         if not isinstance(parsed, dict):
-            return None, None, None, None
+            return None, None, None, None, None
         failure_kind = _clean_optional_value(parsed.get("failure_kind"))
         if failure_kind not in {"timeout", "provider_request", "malformed_output"}:
             failure_kind = None
         malformed_output_reason = _clean_optional_value(parsed.get("malformed_output_reason"))
         if malformed_output_reason not in _MALFORMED_OUTPUT_ALLOWED_REASONS:
             malformed_output_reason = None
+        timeout_type = _clean_optional_value(parsed.get("timeout_type"))
+        if timeout_type not in _TIMEOUT_TYPE_VALUES:
+            timeout_type = None
         endpoint_path = _clean_optional_value(parsed.get("endpoint_path"))
         request_debug = parsed.get("request_debug")
         request_duration_ms = None
@@ -1067,7 +1350,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 minimum=0,
                 maximum=3_600_000,
             )
-        return failure_kind, malformed_output_reason, request_duration_ms, endpoint_path
+        return failure_kind, malformed_output_reason, timeout_type, request_duration_ms, endpoint_path
 
     def _request_completion(
         self,
@@ -1132,6 +1415,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 request_debug=request_debug,
                 error_type=error_type or error_code or "http_error",
                 failure_kind=failure_kind,
+                timeout_type=(_TIMEOUT_TYPE_OVERALL if failure_kind == "timeout" else None),
                 request_duration_ms=request_duration_ms,
             )
             if exc.code in {401, 403}:
@@ -1151,6 +1435,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                         failure_kind="timeout",
                         request_debug=request_debug,
                         provider_error_body=body_text,
+                        timeout_type=_TIMEOUT_TYPE_OVERALL,
                         request_duration_ms=request_duration_ms,
                     ),
                 ) from exc
@@ -1167,14 +1452,16 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             ) from exc
         except (TimeoutError, socket.timeout) as exc:
             request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
+            timeout_type = self._infer_timeout_type(str(exc))
             logger.warning(
                 (
-                    "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s reason=%s "
+                    "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s timeout_type=%s reason=%s "
                     "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
                 ),
                 self.provider_name,
                 self.model_name,
                 normalized_endpoint,
+                timeout_type,
                 str(exc),
                 request_debug.get("prompt_total_chars") if request_debug else None,
                 request_debug.get("context_json_chars") if request_debug else None,
@@ -1185,6 +1472,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 request_debug=request_debug,
                 error_type="timeout",
                 failure_kind="timeout",
+                timeout_type=timeout_type,
                 request_duration_ms=request_duration_ms,
             )
             raise self._provider_error(
@@ -1195,20 +1483,23 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     failure_kind="timeout",
                     request_debug=request_debug,
                     provider_error_body=str(exc),
+                    timeout_type=timeout_type,
                     request_duration_ms=request_duration_ms,
                 ),
             ) from exc
         except urllib.error.URLError as exc:
             request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
             if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
+                timeout_type = self._infer_timeout_type(str(exc.reason))
                 logger.warning(
                     (
-                        "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s reason=%s "
+                        "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s timeout_type=%s reason=%s "
                         "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
                     ),
                     self.provider_name,
                     self.model_name,
                     normalized_endpoint,
+                    timeout_type,
                     str(exc.reason),
                     request_debug.get("prompt_total_chars") if request_debug else None,
                     request_debug.get("context_json_chars") if request_debug else None,
@@ -1219,6 +1510,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     request_debug=request_debug,
                     error_type="timeout",
                     failure_kind="timeout",
+                    timeout_type=timeout_type,
                     request_duration_ms=request_duration_ms,
                 )
                 raise self._provider_error(
@@ -1229,6 +1521,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                         failure_kind="timeout",
                         request_debug=request_debug,
                         provider_error_body=str(exc.reason),
+                        timeout_type=timeout_type,
                         request_duration_ms=request_duration_ms,
                     ),
                 ) from exc
@@ -1530,6 +1823,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         failure_kind: str,
         request_debug: dict[str, object] | None,
         provider_error_body: str | None,
+        timeout_type: str | None = None,
         request_duration_ms: int | None = None,
         malformed_output_reason: str | None = None,
         recovery_actions: tuple[str, ...] | None = None,
@@ -1541,6 +1835,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "failure_kind": normalized_failure_kind,
             "endpoint_path": endpoint_path,
         }
+        normalized_timeout_type = _clean_optional_value((timeout_type or "").strip().lower())
+        if normalized_failure_kind == "timeout":
+            payload["timeout_type"] = (
+                normalized_timeout_type
+                if normalized_timeout_type in _TIMEOUT_TYPE_VALUES
+                else _TIMEOUT_TYPE_UNKNOWN
+            )
         if request_debug:
             payload["request_debug"] = {
                 "run_id": request_debug.get("run_id"),
@@ -1583,6 +1884,24 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             return json.dumps(payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
             return None
+
+    def _infer_timeout_type(self, reason: str | None) -> str:
+        normalized_reason = (reason or "").strip().lower()
+        if not normalized_reason:
+            return _TIMEOUT_TYPE_UNKNOWN
+        if "read operation timed out" in normalized_reason or "read timed out" in normalized_reason:
+            return _TIMEOUT_TYPE_READ
+        if "connect timeout" in normalized_reason:
+            return _TIMEOUT_TYPE_CONNECT
+        if "connect timed out" in normalized_reason:
+            return _TIMEOUT_TYPE_CONNECT
+        if "connection timed out" in normalized_reason and "read" not in normalized_reason:
+            return _TIMEOUT_TYPE_CONNECT
+        if "timed out" in normalized_reason:
+            return _TIMEOUT_TYPE_OVERALL
+        if "timeout" in normalized_reason:
+            return _TIMEOUT_TYPE_OVERALL
+        return _TIMEOUT_TYPE_UNKNOWN
 
     def _extract_assistant_content(self, response_json: dict[str, object]) -> str:
         choices = response_json.get("choices")
@@ -1718,6 +2037,8 @@ class _OpenAICompetitorProfileCandidate(BaseModel):
     @field_validator("name", "domain", "competitor_type", mode="before")
     @classmethod
     def _normalize_required_text(cls, value: object) -> str:
+        if isinstance(value, (list, tuple, dict, set)):
+            raise ValueError("value must be a string")
         normalized = str(value or "").strip()
         if not normalized:
             raise ValueError("value is required")
@@ -1728,12 +2049,27 @@ class _OpenAICompetitorProfileCandidate(BaseModel):
     def _normalize_optional_text(cls, value: object) -> str | None:
         if value is None:
             return None
+        if isinstance(value, (list, tuple, dict, set)):
+            raise ValueError("value must be a string or null")
         normalized = str(value).strip()
         return normalized or None
 
     @field_validator("confidence_score", mode="before")
     @classmethod
     def _normalize_confidence(cls, value: object) -> float:
+        if isinstance(value, (list, tuple)):
+            if not value:
+                raise ValueError("confidence_score must be numeric")
+            value = value[0]
+        elif isinstance(value, dict):
+            extracted = None
+            for key in ("confidence_score", "confidence", "score", "value"):
+                if key in value:
+                    extracted = value.get(key)
+                    break
+            if extracted is None:
+                raise ValueError("confidence_score must be numeric")
+            value = extracted
         try:
             return float(value)
         except (TypeError, ValueError) as exc:

@@ -459,9 +459,9 @@ class _TimeoutThenSuccessCompetitorProfileProvider:
                 model_name=self.model_name,
                 prompt_version=self.prompt_version,
                 raw_output=(
-                    "{\"failure_kind\":\"timeout\",\"endpoint_path\":\""
+                    "{\"failure_kind\":\"timeout\",\"timeout_type\":\"read\",\"endpoint_path\":\""
                     f"{endpoint_path}"
-                    "\","
+                    "\"," 
                     "\"request_debug\":{\"request_duration_ms\":30500,\"timeout_seconds\":30,"
                     "\"web_search_enabled\":"
                     f"{web_search_value}"
@@ -538,9 +538,9 @@ class _TimeoutConfiguredThenSuccessCompetitorProfileProvider:
                 model_name=self.model_name,
                 prompt_version=self.prompt_version,
                 raw_output=(
-                    "{\"failure_kind\":\"timeout\",\"endpoint_path\":\""
+                    "{\"failure_kind\":\"timeout\",\"timeout_type\":\"read\",\"endpoint_path\":\""
                     f"{endpoint_path}"
-                    "\","
+                    "\"," 
                     "\"request_debug\":{\"request_duration_ms\":1500,"
                     f"\"timeout_seconds\":{effective_timeout_seconds},"
                     "\"web_search_enabled\":"
@@ -612,6 +612,73 @@ class _TimeoutCaptureSuccessCompetitorProfileProvider:
             model_name=self.model_name,
             prompt_version=self.prompt_version,
             raw_response='{"candidates":[{"name":"Timeout Default Candidate"}]}',
+        )
+
+
+class _FastTimeoutThenFullSuccessCompetitorProfileProvider:
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def __init__(self) -> None:
+        self.attempt_numbers: list[int | None] = []
+        self.execution_modes: list[str | None] = []
+        self.provider_call_types: list[str | None] = []
+        self.web_search_enabled_flags: list[bool | None] = []
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+        reduced_context_mode: bool = False,
+        run_id: str | None = None,
+        attempt_number: int | None = None,
+        degraded_mode: bool = False,
+        execution_mode: str | None = None,
+        provider_call_type: str | None = None,
+        web_search_enabled: bool | None = None,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count, reduced_context_mode, run_id, degraded_mode
+        self.attempt_numbers.append(attempt_number)
+        self.execution_modes.append(execution_mode)
+        self.provider_call_types.append(provider_call_type)
+        self.web_search_enabled_flags.append(web_search_enabled)
+        if len(self.attempt_numbers) == 1:
+            raise SEOCompetitorProfileProviderError(
+                code="timeout",
+                safe_message="provider timeout",
+                provider_name=self.provider_name,
+                model_name=self.model_name,
+                prompt_version=self.prompt_version,
+                raw_output=(
+                    "{\"failure_kind\":\"timeout\",\"timeout_type\":\"read\",\"endpoint_path\":\"/chat/completions\","
+                    "\"request_debug\":{\"request_duration_ms\":28000,\"timeout_seconds\":30,"
+                    "\"web_search_enabled\":false,\"prompt_size_risk\":\"normal\","
+                    "\"execution_mode\":\"fast_path\",\"provider_call_type\":\"non_tool\"}}"
+                ),
+            )
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Full Attempt Recovery Competitor",
+                    suggested_domain="full-attempt-recovery.example",
+                    competitor_type="direct",
+                    summary="Recovered on full attempt after fast-path timeout.",
+                    why_competitor="Used to validate retry_success timeout classification.",
+                    evidence="Deterministic provider fixture.",
+                    confidence_score=0.81,
+                )
+            ],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Full Attempt Recovery Competitor"}]}',
+            provider_call_type=provider_call_type,
+            endpoint_path="/responses",
+            web_search_enabled=bool(web_search_enabled),
+            request_duration_ms=640,
         )
 
 
@@ -1850,7 +1917,7 @@ def test_invalid_confidence_output_fails_run_safely(db_session, seeded_business)
     assert payload["total_drafts"] == 0
 
 
-def test_timeout_provider_failure_marks_run_failed_safely(db_session, seeded_business) -> None:
+def test_timeout_provider_failure_marks_run_failed_safely(db_session, seeded_business, caplog) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -1862,13 +1929,14 @@ def test_timeout_provider_failure_marks_run_failed_safely(db_session, seeded_bus
     created = _create_generation_run(client, seeded_business.id, site_id)
     run_id = created["run"]["id"]
 
-    _execute_generation_run(
-        db_session=db_session,
-        business_id=seeded_business.id,
-        site_id=site_id,
-        run_id=run_id,
-        provider=_TimeoutCompetitorProfileProvider(),
-    )
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=_TimeoutCompetitorProfileProvider(),
+        )
 
     detail = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
@@ -1910,6 +1978,23 @@ def test_timeout_provider_failure_marks_run_failed_safely(db_session, seeded_bus
     assert payload["provider_attempts"][0]["requested_candidate_count"] == 4
     assert payload["provider_attempts"][1]["requested_candidate_count"] == 4
     assert payload["provider_attempts"][2]["requested_candidate_count"] == 3
+    assert payload["provider_attempts"][0]["max_attempts"] == 3
+    assert payload["provider_attempts"][1]["max_attempts"] == 3
+    assert payload["provider_attempts"][2]["max_attempts"] == 3
+    assert payload["provider_attempts"][0]["recovered_after_timeout"] is False
+    assert payload["provider_attempts"][0]["recovery_path"] == "none"
+    assert payload["provider_attempts"][0]["final_outcome"] == "failure"
+    assert payload["provider_attempts"][2]["final_outcome"] == "failure"
+    events = _structured_event_records(caplog)
+    timeout_outcome_event = next(item for item in events if item.get("event") == "competitor_timeout_outcome")
+    assert timeout_outcome_event["run_id"] == run_id
+    assert timeout_outcome_event["final_outcome"] == "failure"
+    assert timeout_outcome_event["recovered_after_timeout"] is False
+    assert timeout_outcome_event["recovery_path"] == "none"
+    timeout_outcome_record = next(
+        record for record in caplog.records if "\"event\": \"competitor_timeout_outcome\"" in record.getMessage()
+    )
+    assert timeout_outcome_record.levelname == "ERROR"
     persisted_run = (
         db_session.query(SEOCompetitorProfileGenerationRun)
         .filter(SEOCompetitorProfileGenerationRun.business_id == seeded_business.id)
@@ -2001,7 +2086,7 @@ def test_service_passes_explicit_provider_call_type_intent_for_provider_capable_
     assert payload["provider_attempts"][0]["escalation_reason"] is None
 
 
-def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_business) -> None:
+def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_business, caplog) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -2014,13 +2099,14 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     run_id = created["run"]["id"]
     provider = _TimeoutThenSuccessCompetitorProfileProvider()
 
-    _execute_generation_run(
-        db_session=db_session,
-        business_id=seeded_business.id,
-        site_id=site_id,
-        run_id=run_id,
-        provider=provider,
-    )
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=provider,
+        )
 
     detail = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
@@ -2040,6 +2126,7 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert payload["provider_attempts"][0]["reduced_context_mode"] is True
     assert payload["provider_attempts"][0]["web_search_enabled"] is False
     assert payload["provider_attempts"][0]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][0]["timeout_type"] == "read"
     assert payload["provider_attempts"][0]["request_duration_ms"] is not None
     assert payload["provider_attempts"][0]["request_duration_ms"] >= 0
     assert payload["provider_attempts"][1]["attempt_number"] == 1
@@ -2049,6 +2136,7 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert payload["provider_attempts"][1]["reduced_context_mode"] is False
     assert payload["provider_attempts"][1]["web_search_enabled"] is True
     assert payload["provider_attempts"][1]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][1]["timeout_type"] == "read"
     assert payload["provider_attempts"][1]["request_duration_ms"] is not None
     assert payload["provider_attempts"][1]["request_duration_ms"] >= 0
     assert payload["provider_attempts"][2]["attempt_number"] == 2
@@ -2061,6 +2149,13 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert payload["provider_attempts"][2]["request_duration_ms"] is not None
     assert payload["provider_attempts"][2]["request_duration_ms"] >= 0
     assert payload["provider_attempts"][2]["requested_candidate_count"] == 6
+    assert payload["provider_attempts"][0]["max_attempts"] == 3
+    assert payload["provider_attempts"][1]["max_attempts"] == 3
+    assert payload["provider_attempts"][2]["max_attempts"] == 3
+    assert payload["provider_attempts"][0]["recovered_after_timeout"] is True
+    assert payload["provider_attempts"][0]["recovery_path"] == "degraded_success"
+    assert payload["provider_attempts"][0]["final_outcome"] == "degraded_success"
+    assert payload["provider_attempts"][2]["final_outcome"] == "degraded_success"
     assert payload["provider_attempts"][1]["prompt_total_chars"] > payload["provider_attempts"][2]["prompt_total_chars"]
     assert payload["provider_attempts"][1]["context_json_chars"] > payload["provider_attempts"][2]["context_json_chars"]
     assert provider.requested_candidate_counts == [7, 7, 6]
@@ -2071,6 +2166,72 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert provider.execution_modes == ["fast_path", "full", "degraded"]
     assert provider.provider_call_types == ["non_tool", "tool_enabled", "non_tool"]
     assert provider.web_search_enabled_flags == [False, True, False]
+    events = _structured_event_records(caplog)
+    timeout_outcome_event = next(item for item in events if item.get("event") == "competitor_timeout_outcome")
+    assert timeout_outcome_event["run_id"] == run_id
+    assert timeout_outcome_event["final_outcome"] == "degraded_success"
+    assert timeout_outcome_event["recovery_path"] == "degraded_success"
+    assert timeout_outcome_event["recovered_after_timeout"] is True
+    timeout_outcome_record = next(
+        record for record in caplog.records if "\"event\": \"competitor_timeout_outcome\"" in record.getMessage()
+    )
+    assert timeout_outcome_record.levelname == "WARNING"
+
+
+def test_timeout_retry_recovers_on_full_attempt_without_degraded_mode(db_session, seeded_business, caplog) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _FastTimeoutThenFullSuccessCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=4)["run"]["id"]
+
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=provider,
+        )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["provider_attempt_count"] == 2
+    assert payload["provider_degraded_retry_used"] is False
+    assert len(payload["provider_attempts"]) == 2
+    assert payload["provider_attempts"][0]["failure_kind"] == "timeout"
+    assert payload["provider_attempts"][0]["timeout_type"] == "read"
+    assert payload["provider_attempts"][0]["recovered_after_timeout"] is True
+    assert payload["provider_attempts"][0]["recovery_path"] == "retry_success"
+    assert payload["provider_attempts"][0]["final_outcome"] == "success"
+    assert payload["provider_attempts"][1]["execution_mode"] == "full"
+    assert payload["provider_attempts"][1]["provider_call_type"] == "tool_enabled"
+    assert payload["provider_attempts"][1]["web_search_enabled"] is True
+    assert payload["provider_attempts"][1]["final_outcome"] == "success"
+    assert provider.attempt_numbers == [0, 1]
+    assert provider.execution_modes == ["fast_path", "full"]
+    assert provider.provider_call_types == ["non_tool", "tool_enabled"]
+    assert provider.web_search_enabled_flags == [False, True]
+
+    events = _structured_event_records(caplog)
+    timeout_outcome_event = next(item for item in events if item.get("event") == "competitor_timeout_outcome")
+    assert timeout_outcome_event["run_id"] == run_id
+    assert timeout_outcome_event["final_outcome"] == "success"
+    assert timeout_outcome_event["recovery_path"] == "retry_success"
+    assert timeout_outcome_event["recovered_after_timeout"] is True
+    timeout_outcome_record = next(
+        record for record in caplog.records if "\"event\": \"competitor_timeout_outcome\"" in record.getMessage()
+    )
+    assert timeout_outcome_record.levelname == "INFO"
 
 
 def test_timeout_retry_uses_business_scoped_primary_and_degraded_timeouts(db_session, seeded_business) -> None:
