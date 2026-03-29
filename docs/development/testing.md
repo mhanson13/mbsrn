@@ -35,6 +35,11 @@ Pytest discovery is explicit in `pytest.ini`:
 - `testpaths = app/tests`
 - `pythonpath = .`
 
+Pytest environment defaults are explicit:
+- `APP_ENV` defaults to `test` for pytest runs.
+- Developers do not need to manually export `APP_ENV` before running tests.
+- If `APP_ENV` is already set (for example `APP_ENV=ci` in CI), it is preserved.
+
 ## CI Parity
 - Backend pipeline: `.github/workflows/backend-ci.yml`
 - Frontend pipeline: `.github/workflows/frontend-ci.yml`

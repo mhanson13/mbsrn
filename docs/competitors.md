@@ -271,6 +271,7 @@ Competitor run detail responses now include a compact operator-facing `outcome_s
 Related workspace trust signal:
 - Recommendation workspace summary includes a deterministic `apply_outcome` block (see `docs/recommendations.md`) so operators can track what recommendation-linked change was applied, which preview context was used, and when refreshed runs should reflect the change.
 - Workspace also exposes a compact `workspace_trust_summary` roll-up (see `docs/dashboard.md`) that surfaces the latest competitor status (`normal|recovered|degraded|failed`) plus nearby seed discovery and synthetic fallback usage in one operator-facing strip.
+- Workspace includes `competitor_section_freshness` (see `docs/dashboard.md`) to show section-level freshness state (`fresh|pending_refresh|running|stale`) and short operator-safe guidance.
 
 Status mapping:
 - `normal`: provider-backed completion with no recovery path needed

@@ -100,6 +100,7 @@ from app.schemas.seo_recommendation import (
     SEORecommendationOrderingExplanationRead,
     SEORecommendationStartHereRead,
     SEORecommendationThemeGroupRead,
+    SEOWorkspaceSectionFreshnessRead,
     SEORecommendationWorkspaceTrustSummaryRead,
     SEORecommendationWorkspaceSummaryRead,
     SEORecommendationTuningImpactPreviewRead,
@@ -914,6 +915,129 @@ def _build_workspace_trust_summary(
             "latest_recommendation_apply_change_summary": latest_recommendation_apply_change_summary,
             "next_refresh_expectation": next_refresh_expectation,
             "freshness_note": freshness_note,
+        }
+    )
+
+
+def _build_competitor_section_freshness(
+    *,
+    latest_competitor_run_status: str | None,
+    latest_competitor_outcome_summary: SEOCompetitorProfileOutcomeSummaryRead | None,
+    apply_outcome: SEORecommendationApplyOutcomeRead | None,
+    analysis_freshness: SEORecommendationAnalysisFreshnessRead | None,
+) -> SEOWorkspaceSectionFreshnessRead:
+    if latest_competitor_run_status in {"queued", "running"}:
+        return SEOWorkspaceSectionFreshnessRead.model_validate(
+            {
+                "state": "running",
+                "message": "Competitor generation is currently running and will refresh this section on completion.",
+            }
+        )
+
+    if latest_competitor_run_status is None:
+        return SEOWorkspaceSectionFreshnessRead.model_validate(
+            {
+                "state": "stale",
+                "message": "No completed competitor generation run is available yet.",
+            }
+        )
+
+    if latest_competitor_outcome_summary is not None:
+        if latest_competitor_outcome_summary.status_level == "failed":
+            return SEOWorkspaceSectionFreshnessRead.model_validate(
+                {
+                    "state": "stale",
+                    "message": "Latest competitor generation failed. Start a new run to refresh results.",
+                }
+            )
+        if latest_competitor_outcome_summary.status_level == "degraded":
+            return SEOWorkspaceSectionFreshnessRead.model_validate(
+                {
+                    "state": "stale",
+                    "message": "Latest competitor results were degraded fallback output and may need a fresh run.",
+                }
+            )
+
+    if (
+        apply_outcome is not None
+        and apply_outcome.applied
+        and analysis_freshness is not None
+        and analysis_freshness.status == "pending_refresh"
+    ):
+        return SEOWorkspaceSectionFreshnessRead.model_validate(
+            {
+                "state": "pending_refresh",
+                "message": "Applied tuning changes are newer than current analysis; next completed run should refresh competitor context.",
+            }
+        )
+
+    if latest_competitor_outcome_summary is not None and latest_competitor_outcome_summary.status_level == "recovered":
+        return SEOWorkspaceSectionFreshnessRead.model_validate(
+            {
+                "state": "fresh",
+                "message": "Competitor section is current after provider recovery.",
+            }
+        )
+
+    return SEOWorkspaceSectionFreshnessRead.model_validate(
+        {
+            "state": "fresh",
+            "message": "Competitor section is current with the latest completed run.",
+        }
+    )
+
+
+def _build_recommendation_section_freshness(
+    *,
+    latest_recommendation_run_status: str | None,
+    latest_completed_recommendation_run_id: str | None,
+    analysis_freshness: SEORecommendationAnalysisFreshnessRead | None,
+    apply_outcome: SEORecommendationApplyOutcomeRead | None,
+) -> SEOWorkspaceSectionFreshnessRead:
+    if latest_recommendation_run_status in {"queued", "running"}:
+        return SEOWorkspaceSectionFreshnessRead.model_validate(
+            {
+                "state": "running",
+                "message": "Recommendation generation is currently running and will refresh this section on completion.",
+            }
+        )
+
+    if analysis_freshness is not None and analysis_freshness.status == "pending_refresh":
+        return SEOWorkspaceSectionFreshnessRead.model_validate(
+            {
+                "state": "pending_refresh",
+                "message": "Applied changes are waiting for the next completed recommendation analysis run.",
+            }
+        )
+
+    if latest_completed_recommendation_run_id is None:
+        return SEOWorkspaceSectionFreshnessRead.model_validate(
+            {
+                "state": "stale",
+                "message": "No completed recommendation run is available yet.",
+            }
+        )
+
+    if analysis_freshness is not None and analysis_freshness.status == "fresh":
+        return SEOWorkspaceSectionFreshnessRead.model_validate(
+            {
+                "state": "fresh",
+                "message": "Recommendation section reflects the latest applied changes.",
+            }
+        )
+
+    if apply_outcome is not None and apply_outcome.applied:
+        return SEOWorkspaceSectionFreshnessRead.model_validate(
+            {
+                "state": "stale",
+                "message": "Results may still reflect older settings until a new recommendation run completes.",
+            }
+        )
+
+    return SEOWorkspaceSectionFreshnessRead.model_validate(
+        {
+            "state": "stale",
+            "message": "Recommendation freshness could not be confirmed yet.",
         }
     )
 
@@ -2013,6 +2137,8 @@ def get_seo_recommendation_workspace_summary(
     grouped_recommendations: list[SEORecommendationThemeGroupRead] = []
     apply_outcome: SEORecommendationApplyOutcomeRead | None = None
     workspace_trust_summary: SEORecommendationWorkspaceTrustSummaryRead | None = None
+    competitor_section_freshness: SEOWorkspaceSectionFreshnessRead | None = None
+    recommendation_section_freshness: SEOWorkspaceSectionFreshnessRead | None = None
     analysis_freshness: SEORecommendationAnalysisFreshnessRead | None = None
     ordering_explanation: SEORecommendationOrderingExplanationRead | None = None
     start_here: SEORecommendationStartHereRead | None = None
@@ -2244,6 +2370,18 @@ def get_seo_recommendation_workspace_summary(
         apply_outcome=apply_outcome,
         analysis_freshness=analysis_freshness,
     )
+    competitor_section_freshness = _build_competitor_section_freshness(
+        latest_competitor_run_status=(latest_competitor_run.status if latest_competitor_run is not None else None),
+        latest_competitor_outcome_summary=latest_competitor_outcome_summary,
+        apply_outcome=apply_outcome,
+        analysis_freshness=analysis_freshness,
+    )
+    recommendation_section_freshness = _build_recommendation_section_freshness(
+        latest_recommendation_run_status=(latest_run.status if latest_run is not None else None),
+        latest_completed_recommendation_run_id=(latest_completed_run.id if latest_completed_run is not None else None),
+        analysis_freshness=analysis_freshness,
+        apply_outcome=apply_outcome,
+    )
     applied_recommendation_ids = _extract_workspace_applied_recommendation_ids(
         latest_applied_preview_event=latest_applied_preview_event,
         recommendations=recommendations_payload.items,
@@ -2294,6 +2432,8 @@ def get_seo_recommendation_workspace_summary(
         tuning_suggestions=tuning_suggestions,
         apply_outcome=apply_outcome,
         workspace_trust_summary=workspace_trust_summary,
+        competitor_section_freshness=competitor_section_freshness,
+        recommendation_section_freshness=recommendation_section_freshness,
         analysis_freshness=analysis_freshness,
         ordering_explanation=ordering_explanation,
         start_here=start_here,

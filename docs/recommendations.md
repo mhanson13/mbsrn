@@ -251,6 +251,7 @@ Backward compatibility:
 
 Workspace trust roll-up:
 - Workspace summary may also include `workspace_trust_summary` (see `docs/dashboard.md`), which reuses apply outcome fields alongside competitor outcome/provenance signals for a compact operator-visible trust/status strip.
+- Workspace summary may also include `recommendation_section_freshness` (see `docs/dashboard.md`) with section-level freshness state (`fresh|pending_refresh|running|stale`) and concise operator guidance.
 
 ## Workspace Analysis Freshness
 

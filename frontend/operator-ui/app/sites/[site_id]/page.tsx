@@ -68,6 +68,7 @@ import type {
   RecommendationTuningSuggestion,
   RecommendationWorkspaceSummaryResponse,
   SEOAuditRun,
+  WorkspaceSectionFreshness,
   WorkspaceTrustSummary,
 } from "../../../lib/api/types";
 
@@ -1141,6 +1142,11 @@ interface WorkspaceTrustSummaryView {
   freshnessNote: string | null;
 }
 
+interface WorkspaceSectionFreshnessView {
+  state: "fresh" | "pending_refresh" | "running" | "stale";
+  message: string;
+}
+
 function normalizeRecommendationApplyOutcome(
   applyOutcome: RecommendationApplyOutcome | null | undefined,
 ): RecommendationApplyOutcomeView | null {
@@ -1231,6 +1237,54 @@ function normalizeWorkspaceTrustSummary(
     nextRefreshExpectation,
     freshnessNote,
   };
+}
+
+function normalizeWorkspaceSectionFreshness(
+  freshness: WorkspaceSectionFreshness | null | undefined,
+): WorkspaceSectionFreshnessView | null {
+  if (!freshness) {
+    return null;
+  }
+  const state =
+    freshness.state === "fresh" ||
+    freshness.state === "pending_refresh" ||
+    freshness.state === "running" ||
+    freshness.state === "stale"
+      ? freshness.state
+      : null;
+  const message = truncateOptionalText(freshness.message, 220);
+  if (!state || !message) {
+    return null;
+  }
+  return { state, message };
+}
+
+function workspaceSectionFreshnessLabel(state: WorkspaceSectionFreshnessView["state"]): string {
+  switch (state) {
+    case "fresh":
+      return "Fresh";
+    case "pending_refresh":
+      return "Refresh pending";
+    case "running":
+      return "Run in progress";
+    case "stale":
+    default:
+      return "Stale";
+  }
+}
+
+function workspaceSectionFreshnessBadgeClass(state: WorkspaceSectionFreshnessView["state"]): string {
+  switch (state) {
+    case "fresh":
+      return "badge badge-success";
+    case "pending_refresh":
+      return "badge badge-warn";
+    case "running":
+      return "badge badge-muted";
+    case "stale":
+    default:
+      return "badge badge-warn";
+  }
 }
 
 interface RecommendationAnalysisFreshnessView {
@@ -1945,6 +1999,10 @@ export default function SiteWorkspacePage() {
   const [latestRecommendationApplyOutcome, setLatestRecommendationApplyOutcome] =
     useState<RecommendationApplyOutcome | null>(null);
   const [latestWorkspaceTrustSummary, setLatestWorkspaceTrustSummary] = useState<WorkspaceTrustSummary | null>(null);
+  const [latestCompetitorSectionFreshness, setLatestCompetitorSectionFreshness] =
+    useState<WorkspaceSectionFreshness | null>(null);
+  const [latestRecommendationSectionFreshness, setLatestRecommendationSectionFreshness] =
+    useState<WorkspaceSectionFreshness | null>(null);
   const [latestCompetitorContextHealth, setLatestCompetitorContextHealth] =
     useState<CompetitorContextHealth | null>(null);
   const [latestRecommendationEEATGapSummary, setLatestRecommendationEEATGapSummary] =
@@ -2477,6 +2535,14 @@ export default function SiteWorkspacePage() {
     () => normalizeWorkspaceTrustSummary(latestWorkspaceTrustSummary),
     [latestWorkspaceTrustSummary],
   );
+  const competitorSectionFreshness = useMemo(
+    () => normalizeWorkspaceSectionFreshness(latestCompetitorSectionFreshness),
+    [latestCompetitorSectionFreshness],
+  );
+  const recommendationSectionFreshness = useMemo(
+    () => normalizeWorkspaceSectionFreshness(latestRecommendationSectionFreshness),
+    [latestRecommendationSectionFreshness],
+  );
   const competitorContextHealth = useMemo(
     () => normalizeCompetitorContextHealth(latestCompetitorContextHealth),
     [latestCompetitorContextHealth],
@@ -2656,6 +2722,8 @@ export default function SiteWorkspacePage() {
     setLatestCompletedTuningSuggestions(summary.tuning_suggestions);
     setLatestRecommendationApplyOutcome(summary.apply_outcome || null);
     setLatestWorkspaceTrustSummary(summary.workspace_trust_summary || null);
+    setLatestCompetitorSectionFreshness(summary.competitor_section_freshness || null);
+    setLatestRecommendationSectionFreshness(summary.recommendation_section_freshness || null);
     setLatestCompetitorContextHealth(summary.competitor_context_health || null);
     setLatestRecommendationEEATGapSummary(summary.eeat_gap_summary || null);
     setLatestRecommendationAnalysisFreshness(summary.analysis_freshness || null);
@@ -3517,6 +3585,8 @@ export default function SiteWorkspacePage() {
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
       setLatestWorkspaceTrustSummary(null);
+      setLatestCompetitorSectionFreshness(null);
+      setLatestRecommendationSectionFreshness(null);
       setLatestCompetitorContextHealth(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
@@ -3591,6 +3661,8 @@ export default function SiteWorkspacePage() {
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
       setLatestWorkspaceTrustSummary(null);
+      setLatestCompetitorSectionFreshness(null);
+      setLatestRecommendationSectionFreshness(null);
       setLatestCompetitorContextHealth(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
@@ -3657,6 +3729,8 @@ export default function SiteWorkspacePage() {
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
       setLatestWorkspaceTrustSummary(null);
+      setLatestCompetitorSectionFreshness(null);
+      setLatestRecommendationSectionFreshness(null);
       setLatestCompetitorContextHealth(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
@@ -3875,6 +3949,8 @@ export default function SiteWorkspacePage() {
         setLatestCompletedTuningSuggestions([]);
         setLatestRecommendationApplyOutcome(null);
         setLatestWorkspaceTrustSummary(null);
+        setLatestCompetitorSectionFreshness(null);
+        setLatestRecommendationSectionFreshness(null);
         setLatestCompetitorContextHealth(null);
         setLatestRecommendationEEATGapSummary(null);
         setLatestRecommendationAnalysisFreshness(null);
@@ -4819,6 +4895,14 @@ export default function SiteWorkspacePage() {
         <p className="hint muted">
           Generate AI-produced competitor profile drafts, then review and explicitly accept or reject each candidate.
         </p>
+        {competitorSectionFreshness ? (
+          <p className="hint muted" data-testid="competitor-section-freshness">
+            <span className={workspaceSectionFreshnessBadgeClass(competitorSectionFreshness.state)}>
+              {workspaceSectionFreshnessLabel(competitorSectionFreshness.state)}
+            </span>{" "}
+            {competitorSectionFreshness.message}
+          </p>
+        ) : null}
         {competitorProfileError ? <p className="hint error">{competitorProfileError}</p> : null}
         {competitorProfileSummaryError ? <p className="hint warning">{competitorProfileSummaryError}</p> : null}
         {competitorProfileActionError ? <p className="hint error">{competitorProfileActionError}</p> : null}
@@ -5450,6 +5534,14 @@ export default function SiteWorkspacePage() {
 
       <SectionCard>
         <h2>Recommendation Queue</h2>
+        {recommendationSectionFreshness ? (
+          <p className="hint muted" data-testid="recommendation-section-freshness">
+            <span className={workspaceSectionFreshnessBadgeClass(recommendationSectionFreshness.state)}>
+              {workspaceSectionFreshnessLabel(recommendationSectionFreshness.state)}
+            </span>{" "}
+            {recommendationSectionFreshness.message}
+          </p>
+        ) : null}
         <div className="stack-tight">
           <div className="form-actions">
             <button

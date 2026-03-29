@@ -3508,6 +3508,52 @@ describe("site workspace timeline controls", () => {
     expect(screen.queryByTestId("workspace-trust-summary")).not.toBeInTheDocument();
   });
 
+  it("renders competitor and recommendation section freshness indicators when provided", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        competitor_section_freshness: {
+          state: "running",
+          message: "Competitor generation is currently running and will refresh this section on completion.",
+        },
+        recommendation_section_freshness: {
+          state: "pending_refresh",
+          message: "Applied changes are waiting for the next completed recommendation analysis run.",
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Competitor Profiles" });
+    const competitorFreshness = screen.getByTestId("competitor-section-freshness");
+    expect(within(competitorFreshness).getByText("Run in progress")).toBeInTheDocument();
+    expect(
+      within(competitorFreshness).getByText(
+        "Competitor generation is currently running and will refresh this section on completion.",
+      ),
+    ).toBeInTheDocument();
+
+    const recommendationFreshness = screen.getByTestId("recommendation-section-freshness");
+    expect(within(recommendationFreshness).getByText("Refresh pending")).toBeInTheDocument();
+    expect(
+      within(recommendationFreshness).getByText(
+        "Applied changes are waiting for the next completed recommendation analysis run.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps section freshness indicators hidden when freshness fields are absent", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(buildRecommendationWorkspaceSummary());
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Competitor Profiles" });
+    expect(screen.queryByTestId("competitor-section-freshness")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-section-freshness")).not.toBeInTheDocument();
+  });
+
   it("keeps apply outcome block hidden when workspace summary does not include apply metadata", async () => {
     seedRichWorkspaceData();
     mockFetchRecommendationWorkspaceSummary.mockResolvedValue(

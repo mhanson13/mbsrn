@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from urllib.parse import urlparse
 
-_LOCAL_LIKE_ENV_VALUES = {"local", "development", "dev", "test"}
+_LOCALHOST_ALLOWED_APP_ENVS = {"local", "development", "dev", "test", "ci"}
 _LOCALHOST_DATABASE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _LOCAL_DATABASE_URL_FALLBACK = "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn"
 
@@ -157,32 +157,44 @@ def _env_json_object(name: str) -> dict[str, str]:
     return normalized
 
 
-def _is_local_like_env(value: str) -> bool:
-    return value.strip().lower() in _LOCAL_LIKE_ENV_VALUES
+def _normalize_app_env(raw_value: str | None) -> str:
+    return (raw_value or "").strip().lower()
 
 
-def _is_local_like_runtime(*, environment: str, app_env: str) -> bool:
-    return _is_local_like_env(environment) and _is_local_like_env(app_env)
+def _is_localhost_allowed_for_app_env(app_env: str) -> bool:
+    return app_env in _LOCALHOST_ALLOWED_APP_ENVS
 
 
-def _resolve_database_url(*, environment: str, app_env: str) -> str:
+def _resolve_database_url(*, app_env: str) -> str:
     raw_database_url = os.getenv("DATABASE_URL")
-    local_like_runtime = _is_local_like_runtime(environment=environment, app_env=app_env)
+    localhost_allowed = _is_localhost_allowed_for_app_env(app_env)
     if raw_database_url is None or not raw_database_url.strip():
-        if local_like_runtime:
+        if localhost_allowed:
             return _LOCAL_DATABASE_URL_FALLBACK
+        if app_env == "production":
+            raise RuntimeError("DATABASE_URL is required when APP_ENV=production")
+        if app_env:
+            raise RuntimeError(
+                "DATABASE_URL is required when APP_ENV is not one of local/development/dev/test/ci"
+            )
         raise RuntimeError(
-            "DATABASE_URL is required and must not default to localhost in this environment"
+            "DATABASE_URL is required when APP_ENV is unset; set APP_ENV to local/dev/test/ci for localhost fallback"
         )
 
     database_url = raw_database_url.strip()
+    if database_url.lower().startswith("postgresql://"):
+        database_url = "postgresql+psycopg://" + database_url[len("postgresql://") :]
     parsed = urlparse(database_url)
     if not parsed.scheme:
         raise RuntimeError("DATABASE_URL must be a valid URL.")
 
     host = (parsed.hostname or "").strip().lower()
-    if not local_like_runtime and host in _LOCALHOST_DATABASE_HOSTS:
-        raise RuntimeError("Invalid DATABASE_URL: localhost is not allowed in this environment")
+    if host in _LOCALHOST_DATABASE_HOSTS and not localhost_allowed:
+        if app_env == "production":
+            raise RuntimeError("Invalid DATABASE_URL: localhost is not allowed when APP_ENV=production")
+        if app_env:
+            raise RuntimeError(f"Invalid DATABASE_URL: localhost is not allowed when APP_ENV={app_env}")
+        raise RuntimeError("Invalid DATABASE_URL: localhost is not allowed when APP_ENV is unset")
     return database_url
 
 
@@ -214,8 +226,9 @@ def _resolve_ai_prompt_text(*, split_env_name: str, legacy_prompt_text: str) -> 
 def get_settings() -> Settings:
     environment = os.getenv("ENVIRONMENT", "development")
     env_normalized = environment.strip().lower()
-    app_env = os.getenv("APP_ENV", environment).strip().lower()
-    database_url = _resolve_database_url(environment=env_normalized, app_env=app_env)
+    app_env_raw = os.getenv("APP_ENV")
+    app_env = _normalize_app_env(app_env_raw) or env_normalized
+    database_url = _resolve_database_url(app_env=_normalize_app_env(app_env_raw))
     google_auth_enabled = _env_bool("GOOGLE_AUTH_ENABLED", False)
     google_oidc_client_id = os.getenv("GOOGLE_OIDC_CLIENT_ID")
     google_oauth_client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID") or google_oidc_client_id

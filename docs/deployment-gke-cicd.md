@@ -137,11 +137,18 @@ Kubernetes Secret handles sensitive values including:
 `work-boots-secrets` is required by both API/UI Deployments and migration Job (`envFrom.secretRef`).
 
 Database URL safety contract:
-- Non-local runtime (`APP_ENV`/`ENVIRONMENT` not local/dev/test) requires `DATABASE_URL`.
-- In non-local runtime, localhost targets are rejected at startup:
+- `APP_ENV` is the sole authority for localhost database safety checks.
+- Localhost (`localhost`, `127.0.0.1`, `::1`) is allowed only when `APP_ENV` is one of:
+  - `local`
+  - `development`
+  - `dev`
+  - `test`
+  - `ci`
+- `APP_ENV=production` requires `DATABASE_URL` and rejects localhost targets at startup:
   - `localhost`
   - `127.0.0.1`
   - `::1`
+- Unknown or unset `APP_ENV` values reject localhost targets and require an explicit non-localhost `DATABASE_URL`.
 - API startup performs a fail-fast connectivity check (single `SELECT 1`) and exits on failure so Kubernetes can restart.
 - Startup logs emit sanitized DB target only (no credentials):
   - `Database target resolved: host=<host>, port=<port>`

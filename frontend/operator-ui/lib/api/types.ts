@@ -938,6 +938,13 @@ export type RecommendationWorkspaceSummaryState =
   | "completed_no_narrative"
   | "completed_with_narrative";
 
+export type WorkspaceSectionFreshnessState = "fresh" | "pending_refresh" | "running" | "stale";
+
+export interface WorkspaceSectionFreshness {
+  state: WorkspaceSectionFreshnessState;
+  message: string;
+}
+
 export interface RecommendationWorkspaceSummaryResponse {
   business_id: string;
   site_id: string;
@@ -950,6 +957,8 @@ export interface RecommendationWorkspaceSummaryResponse {
   tuning_suggestions: RecommendationTuningSuggestion[];
   apply_outcome?: RecommendationApplyOutcome | null;
   workspace_trust_summary?: WorkspaceTrustSummary | null;
+  competitor_section_freshness?: WorkspaceSectionFreshness | null;
+  recommendation_section_freshness?: WorkspaceSectionFreshness | null;
   analysis_freshness?: RecommendationAnalysisFreshness | null;
   ordering_explanation?: RecommendationOrderingExplanation | null;
   start_here?: RecommendationStartHere | null;

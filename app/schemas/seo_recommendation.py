@@ -29,6 +29,7 @@ SEORecommendationSignalSupportLevel = Literal["low", "medium", "high"]
 SEORecommendationApplyOutcomeSource = Literal["recommendation", "manual"]
 SEORecommendationAnalysisFreshnessStatus = Literal["fresh", "pending_refresh", "unknown"]
 SEORecommendationWorkspaceTrustCompetitorStatus = Literal["normal", "recovered", "degraded", "failed"]
+SEOWorkspaceSectionFreshnessState = Literal["fresh", "pending_refresh", "running", "stale"]
 SEORecommendationProgressStatus = Literal[
     "suggested",
     "applied_pending_refresh",
@@ -116,6 +117,7 @@ _WORKSPACE_TRUST_APPLY_TITLE_MAX_CHARS = 180
 _WORKSPACE_TRUST_APPLY_CHANGE_MAX_CHARS = 260
 _WORKSPACE_TRUST_NEXT_REFRESH_MAX_CHARS = 220
 _WORKSPACE_TRUST_FRESHNESS_NOTE_MAX_CHARS = 220
+_WORKSPACE_SECTION_FRESHNESS_MESSAGE_MAX_CHARS = 220
 _RECOMMENDATION_PROGRESS_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_LIFECYCLE_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS = 220
@@ -1293,6 +1295,29 @@ class SEORecommendationWorkspaceTrustSummaryRead(BaseModel):
     @classmethod
     def normalize_freshness_note(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_WORKSPACE_TRUST_FRESHNESS_NOTE_MAX_CHARS)
+
+
+class SEOWorkspaceSectionFreshnessRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: SEOWorkspaceSectionFreshnessState
+    message: str = Field(min_length=1, max_length=_WORKSPACE_SECTION_FRESHNESS_MESSAGE_MAX_CHARS)
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def normalize_state(cls, value: Any) -> SEOWorkspaceSectionFreshnessState:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"fresh", "pending_refresh", "running", "stale"}:
+            raise ValueError("Invalid workspace section freshness state")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def normalize_message(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_WORKSPACE_SECTION_FRESHNESS_MESSAGE_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Workspace section freshness message is required")
+        return cleaned
 
 
 class SEOCompetitorContextHealthCheckRead(BaseModel):
@@ -2487,6 +2512,8 @@ class SEORecommendationWorkspaceSummaryRead(BaseModel):
     tuning_suggestions: list[SEORecommendationTuningSuggestionRead] = Field(default_factory=list)
     apply_outcome: SEORecommendationApplyOutcomeRead | None = None
     workspace_trust_summary: SEORecommendationWorkspaceTrustSummaryRead | None = None
+    competitor_section_freshness: SEOWorkspaceSectionFreshnessRead | None = None
+    recommendation_section_freshness: SEOWorkspaceSectionFreshnessRead | None = None
     analysis_freshness: SEORecommendationAnalysisFreshnessRead | None = None
     ordering_explanation: SEORecommendationOrderingExplanationRead | None = None
     start_here: SEORecommendationStartHereRead | None = None

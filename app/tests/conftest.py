@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import timedelta
 from uuid import uuid4
 
@@ -38,6 +39,15 @@ from app.models.seo_recommendation import SEORecommendation  # noqa: F401
 from app.models.seo_recommendation_narrative import SEORecommendationNarrative  # noqa: F401
 from app.models.seo_recommendation_run import SEORecommendationRun  # noqa: F401
 from app.models.seo_site import SEOSite  # noqa: F401
+
+os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+
+
+@pytest.fixture(autouse=True)
+def enforce_test_app_env() -> None:
+    if "APP_ENV" not in os.environ:
+        os.environ["APP_ENV"] = "test"
 
 
 @pytest.fixture(autouse=True)

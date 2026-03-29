@@ -46,3 +46,6 @@ ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unused_configs = true
+
+[tool.pytest_env]
+"D:APP_ENV" = "test"
