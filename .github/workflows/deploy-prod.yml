@@ -161,6 +161,27 @@ jobs:
             exit 1
           fi
 
+          python - <<'PY'
+          import os
+          import sys
+          from urllib.parse import urlparse
+
+          database_url = (os.environ.get("DATABASE_URL") or "").strip()
+          parsed = urlparse(database_url)
+          host = (parsed.hostname or "").strip().lower()
+
+          if not parsed.scheme or not host:
+              print("DATABASE_URL must be a valid absolute URL for production deploy.", file=sys.stderr)
+              raise SystemExit(1)
+
+          if host in {"localhost", "127.0.0.1", "::1"}:
+              print(
+                  "Invalid production DATABASE_URL: localhost/loopback is not allowed for deploy-prod.",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          PY
+
           if ! grep -qx "migrate: python -m alembic upgrade head" Procfile; then
             echo "Procfile migrate process must be 'python -m alembic upgrade head'" >&2
             exit 1
@@ -423,6 +444,47 @@ jobs:
             "${render_dir}/api-migration-baseline-job.yaml" \
             "${render_dir}/api-seo-competitor-profile-retention-cronjob.yaml"
 
+          database_env_block="$(awk '
+            $0 ~ /name: DATABASE_URL/ {capture=1; next}
+            capture && $0 ~ /^[[:space:]]*- name:/ {capture=0}
+            capture {print}
+          ' "${render_dir}/api-deployment.yaml")"
+
+          if [[ -z "${database_env_block}" ]]; then
+            echo "Rendered API deployment is missing DATABASE_URL env wiring." >&2
+            exit 1
+          fi
+
+          if ! grep -Eq "^[[:space:]]*valueFrom:[[:space:]]*$" <<<"${database_env_block}"; then
+            echo "Rendered API deployment DATABASE_URL must use valueFrom." >&2
+            exit 1
+          fi
+
+          if ! grep -Eq "^[[:space:]]*secretKeyRef:[[:space:]]*$" <<<"${database_env_block}"; then
+            echo "Rendered API deployment DATABASE_URL must use secretKeyRef." >&2
+            exit 1
+          fi
+
+          if ! grep -Eq "^[[:space:]]*name:[[:space:]]*mbsrn-api-auth[[:space:]]*$" <<<"${database_env_block}"; then
+            echo "Rendered API deployment DATABASE_URL secret ref must target mbsrn-api-auth." >&2
+            exit 1
+          fi
+
+          if ! grep -Eq "^[[:space:]]*key:[[:space:]]*DATABASE_URL[[:space:]]*$" <<<"${database_env_block}"; then
+            echo "Rendered API deployment DATABASE_URL secret ref must target key DATABASE_URL." >&2
+            exit 1
+          fi
+
+          if grep -Eq "^[[:space:]]*value:[[:space:]]*" <<<"${database_env_block}"; then
+            echo "Rendered API deployment DATABASE_URL must not use a literal value." >&2
+            exit 1
+          fi
+
+          if grep -Eiq "(localhost|127\\.0\\.0\\.1|::1)" <<<"${database_env_block}"; then
+            echo "Rendered API deployment DATABASE_URL wiring must not include localhost literals." >&2
+            exit 1
+          fi
+
           echo "RENDER_DIR=${render_dir}" >> "${GITHUB_ENV}"
 
       - name: Apply workload manifests
@@ -458,6 +520,13 @@ jobs:
             --from-literal=AI_MODEL_NAME="${AI_MODEL_NAME}" \
             --from-literal=AI_TIMEOUT_VALUE="${AI_TIMEOUT_VALUE}" \
             --dry-run=client -o yaml | kubectl apply -f -
+
+          database_url_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.DATABASE_URL}' 2>/dev/null || true)"
+          if [[ -z "${database_url_key_present}" ]]; then
+            echo "Kubernetes secret wiring check failed: mbsrn-api-auth key DATABASE_URL is missing." >&2
+            exit 1
+          fi
+
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/ui-serviceaccount.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-serviceaccount.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/redis-service.yaml"
@@ -500,5 +569,74 @@ jobs:
         run: |
           set -euo pipefail
 
+          print_api_env_wiring_diagnostics() {
+            echo "::group::mbsrn-api env wiring diagnostics"
+            deployment_json="${RUNNER_TEMP}/mbsrn-api-deployment.json"
+            if kubectl get deployment mbsrn-api --namespace "${K8S_NAMESPACE}" -o json > "${deployment_json}" 2>/dev/null; then
+              python - "${deployment_json}" <<'PY'
+              import json
+              import sys
+
+              with open(sys.argv[1], encoding="utf-8") as handle:
+                  payload = json.load(handle)
+
+              containers = payload.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+              container = next((item for item in containers if item.get("name") == "mbsrn-api"), None)
+              if container is None:
+                  print("mbsrn-api container not found in deployment template.")
+                  raise SystemExit(0)
+
+              env_entries = container.get("env", [])
+              print("mbsrn-api env sources:")
+              for entry in env_entries:
+                  name = entry.get("name", "<unnamed>")
+                  if "valueFrom" in entry:
+                      value_from = entry["valueFrom"]
+                      if "secretKeyRef" in value_from:
+                          ref = value_from["secretKeyRef"]
+                          print(f"- {name}: secretKeyRef name={ref.get('name')} key={ref.get('key')}")
+                      elif "configMapKeyRef" in value_from:
+                          ref = value_from["configMapKeyRef"]
+                          print(f"- {name}: configMapKeyRef name={ref.get('name')} key={ref.get('key')}")
+                      else:
+                          print(f"- {name}: valueFrom(other)")
+                  elif "value" in entry:
+                      print(f"- {name}: literal value")
+                  else:
+                      print(f"- {name}: source not set")
+
+              database_url_entry = next((item for item in env_entries if item.get("name") == "DATABASE_URL"), None)
+              if database_url_entry is None:
+                  print("DATABASE_URL env entry: missing")
+              elif "valueFrom" in database_url_entry and "secretKeyRef" in database_url_entry["valueFrom"]:
+                  ref = database_url_entry["valueFrom"]["secretKeyRef"]
+                  print(
+                      "DATABASE_URL env entry: secretKeyRef "
+                      f"name={ref.get('name')} key={ref.get('key')}"
+                  )
+              elif "value" in database_url_entry:
+                  print("DATABASE_URL env entry: literal value")
+              else:
+                  print("DATABASE_URL env entry: unresolved source")
+              PY
+            else
+              echo "Unable to fetch deployment/mbsrn-api for env wiring diagnostics."
+            fi
+
+            database_url_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.DATABASE_URL}' 2>/dev/null || true)"
+            if [[ -n "${database_url_key_present}" ]]; then
+              echo "Secret wiring check: mbsrn-api-auth key DATABASE_URL is present."
+            else
+              echo "Secret wiring check: mbsrn-api-auth key DATABASE_URL is missing."
+            fi
+            echo "::endgroup::"
+          }
+
           kubectl rollout status deployment/mbsrn-ui --namespace "${K8S_NAMESPACE}" --timeout=300s
-          kubectl rollout status deployment/mbsrn-api --namespace "${K8S_NAMESPACE}" --timeout=300s
+          if ! kubectl rollout status deployment/mbsrn-api --namespace "${K8S_NAMESPACE}" --timeout=300s; then
+            print_api_env_wiring_diagnostics
+            kubectl describe deployment mbsrn-api --namespace "${K8S_NAMESPACE}" || true
+            kubectl get pods --namespace "${K8S_NAMESPACE}" -l app=mbsrn-api -o wide || true
+            kubectl logs deployment/mbsrn-api --namespace "${K8S_NAMESPACE}" --tail=200 || true
+            exit 1
+          fi

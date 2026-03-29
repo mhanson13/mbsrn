@@ -153,6 +153,28 @@ Database URL safety contract:
 - Startup logs emit sanitized DB target only (no credentials):
   - `Database target resolved: host=<host>, port=<port>`
 
+### Production DATABASE_URL Source Of Truth (`deploy-prod.yml` path)
+- Production-authoritative deploy path (`.github/workflows/deploy-prod.yml` + `k8s/*`) sources
+  `DATABASE_URL` from GitHub secret `DATABASE_URL`.
+- Deploy creates/updates Kubernetes secret `mbsrn-api-auth` with key `DATABASE_URL`.
+- API runtime consumes `DATABASE_URL` only via:
+  - `k8s/api-deployment.yaml` -> `env.valueFrom.secretKeyRef(name=mbsrn-api-auth,key=DATABASE_URL)`
+- Migration and retention jobs consume the same secret/key wiring:
+  - `k8s/api-migration-job.yaml`
+  - `k8s/api-migration-baseline-job.yaml`
+  - `k8s/api-seo-competitor-profile-retention-cronjob.yaml`
+- `deploy-prod.yml` fails fast when:
+  - GitHub secret `DATABASE_URL` host resolves to localhost/loopback (`localhost`, `127.0.0.1`, `::1`)
+  - rendered API manifest does not wire `DATABASE_URL` via `secretKeyRef`
+  - rendered API manifest contains a literal `DATABASE_URL` value
+
+### Rollout Diagnostics For DATABASE_URL Wiring
+On `mbsrn-api` rollout failure, `deploy-prod.yml` now emits safe diagnostics (no secret values):
+- `mbsrn-api` env var names and source type (literal / `secretKeyRef` / `configMapKeyRef`)
+- explicit `DATABASE_URL` env source classification
+- secret/key presence check for `mbsrn-api-auth.DATABASE_URL`
+- deployment describe + pod listing + recent API logs for context
+
 Production-authoritative path (`deploy-prod.yml` + `k8s/*`) injects `GOOGLE_PLACES_API_KEY` into
 Kubernetes Secret `mbsrn-api-auth`, and API runtime consumes it via
 `valueFrom.secretKeyRef` as `GOOGLE_PLACES_API_KEY`.
