@@ -39,6 +39,7 @@ env:
   GOOGLE_BUSINESS_PROFILE_REDIRECT_URI: ${{ vars.GOOGLE_BUSINESS_PROFILE_REDIRECT_URI }}
   APP_SESSION_ISSUER: mbsrn-console
   APP_SESSION_AUDIENCE: mbsrn-api
+  DB_CONNECTION_MODE: cloudsql_proxy
   AI_PROVIDER_NAME: ${{ vars.AI_PROVIDER_NAME || 'openai' }}
   AI_MODEL_NAME: ${{ vars.AI_MODEL_NAME || 'gpt-4o-mini' }}
   AI_TIMEOUT_VALUE: ${{ vars.AI_TIMEOUT_VALUE || '30' }}
@@ -161,7 +162,9 @@ jobs:
             exit 1
           fi
 
-          python scripts/validate_production_database_url.py --env-var DATABASE_URL
+          python scripts/validate_production_database_url.py \
+            --env-var DATABASE_URL \
+            --db-connection-mode-env-var DB_CONNECTION_MODE
 
           if ! grep -qx "migrate: python -m alembic upgrade head" Procfile; then
             echo "Procfile migrate process must be 'python -m alembic upgrade head'" >&2

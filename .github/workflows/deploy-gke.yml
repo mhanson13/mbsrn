@@ -220,6 +220,7 @@ jobs:
       KUBERNETES_CLUSTER_LOCATION_TYPE: ${{ secrets.KUBERNETES_CLUSTER_LOCATION_TYPE }}
       OIDC_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.OIDC_WORKLOAD_IDENTITY_PROVIDER }}
       DEPLOY_SERVICE_ACCOUNT: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}
+      DB_CONNECTION_MODE: ${{ vars.DB_CONNECTION_MODE || 'direct' }}
 
     steps:
       - name: Checkout
@@ -356,6 +357,23 @@ jobs:
             echo "::error::Secret work-boots-ai-provider is missing key AI_PROVIDER_API_KEY in namespace ${NAMESPACE}."
             exit 1
           fi
+
+          DATABASE_URL_B64="$(kubectl -n "${NAMESPACE}" get secret work-boots-secrets -o jsonpath='{.data.DATABASE_URL}')"
+          if [ -z "${DATABASE_URL_B64}" ]; then
+            echo "::error::Secret work-boots-secrets is missing key DATABASE_URL in namespace ${NAMESPACE}."
+            exit 1
+          fi
+
+          if [ "${DB_CONNECTION_MODE}" != "direct" ] && [ "${DB_CONNECTION_MODE}" != "cloudsql_proxy" ]; then
+            echo "::error::DB_CONNECTION_MODE must be direct or cloudsql_proxy. Got: ${DB_CONNECTION_MODE}"
+            exit 1
+          fi
+
+          DATABASE_URL="$(printf '%s' "${DATABASE_URL_B64}" | base64 --decode)"
+          DATABASE_URL="${DATABASE_URL}" DB_CONNECTION_MODE="${DB_CONNECTION_MODE}" \
+            python scripts/validate_production_database_url.py \
+              --env-var DATABASE_URL \
+              --db-connection-mode-env-var DB_CONNECTION_MODE
 
       - name: Apply kustomize overlay
         run: |

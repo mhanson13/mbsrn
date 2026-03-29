@@ -70,10 +70,14 @@ This produces OCI-compatible images suitable for containerd on GKE.
   - Alembic migration gate (`alembic upgrade head`) before rollout
   - deployment image updates to exact image refs produced by build jobs
   - rollout verification
+  - preflight `DATABASE_URL` validation via `scripts/validate_production_database_url.py`
+    using `DB_CONNECTION_MODE` (default `direct`, configurable)
 
 - `deploy-prod.yml`
   - push-to-main/workflow-dispatch production rollout path using `k8s/` manifests
   - includes explicit Redis apply for `mbsrn-redis` prior to API rollout
+  - preflight `DATABASE_URL` validation via `scripts/validate_production_database_url.py`
+    using `DB_CONNECTION_MODE=cloudsql_proxy`
 
 ### Deployment Path Precedence
 - Production-authoritative path:
@@ -159,6 +163,7 @@ Database URL safety contract:
 ### Production DATABASE_URL Source Of Truth (`deploy-prod.yml` path)
 - Production-authoritative deploy path (`.github/workflows/deploy-prod.yml` + `k8s/*`) sources
   `DATABASE_URL` from GitHub secret `DATABASE_URL`.
+- The same deploy path sets `DB_CONNECTION_MODE=cloudsql_proxy` for preflight validation parity with runtime.
 - Deploy creates/updates Kubernetes secret `mbsrn-api-auth` with key `DATABASE_URL`.
 - API runtime consumes `DATABASE_URL` only via:
   - `k8s/api-deployment.yaml` -> `env.valueFrom.secretKeyRef(name=mbsrn-api-auth,key=DATABASE_URL)`
@@ -171,7 +176,7 @@ Database URL safety contract:
   - `k8s/api-migration-baseline-job.yaml`
   - `k8s/api-seo-competitor-profile-retention-cronjob.yaml`
 - `deploy-prod.yml` fails fast when:
-  - GitHub secret `DATABASE_URL` host resolves to localhost/loopback (`localhost`, `127.0.0.1`, `::1`)
+  - GitHub secret `DATABASE_URL` resolves to localhost/loopback and `DB_CONNECTION_MODE` is not `cloudsql_proxy`
   - rendered API manifest does not wire `DATABASE_URL` via `secretKeyRef`
   - rendered API manifest contains a literal `DATABASE_URL` value
 - Accepted production `DATABASE_URL` forms include:
@@ -180,7 +185,21 @@ Database URL safety contract:
     - `postgresql://user:pass@db.example.com:5432/dbname`
   - socket-style/cloud-native (effective target comes from query host/socket path):
     - `postgresql://user:pass@/dbname?host=/cloudsql/<project>:<region>:<instance>`
-- `deploy-prod.yml` validates the effective connection target host/socket path and rejects only true loopback targets.
+- `deploy-prod.yml` validates the effective connection target host/socket path and applies the same rule as runtime:
+  - loopback allowed only with `DB_CONNECTION_MODE=cloudsql_proxy`
+  - otherwise loopback rejected
+
+### Shared DATABASE_URL Validation Policy (Both Deploy Workflows)
+- Both `.github/workflows/deploy-prod.yml` and `.github/workflows/deploy-gke.yml`
+  call the shared validator:
+  - `python scripts/validate_production_database_url.py --env-var DATABASE_URL --db-connection-mode-env-var DB_CONNECTION_MODE`
+- Effective policy is mode-aware and matches runtime safety intent:
+  - loopback rejected unless `DB_CONNECTION_MODE=cloudsql_proxy`
+  - remote host allowed
+  - socket-style cloud-native URL forms allowed
+  - unknown `DB_CONNECTION_MODE` rejected
+- Recommended `deploy-gke.yml` default is `DB_CONNECTION_MODE=direct`; set `cloudsql_proxy`
+  only when that deployment path is intentionally proxy-backed.
 
 ### Rollout Diagnostics For DATABASE_URL Wiring
 On `mbsrn-api` rollout failure, `deploy-prod.yml` now emits safe diagnostics (no secret values):

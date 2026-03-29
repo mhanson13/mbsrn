@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _EFFECTIVE_HOST_QUERY_KEYS = ("host", "hostaddr", "unix_sock")
+_ALLOWED_DB_CONNECTION_MODES = {"direct", "cloudsql_proxy"}
 
 
 @dataclass(frozen=True)
@@ -18,8 +19,10 @@ class DatabaseUrlDiagnostics:
     query_param_keys: tuple[str, ...]
     effective_target_source: str
     effective_target_kind: str
+    db_connection_mode: str
     socket_style_detected: bool
     loopback_detected: bool
+    proxy_mode_exception_applied: bool
 
 
 def _normalize_host(raw: str | None) -> str:
@@ -56,7 +59,36 @@ def _resolve_effective_target(parsed_query: dict[str, list[str]], parsed_hostnam
     return ("unresolved", "", False)
 
 
-def analyze_database_url(database_url: str) -> tuple[bool, str, DatabaseUrlDiagnostics]:
+def _normalize_db_connection_mode(raw_mode: str | None) -> str:
+    normalized = (raw_mode or "").strip().lower()
+    if not normalized:
+        return "direct"
+    return normalized
+
+
+def analyze_database_url(database_url: str, *, db_connection_mode: str) -> tuple[bool, str, DatabaseUrlDiagnostics]:
+    normalized_mode = _normalize_db_connection_mode(db_connection_mode)
+    if normalized_mode not in _ALLOWED_DB_CONNECTION_MODES:
+        diagnostics = DatabaseUrlDiagnostics(
+            scheme="",
+            query_params_present=False,
+            query_param_keys=(),
+            effective_target_source="unresolved",
+            effective_target_kind="invalid_connection_mode",
+            db_connection_mode=normalized_mode,
+            socket_style_detected=False,
+            loopback_detected=False,
+            proxy_mode_exception_applied=False,
+        )
+        return (
+            False,
+            (
+                "DB_CONNECTION_MODE must be one of: "
+                + ", ".join(sorted(_ALLOWED_DB_CONNECTION_MODES))
+            ),
+            diagnostics,
+        )
+
     raw_url = database_url.strip()
     if not raw_url:
         diagnostics = DatabaseUrlDiagnostics(
@@ -65,8 +97,10 @@ def analyze_database_url(database_url: str) -> tuple[bool, str, DatabaseUrlDiagn
             query_param_keys=(),
             effective_target_source="unresolved",
             effective_target_kind="missing_url",
+            db_connection_mode=normalized_mode,
             socket_style_detected=False,
             loopback_detected=False,
+            proxy_mode_exception_applied=False,
         )
         return False, "DATABASE_URL is required for production deploy preflight validation.", diagnostics
 
@@ -84,21 +118,28 @@ def analyze_database_url(database_url: str) -> tuple[bool, str, DatabaseUrlDiagn
             query_param_keys=query_keys,
             effective_target_source=source,
             effective_target_kind="invalid_url_missing_scheme",
+            db_connection_mode=normalized_mode,
             socket_style_detected=socket_style,
             loopback_detected=False,
+            proxy_mode_exception_applied=False,
         )
         return False, "DATABASE_URL must be a valid absolute URL for production deploy.", diagnostics
 
     if url_hostname in _LOOPBACK_HOSTS:
+        proxy_mode_exception_applied = normalized_mode == "cloudsql_proxy"
         diagnostics = DatabaseUrlDiagnostics(
             scheme=scheme,
             query_params_present=bool(query_keys),
             query_param_keys=query_keys,
             effective_target_source="url:hostname",
             effective_target_kind="loopback_host",
+            db_connection_mode=normalized_mode,
             socket_style_detected=socket_style,
             loopback_detected=True,
+            proxy_mode_exception_applied=proxy_mode_exception_applied,
         )
+        if proxy_mode_exception_applied:
+            return True, "DATABASE_URL accepted for production deploy.", diagnostics
         return (
             False,
             "Invalid production DATABASE_URL: localhost/loopback target is not allowed for deploy-prod.",
@@ -112,8 +153,10 @@ def analyze_database_url(database_url: str) -> tuple[bool, str, DatabaseUrlDiagn
             query_param_keys=query_keys,
             effective_target_source=source,
             effective_target_kind="unix_socket",
+            db_connection_mode=normalized_mode,
             socket_style_detected=True,
             loopback_detected=False,
+            proxy_mode_exception_applied=False,
         )
         return True, "DATABASE_URL accepted for production deploy.", diagnostics
 
@@ -124,8 +167,10 @@ def analyze_database_url(database_url: str) -> tuple[bool, str, DatabaseUrlDiagn
             query_param_keys=query_keys,
             effective_target_source=source,
             effective_target_kind="missing_host",
+            db_connection_mode=normalized_mode,
             socket_style_detected=False,
             loopback_detected=False,
+            proxy_mode_exception_applied=False,
         )
         return False, "DATABASE_URL must include a resolvable non-loopback target host for production deploy.", diagnostics
 
@@ -136,8 +181,10 @@ def analyze_database_url(database_url: str) -> tuple[bool, str, DatabaseUrlDiagn
         query_param_keys=query_keys,
         effective_target_source=source,
         effective_target_kind="loopback_host" if is_loopback else "remote_host",
+        db_connection_mode=normalized_mode,
         socket_style_detected=False,
         loopback_detected=is_loopback,
+        proxy_mode_exception_applied=False,
     )
     if is_loopback:
         return (
@@ -156,10 +203,12 @@ def _print_diagnostics(diagnostics: DatabaseUrlDiagnostics, *, accepted: bool) -
         f"scheme={diagnostics.scheme or 'missing'} "
         f"target_source={diagnostics.effective_target_source} "
         f"target_kind={diagnostics.effective_target_kind} "
+        f"db_connection_mode={diagnostics.db_connection_mode} "
         f"query_params_present={str(diagnostics.query_params_present).lower()} "
         f"query_param_keys={query_keys} "
         f"socket_style_detected={str(diagnostics.socket_style_detected).lower()} "
-        f"loopback_detected={str(diagnostics.loopback_detected).lower()}"
+        f"loopback_detected={str(diagnostics.loopback_detected).lower()} "
+        f"proxy_mode_exception_applied={str(diagnostics.proxy_mode_exception_applied).lower()}"
     )
 
 
@@ -179,13 +228,32 @@ def main(argv: list[str] | None = None) -> int:
         default="DATABASE_URL",
         help="Environment variable containing the database URL when --database-url is omitted (default: DATABASE_URL).",
     )
+    parser.add_argument(
+        "--db-connection-mode",
+        help="Explicit DB connection mode override (direct|cloudsql_proxy).",
+    )
+    parser.add_argument(
+        "--db-connection-mode-env-var",
+        default="DB_CONNECTION_MODE",
+        help=(
+            "Environment variable containing DB connection mode when --db-connection-mode is omitted "
+            "(default: DB_CONNECTION_MODE)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     database_url = args.database_url
     if database_url is None:
         database_url = os.getenv(args.env_var, "")
 
-    accepted, message, diagnostics = analyze_database_url(database_url)
+    db_connection_mode = args.db_connection_mode
+    if db_connection_mode is None:
+        db_connection_mode = os.getenv(args.db_connection_mode_env_var, "")
+
+    accepted, message, diagnostics = analyze_database_url(
+        database_url,
+        db_connection_mode=db_connection_mode,
+    )
     _print_diagnostics(diagnostics, accepted=accepted)
     if accepted:
         print(message)
