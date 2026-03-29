@@ -557,52 +557,7 @@ jobs:
             echo "::group::mbsrn-api env wiring diagnostics"
             deployment_json="${RUNNER_TEMP}/mbsrn-api-deployment.json"
             if kubectl get deployment mbsrn-api --namespace "${K8S_NAMESPACE}" -o json > "${deployment_json}" 2>/dev/null; then
-              python - "${deployment_json}" <<'PY'
-              import json
-              import sys
-
-              with open(sys.argv[1], encoding="utf-8") as handle:
-                  payload = json.load(handle)
-
-              containers = payload.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
-              container = next((item for item in containers if item.get("name") == "mbsrn-api"), None)
-              if container is None:
-                  print("mbsrn-api container not found in deployment template.")
-                  raise SystemExit(0)
-
-              env_entries = container.get("env", [])
-              print("mbsrn-api env sources:")
-              for entry in env_entries:
-                  name = entry.get("name", "<unnamed>")
-                  if "valueFrom" in entry:
-                      value_from = entry["valueFrom"]
-                      if "secretKeyRef" in value_from:
-                          ref = value_from["secretKeyRef"]
-                          print(f"- {name}: secretKeyRef name={ref.get('name')} key={ref.get('key')}")
-                      elif "configMapKeyRef" in value_from:
-                          ref = value_from["configMapKeyRef"]
-                          print(f"- {name}: configMapKeyRef name={ref.get('name')} key={ref.get('key')}")
-                      else:
-                          print(f"- {name}: valueFrom(other)")
-                  elif "value" in entry:
-                      print(f"- {name}: literal value")
-                  else:
-                      print(f"- {name}: source not set")
-
-              database_url_entry = next((item for item in env_entries if item.get("name") == "DATABASE_URL"), None)
-              if database_url_entry is None:
-                  print("DATABASE_URL env entry: missing")
-              elif "valueFrom" in database_url_entry and "secretKeyRef" in database_url_entry["valueFrom"]:
-                  ref = database_url_entry["valueFrom"]["secretKeyRef"]
-                  print(
-                      "DATABASE_URL env entry: secretKeyRef "
-                      f"name={ref.get('name')} key={ref.get('key')}"
-                  )
-              elif "value" in database_url_entry:
-                  print("DATABASE_URL env entry: literal value")
-              else:
-                  print("DATABASE_URL env entry: unresolved source")
-              PY
+              python scripts/print_api_env_wiring.py "${deployment_json}"
             else
               echo "Unable to fetch deployment/mbsrn-api for env wiring diagnostics."
             fi

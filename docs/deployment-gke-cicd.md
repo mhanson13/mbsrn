@@ -207,6 +207,7 @@ On `mbsrn-api` rollout failure, `deploy-prod.yml` now emits safe diagnostics (no
 - explicit `DATABASE_URL` env source classification
 - secret/key presence check for `mbsrn-api-auth.DATABASE_URL`
 - deployment describe + pod listing + recent API logs for context
+- env-source rendering is produced by `scripts/print_api_env_wiring.py` (no inline heredoc parsing)
 - Preflight database diagnostics include:
   - parsed scheme
   - effective target source classification (`url:hostname`, `query:host`, `query:unix_sock`, etc.)
