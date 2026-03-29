@@ -167,6 +167,13 @@ Database URL safety contract:
   - GitHub secret `DATABASE_URL` host resolves to localhost/loopback (`localhost`, `127.0.0.1`, `::1`)
   - rendered API manifest does not wire `DATABASE_URL` via `secretKeyRef`
   - rendered API manifest contains a literal `DATABASE_URL` value
+- Accepted production `DATABASE_URL` forms include:
+  - standard remote hostname:
+    - `postgresql+psycopg://user:pass@db.example.com:5432/dbname`
+    - `postgresql://user:pass@db.example.com:5432/dbname`
+  - socket-style/cloud-native (effective target comes from query host/socket path):
+    - `postgresql://user:pass@/dbname?host=/cloudsql/<project>:<region>:<instance>`
+- `deploy-prod.yml` validates the effective connection target host/socket path and rejects only true loopback targets.
 
 ### Rollout Diagnostics For DATABASE_URL Wiring
 On `mbsrn-api` rollout failure, `deploy-prod.yml` now emits safe diagnostics (no secret values):
@@ -174,6 +181,13 @@ On `mbsrn-api` rollout failure, `deploy-prod.yml` now emits safe diagnostics (no
 - explicit `DATABASE_URL` env source classification
 - secret/key presence check for `mbsrn-api-auth.DATABASE_URL`
 - deployment describe + pod listing + recent API logs for context
+- Preflight database diagnostics include:
+  - parsed scheme
+  - effective target source classification (`url:hostname`, `query:host`, `query:unix_sock`, etc.)
+  - query parameter presence/keys
+  - socket-style detection
+  - loopback detection result
+  - final accept/reject result
 
 Production-authoritative path (`deploy-prod.yml` + `k8s/*`) injects `GOOGLE_PLACES_API_KEY` into
 Kubernetes Secret `mbsrn-api-auth`, and API runtime consumes it via
