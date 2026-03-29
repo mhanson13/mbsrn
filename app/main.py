@@ -25,7 +25,7 @@ from app.api.routes import (
 )
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.session import engine
+from app.db.session import engine, get_database_target
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
@@ -84,6 +84,24 @@ def _resolve_expected_alembic_head() -> str | None:
 
 
 EXPECTED_ALEMBIC_HEAD = _resolve_expected_alembic_head()
+DATABASE_TARGET_HOST, DATABASE_TARGET_PORT = get_database_target()
+DATABASE_TARGET_PORT_LABEL = str(DATABASE_TARGET_PORT) if DATABASE_TARGET_PORT is not None else "default"
+
+
+def _ensure_database_connectivity() -> None:
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        logger.error(
+            "Startup database connectivity check failed host=%s port=%s error=%s",
+            DATABASE_TARGET_HOST,
+            DATABASE_TARGET_PORT_LABEL,
+            exc,
+        )
+        raise RuntimeError(
+            "Startup database connectivity check failed. Verify DATABASE_URL and database reachability."
+        ) from exc
 
 
 def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
@@ -98,12 +116,19 @@ def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
         with engine.connect() as connection:
             rows = connection.execute(text("SELECT version_num FROM alembic_version")).all()
     except SQLAlchemyError as exc:
-        logger.warning("Schema readiness query failed: %s", exc)
+        logger.warning(
+            "Schema readiness query failed host=%s port=%s error=%s",
+            DATABASE_TARGET_HOST,
+            DATABASE_TARGET_PORT_LABEL,
+            exc,
+        )
         return False, {
             "status": "not_ready",
             "service": settings.app_name,
             "reason": "alembic_version_unavailable",
             "expected_revision": EXPECTED_ALEMBIC_HEAD,
+            "database_host": DATABASE_TARGET_HOST,
+            "database_port": DATABASE_TARGET_PORT_LABEL,
         }
 
     revisions = sorted({str(row[0]).strip() for row in rows if row and row[0] is not None and str(row[0]).strip()})
@@ -185,6 +210,9 @@ _configure_security_headers()
 
 @app.on_event("startup")
 def on_startup() -> None:
+    if _should_enforce_schema_readiness():
+        _ensure_database_connectivity()
+
     if _should_auto_create_schema():
         can_autocreate, reason = _can_run_local_schema_autocreate()
         if not can_autocreate:

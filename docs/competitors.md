@@ -225,6 +225,10 @@ Deterministic normalization:
   - object wrappers with common score keys (`confidence_score`, `confidence`, `score`, `value`)
 - This narrows recurring field-type drift without changing provider contracts or prompt shape.
 - Normalization is intentionally narrow at schema-intake only for `confidence_score`; no broad cross-field coercion is applied.
+- Optional competitor/seed text fields are normalized safely:
+  - `null` and whitespace-only values are treated as absent
+  - optional `website_domain` and similar nullable fields degrade cleanly instead of crashing candidate generation
+  - malformed optional text is ignored so downstream validation/fallback can continue deterministically
 
 ### Production triage: schema diagnostics
 
@@ -263,6 +267,10 @@ Competitor run detail responses now include a compact operator-facing `outcome_s
 - `used_timeout_recovery`: `true` when provider timeout recovery succeeded
 - `had_schema_repair_or_discard`: `true` when provider candidate payload repair/discard occurred
 - `used_google_places_seeds`: `true` when nearby-business discovery seeds were used in this run before AI enrichment
+
+Related workspace trust signal:
+- Recommendation workspace summary includes a deterministic `apply_outcome` block (see `docs/recommendations.md`) so operators can track what recommendation-linked change was applied, which preview context was used, and when refreshed runs should reflect the change.
+- Workspace also exposes a compact `workspace_trust_summary` roll-up (see `docs/dashboard.md`) that surfaces the latest competitor status (`normal|recovered|degraded|failed`) plus nearby seed discovery and synthetic fallback usage in one operator-facing strip.
 
 Status mapping:
 - `normal`: provider-backed completion with no recovery path needed

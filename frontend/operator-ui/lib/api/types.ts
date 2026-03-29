@@ -776,10 +776,25 @@ export type RecommendationTargetContext =
 export interface RecommendationApplyOutcome {
   applied: boolean;
   applied_at: string | null;
+  applied_recommendation_id?: string | null;
+  applied_recommendation_title?: string | null;
+  applied_change_summary?: string | null;
+  applied_preview_summary?: string | null;
+  next_refresh_expectation?: string | null;
   recommendation_label: string | null;
   expected_change: string | null;
   reflected_on_next_run: string | null;
   source: "recommendation" | "manual" | null;
+}
+
+export interface WorkspaceTrustSummary {
+  latest_competitor_status?: CompetitorRunOutcomeStatusLevel | null;
+  used_google_places_seeds?: boolean | null;
+  used_synthetic_fallback?: boolean | null;
+  latest_recommendation_apply_title?: string | null;
+  latest_recommendation_apply_change_summary?: string | null;
+  next_refresh_expectation?: string | null;
+  freshness_note?: string | null;
 }
 
 export type RecommendationAnalysisFreshnessStatus = "fresh" | "pending_refresh" | "unknown";
@@ -934,6 +949,7 @@ export interface RecommendationWorkspaceSummaryResponse {
   latest_narrative: RecommendationNarrative | null;
   tuning_suggestions: RecommendationTuningSuggestion[];
   apply_outcome?: RecommendationApplyOutcome | null;
+  workspace_trust_summary?: WorkspaceTrustSummary | null;
   analysis_freshness?: RecommendationAnalysisFreshness | null;
   ordering_explanation?: RecommendationOrderingExplanation | null;
   start_here?: RecommendationStartHere | null;

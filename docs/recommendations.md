@@ -217,6 +217,11 @@ Shape:
 {
   "applied": true,
   "applied_at": "2026-03-21T01:40:00Z",
+  "applied_recommendation_id": "rec-123",
+  "applied_recommendation_title": "Fix title tags",
+  "applied_change_summary": "Minimum relevance score was updated from 35 to 30.",
+  "applied_preview_summary": "Estimated increase of 2 included candidates over the last 30 days of telemetry.",
+  "next_refresh_expectation": "The next completed recommendation or competitor generation run should reflect this change.",
   "recommendation_label": "Fix title tags",
   "expected_change": "Estimated increase of 2 included candidates over the last 30 days of telemetry.",
   "reflected_on_next_run": "The next completed recommendation or competitor generation run should reflect this change.",
@@ -232,6 +237,20 @@ Shape:
 - If linkage metadata is partial, values are populated conservatively from bounded preview fields.
 - If safe derivation is not possible, `apply_outcome` remains `null`.
 - This is deterministic response shaping from existing data; no new AI calls, persistence, or schema changes.
+
+### Operator-visible meaning
+- `applied_recommendation_id`: linked recommendation id when deterministic linkage exists.
+- `applied_recommendation_title`: recommendation title associated with the apply action.
+- `applied_change_summary`: backend-authored summary of what concrete tuning change was applied.
+- `applied_preview_summary`: backend-authored summary of the preview/estimated impact associated with apply.
+- `next_refresh_expectation`: backend-authored message describing when operators should expect refreshed runs to reflect the change.
+
+Backward compatibility:
+- Legacy fields (`recommendation_label`, `expected_change`, `reflected_on_next_run`) remain populated for existing clients.
+- Older historical payloads may omit new additive fields; UI should render safely and fall back to legacy fields.
+
+Workspace trust roll-up:
+- Workspace summary may also include `workspace_trust_summary` (see `docs/dashboard.md`), which reuses apply outcome fields alongside competitor outcome/provenance signals for a compact operator-visible trust/status strip.
 
 ## Workspace Analysis Freshness
 

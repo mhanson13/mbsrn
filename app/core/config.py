@@ -4,6 +4,11 @@ import json
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
+from urllib.parse import urlparse
+
+_LOCAL_LIKE_ENV_VALUES = {"local", "development", "dev", "test"}
+_LOCALHOST_DATABASE_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_LOCAL_DATABASE_URL_FALLBACK = "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn"
 
 
 @dataclass(frozen=True)
@@ -152,6 +157,35 @@ def _env_json_object(name: str) -> dict[str, str]:
     return normalized
 
 
+def _is_local_like_env(value: str) -> bool:
+    return value.strip().lower() in _LOCAL_LIKE_ENV_VALUES
+
+
+def _is_local_like_runtime(*, environment: str, app_env: str) -> bool:
+    return _is_local_like_env(environment) and _is_local_like_env(app_env)
+
+
+def _resolve_database_url(*, environment: str, app_env: str) -> str:
+    raw_database_url = os.getenv("DATABASE_URL")
+    local_like_runtime = _is_local_like_runtime(environment=environment, app_env=app_env)
+    if raw_database_url is None or not raw_database_url.strip():
+        if local_like_runtime:
+            return _LOCAL_DATABASE_URL_FALLBACK
+        raise RuntimeError(
+            "DATABASE_URL is required and must not default to localhost in this environment"
+        )
+
+    database_url = raw_database_url.strip()
+    parsed = urlparse(database_url)
+    if not parsed.scheme:
+        raise RuntimeError("DATABASE_URL must be a valid URL.")
+
+    host = (parsed.hostname or "").strip().lower()
+    if not local_like_runtime and host in _LOCALHOST_DATABASE_HOSTS:
+        raise RuntimeError("Invalid DATABASE_URL: localhost is not allowed in this environment")
+    return database_url
+
+
 def _resolve_ai_prompt_text(*, split_env_name: str, legacy_prompt_text: str) -> _AIPromptResolution:
     split_prompt_text = os.getenv(split_env_name)
     split_prompt_present = split_prompt_text is not None and bool(split_prompt_text.strip())
@@ -181,6 +215,7 @@ def get_settings() -> Settings:
     environment = os.getenv("ENVIRONMENT", "development")
     env_normalized = environment.strip().lower()
     app_env = os.getenv("APP_ENV", environment).strip().lower()
+    database_url = _resolve_database_url(environment=env_normalized, app_env=app_env)
     google_auth_enabled = _env_bool("GOOGLE_AUTH_ENABLED", False)
     google_oidc_client_id = os.getenv("GOOGLE_OIDC_CLIENT_ID")
     google_oauth_client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID") or google_oidc_client_id
@@ -254,10 +289,7 @@ def get_settings() -> Settings:
         app_name=os.getenv("APP_NAME", "MBSRN Operator Platform"),
         app_env=app_env,
         environment=environment,
-        database_url=os.getenv(
-            "DATABASE_URL",
-            "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn",
-        ),
+        database_url=database_url,
         db_auto_create_local=_env_bool(
             "DB_AUTO_CREATE_LOCAL",
             False,

@@ -40,6 +40,11 @@ from app.models.seo_recommendation_run import SEORecommendationRun  # noqa: F401
 from app.models.seo_site import SEOSite  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def _default_database_url_for_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+
+
 @pytest.fixture()
 def db_session() -> Session:
     engine = create_engine(

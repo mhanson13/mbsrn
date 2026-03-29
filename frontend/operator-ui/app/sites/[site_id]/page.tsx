@@ -68,6 +68,7 @@ import type {
   RecommendationTuningSuggestion,
   RecommendationWorkspaceSummaryResponse,
   SEOAuditRun,
+  WorkspaceTrustSummary,
 } from "../../../lib/api/types";
 
 const MAX_AUDIT_ROWS = 8;
@@ -1122,10 +1123,22 @@ function normalizeNarrativeSignalSummary(
 interface RecommendationApplyOutcomeView {
   applied: boolean;
   appliedAt: string | null;
-  recommendationLabel: string | null;
-  expectedChange: string | null;
-  reflectedOnNextRun: string | null;
+  appliedRecommendationId: string | null;
+  appliedRecommendationTitle: string | null;
+  appliedChangeSummary: string | null;
+  appliedPreviewSummary: string | null;
+  nextRefreshExpectation: string | null;
   source: "recommendation" | "manual" | null;
+}
+
+interface WorkspaceTrustSummaryView {
+  latestCompetitorStatus: CompetitorRunOutcomeSummary["status_level"] | null;
+  usedGooglePlacesSeeds: boolean | null;
+  usedSyntheticFallback: boolean | null;
+  latestRecommendationApplyTitle: string | null;
+  latestRecommendationApplyChangeSummary: string | null;
+  nextRefreshExpectation: string | null;
+  freshnessNote: string | null;
 }
 
 function normalizeRecommendationApplyOutcome(
@@ -1134,24 +1147,89 @@ function normalizeRecommendationApplyOutcome(
   if (!applyOutcome || !applyOutcome.applied) {
     return null;
   }
-  const recommendationLabel = truncateOptionalText(applyOutcome.recommendation_label, 180);
-  const expectedChange = truncateOptionalText(applyOutcome.expected_change, 240);
-  const reflectedOnNextRun = truncateOptionalText(applyOutcome.reflected_on_next_run, 220);
+  const appliedRecommendationId = truncateOptionalText(applyOutcome.applied_recommendation_id, 48);
+  const appliedRecommendationTitle = truncateOptionalText(
+    applyOutcome.applied_recommendation_title ?? applyOutcome.recommendation_label,
+    180,
+  );
+  const appliedChangeSummary = truncateOptionalText(
+    applyOutcome.applied_change_summary ?? applyOutcome.expected_change,
+    240,
+  );
+  const appliedPreviewSummary = truncateOptionalText(applyOutcome.applied_preview_summary, 240);
+  const nextRefreshExpectation = truncateOptionalText(
+    applyOutcome.next_refresh_expectation ?? applyOutcome.reflected_on_next_run,
+    220,
+  );
   const appliedAt = truncateOptionalText(applyOutcome.applied_at, 64);
   const source =
     applyOutcome.source === "recommendation" || applyOutcome.source === "manual"
       ? applyOutcome.source
       : null;
-  if (!recommendationLabel && !expectedChange && !reflectedOnNextRun && !appliedAt) {
+  if (
+    !appliedRecommendationTitle &&
+    !appliedChangeSummary &&
+    !appliedPreviewSummary &&
+    !nextRefreshExpectation &&
+    !appliedAt
+  ) {
     return null;
   }
   return {
     applied: true,
     appliedAt,
-    recommendationLabel,
-    expectedChange,
-    reflectedOnNextRun,
+    appliedRecommendationId,
+    appliedRecommendationTitle,
+    appliedChangeSummary,
+    appliedPreviewSummary,
+    nextRefreshExpectation,
     source,
+  };
+}
+
+function normalizeWorkspaceTrustSummary(
+  summary: WorkspaceTrustSummary | null | undefined,
+): WorkspaceTrustSummaryView | null {
+  if (!summary) {
+    return null;
+  }
+  const latestCompetitorStatus =
+    summary.latest_competitor_status === "normal" ||
+    summary.latest_competitor_status === "recovered" ||
+    summary.latest_competitor_status === "degraded" ||
+    summary.latest_competitor_status === "failed"
+      ? summary.latest_competitor_status
+      : null;
+  const usedGooglePlacesSeeds =
+    typeof summary.used_google_places_seeds === "boolean" ? summary.used_google_places_seeds : null;
+  const usedSyntheticFallback =
+    typeof summary.used_synthetic_fallback === "boolean" ? summary.used_synthetic_fallback : null;
+  const latestRecommendationApplyTitle = truncateOptionalText(summary.latest_recommendation_apply_title, 180);
+  const latestRecommendationApplyChangeSummary = truncateOptionalText(
+    summary.latest_recommendation_apply_change_summary,
+    240,
+  );
+  const nextRefreshExpectation = truncateOptionalText(summary.next_refresh_expectation, 220);
+  const freshnessNote = truncateOptionalText(summary.freshness_note, 220);
+  if (
+    !latestCompetitorStatus &&
+    usedGooglePlacesSeeds === null &&
+    usedSyntheticFallback === null &&
+    !latestRecommendationApplyTitle &&
+    !latestRecommendationApplyChangeSummary &&
+    !nextRefreshExpectation &&
+    !freshnessNote
+  ) {
+    return null;
+  }
+  return {
+    latestCompetitorStatus,
+    usedGooglePlacesSeeds,
+    usedSyntheticFallback,
+    latestRecommendationApplyTitle,
+    latestRecommendationApplyChangeSummary,
+    nextRefreshExpectation,
+    freshnessNote,
   };
 }
 
@@ -1866,6 +1944,7 @@ export default function SiteWorkspacePage() {
     useState<RecommendationTuningSuggestion[]>([]);
   const [latestRecommendationApplyOutcome, setLatestRecommendationApplyOutcome] =
     useState<RecommendationApplyOutcome | null>(null);
+  const [latestWorkspaceTrustSummary, setLatestWorkspaceTrustSummary] = useState<WorkspaceTrustSummary | null>(null);
   const [latestCompetitorContextHealth, setLatestCompetitorContextHealth] =
     useState<CompetitorContextHealth | null>(null);
   const [latestRecommendationEEATGapSummary, setLatestRecommendationEEATGapSummary] =
@@ -2394,6 +2473,10 @@ export default function SiteWorkspacePage() {
     () => normalizeRecommendationApplyOutcome(latestRecommendationApplyOutcome),
     [latestRecommendationApplyOutcome],
   );
+  const workspaceTrustSummary = useMemo(
+    () => normalizeWorkspaceTrustSummary(latestWorkspaceTrustSummary),
+    [latestWorkspaceTrustSummary],
+  );
   const competitorContextHealth = useMemo(
     () => normalizeCompetitorContextHealth(latestCompetitorContextHealth),
     [latestCompetitorContextHealth],
@@ -2572,6 +2655,7 @@ export default function SiteWorkspacePage() {
     setLatestCompletedRecommendationNarrative(summary.latest_narrative);
     setLatestCompletedTuningSuggestions(summary.tuning_suggestions);
     setLatestRecommendationApplyOutcome(summary.apply_outcome || null);
+    setLatestWorkspaceTrustSummary(summary.workspace_trust_summary || null);
     setLatestCompetitorContextHealth(summary.competitor_context_health || null);
     setLatestRecommendationEEATGapSummary(summary.eeat_gap_summary || null);
     setLatestRecommendationAnalysisFreshness(summary.analysis_freshness || null);
@@ -3432,6 +3516,7 @@ export default function SiteWorkspacePage() {
       setLatestCompletedRecommendationNarrative(null);
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
+      setLatestWorkspaceTrustSummary(null);
       setLatestCompetitorContextHealth(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
@@ -3505,6 +3590,7 @@ export default function SiteWorkspacePage() {
       setLatestCompletedRecommendationNarrative(null);
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
+      setLatestWorkspaceTrustSummary(null);
       setLatestCompetitorContextHealth(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
@@ -3570,6 +3656,7 @@ export default function SiteWorkspacePage() {
       setLatestCompletedRecommendationNarrative(null);
       setLatestCompletedTuningSuggestions([]);
       setLatestRecommendationApplyOutcome(null);
+      setLatestWorkspaceTrustSummary(null);
       setLatestCompetitorContextHealth(null);
       setLatestRecommendationEEATGapSummary(null);
       setLatestRecommendationAnalysisFreshness(null);
@@ -3787,6 +3874,7 @@ export default function SiteWorkspacePage() {
         setLatestCompletedRecommendationNarrative(null);
         setLatestCompletedTuningSuggestions([]);
         setLatestRecommendationApplyOutcome(null);
+        setLatestWorkspaceTrustSummary(null);
         setLatestCompetitorContextHealth(null);
         setLatestRecommendationEEATGapSummary(null);
         setLatestRecommendationAnalysisFreshness(null);
@@ -4190,6 +4278,43 @@ export default function SiteWorkspacePage() {
             </strong>
           </div>
         </div>
+        {workspaceTrustSummary ? (
+          <div className="panel panel-compact stack-tight" data-testid="workspace-trust-summary">
+            <span className="hint muted">Workspace trust summary</span>
+            {workspaceTrustSummary.latestCompetitorStatus ? (
+              <span className="hint">
+                Latest competitor status:{" "}
+                {formatCompetitorOutcomeStatusLevel(workspaceTrustSummary.latestCompetitorStatus)}
+              </span>
+            ) : null}
+            {workspaceTrustSummary.usedGooglePlacesSeeds !== null ? (
+              <span className="hint muted">
+                Nearby seed discovery used: {workspaceTrustSummary.usedGooglePlacesSeeds ? "yes" : "no"}.
+              </span>
+            ) : null}
+            {workspaceTrustSummary.usedSyntheticFallback !== null ? (
+              <span className={workspaceTrustSummary.usedSyntheticFallback ? "hint warning" : "hint muted"}>
+                Synthetic fallback used: {workspaceTrustSummary.usedSyntheticFallback ? "yes" : "no"}.
+              </span>
+            ) : null}
+            {workspaceTrustSummary.latestRecommendationApplyTitle ? (
+              <span className="hint">
+                Latest applied recommendation: {workspaceTrustSummary.latestRecommendationApplyTitle}.
+              </span>
+            ) : null}
+            {workspaceTrustSummary.latestRecommendationApplyChangeSummary ? (
+              <span className="hint muted">
+                Latest applied change: {workspaceTrustSummary.latestRecommendationApplyChangeSummary}
+              </span>
+            ) : null}
+            {workspaceTrustSummary.nextRefreshExpectation ? (
+              <span className="hint muted">Next refresh: {workspaceTrustSummary.nextRefreshExpectation}</span>
+            ) : null}
+            {workspaceTrustSummary.freshnessNote ? (
+              <span className="hint muted">Freshness: {workspaceTrustSummary.freshnessNote}</span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="panel panel-compact stack" data-testid="start-here-section">
           <span className="hint muted">Start Here</span>
           <strong>{startHereAction.title}</strong>
@@ -5878,15 +6003,23 @@ export default function SiteWorkspacePage() {
                   <div className="panel panel-compact stack-tight" data-testid="narrative-apply-outcome">
                     <span className="hint muted">Latest apply outcome</span>
                     <span className="hint success">Applied</span>
-                    {recommendationApplyOutcome.recommendationLabel ? (
-                      <span className="hint">Recommendation: {recommendationApplyOutcome.recommendationLabel}</span>
+                    {recommendationApplyOutcome.appliedRecommendationTitle ? (
+                      <span className="hint">
+                        Recommendation: {recommendationApplyOutcome.appliedRecommendationTitle}
+                        {recommendationApplyOutcome.appliedRecommendationId
+                          ? ` (${recommendationApplyOutcome.appliedRecommendationId})`
+                          : ""}
+                      </span>
                     ) : null}
-                    {recommendationApplyOutcome.expectedChange ? (
-                      <span className="hint muted">Expected change: {recommendationApplyOutcome.expectedChange}</span>
+                    {recommendationApplyOutcome.appliedChangeSummary ? (
+                      <span className="hint muted">What changed: {recommendationApplyOutcome.appliedChangeSummary}</span>
                     ) : null}
-                    {recommendationApplyOutcome.reflectedOnNextRun ? (
+                    {recommendationApplyOutcome.appliedPreviewSummary ? (
+                      <span className="hint muted">Preview used: {recommendationApplyOutcome.appliedPreviewSummary}</span>
+                    ) : null}
+                    {recommendationApplyOutcome.nextRefreshExpectation ? (
                       <span className="hint muted">
-                        Reflects on next run: {recommendationApplyOutcome.reflectedOnNextRun}
+                        Next refresh expectation: {recommendationApplyOutcome.nextRefreshExpectation}
                       </span>
                     ) : null}
                     {recommendationApplyOutcome.appliedAt ? (

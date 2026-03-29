@@ -69,6 +69,7 @@ from app.schemas.seo_competitor import (
     SEOCompetitorProfileGenerationRunListResponse,
     SEOCompetitorProfileGenerationObservabilitySummaryRead,
     SEOCompetitorProfileGenerationRunRead,
+    SEOCompetitorProfileOutcomeSummaryRead,
     SEOCompetitorProfileRejectedCandidateRead,
     SEOCompetitorProfileTuningRejectedCandidateRead,
     SEOCompetitorDomainCreateRequest,
@@ -99,6 +100,7 @@ from app.schemas.seo_recommendation import (
     SEORecommendationOrderingExplanationRead,
     SEORecommendationStartHereRead,
     SEORecommendationThemeGroupRead,
+    SEORecommendationWorkspaceTrustSummaryRead,
     SEORecommendationWorkspaceSummaryRead,
     SEORecommendationTuningImpactPreviewRead,
     SEORecommendationTuningImpactPreviewRequest,
@@ -668,12 +670,16 @@ def _build_workspace_apply_outcome(
         item.id: _compact_workspace_text(item.title, max_length=_WORKSPACE_APPLY_OUTCOME_LABEL_MAX_CHARS)
         for item in recommendations
     }
+    applied_recommendation_id = None
+    applied_recommendation_title = None
     recommendation_label = None
     source = None
     if matching_suggestion is not None:
         for linked_id in matching_suggestion.linked_recommendation_ids:
             linked_title = recommendation_title_by_id.get(linked_id)
             if linked_title:
+                applied_recommendation_id = _compact_workspace_text(linked_id, max_length=36)
+                applied_recommendation_title = linked_title
                 recommendation_label = linked_title
                 source = "recommendation"
                 break
@@ -695,6 +701,28 @@ def _build_workspace_apply_outcome(
         if changed_setting
         else None
     )
+    applied_change_summary = None
+    if setting_label and current_value is not None and proposed_value is not None:
+        applied_change_summary = _compact_workspace_text(
+            f"{setting_label} was updated from {current_value} to {proposed_value}.",
+            max_length=_WORKSPACE_APPLY_OUTCOME_EXPECTED_MAX_CHARS,
+        )
+    elif setting_label and proposed_value is not None:
+        applied_change_summary = _compact_workspace_text(
+            f"{setting_label} was updated to {proposed_value}.",
+            max_length=_WORKSPACE_APPLY_OUTCOME_EXPECTED_MAX_CHARS,
+        )
+    elif setting_label:
+        applied_change_summary = _compact_workspace_text(
+            f"{setting_label} recommendation was applied to site tuning settings.",
+            max_length=_WORKSPACE_APPLY_OUTCOME_EXPECTED_MAX_CHARS,
+        )
+    else:
+        applied_change_summary = _compact_workspace_text(
+            "A recommendation-linked tuning change was applied to site settings.",
+            max_length=_WORKSPACE_APPLY_OUTCOME_EXPECTED_MAX_CHARS,
+        )
+
     if recommendation_label is None and setting_label:
         if current_value is not None and proposed_value is not None:
             recommendation_label = _compact_workspace_text(
@@ -725,24 +753,32 @@ def _build_workspace_apply_outcome(
     if expected_change is None:
         expected_change = "This tuning update should improve upcoming recommendation and competitor run outputs."
 
+    applied_preview_summary = expected_change
+
     if latest_run_status in {"queued", "running"}:
-        reflected_on_next_run = (
+        next_refresh_expectation = (
             "An in-flight run may still reflect previous settings. The next completed run should include this change."
         )
     else:
-        reflected_on_next_run = (
+        next_refresh_expectation = (
             "The next completed recommendation or competitor generation run should reflect this change."
         )
-    reflected_on_next_run = _compact_workspace_text(
-        reflected_on_next_run,
+    next_refresh_expectation = _compact_workspace_text(
+        next_refresh_expectation,
         max_length=_WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS,
     )
+    reflected_on_next_run = next_refresh_expectation
 
     try:
         return SEORecommendationApplyOutcomeRead.model_validate(
             {
                 "applied": True,
                 "applied_at": latest_applied_preview_event.applied_at,
+                "applied_recommendation_id": applied_recommendation_id,
+                "applied_recommendation_title": applied_recommendation_title or recommendation_label,
+                "applied_change_summary": applied_change_summary,
+                "applied_preview_summary": applied_preview_summary,
+                "next_refresh_expectation": next_refresh_expectation,
                 "recommendation_label": recommendation_label,
                 "expected_change": expected_change,
                 "reflected_on_next_run": reflected_on_next_run,
@@ -775,6 +811,109 @@ def _derive_workspace_analysis_freshness(
             "analysis_generated_at": analysis_generated_at,
             "last_apply_at": last_apply_at,
             "message": message,
+        }
+    )
+
+
+def _build_workspace_trust_summary(
+    *,
+    latest_competitor_outcome_summary: SEOCompetitorProfileOutcomeSummaryRead | None,
+    latest_competitor_run_status: str | None,
+    apply_outcome: SEORecommendationApplyOutcomeRead | None,
+    analysis_freshness: SEORecommendationAnalysisFreshnessRead | None,
+) -> SEORecommendationWorkspaceTrustSummaryRead | None:
+    latest_competitor_status = (
+        latest_competitor_outcome_summary.status_level
+        if latest_competitor_outcome_summary is not None
+        else None
+    )
+    used_google_places_seeds = (
+        bool(latest_competitor_outcome_summary.used_google_places_seeds)
+        if latest_competitor_outcome_summary is not None
+        else None
+    )
+    used_synthetic_fallback = (
+        bool(latest_competitor_outcome_summary.used_synthetic_fallback)
+        if latest_competitor_outcome_summary is not None
+        else None
+    )
+
+    latest_recommendation_apply_title = None
+    latest_recommendation_apply_change_summary = None
+    next_refresh_expectation = None
+    if apply_outcome is not None and apply_outcome.applied:
+        latest_recommendation_apply_title = _compact_workspace_text(
+            apply_outcome.applied_recommendation_title or apply_outcome.recommendation_label,
+            max_length=_WORKSPACE_APPLY_OUTCOME_LABEL_MAX_CHARS,
+        )
+        latest_recommendation_apply_change_summary = _compact_workspace_text(
+            apply_outcome.applied_change_summary or apply_outcome.expected_change,
+            max_length=_WORKSPACE_APPLY_OUTCOME_EXPECTED_MAX_CHARS,
+        )
+        next_refresh_expectation = _compact_workspace_text(
+            apply_outcome.next_refresh_expectation or apply_outcome.reflected_on_next_run,
+            max_length=_WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS,
+        )
+
+    if next_refresh_expectation is None:
+        if analysis_freshness is not None and analysis_freshness.status == "pending_refresh":
+            next_refresh_expectation = _compact_workspace_text(
+                "The next completed recommendation run should reflect the latest applied changes.",
+                max_length=_WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS,
+            )
+        elif latest_competitor_run_status in {"queued", "running"}:
+            next_refresh_expectation = _compact_workspace_text(
+                "A competitor generation run is in progress. Results will refresh after completion.",
+                max_length=_WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS,
+            )
+        elif latest_competitor_status in {"recovered", "degraded"}:
+            next_refresh_expectation = _compact_workspace_text(
+                "The next completed competitor generation run should confirm updated live discovery results.",
+                max_length=_WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS,
+            )
+        elif latest_competitor_status == "failed":
+            next_refresh_expectation = _compact_workspace_text(
+                "Start a new competitor generation run to refresh competitor results.",
+                max_length=_WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS,
+            )
+
+    freshness_note = None
+    if analysis_freshness is not None and analysis_freshness.status in {"fresh", "pending_refresh"}:
+        freshness_note = _compact_workspace_text(
+            analysis_freshness.message,
+            max_length=_WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS,
+        )
+    elif latest_competitor_status == "failed":
+        freshness_note = _compact_workspace_text(
+            "Latest competitor generation failed and needs a fresh run.",
+            max_length=_WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS,
+        )
+    elif latest_competitor_status in {"recovered", "degraded"}:
+        freshness_note = _compact_workspace_text(
+            "Latest competitor generation required recovery handling.",
+            max_length=_WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS,
+        )
+
+    if (
+        latest_competitor_status is None
+        and used_google_places_seeds is None
+        and used_synthetic_fallback is None
+        and latest_recommendation_apply_title is None
+        and latest_recommendation_apply_change_summary is None
+        and next_refresh_expectation is None
+        and freshness_note is None
+    ):
+        return None
+
+    return SEORecommendationWorkspaceTrustSummaryRead.model_validate(
+        {
+            "latest_competitor_status": latest_competitor_status,
+            "used_google_places_seeds": used_google_places_seeds,
+            "used_synthetic_fallback": used_synthetic_fallback,
+            "latest_recommendation_apply_title": latest_recommendation_apply_title,
+            "latest_recommendation_apply_change_summary": latest_recommendation_apply_change_summary,
+            "next_refresh_expectation": next_refresh_expectation,
+            "freshness_note": freshness_note,
         }
     )
 
@@ -1873,6 +2012,7 @@ def get_seo_recommendation_workspace_summary(
     tuning_suggestions: list[SEORecommendationTuningSuggestionRead] = []
     grouped_recommendations: list[SEORecommendationThemeGroupRead] = []
     apply_outcome: SEORecommendationApplyOutcomeRead | None = None
+    workspace_trust_summary: SEORecommendationWorkspaceTrustSummaryRead | None = None
     analysis_freshness: SEORecommendationAnalysisFreshnessRead | None = None
     ordering_explanation: SEORecommendationOrderingExplanationRead | None = None
     start_here: SEORecommendationStartHereRead | None = None
@@ -1880,6 +2020,7 @@ def get_seo_recommendation_workspace_summary(
     competitor_context_health: SEOCompetitorContextHealthRead | None = None
     competitor_prompt_preview = None
     recommendation_prompt_preview = None
+    latest_competitor_outcome_summary: SEOCompetitorProfileOutcomeSummaryRead | None = None
     trusted_site_context: dict[str, object] = {}
     workspace_audit_pages: list[SEOAuditPage] = []
     latest_applied_preview_event = (
@@ -1998,6 +2139,25 @@ def get_seo_recommendation_workspace_summary(
         scoped_business_id,
         site_id,
     )
+    latest_competitor_run = latest_competitor_runs[0] if latest_competitor_runs else None
+    if latest_competitor_run is not None:
+        try:
+            latest_competitor_run_detail = generation_service.get_run_detail(
+                business_id=scoped_business_id,
+                site_id=site_id,
+                generation_run_id=latest_competitor_run.id,
+            )
+            if latest_competitor_run_detail.outcome_summary is not None:
+                latest_competitor_outcome_summary = SEOCompetitorProfileOutcomeSummaryRead.model_validate(
+                    latest_competitor_run_detail.outcome_summary
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to build competitor run outcome summary for workspace business_id=%s site_id=%s run_id=%s",
+                scoped_business_id,
+                site_id,
+                latest_competitor_run.id,
+            )
     competitor_candidate_count = latest_competitor_runs[0].requested_candidate_count if latest_competitor_runs else 5
     try:
         competitor_prompt_preview_data = generation_service.build_prompt_preview(
@@ -2078,6 +2238,12 @@ def get_seo_recommendation_workspace_summary(
         analysis_generated_at=analysis_generated_at,
         last_apply_at=last_apply_at,
     )
+    workspace_trust_summary = _build_workspace_trust_summary(
+        latest_competitor_outcome_summary=latest_competitor_outcome_summary,
+        latest_competitor_run_status=(latest_competitor_run.status if latest_competitor_run is not None else None),
+        apply_outcome=apply_outcome,
+        analysis_freshness=analysis_freshness,
+    )
     applied_recommendation_ids = _extract_workspace_applied_recommendation_ids(
         latest_applied_preview_event=latest_applied_preview_event,
         recommendations=recommendations_payload.items,
@@ -2127,6 +2293,7 @@ def get_seo_recommendation_workspace_summary(
         latest_narrative=latest_narrative_read,
         tuning_suggestions=tuning_suggestions,
         apply_outcome=apply_outcome,
+        workspace_trust_summary=workspace_trust_summary,
         analysis_freshness=analysis_freshness,
         ordering_explanation=ordering_explanation,
         start_here=start_here,

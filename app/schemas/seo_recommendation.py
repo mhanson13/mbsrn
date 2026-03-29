@@ -28,6 +28,7 @@ SEORecommendationTuningSuggestionConfidence = Literal["low", "medium", "high"]
 SEORecommendationSignalSupportLevel = Literal["low", "medium", "high"]
 SEORecommendationApplyOutcomeSource = Literal["recommendation", "manual"]
 SEORecommendationAnalysisFreshnessStatus = Literal["fresh", "pending_refresh", "unknown"]
+SEORecommendationWorkspaceTrustCompetitorStatus = Literal["normal", "recovered", "degraded", "failed"]
 SEORecommendationProgressStatus = Literal[
     "suggested",
     "applied_pending_refresh",
@@ -107,9 +108,14 @@ _ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS = 180
 _ACTION_SUMMARY_WHY_MAX_CHARS = 240
 _ACTION_SUMMARY_FIRST_STEP_MAX_CHARS = 180
 _ACTION_SUMMARY_EVIDENCE_ITEM_MAX_CHARS = 160
+_APPLY_OUTCOME_RECOMMENDATION_ID_MAX_CHARS = 36
 _APPLY_OUTCOME_LABEL_MAX_CHARS = 180
 _APPLY_OUTCOME_EXPECTED_CHANGE_MAX_CHARS = 260
 _APPLY_OUTCOME_NEXT_RUN_MAX_CHARS = 220
+_WORKSPACE_TRUST_APPLY_TITLE_MAX_CHARS = 180
+_WORKSPACE_TRUST_APPLY_CHANGE_MAX_CHARS = 260
+_WORKSPACE_TRUST_NEXT_REFRESH_MAX_CHARS = 220
+_WORKSPACE_TRUST_FRESHNESS_NOTE_MAX_CHARS = 220
 _RECOMMENDATION_PROGRESS_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_LIFECYCLE_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS = 220
@@ -1143,10 +1149,40 @@ class SEORecommendationApplyOutcomeRead(BaseModel):
 
     applied: bool
     applied_at: datetime | None = None
+    applied_recommendation_id: str | None = Field(default=None, max_length=_APPLY_OUTCOME_RECOMMENDATION_ID_MAX_CHARS)
+    applied_recommendation_title: str | None = Field(default=None, max_length=_APPLY_OUTCOME_LABEL_MAX_CHARS)
+    applied_change_summary: str | None = Field(default=None, max_length=_APPLY_OUTCOME_EXPECTED_CHANGE_MAX_CHARS)
+    applied_preview_summary: str | None = Field(default=None, max_length=_APPLY_OUTCOME_EXPECTED_CHANGE_MAX_CHARS)
+    next_refresh_expectation: str | None = Field(default=None, max_length=_APPLY_OUTCOME_NEXT_RUN_MAX_CHARS)
     recommendation_label: str | None = Field(default=None, max_length=_APPLY_OUTCOME_LABEL_MAX_CHARS)
     expected_change: str | None = Field(default=None, max_length=_APPLY_OUTCOME_EXPECTED_CHANGE_MAX_CHARS)
     reflected_on_next_run: str | None = Field(default=None, max_length=_APPLY_OUTCOME_NEXT_RUN_MAX_CHARS)
     source: SEORecommendationApplyOutcomeSource | None = None
+
+    @field_validator("applied_recommendation_id", mode="before")
+    @classmethod
+    def normalize_applied_recommendation_id(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_APPLY_OUTCOME_RECOMMENDATION_ID_MAX_CHARS)
+
+    @field_validator("applied_recommendation_title", mode="before")
+    @classmethod
+    def normalize_applied_recommendation_title(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_APPLY_OUTCOME_LABEL_MAX_CHARS)
+
+    @field_validator("applied_change_summary", mode="before")
+    @classmethod
+    def normalize_applied_change_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_APPLY_OUTCOME_EXPECTED_CHANGE_MAX_CHARS)
+
+    @field_validator("applied_preview_summary", mode="before")
+    @classmethod
+    def normalize_applied_preview_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_APPLY_OUTCOME_EXPECTED_CHANGE_MAX_CHARS)
+
+    @field_validator("next_refresh_expectation", mode="before")
+    @classmethod
+    def normalize_next_refresh_expectation(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_APPLY_OUTCOME_NEXT_RUN_MAX_CHARS)
 
     @field_validator("recommendation_label", mode="before")
     @classmethod
@@ -1197,6 +1233,66 @@ class SEORecommendationAnalysisFreshnessRead(BaseModel):
         if cleaned is None:
             raise ValueError("Analysis freshness message is required")
         return cleaned
+
+
+class SEORecommendationWorkspaceTrustSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    latest_competitor_status: SEORecommendationWorkspaceTrustCompetitorStatus | None = None
+    used_google_places_seeds: bool | None = None
+    used_synthetic_fallback: bool | None = None
+    latest_recommendation_apply_title: str | None = Field(default=None, max_length=_WORKSPACE_TRUST_APPLY_TITLE_MAX_CHARS)
+    latest_recommendation_apply_change_summary: str | None = Field(
+        default=None,
+        max_length=_WORKSPACE_TRUST_APPLY_CHANGE_MAX_CHARS,
+    )
+    next_refresh_expectation: str | None = Field(default=None, max_length=_WORKSPACE_TRUST_NEXT_REFRESH_MAX_CHARS)
+    freshness_note: str | None = Field(default=None, max_length=_WORKSPACE_TRUST_FRESHNESS_NOTE_MAX_CHARS)
+
+    @field_validator("latest_competitor_status", mode="before")
+    @classmethod
+    def normalize_latest_competitor_status(
+        cls,
+        value: Any,
+    ) -> SEORecommendationWorkspaceTrustCompetitorStatus | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if normalized not in {"normal", "recovered", "degraded", "failed"}:
+            return None
+        return normalized  # type: ignore[return-value]
+
+    @field_validator(
+        "latest_recommendation_apply_title",
+        mode="before",
+    )
+    @classmethod
+    def normalize_latest_recommendation_apply_title(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_WORKSPACE_TRUST_APPLY_TITLE_MAX_CHARS)
+
+    @field_validator(
+        "latest_recommendation_apply_change_summary",
+        mode="before",
+    )
+    @classmethod
+    def normalize_latest_recommendation_apply_change_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_WORKSPACE_TRUST_APPLY_CHANGE_MAX_CHARS)
+
+    @field_validator(
+        "next_refresh_expectation",
+        mode="before",
+    )
+    @classmethod
+    def normalize_next_refresh_expectation(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_WORKSPACE_TRUST_NEXT_REFRESH_MAX_CHARS)
+
+    @field_validator(
+        "freshness_note",
+        mode="before",
+    )
+    @classmethod
+    def normalize_freshness_note(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_WORKSPACE_TRUST_FRESHNESS_NOTE_MAX_CHARS)
 
 
 class SEOCompetitorContextHealthCheckRead(BaseModel):
@@ -2390,6 +2486,7 @@ class SEORecommendationWorkspaceSummaryRead(BaseModel):
     latest_narrative: SEORecommendationNarrativeRead | None
     tuning_suggestions: list[SEORecommendationTuningSuggestionRead] = Field(default_factory=list)
     apply_outcome: SEORecommendationApplyOutcomeRead | None = None
+    workspace_trust_summary: SEORecommendationWorkspaceTrustSummaryRead | None = None
     analysis_freshness: SEORecommendationAnalysisFreshnessRead | None = None
     ordering_explanation: SEORecommendationOrderingExplanationRead | None = None
     start_here: SEORecommendationStartHereRead | None = None

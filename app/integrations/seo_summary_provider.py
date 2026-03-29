@@ -230,7 +230,7 @@ class MockSEOCompetitorProfileGenerationProvider:
         seed_candidates: list[dict[str, object]] | None = None,
     ) -> SEOCompetitorProfileGenerationOutput:
         del reduced_context_mode, seed_candidates
-        existing = {item.strip().lower() for item in existing_domains if item.strip()}
+        existing = {str(item).strip().lower() for item in existing_domains if isinstance(item, str) and item.strip()}
         normalized_domain = (site.normalized_domain or "").strip().lower() or "example.com"
         root = normalized_domain.split(".")[0] or "example"
         seed_candidates: list[SEOCompetitorProfileDraftCandidateOutput] = [

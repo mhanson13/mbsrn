@@ -179,6 +179,64 @@ def test_response_parsing_still_returns_valid_candidates(monkeypatch) -> None:
     assert output.candidates[0].suggested_domain == "competitor-one.example"
 
 
+def test_response_parsing_handles_nullable_optional_candidate_text(monkeypatch) -> None:
+    nullable_optional_payload = json.dumps(
+        {
+            "model": "gpt-4.1-mini-2026-01-01",
+            "output": [
+                {
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": json.dumps(
+                                {
+                                    "candidates": [
+                                        {
+                                            "name": "Competitor Nullable",
+                                            "domain": "nullable-competitor.example",
+                                            "competitor_type": "direct",
+                                            "summary": None,
+                                            "why_competitor": None,
+                                            "evidence": None,
+                                            "confidence_score": 0.73,
+                                        }
+                                    ]
+                                }
+                            ),
+                        }
+                    ]
+                }
+            ],
+        }
+    )
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 20
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(nullable_optional_payload)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        timeout_seconds=20,
+    )
+
+    output = provider.generate_competitor_profiles(
+        site=_site(),
+        existing_domains=["known.example"],
+        candidate_count=1,
+    )
+
+    assert len(output.candidates) == 1
+    candidate = output.candidates[0]
+    assert candidate.suggested_name == "Competitor Nullable"
+    assert candidate.suggested_domain == "nullable-competitor.example"
+    assert candidate.summary is None
+    assert candidate.why_competitor is None
+    assert candidate.evidence is None
+
+
 def test_output_prompt_version_uses_resolved_prompt_marker_when_override_is_present(monkeypatch) -> None:
     def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         assert timeout == 20

@@ -19,6 +19,7 @@ from app.models.seo_audit_page import SEOAuditPage
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_finding import SEOCompetitorComparisonFinding
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
+from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
 from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
 from app.models.seo_competitor_tuning_preview_event import SEOCompetitorTuningPreviewEvent
@@ -2435,6 +2436,66 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
             direction_correct=None,
         )
     )
+    db_session.add(
+        SEOCompetitorProfileGenerationRun(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            parent_run_id=None,
+            status="completed",
+            requested_candidate_count=5,
+            generated_draft_count=3,
+            raw_candidate_count=5,
+            included_candidate_count=3,
+            excluded_candidate_count=2,
+            exclusion_counts_by_reason={"invalid_candidate": 2},
+            provider_name="openai",
+            model_name="gpt-5-mini",
+            prompt_version="seo-competitor-profile-v4",
+            failure_category=None,
+            raw_output=json.dumps(
+                {
+                    "provider_attempt_count": 2,
+                    "provider_degraded_retry_used": False,
+                    "provider_attempts_debug": [
+                        {
+                            "attempt_number": 0,
+                            "execution_mode": "fast_path",
+                            "provider_call_type": "non_tool",
+                            "degraded_mode": False,
+                            "reduced_context_mode": True,
+                            "requested_candidate_count": 5,
+                            "outcome": "failure",
+                            "failure_kind": "timeout",
+                            "request_duration_ms": 30000,
+                            "timeout_seconds": 30,
+                            "recovered_after_timeout": False,
+                            "final_outcome": "failure",
+                            "google_places_seed_count": 0,
+                        },
+                        {
+                            "attempt_number": 1,
+                            "execution_mode": "full",
+                            "provider_call_type": "tool_enabled",
+                            "degraded_mode": False,
+                            "reduced_context_mode": False,
+                            "requested_candidate_count": 5,
+                            "outcome": "success",
+                            "request_duration_ms": 19800,
+                            "timeout_seconds": 30,
+                            "recovered_after_timeout": True,
+                            "recovery_path": "retry_success",
+                            "final_outcome": "success",
+                            "google_places_seed_count": 4,
+                        },
+                    ],
+                }
+            ),
+            error_summary=None,
+            completed_at=utc_now(),
+            created_by_principal_id="principal-1",
+        )
+    )
     db_session.commit()
 
     summary = client.get(
@@ -2452,13 +2513,35 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
     assert "pending_refresh_context" in payload["start_here"]["context_flags"]
     assert payload["apply_outcome"]["applied"] is True
     assert payload["apply_outcome"]["source"] == "recommendation"
+    assert payload["apply_outcome"]["applied_recommendation_id"] == recommendation_id
+    assert payload["apply_outcome"]["applied_recommendation_title"] == recommendation_title
     assert payload["apply_outcome"]["recommendation_label"] == recommendation_title
+    assert (
+        payload["apply_outcome"]["applied_change_summary"]
+        == "Minimum relevance score was updated from 35 to 30."
+    )
+    assert (
+        payload["apply_outcome"]["applied_preview_summary"]
+        == "Estimated increase of 2 included candidates over the last 30 days of telemetry."
+    )
     assert (
         payload["apply_outcome"]["expected_change"]
         == "Estimated increase of 2 included candidates over the last 30 days of telemetry."
     )
+    assert payload["apply_outcome"]["next_refresh_expectation"]
     assert payload["apply_outcome"]["reflected_on_next_run"]
     assert payload["apply_outcome"]["applied_at"] is not None
+    assert payload["workspace_trust_summary"] is not None
+    assert payload["workspace_trust_summary"]["latest_competitor_status"] == "recovered"
+    assert payload["workspace_trust_summary"]["used_google_places_seeds"] is True
+    assert payload["workspace_trust_summary"]["used_synthetic_fallback"] is False
+    assert payload["workspace_trust_summary"]["latest_recommendation_apply_title"] == recommendation_title
+    assert (
+        payload["workspace_trust_summary"]["latest_recommendation_apply_change_summary"]
+        == "Minimum relevance score was updated from 35 to 30."
+    )
+    assert payload["workspace_trust_summary"]["next_refresh_expectation"]
+    assert payload["workspace_trust_summary"]["freshness_note"] == payload["analysis_freshness"]["message"]
     assert payload["recommendations"]["items"][0]["recommendation_progress_status"] == "applied_pending_refresh"
     assert (
         payload["recommendations"]["items"][0]["recommendation_progress_summary"]
@@ -2514,8 +2597,14 @@ def test_recommendation_workspace_summary_handles_partial_apply_metadata_safely(
     payload = summary.json()
     assert payload["apply_outcome"] is not None
     assert payload["apply_outcome"]["applied"] is True
+    assert payload["apply_outcome"]["applied_change_summary"]
+    assert payload["apply_outcome"]["next_refresh_expectation"]
     assert payload["apply_outcome"]["expected_change"]
     assert payload["apply_outcome"]["reflected_on_next_run"]
+    assert payload["workspace_trust_summary"] is not None
+    assert payload["workspace_trust_summary"]["latest_competitor_status"] is None
+    assert payload["workspace_trust_summary"]["latest_recommendation_apply_change_summary"]
+    assert payload["workspace_trust_summary"]["next_refresh_expectation"]
     assert payload["analysis_freshness"]["status"] == "pending_refresh"
     assert payload["start_here"] is not None
     assert payload["start_here"]["context_flags"]
@@ -2560,6 +2649,7 @@ def test_recommendation_workspace_summary_handles_in_progress_runs_safely(db_ses
     assert payload["recommendations"]["total"] == 0
     assert payload["latest_narrative"] is None
     assert payload["apply_outcome"] is None
+    assert payload["workspace_trust_summary"] is None
     assert payload["start_here"] is None
     assert payload["analysis_freshness"]["status"] == "unknown"
     assert payload["analysis_freshness"]["analysis_generated_at"] is None

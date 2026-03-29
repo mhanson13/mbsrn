@@ -1654,6 +1654,55 @@ def test_google_places_seeds_are_passed_to_ai_enrichment_with_minimal_fields(db_
     assert first_seed["website_domain"] == "www.acmealarm.example"
 
 
+def test_google_places_seed_nullable_optional_fields_do_not_crash_generation(db_session, seeded_business) -> None:
+    provider = _SeedAwareCompetitorProfileProvider()
+    deferred_executor = _DeferredRunExecutor()
+    seed_client = _StubGooglePlacesSeedClient(
+        candidates=[
+            GooglePlacesSeedCandidate(
+                source="google_places",
+                place_id="place-null-optionals",
+                name="North Metro Fire and Alarm",
+                formatted_address=None,
+                locality=None,
+                primary_type=None,
+                types=(),
+                website_domain=None,
+            )
+        ]
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="null-optional-seed.example")
+    run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+
+    detail = _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+        google_places_seed_client=seed_client,
+    )
+
+    assert detail is not None
+    assert detail.run.status == "completed"
+    assert detail.outcome_summary is not None
+    assert detail.outcome_summary.used_google_places_seeds is True
+    assert provider.received_seed_candidates
+    first_seed = provider.received_seed_candidates[0]
+    assert first_seed["source"] == "google_places"
+    assert first_seed["name"] == "North Metro Fire and Alarm"
+    assert first_seed["formatted_address"] == ""
+    assert first_seed["locality"] == ""
+    assert first_seed["primary_type"] == ""
+    assert first_seed["website_domain"] == ""
+
+
 def test_google_places_unavailable_falls_back_to_existing_competitor_flow(db_session, seeded_business) -> None:
     provider = _SeedAwareCompetitorProfileProvider()
     deferred_executor = _DeferredRunExecutor()
@@ -2012,6 +2061,13 @@ def test_empty_candidate_output_uses_synthetic_fallback_drafts(db_session, seede
         run_executor=deferred_executor,
     )
     site_id = _create_site(client, seeded_business.id)
+    site = db_session.get(SEOSite, site_id)
+    assert site is not None
+    site.industry = None
+    site.primary_location = None
+    site.service_areas_json = None
+    db_session.add(site)
+    db_session.commit()
     created = _create_generation_run(client, seeded_business.id, site_id)
     run_id = created["run"]["id"]
 
@@ -2053,6 +2109,8 @@ def test_empty_candidate_output_uses_synthetic_fallback_drafts(db_session, seede
     assert all(item["forced_inclusion"] is True for item in payload["drafts"])
     assert all(item["source"] == "ai_forced_fallback" for item in payload["drafts"])
     assert all(item["provenance_classification"] == "synthetic_fallback" for item in payload["drafts"])
+    assert all("None" not in item["suggested_name"] for item in payload["drafts"])
+    assert all("None" not in (item["summary"] or "") for item in payload["drafts"])
     assert all(
         item["provenance_explanation"]
         == "Synthetic fallback candidate generated because reliable live competitor discovery was unavailable."

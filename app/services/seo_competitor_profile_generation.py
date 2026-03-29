@@ -2711,8 +2711,11 @@ class SEOCompetitorProfileGenerationService:
             raise SEOCompetitorProfileGenerationNotFoundError("SEO site not found")
         return site
 
-    def _normalize_domain_value(self, raw_domain: str) -> str:
-        candidate = raw_domain.strip().lower()
+    def _normalize_domain_value(self, raw_domain: object | None) -> str:
+        candidate = self._clean_optional(raw_domain)
+        if candidate is None:
+            raise SEOCompetitorProfileGenerationValidationError("suggested_domain is required")
+        candidate = candidate.lower()
         if not candidate:
             raise SEOCompetitorProfileGenerationValidationError("suggested_domain is required")
         if "://" in candidate:
@@ -2731,6 +2734,15 @@ class SEOCompetitorProfileGenerationService:
         if any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-." for ch in cleaned):
             raise SEOCompetitorProfileGenerationValidationError("suggested_domain contains invalid characters")
         return cleaned
+
+    def _normalize_optional_domain_value(self, raw_domain: object | None) -> str | None:
+        normalized = self._clean_optional(raw_domain)
+        if normalized is None:
+            return None
+        try:
+            return self._normalize_domain_value(normalized)
+        except SEOCompetitorProfileGenerationValidationError:
+            return None
 
     def _normalize_competitor_type(self, raw: str) -> str:
         normalized = (raw or "").strip().lower()
@@ -2756,10 +2768,17 @@ class SEOCompetitorProfileGenerationService:
         return cleaned
 
     @staticmethod
-    def _clean_optional(value: str | None) -> str | None:
+    def _clean_optional(value: object | None) -> str | None:
         if value is None:
             return None
-        cleaned = value.strip()
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned or None
+        if isinstance(value, (list, tuple, dict, set)):
+            return None
+        if not value:
+            return None
+        cleaned = str(value).strip()
         return cleaned or None
 
     def _default_provider_name(self) -> str:
@@ -3355,7 +3374,7 @@ class SEOCompetitorProfileGenerationService:
         known_domains = {
             candidate_domain
             for raw_domain in [*(existing_domains or []), site_domain]
-            for candidate_domain in [self._normalize_domain_value(raw_domain)]
+            for candidate_domain in [self._normalize_optional_domain_value(raw_domain)]
             if candidate_domain
         }
         bounded_max_results = max(1, min(_GOOGLE_PLACES_SEED_MAX_CANDIDATES, int(max_results)))
@@ -3371,7 +3390,7 @@ class SEOCompetitorProfileGenerationService:
                 continue
             seen_place_ids.add(place_key)
 
-            website_domain = self._normalize_domain_value(candidate.website_domain)
+            website_domain = self._normalize_optional_domain_value(candidate.website_domain)
             if website_domain and website_domain in known_domains:
                 continue
 

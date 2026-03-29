@@ -3362,6 +3362,12 @@ describe("site workspace timeline controls", () => {
         apply_outcome: {
           applied: true,
           applied_at: "2026-03-21T01:40:00Z",
+          applied_recommendation_id: "rec-1",
+          applied_recommendation_title: "Fix title tags",
+          applied_change_summary: "Minimum relevance score was updated from 35 to 30.",
+          applied_preview_summary: "Estimated increase of 2 included candidates over the last 30 days of telemetry.",
+          next_refresh_expectation:
+            "The next completed recommendation or competitor generation run should reflect this change.",
           recommendation_label: "Fix title tags",
           expected_change: "Estimated increase of 2 included candidates over the last 30 days of telemetry.",
           reflected_on_next_run: "The next completed recommendation or competitor generation run should reflect this change.",
@@ -3376,19 +3382,130 @@ describe("site workspace timeline controls", () => {
     const applyOutcome = screen.getByTestId("narrative-apply-outcome");
     expect(within(applyOutcome).getByText("Latest apply outcome")).toBeInTheDocument();
     expect(within(applyOutcome).getByText("Applied")).toBeInTheDocument();
-    expect(within(applyOutcome).getByText("Recommendation: Fix title tags")).toBeInTheDocument();
+    expect(within(applyOutcome).getByText("Recommendation: Fix title tags (rec-1)")).toBeInTheDocument();
     expect(
       within(applyOutcome).getByText(
-        "Expected change: Estimated increase of 2 included candidates over the last 30 days of telemetry.",
+        "What changed: Minimum relevance score was updated from 35 to 30.",
       ),
     ).toBeInTheDocument();
     expect(
       within(applyOutcome).getByText(
-        "Reflects on next run: The next completed recommendation or competitor generation run should reflect this change.",
+        "Preview used: Estimated increase of 2 included candidates over the last 30 days of telemetry.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(applyOutcome).getByText(
+        "Next refresh expectation: The next completed recommendation or competitor generation run should reflect this change.",
       ),
     ).toBeInTheDocument();
     expect(within(applyOutcome).getByText(/Applied at:/)).toBeInTheDocument();
     expect(within(applyOutcome).getByText("Source: recommendation-guided tuning action.")).toBeInTheDocument();
+  });
+
+  it("falls back to legacy apply outcome fields when additive apply metadata is missing", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        apply_outcome: {
+          applied: true,
+          applied_at: "2026-03-21T01:40:00Z",
+          recommendation_label: "Fix title tags",
+          expected_change: "Estimated increase of 2 included candidates over the last 30 days of telemetry.",
+          reflected_on_next_run: "The next completed recommendation run should reflect this change.",
+          source: "recommendation",
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Narrative Overlay" });
+    const applyOutcome = screen.getByTestId("narrative-apply-outcome");
+    expect(within(applyOutcome).getByText("Recommendation: Fix title tags")).toBeInTheDocument();
+    expect(
+      within(applyOutcome).getByText(
+        "What changed: Estimated increase of 2 included candidates over the last 30 days of telemetry.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(applyOutcome).getByText(
+        "Next refresh expectation: The next completed recommendation run should reflect this change.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(applyOutcome).queryByText(/Preview used:/)).not.toBeInTheDocument();
+  });
+
+  it("renders compact workspace trust summary when trust signals are available", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        workspace_trust_summary: {
+          latest_competitor_status: "recovered",
+          used_google_places_seeds: true,
+          used_synthetic_fallback: false,
+          latest_recommendation_apply_title: "Fix title tags",
+          latest_recommendation_apply_change_summary: "Minimum relevance score was updated from 35 to 30.",
+          next_refresh_expectation: "The next completed recommendation run should reflect this change.",
+          freshness_note: "Analysis is up to date with the latest applied changes.",
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Top Insights" });
+    const trustSummary = screen.getByTestId("workspace-trust-summary");
+    expect(within(trustSummary).getByText("Workspace trust summary")).toBeInTheDocument();
+    expect(within(trustSummary).getByText("Latest competitor status: Recovered")).toBeInTheDocument();
+    expect(within(trustSummary).getByText("Nearby seed discovery used: yes.")).toBeInTheDocument();
+    expect(within(trustSummary).getByText("Synthetic fallback used: no.")).toBeInTheDocument();
+    expect(
+      within(trustSummary).getByText("Latest applied recommendation: Fix title tags."),
+    ).toBeInTheDocument();
+    expect(
+      within(trustSummary).getByText("Latest applied change: Minimum relevance score was updated from 35 to 30."),
+    ).toBeInTheDocument();
+    expect(
+      within(trustSummary).getByText("Next refresh: The next completed recommendation run should reflect this change."),
+    ).toBeInTheDocument();
+    expect(
+      within(trustSummary).getByText("Freshness: Analysis is up to date with the latest applied changes."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders partial workspace trust summary safely when only some trust signals are available", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        workspace_trust_summary: {
+          latest_competitor_status: "degraded",
+          used_synthetic_fallback: true,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Top Insights" });
+    const trustSummary = screen.getByTestId("workspace-trust-summary");
+    expect(within(trustSummary).getByText("Latest competitor status: Degraded")).toBeInTheDocument();
+    expect(within(trustSummary).getByText("Synthetic fallback used: yes.")).toBeInTheDocument();
+    expect(within(trustSummary).queryByText(/Latest applied recommendation:/)).not.toBeInTheDocument();
+    expect(within(trustSummary).queryByText(/Next refresh:/)).not.toBeInTheDocument();
+  });
+
+  it("keeps workspace trust summary hidden when no trust signals are provided", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        workspace_trust_summary: null,
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Top Insights" });
+    expect(screen.queryByTestId("workspace-trust-summary")).not.toBeInTheDocument();
   });
 
   it("keeps apply outcome block hidden when workspace summary does not include apply metadata", async () => {
