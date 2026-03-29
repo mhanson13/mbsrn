@@ -38,6 +38,10 @@ spec:
           image: __API_IMAGE__
           command: ["/cnb/process/migrate"]
           env:
+            - name: APP_ENV
+              value: production
+            - name: DB_CONNECTION_MODE
+              value: cloudsql_proxy
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

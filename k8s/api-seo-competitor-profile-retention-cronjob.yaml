@@ -47,6 +47,10 @@ spec:
                 - "-m"
                 - "app.cli.seo_competitor_profile_generation_retention_cleanup"
               env:
+                - name: APP_ENV
+                  value: production
+                - name: DB_CONNECTION_MODE
+                  value: cloudsql_proxy
                 - name: DATABASE_URL
                   valueFrom:
                     secretKeyRef:

@@ -7,6 +7,7 @@ from functools import lru_cache
 from urllib.parse import urlparse
 
 _LOCALHOST_ALLOWED_APP_ENVS = {"local", "development", "dev", "test", "ci"}
+_PRODUCTION_LOCALHOST_ALLOWED_DB_CONNECTION_MODES = {"cloudsql_proxy"}
 _LOCALHOST_DATABASE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _LOCAL_DATABASE_URL_FALLBACK = "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn"
 
@@ -23,6 +24,7 @@ class Settings:
     app_name: str
     app_env: str
     environment: str
+    db_connection_mode: str
     database_url: str
     db_auto_create_local: bool
     google_auth_enabled: bool
@@ -161,15 +163,31 @@ def _normalize_app_env(raw_value: str | None) -> str:
     return (raw_value or "").strip().lower()
 
 
+def _normalize_db_connection_mode(raw_value: str | None) -> str:
+    return (raw_value or "").strip().lower()
+
+
 def _is_localhost_allowed_for_app_env(app_env: str) -> bool:
     return app_env in _LOCALHOST_ALLOWED_APP_ENVS
 
 
-def _resolve_database_url(*, app_env: str) -> str:
+def _is_localhost_allowed_for_runtime(*, app_env: str, db_connection_mode: str) -> bool:
+    if _is_localhost_allowed_for_app_env(app_env):
+        return True
+    return (
+        app_env == "production"
+        and db_connection_mode in _PRODUCTION_LOCALHOST_ALLOWED_DB_CONNECTION_MODES
+    )
+
+
+def _resolve_database_url(*, app_env: str, db_connection_mode: str) -> str:
     raw_database_url = os.getenv("DATABASE_URL")
-    localhost_allowed = _is_localhost_allowed_for_app_env(app_env)
+    localhost_allowed = _is_localhost_allowed_for_runtime(
+        app_env=app_env,
+        db_connection_mode=db_connection_mode,
+    )
     if raw_database_url is None or not raw_database_url.strip():
-        if localhost_allowed:
+        if _is_localhost_allowed_for_app_env(app_env):
             return _LOCAL_DATABASE_URL_FALLBACK
         if app_env == "production":
             raise RuntimeError("DATABASE_URL is required when APP_ENV=production")
@@ -189,7 +207,10 @@ def _resolve_database_url(*, app_env: str) -> str:
     host = (parsed.hostname or "").strip().lower()
     if host in _LOCALHOST_DATABASE_HOSTS and not localhost_allowed:
         if app_env == "production":
-            raise RuntimeError("Invalid DATABASE_URL: localhost is not allowed when APP_ENV=production")
+            raise RuntimeError(
+                "Invalid DATABASE_URL: localhost is not allowed when APP_ENV=production "
+                "unless DB_CONNECTION_MODE=cloudsql_proxy"
+            )
         if app_env:
             raise RuntimeError(f"Invalid DATABASE_URL: localhost is not allowed when APP_ENV={app_env}")
         raise RuntimeError("Invalid DATABASE_URL: localhost is not allowed when APP_ENV is unset")
@@ -225,8 +246,13 @@ def get_settings() -> Settings:
     environment = os.getenv("ENVIRONMENT", "development")
     env_normalized = environment.strip().lower()
     app_env_raw = os.getenv("APP_ENV")
+    db_connection_mode_raw = os.getenv("DB_CONNECTION_MODE")
     app_env = _normalize_app_env(app_env_raw) or env_normalized
-    database_url = _resolve_database_url(app_env=_normalize_app_env(app_env_raw))
+    db_connection_mode = _normalize_db_connection_mode(db_connection_mode_raw)
+    database_url = _resolve_database_url(
+        app_env=_normalize_app_env(app_env_raw),
+        db_connection_mode=db_connection_mode,
+    )
     google_auth_enabled = _env_bool("GOOGLE_AUTH_ENABLED", False)
     google_oidc_client_id = os.getenv("GOOGLE_OIDC_CLIENT_ID")
     google_oauth_client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID") or google_oidc_client_id
@@ -300,6 +326,7 @@ def get_settings() -> Settings:
         app_name=os.getenv("APP_NAME", "MBSRN Operator Platform"),
         app_env=app_env,
         environment=environment,
+        db_connection_mode=db_connection_mode or "direct",
         database_url=database_url,
         db_auto_create_local=_env_bool(
             "DB_AUTO_CREATE_LOCAL",

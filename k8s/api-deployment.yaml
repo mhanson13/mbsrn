@@ -22,6 +22,8 @@ spec:
           env:
             - name: APP_ENV
               value: production
+            - name: DB_CONNECTION_MODE
+              value: cloudsql_proxy
             - name: SESSION_STATE_BACKEND
               value: redis
             - name: SESSION_STATE_ALLOW_INMEMORY_FALLBACK

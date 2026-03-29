@@ -19,6 +19,7 @@ def _configure_production_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GOOGLE_AUTH_ENABLED", "false")
     monkeypatch.delenv("API_CORS_ALLOWED_ORIGINS", raising=False)
     monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("DB_CONNECTION_MODE", raising=False)
 
 
 def test_missing_database_url_raises_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -33,7 +34,13 @@ def test_localhost_database_url_rejected_in_production(monkeypatch: pytest.Monke
     _configure_production_runtime(monkeypatch)
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn")
 
-    with pytest.raises(RuntimeError, match="Invalid DATABASE_URL: localhost is not allowed when APP_ENV=production"):
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "Invalid DATABASE_URL: localhost is not allowed when APP_ENV=production "
+            "unless DB_CONNECTION_MODE=cloudsql_proxy"
+        ),
+    ):
         get_settings()
 
 
@@ -44,6 +51,36 @@ def test_valid_remote_database_url_accepted_in_production(monkeypatch: pytest.Mo
     settings = get_settings()
 
     assert settings.database_url == "postgresql+psycopg://app_user:secret@db.internal:5432/mbsrn"
+
+
+def test_localhost_database_url_allowed_in_production_with_cloudsql_proxy_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_production_runtime(monkeypatch)
+    monkeypatch.setenv("DB_CONNECTION_MODE", "cloudsql_proxy")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn")
+
+    settings = get_settings()
+
+    assert settings.database_url == "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn"
+    assert settings.db_connection_mode == "cloudsql_proxy"
+
+
+def test_loopback_database_url_rejected_in_production_with_unrelated_connection_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_production_runtime(monkeypatch)
+    monkeypatch.setenv("DB_CONNECTION_MODE", "direct")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/mbsrn")
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "Invalid DATABASE_URL: localhost is not allowed when APP_ENV=production "
+            "unless DB_CONNECTION_MODE=cloudsql_proxy"
+        ),
+    ):
+        get_settings()
 
 
 @pytest.mark.parametrize("app_env", ["ci", "test", "development", "dev", "local"])

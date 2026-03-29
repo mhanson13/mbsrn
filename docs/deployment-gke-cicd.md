@@ -148,6 +148,9 @@ Database URL safety contract:
   - `localhost`
   - `127.0.0.1`
   - `::1`
+- Production localhost exception is narrow and explicit:
+  - localhost/loopback `DATABASE_URL` is allowed only when `DB_CONNECTION_MODE=cloudsql_proxy`
+  - this is intended for the current in-pod Cloud SQL proxy sidecar model
 - Unknown or unset `APP_ENV` values reject localhost targets and require an explicit non-localhost `DATABASE_URL`.
 - API startup performs a fail-fast connectivity check (single `SELECT 1`) and exits on failure so Kubernetes can restart.
 - Startup logs emit sanitized DB target only (no credentials):
@@ -159,6 +162,10 @@ Database URL safety contract:
 - Deploy creates/updates Kubernetes secret `mbsrn-api-auth` with key `DATABASE_URL`.
 - API runtime consumes `DATABASE_URL` only via:
   - `k8s/api-deployment.yaml` -> `env.valueFrom.secretKeyRef(name=mbsrn-api-auth,key=DATABASE_URL)`
+- Proxy-mode production runtime wiring is explicit in manifests:
+  - `APP_ENV=production`
+  - `DB_CONNECTION_MODE=cloudsql_proxy`
+  - `DATABASE_URL` from `mbsrn-api-auth.DATABASE_URL`
 - Migration and retention jobs consume the same secret/key wiring:
   - `k8s/api-migration-job.yaml`
   - `k8s/api-migration-baseline-job.yaml`
