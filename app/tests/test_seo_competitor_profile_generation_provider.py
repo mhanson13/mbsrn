@@ -1494,9 +1494,7 @@ def test_confidence_score_list_is_normalized_without_invalid_field_type_drift(mo
     assert len(output.candidates) == 1
     assert output.candidates[0].confidence_score == pytest.approx(0.73)
     structured_events = _structured_event_records(caplog)
-    assert not any(
-        item.get("event") == "competitor_candidate_schema_diagnostics" for item in structured_events
-    )
+    assert not any(item.get("event") == "competitor_candidate_schema_diagnostics" for item in structured_events)
 
 
 @pytest.mark.parametrize(
@@ -1560,9 +1558,7 @@ def test_confidence_score_object_wrapper_keys_are_normalized_without_diagnostics
     assert len(output.candidates) == 1
     assert output.candidates[0].confidence_score == pytest.approx(expected_score)
     structured_events = _structured_event_records(caplog)
-    assert not any(
-        item.get("event") == "competitor_candidate_schema_diagnostics" for item in structured_events
-    )
+    assert not any(item.get("event") == "competitor_candidate_schema_diagnostics" for item in structured_events)
 
 
 def test_confidence_score_unsupported_object_wrapper_emits_schema_diagnostics(monkeypatch, caplog) -> None:

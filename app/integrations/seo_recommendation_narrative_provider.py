@@ -230,10 +230,7 @@ class OpenAISEORecommendationNarrativeProvider:
             ) from exc
 
         model_name = _clean_optional_value(response_json.get("model")) or self.model_name
-        allowed_ids = {
-            _clean_optional_value(getattr(item, "id", None))
-            for item in recommendations
-        }
+        allowed_ids = {_clean_optional_value(getattr(item, "id", None)) for item in recommendations}
         allowed_recommendation_ids = {item for item in allowed_ids if item}
 
         sections = self._normalize_sections(

@@ -113,7 +113,9 @@ class GoogleCloudLoggingClient:
             raise GoogleCloudLoggingADCError("Cloud Logging project id is required.")
         normalized_filter = filter_text.strip()
         if not normalized_filter:
-            raise GoogleCloudLoggingAPIError("Cloud Logging filter is required.", status_code=400, error_status="INVALID_ARGUMENT")
+            raise GoogleCloudLoggingAPIError(
+                "Cloud Logging filter is required.", status_code=400, error_status="INVALID_ARGUMENT"
+            )
 
         request_body: dict[str, Any] = {
             "resourceNames": [f"projects/{normalized_project_id}"],

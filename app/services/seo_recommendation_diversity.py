@@ -239,11 +239,7 @@ def _clean_text(value: object, *, max_length: int) -> str:
 
 
 def _tokens_for_similarity(normalized_text: str) -> set[str]:
-    tokens = {
-        token
-        for token in re.split(r"[^a-z0-9]+", normalized_text)
-        if token and token not in _STOP_TOKENS
-    }
+    tokens = {token for token in re.split(r"[^a-z0-9]+", normalized_text) if token and token not in _STOP_TOKENS}
     return tokens
 
 

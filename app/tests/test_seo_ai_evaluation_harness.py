@@ -262,7 +262,9 @@ def test_recommendation_scoring_penalizes_missing_references() -> None:
 
 
 class _StubCompetitorProvider:
-    def generate_competitor_profiles(self, *, site: SEOSite, existing_domains: list[str], candidate_count: int):  # noqa: ANN001
+    def generate_competitor_profiles(
+        self, *, site: SEOSite, existing_domains: list[str], candidate_count: int
+    ):  # noqa: ANN001
         del site, existing_domains, candidate_count
         return SEOCompetitorProfileGenerationOutput(
             candidates=[
@@ -323,8 +325,8 @@ def test_runner_and_report_include_aggregate_fields() -> None:
     assert "aggregate_score" in report_text
     assert "mode=mock" in report_text
     assert "runner-case-1" in report_text
-    assert "\"pipeline\": \"competitor\"" in report_json
-    assert "\"eval_mode\": \"mock\"" in report_json
+    assert '"pipeline": "competitor"' in report_json
+    assert '"eval_mode": "mock"' in report_json
 
     recommendation_case = RecommendationEvalCase(
         case_id="runner-case-2",

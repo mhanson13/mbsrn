@@ -473,10 +473,7 @@ def filter_eligible_competitor_candidates(
     relaxed_candidates = _select_relaxed_candidates_when_overfiltered(decisions)
     if relaxed_candidates:
         relaxed_filtering_applied = True
-        relaxed_keys = {
-            (item.suggested_name, item.suggested_domain, item.source_index)
-            for item in relaxed_candidates
-        }
+        relaxed_keys = {(item.suggested_name, item.suggested_domain, item.source_index) for item in relaxed_candidates}
         adjusted_decisions: list[CompetitorCandidateEligibilityDecision] = []
         for decision in decisions:
             key = (
@@ -1303,9 +1300,7 @@ def _score_candidate(
         score += tuning.local_alignment_bonus
 
     specific_fields = sum(
-        1
-        for value in [candidate.summary, candidate.why_competitor, candidate.evidence]
-        if _is_specific_text(value)
+        1 for value in [candidate.summary, candidate.why_competitor, candidate.evidence] if _is_specific_text(value)
     )
     score += specific_fields * 6
     if specific_fields == 0:

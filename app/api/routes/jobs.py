@@ -124,9 +124,7 @@ def get_seo_competitor_profile_generation_retention_cleanup_status(
     business_id: str | None = None,
     site_id: str | None = None,
     tenant_context: TenantContext = Depends(get_tenant_context),
-    generation_service: SEOCompetitorProfileGenerationService = Depends(
-        get_seo_competitor_profile_generation_service
-    ),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
 ) -> SEOCompetitorProfileGenerationRetentionCleanupStatusRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,

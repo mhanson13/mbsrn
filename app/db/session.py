@@ -20,6 +20,7 @@ def _resolve_database_target(database_url: str) -> tuple[str, int | None]:
         port = 5432
     return host, port
 
+
 # future=True style is default on SQLAlchemy 2.x
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)

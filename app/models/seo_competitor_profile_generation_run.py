@@ -46,10 +46,7 @@ class SEOCompetitorProfileGenerationRun(Base):
             name="ck_scpg_runs_failure_cat",
         ),
         CheckConstraint(
-            (
-                "raw_candidate_count >= 0 AND included_candidate_count >= 0 "
-                "AND excluded_candidate_count >= 0"
-            ),
+            ("raw_candidate_count >= 0 AND included_candidate_count >= 0 " "AND excluded_candidate_count >= 0"),
             name="ck_scpg_runs_candidate_counts_nonneg",
         ),
     )

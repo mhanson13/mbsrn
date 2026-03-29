@@ -174,9 +174,7 @@ def _resolve_database_url(*, app_env: str) -> str:
         if app_env == "production":
             raise RuntimeError("DATABASE_URL is required when APP_ENV=production")
         if app_env:
-            raise RuntimeError(
-                "DATABASE_URL is required when APP_ENV is not one of local/development/dev/test/ci"
-            )
+            raise RuntimeError("DATABASE_URL is required when APP_ENV is not one of local/development/dev/test/ci")
         raise RuntimeError(
             "DATABASE_URL is required when APP_ENV is unset; set APP_ENV to local/dev/test/ci for localhost fallback"
         )

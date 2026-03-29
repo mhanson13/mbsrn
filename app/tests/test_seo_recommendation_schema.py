@@ -273,6 +273,7 @@ def test_recommendation_read_derives_likely_resolved_only_for_sparse_reflected_s
     assert reflected_sparse.recommendation_lifecycle_state == "likely_resolved"
     assert reflected_sparse.recommendation_lifecycle_summary == "Likely addressed in the latest analysis."
 
+
 def test_recommendation_read_derives_competitor_backed_evidence_summary() -> None:
     recommendation = SEORecommendationRead.model_validate(
         _recommendation_payload(

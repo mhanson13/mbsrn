@@ -296,11 +296,7 @@ class SEOCompetitorProfileGenerationRepository:
             .group_by(SEOCompetitorProfileGenerationRun.failure_category)
         )
         rows = self.session.execute(stmt).all()
-        return {
-            str(failure_category): int(count)
-            for failure_category, count in rows
-            if failure_category is not None
-        }
+        return {str(failure_category): int(count) for failure_category, count in rows if failure_category is not None}
 
     def count_retry_child_runs(
         self,
@@ -373,13 +369,19 @@ class SEOCompetitorProfileGenerationRepository:
             func.max(SEOCompetitorProfileGenerationRun.completed_at),
             func.max(
                 case(
-                    (SEOCompetitorProfileGenerationRun.status == "completed", SEOCompetitorProfileGenerationRun.completed_at),
+                    (
+                        SEOCompetitorProfileGenerationRun.status == "completed",
+                        SEOCompetitorProfileGenerationRun.completed_at,
+                    ),
                     else_=None,
                 )
             ),
             func.max(
                 case(
-                    (SEOCompetitorProfileGenerationRun.status == "failed", SEOCompetitorProfileGenerationRun.completed_at),
+                    (
+                        SEOCompetitorProfileGenerationRun.status == "failed",
+                        SEOCompetitorProfileGenerationRun.completed_at,
+                    ),
                     else_=None,
                 )
             ),
@@ -764,7 +766,9 @@ class SEOCompetitorProfileGenerationRepository:
             )
             if item is not None
         )
-        deletable_ids = [run_id for run_id in candidate_ids if run_id not in draft_run_ids and run_id not in parent_run_ids]
+        deletable_ids = [
+            run_id for run_id in candidate_ids if run_id not in draft_run_ids and run_id not in parent_run_ids
+        ]
         if not deletable_ids:
             return 0
 

@@ -90,9 +90,7 @@ def _verify_cluster_wiring(namespace: str, deployment: str, ksa: str) -> bool:
         ]
     )
     if code != 0:
-        _print_fail(
-            f"Failed to read deployment serviceAccountName via kubectl: {err or 'unknown kubectl error'}"
-        )
+        _print_fail(f"Failed to read deployment serviceAccountName via kubectl: {err or 'unknown kubectl error'}")
         return False
     if sa_name == ksa:
         _print_ok(f"Cluster deployment {namespace}/{deployment} uses expected KSA: {ksa}")
@@ -150,13 +148,13 @@ def _print_manual_commands(namespace: str, deployment: str, ksa: str, project: s
     project_hint = project or "<PROJECT_ID>"
     gsa_hint = gsa_email or f"<GSA_NAME>@{project_hint}.iam.gserviceaccount.com"
     print("\nManual verification / setup commands:")
-    print(f"  kubectl -n {namespace} get deploy {deployment} -o jsonpath='{{.spec.template.spec.serviceAccountName}}{{\"\\n\"}}'")
+    print(
+        f"  kubectl -n {namespace} get deploy {deployment} -o jsonpath='{{.spec.template.spec.serviceAccountName}}{{\"\\n\"}}'"
+    )
     print(
         f"  kubectl -n {namespace} get sa {ksa} -o jsonpath='{{.metadata.annotations.iam\\.gke\\.io/gcp-service-account}}{{\"\\n\"}}'"
     )
-    print(
-        f"  kubectl -n {namespace} annotate sa {ksa} iam.gke.io/gcp-service-account={gsa_hint} --overwrite"
-    )
+    print(f"  kubectl -n {namespace} annotate sa {ksa} iam.gke.io/gcp-service-account={gsa_hint} --overwrite")
     print(
         f"  gcloud iam service-accounts add-iam-policy-binding {gsa_hint} "
         f"--role=roles/iam.workloadIdentityUser "
@@ -168,24 +166,19 @@ def _print_manual_commands(namespace: str, deployment: str, ksa: str, project: s
         f"--member='serviceAccount:{gsa_hint}' --role='roles/logging.viewer'"
     )
     print(f"  kubectl -n {namespace} rollout restart deployment/{deployment}")
+    print(f"  kubectl -n {namespace} exec deploy/{deployment} -- sh -c " "'env | egrep \"GCP_PROJECT_ID\"'")
     print(
         f"  kubectl -n {namespace} exec deploy/{deployment} -- sh -c "
-        "'env | egrep \"GCP_PROJECT_ID\"'"
-    )
-    print(
-        f"  kubectl -n {namespace} exec deploy/{deployment} -- sh -c "
-        "'python - <<\"PY\"\n"
+        '\'python - <<"PY"\n'
         "import google.auth\n"
         "creds, proj = google.auth.default()\n"
-        "print(\"ADC_OK\", bool(creds), \"PROJECT\", proj)\n"
+        'print("ADC_OK", bool(creds), "PROJECT", proj)\n'
         "PY'"
     )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Verify deployment wiring prerequisites for in-app GCP Logs Query."
-    )
+    parser = argparse.ArgumentParser(description="Verify deployment wiring prerequisites for in-app GCP Logs Query.")
     parser.add_argument("--cluster", action="store_true", help="Also verify live cluster wiring via kubectl.")
     parser.add_argument("--namespace", default="mbsrn", help="Kubernetes namespace for cluster checks.")
     parser.add_argument("--deployment", default="mbsrn-api", help="API deployment name for cluster checks.")

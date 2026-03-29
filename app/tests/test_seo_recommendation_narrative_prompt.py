@@ -148,9 +148,7 @@ def test_prompt_contains_grounded_deterministic_context() -> None:
         "competitor_names": [],
         "competitor_summary": "",
     }
-    assert (
-        prompt.grounded_context["current_candidate_quality_tuning"]["competitor_candidate_directory_penalty"] == 35
-    )
+    assert prompt.grounded_context["current_candidate_quality_tuning"]["competitor_candidate_directory_penalty"] == 35
     assert "structured_gap_context" in prompt.grounded_context
     assert "source_counts" in prompt.grounded_context["structured_gap_context"]
     assert "site_business_context and structured_gap_context" in prompt.user_prompt

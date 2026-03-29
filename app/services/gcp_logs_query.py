@@ -27,10 +27,7 @@ _MAX_TIMESTAMP_CHARS = 64
 _MAX_INSERT_ID_CHARS = 128
 _MAX_PAYLOAD_SUMMARY_CHARS = 900
 _MAX_PAGE_TOKEN_CHARS = 2048
-_PROJECT_CONFIG_ERROR_MESSAGE = (
-    "Cloud Logging query is not configured: missing GCP project id. "
-    "Set GCP_PROJECT_ID."
-)
+_PROJECT_CONFIG_ERROR_MESSAGE = "Cloud Logging query is not configured: missing GCP project id. " "Set GCP_PROJECT_ID."
 _ADC_CONFIG_ERROR_MESSAGE = (
     "Cloud Logging query is not configured: runtime Application Default Credentials are unavailable. "
     "Verify Workload Identity and deployed service account attachment for this environment."

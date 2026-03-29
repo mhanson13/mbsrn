@@ -289,8 +289,7 @@ def test_gcp_logs_query_handles_provider_error_with_sanitized_message(db_session
 def test_gcp_logs_query_surfaces_actionable_missing_project_configuration_error(db_session, seeded_business) -> None:
     stub_service = _StubGCPLogsQueryService()
     stub_service.error = GCPLogsQueryConfigurationError(
-        "Cloud Logging query is not configured: missing GCP project id. "
-        "Set GCP_PROJECT_ID."
+        "Cloud Logging query is not configured: missing GCP project id. " "Set GCP_PROJECT_ID."
     )
     client = _make_client(
         db_session,

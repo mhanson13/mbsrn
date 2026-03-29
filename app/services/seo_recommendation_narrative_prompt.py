@@ -121,21 +121,12 @@ def build_seo_recommendation_narrative_prompt(
     prompt_text_recommendation: str | None = None,
 ) -> SEORecommendationNarrativePrompt:
     normalized_recommendations = _normalize_recommendations(recommendations)
-    normalized_backlog_ids = [
-        item["id"]
-        for item in _normalize_recommendations(backlog)[:_MAX_BACKLOG_IDS]
-    ]
+    normalized_backlog_ids = [item["id"] for item in _normalize_recommendations(backlog)[:_MAX_BACKLOG_IDS]]
     allowed_recommendation_ids = sorted(
-        {
-            item["id"]
-            for item in normalized_recommendations[:_MAX_ALLOWED_RECOMMENDATION_IDS]
-            if item.get("id")
-        }
+        {item["id"] for item in normalized_recommendations[:_MAX_ALLOWED_RECOMMENDATION_IDS] if item.get("id")}
     )
 
-    normalized_competitor_telemetry_summary = _normalize_competitor_telemetry_summary(
-        competitor_telemetry_summary
-    )
+    normalized_competitor_telemetry_summary = _normalize_competitor_telemetry_summary(competitor_telemetry_summary)
     normalized_competitor_context = _normalize_competitor_context(competitor_context)
     normalized_current_tuning_values = _normalize_current_tuning_values(current_tuning_values)
     site_business_context = _normalize_site_business_context(run)
@@ -376,19 +367,13 @@ def _build_key_observations(structured_gap_context: dict[str, object]) -> str:
     if isinstance(finding_type_counts, dict) and finding_type_counts:
         top_finding_types = list(finding_type_counts.keys())[:3]
         sanitized_findings = [
-            item
-            for raw in top_finding_types
-            for item in [_sanitize_data_optional(raw, max_length=48)]
-            if item
+            item for raw in top_finding_types for item in [_sanitize_data_optional(raw, max_length=48)] if item
         ]
         if sanitized_findings:
             observations.append(f"top finding types: {', '.join(sanitized_findings)}")
     if isinstance(local_market_terms, list) and local_market_terms:
         sanitized_local_terms = [
-            item
-            for raw in local_market_terms[:3]
-            for item in [_sanitize_data_optional(raw, max_length=24)]
-            if item
+            item for raw in local_market_terms[:3] for item in [_sanitize_data_optional(raw, max_length=24)] if item
         ]
         if sanitized_local_terms:
             observations.append(f"local terms: {', '.join(sanitized_local_terms)}")
@@ -416,7 +401,9 @@ def _normalize_recommendations(recommendations: list[SEORecommendation]) -> list
                     max_length=_MAX_RULE_KEY_LENGTH,
                     fallback="unknown_rule",
                 ),
-                "title": _sanitize_required(item.title, max_length=_MAX_TITLE_LENGTH, fallback="Untitled recommendation"),
+                "title": _sanitize_required(
+                    item.title, max_length=_MAX_TITLE_LENGTH, fallback="Untitled recommendation"
+                ),
                 "status": _sanitize_required(item.status, max_length=_MAX_STATUS_LENGTH, fallback="open"),
                 "category": _sanitize_required(item.category, max_length=_MAX_CATEGORY_LENGTH, fallback="TECHNICAL"),
                 "severity": _sanitize_required(item.severity, max_length=_MAX_SEVERITY_LENGTH, fallback="INFO"),
@@ -498,10 +485,7 @@ def _normalize_site_business_context(run: SEORecommendationRun) -> dict[str, obj
         primary_location=primary_location,
         service_areas=service_areas,
     )
-    industry_context = (
-        industry
-        or f'Industry not explicitly classified. Infer cautiously from site "{display_name}".'
-    )
+    industry_context = industry or f'Industry not explicitly classified. Infer cautiously from site "{display_name}".'
 
     return {
         "available": True,
@@ -579,7 +563,7 @@ def _normalize_structured_gap_context(
         str(item["id"])
         for item in normalized_recommendations
         if str(item.get("status", "")).lower() in {"open", "in_progress", "accepted"}
-    ][: _MAX_SIGNAL_RECOMMENDATION_IDS]
+    ][:_MAX_SIGNAL_RECOMMENDATION_IDS]
 
     return {
         "source_counts": _top_count_items(source_counts, limit=_MAX_SOURCE_COUNTS),
@@ -634,10 +618,7 @@ def _to_sanitized_list(raw: object, *, max_length: int) -> list[str]:
 
 def _top_count_items(counts: dict[str, int], *, limit: int) -> dict[str, int]:
     items = sorted(counts.items(), key=lambda item: (-int(item[1]), item[0]))
-    return {
-        key: max(0, int(value))
-        for key, value in items[:limit]
-    }
+    return {key: max(0, int(value)) for key, value in items[:limit]}
 
 
 def _append_unique_bounded(values: list[str], value: str, *, limit: int) -> None:
@@ -717,10 +698,13 @@ def _normalize_competitor_context(raw: dict[str, object] | None) -> dict[str, ob
         context.get("competitor_names"),
         max_length=_MAX_COMPETITOR_SIGNAL_NAME_LENGTH,
     )[:_MAX_COMPETITOR_SIGNAL_NAMES]
-    competitor_summary = _sanitize_data_optional(
-        context.get("competitor_summary"),
-        max_length=_MAX_COMPETITOR_SIGNAL_SUMMARY_LENGTH,
-    ) or ""
+    competitor_summary = (
+        _sanitize_data_optional(
+            context.get("competitor_summary"),
+            max_length=_MAX_COMPETITOR_SIGNAL_SUMMARY_LENGTH,
+        )
+        or ""
+    )
     return {
         "top_opportunities": top_opportunities,
         "competitor_names": competitor_names,
@@ -729,10 +713,7 @@ def _normalize_competitor_context(raw: dict[str, object] | None) -> dict[str, ob
 
 
 def _allowed_tuning_settings_schema() -> dict[str, dict[str, int]]:
-    return {
-        key: {"min": bounds[0], "max": bounds[1]}
-        for key, bounds in sorted(_TUNING_SETTING_BOUNDS.items())
-    }
+    return {key: {"min": bounds[0], "max": bounds[1]} for key, bounds in sorted(_TUNING_SETTING_BOUNDS.items())}
 
 
 def _coerce_non_negative_int(value: object, *, default: int) -> int:

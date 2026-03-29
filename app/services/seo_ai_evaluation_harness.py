@@ -213,9 +213,7 @@ def load_competitor_eval_cases(fixtures_root: Path) -> list[CompetitorEvalCase]:
             ),
         )
         if expected.min_candidate_count > expected.max_candidate_count:
-            raise ValueError(
-                f"competitor[{index}].expected.min_candidate_count cannot exceed max_candidate_count."
-            )
+            raise ValueError(f"competitor[{index}].expected.min_candidate_count cannot exceed max_candidate_count.")
         cases.append(
             CompetitorEvalCase(
                 case_id=case_id,
@@ -363,6 +361,7 @@ def load_recommendation_eval_cases(fixtures_root: Path) -> list[RecommendationEv
         )
     return cases
 
+
 def run_competitor_eval(
     *,
     cases: list[CompetitorEvalCase],
@@ -498,14 +497,10 @@ def score_competitor_output(
     existing_domains = {_normalize_domain(value) for value in case.input.existing_domains}
     forbidden_domains = {_normalize_domain(value) for value in expected.forbidden_domains}
     forbidden_substrings = {
-        value.strip().lower()
-        for value in expected.forbidden_domain_substrings
-        if value and value.strip()
+        value.strip().lower() for value in expected.forbidden_domain_substrings if value and value.strip()
     }
     forbidden_types = {
-        value.strip().lower()
-        for value in expected.forbidden_competitor_types
-        if value and value.strip()
+        value.strip().lower() for value in expected.forbidden_competitor_types if value and value.strip()
     }
     known_good_domains = {_normalize_domain(value) for value in expected.known_good_domains_any}
 
@@ -567,9 +562,7 @@ def score_recommendation_output(
     top_themes = _normalize_string_list(output.top_themes)
     next_actions = _normalize_string_list(sections.get("next_actions"))
     references = {
-        value.strip()
-        for value in _normalize_string_list(sections.get("recommendation_references"))
-        if value.strip()
+        value.strip() for value in _normalize_string_list(sections.get("recommendation_references")) if value.strip()
     }
     corpus = "\n".join([narrative_text, *top_themes, *next_actions]).lower()
 
@@ -591,9 +584,7 @@ def score_recommendation_output(
             hard_fail = True
 
     missing_topics = [
-        topic
-        for topic in expected.must_address_topics
-        if topic.strip() and topic.strip().lower() not in corpus
+        topic for topic in expected.must_address_topics if topic.strip() and topic.strip().lower() not in corpus
     ]
     if missing_topics:
         score -= min(45, len(missing_topics) * 15)
@@ -646,6 +637,7 @@ def reports_to_json(reports: list[EvalPipelineReport]) -> str:
         "reports": [report.to_dict() for report in reports],
     }
     return json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True)
+
 
 def _build_report(
     pipeline: str,

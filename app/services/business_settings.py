@@ -122,8 +122,7 @@ class BusinessSettingsService:
         changed_keys = {
             key
             for key in _COMPETITOR_CANDIDATE_SETTING_FIELDS
-            if key in updates
-            and int(getattr(business, key)) != int(previous_competitor_values[key])
+            if key in updates and int(getattr(business, key)) != int(previous_competitor_values[key])
         }
         if not changed_keys:
             return
@@ -142,14 +141,12 @@ class BusinessSettingsService:
                 )
 
             if matched_event is None:
-                matched_event = (
-                    self.seo_competitor_profile_generation_repository.find_recent_unapplied_preview_event_for_business_matching_tuning(
-                        business_id=business.id,
-                        changed_keys=changed_keys,
-                        previous_values=previous_competitor_values,
-                        applied_values=applied_values,
-                        created_after=created_after,
-                    )
+                matched_event = self.seo_competitor_profile_generation_repository.find_recent_unapplied_preview_event_for_business_matching_tuning(
+                    business_id=business.id,
+                    changed_keys=changed_keys,
+                    previous_values=previous_competitor_values,
+                    applied_values=applied_values,
+                    created_after=created_after,
                 )
 
             if matched_event is None or matched_event.applied_at is not None:

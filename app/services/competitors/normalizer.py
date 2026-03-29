@@ -66,8 +66,14 @@ def _normalize_competitor(raw_competitor: object) -> dict[str, object] | None:
     if not isinstance(raw_competitor, dict):
         return None
 
-    name = _normalize_text(raw_competitor.get("name")) or _normalize_text(raw_competitor.get("suggested_name")) or "Unknown"
-    domain = _normalize_text(raw_competitor.get("domain")) or _normalize_text(raw_competitor.get("suggested_domain")) or ""
+    name = (
+        _normalize_text(raw_competitor.get("name"))
+        or _normalize_text(raw_competitor.get("suggested_name"))
+        or "Unknown"
+    )
+    domain = (
+        _normalize_text(raw_competitor.get("domain")) or _normalize_text(raw_competitor.get("suggested_domain")) or ""
+    )
     location = _normalize_text(raw_competitor.get("location")) or ""
 
     strengths = _normalize_text_list(raw_competitor.get("strengths"))

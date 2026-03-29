@@ -65,9 +65,7 @@ def test_main_app_mounts_seo_routes() -> None:
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/recommendations/prioritized-report"] >= {
         "GET"
     }
-    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/recommendations/tuning-preview"] >= {
-        "POST"
-    }
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/recommendations/tuning-preview"] >= {"POST"}
     assert route_methods[
         "/api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives"
     ] >= {"GET", "POST"}

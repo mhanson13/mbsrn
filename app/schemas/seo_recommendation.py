@@ -573,9 +573,7 @@ def _derive_recommendation_evidence_summary(
 ) -> str | None:
     evidence_sources = _extract_recommendation_evidence_sources(evidence_json)
     competitor_backed = (
-        "competitor_gap" in priority_reasons
-        or "comparison" in evidence_sources
-        or "mixed" in evidence_sources
+        "competitor_gap" in priority_reasons or "comparison" in evidence_sources or "mixed" in evidence_sources
     )
 
     if competitor_backed:
@@ -793,20 +791,17 @@ def _derive_recommendation_observed_gap_summary(
     ):
         return "Project/testimonial proof appears limited on likely service pages."
 
-    if (
-        recommendation_target_context == "location_pages"
-        or any(
-            keyword in normalized_signal
-            for keyword in (
-                "local",
-                "location",
-                "service area",
-                "cities",
-                "zip",
-                "map",
-                "gbp",
-                "google business profile",
-            )
+    if recommendation_target_context == "location_pages" or any(
+        keyword in normalized_signal
+        for keyword in (
+            "local",
+            "location",
+            "service area",
+            "cities",
+            "zip",
+            "map",
+            "gbp",
+            "google business profile",
         )
     ):
         return "Local/service-area relevance signals appear limited."
@@ -825,7 +820,10 @@ def _derive_recommendation_observed_gap_summary(
     if (
         "authoritativeness" in eeat_categories
         or "authority_gap" in priority_reasons
-        or any(keyword in normalized_signal for keyword in ("citation", "directory", "association", "credential", "award", "press"))
+        or any(
+            keyword in normalized_signal
+            for keyword in ("citation", "directory", "association", "credential", "award", "press")
+        )
     ):
         return "External authority and recognition signals appear limited."
 
@@ -951,7 +949,10 @@ def _derive_recommendation_target_context(
         )
     )
 
-    if any(keyword in signal for keyword in ("sitewide", "across all pages", "across the site", "all pages", "every page", "global")):
+    if any(
+        keyword in signal
+        for keyword in ("sitewide", "across all pages", "across the site", "all pages", "every page", "global")
+    ):
         return "sitewide"
     if any(keyword in signal for keyword in ("homepage", "home page", "hero", "h1", "title tag", "above the fold")):
         return "homepage"
@@ -1243,7 +1244,9 @@ class SEORecommendationWorkspaceTrustSummaryRead(BaseModel):
     latest_competitor_status: SEORecommendationWorkspaceTrustCompetitorStatus | None = None
     used_google_places_seeds: bool | None = None
     used_synthetic_fallback: bool | None = None
-    latest_recommendation_apply_title: str | None = Field(default=None, max_length=_WORKSPACE_TRUST_APPLY_TITLE_MAX_CHARS)
+    latest_recommendation_apply_title: str | None = Field(
+        default=None, max_length=_WORKSPACE_TRUST_APPLY_TITLE_MAX_CHARS
+    )
     latest_recommendation_apply_change_summary: str | None = Field(
         default=None,
         max_length=_WORKSPACE_TRUST_APPLY_CHANGE_MAX_CHARS,
@@ -1928,10 +1931,7 @@ class SEORecommendationRead(BaseModel):
         self.priority_reasons = reasons
         if self.primary_priority_reason is None and reasons:
             self.primary_priority_reason = reasons[0]
-        elif (
-            self.primary_priority_reason is not None
-            and self.primary_priority_reason not in reasons
-        ):
+        elif self.primary_priority_reason is not None and self.primary_priority_reason not in reasons:
             self.primary_priority_reason = reasons[0] if reasons else None
         return self
 
@@ -2054,12 +2054,11 @@ class SEORecommendationRead(BaseModel):
                 observed_gap = (self.recommendation_observed_gap_summary or "").strip().lower()
                 has_meaningful_observed_gap = bool(
                     observed_gap
-                    and observed_gap != "current site signals in this recommendation area appear limited or inconsistent."
+                    and observed_gap
+                    != "current site signals in this recommendation area appear limited or inconsistent."
                 )
                 meaningful_priority_reasons = [
-                    reason
-                    for reason in self.priority_reasons
-                    if reason not in {"general", "pending_refresh_context"}
+                    reason for reason in self.priority_reasons if reason not in {"general", "pending_refresh_context"}
                 ]
                 meaningful_trace_tokens = [
                     token
@@ -2067,8 +2066,7 @@ class SEORecommendationRead(BaseModel):
                     if token.lower() not in {"audit-backed", "general site signals"}
                 ]
                 has_specific_target_context = (
-                    self.recommendation_target_context is not None
-                    and self.recommendation_target_context != "general"
+                    self.recommendation_target_context is not None and self.recommendation_target_context != "general"
                 )
                 has_current_signal = any(
                     [

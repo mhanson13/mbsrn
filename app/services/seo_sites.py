@@ -57,9 +57,7 @@ SEOLocationContextSource = Literal["explicit_location", "service_area", "zip_cap
 _ZIP_CAPTURE_ALLOWED_TOKENS = {"zip", "code", "serving", "service", "area", "around", "primary"}
 _LOCATION_CONTEXT_FALLBACK_TEXT = "Location not yet established from available business/site data."
 _MAX_SERVICE_AREAS = 25
-_SITE_CONTEXT_FALLBACK_TARGET_CUSTOMER = (
-    "Customers seeking clearly substitutable services in the same market context."
-)
+_SITE_CONTEXT_FALLBACK_TARGET_CUSTOMER = "Customers seeking clearly substitutable services in the same market context."
 _SITE_CONTEXT_FALLBACK_INDUSTRY = "Industry not yet confidently classified from available structured data."
 _SITE_CONTEXT_MAX_SERVICE_TERMS = 8
 _SITE_CONTEXT_EMBEDDED_DOMAIN_PATTERN = re.compile(
@@ -218,9 +216,7 @@ def build_location_context(site: SEOSite) -> SEOSiteLocationContext:
 
     if primary_location and not _is_zip_capture_location(primary_location):
         if service_areas:
-            non_duplicate_service_areas = [
-                area for area in service_areas if area.lower() != primary_location.lower()
-            ]
+            non_duplicate_service_areas = [area for area in service_areas if area.lower() != primary_location.lower()]
             if non_duplicate_service_areas:
                 preview = non_duplicate_service_areas[:3]
                 suffix = " and surrounding areas" if len(non_duplicate_service_areas) > 3 else ""
@@ -339,13 +335,10 @@ def build_site_business_context(
     service_focus_terms_dropped: list[str] = []
     explicit_industry_conflicted = False
     if cleaned_industry:
-        explicit_industry_conflicted = (
-            bool(content_terms)
-            and not _is_explicit_industry_supported_by_content(
-                cleaned_industry=cleaned_industry,
-                content_sources=content_sources,
-                content_terms=content_terms,
-            )
+        explicit_industry_conflicted = bool(content_terms) and not _is_explicit_industry_supported_by_content(
+            cleaned_industry=cleaned_industry,
+            content_sources=content_sources,
+            content_terms=content_terms,
         )
         if explicit_industry_conflicted:
             service_focus_terms_dropped.append(cleaned_industry)
@@ -742,9 +735,7 @@ class SEOSiteService:
         if "primary_business_zip" in changes and "primary_location" not in changes:
             normalized_zip = normalize_primary_business_zip(changes["primary_business_zip"])
             site.primary_location = (
-                build_primary_location_from_zip(normalized_zip)
-                if normalized_zip is not None
-                else None
+                build_primary_location_from_zip(normalized_zip) if normalized_zip is not None else None
             )
         if "service_areas" in changes:
             site.service_areas_json = changes["service_areas"]
@@ -776,20 +767,14 @@ class SEOSiteService:
         try:
             for model in _SITE_PERMANENT_DELETE_MODELS:
                 self.session.execute(
-                    delete(model)
-                    .where(model.business_id == business_id)
-                    .where(model.site_id == site_id)
+                    delete(model).where(model.business_id == business_id).where(model.site_id == site_id)
                 )
             deleted_site = self.session.execute(
-                delete(SEOSite)
-                .where(SEOSite.business_id == business_id)
-                .where(SEOSite.id == site_id)
+                delete(SEOSite).where(SEOSite.business_id == business_id).where(SEOSite.id == site_id)
             )
             if int(deleted_site.rowcount or 0) != 1:
                 self.session.rollback()
-                raise SEOSiteValidationError(
-                    "Permanent site deletion did not remove exactly one site record"
-                )
+                raise SEOSiteValidationError("Permanent site deletion did not remove exactly one site record")
             self._commit_with_constraint_handling()
         except SEOSiteValidationError:
             raise

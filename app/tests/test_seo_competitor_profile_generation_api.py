@@ -94,9 +94,7 @@ class _DeterministicCompetitorProfileProvider:
             provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,
-            raw_response=(
-                '{\"candidates\":[{\"name\":\"Draft Competitor One\"},{\"name\":\"Draft Competitor Two\"}]}'
-            ),
+            raw_response=('{"candidates":[{"name":"Draft Competitor One"},{"name":"Draft Competitor Two"}]}'),
         )
 
 
@@ -128,7 +126,7 @@ class _InvalidCompetitorProfileProvider:
             provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,
-            raw_response='{\"candidates\":[{\"domain\":\"invalid-domain-without-tld\"}]}',
+            raw_response='{"candidates":[{"domain":"invalid-domain-without-tld"}]}',
         )
 
 
@@ -191,7 +189,7 @@ class _PartiallyInvalidCompetitorProfileProvider:
             provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,
-            raw_response='{\"candidates\":[{\"domain\":\"valid-competitor.example\"},{\"domain\":\"broken\"}]}',
+            raw_response='{"candidates":[{"domain":"valid-competitor.example"},{"domain":"broken"}]}',
             had_schema_repair_or_discard=True,
             schema_invalid_candidate_count=1,
             schema_invalid_field_type_count=0,
@@ -388,7 +386,7 @@ class _InvalidConfidenceCompetitorProfileProvider:
             provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,
-            raw_response='{\"candidates\":[{\"confidence_score\":1.2}]}',
+            raw_response='{"candidates":[{"confidence_score":1.2}]}',
         )
 
 
@@ -411,7 +409,7 @@ class _TimeoutCompetitorProfileProvider:
             provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,
-            raw_output="{\"error\":\"timeout\"}",
+            raw_output='{"error":"timeout"}',
         )
 
 
@@ -463,18 +461,18 @@ class _TimeoutThenSuccessCompetitorProfileProvider:
                 model_name=self.model_name,
                 prompt_version=self.prompt_version,
                 raw_output=(
-                    "{\"failure_kind\":\"timeout\",\"timeout_type\":\"read\",\"endpoint_path\":\""
+                    '{"failure_kind":"timeout","timeout_type":"read","endpoint_path":"'
                     f"{endpoint_path}"
-                    "\"," 
-                    "\"request_debug\":{\"request_duration_ms\":30500,\"timeout_seconds\":30,"
-                    "\"web_search_enabled\":"
+                    '",'
+                    '"request_debug":{"request_duration_ms":30500,"timeout_seconds":30,'
+                    '"web_search_enabled":'
                     f"{web_search_value}"
-                    ",\"prompt_size_risk\":\"normal\","
-                    "\"execution_mode\":\""
+                    ',"prompt_size_risk":"normal",'
+                    '"execution_mode":"'
                     f"{execution_mode or ''}"
-                    "\",\"provider_call_type\":\""
+                    '","provider_call_type":"'
                     f"{provider_call_type or ''}"
-                    "\"}}"
+                    '"}}'
                 ),
             )
         return SEOCompetitorProfileGenerationOutput(
@@ -492,7 +490,7 @@ class _TimeoutThenSuccessCompetitorProfileProvider:
             provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,
-            raw_response="{\"candidates\":[{\"name\":\"Recovered Competitor\"}]}",
+            raw_response='{"candidates":[{"name":"Recovered Competitor"}]}',
             provider_call_type=provider_call_type,
             endpoint_path="/chat/completions",
             web_search_enabled=False,
@@ -542,19 +540,19 @@ class _TimeoutConfiguredThenSuccessCompetitorProfileProvider:
                 model_name=self.model_name,
                 prompt_version=self.prompt_version,
                 raw_output=(
-                    "{\"failure_kind\":\"timeout\",\"timeout_type\":\"read\",\"endpoint_path\":\""
+                    '{"failure_kind":"timeout","timeout_type":"read","endpoint_path":"'
                     f"{endpoint_path}"
-                    "\"," 
-                    "\"request_debug\":{\"request_duration_ms\":1500,"
-                    f"\"timeout_seconds\":{effective_timeout_seconds},"
-                    "\"web_search_enabled\":"
+                    '",'
+                    '"request_debug":{"request_duration_ms":1500,'
+                    f'"timeout_seconds":{effective_timeout_seconds},'
+                    '"web_search_enabled":'
                     f"{web_search_value}"
-                    ",\"prompt_size_risk\":\"normal\","
-                    "\"execution_mode\":\""
+                    ',"prompt_size_risk":"normal",'
+                    '"execution_mode":"'
                     f"{execution_mode or ''}"
-                    "\",\"provider_call_type\":\""
+                    '","provider_call_type":"'
                     f"{provider_call_type or ''}"
-                    "\"}}"
+                    '"}}'
                 ),
             )
         return SEOCompetitorProfileGenerationOutput(
@@ -657,10 +655,10 @@ class _FastTimeoutThenFullSuccessCompetitorProfileProvider:
                 model_name=self.model_name,
                 prompt_version=self.prompt_version,
                 raw_output=(
-                    "{\"failure_kind\":\"timeout\",\"timeout_type\":\"read\",\"endpoint_path\":\"/chat/completions\","
-                    "\"request_debug\":{\"request_duration_ms\":28000,\"timeout_seconds\":30,"
-                    "\"web_search_enabled\":false,\"prompt_size_risk\":\"normal\","
-                    "\"execution_mode\":\"fast_path\",\"provider_call_type\":\"non_tool\"}}"
+                    '{"failure_kind":"timeout","timeout_type":"read","endpoint_path":"/chat/completions",'
+                    '"request_debug":{"request_duration_ms":28000,"timeout_seconds":30,'
+                    '"web_search_enabled":false,"prompt_size_risk":"normal",'
+                    '"execution_mode":"fast_path","provider_call_type":"non_tool"}}'
                 ),
             )
         return SEOCompetitorProfileGenerationOutput(
@@ -756,8 +754,8 @@ class _ProviderEndpointMetadataSuccessProvider:
         del site, existing_domains, reduced_context_mode
         normalized_call_type = provider_call_type or "non_tool"
         endpoint_path = "/responses" if normalized_call_type == "tool_enabled" else "/chat/completions"
-        normalized_web_search_enabled = bool(web_search_enabled) if web_search_enabled is not None else (
-            normalized_call_type == "tool_enabled"
+        normalized_web_search_enabled = (
+            bool(web_search_enabled) if web_search_enabled is not None else (normalized_call_type == "tool_enabled")
         )
         return SEOCompetitorProfileGenerationOutput(
             candidates=[
@@ -800,8 +798,8 @@ class _ProviderEndpointMetadataSearchUnavailableLowResultProvider:
         del site, existing_domains, reduced_context_mode
         normalized_call_type = provider_call_type or "non_tool"
         endpoint_path = "/responses" if normalized_call_type == "tool_enabled" else "/chat/completions"
-        normalized_web_search_enabled = bool(web_search_enabled) if web_search_enabled is not None else (
-            normalized_call_type == "tool_enabled"
+        normalized_web_search_enabled = (
+            bool(web_search_enabled) if web_search_enabled is not None else (normalized_call_type == "tool_enabled")
         )
         return SEOCompetitorProfileGenerationOutput(
             candidates=[
@@ -987,18 +985,18 @@ class _ProviderRequestFailureObservingProvider:
             model_name=self.model_name,
             prompt_version=self.prompt_version,
             raw_output=(
-                "{\"failure_kind\":\"provider_request\",\"endpoint_path\":\""
+                '{"failure_kind":"provider_request","endpoint_path":"'
                 f"{endpoint_path}"
-                "\","
-                "\"request_debug\":{\"request_duration_ms\":2200,\"timeout_seconds\":30,"
-                "\"web_search_enabled\":"
+                '",'
+                '"request_debug":{"request_duration_ms":2200,"timeout_seconds":30,'
+                '"web_search_enabled":'
                 f"{web_search_value}"
-                ",\"prompt_size_risk\":\"normal\","
-                "\"execution_mode\":\""
+                ',"prompt_size_risk":"normal",'
+                '"execution_mode":"'
                 f"{execution_mode or ''}"
-                "\",\"provider_call_type\":\""
+                '","provider_call_type":"'
                 f"{provider_call_type or ''}"
-                "\"}}"
+                '"}}'
             ),
         )
 
@@ -1022,7 +1020,7 @@ class _ProviderAuthCompetitorProfileProvider:
             provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,
-            raw_output="{\"error\":\"unauthorized\"}",
+            raw_output='{"error":"unauthorized"}',
         )
 
 
@@ -1307,12 +1305,8 @@ class _MissingDomainStrongReasonCompetitorProfileProvider:
                 suggested_name="Denver Fire Alarm Services",
                 suggested_domain="",
                 competitor_type="direct",
-                summary=(
-                    "Denver and Aurora fire alarm inspection, installation, and ongoing service support."
-                ),
-                why_competitor=(
-                    "Competes on local fire system service and inspection demand across Denver metro."
-                ),
+                summary=("Denver and Aurora fire alarm inspection, installation, and ongoing service support."),
+                why_competitor=("Competes on local fire system service and inspection demand across Denver metro."),
                 evidence=(
                     "Business profile signals include service scheduling, local coverage references, and direct contact intent."
                 ),
@@ -1518,7 +1512,9 @@ def _execute_generation_run(
     )
 
 
-def test_google_places_seed_queries_are_generated_from_service_and_location_context(db_session, seeded_business) -> None:
+def test_google_places_seed_queries_are_generated_from_service_and_location_context(
+    db_session, seeded_business
+) -> None:
     provider = _SeedAwareCompetitorProfileProvider()
     deferred_executor = _DeferredRunExecutor()
     seed_client = _StubGooglePlacesSeedClient(
@@ -2190,11 +2186,7 @@ def test_invalid_candidate_reasons_are_classified_with_specific_codes(db_session
     assert payload["run"]["excluded_candidate_count"] == 5
     assert payload["run"]["exclusion_counts_by_reason"]["invalid_candidate"] == 5
     assert payload["rejected_candidate_count"] == 5
-    rejected_reason_set = {
-        reason
-        for item in payload["rejected_candidates"]
-        for reason in item["reasons"]
-    }
+    rejected_reason_set = {reason for item in payload["rejected_candidates"] for reason in item["reasons"]}
     assert rejected_reason_set == {
         "missing_business_name",
         "insufficient_overlap_evidence",
@@ -2501,7 +2493,7 @@ def test_timeout_retry_recovers_with_degraded_second_attempt(db_session, seeded_
     assert timeout_outcome_event["recovery_path"] == "degraded_success"
     assert timeout_outcome_event["recovered_after_timeout"] is True
     timeout_outcome_record = next(
-        record for record in caplog.records if "\"event\": \"competitor_timeout_outcome\"" in record.getMessage()
+        record for record in caplog.records if '"event": "competitor_timeout_outcome"' in record.getMessage()
     )
     assert timeout_outcome_record.levelname == "WARNING"
 
@@ -2557,7 +2549,7 @@ def test_timeout_retry_recovers_on_full_attempt_without_degraded_mode(db_session
     assert timeout_outcome_event["recovery_path"] == "retry_success"
     assert timeout_outcome_event["recovered_after_timeout"] is True
     timeout_outcome_record = next(
-        record for record in caplog.records if "\"event\": \"competitor_timeout_outcome\"" in record.getMessage()
+        record for record in caplog.records if '"event": "competitor_timeout_outcome"' in record.getMessage()
     )
     assert timeout_outcome_record.levelname == "INFO"
 
@@ -2604,7 +2596,9 @@ def test_timeout_retry_uses_business_scoped_primary_and_degraded_timeouts(db_ses
     assert payload["provider_attempts"][2]["timeout_seconds"] == 19
 
 
-def test_timeout_defaults_fall_back_to_provider_default_when_business_settings_absent(db_session, seeded_business) -> None:
+def test_timeout_defaults_fall_back_to_provider_default_when_business_settings_absent(
+    db_session, seeded_business
+) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -2722,7 +2716,9 @@ def test_generation_logs_rejection_summary_for_excluded_domain_hint(db_session, 
     assert rejection_summary_event["reason_histogram"]["non_competitor_hint"] >= 1
 
 
-def test_generation_logs_rejection_summary_for_duplicate_and_final_limit_stages(db_session, seeded_business, caplog) -> None:
+def test_generation_logs_rejection_summary_for_duplicate_and_final_limit_stages(
+    db_session, seeded_business, caplog
+) -> None:
     deferred_executor = _DeferredRunExecutor()
     provider = _OverProducingCompetitorProfileProvider()
     client = _make_client(
@@ -2733,10 +2729,7 @@ def test_generation_logs_rejection_summary_for_duplicate_and_final_limit_stages(
     )
     site_id = _create_site(client, seeded_business.id)
     site = (
-        db_session.query(SEOSite)
-        .filter(SEOSite.business_id == seeded_business.id)
-        .filter(SEOSite.id == site_id)
-        .one()
+        db_session.query(SEOSite).filter(SEOSite.business_id == seeded_business.id).filter(SEOSite.id == site_id).one()
     )
     site.primary_location = "Denver, CO"
     site.service_areas_json = ["Denver", "Aurora"]
@@ -3119,9 +3112,7 @@ def test_list_runs_reconciles_stale_queued_and_running_runs(db_session, seeded_b
         age=STALE_RUNNING_RUN_TIMEOUT + timedelta(minutes=1),
     )
 
-    listed = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs"
-    )
+    listed = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs")
     assert listed.status_code == 200
     items = {item["id"]: item for item in listed.json()["items"]}
     assert items[queued_run_id]["status"] == "failed"
@@ -3151,9 +3142,7 @@ def test_stale_queued_run_marked_failed_is_not_executed(db_session, seeded_busin
     )
 
     # Trigger reconciliation via list endpoint.
-    listed = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs"
-    )
+    listed = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs")
     assert listed.status_code == 200
 
     executed = _execute_generation_run(
@@ -3500,10 +3489,7 @@ def test_generation_dedup_scoring_and_exclusion_are_applied_before_persistence(d
     )
     site_id = _create_site(client, seeded_business.id)
     site = (
-        db_session.query(SEOSite)
-        .filter(SEOSite.business_id == seeded_business.id)
-        .filter(SEOSite.id == site_id)
-        .one()
+        db_session.query(SEOSite).filter(SEOSite.business_id == seeded_business.id).filter(SEOSite.id == site_id).one()
     )
     site.primary_location = "Denver, CO"
     site.service_areas_json = ["Denver", "Aurora"]
@@ -3664,10 +3650,7 @@ def test_generation_pipeline_summary_tracks_final_limit_stage(db_session, seeded
     )
     site_id = _create_site(client, seeded_business.id)
     site = (
-        db_session.query(SEOSite)
-        .filter(SEOSite.business_id == seeded_business.id)
-        .filter(SEOSite.id == site_id)
-        .one()
+        db_session.query(SEOSite).filter(SEOSite.business_id == seeded_business.id).filter(SEOSite.id == site_id).one()
     )
     site.primary_location = "Denver, CO"
     site.service_areas_json = ["Denver", "Aurora"]
@@ -3703,7 +3686,9 @@ def test_generation_pipeline_summary_tracks_final_limit_stage(db_session, seeded
         seeded_business.id,
         site_id,
         candidate_count=2,
-    )["run"]["id"]
+    )[
+        "run"
+    ]["id"]
     _execute_generation_run(
         db_session=db_session,
         business_id=seeded_business.id,
@@ -3748,10 +3733,7 @@ def test_generation_applies_eligibility_filter_before_admin_tuning(db_session, s
     )
     site_id = _create_site(client, seeded_business.id)
     site = (
-        db_session.query(SEOSite)
-        .filter(SEOSite.business_id == seeded_business.id)
-        .filter(SEOSite.id == site_id)
-        .one()
+        db_session.query(SEOSite).filter(SEOSite.business_id == seeded_business.id).filter(SEOSite.id == site_id).one()
     )
     site.industry = "Construction"
     site.primary_location = "Denver, CO"
@@ -3845,10 +3827,7 @@ def test_generation_allows_missing_domain_with_strong_local_reasoning_and_caps_c
     )
     site_id = _create_site(client, seeded_business.id)
     site = (
-        db_session.query(SEOSite)
-        .filter(SEOSite.business_id == seeded_business.id)
-        .filter(SEOSite.id == site_id)
-        .one()
+        db_session.query(SEOSite).filter(SEOSite.business_id == seeded_business.id).filter(SEOSite.id == site_id).one()
     )
     site.industry = "Fire alarm services"
     site.primary_location = "Denver, CO"
@@ -3897,10 +3876,7 @@ def test_generation_forces_output_when_all_candidates_would_be_excluded_and_pers
     )
     site_id = _create_site(client, seeded_business.id)
     site = (
-        db_session.query(SEOSite)
-        .filter(SEOSite.business_id == seeded_business.id)
-        .filter(SEOSite.id == site_id)
-        .one()
+        db_session.query(SEOSite).filter(SEOSite.business_id == seeded_business.id).filter(SEOSite.id == site_id).one()
     )
     site.primary_location = "Denver, CO"
     site.service_areas_json = ["Denver", "Aurora"]
@@ -3957,10 +3933,7 @@ def test_generation_uses_business_quality_tuning_threshold_settings(db_session, 
     )
     site_id = _create_site(client, seeded_business.id)
     site = (
-        db_session.query(SEOSite)
-        .filter(SEOSite.business_id == seeded_business.id)
-        .filter(SEOSite.id == site_id)
-        .one()
+        db_session.query(SEOSite).filter(SEOSite.business_id == seeded_business.id).filter(SEOSite.id == site_id).one()
     )
     site.primary_location = "Denver, CO"
     site.service_areas_json = ["Denver", "Aurora"]
@@ -3977,7 +3950,9 @@ def test_generation_uses_business_quality_tuning_threshold_settings(db_session, 
         seeded_business.id,
         site_id,
         candidate_count=1,
-    )["run"]["id"]
+    )[
+        "run"
+    ]["id"]
     _execute_generation_run(
         db_session=db_session,
         business_id=seeded_business.id,
@@ -4002,7 +3977,9 @@ def test_generation_uses_business_quality_tuning_threshold_settings(db_session, 
         seeded_business.id,
         site_id,
         candidate_count=1,
-    )["run"]["id"]
+    )[
+        "run"
+    ]["id"]
     _execute_generation_run(
         db_session=db_session,
         business_id=seeded_business.id,
@@ -4058,7 +4035,9 @@ def test_generation_fails_safely_when_business_quality_tuning_is_invalid(db_sess
         seeded_business.id,
         site_id,
         candidate_count=1,
-    )["run"]["id"]
+    )[
+        "run"
+    ]["id"]
     _execute_generation_run(
         db_session=db_session,
         business_id=seeded_business.id,
@@ -4073,7 +4052,10 @@ def test_generation_fails_safely_when_business_quality_tuning_is_invalid(db_sess
     assert detail.status_code == 200
     payload = detail.json()
     assert payload["run"]["status"] == "failed"
-    assert payload["run"]["error_summary"] == "Competitor profile generation failed due to invalid candidate quality settings."
+    assert (
+        payload["run"]["error_summary"]
+        == "Competitor profile generation failed due to invalid candidate quality settings."
+    )
     assert payload["run"]["failure_category"] == "internal_error"
 
 
@@ -4200,10 +4182,7 @@ def test_generation_summary_endpoint_aggregates_cross_run_exclusion_telemetry(db
     )
     site_id = _create_site(client, seeded_business.id)
     site = (
-        db_session.query(SEOSite)
-        .filter(SEOSite.business_id == seeded_business.id)
-        .filter(SEOSite.id == site_id)
-        .one()
+        db_session.query(SEOSite).filter(SEOSite.business_id == seeded_business.id).filter(SEOSite.id == site_id).one()
     )
     site.primary_location = "Denver, CO"
     site.service_areas_json = ["Denver", "Aurora"]
@@ -4215,7 +4194,9 @@ def test_generation_summary_endpoint_aggregates_cross_run_exclusion_telemetry(db
         seeded_business.id,
         site_id,
         candidate_count=6,
-    )["run"]["id"]
+    )[
+        "run"
+    ]["id"]
     _execute_generation_run(
         db_session=db_session,
         business_id=seeded_business.id,
@@ -4338,7 +4319,9 @@ def test_generation_summary_endpoint_returns_zero_candidate_telemetry_when_no_ru
     }
 
 
-def test_generation_summary_endpoint_includes_failed_run_candidate_telemetry_totals(db_session, seeded_business) -> None:
+def test_generation_summary_endpoint_includes_failed_run_candidate_telemetry_totals(
+    db_session, seeded_business
+) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,

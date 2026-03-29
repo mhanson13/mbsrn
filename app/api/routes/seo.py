@@ -527,9 +527,7 @@ def _build_workspace_competitor_context_health(
     ]
     service_focus_strong = len(meaningful_service_terms) > 0
     if service_focus_strong:
-        service_focus_detail = (
-            f"Service focus terms are available: {', '.join(meaningful_service_terms[:3])}."
-        )
+        service_focus_detail = f"Service focus terms are available: {', '.join(meaningful_service_terms[:3])}."
     elif service_focus_terms:
         service_focus_detail = "Service focus terms are present but too generic for strong competitor matching."
     else:
@@ -577,7 +575,9 @@ def _build_workspace_competitor_context_health(
     )
 
     check_status_by_key = {
-        check["key"]: check["status"] for check in checks_payload if check["key"] in _WORKSPACE_CONTEXT_HEALTH_CHECK_ORDER
+        check["key"]: check["status"]
+        for check in checks_payload
+        if check["key"] in _WORKSPACE_CONTEXT_HEALTH_CHECK_ORDER
     }
     strong_count = sum(1 for status_value in check_status_by_key.values() if status_value == "strong")
     if strong_count >= 3:
@@ -585,14 +585,10 @@ def _build_workspace_competitor_context_health(
         message = "Competitor matching is using grounded business context."
     elif strong_count <= 1:
         status = "weak"
-        message = (
-            "Competitor matching is missing key business context; results may be limited until location/industry details improve."
-        )
+        message = "Competitor matching is missing key business context; results may be limited until location/industry details improve."
     else:
         status = "mixed"
-        message = (
-            "Competitor matching has partial business context; results may be narrower or more conservative."
-        )
+        message = "Competitor matching has partial business context; results may be narrower or more conservative."
 
     return SEOCompetitorContextHealthRead.model_validate(
         {
@@ -824,9 +820,7 @@ def _build_workspace_trust_summary(
     analysis_freshness: SEORecommendationAnalysisFreshnessRead | None,
 ) -> SEORecommendationWorkspaceTrustSummaryRead | None:
     latest_competitor_status = (
-        latest_competitor_outcome_summary.status_level
-        if latest_competitor_outcome_summary is not None
-        else None
+        latest_competitor_outcome_summary.status_level if latest_competitor_outcome_summary is not None else None
     )
     used_google_places_seeds = (
         bool(latest_competitor_outcome_summary.used_google_places_seeds)
@@ -1257,7 +1251,9 @@ def _build_workspace_ordering_explanation(
         for reason in eeat_gap_reason_order
         if any(reason in recommendation.priority_reasons for recommendation in recommendations)
     ]
-    has_clarity_reason = any("high_clarity_action" in recommendation.priority_reasons for recommendation in recommendations)
+    has_clarity_reason = any(
+        "high_clarity_action" in recommendation.priority_reasons for recommendation in recommendations
+    )
 
     message_parts = ["Ordering reflects deterministic recommendation metadata only; no score is used."]
     context_reasons: list[str] = []
@@ -1379,8 +1375,7 @@ def _build_workspace_start_here_reason(
         reason = f"{reason} Based on the latest available analysis; refresh pending."
     compacted = _compact_workspace_text(reason, max_length=_WORKSPACE_START_HERE_REASON_MAX_CHARS)
     return (
-        compacted
-        or "Start here because this is the first action in your strongest visible gap theme.",
+        compacted or "Start here because this is the first action in your strongest visible gap theme.",
         list(dict.fromkeys(context_flags)),
     )
 
@@ -1701,14 +1696,11 @@ def patch_seo_site(
         tenant_context=tenant_context,
         requested_business_id=business_id,
     )
-    if (
-        tenant_context.principal_role != PrincipalRole.ADMIN
-        and (
-            payload.display_name is not None
-            or payload.base_url is not None
-            or payload.is_active is not None
-            or payload.is_primary is not None
-        )
+    if tenant_context.principal_role != PrincipalRole.ADMIN and (
+        payload.display_name is not None
+        or payload.base_url is not None
+        or payload.is_active is not None
+        or payload.is_primary is not None
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -2113,9 +2105,7 @@ def get_seo_recommendation_workspace_summary(
     recommendation_narrative_service: SEORecommendationNarrativeService = Depends(
         get_seo_recommendation_narrative_service
     ),
-    generation_service: SEOCompetitorProfileGenerationService = Depends(
-        get_seo_competitor_profile_generation_service
-    ),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
 ) -> SEORecommendationWorkspaceSummaryRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -2171,10 +2161,13 @@ def get_seo_recommendation_workspace_summary(
         site_location_details.primary_location,
         max_length=_WORKSPACE_PRIMARY_LOCATION_MAX_CHARS,
     )
-    site_location_context = _compact_workspace_text(
-        site_location_details.location_context,
-        max_length=_WORKSPACE_LOCATION_CONTEXT_MAX_CHARS,
-    ) or site_location_details.location_context
+    site_location_context = (
+        _compact_workspace_text(
+            site_location_details.location_context,
+            max_length=_WORKSPACE_LOCATION_CONTEXT_MAX_CHARS,
+        )
+        or site_location_details.location_context
+    )
     site_location_context_strength = site_location_details.location_context_strength
     site_location_context_source = site_location_details.location_context_source
     site_primary_business_zip = _compact_workspace_text(
@@ -2966,7 +2959,9 @@ def preview_seo_recommendation_tuning_impact(
         result = recommendation_narrative_service.preview_tuning_impact(
             business_id=scoped_business_id,
             site_id=site_id,
-            current_values_overrides=(payload.current_values.model_dump(exclude_none=True) if payload.current_values else {}),
+            current_values_overrides=(
+                payload.current_values.model_dump(exclude_none=True) if payload.current_values else {}
+            ),
             proposed_values_overrides=payload.proposed_values.model_dump(exclude_none=True),
             recommendation_run_id=payload.recommendation_run_id,
             narrative_id=payload.narrative_id,
@@ -3281,8 +3276,7 @@ def _to_competitor_profile_generation_run_detail_response(
 ) -> SEOCompetitorProfileGenerationRunDetailRead:
     serialized_drafts = [SEOCompetitorProfileDraftRead.model_validate(item) for item in drafts]
     serialized_rejected_candidates = [
-        SEOCompetitorProfileRejectedCandidateRead.model_validate(item)
-        for item in (rejected_candidates or [])
+        SEOCompetitorProfileRejectedCandidateRead.model_validate(item) for item in (rejected_candidates or [])
     ]
     serialized_tuning_rejected_candidates = [
         SEOCompetitorProfileTuningRejectedCandidateRead.model_validate(item)
@@ -3297,9 +3291,7 @@ def _to_competitor_profile_generation_run_detail_response(
         tuning_rejected_candidate_count=max(0, int(tuning_rejected_candidate_count)),
         tuning_rejected_candidates=serialized_tuning_rejected_candidates,
         tuning_rejection_reason_counts=(
-            dict(tuning_rejection_reason_counts)
-            if isinstance(tuning_rejection_reason_counts, dict)
-            else {}
+            dict(tuning_rejection_reason_counts) if isinstance(tuning_rejection_reason_counts, dict) else {}
         ),
         candidate_pipeline_summary=(
             SEOCompetitorProfileCandidatePipelineSummaryRead.model_validate(candidate_pipeline_summary)
@@ -3330,9 +3322,7 @@ def create_competitor_profile_generation_run(
     background_tasks: BackgroundTasks,
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
-    generation_service: SEOCompetitorProfileGenerationService = Depends(
-        get_seo_competitor_profile_generation_service
-    ),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
     generation_run_executor: SEOCompetitorProfileGenerationRunExecutor = Depends(
         get_seo_competitor_profile_generation_run_executor
     ),
@@ -3391,9 +3381,7 @@ def list_competitor_profile_generation_runs(
     site_id: str,
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
-    generation_service: SEOCompetitorProfileGenerationService = Depends(
-        get_seo_competitor_profile_generation_service
-    ),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
 ) -> SEOCompetitorProfileGenerationRunListResponse:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -3430,9 +3418,7 @@ def get_competitor_profile_generation_runs_summary(
     lookback_days: int | None = None,
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
-    generation_service: SEOCompetitorProfileGenerationService = Depends(
-        get_seo_competitor_profile_generation_service
-    ),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
 ) -> SEOCompetitorProfileGenerationObservabilitySummaryRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -3496,9 +3482,7 @@ def get_competitor_profile_generation_run_detail(
     generation_run_id: str,
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
-    generation_service: SEOCompetitorProfileGenerationService = Depends(
-        get_seo_competitor_profile_generation_service
-    ),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
 ) -> SEOCompetitorProfileGenerationRunDetailRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -3549,9 +3533,7 @@ def retry_competitor_profile_generation_run(
     background_tasks: BackgroundTasks,
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
-    generation_service: SEOCompetitorProfileGenerationService = Depends(
-        get_seo_competitor_profile_generation_service
-    ),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
     generation_run_executor: SEOCompetitorProfileGenerationRunExecutor = Depends(
         get_seo_competitor_profile_generation_run_executor
     ),
@@ -3613,9 +3595,7 @@ def edit_competitor_profile_generation_draft(
     payload: SEOCompetitorProfileDraftEditRequest,
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
-    generation_service: SEOCompetitorProfileGenerationService = Depends(
-        get_seo_competitor_profile_generation_service
-    ),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
 ) -> SEOCompetitorProfileDraftRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -3657,9 +3637,7 @@ def reject_competitor_profile_generation_draft(
     payload: SEOCompetitorProfileDraftRejectRequest,
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
-    generation_service: SEOCompetitorProfileGenerationService = Depends(
-        get_seo_competitor_profile_generation_service
-    ),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
 ) -> SEOCompetitorProfileDraftRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -3701,9 +3679,7 @@ def accept_competitor_profile_generation_draft(
     payload: SEOCompetitorProfileDraftAcceptRequest,
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
-    generation_service: SEOCompetitorProfileGenerationService = Depends(
-        get_seo_competitor_profile_generation_service
-    ),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
 ) -> SEOCompetitorProfileDraftRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,

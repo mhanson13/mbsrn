@@ -30,10 +30,7 @@ def extract_recommendation_competitor_context(
     )
 
     # Ignore normalizer fallback text when no real competitor signal exists.
-    if (
-        not competitor_names
-        and competitor_summary.startswith(_FALLBACK_SUMMARY_PREFIX)
-    ):
+    if not competitor_names and competitor_summary.startswith(_FALLBACK_SUMMARY_PREFIX):
         return empty
 
     if not top_opportunities and not competitor_names and not competitor_summary:

@@ -958,9 +958,7 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
     assert created.status_code == 201
     run_id = created.json()["id"]
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["state"] == "completed_no_narrative"
@@ -1004,11 +1002,12 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
     assert payload["start_here"]["context_flags"] == []
     assert payload["recommendations"]["items"][0]["recommendation_progress_status"] == "suggested"
     assert (
-        payload["recommendations"]["items"][0]["recommendation_progress_summary"]
-        == "Suggested action not yet applied."
+        payload["recommendations"]["items"][0]["recommendation_progress_summary"] == "Suggested action not yet applied."
     )
     assert payload["recommendations"]["items"][0]["recommendation_lifecycle_state"] == "active"
-    assert payload["recommendations"]["items"][0]["recommendation_lifecycle_summary"] == "Still an active recommendation."
+    assert (
+        payload["recommendations"]["items"][0]["recommendation_lifecycle_summary"] == "Still an active recommendation."
+    )
     assert (
         payload["recommendations"]["items"][0]["recommendation_evidence_summary"]
         == "This is backed by structured site findings from the latest analysis."
@@ -1095,8 +1094,7 @@ def test_recommendation_workspace_summary_prompt_previews_use_admin_prompt_overr
         assert reloaded_business is not None
         assert reloaded_business.ai_prompt_text_competitor == "Prefer direct local competitors with service overlap."
         assert (
-            reloaded_business.ai_prompt_text_recommendations
-            == "Prioritize concrete next-step recommendation guidance."
+            reloaded_business.ai_prompt_text_recommendations == "Prioritize concrete next-step recommendation guidance."
         )
 
         created = client.post(
@@ -1133,9 +1131,14 @@ def test_recommendation_workspace_summary_prompt_previews_use_admin_prompt_overr
         assert "ADDITIONAL_COMPETITOR_CONTEXT:" not in competitor_preview["user_prompt"]
         _assert_site_context_json_is_data_only(competitor_preview["user_prompt"])
         assert "Prioritize concrete next-step recommendation guidance." in recommendation_preview["user_prompt"]
-        assert recommendation_preview["user_prompt"].count("Prioritize concrete next-step recommendation guidance.") == 1
+        assert (
+            recommendation_preview["user_prompt"].count("Prioritize concrete next-step recommendation guidance.") == 1
+        )
         assert "RECOMMENDATION_PROMPT_INSTRUCTIONS:" in recommendation_preview["user_prompt"]
-        assert "TASK: Summarize deterministic recommendation artifacts for operator review." not in recommendation_preview["user_prompt"]
+        assert (
+            "TASK: Summarize deterministic recommendation artifacts for operator review."
+            not in recommendation_preview["user_prompt"]
+        )
         assert recommendation_preview["user_prompt"].count("RECOMMENDATION_CONTEXT_JSON:") == 1
         assert "- location:" in recommendation_preview["user_prompt"]
         _assert_recommendation_context_json_is_data_only(recommendation_preview["user_prompt"])
@@ -1449,7 +1452,10 @@ def test_workspace_recommendation_prompt_preview_uses_business_override_without_
         assert "Keep recommendation guidance concise and specific." in first_preview["user_prompt"]
         assert first_preview["user_prompt"].count("Keep recommendation guidance concise and specific.") == 1
         assert "RECOMMENDATION_PROMPT_INSTRUCTIONS:" in first_preview["user_prompt"]
-        assert "TASK: Summarize deterministic recommendation artifacts for operator review." not in first_preview["user_prompt"]
+        assert (
+            "TASK: Summarize deterministic recommendation artifacts for operator review."
+            not in first_preview["user_prompt"]
+        )
         assert first_preview["user_prompt"].count("RECOMMENDATION_CONTEXT_JSON:") == 1
         _assert_recommendation_context_json_is_data_only(first_preview["user_prompt"])
 
@@ -1470,7 +1476,10 @@ def test_workspace_recommendation_prompt_preview_uses_business_override_without_
         assert "Prioritize operator action wording and clear first steps." in refreshed_preview["user_prompt"]
         assert refreshed_preview["user_prompt"].count("Prioritize operator action wording and clear first steps.") == 1
         assert "RECOMMENDATION_PROMPT_INSTRUCTIONS:" in refreshed_preview["user_prompt"]
-        assert "TASK: Summarize deterministic recommendation artifacts for operator review." not in refreshed_preview["user_prompt"]
+        assert (
+            "TASK: Summarize deterministic recommendation artifacts for operator review."
+            not in refreshed_preview["user_prompt"]
+        )
         assert refreshed_preview["user_prompt"].count("RECOMMENDATION_CONTEXT_JSON:") == 1
         _assert_recommendation_context_json_is_data_only(refreshed_preview["user_prompt"])
         assert "Keep recommendation guidance concise and specific." not in refreshed_preview["user_prompt"]
@@ -1491,7 +1500,10 @@ def test_workspace_recommendation_prompt_preview_uses_business_override_without_
         assert cleared_preview["source"] == "default"
         assert "Prioritize operator action wording and clear first steps." not in cleared_preview["user_prompt"]
         assert "RECOMMENDATION_PROMPT_INSTRUCTIONS:" not in cleared_preview["user_prompt"]
-        assert "TASK: Summarize deterministic recommendation artifacts for operator review." in cleared_preview["user_prompt"]
+        assert (
+            "TASK: Summarize deterministic recommendation artifacts for operator review."
+            in cleared_preview["user_prompt"]
+        )
         assert cleared_preview["user_prompt"].count("RECOMMENDATION_CONTEXT_JSON:") == 1
         _assert_recommendation_context_json_is_data_only(cleared_preview["user_prompt"])
     finally:
@@ -1513,9 +1525,7 @@ def test_recommendation_workspace_summary_reflects_primary_business_zip_location
     assert patched_payload["primary_business_zip"] == "80538"
     assert patched_payload["primary_location"] == "Serving area around ZIP code 80538"
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["state"] == "no_runs"
@@ -1527,9 +1537,7 @@ def test_recommendation_workspace_summary_reflects_primary_business_zip_location
     assert "80538" in payload["site_location_context"]
 
 
-def test_recommendation_workspace_summary_reflects_explicit_location_source(
-    db_session, seeded_business
-) -> None:
+def test_recommendation_workspace_summary_reflects_explicit_location_source(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
     site_id = _create_site(client, seeded_business.id)
 
@@ -1539,9 +1547,7 @@ def test_recommendation_workspace_summary_reflects_explicit_location_source(
     )
     assert patch_site.status_code == 200
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["start_here"] is None
@@ -1552,9 +1558,7 @@ def test_recommendation_workspace_summary_reflects_explicit_location_source(
     assert payload["site_location_context"] == "Loveland, Colorado"
 
 
-def test_recommendation_workspace_summary_reflects_service_area_location_source(
-    db_session, seeded_business
-) -> None:
+def test_recommendation_workspace_summary_reflects_service_area_location_source(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
     site_id = _create_site(client, seeded_business.id)
 
@@ -1564,9 +1568,7 @@ def test_recommendation_workspace_summary_reflects_service_area_location_source(
     )
     assert patch_site.status_code == 200
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["start_here"] is None
@@ -1611,9 +1613,7 @@ def test_recommendation_workspace_summary_prefers_audit_page_content_for_industr
         ],
     )
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
 
@@ -1676,9 +1676,7 @@ def test_recommendation_workspace_summary_does_not_bleed_stale_roofing_context_a
     assert repoint_site.json()["normalized_domain"] == "vmsdata.com"
     assert repoint_site.json()["industry"] is None
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
 
@@ -1765,9 +1763,7 @@ def test_recommendation_workspace_summary_uses_new_domain_audit_signals_for_fres
         ],
     )
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
 
@@ -1827,9 +1823,7 @@ def test_workspace_competitor_preview_drops_conflicting_stale_industry_term_from
         ],
     )
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
 
@@ -1839,7 +1833,9 @@ def test_workspace_competitor_preview_drops_conflicting_stale_industry_term_from
     service_focus_terms = [str(term).lower() for term in context_json.get("service_focus_terms", [])]
     assert "roofing" not in service_focus_terms
     assert "roofing services" not in service_focus_terms
-    assert any(token in service_focus_terms for token in ("seo", "digital marketing", "web hosting", "managed it services"))
+    assert any(
+        token in service_focus_terms for token in ("seo", "digital marketing", "web hosting", "managed it services")
+    )
 
     metrics = preview.get("prompt_metrics") or {}
     assert int(metrics.get("service_focus_source_site_content", 0)) == 1
@@ -1862,9 +1858,7 @@ def test_recommendation_workspace_summary_context_health_strong_when_location_in
     )
     assert patch_site.status_code == 200
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     context_health = payload["competitor_context_health"]
@@ -1891,9 +1885,7 @@ def test_recommendation_workspace_summary_context_health_mixed_when_location_is_
     )
     assert patch_site.status_code == 200
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     context_health = payload["competitor_context_health"]
@@ -1958,9 +1950,7 @@ def test_recommendation_workspace_summary_groups_recommendations_by_theme_withou
     }
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
 
@@ -2055,9 +2045,7 @@ def test_recommendation_workspace_summary_includes_latest_narrative_and_bounded_
     )
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["state"] == "completed_with_narrative"
@@ -2132,9 +2120,7 @@ def test_recommendation_workspace_summary_derives_eeat_categories_and_gap_summar
     )
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["recommendations"]["items"][0]["eeat_categories"] == ["trustworthiness"]
@@ -2149,7 +2135,9 @@ def test_recommendation_workspace_summary_derives_eeat_categories_and_gap_summar
     assert "Trust/verification gap" in payload["recommendations"]["items"][0]["recommendation_evidence_trace"]
     assert "Contact/About" in payload["recommendations"]["items"][0]["recommendation_evidence_trace"]
     assert "trust" in payload["recommendations"]["items"][0]["recommendation_observed_gap_summary"].lower()
-    assert "license and insurance proof" in payload["recommendations"]["items"][0]["recommendation_action_clarity"].lower()
+    assert (
+        "license and insurance proof" in payload["recommendations"]["items"][0]["recommendation_action_clarity"].lower()
+    )
     assert "trust" in payload["recommendations"]["items"][0]["recommendation_expected_outcome"].lower()
     assert payload["recommendations"]["items"][0]["recommendation_target_context"] == "contact_about"
     assert payload["eeat_gap_summary"] is not None
@@ -2263,15 +2251,10 @@ def test_recommendation_workspace_summary_derives_target_page_hints_from_audit_i
     )
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
-    by_rule_key = {
-        recommendation["rule_key"]: recommendation
-        for recommendation in payload["recommendations"]["items"]
-    }
+    by_rule_key = {recommendation["rule_key"]: recommendation for recommendation in payload["recommendations"]["items"]}
 
     assert by_rule_key["workspace_hint_homepage"]["recommendation_target_page_hints"] == ["Homepage"]
     assert by_rule_key["workspace_hint_homepage"]["recommendation_observed_gap_summary"]
@@ -2287,7 +2270,10 @@ def test_recommendation_workspace_summary_derives_target_page_hints_from_audit_i
     assert "service" in by_rule_key["workspace_hint_service_pages"]["recommendation_observed_gap_summary"].lower()
     assert "Service pages" in by_rule_key["workspace_hint_service_pages"]["recommendation_evidence_trace"]
     assert "/locations/loveland" in by_rule_key["workspace_hint_location_pages"]["recommendation_target_page_hints"]
-    assert "local/service-area" in by_rule_key["workspace_hint_location_pages"]["recommendation_observed_gap_summary"].lower()
+    assert (
+        "local/service-area"
+        in by_rule_key["workspace_hint_location_pages"]["recommendation_observed_gap_summary"].lower()
+    )
     assert "Location pages" in by_rule_key["workspace_hint_location_pages"]["recommendation_evidence_trace"]
 
 
@@ -2324,9 +2310,7 @@ def test_recommendation_workspace_summary_omits_eeat_gap_summary_when_competitor
     db_session.add(recommendation)
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["recommendations"]["items"][0]["eeat_categories"] == []
@@ -2498,9 +2482,7 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
     )
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["apply_outcome"] is not None
@@ -2516,10 +2498,7 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
     assert payload["apply_outcome"]["applied_recommendation_id"] == recommendation_id
     assert payload["apply_outcome"]["applied_recommendation_title"] == recommendation_title
     assert payload["apply_outcome"]["recommendation_label"] == recommendation_title
-    assert (
-        payload["apply_outcome"]["applied_change_summary"]
-        == "Minimum relevance score was updated from 35 to 30."
-    )
+    assert payload["apply_outcome"]["applied_change_summary"] == "Minimum relevance score was updated from 35 to 30."
     assert (
         payload["apply_outcome"]["applied_preview_summary"]
         == "Estimated increase of 2 included candidates over the last 30 days of telemetry."
@@ -2558,9 +2537,7 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
     )
 
 
-def test_recommendation_workspace_summary_handles_partial_apply_metadata_safely(
-    db_session, seeded_business
-) -> None:
+def test_recommendation_workspace_summary_handles_partial_apply_metadata_safely(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
     site_id = _create_site(client, seeded_business.id)
     audit_run_id = _seed_completed_audit_run(
@@ -2594,9 +2571,7 @@ def test_recommendation_workspace_summary_handles_partial_apply_metadata_safely(
     )
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["apply_outcome"] is not None
@@ -2644,9 +2619,7 @@ def test_recommendation_workspace_summary_handles_in_progress_runs_safely(db_ses
     db_session.add(running_run)
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["state"] == "no_completed_runs"
@@ -2708,9 +2681,7 @@ def test_recommendation_workspace_summary_marks_fresh_when_apply_is_older_than_a
     )
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["analysis_freshness"]["status"] == "fresh"
@@ -2754,18 +2725,14 @@ def test_recommendation_workspace_summary_sets_competitor_freshness_running_when
     )
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["competitor_section_freshness"]["state"] == "running"
     assert payload["recommendation_section_freshness"]["state"] == "stale"
 
 
-def test_recommendation_workspace_summary_marks_reflected_when_apply_link_is_fresh(
-    db_session, seeded_business
-) -> None:
+def test_recommendation_workspace_summary_marks_reflected_when_apply_link_is_fresh(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
     site_id = _create_site(client, seeded_business.id)
     audit_run_id = _seed_completed_audit_run(
@@ -2856,9 +2823,7 @@ def test_recommendation_workspace_summary_marks_reflected_when_apply_link_is_fre
     )
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["analysis_freshness"]["status"] == "fresh"
@@ -2874,15 +2839,11 @@ def test_recommendation_workspace_summary_marks_reflected_when_apply_link_is_fre
     )
 
 
-def test_recommendation_workspace_summary_marks_unknown_when_no_analysis_exists(
-    db_session, seeded_business
-) -> None:
+def test_recommendation_workspace_summary_marks_unknown_when_no_analysis_exists(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
     site_id = _create_site(client, seeded_business.id)
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["state"] == "no_runs"
@@ -2918,9 +2879,7 @@ def test_recommendation_workspace_summary_marks_unknown_when_apply_exists_withou
     )
     db_session.commit()
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["start_here"] is None
@@ -2934,7 +2893,5 @@ def test_recommendation_workspace_summary_enforces_business_scope(db_session, se
     client = _make_client(db_session, business_id=seeded_business.id)
     site_id = _create_site(client, seeded_business.id)
 
-    summary = client.get(
-        f"/api/businesses/{other_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{other_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 404

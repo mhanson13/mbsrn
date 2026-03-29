@@ -192,9 +192,7 @@ def _assert_real_mode_allowed(*, settings: Settings) -> None:
             "Real-provider eval is disabled. Set AI_EVAL_ALLOW_REAL_PROVIDER=true and rerun with --mode real."
         )
     if _is_production_like_environment(settings=settings):
-        raise RuntimeError(
-            "Real-provider eval is blocked in production-like environments."
-        )
+        raise RuntimeError("Real-provider eval is blocked in production-like environments.")
     if (settings.ai_provider_name or "").strip().lower() == "mock":
         raise RuntimeError("Real-provider eval requires a non-mock AI_PROVIDER_NAME.")
 

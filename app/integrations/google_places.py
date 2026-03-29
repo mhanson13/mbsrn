@@ -198,7 +198,9 @@ class GooglePlacesTextSearchClient:
         if not place_id or not name:
             return None
 
-        formatted_address = _clean_optional(raw_item.get("formattedAddress"), max_length=_GOOGLE_PLACES_MAX_ADDRESS_LENGTH)
+        formatted_address = _clean_optional(
+            raw_item.get("formattedAddress"), max_length=_GOOGLE_PLACES_MAX_ADDRESS_LENGTH
+        )
         locality = self._derive_locality_from_formatted_address(formatted_address)
         primary_type = _clean_optional(raw_item.get("primaryType"), max_length=_GOOGLE_PLACES_MAX_TYPE_LENGTH)
 

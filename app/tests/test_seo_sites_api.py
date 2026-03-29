@@ -99,10 +99,7 @@ _SITE_OWNED_MODELS = (
 
 def _count_site_rows(*, db_session, model, business_id: str, site_id: str) -> int:
     stmt = (
-        select(func.count())
-        .select_from(model)
-        .where(model.business_id == business_id)
-        .where(model.site_id == site_id)
+        select(func.count()).select_from(model).where(model.business_id == business_id).where(model.site_id == site_id)
     )
     return int(db_session.scalar(stmt) or 0)
 
@@ -642,7 +639,9 @@ def test_admin_can_update_site_url_via_admin_endpoint(db_session, seeded_busines
     assert payload["normalized_domain"] == "example.com"
 
 
-def test_admin_site_domain_change_clears_stale_industry_when_not_explicitly_updated(db_session, seeded_business) -> None:
+def test_admin_site_domain_change_clears_stale_industry_when_not_explicitly_updated(
+    db_session, seeded_business
+) -> None:
     admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
     client = _make_client(db_session, business_id=seeded_business.id, principal_id=admin_principal.id)
 
@@ -751,12 +750,15 @@ def test_admin_can_permanently_delete_site_and_site_owned_data(db_session, seede
     )
 
     for model in _SITE_OWNED_MODELS:
-        assert _count_site_rows(
-            db_session=db_session,
-            model=model,
-            business_id=seeded_business.id,
-            site_id=delete_site_id,
-        ) > 0
+        assert (
+            _count_site_rows(
+                db_session=db_session,
+                model=model,
+                business_id=seeded_business.id,
+                site_id=delete_site_id,
+            )
+            > 0
+        )
 
     delete_response = client.delete(
         f"/api/businesses/{seeded_business.id}/seo/admin/sites/{delete_site_id}",
@@ -767,18 +769,24 @@ def test_admin_can_permanently_delete_site_and_site_owned_data(db_session, seede
     assert deleted_site_read.status_code == 404
 
     for model in _SITE_OWNED_MODELS:
-        assert _count_site_rows(
-            db_session=db_session,
-            model=model,
-            business_id=seeded_business.id,
-            site_id=delete_site_id,
-        ) == 0
-        assert _count_site_rows(
-            db_session=db_session,
-            model=model,
-            business_id=seeded_business.id,
-            site_id=keep_site_id,
-        ) > 0
+        assert (
+            _count_site_rows(
+                db_session=db_session,
+                model=model,
+                business_id=seeded_business.id,
+                site_id=delete_site_id,
+            )
+            == 0
+        )
+        assert (
+            _count_site_rows(
+                db_session=db_session,
+                model=model,
+                business_id=seeded_business.id,
+                site_id=keep_site_id,
+            )
+            > 0
+        )
 
     kept_site_read = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{keep_site_id}")
     assert kept_site_read.status_code == 200

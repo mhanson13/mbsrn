@@ -145,9 +145,7 @@ def _scan_file(path: Path) -> list[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Fail when a Kubernetes env item defines both value and valueFrom."
-    )
+    parser = argparse.ArgumentParser(description="Fail when a Kubernetes env item defines both value and valueFrom.")
     parser.add_argument("paths", nargs="+", help="Manifest files to scan.")
     args = parser.parse_args()
 

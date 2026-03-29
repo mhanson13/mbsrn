@@ -94,9 +94,7 @@ STALE_RUNNING_RUN_ERROR_SUMMARY = (
 PROVIDER_TIMEOUT_ERROR_SUMMARY = (
     "Competitor profile generation timed out while contacting the AI provider. Start a new generation run to retry."
 )
-PROVIDER_AUTH_CONFIG_ERROR_SUMMARY = (
-    "AI provider credentials are not configured for competitor profile generation."
-)
+PROVIDER_AUTH_CONFIG_ERROR_SUMMARY = "AI provider credentials are not configured for competitor profile generation."
 INVALID_OUTPUT_ERROR_SUMMARY = (
     "Competitor profile generation returned invalid structured output. Start a new generation run to retry."
 )
@@ -514,19 +512,17 @@ class SEOCompetitorProfileGenerationService:
         configured_prompt_text = getattr(self.provider, "prompt_text_competitor", None)
         if configured_prompt_text is None:
             configured_prompt_text = getattr(self.provider, "prompt_text_recommendation", "")
-        self._configured_prompt_text_competitor = (
-            self._clean_optional(str(configured_prompt_text or "")) or ""
-        )
-        self._configured_prompt_legacy_config_used = bool(
-            getattr(self.provider, "legacy_config_used", False)
-        )
+        self._configured_prompt_text_competitor = self._clean_optional(str(configured_prompt_text or "")) or ""
+        self._configured_prompt_legacy_config_used = bool(getattr(self.provider, "legacy_config_used", False))
         self.candidate_domain_probe = candidate_domain_probe
         self.google_places_seed_client = google_places_seed_client
         self.google_places_seed_max_candidates = max(
             _GOOGLE_PLACES_SEED_MIN_CANDIDATES,
             min(_GOOGLE_PLACES_SEED_MAX_CANDIDATES, int(google_places_seed_max_candidates)),
         )
-        self.google_places_seed_query_limit = max(1, min(_GOOGLE_PLACES_SEED_QUERY_LIMIT, int(google_places_seed_query_limit)))
+        self.google_places_seed_query_limit = max(
+            1, min(_GOOGLE_PLACES_SEED_QUERY_LIMIT, int(google_places_seed_query_limit))
+        )
         self.retention_policy = retention_policy
         self.observability_lookback_days = max(1, int(observability_lookback_days))
 
@@ -627,7 +623,9 @@ class SEOCompetitorProfileGenerationService:
             return SEOCompetitorProfileGenerationRunDetail(run=run, drafts=[])
         except Exception as exc:  # noqa: BLE001
             self.session.rollback()
-            raise SEOCompetitorProfileGenerationValidationError("Failed to queue competitor profile generation run") from exc
+            raise SEOCompetitorProfileGenerationValidationError(
+                "Failed to queue competitor profile generation run"
+            ) from exc
 
     def execute_queued_run(
         self,
@@ -742,11 +740,7 @@ class SEOCompetitorProfileGenerationService:
                 parsed_candidate_count=len(output.candidates),
             )
             drafts = draft_result.drafts
-            if (
-                not drafts
-                and draft_result.raw_candidate_count > 0
-                and draft_result.forced_draft_count <= 0
-            ):
+            if not drafts and draft_result.raw_candidate_count > 0 and draft_result.forced_draft_count <= 0:
                 raise SEOCompetitorProfileGenerationValidationError(
                     "No viable competitor candidates were available for draft output"
                 )
@@ -770,9 +764,7 @@ class SEOCompetitorProfileGenerationService:
                 tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
                 candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
                 provider_attempts=provider_attempts,
-                schema_had_repair_or_discard=(
-                    True if bool(output.had_schema_repair_or_discard) else None
-                ),
+                schema_had_repair_or_discard=(True if bool(output.had_schema_repair_or_discard) else None),
                 schema_invalid_candidate_count=(
                     max(0, int(output.schema_invalid_candidate_count))
                     if int(output.schema_invalid_candidate_count) > 0
@@ -993,8 +985,7 @@ class SEOCompetitorProfileGenerationService:
         pipeline_summary = draft_result.candidate_pipeline_summary
         post_filter_candidate_count = max(
             0,
-            int(pipeline_summary.final_candidate_count)
-            + int(pipeline_summary.removed_by_final_limit_count),
+            int(pipeline_summary.final_candidate_count) + int(pipeline_summary.removed_by_final_limit_count),
         )
         discovery_payload = {
             "event": "competitor_discovery_pipeline_counts",
@@ -1067,18 +1058,16 @@ class SEOCompetitorProfileGenerationService:
             normalized_reason = self._clean_optional(reason)
             if normalized_reason is None:
                 continue
-            raw_reason_counts[normalized_reason] = (
-                raw_reason_counts.get(normalized_reason, 0)
-                + max(0, self._coerce_int(count, default=0))
+            raw_reason_counts[normalized_reason] = raw_reason_counts.get(normalized_reason, 0) + max(
+                0, self._coerce_int(count, default=0)
             )
 
         for reason, count in draft_result.exclusion_counts_by_reason.items():
             normalized_reason = self._clean_optional(reason)
             if normalized_reason is None:
                 continue
-            raw_reason_counts[normalized_reason] = (
-                raw_reason_counts.get(normalized_reason, 0)
-                + max(0, self._coerce_int(count, default=0))
+            raw_reason_counts[normalized_reason] = raw_reason_counts.get(normalized_reason, 0) + max(
+                0, self._coerce_int(count, default=0)
             )
 
         for candidate in draft_result.rejected_candidates:
@@ -1268,9 +1257,7 @@ class SEOCompetitorProfileGenerationService:
             return None
 
         bounded_candidate_count = max(1, int(candidate_count))
-        resolved_prompt_version = (
-            self._clean_optional(prompt_version) or self._default_prompt_version()
-        )
+        resolved_prompt_version = self._clean_optional(prompt_version) or self._default_prompt_version()
         resolved_prompt = self._resolve_competitor_prompt_settings(business)
         self._attach_site_content_signals(site=site, business_id=business_id, site_id=site_id)
         prompt = build_seo_competitor_profile_prompt(
@@ -1287,8 +1274,7 @@ class SEOCompetitorProfileGenerationService:
             prompt_text_competitor=resolved_prompt.prompt_text,
         )
         preview_prompt_version = (
-            self._extract_prompt_version_from_user_prompt(prompt.user_prompt)
-            or prompt.prompt_version
+            self._extract_prompt_version_from_user_prompt(prompt.user_prompt) or prompt.prompt_version
         )
         return SEOCompetitorPromptPreview(
             system_prompt=prompt.system_prompt,
@@ -1374,12 +1360,10 @@ class SEOCompetitorProfileGenerationService:
             site_id=site_id,
             created_after=window_start,
         )
-        exclusion_reason_counts = (
-            self.seo_competitor_profile_generation_repository.list_exclusion_reason_counts_for_business_site_created_after(
-                business_id=business_id,
-                site_id=site_id,
-                created_after=window_start,
-            )
+        exclusion_reason_counts = self.seo_competitor_profile_generation_repository.list_exclusion_reason_counts_for_business_site_created_after(
+            business_id=business_id,
+            site_id=site_id,
+            created_after=window_start,
         )
 
         exclusion_counts_by_reason = default_exclusion_reason_counts()
@@ -1460,9 +1444,11 @@ class SEOCompetitorProfileGenerationService:
         window_end = utc_now()
         window_start = window_end - timedelta(days=effective_lookback_days)
 
-        latest_execution = self.seo_competitor_profile_generation_repository.get_latest_cleanup_execution_for_business_scope(
-            business_id=business_id,
-            site_id=site_id,
+        latest_execution = (
+            self.seo_competitor_profile_generation_repository.get_latest_cleanup_execution_for_business_scope(
+                business_id=business_id,
+                site_id=site_id,
+            )
         )
         status_counts = self.seo_competitor_profile_generation_repository.count_cleanup_executions_by_status(
             business_id=business_id,
@@ -1736,9 +1722,7 @@ class SEOCompetitorProfileGenerationService:
         unsupported_type_allowed_count = sum(
             1 for candidate in final_candidates if bool(candidate.classification_mismatch)
         )
-        no_domain_allowed_count = sum(
-            1 for candidate in final_candidates if bool(candidate.weak_or_missing_domain)
-        )
+        no_domain_allowed_count = sum(1 for candidate in final_candidates if bool(candidate.weak_or_missing_domain))
         if (
             eligibility_result.relaxed_filtering_applied
             or unsupported_type_allowed_count > 0
@@ -1852,9 +1836,7 @@ class SEOCompetitorProfileGenerationService:
             return []
 
         eligible_ids = {id(candidate) for candidate in eligible_candidates}
-        overflow_candidates = [
-            candidate for candidate in prepared_candidates if id(candidate) not in eligible_ids
-        ]
+        overflow_candidates = [candidate for candidate in prepared_candidates if id(candidate) not in eligible_ids]
         candidate_pool = [*eligible_candidates, *overflow_candidates]
         if not candidate_pool:
             return []
@@ -1942,9 +1924,7 @@ class SEOCompetitorProfileGenerationService:
                 "fallback_reason": fallback_reason,
                 "fallback_candidate_count": draft_count,
                 "provider_raw_candidate_count": (
-                    int(baseline_result.raw_candidate_count)
-                    if baseline_result is not None
-                    else 0
+                    int(baseline_result.raw_candidate_count) if baseline_result is not None else 0
                 ),
             },
             fallback_message="competitor_synthetic_fallback",
@@ -2033,18 +2013,30 @@ class SEOCompetitorProfileGenerationService:
                 str(exc),
             )
 
-        location_label = self._clean_optional(
-            str(context.get("site_location_context")) if context.get("site_location_context") is not None else None
-        ) or self._clean_optional(site.primary_location) or "local area"
+        location_label = (
+            self._clean_optional(
+                str(context.get("site_location_context")) if context.get("site_location_context") is not None else None
+            )
+            or self._clean_optional(site.primary_location)
+            or "local area"
+        )
         if "unspecified" in location_label.lower():
             location_label = self._clean_optional(site.primary_location) or "local area"
 
-        business_name = self._clean_optional(
-            str(context.get("site_business_name")) if context.get("site_business_name") is not None else None
-        ) or self._clean_optional(site.display_name) or "Local Business"
-        industry_context = self._clean_optional(
-            str(context.get("site_industry_context")) if context.get("site_industry_context") is not None else None
-        ) or self._clean_optional(site.industry) or "local services"
+        business_name = (
+            self._clean_optional(
+                str(context.get("site_business_name")) if context.get("site_business_name") is not None else None
+            )
+            or self._clean_optional(site.display_name)
+            or "Local Business"
+        )
+        industry_context = (
+            self._clean_optional(
+                str(context.get("site_industry_context")) if context.get("site_industry_context") is not None else None
+            )
+            or self._clean_optional(site.industry)
+            or "local services"
+        )
         service_terms_raw = context.get("service_focus_terms")
         service_terms: list[str] = []
         if isinstance(service_terms_raw, list):
@@ -2132,12 +2124,8 @@ class SEOCompetitorProfileGenerationService:
             "Deterministic fallback candidate generated from local site context "
             "after provider attempts returned no usable competitors."
         )
-        why_competitor = (
-            f"Fallback pattern '{normalized_service}' in '{location_label}' was used for operator review."
-        )
-        evidence = (
-            f"Synthetic fallback result for {business_name}; manually verify business fit and live website."
-        )
+        why_competitor = f"Fallback pattern '{normalized_service}' in '{location_label}' was used for operator review."
+        evidence = f"Synthetic fallback result for {business_name}; manually verify business fit and live website."
         return {
             "suggested_name": clean_name,
             "suggested_domain": clean_domain,
@@ -2728,9 +2716,7 @@ class SEOCompetitorProfileGenerationService:
             raise SEOCompetitorProfileGenerationValidationError("suggested_domain must be valid")
         cleaned = host.strip(".")
         if not cleaned or "." not in cleaned:
-            raise SEOCompetitorProfileGenerationValidationError(
-                "suggested_domain must include a top-level domain"
-            )
+            raise SEOCompetitorProfileGenerationValidationError("suggested_domain must include a top-level domain")
         if any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-." for ch in cleaned):
             raise SEOCompetitorProfileGenerationValidationError("suggested_domain contains invalid characters")
         return cleaned
@@ -3333,7 +3319,9 @@ class SEOCompetitorProfileGenerationService:
 
     def _derive_google_places_query_location(self, *, context: dict[str, object]) -> str | None:
         zip_code = self._clean_optional(
-            str(context.get("site_primary_business_zip")) if context.get("site_primary_business_zip") is not None else None
+            str(context.get("site_primary_business_zip"))
+            if context.get("site_primary_business_zip") is not None
+            else None
         )
         if zip_code and len(zip_code) == 5 and zip_code.isdigit():
             return zip_code
@@ -3413,15 +3401,15 @@ class SEOCompetitorProfileGenerationService:
                     "source": "google_places",
                     "place_id": place_id[:255],
                     "name": name[:_GOOGLE_PLACES_SEED_MAX_NAME_LENGTH],
-                    "formatted_address": (
-                        self._clean_optional(candidate.formatted_address) or ""
-                    )[:_GOOGLE_PLACES_SEED_MAX_ADDRESS_LENGTH],
-                    "locality": (
-                        self._clean_optional(candidate.locality) or ""
-                    )[:_GOOGLE_PLACES_SEED_MAX_LOCALITY_LENGTH],
-                    "primary_type": (
-                        self._clean_optional(candidate.primary_type) or ""
-                    )[:_GOOGLE_PLACES_SEED_MAX_TYPE_LENGTH],
+                    "formatted_address": (self._clean_optional(candidate.formatted_address) or "")[
+                        :_GOOGLE_PLACES_SEED_MAX_ADDRESS_LENGTH
+                    ],
+                    "locality": (self._clean_optional(candidate.locality) or "")[
+                        :_GOOGLE_PLACES_SEED_MAX_LOCALITY_LENGTH
+                    ],
+                    "primary_type": (self._clean_optional(candidate.primary_type) or "")[
+                        :_GOOGLE_PLACES_SEED_MAX_TYPE_LENGTH
+                    ],
                     "types": types,
                     "website_domain": website_domain or "",
                 }
@@ -3742,13 +3730,9 @@ class SEOCompetitorProfileGenerationService:
         provider_call_type: str = _PROVIDER_CALL_TYPE_TOOL_ENABLED,
         attempt_timeout_seconds: int | None = None,
     ) -> SEOCompetitorProfileGenerationOutput:
-        normalized_execution_mode = (
-            execution_mode if execution_mode in _EXECUTION_MODES else _EXECUTION_MODE_FULL
-        )
+        normalized_execution_mode = execution_mode if execution_mode in _EXECUTION_MODES else _EXECUTION_MODE_FULL
         normalized_provider_call_type = (
-            provider_call_type
-            if provider_call_type in _PROVIDER_CALL_TYPES
-            else _PROVIDER_CALL_TYPE_TOOL_ENABLED
+            provider_call_type if provider_call_type in _PROVIDER_CALL_TYPES else _PROVIDER_CALL_TYPE_TOOL_ENABLED
         )
         if (
             normalized_execution_mode in {_EXECUTION_MODE_FAST_PATH, _EXECUTION_MODE_DEGRADED}
@@ -3863,9 +3847,7 @@ class SEOCompetitorProfileGenerationService:
         if configured_timeout_seconds is not None:
             return configured_timeout_seconds
 
-        return self._coerce_competitor_timeout_seconds(
-            getattr(self.provider, "timeout_seconds", None)
-        )
+        return self._coerce_competitor_timeout_seconds(getattr(self.provider, "timeout_seconds", None))
 
     @staticmethod
     def _coerce_competitor_timeout_seconds(value: object) -> int | None:
@@ -4121,16 +4103,8 @@ class SEOCompetitorProfileGenerationService:
     ) -> None:
         if not provider_attempts:
             return
-        normalized_final_outcome = (
-            final_outcome
-            if final_outcome in _TIMEOUT_FINAL_OUTCOMES
-            else "failure"
-        )
-        normalized_recovery_path = (
-            recovery_path
-            if recovery_path in _TIMEOUT_RECOVERY_PATHS
-            else "none"
-        )
+        normalized_final_outcome = final_outcome if final_outcome in _TIMEOUT_FINAL_OUTCOMES else "failure"
+        normalized_recovery_path = recovery_path if recovery_path in _TIMEOUT_RECOVERY_PATHS else "none"
         timeout_observed = any(item.failure_kind == "timeout" for item in provider_attempts)
         recovered_after_timeout = bool(
             timeout_observed
@@ -4161,16 +4135,8 @@ class SEOCompetitorProfileGenerationService:
         timeout_attempts = [item for item in provider_attempts if item.failure_kind == "timeout"]
         if not timeout_attempts:
             return
-        normalized_final_outcome = (
-            final_outcome
-            if final_outcome in _TIMEOUT_FINAL_OUTCOMES
-            else "failure"
-        )
-        normalized_recovery_path = (
-            recovery_path
-            if recovery_path in _TIMEOUT_RECOVERY_PATHS
-            else "none"
-        )
+        normalized_final_outcome = final_outcome if final_outcome in _TIMEOUT_FINAL_OUTCOMES else "failure"
+        normalized_recovery_path = recovery_path if recovery_path in _TIMEOUT_RECOVERY_PATHS else "none"
         recovered_after_timeout = bool(
             normalized_final_outcome in {"success", "degraded_success"}
             and normalized_recovery_path
@@ -4297,7 +4263,9 @@ class SEOCompetitorProfileGenerationService:
                 attempt_number = max(0, self._coerce_int(raw_item.get("attempt_number"), default=0))
                 execution_mode = self._clean_optional(str(raw_item.get("execution_mode") or ""))
                 if execution_mode not in _EXECUTION_MODES:
-                    execution_mode = _EXECUTION_MODE_DEGRADED if bool(raw_item.get("degraded_mode")) else _EXECUTION_MODE_FULL
+                    execution_mode = (
+                        _EXECUTION_MODE_DEGRADED if bool(raw_item.get("degraded_mode")) else _EXECUTION_MODE_FULL
+                    )
                 provider_call_type = self._clean_optional(str(raw_item.get("provider_call_type") or ""))
                 if provider_call_type not in _PROVIDER_CALL_TYPES:
                     provider_call_type = None
@@ -4449,10 +4417,7 @@ class SEOCompetitorProfileGenerationService:
             return None
 
         used_synthetic_fallback = any(
-            (
-                item.recovery_path == _SYNTHETIC_FALLBACK_RECOVERY_PATH
-                or item.execution_mode == _EXECUTION_MODE_FALLBACK
-            )
+            (item.recovery_path == _SYNTHETIC_FALLBACK_RECOVERY_PATH or item.execution_mode == _EXECUTION_MODE_FALLBACK)
             for item in provider_attempts
         )
         used_timeout_recovery = any(item.recovered_after_timeout is True for item in provider_attempts)
@@ -4476,10 +4441,7 @@ class SEOCompetitorProfileGenerationService:
             message = "Competitor generation failed. Start a new run to continue."
         elif used_synthetic_fallback:
             status_level = _OUTCOME_STATUS_DEGRADED
-            message = (
-                "Fallback placeholders were generated from local context. "
-                "Review and confirm before accepting."
-            )
+            message = "Fallback placeholders were generated from local context. " "Review and confirm before accepting."
         elif used_provider_recovery or used_timeout_recovery:
             status_level = _OUTCOME_STATUS_RECOVERED
             message = "Competitor generation recovered after provider instability."
@@ -4558,14 +4520,14 @@ class SEOCompetitorProfileGenerationService:
             parsed[_TUNING_REJECTED_CANDIDATE_DEBUG_COUNT_KEY] = max(0, len(tuning_rejected_candidates))
             parsed[_TUNING_REJECTED_CANDIDATE_DEBUG_KEY] = serialized_tuning_rejected
 
-        normalized_reason_counts = self._normalize_tuning_rejection_reason_counts(
-            tuning_rejection_reason_counts
-        )
+        normalized_reason_counts = self._normalize_tuning_rejection_reason_counts(tuning_rejection_reason_counts)
         if any(value > 0 for value in normalized_reason_counts.values()):
             parsed[_TUNING_REJECTION_REASON_COUNTS_KEY] = normalized_reason_counts
         if serialized_provider_attempts:
             parsed[_PROVIDER_ATTEMPT_COUNT_KEY] = max(0, len(provider_attempts or []))
-            parsed[_PROVIDER_DEGRADED_RETRY_USED_KEY] = any(item["degraded_mode"] for item in serialized_provider_attempts)
+            parsed[_PROVIDER_DEGRADED_RETRY_USED_KEY] = any(
+                item["degraded_mode"] for item in serialized_provider_attempts
+            )
             parsed[_PROVIDER_ATTEMPTS_DEBUG_KEY] = serialized_provider_attempts
         if candidate_pipeline_summary is not None:
             parsed[_CANDIDATE_PIPELINE_SUMMARY_KEY] = {
@@ -4622,9 +4584,7 @@ class SEOCompetitorProfileGenerationService:
         for raw_item in raw_candidates[:REJECTED_CANDIDATE_DEBUG_MAX_ITEMS]:
             if not isinstance(raw_item, dict):
                 continue
-            domain = self._clean_optional(
-                str(raw_item.get("domain") or "")
-            )
+            domain = self._clean_optional(str(raw_item.get("domain") or ""))
             if domain is None:
                 continue
             reasons = self._normalize_rejected_candidate_reasons(raw_item.get("reasons"))
@@ -4820,9 +4780,8 @@ class SEOCompetitorProfileGenerationService:
             estimated_included_delta = int(round(estimated_window_delta / divisor))
             actual_included_delta = int(run.included_candidate_count) - baseline_included_per_run
             error_margin = abs(actual_included_delta - estimated_included_delta)
-            direction_correct = (
-                self._delta_direction(estimated_included_delta)
-                == self._delta_direction(actual_included_delta)
+            direction_correct = self._delta_direction(estimated_included_delta) == self._delta_direction(
+                actual_included_delta
             )
 
             event.evaluated_generation_run_id = run.id

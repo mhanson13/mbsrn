@@ -189,9 +189,7 @@ def test_directory_candidate_is_conservatively_excluded() -> None:
     assert result.included_candidates[0].canonical_domain == "denverprecisionplumbing.example"
     assert result.tuning_rejection_reason_counts[TUNING_EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR_PENALTY] == 1
     assert len(result.tuning_rejected_candidates) == 1
-    assert result.tuning_rejected_candidates[0].reasons == (
-        TUNING_EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR_PENALTY,
-    )
+    assert result.tuning_rejected_candidates[0].reasons == (TUNING_EXCLUSION_REASON_DIRECTORY_OR_AGGREGATOR_PENALTY,)
 
 
 def test_local_alignment_scores_higher_than_non_local_chain_candidate() -> None:
@@ -281,9 +279,7 @@ def test_big_box_candidate_is_excluded_when_local_context_is_missing() -> None:
     assert tuple(result.exclusion_counts_by_reason.keys()) == EXCLUSION_REASON_KEYS
     assert result.tuning_rejection_reason_counts[TUNING_EXCLUSION_REASON_BIG_BOX_MISMATCH_PENALTY] == 1
     assert len(result.tuning_rejected_candidates) == 1
-    assert result.tuning_rejected_candidates[0].reasons == (
-        TUNING_EXCLUSION_REASON_BIG_BOX_MISMATCH_PENALTY,
-    )
+    assert result.tuning_rejected_candidates[0].reasons == (TUNING_EXCLUSION_REASON_BIG_BOX_MISMATCH_PENALTY,)
 
 
 def test_existing_domain_match_is_counted_as_excluded_reason() -> None:
@@ -512,9 +508,7 @@ def test_eligibility_gate_rejects_excluded_domain_patterns() -> None:
             {
                 "buy-this-domain-example.com": CompetitorCandidateDomainProbeResult(
                     status_code=200,
-                    body_text=(
-                        "This domain has placeholder content and can be acquired through a marketplace."
-                    ),
+                    body_text=("This domain has placeholder content and can be acquired through a marketplace."),
                 )
             }
         ),
@@ -714,9 +708,7 @@ def test_eligibility_gate_rejects_out_of_market_candidate_with_strong_local_cont
             {
                 "seattleplumbingplus.com": CompetitorCandidateDomainProbeResult(
                     status_code=200,
-                    body_text=(
-                        "Seattle WA plumbing contractor. Contact our Seattle team for service in Washington."
-                    ),
+                    body_text=("Seattle WA plumbing contractor. Contact our Seattle team for service in Washington."),
                 )
             }
         ),
@@ -742,9 +734,7 @@ def test_eligibility_gate_rejects_insufficient_overlap_evidence() -> None:
             {
                 "generic-home-services.com": CompetitorCandidateDomainProbeResult(
                     status_code=200,
-                    body_text=(
-                        "Browse links, click here, generic home page elements, and broad categories."
-                    ),
+                    body_text=("Browse links, click here, generic home page elements, and broad categories."),
                 )
             }
         ),

@@ -81,7 +81,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_seo_competitor_tuning_preview_events_site_id", table_name="seo_competitor_tuning_preview_events")
-    op.drop_index("ix_seo_competitor_tuning_preview_events_business_id", table_name="seo_competitor_tuning_preview_events")
+    op.drop_index(
+        "ix_seo_competitor_tuning_preview_events_business_id", table_name="seo_competitor_tuning_preview_events"
+    )
     op.drop_index("ix_sctpe_biz_site_eval", table_name="seo_competitor_tuning_preview_events")
     op.drop_index("ix_sctpe_biz_site_applied", table_name="seo_competitor_tuning_preview_events")
     op.drop_index("ix_sctpe_biz_site_created", table_name="seo_competitor_tuning_preview_events")

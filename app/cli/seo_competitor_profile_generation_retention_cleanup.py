@@ -67,10 +67,7 @@ def run_seo_competitor_profile_generation_retention_cleanup(
             scope = "global"
 
         logger.info(
-            (
-                "SEO competitor profile retention cleanup sweep started scope=%s "
-                "site_id=%s business_count=%s"
-            ),
+            ("SEO competitor profile retention cleanup sweep started scope=%s " "site_id=%s business_count=%s"),
             scope,
             normalized_site_id or "all",
             len(business_ids),

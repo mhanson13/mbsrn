@@ -61,9 +61,7 @@ _LOCATION_FALLBACK_TEXT = "Location not yet established from available business/
 _INDUSTRY_FALLBACK_TEXT = "Industry not yet confidently classified from available structured data."
 _TARGET_CUSTOMER_CONTEXT_FALLBACK = "Customers seeking clearly substitutable services in the same market context."
 _PROMPT_INSTRUCTION_MARKERS = ("PROMPT_VERSION:", "TASK:", "RESPONSE RULES:")
-_OVERRIDE_DATA_MARKER_RENAMES = (
-    ("SITE_CONTEXT_JSON:", "OVERRIDE_CONTEXT_TEMPLATE:"),
-)
+_OVERRIDE_DATA_MARKER_RENAMES = (("SITE_CONTEXT_JSON:", "OVERRIDE_CONTEXT_TEMPLATE:"),)
 _OVERRIDE_RUNTIME_CONSTRAINT_MARKERS = (
     "REQUESTED_CANDIDATE_COUNT:",
     "ALLOWED_COMPETITOR_TYPES:",
@@ -170,7 +168,9 @@ def build_seo_competitor_profile_prompt(
         max_items=_MAX_EXISTING_COMPETITOR_DOMAINS,
         max_total_chars=_MAX_EXISTING_COMPETITOR_DOMAINS_TOTAL_CHARS,
     )
-    display_name = _sanitize_required(site.display_name, max_length=_MAX_DISPLAY_NAME_LENGTH, fallback="Unknown business")
+    display_name = _sanitize_required(
+        site.display_name, max_length=_MAX_DISPLAY_NAME_LENGTH, fallback="Unknown business"
+    )
     base_url = _sanitize_required(site.base_url, max_length=_MAX_BASE_URL_LENGTH, fallback="https://example.invalid/")
     normalized_domain = _sanitize_required(
         site.normalized_domain,
@@ -198,9 +198,7 @@ def build_seo_competitor_profile_prompt(
         max_length=_MAX_LOCATION_LENGTH,
         fallback=_LOCATION_FALLBACK_TEXT,
     )
-    location_context_strength = (
-        "strong" if location_context_details.location_context_strength == "strong" else "weak"
-    )
+    location_context_strength = "strong" if location_context_details.location_context_strength == "strong" else "weak"
     location_context_source = location_context_details.location_context_source
     site_context_details = build_site_business_context(
         site=site,
@@ -348,9 +346,7 @@ def build_seo_competitor_profile_prompt(
             len(context_competitor_search_hints) if isinstance(context_competitor_search_hints, list) else 0
         ),
         "google_places_seed_candidates_count": (
-            len(context_google_places_seed_candidates)
-            if isinstance(context_google_places_seed_candidates, list)
-            else 0
+            len(context_google_places_seed_candidates) if isinstance(context_google_places_seed_candidates, list) else 0
         ),
         "supplemental_competitor_text_chars": supplemental_competitor_text_chars,
         "context_budget_trimmed": 1 if context_budget_trimmed else 0,
@@ -471,9 +467,13 @@ def _build_override_template_values(
             non_competitor_hints_text = ", ".join(cleaned_hints)
 
     return {
-        "site_display_name": _coerce_override_template_value(context.get("site_display_name"), fallback="Unknown business"),
+        "site_display_name": _coerce_override_template_value(
+            context.get("site_display_name"), fallback="Unknown business"
+        ),
         "site_business_name": _coerce_override_template_value(context.get("site_business_name")),
-        "site_base_url": _coerce_override_template_value(context.get("site_base_url"), fallback="https://example.invalid/"),
+        "site_base_url": _coerce_override_template_value(
+            context.get("site_base_url"), fallback="https://example.invalid/"
+        ),
         "site_normalized_domain": _coerce_override_template_value(
             context.get("site_normalized_domain"),
             fallback="example.invalid",
@@ -747,9 +747,9 @@ def _apply_context_budget(
         budgeted["competitor_search_hints"] = competitor_search_hints[:_BUDGET_CONTEXT_COMPETITOR_SEARCH_HINT_CAP]
     google_places_seed_candidates = budgeted.get("google_places_seed_candidates")
     if isinstance(google_places_seed_candidates, list):
-        budgeted["google_places_seed_candidates"] = (
-            google_places_seed_candidates[:_BUDGET_CONTEXT_GOOGLE_PLACES_SEED_CAP]
-        )
+        budgeted["google_places_seed_candidates"] = google_places_seed_candidates[
+            :_BUDGET_CONTEXT_GOOGLE_PLACES_SEED_CAP
+        ]
 
     context_json = _serialize_context_json(budgeted)
     if len(context_json) > _MAX_CONTEXT_JSON_CHARS:
@@ -820,14 +820,12 @@ def _apply_retry_reduced_context_mode(
         reduced["non_competitor_domain_hints"] = non_competitor_hints[:_RETRY_REDUCED_CONTEXT_NON_COMPETITOR_HINT_CAP]
     competitor_search_hints = reduced.get("competitor_search_hints")
     if isinstance(competitor_search_hints, list):
-        reduced["competitor_search_hints"] = (
-            competitor_search_hints[:_RETRY_REDUCED_CONTEXT_COMPETITOR_SEARCH_HINT_CAP]
-        )
+        reduced["competitor_search_hints"] = competitor_search_hints[:_RETRY_REDUCED_CONTEXT_COMPETITOR_SEARCH_HINT_CAP]
     google_places_seed_candidates = reduced.get("google_places_seed_candidates")
     if isinstance(google_places_seed_candidates, list):
-        reduced["google_places_seed_candidates"] = (
-            google_places_seed_candidates[:_RETRY_REDUCED_CONTEXT_GOOGLE_PLACES_SEED_CAP]
-        )
+        reduced["google_places_seed_candidates"] = google_places_seed_candidates[
+            :_RETRY_REDUCED_CONTEXT_GOOGLE_PLACES_SEED_CAP
+        ]
 
     service_focus_terms = reduced.get("service_focus_terms")
     if isinstance(service_focus_terms, list):
@@ -912,17 +910,13 @@ def _sanitize_structured_context_data(
         sanitized.get("site_location_context_strength"),
         max_length=16,
     )
-    sanitized["site_location_context_strength"] = (
-        "strong" if raw_location_strength == "strong" else "weak"
-    )
+    sanitized["site_location_context_strength"] = "strong" if raw_location_strength == "strong" else "weak"
     raw_location_source = _sanitize_text_if_data_only(
         sanitized.get("site_location_context_source"),
         max_length=32,
     )
     sanitized["site_location_context_source"] = (
-        raw_location_source
-        if raw_location_source in _ALLOWED_LOCATION_CONTEXT_SOURCES
-        else "fallback"
+        raw_location_source if raw_location_source in _ALLOWED_LOCATION_CONTEXT_SOURCES else "fallback"
     )
     sanitized["site_industry_context"] = _sanitize_required(
         _sanitize_text_if_data_only(
@@ -936,9 +930,7 @@ def _sanitize_structured_context_data(
         sanitized.get("site_industry_context_strength"),
         max_length=16,
     )
-    sanitized["site_industry_context_strength"] = (
-        "strong" if raw_industry_strength == "strong" else "weak"
-    )
+    sanitized["site_industry_context_strength"] = "strong" if raw_industry_strength == "strong" else "weak"
     sanitized["service_focus_terms"] = _sanitize_data_string_list(
         sanitized.get("service_focus_terms"),
         max_length=_MAX_SERVICE_FOCUS_TERM_LENGTH,

@@ -204,11 +204,15 @@ class SEORecommendationRepository:
         by_priority_band = self._group_counts(filtered_subquery=filtered_subquery, column_name="priority_band")
 
         offset = (page - 1) * page_size
-        items_stmt = self._apply_site_recommendation_ordering(
-            stmt=base_stmt,
-            sort_by=sort_by,
-            sort_order=sort_order,
-        ).offset(offset).limit(page_size)
+        items_stmt = (
+            self._apply_site_recommendation_ordering(
+                stmt=base_stmt,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+            .offset(offset)
+            .limit(page_size)
+        )
         items = list(self.session.scalars(items_stmt))
         return SEORecommendationListPageResult(
             items=items,
@@ -290,9 +294,7 @@ class SEORecommendationRepository:
 
     def _group_counts(self, *, filtered_subquery, column_name: str) -> dict[str, int]:
         column = filtered_subquery.c[column_name]
-        rows = self.session.execute(
-            select(column, func.count()).group_by(column)
-        ).all()
+        rows = self.session.execute(select(column, func.count()).group_by(column)).all()
         counts: dict[str, int] = {}
         for key, count in rows:
             if key is None:

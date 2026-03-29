@@ -142,9 +142,7 @@ class SEORecommendationNarrativeService:
         if configured_prompt_text is None:
             configured_prompt_text = getattr(self.provider, "prompt_text_recommendation", "")
         self._configured_prompt_text_recommendations = str(configured_prompt_text or "").strip()
-        self._configured_prompt_legacy_config_used = bool(
-            getattr(self.provider, "legacy_config_used", False)
-        )
+        self._configured_prompt_legacy_config_used = bool(getattr(self.provider, "legacy_config_used", False))
 
     def summarize_run(
         self,
@@ -447,9 +445,7 @@ class SEORecommendationNarrativeService:
             overrides=proposed_values_overrides,
         )
         if proposed_values == current_values:
-            raise SEORecommendationNarrativeValidationError(
-                "Proposed tuning values must differ from current values."
-            )
+            raise SEORecommendationNarrativeValidationError("Proposed tuning values must differ from current values.")
 
         telemetry_window = self._build_competitor_telemetry_summary(
             business_id=business_id,
@@ -500,9 +496,7 @@ class SEORecommendationNarrativeService:
                 site_id,
                 str(exc),
             )
-            raise SEORecommendationNarrativeValidationError(
-                "Unable to persist tuning impact preview event."
-            ) from exc
+            raise SEORecommendationNarrativeValidationError("Unable to persist tuning impact preview event.") from exc
         return SEORecommendationTuningImpactPreviewResult(
             business_id=business_id,
             site_id=site_id,
@@ -635,12 +629,10 @@ class SEORecommendationNarrativeService:
             site_id=site_id,
             created_after=window_start,
         )
-        exclusion_reason_records = (
-            self.seo_competitor_profile_generation_repository.list_exclusion_reason_counts_for_business_site_created_after(
-                business_id=business_id,
-                site_id=site_id,
-                created_after=window_start,
-            )
+        exclusion_reason_records = self.seo_competitor_profile_generation_repository.list_exclusion_reason_counts_for_business_site_created_after(
+            business_id=business_id,
+            site_id=site_id,
+            created_after=window_start,
         )
         exclusion_counts_by_reason = default_exclusion_reason_counts()
         for record in exclusion_reason_records:
@@ -680,8 +672,12 @@ class SEORecommendationNarrativeService:
         self,
         competitor_context: dict[str, object],
     ) -> dict[str, object] | None:
-        top_opportunities = self._to_compact_string_list(competitor_context.get("top_opportunities"), limit=5, max_length=140)
-        competitor_names = self._to_compact_string_list(competitor_context.get("competitor_names"), limit=5, max_length=120)
+        top_opportunities = self._to_compact_string_list(
+            competitor_context.get("top_opportunities"), limit=5, max_length=140
+        )
+        competitor_names = self._to_compact_string_list(
+            competitor_context.get("competitor_names"), limit=5, max_length=120
+        )
         competitor_summary = self._to_compact_string(competitor_context.get("competitor_summary"), max_length=180)
 
         if not top_opportunities and not competitor_names and not competitor_summary:

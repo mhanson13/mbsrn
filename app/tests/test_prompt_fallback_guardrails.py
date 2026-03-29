@@ -105,10 +105,7 @@ def test_competitor_prompt_apply_resolution_uses_normalized_admin_override_for_e
         provider=provider,
     )
     seeded_business.ai_prompt_text_competitor = (
-        " \n"
-        "PROMPT_VERSION: seo-competitor-profile-v4\n"
-        "TASK: Use the admin override prompt.\n"
-        " "
+        " \n" "PROMPT_VERSION: seo-competitor-profile-v4\n" "TASK: Use the admin override prompt.\n" " "
     )
 
     resolved = service._apply_resolved_competitor_prompt_settings(seeded_business)

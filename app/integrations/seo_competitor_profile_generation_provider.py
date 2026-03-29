@@ -674,14 +674,22 @@ class OpenAISEOCompetitorProfileGenerationProvider:
     ) -> SEOCompetitorProfileDraftCandidateOutput | None:
         if not isinstance(raw_candidate, dict):
             return None
-        suggested_name = _clean_optional_value(
-            raw_candidate.get("name") if raw_candidate.get("name") is not None else raw_candidate.get("suggested_name")
-        ) or ""
-        suggested_domain = _clean_optional_value(
-            raw_candidate.get("domain")
-            if raw_candidate.get("domain") is not None
-            else raw_candidate.get("suggested_domain")
-        ) or ""
+        suggested_name = (
+            _clean_optional_value(
+                raw_candidate.get("name")
+                if raw_candidate.get("name") is not None
+                else raw_candidate.get("suggested_name")
+            )
+            or ""
+        )
+        suggested_domain = (
+            _clean_optional_value(
+                raw_candidate.get("domain")
+                if raw_candidate.get("domain") is not None
+                else raw_candidate.get("suggested_domain")
+            )
+            or ""
+        )
         competitor_type = _clean_optional_value(raw_candidate.get("competitor_type")) or "unknown"
         summary = _clean_optional_value(raw_candidate.get("summary"))
         why_competitor = _clean_optional_value(raw_candidate.get("why_competitor"))
@@ -766,17 +774,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 return _StructuredPayloadRecoveryResult(
                     payload=payload,
                     reason=payload_reason,
-                    recovery_actions=(_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,)
-                    if fenced is not None
-                    else (),
+                    recovery_actions=(_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,) if fenced is not None else (),
                 )
         if fragment_partial:
             return _StructuredPayloadRecoveryResult(
                 payload=None,
                 reason=_MALFORMED_OUTPUT_REASON_PARTIAL_JSON,
-                recovery_actions=(_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,)
-                if fenced is not None
-                else (),
+                recovery_actions=(_MALFORMED_OUTPUT_REASON_WRAPPED_IN_MARKDOWN,) if fenced is not None else (),
             )
 
         if fenced is not None:
@@ -882,10 +886,18 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             threats = _normalize_text_list(raw_competitor.get("threats"))
 
             why_competitor = opportunities[0] if opportunities else (differentiators[0] if differentiators else summary)
-            evidence = strengths[0] if strengths else (differentiators[0] if differentiators else (threats[0] if threats else None))
+            evidence = (
+                strengths[0]
+                if strengths
+                else (differentiators[0] if differentiators else (threats[0] if threats else None))
+            )
 
-            relevance_score = _coerce_bounded_int(raw_competitor.get("relevance_score"), minimum=1, maximum=5, default=3)
-            visibility_score = _coerce_bounded_int(raw_competitor.get("visibility_score"), minimum=1, maximum=5, default=3)
+            relevance_score = _coerce_bounded_int(
+                raw_competitor.get("relevance_score"), minimum=1, maximum=5, default=3
+            )
+            visibility_score = _coerce_bounded_int(
+                raw_competitor.get("visibility_score"), minimum=1, maximum=5, default=3
+            )
             confidence_score = max(0.0, min(1.0, (relevance_score + visibility_score) / 10.0))
 
             candidates.append(
@@ -957,11 +969,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     "expected_type": expected_type,
                     "actual_type": actual_type,
                     "discard_reason": discard_reason,
-                    "required_or_optional": (
-                        "required"
-                        if field_name in _CANDIDATE_REQUIRED_FIELDS
-                        else "optional"
-                    ),
+                    "required_or_optional": ("required" if field_name in _CANDIDATE_REQUIRED_FIELDS else "optional"),
                 }
             )
             if len(diagnostics) >= _INVALID_FIELD_DIAGNOSTIC_MAX_ITEMS:
@@ -1171,11 +1179,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
     ) -> None:
         structured_payload = {"event": event, "provider_name": self.provider_name}
         structured_payload.update(payload)
-        safe_payload = {
-            key: value
-            for key, value in structured_payload.items()
-            if value is not None
-        }
+        safe_payload = {key: value for key, value in structured_payload.items() if value is not None}
         try:
             serialized = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
@@ -1344,13 +1348,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         normalized_timeout_type = _clean_optional_value((timeout_type or "").strip().lower())
         if failure_kind == "timeout":
             payload["timeout_type"] = (
-                normalized_timeout_type
-                if normalized_timeout_type in _TIMEOUT_TYPE_VALUES
-                else _TIMEOUT_TYPE_UNKNOWN
+                normalized_timeout_type if normalized_timeout_type in _TIMEOUT_TYPE_VALUES else _TIMEOUT_TYPE_UNKNOWN
             )
-        normalized_reason = _clean_optional_value(
-            str(malformed_output_reason or "").strip().lower()
-        )
+        normalized_reason = _clean_optional_value(str(malformed_output_reason or "").strip().lower())
         if normalized_reason in _MALFORMED_OUTPUT_ALLOWED_REASONS:
             payload["malformed_output_reason"] = normalized_reason
         self._emit_structured_provider_log(
@@ -1360,7 +1360,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         )
 
     def _should_log_structured_error(self, provider_error: SEOCompetitorProfileProviderError) -> bool:
-        if provider_error.code in {_PROVIDER_ERROR_INVALID_OUTPUT, _PROVIDER_ERROR_SCHEMA_VALIDATION, _PROVIDER_ERROR_PARSING}:
+        if provider_error.code in {
+            _PROVIDER_ERROR_INVALID_OUTPUT,
+            _PROVIDER_ERROR_SCHEMA_VALIDATION,
+            _PROVIDER_ERROR_PARSING,
+        }:
             return True
         failure_kind, _, _, _, _ = self._extract_structured_failure_details(provider_error.raw_output)
         return failure_kind == "malformed_output"
@@ -1378,9 +1382,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             timeout_type,
             duration_ms,
             parsed_endpoint,
-        ) = self._extract_structured_failure_details(
-            provider_error.raw_output
-        )
+        ) = self._extract_structured_failure_details(provider_error.raw_output)
         effective_failure_kind = failure_kind or "malformed_output"
         effective_endpoint = parsed_endpoint or endpoint_path
         if effective_failure_kind not in {"timeout", "provider_request", "malformed_output"}:
@@ -1500,9 +1502,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             if exc.code in {401, 403}:
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_AUTH_CONFIG,
-                    safe_message=(
-                        "AI provider authentication failed. Verify competitor profile provider credentials."
-                    ),
+                    safe_message=("AI provider authentication failed. Verify competitor profile provider credentials."),
                     raw_output=body_text,
                 ) from exc
             if exc.code in {408, 504}:
@@ -1743,11 +1743,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         if normalized in _PROVIDER_CALL_TYPES:
             return normalized
         if isinstance(web_search_enabled, bool):
-            return (
-                _PROVIDER_CALL_TYPE_TOOL_ENABLED
-                if web_search_enabled
-                else _PROVIDER_CALL_TYPE_NON_TOOL
-            )
+            return _PROVIDER_CALL_TYPE_TOOL_ENABLED if web_search_enabled else _PROVIDER_CALL_TYPE_NON_TOOL
         return _PROVIDER_CALL_TYPE_TOOL_ENABLED
 
     def _normalize_execution_mode(
@@ -1921,9 +1917,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         normalized_timeout_type = _clean_optional_value((timeout_type or "").strip().lower())
         if normalized_failure_kind == "timeout":
             payload["timeout_type"] = (
-                normalized_timeout_type
-                if normalized_timeout_type in _TIMEOUT_TYPE_VALUES
-                else _TIMEOUT_TYPE_UNKNOWN
+                normalized_timeout_type if normalized_timeout_type in _TIMEOUT_TYPE_VALUES else _TIMEOUT_TYPE_UNKNOWN
             )
         if request_debug:
             payload["request_debug"] = {
@@ -1952,9 +1946,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 payload["malformed_output_reason"] = normalized_reason
             if recovery_actions:
                 normalized_actions = [
-                    action
-                    for action in recovery_actions
-                    if action in _MALFORMED_OUTPUT_ALLOWED_REASONS
+                    action for action in recovery_actions if action in _MALFORMED_OUTPUT_ALLOWED_REASONS
                 ]
                 if normalized_actions:
                     payload["recovery_actions"] = normalized_actions

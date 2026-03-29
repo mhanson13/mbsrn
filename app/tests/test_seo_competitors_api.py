@@ -421,9 +421,7 @@ def test_snapshot_page_reads_return_capture_context_and_site_scoped_v1_route(db_
         url="https://competitor.example/landing",
     )
 
-    pages_response = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/snapshot-runs/{snapshot_run_id}/pages"
-    )
+    pages_response = client.get(f"/api/businesses/{seeded_business.id}/seo/snapshot-runs/{snapshot_run_id}/pages")
     assert pages_response.status_code == 200
     pages_payload = pages_response.json()
     assert pages_payload["total"] == 1
@@ -432,14 +430,10 @@ def test_snapshot_page_reads_return_capture_context_and_site_scoped_v1_route(db_
     assert pages_payload["items"][0]["competitor_domain_id"] == domain_id
     assert pages_payload["items"][0]["title"] == "Snapshot Title"
 
-    cross_tenant_pages = client.get(
-        f"/api/businesses/{other_business.id}/seo/snapshot-runs/{snapshot_run_id}/pages"
-    )
+    cross_tenant_pages = client.get(f"/api/businesses/{other_business.id}/seo/snapshot-runs/{snapshot_run_id}/pages")
     assert cross_tenant_pages.status_code == 404
 
-    unknown_run_pages = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/snapshot-runs/{uuid4()}/pages"
-    )
+    unknown_run_pages = client.get(f"/api/businesses/{seeded_business.id}/seo/snapshot-runs/{uuid4()}/pages")
     assert unknown_run_pages.status_code == 404
 
     v1_pages = client.get(

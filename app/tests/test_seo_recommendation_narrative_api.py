@@ -445,7 +445,9 @@ def test_recommendation_narrative_surfaces_action_summary_from_rich_sections(
     assert action_summary is not None
     assert action_summary["primary_action"] == "Publish emergency service page updates for top service categories."
     assert action_summary["first_step"] == "Publish emergency service page updates for top service categories."
-    assert action_summary["why_it_matters"] == "This addresses the strongest local conversion and visibility gaps first."
+    assert (
+        action_summary["why_it_matters"] == "This addresses the strongest local conversion and visibility gaps first."
+    )
     assert 1 <= len(action_summary["evidence"]) <= 4
     assert "Emergency service pages are weaker than nearby competitors." in action_summary["evidence"]
     signal_summary = payload["signal_summary"]
@@ -837,11 +839,11 @@ def test_recommendation_narrative_competitor_influence_remains_bounded(
             '{"competitors":['
             '{"name":"Competitor 1"},{"name":"Competitor 2"},{"name":"Competitor 3"},'
             '{"name":"Competitor 4"},{"name":"Competitor 5"},{"name":"Competitor 6"}'
-            '],'
+            "],"
             '"top_opportunities":['
             '"Opportunity 1","Opportunity 2","Opportunity 3",'
             '"Opportunity 4","Opportunity 5","Opportunity 6"'
-            '],'
+            "],"
             '"summary":"Competitor context with many entries."}'
         ),
     )
