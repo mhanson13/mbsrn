@@ -308,6 +308,50 @@ Notes:
   - per-competitor field explains each draft's origin class
 - Historical runs may not contain per-competitor provenance fields; UI must handle missing values safely.
 
+### Per-competitor evidence interpretation
+
+Each draft may include a compact deterministic `operator_evidence_summary` derived from existing structured signals:
+
+- strong local match
+- broader service coverage
+- location relevance from nearby seed discovery
+- lower-confidence synthetic/fallback candidate
+
+This is backend-authored deterministic text, not model-generated narrative.
+
+### Recommendation linkage to competitor evidence
+
+Workspace recommendation items may include optional linkage fields:
+
+- `competitor_evidence_links` (up to 3 linked competitors)
+- `competitor_linkage_summary` (short gap/advantage context)
+
+These fields are additive:
+- present when competitor-backed evidence is available
+- omitted/empty for low-data or non-competitor-backed recommendation rows
+
+### Recommendation action-delta composition
+
+Workspace recommendation rows can also include an optional deterministic `recommendation_action_delta`
+when competitor evidence is strong enough:
+
+- `observed_competitor_pattern`
+- `observed_site_gap`
+- `recommended_operator_action`
+- `evidence_strength` (`high` | `medium` | `low`)
+
+This is composed from existing competitor linkage/evidence fields and recommendation metadata only.
+No additional provider call is used, and low-signal rows omit the action-delta payload.
+
+### Competitor evidence and recommendation priority
+
+Competitor linkage and action-delta strength can elevate recommendation priority tier in workspace rendering:
+
+- stronger competitor-backed evidence + clear action => higher priority
+- weaker or sparse competitor evidence => lower priority
+
+This remains deterministic and backend-authored; no additional provider call is introduced.
+
 ## Provider Error Visibility
 
 Competitor provider failures now emit bounded backend log metadata to improve debugging:
@@ -516,7 +560,20 @@ Competitor generation uses a two-stage yield model:
    - this improves odds that enough valid candidates survive strict filtering
 2. Filtering stage (deterministic validation + eligibility + tuning):
    - invalid/malformed/low-relevance candidates are removed
-   - final output is still capped to the run `requested_candidate_count`
+   - final output is capped to `requested_candidate_count` and now defaults to a 10-candidate target for workspace-triggered runs
+
+### Tiered output labels
+
+Returned drafts now include compact operator-safe tier labels:
+
+- `confidence_level`: `high` | `medium` | `low`
+- `source_type`: `search` | `places` | `fallback` | `synthetic`
+
+Interpretation:
+
+- `high` + `search`/`places`: strongest direct discovery candidates
+- `medium`: secondary/adjacent candidates retained for review depth
+- `low` + `fallback`/`synthetic`: deterministic gap-fill candidates for operator review when discovery is sparse
 
 Why returned candidates can be lower than discovered candidates:
 

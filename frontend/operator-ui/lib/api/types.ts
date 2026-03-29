@@ -336,8 +336,11 @@ export interface CompetitorProfileDraft {
   evidence: string | null;
   confidence_score: number;
   source: string;
+  confidence_level?: "high" | "medium" | "low" | null;
+  source_type?: "search" | "places" | "fallback" | "synthetic" | null;
   provenance_classification?: "places_ai_enriched" | "ai_only" | "synthetic_fallback" | null;
   provenance_explanation?: string | null;
+  operator_evidence_summary?: string | null;
   forced_inclusion?: boolean;
   forced_reason?: string | null;
   review_status: "pending" | "edited" | "accepted" | "rejected";
@@ -1000,6 +1003,28 @@ export interface RecommendationEEATGapSummary {
   message: string;
 }
 
+export interface RecommendationCompetitorEvidenceLink {
+  competitor_draft_id: string;
+  competitor_name: string;
+  competitor_domain?: string | null;
+  confidence_level?: "high" | "medium" | "low" | null;
+  source_type?: "search" | "places" | "fallback" | "synthetic" | null;
+  evidence_summary?: string | null;
+}
+
+export interface RecommendationActionDelta {
+  observed_competitor_pattern: string;
+  observed_site_gap: string;
+  recommended_operator_action: string;
+  evidence_strength: "high" | "medium" | "low";
+}
+
+export interface RecommendationPriority {
+  priority_level: "high" | "medium" | "low";
+  priority_reason: string;
+  effort_hint?: "quick_win" | "moderate" | "larger_change" | null;
+}
+
 export interface Recommendation {
   id: string;
   business_id: string;
@@ -1032,6 +1057,10 @@ export interface Recommendation {
   recommendation_expected_outcome?: string | null;
   recommendation_target_context?: RecommendationTargetContext | null;
   recommendation_target_page_hints?: string[];
+  competitor_evidence_links?: RecommendationCompetitorEvidenceLink[];
+  competitor_linkage_summary?: string | null;
+  recommendation_action_delta?: RecommendationActionDelta | null;
+  recommendation_priority?: RecommendationPriority | null;
   decision_reason: string | null;
   created_at: string;
   updated_at: string;

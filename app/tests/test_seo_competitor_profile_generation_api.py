@@ -1571,8 +1571,12 @@ def test_google_places_seed_queries_are_generated_from_service_and_location_cont
         detail_payload["drafts"][0]["provenance_explanation"]
         == "Discovered from nearby business seed data and enriched for service/location fit."
     )
+    assert any(
+        token in detail_payload["drafts"][0]["operator_evidence_summary"].lower()
+        for token in ("local match", "location relevance")
+    )
     assert seed_client.queries
-    assert len(seed_client.queries) <= 3
+    assert len(seed_client.queries) <= 5
     joined_queries = " | ".join(seed_client.queries).lower()
     assert "80501" in joined_queries or "longmont" in joined_queries
     assert "fire protection services" in joined_queries
@@ -1633,6 +1637,7 @@ def test_google_places_seeds_are_passed_to_ai_enrichment_with_minimal_fields(db_
         detail_payload["drafts"][0]["provenance_explanation"]
         == "Discovered from nearby business seed data and enriched for service/location fit."
     )
+    assert detail_payload["drafts"][0]["operator_evidence_summary"]
 
     assert provider.received_seed_candidates
     first_seed = provider.received_seed_candidates[0]
@@ -1734,7 +1739,75 @@ def test_google_places_unavailable_falls_back_to_existing_competitor_flow(db_ses
         detail_payload["drafts"][0]["provenance_explanation"]
         == "Selected from AI discovery based on service/location relevance."
     )
+    assert "service and location relevance" in detail_payload["drafts"][0]["operator_evidence_summary"].lower()
     assert provider.received_seed_candidates == []
+
+
+def test_tiered_competitor_fill_targets_ten_with_confidence_and_source_labels(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="tiered-ten.example")
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=10)["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_DeterministicCompetitorProfileProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["requested_candidate_count"] == 10
+    assert payload["run"]["generated_draft_count"] == 10
+    assert payload["total_drafts"] == 10
+    confidence_levels = {item.get("confidence_level") for item in payload["drafts"]}
+    source_types = {item.get("source_type") for item in payload["drafts"]}
+    assert confidence_levels.issubset({"high", "medium", "low"})
+    assert "search" in source_types
+    assert "synthetic" in source_types
+    assert all(item.get("operator_evidence_summary") for item in payload["drafts"])
+
+
+def test_tiered_competitor_fill_can_include_fallback_source_type(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="tiered-fallback.example")
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=10)["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_ExcludedDomainHintCompetitorProfileProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["generated_draft_count"] == 10
+    source_types = {item.get("source_type") for item in payload["drafts"]}
+    assert "search" in source_types
+    assert "fallback" in source_types
 
 
 def _seed_tuning_preview_event(

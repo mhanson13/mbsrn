@@ -89,6 +89,8 @@ from app.schemas.ai_prompt import build_ai_prompt_preview_read
 from app.schemas.seo_recommendation import (
     SEOCompetitorContextHealthCheckRead,
     SEOCompetitorContextHealthRead,
+    SEORecommendationActionDeltaRead,
+    SEORecommendationCompetitorEvidenceLinkRead,
     SEORecommendationEEATCategory,
     SEORecommendationEEATGapSummaryRead,
     SEORecommendationAnalysisFreshnessRead,
@@ -98,6 +100,7 @@ from app.schemas.seo_recommendation import (
     SEORecommendationListQuery,
     SEORecommendationListResponse,
     SEORecommendationOrderingExplanationRead,
+    SEORecommendationPriorityRead,
     SEORecommendationStartHereRead,
     SEORecommendationThemeGroupRead,
     SEOWorkspaceSectionFreshnessRead,
@@ -201,6 +204,10 @@ _WORKSPACE_SETTING_LABELS = {
 _WORKSPACE_APPLY_OUTCOME_LABEL_MAX_CHARS = 180
 _WORKSPACE_APPLY_OUTCOME_EXPECTED_MAX_CHARS = 260
 _WORKSPACE_APPLY_OUTCOME_REFLECT_MAX_CHARS = 220
+_WORKSPACE_COMPETITOR_EVIDENCE_LINK_MAX_ITEMS = 3
+_WORKSPACE_COMPETITOR_EVIDENCE_TEXT_MAX_CHARS = 220
+_WORKSPACE_RECOMMENDATION_COMPETITOR_LINKAGE_SUMMARY_MAX_CHARS = 240
+_WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS = 220
 _WORKSPACE_EEAT_GAP_MAX_SIGNALS = 6
 _WORKSPACE_EEAT_GAP_SIGNAL_MAX_CHARS = 140
 _WORKSPACE_COMPETITOR_CONTEXT_HEALTH_DETAIL_MAX_CHARS = 220
@@ -1601,6 +1608,356 @@ def _derive_workspace_recommendation_target_page_hints(
     return hints_by_recommendation_id
 
 
+def _workspace_recommendation_has_competitor_backing(recommendation: SEORecommendationRead) -> bool:
+    if recommendation.comparison_run_id:
+        return True
+    if "competitor_gap" in recommendation.priority_reasons:
+        return True
+    evidence_json = recommendation.evidence_json if isinstance(recommendation.evidence_json, dict) else None
+    sources = evidence_json.get("sources") if isinstance(evidence_json, dict) else None
+    if isinstance(sources, list):
+        for source in sources:
+            if str(source or "").strip().lower() == "comparison":
+                return True
+    return False
+
+
+def _workspace_competitor_link_rank_score(
+    *,
+    recommendation: SEORecommendationRead,
+    draft: SEOCompetitorProfileDraftRead,
+) -> float:
+    score = max(0.0, float(draft.confidence_score or 0.0))
+    if draft.competitor_type in {"direct", "local"}:
+        score += 0.1
+    if draft.source_type == "places":
+        score += 0.08
+    if draft.source_type == "synthetic":
+        score -= 0.35
+    if recommendation.recommendation_target_context == "location_pages":
+        if draft.competitor_type == "local":
+            score += 0.07
+        if draft.source_type == "places":
+            score += 0.04
+    if recommendation.recommendation_target_context == "service_pages" and draft.competitor_type in {"direct", "indirect"}:
+        score += 0.05
+    return score
+
+
+def _build_workspace_recommendation_competitor_linkage(
+    *,
+    recommendations: list[SEORecommendationRead],
+    competitor_drafts: list[SEOCompetitorProfileDraftRead],
+) -> dict[str, dict[str, object]]:
+    if not recommendations:
+        return {}
+
+    normalized_drafts = [
+        draft
+        for draft in competitor_drafts
+        if _compact_workspace_text(draft.suggested_name, max_length=180) is not None
+    ]
+    if not normalized_drafts:
+        return {}
+
+    linkage_by_recommendation_id: dict[str, dict[str, object]] = {}
+    for recommendation in recommendations:
+        if not _workspace_recommendation_has_competitor_backing(recommendation):
+            continue
+
+        ranked_drafts = sorted(
+            normalized_drafts,
+            key=lambda draft: (
+                -_workspace_competitor_link_rank_score(recommendation=recommendation, draft=draft),
+                str(draft.suggested_name or "").lower(),
+                draft.id,
+            ),
+        )
+
+        links: list[SEORecommendationCompetitorEvidenceLinkRead] = []
+        seen_draft_ids: set[str] = set()
+        for draft in ranked_drafts:
+            if draft.id in seen_draft_ids:
+                continue
+            seen_draft_ids.add(draft.id)
+            competitor_name = _compact_workspace_text(draft.suggested_name, max_length=180)
+            if competitor_name is None:
+                continue
+            try:
+                links.append(
+                    SEORecommendationCompetitorEvidenceLinkRead.model_validate(
+                        {
+                            "competitor_draft_id": draft.id,
+                            "competitor_name": competitor_name,
+                            "competitor_domain": _compact_workspace_text(draft.suggested_domain, max_length=255),
+                            "confidence_level": draft.confidence_level,
+                            "source_type": draft.source_type,
+                            "evidence_summary": _compact_workspace_text(
+                                draft.operator_evidence_summary
+                                or draft.provenance_explanation
+                                or draft.why_competitor
+                                or draft.summary,
+                                max_length=_WORKSPACE_COMPETITOR_EVIDENCE_TEXT_MAX_CHARS,
+                            ),
+                        }
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                continue
+            if len(links) >= _WORKSPACE_COMPETITOR_EVIDENCE_LINK_MAX_ITEMS:
+                break
+
+        observed_gap_or_advantage = _compact_workspace_text(
+            recommendation.recommendation_observed_gap_summary,
+            max_length=_WORKSPACE_RECOMMENDATION_COMPETITOR_LINKAGE_SUMMARY_MAX_CHARS,
+        )
+        if observed_gap_or_advantage is not None:
+            linkage_summary = observed_gap_or_advantage
+        elif links:
+            linkage_summary = _compact_workspace_text(
+                "Competitor evidence indicates this recommendation can close a local service visibility gap.",
+                max_length=_WORKSPACE_RECOMMENDATION_COMPETITOR_LINKAGE_SUMMARY_MAX_CHARS,
+            )
+        else:
+            linkage_summary = _compact_workspace_text(
+                "Competitor evidence is limited for this recommendation; validate against local market context.",
+                max_length=_WORKSPACE_RECOMMENDATION_COMPETITOR_LINKAGE_SUMMARY_MAX_CHARS,
+            )
+
+        linkage_by_recommendation_id[recommendation.id] = {
+            "competitor_evidence_links": links,
+            "competitor_linkage_summary": linkage_summary,
+        }
+
+    return linkage_by_recommendation_id
+
+
+def _derive_workspace_action_delta_evidence_strength(
+    links: list[SEORecommendationCompetitorEvidenceLinkRead],
+) -> str:
+    if not links:
+        return "low"
+    high_count = sum(1 for link in links if link.confidence_level == "high")
+    medium_count = sum(1 for link in links if link.confidence_level == "medium")
+    places_count = sum(1 for link in links if link.source_type == "places")
+    if high_count >= 1 and (len(links) >= 2 or places_count >= 1):
+        return "high"
+    if high_count >= 1 or medium_count >= 1 or len(links) >= 2:
+        return "medium"
+    return "low"
+
+
+def _derive_workspace_observed_competitor_pattern(
+    links: list[SEORecommendationCompetitorEvidenceLinkRead],
+) -> str | None:
+    if not links:
+        return None
+    has_places = any(link.source_type == "places" for link in links)
+    has_high = any(link.confidence_level == "high" for link in links)
+    normalized_source_types = [link.source_type for link in links if link.source_type]
+    only_fallback_sources = bool(normalized_source_types) and all(
+        source_type in {"fallback", "synthetic"} for source_type in normalized_source_types
+    )
+    if only_fallback_sources:
+        return _compact_workspace_text(
+            "Competitor coverage is based on lower-confidence fallback candidates.",
+            max_length=_WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS,
+        )
+    if has_places and has_high:
+        return _compact_workspace_text(
+            "Nearby seeded competitors show strong local service coverage.",
+            max_length=_WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS,
+        )
+    if has_places:
+        return _compact_workspace_text(
+            "Nearby seeded competitors indicate stronger local relevance in this area.",
+            max_length=_WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS,
+        )
+    if has_high:
+        return _compact_workspace_text(
+            "Top linked competitors show stronger coverage in this recommendation area.",
+            max_length=_WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS,
+        )
+    return _compact_workspace_text(
+        "Linked competitors indicate stronger coverage in this recommendation area.",
+        max_length=_WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS,
+    )
+
+
+def _build_workspace_recommendation_action_deltas(
+    *,
+    recommendations: list[SEORecommendationRead],
+    competitor_linkage_by_recommendation_id: dict[str, dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    if not recommendations:
+        return {}
+
+    action_deltas_by_recommendation_id: dict[str, dict[str, object]] = {}
+    for recommendation in recommendations:
+        linkage_payload = competitor_linkage_by_recommendation_id.get(recommendation.id)
+        if linkage_payload is None:
+            continue
+
+        raw_links = linkage_payload.get("competitor_evidence_links")
+        links = [link for link in raw_links if isinstance(link, SEORecommendationCompetitorEvidenceLinkRead)] if isinstance(raw_links, list) else []
+        if not links:
+            continue
+
+        observed_competitor_pattern = _derive_workspace_observed_competitor_pattern(links)
+        observed_site_gap = _compact_workspace_text(
+            recommendation.recommendation_observed_gap_summary,
+            max_length=_WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS,
+        )
+        if observed_site_gap is None:
+            observed_site_gap = _compact_workspace_text(
+                recommendation.recommendation_evidence_summary,
+                max_length=_WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS,
+            )
+
+        recommended_operator_action = _compact_workspace_text(
+            recommendation.recommendation_action_clarity,
+            max_length=_WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS,
+        )
+        if recommended_operator_action is None:
+            recommended_operator_action = _compact_workspace_text(
+                recommendation.title,
+                max_length=_WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS,
+            )
+
+        if (
+            observed_competitor_pattern is None
+            or observed_site_gap is None
+            or recommended_operator_action is None
+        ):
+            continue
+
+        evidence_strength = _derive_workspace_action_delta_evidence_strength(links)
+
+        try:
+            action_delta = SEORecommendationActionDeltaRead.model_validate(
+                {
+                    "observed_competitor_pattern": observed_competitor_pattern,
+                    "observed_site_gap": observed_site_gap,
+                    "recommended_operator_action": recommended_operator_action,
+                    "evidence_strength": evidence_strength,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            continue
+
+        action_deltas_by_recommendation_id[recommendation.id] = {
+            "recommendation_action_delta": action_delta,
+        }
+
+    return action_deltas_by_recommendation_id
+
+
+def _workspace_recommendation_effort_hint(effort_bucket: str | None) -> str | None:
+    normalized = str(effort_bucket or "").strip().upper()
+    if normalized == "LOW":
+        return "quick_win"
+    if normalized == "MEDIUM":
+        return "moderate"
+    if normalized == "HIGH":
+        return "larger_change"
+    return None
+
+
+def _workspace_priority_reason_for_level(
+    *,
+    priority_level: str,
+    has_competitor_linkage: bool,
+    has_action_delta: bool,
+) -> str:
+    if priority_level == "high":
+        if has_competitor_linkage and has_action_delta:
+            return "Strong competitor-backed gap with a clear next action."
+        if has_action_delta:
+            return "Clear action with high-impact evidence from current signals."
+        return "High-impact recommendation that should be addressed first."
+    if priority_level == "medium":
+        if has_competitor_linkage:
+            return "Competitor-backed gap with an actionable next step."
+        return "Actionable recommendation with moderate evidence support."
+    if has_action_delta:
+        return "Lower-evidence action; schedule after higher-priority items."
+    return "Limited competitor evidence; review after higher-confidence actions."
+
+
+def _build_workspace_recommendation_priorities(
+    *,
+    recommendations: list[SEORecommendationRead],
+    competitor_linkage_by_recommendation_id: dict[str, dict[str, object]],
+    action_delta_by_recommendation_id: dict[str, dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    if not recommendations:
+        return {}
+
+    priorities_by_recommendation_id: dict[str, dict[str, object]] = {}
+    for recommendation in recommendations:
+        linkage_payload = competitor_linkage_by_recommendation_id.get(recommendation.id, {})
+        links_raw = linkage_payload.get("competitor_evidence_links")
+        links = [link for link in links_raw if isinstance(link, SEORecommendationCompetitorEvidenceLinkRead)] if isinstance(links_raw, list) else []
+        high_link_count = sum(1 for link in links if link.confidence_level == "high")
+        has_competitor_linkage = bool(links)
+
+        action_delta_payload = action_delta_by_recommendation_id.get(recommendation.id, {})
+        action_delta = action_delta_payload.get("recommendation_action_delta")
+        action_delta_evidence_strength = (
+            action_delta.evidence_strength if isinstance(action_delta, SEORecommendationActionDeltaRead) else None
+        )
+        has_action_delta = action_delta_evidence_strength is not None
+
+        score = 0
+        if action_delta_evidence_strength == "high":
+            score += 4
+        elif action_delta_evidence_strength == "medium":
+            score += 2
+        elif action_delta_evidence_strength == "low":
+            score += 1
+
+        if len(links) >= 2:
+            score += 1
+        if high_link_count >= 1:
+            score += 1
+
+        if recommendation.priority_band in {"critical", "high"}:
+            score += 1
+        if recommendation.severity == "CRITICAL":
+            score += 1
+
+        if score >= 5:
+            priority_level = "high"
+        elif score >= 2:
+            priority_level = "medium"
+        else:
+            priority_level = "low"
+
+        priority_reason = _workspace_priority_reason_for_level(
+            priority_level=priority_level,
+            has_competitor_linkage=has_competitor_linkage,
+            has_action_delta=has_action_delta,
+        )
+        effort_hint = _workspace_recommendation_effort_hint(recommendation.effort_bucket)
+
+        try:
+            priority = SEORecommendationPriorityRead.model_validate(
+                {
+                    "priority_level": priority_level,
+                    "priority_reason": priority_reason,
+                    "effort_hint": effort_hint,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            continue
+
+        priorities_by_recommendation_id[recommendation.id] = {
+            "recommendation_priority": priority,
+        }
+
+    return priorities_by_recommendation_id
+
+
 def _load_workspace_audit_pages_for_recommendations(
     *,
     business_id: str,
@@ -2137,6 +2494,7 @@ def get_seo_recommendation_workspace_summary(
     competitor_prompt_preview = None
     recommendation_prompt_preview = None
     latest_competitor_outcome_summary: SEOCompetitorProfileOutcomeSummaryRead | None = None
+    latest_competitor_drafts: list[SEOCompetitorProfileDraftRead] = []
     trusted_site_context: dict[str, object] = {}
     workspace_audit_pages: list[SEOAuditPage] = []
     latest_applied_preview_event = (
@@ -2270,6 +2628,10 @@ def get_seo_recommendation_workspace_summary(
                 latest_competitor_outcome_summary = SEOCompetitorProfileOutcomeSummaryRead.model_validate(
                     latest_competitor_run_detail.outcome_summary
                 )
+            latest_competitor_drafts = [
+                SEOCompetitorProfileDraftRead.model_validate(item)
+                for item in (latest_competitor_run_detail.drafts or [])
+            ]
         except Exception:  # noqa: BLE001
             logger.warning(
                 "Failed to build competitor run outcome summary for workspace business_id=%s site_id=%s run_id=%s",
@@ -2277,7 +2639,7 @@ def get_seo_recommendation_workspace_summary(
                 site_id,
                 latest_competitor_run.id,
             )
-    competitor_candidate_count = latest_competitor_runs[0].requested_candidate_count if latest_competitor_runs else 5
+    competitor_candidate_count = latest_competitor_runs[0].requested_candidate_count if latest_competitor_runs else 10
     try:
         competitor_prompt_preview_data = generation_service.build_prompt_preview(
             business_id=scoped_business_id,
@@ -2385,6 +2747,19 @@ def get_seo_recommendation_workspace_summary(
         applied_recommendation_ids=applied_recommendation_ids,
         analysis_freshness=analysis_freshness,
     )
+    recommendation_competitor_linkage = _build_workspace_recommendation_competitor_linkage(
+        recommendations=recommendations_payload.items,
+        competitor_drafts=latest_competitor_drafts,
+    )
+    recommendation_action_deltas = _build_workspace_recommendation_action_deltas(
+        recommendations=recommendations_payload.items,
+        competitor_linkage_by_recommendation_id=recommendation_competitor_linkage,
+    )
+    recommendation_priorities = _build_workspace_recommendation_priorities(
+        recommendations=recommendations_payload.items,
+        competitor_linkage_by_recommendation_id=recommendation_competitor_linkage,
+        action_delta_by_recommendation_id=recommendation_action_deltas,
+    )
     recommendation_target_page_hints_by_id = _derive_workspace_recommendation_target_page_hints(
         recommendations=recommendations_payload.items,
         audit_pages=workspace_audit_pages,
@@ -2393,6 +2768,9 @@ def get_seo_recommendation_workspace_summary(
         recommendation.model_copy(
             update={
                 **recommendation_progress_metadata.get(recommendation.id, {}),
+                **recommendation_competitor_linkage.get(recommendation.id, {}),
+                **recommendation_action_deltas.get(recommendation.id, {}),
+                **recommendation_priorities.get(recommendation.id, {}),
                 "recommendation_target_page_hints": recommendation_target_page_hints_by_id.get(
                     recommendation.id,
                     [],

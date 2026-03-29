@@ -19,6 +19,7 @@ from app.models.seo_audit_page import SEOAuditPage
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_finding import SEOCompetitorComparisonFinding
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
+from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
 from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
 from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
@@ -2259,6 +2260,8 @@ def test_recommendation_workspace_summary_derives_target_page_hints_from_audit_i
     assert by_rule_key["workspace_hint_homepage"]["recommendation_target_page_hints"] == ["Homepage"]
     assert by_rule_key["workspace_hint_homepage"]["recommendation_observed_gap_summary"]
     assert "Homepage" in by_rule_key["workspace_hint_homepage"]["recommendation_evidence_trace"]
+    assert by_rule_key["workspace_hint_homepage"]["recommendation_priority"]["priority_level"] == "low"
+    assert by_rule_key["workspace_hint_homepage"]["recommendation_priority"]["effort_hint"] == "moderate"
 
     contact_hints = by_rule_key["workspace_hint_contact_about"]["recommendation_target_page_hints"]
     assert contact_hints
@@ -2269,12 +2272,98 @@ def test_recommendation_workspace_summary_derives_target_page_hints_from_audit_i
     assert "/services" in by_rule_key["workspace_hint_service_pages"]["recommendation_target_page_hints"]
     assert "service" in by_rule_key["workspace_hint_service_pages"]["recommendation_observed_gap_summary"].lower()
     assert "Service pages" in by_rule_key["workspace_hint_service_pages"]["recommendation_evidence_trace"]
+    assert by_rule_key["workspace_hint_service_pages"]["recommendation_priority"]["priority_level"] == "low"
     assert "/locations/loveland" in by_rule_key["workspace_hint_location_pages"]["recommendation_target_page_hints"]
     assert (
         "local/service-area"
         in by_rule_key["workspace_hint_location_pages"]["recommendation_observed_gap_summary"].lower()
     )
     assert "Location pages" in by_rule_key["workspace_hint_location_pages"]["recommendation_evidence_trace"]
+    assert by_rule_key["workspace_hint_location_pages"]["recommendation_priority"]["priority_level"] == "low"
+
+
+def test_recommendation_workspace_summary_derives_medium_priority_from_moderate_competitor_evidence(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+    audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+    )
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    recommendation_list = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert recommendation_list.status_code == 200
+    recommendation_id = recommendation_list.json()["items"][0]["id"]
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.comparison_run_id = str(uuid4())
+    recommendation.priority_band = "medium"
+    recommendation.severity = "WARNING"
+    recommendation.effort_bucket = "MEDIUM"
+    db_session.add(recommendation)
+
+    competitor_run_id = str(uuid4())
+    db_session.add(
+        SEOCompetitorProfileGenerationRun(
+            id=competitor_run_id,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            parent_run_id=None,
+            status="completed",
+            requested_candidate_count=10,
+            generated_draft_count=1,
+            raw_candidate_count=1,
+            included_candidate_count=1,
+            excluded_candidate_count=0,
+            exclusion_counts_by_reason={},
+            provider_name="openai",
+            model_name="gpt-5-mini",
+            prompt_version="seo-competitor-profile-v2",
+            failure_category=None,
+            raw_output=json.dumps({"provider_attempt_count": 1}),
+            error_summary=None,
+            completed_at=utc_now(),
+            created_by_principal_id="principal-1",
+        )
+    )
+    db_session.add(
+        SEOCompetitorProfileDraft(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            generation_run_id=competitor_run_id,
+            suggested_name="Moderate Confidence Competitor",
+            suggested_domain="moderate-competitor.example",
+            competitor_type="direct",
+            summary="Competes in overlapping service categories.",
+            why_competitor="Service overlap in local market.",
+            evidence="Moderate overlap",
+            confidence_score=0.62,
+            source="ai_generated",
+        )
+    )
+    db_session.commit()
+
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
+    assert summary.status_code == 200
+    payload = summary.json()
+    recommendation_payload = payload["recommendations"]["items"][0]
+    assert recommendation_payload["recommendation_action_delta"] is not None
+    assert recommendation_payload["recommendation_action_delta"]["evidence_strength"] == "medium"
+    assert recommendation_payload["recommendation_priority"] is not None
+    assert recommendation_payload["recommendation_priority"]["priority_level"] == "medium"
+    assert recommendation_payload["recommendation_priority"]["priority_reason"]
+    assert recommendation_payload["recommendation_priority"]["effort_hint"] == "moderate"
 
 
 def test_recommendation_workspace_summary_omits_eeat_gap_summary_when_competitor_signals_are_insufficient(
@@ -2342,6 +2431,10 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
     recommendation = recommendation_list.json()["items"][0]
     recommendation_id = recommendation["id"]
     recommendation_title = recommendation["title"]
+    recommendation_record = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation_record is not None
+    recommendation_record.comparison_run_id = str(uuid4())
+    db_session.add(recommendation_record)
 
     narrative_id = str(uuid4())
     db_session.add(
@@ -2420,9 +2513,10 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
             direction_correct=None,
         )
     )
+    competitor_run_id = str(uuid4())
     db_session.add(
         SEOCompetitorProfileGenerationRun(
-            id=str(uuid4()),
+            id=competitor_run_id,
             business_id=seeded_business.id,
             site_id=site_id,
             parent_run_id=None,
@@ -2480,6 +2574,38 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
             created_by_principal_id="principal-1",
         )
     )
+    db_session.add_all(
+        [
+            SEOCompetitorProfileDraft(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                generation_run_id=competitor_run_id,
+                suggested_name="High Confidence Local Competitor",
+                suggested_domain="high-local.example",
+                competitor_type="direct",
+                summary="Strong overlap in local fire protection services.",
+                why_competitor="Competes for similar local service demand.",
+                evidence="Local service overlap",
+                confidence_score=0.84,
+                source="ai_places_enriched",
+            ),
+            SEOCompetitorProfileDraft(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                generation_run_id=competitor_run_id,
+                suggested_name="Secondary Regional Competitor",
+                suggested_domain="secondary-regional.example",
+                competitor_type="indirect",
+                summary="Broader coverage in nearby markets.",
+                why_competitor="Covers adjacent services in region.",
+                evidence="Broader service coverage",
+                confidence_score=0.61,
+                source="ai_generated",
+            ),
+        ]
+    )
     db_session.commit()
 
     summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
@@ -2535,6 +2661,24 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
         payload["recommendations"]["items"][0]["recommendation_lifecycle_summary"]
         == "Applied and waiting for refreshed validation."
     )
+    assert payload["recommendations"]["items"][0]["competitor_linkage_summary"] is not None
+    competitor_links = payload["recommendations"]["items"][0]["competitor_evidence_links"]
+    assert isinstance(competitor_links, list)
+    assert len(competitor_links) >= 1
+    assert competitor_links[0]["competitor_name"]
+    assert competitor_links[0]["source_type"] in {"places", "search", "fallback", "synthetic", None}
+    assert competitor_links[0]["evidence_summary"]
+    action_delta = payload["recommendations"]["items"][0]["recommendation_action_delta"]
+    assert action_delta is not None
+    assert action_delta["observed_competitor_pattern"]
+    assert action_delta["observed_site_gap"]
+    assert action_delta["recommended_operator_action"]
+    assert action_delta["evidence_strength"] in {"high", "medium", "low"}
+    recommendation_priority = payload["recommendations"]["items"][0]["recommendation_priority"]
+    assert recommendation_priority is not None
+    assert recommendation_priority["priority_level"] == "high"
+    assert recommendation_priority["priority_reason"]
+    assert recommendation_priority["effort_hint"] in {"quick_win", "moderate", "larger_change", None}
 
 
 def test_recommendation_workspace_summary_handles_partial_apply_metadata_safely(db_session, seeded_business) -> None:
@@ -2589,6 +2733,10 @@ def test_recommendation_workspace_summary_handles_partial_apply_metadata_safely(
     assert payload["analysis_freshness"]["status"] == "pending_refresh"
     assert payload["start_here"] is not None
     assert payload["start_here"]["context_flags"]
+    assert payload["recommendations"]["items"][0]["competitor_evidence_links"] == []
+    assert payload["recommendations"]["items"][0]["competitor_linkage_summary"] is None
+    assert payload["recommendations"]["items"][0]["recommendation_action_delta"] is None
+    assert payload["recommendations"]["items"][0]["recommendation_priority"] is not None
 
 
 def test_recommendation_workspace_summary_handles_in_progress_runs_safely(db_session, seeded_business) -> None:

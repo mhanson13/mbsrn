@@ -45,6 +45,56 @@ These indicators complement `workspace_trust_summary`:
 - `workspace_trust_summary` = compact cross-workspace trust roll-up
 - section freshness = per-section “is this current right now?” signal
 
+## Competitor Confidence Tiers
+
+Competitor generation now targets up to 10 candidates with tiered operator labels:
+
+- `confidence_level=high`: strongest direct/near-direct competitors.
+- `confidence_level=medium`: adjacent or lower-signal competitors worth review.
+- `confidence_level=low`: fallback/synthetic review candidates used to avoid sparse output.
+
+Each competitor also includes `source_type`:
+
+- `search`: provider-discovered candidates
+- `places`: nearby-business seeded and AI-enriched candidates
+- `fallback`: deterministic fallback candidates derived from candidate overflow
+- `synthetic`: deterministic local-context synthetic placeholders
+
+## Competitor Evidence + Recommendation Linkage
+
+Workspace now surfaces lightweight competitor evidence in two places:
+
+- Per competitor draft:
+  - confidence/source badges (`confidence_level`, `source_type`)
+  - deterministic `operator_evidence_summary` line
+- Per recommendation:
+  - optional `competitor_linkage_summary`
+  - optional `competitor_evidence_links` (up to 3 linked competitors)
+
+This keeps recommendation rationale compact and evidence-based without exposing raw provider/debug payloads.
+
+## Recommendation Action Delta
+
+When competitor linkage is strong enough, recommendation rows now include a compact deterministic
+`recommendation_action_delta` summary:
+
+- `observed_competitor_pattern`
+- `observed_site_gap`
+- `recommended_operator_action`
+- `evidence_strength` (`high` | `medium` | `low`)
+
+This complements (not replaces) competitor linkage lines. Sparse/low-signal rows omit action-delta instead of over-claiming.
+
+## Recommendation Priority Tier
+
+Workspace recommendation rows now include deterministic `recommendation_priority` metadata:
+
+- `priority_level` (`high` | `medium` | `low`)
+- `priority_reason` (short operator-facing rationale)
+- `effort_hint` (`quick_win` | `moderate` | `larger_change`)
+
+UI uses this tier as a compact “what to do first” signal and can sort rows by tier while preserving stable order inside each tier.
+
 TOP ROW
 -------
 Leads Today

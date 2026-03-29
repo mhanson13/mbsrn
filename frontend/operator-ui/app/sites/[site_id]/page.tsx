@@ -82,7 +82,7 @@ const TIMELINE_INITIAL_VISIBLE_COUNT = 10;
 const AI_OPPORTUNITY_INITIAL_COUNT = 3;
 const AI_ACTION_HIGHLIGHT_DURATION_MS = 1800;
 const MAX_RECENT_TUNING_CHANGES = 8;
-const COMPETITOR_PROFILE_DRAFT_CANDIDATE_COUNT = 5;
+const COMPETITOR_PROFILE_DRAFT_CANDIDATE_COUNT = 10;
 const COMPETITOR_PROFILE_POLL_INTERVAL_MS = 3000;
 const COMPETITOR_PROFILE_POLL_MAX_ATTEMPTS = 30;
 const MAX_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
@@ -263,6 +263,63 @@ function competitorDraftProvenanceHintClass(
     return "hint warning";
   }
   return "hint muted";
+}
+
+function formatCompetitorDraftConfidenceLevelLabel(
+  confidenceLevel: CompetitorProfileDraft["confidence_level"],
+): string | null {
+  switch (confidenceLevel) {
+    case "high":
+      return "High confidence";
+    case "medium":
+      return "Medium confidence";
+    case "low":
+      return "Low confidence";
+    default:
+      return null;
+  }
+}
+
+function competitorDraftConfidenceLevelBadgeClass(
+  confidenceLevel: CompetitorProfileDraft["confidence_level"],
+): string {
+  if (confidenceLevel === "high") {
+    return "badge badge-success";
+  }
+  if (confidenceLevel === "medium") {
+    return "badge badge-warn";
+  }
+  if (confidenceLevel === "low") {
+    return "badge badge-muted";
+  }
+  return "badge badge-muted";
+}
+
+function formatCompetitorDraftSourceTypeLabel(
+  sourceType: CompetitorProfileDraft["source_type"],
+): string | null {
+  switch (sourceType) {
+    case "places":
+      return "Nearby seed";
+    case "search":
+      return "AI search";
+    case "fallback":
+      return "Fallback fill";
+    case "synthetic":
+      return "Synthetic";
+    default:
+      return null;
+  }
+}
+
+function competitorDraftSourceTypeBadgeClass(sourceType: CompetitorProfileDraft["source_type"]): string {
+  if (sourceType === "synthetic" || sourceType === "fallback") {
+    return "badge badge-warn";
+  }
+  if (sourceType === "places") {
+    return "badge badge-success";
+  }
+  return "badge badge-muted";
 }
 
 function runActivityTimestamp(
@@ -1512,6 +1569,197 @@ function normalizeRecommendationTargetPageHints(item: Recommendation): string[] 
   return normalizeBoundedStringList(item.recommendation_target_page_hints, 3, 120);
 }
 
+function normalizeRecommendationCompetitorLinkageSummary(item: Recommendation): string | null {
+  return truncateOptionalText(item.competitor_linkage_summary, 240);
+}
+
+function normalizeRecommendationCompetitorEvidenceLinks(
+  item: Recommendation,
+): Array<{
+  competitorDraftId: string;
+  competitorName: string;
+  competitorDomain: string | null;
+  confidenceLevel: "high" | "medium" | "low" | null;
+  sourceType: "search" | "places" | "fallback" | "synthetic" | null;
+  evidenceSummary: string | null;
+}> {
+  if (!Array.isArray(item.competitor_evidence_links)) {
+    return [];
+  }
+  const normalized: Array<{
+    competitorDraftId: string;
+    competitorName: string;
+    competitorDomain: string | null;
+    confidenceLevel: "high" | "medium" | "low" | null;
+    sourceType: "search" | "places" | "fallback" | "synthetic" | null;
+    evidenceSummary: string | null;
+  }> = [];
+  const seenDraftIds = new Set<string>();
+  for (const rawLink of item.competitor_evidence_links) {
+    const competitorDraftId = truncateOptionalText(rawLink?.competitor_draft_id, 36);
+    const competitorName = truncateOptionalText(rawLink?.competitor_name, 180);
+    if (!competitorDraftId || !competitorName || seenDraftIds.has(competitorDraftId)) {
+      continue;
+    }
+    seenDraftIds.add(competitorDraftId);
+    const confidenceLevel =
+      rawLink?.confidence_level === "high" || rawLink?.confidence_level === "medium" || rawLink?.confidence_level === "low"
+        ? rawLink.confidence_level
+        : null;
+    const sourceType =
+      rawLink?.source_type === "search"
+      || rawLink?.source_type === "places"
+      || rawLink?.source_type === "fallback"
+      || rawLink?.source_type === "synthetic"
+        ? rawLink.source_type
+        : null;
+    normalized.push({
+      competitorDraftId,
+      competitorName,
+      competitorDomain: truncateOptionalText(rawLink?.competitor_domain, 255),
+      confidenceLevel,
+      sourceType,
+      evidenceSummary: truncateOptionalText(rawLink?.evidence_summary, 220),
+    });
+    if (normalized.length >= 3) {
+      break;
+    }
+  }
+  return normalized;
+}
+
+function formatRecommendationActionDeltaEvidenceStrength(
+  value: "high" | "medium" | "low",
+): string {
+  if (value === "high") {
+    return "High";
+  }
+  if (value === "medium") {
+    return "Medium";
+  }
+  return "Low";
+}
+
+function normalizeRecommendationActionDelta(
+  item: Recommendation,
+): {
+  observedCompetitorPattern: string;
+  observedSiteGap: string;
+  recommendedOperatorAction: string;
+  evidenceStrength: "high" | "medium" | "low";
+} | null {
+  const raw = item.recommendation_action_delta;
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const observedCompetitorPattern = truncateOptionalText(raw.observed_competitor_pattern, 220);
+  const observedSiteGap = truncateOptionalText(raw.observed_site_gap, 220);
+  const recommendedOperatorAction = truncateOptionalText(raw.recommended_operator_action, 220);
+  const evidenceStrength =
+    raw.evidence_strength === "high" || raw.evidence_strength === "medium" || raw.evidence_strength === "low"
+      ? raw.evidence_strength
+      : null;
+  if (!observedCompetitorPattern || !observedSiteGap || !recommendedOperatorAction || !evidenceStrength) {
+    return null;
+  }
+  return {
+    observedCompetitorPattern,
+    observedSiteGap,
+    recommendedOperatorAction,
+    evidenceStrength,
+  };
+}
+
+function formatRecommendationPriorityLevelLabel(level: "high" | "medium" | "low"): string {
+  if (level === "high") {
+    return "Take first";
+  }
+  if (level === "medium") {
+    return "Next up";
+  }
+  return "Later";
+}
+
+function recommendationPriorityLevelBadgeClass(level: "high" | "medium" | "low"): string {
+  if (level === "high") {
+    return "badge badge-critical";
+  }
+  if (level === "medium") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
+}
+
+function formatRecommendationEffortHintLabel(
+  value: "quick_win" | "moderate" | "larger_change",
+): string {
+  if (value === "quick_win") {
+    return "Quick win";
+  }
+  if (value === "moderate") {
+    return "Moderate effort";
+  }
+  return "Larger change";
+}
+
+function normalizeRecommendationPriority(
+  item: Recommendation,
+): {
+  priorityLevel: "high" | "medium" | "low";
+  priorityReason: string;
+  effortHint: "quick_win" | "moderate" | "larger_change" | null;
+} | null {
+  const raw = item.recommendation_priority;
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const priorityLevel =
+    raw.priority_level === "high" || raw.priority_level === "medium" || raw.priority_level === "low"
+      ? raw.priority_level
+      : null;
+  const priorityReason = truncateOptionalText(raw.priority_reason, 220);
+  const effortHint =
+    raw.effort_hint === "quick_win" || raw.effort_hint === "moderate" || raw.effort_hint === "larger_change"
+      ? raw.effort_hint
+      : null;
+  if (!priorityLevel || !priorityReason) {
+    return null;
+  }
+  return {
+    priorityLevel,
+    priorityReason,
+    effortHint,
+  };
+}
+
+function sortRecommendationsByDeterministicPriority(recommendations: Recommendation[]): Recommendation[] {
+  if (recommendations.length <= 1) {
+    return recommendations;
+  }
+  const rank = (item: Recommendation): number => {
+    const level = item.recommendation_priority?.priority_level;
+    if (level === "high") {
+      return 0;
+    }
+    if (level === "medium") {
+      return 1;
+    }
+    if (level === "low") {
+      return 2;
+    }
+    return 3;
+  };
+  const indexed = recommendations.map((item, index) => ({ item, index }));
+  indexed.sort((left, right) => {
+    const rankDiff = rank(left.item) - rank(right.item);
+    if (rankDiff !== 0) {
+      return rankDiff;
+    }
+    return left.index - right.index;
+  });
+  return indexed.map((entry) => entry.item);
+}
+
 interface CompetitorContextHealthCheckView {
   key: "location_context" | "industry_context" | "service_focus" | "target_customer_context";
   label: string;
@@ -2717,7 +2965,7 @@ export default function SiteWorkspacePage() {
   function applyWorkspaceSummary(summary: RecommendationWorkspaceSummaryResponse): void {
     setRecommendationWorkspaceSummaryState(summary.state);
     setLatestCompletedRecommendationRun(summary.latest_completed_run);
-    setLatestCompletedRecommendations(summary.recommendations.items);
+    setLatestCompletedRecommendations(sortRecommendationsByDeterministicPriority(summary.recommendations.items));
     setLatestCompletedRecommendationNarrative(summary.latest_narrative);
     setLatestCompletedTuningSuggestions(summary.tuning_suggestions);
     setLatestRecommendationApplyOutcome(summary.apply_outcome || null);
@@ -5293,6 +5541,8 @@ export default function SiteWorkspacePage() {
                     draftActionTargetId === draft.id || editActionInFlight || generationInFlight || retryInFlight;
                   const editable = draft.review_status === "pending" || draft.review_status === "edited";
                   const provenanceLabel = formatCompetitorDraftProvenanceLabel(draft.provenance_classification);
+                  const confidenceLevelLabel = formatCompetitorDraftConfidenceLevelLabel(draft.confidence_level);
+                  const sourceTypeLabel = formatCompetitorDraftSourceTypeLabel(draft.source_type);
                   return (
                     <Fragment key={draft.id}>
                       <tr data-testid="competitor-profile-draft-row">
@@ -5310,7 +5560,23 @@ export default function SiteWorkspacePage() {
                           ) : null}
                         </td>
                         <td>{draft.competitor_type}</td>
-                        <td>{draft.confidence_score.toFixed(2)}</td>
+                        <td>
+                          {draft.confidence_score.toFixed(2)}
+                          {confidenceLevelLabel || sourceTypeLabel ? (
+                            <div className="link-row" data-testid="competitor-confidence-source-chips">
+                              {confidenceLevelLabel ? (
+                                <span className={competitorDraftConfidenceLevelBadgeClass(draft.confidence_level)}>
+                                  {confidenceLevelLabel}
+                                </span>
+                              ) : null}
+                              {sourceTypeLabel ? (
+                                <span className={competitorDraftSourceTypeBadgeClass(draft.source_type)}>
+                                  {sourceTypeLabel}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </td>
                         <td className="table-cell-wrap">
                           {truncateText(draft.summary || "No summary provided.", 140)}
                           <br />
@@ -5318,6 +5584,14 @@ export default function SiteWorkspacePage() {
                             <strong>Why this competitor:</strong>{" "}
                             {truncateText(draft.why_competitor || "Reasoning not provided.", 140)}
                           </span>
+                          {draft.operator_evidence_summary ? (
+                            <>
+                              <br />
+                              <span className="hint muted" data-testid="competitor-operator-evidence-summary">
+                                <strong>Evidence signal:</strong> {truncateText(draft.operator_evidence_summary, 180)}
+                              </span>
+                            </>
+                          ) : null}
                           {draft.provenance_explanation ? (
                             <>
                               <br />
@@ -5705,6 +5979,12 @@ export default function SiteWorkspacePage() {
                         const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
                         const recommendationTargetContext = normalizeRecommendationTargetContext(item);
                         const recommendationTargetPageHints = normalizeRecommendationTargetPageHints(item);
+                        const recommendationCompetitorLinkageSummary =
+                          normalizeRecommendationCompetitorLinkageSummary(item);
+                        const recommendationCompetitorEvidenceLinks =
+                          normalizeRecommendationCompetitorEvidenceLinks(item);
+                        const recommendationActionDelta = normalizeRecommendationActionDelta(item);
+                        const recommendationPriority = normalizeRecommendationPriority(item);
                         const rowId = recommendationRowId(item.id);
                         return (
                           <tr
@@ -5794,6 +6074,48 @@ export default function SiteWorkspacePage() {
                                   Likely pages: {recommendationTargetPageHints.join(", ")}
                                 </span>
                               ) : null}
+                              {recommendationCompetitorLinkageSummary ? (
+                                <span className="hint muted" data-testid="recommendation-competitor-linkage-summary">
+                                  Competitor linkage: {recommendationCompetitorLinkageSummary}
+                                </span>
+                              ) : null}
+                              {recommendationCompetitorEvidenceLinks.length > 0 ? (
+                                <span className="hint muted" data-testid="recommendation-competitor-linkage">
+                                  Linked competitors:{" "}
+                                  {recommendationCompetitorEvidenceLinks
+                                    .map((link) => {
+                                      const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(link.confidenceLevel);
+                                      const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
+                                      const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
+                                      return suffixParts.length > 0
+                                        ? `${link.competitorName} (${suffixParts.join(", ")})`
+                                        : link.competitorName;
+                                    })
+                                    .join("; ")}
+                                </span>
+                              ) : null}
+                              {recommendationPriority ? (
+                                <span className="hint muted" data-testid="recommendation-priority">
+                                  <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
+                                    {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
+                                  </span>{" "}
+                                  {recommendationPriority.priorityReason}
+                                  {recommendationPriority.effortHint ? (
+                                    <> Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}.</>
+                                  ) : null}
+                                </span>
+                              ) : null}
+                              {recommendationActionDelta ? (
+                                <span className="hint muted" data-testid="recommendation-action-delta">
+                                  Action delta: {recommendationActionDelta.observedCompetitorPattern} Site gap:{" "}
+                                  {recommendationActionDelta.observedSiteGap} Next action:{" "}
+                                  {recommendationActionDelta.recommendedOperatorAction} Evidence strength:{" "}
+                                  {formatRecommendationActionDeltaEvidenceStrength(
+                                    recommendationActionDelta.evidenceStrength,
+                                  )}
+                                  .
+                                </span>
+                              ) : null}
                               <span className="hint muted"><code>{item.id}</code></span>
                             </td>
                             <td>{item.category}</td>
@@ -5856,6 +6178,12 @@ export default function SiteWorkspacePage() {
                               const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
                               const recommendationTargetContext = normalizeRecommendationTargetContext(item);
                               const recommendationTargetPageHints = normalizeRecommendationTargetPageHints(item);
+                              const recommendationCompetitorLinkageSummary =
+                                normalizeRecommendationCompetitorLinkageSummary(item);
+                              const recommendationCompetitorEvidenceLinks =
+                                normalizeRecommendationCompetitorEvidenceLinks(item);
+                              const recommendationActionDelta = normalizeRecommendationActionDelta(item);
+                              const recommendationPriority = normalizeRecommendationPriority(item);
                               const rowId = recommendationRowId(item.id);
                               return (
                                 <tr
@@ -5945,6 +6273,50 @@ export default function SiteWorkspacePage() {
                                     {recommendationTargetPageHints.length > 0 ? (
                                       <span className="hint muted" data-testid="recommendation-target-page-hints">
                                         Likely pages: {recommendationTargetPageHints.join(", ")}
+                                      </span>
+                                    ) : null}
+                                    {recommendationCompetitorLinkageSummary ? (
+                                      <span className="hint muted" data-testid="recommendation-competitor-linkage-summary">
+                                        Competitor linkage: {recommendationCompetitorLinkageSummary}
+                                      </span>
+                                    ) : null}
+                                    {recommendationCompetitorEvidenceLinks.length > 0 ? (
+                                      <span className="hint muted" data-testid="recommendation-competitor-linkage">
+                                        Linked competitors:{" "}
+                                        {recommendationCompetitorEvidenceLinks
+                                          .map((link) => {
+                                            const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(
+                                              link.confidenceLevel,
+                                            );
+                                            const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
+                                            const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
+                                            return suffixParts.length > 0
+                                              ? `${link.competitorName} (${suffixParts.join(", ")})`
+                                              : link.competitorName;
+                                          })
+                                          .join("; ")}
+                                      </span>
+                                    ) : null}
+                                    {recommendationPriority ? (
+                                      <span className="hint muted" data-testid="recommendation-priority">
+                                        <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
+                                          {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
+                                        </span>{" "}
+                                        {recommendationPriority.priorityReason}
+                                        {recommendationPriority.effortHint ? (
+                                          <> Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}.</>
+                                        ) : null}
+                                      </span>
+                                    ) : null}
+                                    {recommendationActionDelta ? (
+                                      <span className="hint muted" data-testid="recommendation-action-delta">
+                                        Action delta: {recommendationActionDelta.observedCompetitorPattern} Site gap:{" "}
+                                        {recommendationActionDelta.observedSiteGap} Next action:{" "}
+                                        {recommendationActionDelta.recommendedOperatorAction} Evidence strength:{" "}
+                                        {formatRecommendationActionDeltaEvidenceStrength(
+                                          recommendationActionDelta.evidenceStrength,
+                                        )}
+                                        .
                                       </span>
                                     ) : null}
                                     <span className="hint muted"><code>{item.id}</code></span>

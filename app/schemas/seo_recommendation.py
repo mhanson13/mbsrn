@@ -26,6 +26,8 @@ SEORecommendationSortBy = Literal["priority_score", "priority_band", "severity",
 SortOrder = Literal["asc", "desc"]
 SEORecommendationTuningSuggestionConfidence = Literal["low", "medium", "high"]
 SEORecommendationSignalSupportLevel = Literal["low", "medium", "high"]
+SEORecommendationPriorityLevel = Literal["high", "medium", "low"]
+SEORecommendationEffortHint = Literal["quick_win", "moderate", "larger_change"]
 SEORecommendationApplyOutcomeSource = Literal["recommendation", "manual"]
 SEORecommendationAnalysisFreshnessStatus = Literal["fresh", "pending_refresh", "unknown"]
 SEORecommendationWorkspaceTrustCompetitorStatus = Literal["normal", "recovered", "degraded", "failed"]
@@ -128,6 +130,15 @@ _RECOMMENDATION_EVIDENCE_TRACE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_ITEMS = 5
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_ITEMS = 3
+_RECOMMENDATION_COMPETITOR_LINK_MAX_ITEMS = 3
+_RECOMMENDATION_COMPETITOR_LINK_NAME_MAX_CHARS = 180
+_RECOMMENDATION_COMPETITOR_LINK_DOMAIN_MAX_CHARS = 255
+_RECOMMENDATION_COMPETITOR_LINK_SUMMARY_MAX_CHARS = 220
+_RECOMMENDATION_COMPETITOR_LINKAGE_SUMMARY_MAX_CHARS = 240
+_RECOMMENDATION_ACTION_DELTA_PATTERN_MAX_CHARS = 220
+_RECOMMENDATION_ACTION_DELTA_GAP_MAX_CHARS = 220
+_RECOMMENDATION_ACTION_DELTA_ACTION_MAX_CHARS = 220
+_RECOMMENDATION_PRIORITY_REASON_MAX_CHARS = 220
 _SIGNAL_SUMMARY_EVIDENCE_SOURCE_ORDER = ("site", "competitors", "references", "themes")
 _RECOMMENDATION_EEAT_GAP_SUPPORTING_SIGNALS_MAX_ITEMS = 6
 _RECOMMENDATION_EEAT_GAP_SUPPORTING_SIGNAL_MAX_CHARS = 140
@@ -1641,6 +1652,138 @@ class SEORecommendationRunListResponse(BaseModel):
     total: int
 
 
+class SEORecommendationCompetitorEvidenceLinkRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    competitor_draft_id: str = Field(min_length=1, max_length=36)
+    competitor_name: str = Field(min_length=1, max_length=_RECOMMENDATION_COMPETITOR_LINK_NAME_MAX_CHARS)
+    competitor_domain: str | None = Field(default=None, max_length=_RECOMMENDATION_COMPETITOR_LINK_DOMAIN_MAX_CHARS)
+    confidence_level: Literal["high", "medium", "low"] | None = None
+    source_type: Literal["search", "places", "fallback", "synthetic"] | None = None
+    evidence_summary: str | None = Field(default=None, max_length=_RECOMMENDATION_COMPETITOR_LINK_SUMMARY_MAX_CHARS)
+
+    @field_validator("competitor_draft_id", mode="before")
+    @classmethod
+    def normalize_competitor_draft_id(cls, value: Any) -> str:
+        cleaned = _strip_or_none(str(value) if value is not None else None)
+        if cleaned is None:
+            raise ValueError("competitor_draft_id is required")
+        return cleaned[:36]
+
+    @field_validator("competitor_name", mode="before")
+    @classmethod
+    def normalize_competitor_name(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_RECOMMENDATION_COMPETITOR_LINK_NAME_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("competitor_name is required")
+        return cleaned
+
+    @field_validator("competitor_domain", mode="before")
+    @classmethod
+    def normalize_competitor_domain(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_COMPETITOR_LINK_DOMAIN_MAX_CHARS)
+
+    @field_validator("confidence_level", mode="before")
+    @classmethod
+    def normalize_confidence_level(cls, value: Any) -> Literal["high", "medium", "low"] | None:
+        if value is None:
+            return None
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"high", "medium", "low"}:
+            return None
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: Any) -> Literal["search", "places", "fallback", "synthetic"] | None:
+        if value is None:
+            return None
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"search", "places", "fallback", "synthetic"}:
+            return None
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("evidence_summary", mode="before")
+    @classmethod
+    def normalize_evidence_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_COMPETITOR_LINK_SUMMARY_MAX_CHARS)
+
+
+class SEORecommendationActionDeltaRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    observed_competitor_pattern: str = Field(min_length=1, max_length=_RECOMMENDATION_ACTION_DELTA_PATTERN_MAX_CHARS)
+    observed_site_gap: str = Field(min_length=1, max_length=_RECOMMENDATION_ACTION_DELTA_GAP_MAX_CHARS)
+    recommended_operator_action: str = Field(min_length=1, max_length=_RECOMMENDATION_ACTION_DELTA_ACTION_MAX_CHARS)
+    evidence_strength: SEORecommendationSignalSupportLevel
+
+    @field_validator("observed_competitor_pattern", mode="before")
+    @classmethod
+    def normalize_observed_competitor_pattern(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_RECOMMENDATION_ACTION_DELTA_PATTERN_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("observed_competitor_pattern is required")
+        return cleaned
+
+    @field_validator("observed_site_gap", mode="before")
+    @classmethod
+    def normalize_observed_site_gap(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_RECOMMENDATION_ACTION_DELTA_GAP_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("observed_site_gap is required")
+        return cleaned
+
+    @field_validator("recommended_operator_action", mode="before")
+    @classmethod
+    def normalize_recommended_operator_action(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_RECOMMENDATION_ACTION_DELTA_ACTION_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("recommended_operator_action is required")
+        return cleaned
+
+    @field_validator("evidence_strength", mode="before")
+    @classmethod
+    def normalize_evidence_strength(cls, value: Any) -> SEORecommendationSignalSupportLevel:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"low", "medium", "high"}:
+            raise ValueError("Invalid evidence_strength")
+        return normalized  # type: ignore[return-value]
+
+
+class SEORecommendationPriorityRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    priority_level: SEORecommendationPriorityLevel
+    priority_reason: str = Field(min_length=1, max_length=_RECOMMENDATION_PRIORITY_REASON_MAX_CHARS)
+    effort_hint: SEORecommendationEffortHint | None = None
+
+    @field_validator("priority_level", mode="before")
+    @classmethod
+    def normalize_priority_level(cls, value: Any) -> SEORecommendationPriorityLevel:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"high", "medium", "low"}:
+            raise ValueError("Invalid priority_level")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("priority_reason", mode="before")
+    @classmethod
+    def normalize_priority_reason(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_RECOMMENDATION_PRIORITY_REASON_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("priority_reason is required")
+        return cleaned
+
+    @field_validator("effort_hint", mode="before")
+    @classmethod
+    def normalize_effort_hint(cls, value: Any) -> SEORecommendationEffortHint | None:
+        if value is None:
+            return None
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"quick_win", "moderate", "larger_change"}:
+            return None
+        return normalized  # type: ignore[return-value]
+
+
 class SEORecommendationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -1688,6 +1831,13 @@ class SEORecommendationRead(BaseModel):
     )
     recommendation_target_context: SEORecommendationTargetContext | None = None
     recommendation_target_page_hints: list[str] = Field(default_factory=list)
+    competitor_evidence_links: list[SEORecommendationCompetitorEvidenceLinkRead] = Field(default_factory=list)
+    competitor_linkage_summary: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_COMPETITOR_LINKAGE_SUMMARY_MAX_CHARS,
+    )
+    recommendation_action_delta: SEORecommendationActionDeltaRead | None = None
+    recommendation_priority: SEORecommendationPriorityRead | None = None
     decision: SEORecommendationDecision | None = None
     decision_reason: str | None = None
     assigned_principal_id: str | None = None
@@ -1814,6 +1964,70 @@ class SEORecommendationRead(BaseModel):
             limit=_RECOMMENDATION_TARGET_PAGE_HINT_MAX_ITEMS,
             max_length=_RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS,
         )
+
+    @field_validator("competitor_evidence_links", mode="before")
+    @classmethod
+    def normalize_competitor_evidence_links(
+        cls,
+        value: Any,
+    ) -> list[SEORecommendationCompetitorEvidenceLinkRead]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise TypeError("competitor_evidence_links must be a list")
+        normalized: list[SEORecommendationCompetitorEvidenceLinkRead] = []
+        seen_ids: set[str] = set()
+        for item in value:
+            try:
+                parsed = (
+                    item
+                    if isinstance(item, SEORecommendationCompetitorEvidenceLinkRead)
+                    else SEORecommendationCompetitorEvidenceLinkRead.model_validate(item)
+                )
+            except Exception:  # noqa: BLE001
+                continue
+            if parsed.competitor_draft_id in seen_ids:
+                continue
+            seen_ids.add(parsed.competitor_draft_id)
+            normalized.append(parsed)
+            if len(normalized) >= _RECOMMENDATION_COMPETITOR_LINK_MAX_ITEMS:
+                break
+        return normalized
+
+    @field_validator("competitor_linkage_summary", mode="before")
+    @classmethod
+    def normalize_competitor_linkage_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_COMPETITOR_LINKAGE_SUMMARY_MAX_CHARS)
+
+    @field_validator("recommendation_action_delta", mode="before")
+    @classmethod
+    def normalize_recommendation_action_delta(
+        cls,
+        value: Any,
+    ) -> SEORecommendationActionDeltaRead | None:
+        if value is None:
+            return None
+        if isinstance(value, SEORecommendationActionDeltaRead):
+            return value
+        try:
+            return SEORecommendationActionDeltaRead.model_validate(value)
+        except Exception:  # noqa: BLE001
+            return None
+
+    @field_validator("recommendation_priority", mode="before")
+    @classmethod
+    def normalize_recommendation_priority(
+        cls,
+        value: Any,
+    ) -> SEORecommendationPriorityRead | None:
+        if value is None:
+            return None
+        if isinstance(value, SEORecommendationPriorityRead):
+            return value
+        try:
+            return SEORecommendationPriorityRead.model_validate(value)
+        except Exception:  # noqa: BLE001
+            return None
 
     @field_validator("decision", mode="before")
     @classmethod

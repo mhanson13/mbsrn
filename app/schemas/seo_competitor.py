@@ -49,6 +49,8 @@ SEOCompetitorProfileDraftReviewStatus = Literal["pending", "edited", "accepted",
 SEOCompetitorProfileCleanupExecutionStatus = Literal["completed", "failed"]
 SEOCompetitorProfileOutcomeStatusLevel = Literal["normal", "recovered", "degraded", "failed"]
 SEOCompetitorDraftProvenanceClassification = Literal["places_ai_enriched", "ai_only", "synthetic_fallback"]
+SEOCompetitorDraftConfidenceLevel = Literal["high", "medium", "low"]
+SEOCompetitorDraftSourceType = Literal["search", "places", "fallback", "synthetic"]
 SEOSummaryStatus = Literal["completed", "failed"]
 SEOFindingCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
 SEOFindingSeverity = Literal["INFO", "WARNING", "CRITICAL"]
@@ -89,7 +91,10 @@ _COMPETITOR_PROFILE_TUNING_EXCLUSION_REASONS: tuple[str, ...] = (
 )
 _DRAFT_SOURCE_AI_GENERATED = "ai_generated"
 _DRAFT_SOURCE_AI_FORCED_FALLBACK = "ai_forced_fallback"
+_DRAFT_SOURCE_AI_TIER2_FALLBACK = "ai_tier2_fallback"
 _DRAFT_SOURCE_AI_PLACES_ENRICHED = "ai_places_enriched"
+_DRAFT_SOURCE_SYNTHETIC_FALLBACK = "synthetic_fallback"
+_DRAFT_OPERATOR_EVIDENCE_SUMMARY_MAX_CHARS = 220
 _DRAFT_PROVENANCE_EXPLANATIONS: dict[str, str] = {
     "places_ai_enriched": "Discovered from nearby business seed data and enriched for service/location fit.",
     "ai_only": "Selected from AI discovery based on service/location relevance.",
@@ -102,6 +107,33 @@ def _strip_or_none(value: str | None) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def _derive_draft_operator_evidence_summary(
+    *,
+    competitor_type: SEOCompetitorProfileType,
+    confidence_level: SEOCompetitorDraftConfidenceLevel | None,
+    source_type: SEOCompetitorDraftSourceType | None,
+    provenance_classification: SEOCompetitorDraftProvenanceClassification | None,
+    forced_inclusion: bool,
+) -> str:
+    if provenance_classification == "synthetic_fallback" or source_type == "synthetic":
+        return "Lower-confidence synthetic candidate included for operator review."
+    if source_type == "places":
+        if confidence_level == "high":
+            return "Ranks as a strong local match from nearby-business discovery."
+        return "Location relevance detected from nearby-business seed discovery."
+    if forced_inclusion:
+        return "Included as a lower-confidence fallback to preserve review coverage."
+    if competitor_type in {"direct", "local"} and confidence_level == "high":
+        return "Ranks as a strong local match for likely competing services."
+    if competitor_type in {"indirect", "marketplace", "informational"}:
+        return "Has broader service coverage that may influence local competition."
+    if confidence_level == "medium":
+        return "Shows moderate service and location relevance."
+    if confidence_level == "low":
+        return "Lower-confidence candidate; verify service and location fit."
+    return "Selected for service and location relevance."
 
 
 def _normalize_count_map(raw: Any) -> dict[str, int]:
@@ -259,7 +291,7 @@ class SEOCompetitorDomainListResponse(BaseModel):
 class SEOCompetitorProfileGenerationRunCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    candidate_count: int = Field(default=5, ge=1, le=20)
+    candidate_count: int = Field(default=10, ge=1, le=20)
 
 
 class SEOCompetitorProfileGenerationRunRead(BaseModel):
@@ -321,8 +353,11 @@ class SEOCompetitorProfileDraftRead(BaseModel):
     evidence: str | None
     confidence_score: float
     source: str
+    confidence_level: SEOCompetitorDraftConfidenceLevel | None = None
+    source_type: SEOCompetitorDraftSourceType | None = None
     provenance_classification: SEOCompetitorDraftProvenanceClassification | None = None
     provenance_explanation: str | None = Field(default=None, max_length=240)
+    operator_evidence_summary: str | None = Field(default=None, max_length=_DRAFT_OPERATOR_EVIDENCE_SUMMARY_MAX_CHARS)
     forced_inclusion: bool = False
     forced_reason: str | None = None
     review_status: SEOCompetitorProfileDraftReviewStatus
@@ -363,12 +398,22 @@ class SEOCompetitorProfileDraftRead(BaseModel):
             return None
         return _strip_or_none(str(value))
 
+    @field_validator("operator_evidence_summary", mode="before")
+    @classmethod
+    def normalize_operator_evidence_summary(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        cleaned = _strip_or_none(str(value))
+        if cleaned is None:
+            return None
+        return cleaned[:_DRAFT_OPERATOR_EVIDENCE_SUMMARY_MAX_CHARS]
+
     @model_validator(mode="after")
     def derive_provenance_fields(self) -> "SEOCompetitorProfileDraftRead":
         classification = self.provenance_classification
         source_normalized = _strip_or_none(str(self.source or "").lower())
         if classification is None:
-            if source_normalized == _DRAFT_SOURCE_AI_FORCED_FALLBACK:
+            if source_normalized in {_DRAFT_SOURCE_AI_FORCED_FALLBACK, _DRAFT_SOURCE_SYNTHETIC_FALLBACK}:
                 classification = "synthetic_fallback"
             elif source_normalized == _DRAFT_SOURCE_AI_PLACES_ENRICHED:
                 classification = "places_ai_enriched"
@@ -378,6 +423,30 @@ class SEOCompetitorProfileDraftRead(BaseModel):
             self.provenance_classification = classification
             if self.provenance_explanation is None:
                 self.provenance_explanation = _DRAFT_PROVENANCE_EXPLANATIONS.get(classification)
+        if self.confidence_level is None:
+            if self.confidence_score >= 0.75:
+                self.confidence_level = "high"
+            elif self.confidence_score >= 0.5:
+                self.confidence_level = "medium"
+            else:
+                self.confidence_level = "low"
+        if self.source_type is None:
+            if source_normalized == _DRAFT_SOURCE_AI_PLACES_ENRICHED:
+                self.source_type = "places"
+            elif source_normalized == _DRAFT_SOURCE_AI_TIER2_FALLBACK:
+                self.source_type = "fallback"
+            elif source_normalized in {_DRAFT_SOURCE_AI_FORCED_FALLBACK, _DRAFT_SOURCE_SYNTHETIC_FALLBACK}:
+                self.source_type = "synthetic"
+            else:
+                self.source_type = "search"
+        if self.operator_evidence_summary is None:
+            self.operator_evidence_summary = _derive_draft_operator_evidence_summary(
+                competitor_type=self.competitor_type,
+                confidence_level=self.confidence_level,
+                source_type=self.source_type,
+                provenance_classification=self.provenance_classification,
+                forced_inclusion=self.forced_inclusion,
+            )
         return self
 
 

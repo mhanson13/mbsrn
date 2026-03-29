@@ -145,13 +145,14 @@ _MAX_SITE_CONTENT_SIGNALS = 120
 _MAX_SITE_CONTENT_SIGNAL_LENGTH = 200
 _MAX_PROVIDER_ATTEMPTS_DEBUG_ITEMS = 3
 _TIMEOUT_RETRY_BACKOFF_SECONDS = 0.2
+TARGET_COMPETITOR_COUNT = 10
 _DISCOVERY_CANDIDATE_BUFFER = 2
 _MAX_DISCOVERY_CANDIDATE_COUNT = 20
 _MIN_DEGRADED_DISCOVERY_CANDIDATE_COUNT = 2
 _CANDIDATE_REJECTION_LOG_MAX_ITEMS = 12
-_GOOGLE_PLACES_SEED_MAX_CANDIDATES = 5
+_GOOGLE_PLACES_SEED_MAX_CANDIDATES = 8
 _GOOGLE_PLACES_SEED_MIN_CANDIDATES = 3
-_GOOGLE_PLACES_SEED_QUERY_LIMIT = 3
+_GOOGLE_PLACES_SEED_QUERY_LIMIT = 5
 _GOOGLE_PLACES_QUERY_MAX_LENGTH = 120
 _GOOGLE_PLACES_SEED_MAX_NAME_LENGTH = 140
 _GOOGLE_PLACES_SEED_MAX_ADDRESS_LENGTH = 220
@@ -159,10 +160,11 @@ _GOOGLE_PLACES_SEED_MAX_LOCALITY_LENGTH = 100
 _GOOGLE_PLACES_SEED_MAX_TYPE_LENGTH = 64
 _GOOGLE_PLACES_SEED_MAX_TYPES = 8
 _FORCED_OUTPUT_REASON_NO_VALID_DRAFTS = "no_valid_drafts_after_filtering"
+_FORCED_OUTPUT_REASON_TARGET_GAP_FILL = "target_count_gap_fill"
 _FORCED_DRAFT_SOURCE = "ai_forced_fallback"
 _PLACES_ENRICHED_DRAFT_SOURCE = "ai_places_enriched"
 _FORCED_DRAFT_MIN_COUNT = 3
-_FORCED_DRAFT_MAX_COUNT = 5
+_FORCED_DRAFT_MAX_COUNT = TARGET_COMPETITOR_COUNT
 _SYNTHETIC_FALLBACK_RECOVERY_PATH = "synthetic_fallback"
 _SYNTHETIC_FALLBACK_REASON_TIMEOUT_EXHAUSTED = "provider_timeout_exhausted"
 _SYNTHETIC_FALLBACK_REASON_ZERO_USABLE_CANDIDATES = "zero_usable_candidates_after_validation"
@@ -1693,16 +1695,56 @@ class SEOCompetitorProfileGenerationService:
             0,
             self._coerce_int(candidate_processing.exclusion_counts_by_reason.get("duplicate"), default=0),
         )
-        bounded_requested_candidate_count = max(1, int(run.requested_candidate_count or 1))
-        final_candidates = candidate_processing.included_candidates[:bounded_requested_candidate_count]
+        target_candidate_count = max(
+            1,
+            min(
+                TARGET_COMPETITOR_COUNT,
+                int(run.requested_candidate_count or TARGET_COMPETITOR_COUNT),
+            ),
+        )
+        enable_tiered_fill = target_candidate_count >= TARGET_COMPETITOR_COUNT
+        final_candidates = candidate_processing.included_candidates[:target_candidate_count]
         forced_fallback_candidates: list[CompetitorCandidateInput] = []
-        if not final_candidates and proposed_candidate_count > 0:
-            forced_fallback_candidates = self._select_forced_fallback_candidates(
+        if (
+            (
+                enable_tiered_fill and len(final_candidates) < target_candidate_count
+            )
+            or (not enable_tiered_fill and not final_candidates)
+        ) and proposed_candidate_count > 0:
+            forced_candidate_pool = self._select_forced_fallback_candidates(
                 prepared_candidates=prepared_candidates,
                 eligible_candidates=eligibility_result.eligible_candidates,
-                requested_candidate_count=bounded_requested_candidate_count,
+                requested_candidate_count=target_candidate_count,
             )
+            if forced_candidate_pool:
+                seen_forced_keys = {
+                    (
+                        (candidate.suggested_name or "").strip().lower(),
+                        candidate.canonical_domain.strip().lower(),
+                    )
+                    for candidate in final_candidates
+                }
+                needed_forced = max(0, target_candidate_count - len(final_candidates))
+                for candidate in forced_candidate_pool:
+                    if needed_forced <= 0:
+                        break
+                    forced_key = (
+                        (candidate.suggested_name or "").strip().lower(),
+                        (candidate.suggested_domain or "").strip().lower(),
+                    )
+                    if not forced_key[0]:
+                        continue
+                    if forced_key in seen_forced_keys:
+                        continue
+                    seen_forced_keys.add(forced_key)
+                    forced_fallback_candidates.append(candidate)
+                    needed_forced -= 1
             if forced_fallback_candidates:
+                forced_reason = (
+                    _FORCED_OUTPUT_REASON_NO_VALID_DRAFTS
+                    if not final_candidates
+                    else _FORCED_OUTPUT_REASON_TARGET_GAP_FILL
+                )
                 self._emit_structured_service_log(
                     payload={
                         "event": "competitor_forced_output",
@@ -1711,14 +1753,12 @@ class SEOCompetitorProfileGenerationService:
                         "site_id": run.site_id,
                         "raw_candidates": proposed_candidate_count,
                         "forced_drafts": len(forced_fallback_candidates),
-                        "forced_reason": _FORCED_OUTPUT_REASON_NO_VALID_DRAFTS,
+                        "target_candidate_count": target_candidate_count,
+                        "forced_reason": forced_reason,
                     },
                     fallback_message="competitor_forced_output",
                 )
-        removed_by_final_limit_count = max(
-            0,
-            len(candidate_processing.included_candidates) - len(final_candidates),
-        )
+        removed_by_final_limit_count = max(0, len(candidate_processing.included_candidates) - target_candidate_count)
         unsupported_type_allowed_count = sum(
             1 for candidate in final_candidates if bool(candidate.classification_mismatch)
         )
@@ -1767,6 +1807,11 @@ class SEOCompetitorProfileGenerationService:
                 source_index=candidate.source_index,
             )
             forced_relevance = max(0, min(100, int(round(candidate.confidence_score * 100))))
+            forced_draft_source = (
+                "ai_tier2_fallback"
+                if enable_tiered_fill and len(final_candidates) > 0
+                else _FORCED_DRAFT_SOURCE
+            )
             draft = SEOCompetitorProfileDraft(
                 id=str(uuid4()),
                 business_id=run.business_id,
@@ -1780,10 +1825,94 @@ class SEOCompetitorProfileGenerationService:
                 evidence=candidate.evidence,
                 confidence_score=candidate.confidence_score,
                 relevance_score=forced_relevance,
-                source=_FORCED_DRAFT_SOURCE,
+                source=forced_draft_source,
                 review_status="pending",
             )
             drafts.append(draft)
+        synthetic_gap_fill_count = 0
+        if enable_tiered_fill and len(drafts) < target_candidate_count:
+            synthetic_candidates = self._build_synthetic_fallback_candidates(
+                site=site,
+                requested_candidate_count=target_candidate_count,
+                existing_domains=existing_domains,
+            )
+            if synthetic_candidates:
+                seen_synthetic_domains = {
+                    (self._normalize_optional_domain_value(draft.suggested_domain) or "").lower() for draft in drafts
+                }
+                seen_synthetic_names = {(draft.suggested_name or "").strip().lower() for draft in drafts}
+                for synthetic_candidate in synthetic_candidates:
+                    if len(drafts) >= target_candidate_count:
+                        break
+                    suggested_name = self._clean_optional(
+                        str(synthetic_candidate.get("suggested_name"))
+                        if synthetic_candidate.get("suggested_name") is not None
+                        else None
+                    )
+                    if not suggested_name:
+                        continue
+                    suggested_domain = self._normalize_optional_domain_value(
+                        synthetic_candidate.get("suggested_domain")
+                    ) or self._build_synthetic_fallback_domain(seed_name=suggested_name, location_label=site.id)
+                    synthetic_domain_key = suggested_domain.lower()
+                    synthetic_name_key = suggested_name.strip().lower()
+                    if synthetic_domain_key in seen_synthetic_domains or synthetic_name_key in seen_synthetic_names:
+                        continue
+                    seen_synthetic_domains.add(synthetic_domain_key)
+                    seen_synthetic_names.add(synthetic_name_key)
+                    confidence_score = max(
+                        0.0,
+                        min(1.0, self._coerce_float(synthetic_candidate.get("confidence_score"), default=0.3)),
+                    )
+                    relevance_score = max(0, min(100, int(round(confidence_score * 100))))
+                    drafts.append(
+                        SEOCompetitorProfileDraft(
+                            id=str(uuid4()),
+                            business_id=run.business_id,
+                            site_id=run.site_id,
+                            generation_run_id=run.id,
+                            suggested_name=suggested_name,
+                            suggested_domain=suggested_domain,
+                            competitor_type=self._normalize_competitor_type(
+                                synthetic_candidate.get("competitor_type")
+                            ),
+                            summary=self._clean_optional(
+                                str(synthetic_candidate.get("summary"))
+                                if synthetic_candidate.get("summary") is not None
+                                else None
+                            ),
+                            why_competitor=self._clean_optional(
+                                str(synthetic_candidate.get("why_competitor"))
+                                if synthetic_candidate.get("why_competitor") is not None
+                                else None
+                            ),
+                            evidence=self._clean_optional(
+                                str(synthetic_candidate.get("evidence"))
+                                if synthetic_candidate.get("evidence") is not None
+                                else None
+                            ),
+                            confidence_score=confidence_score,
+                            relevance_score=relevance_score,
+                            source="synthetic_fallback",
+                            review_status="pending",
+                        )
+                    )
+                    synthetic_gap_fill_count += 1
+        if synthetic_gap_fill_count > 0:
+            self._emit_structured_service_log(
+                payload={
+                    "event": "competitor_tiered_gap_fill",
+                    "run_id": run.id,
+                    "business_id": run.business_id,
+                    "site_id": run.site_id,
+                    "target_candidate_count": target_candidate_count,
+                    "tier1_count": len(final_candidates),
+                    "tier2_count": len(forced_fallback_candidates),
+                    "tier3_count": synthetic_gap_fill_count,
+                    "final_count": len(drafts),
+                },
+                fallback_message="competitor_tiered_gap_fill",
+            )
         included_count = len(drafts)
         excluded_count = (
             max(0, proposed_candidate_count - included_count)
@@ -3293,6 +3422,25 @@ class SEOCompetitorProfileGenerationService:
             if industry_context:
                 service_terms.append(industry_context)
 
+        expanded_service_terms: list[str] = []
+        expanded_seen: set[str] = set()
+        for service_term in service_terms:
+            normalized_service = self._clean_optional(service_term)
+            if not normalized_service:
+                continue
+            lowered_service = normalized_service.lower()
+            if lowered_service not in expanded_seen:
+                expanded_seen.add(lowered_service)
+                expanded_service_terms.append(normalized_service)
+            stripped_suffix = normalized_service.removesuffix(" services").removesuffix(" service").strip()
+            if stripped_suffix:
+                stripped_lower = stripped_suffix.lower()
+                if stripped_lower not in expanded_seen:
+                    expanded_seen.add(stripped_lower)
+                    expanded_service_terms.append(stripped_suffix)
+        if expanded_service_terms:
+            service_terms = expanded_service_terms
+
         location_phrase = self._derive_google_places_query_location(context=context)
         if not service_terms or not location_phrase:
             return queries
@@ -3302,6 +3450,9 @@ class SEOCompetitorProfileGenerationService:
                 "{service} near {location}",
                 "{service} in {location}",
                 "{service} company {location}",
+                "{service} contractors near {location}",
+                "{service} specialists in {location}",
+                "{service} providers {location}",
             ):
                 candidate = template.format(service=service_term, location=location_phrase).strip()
                 cleaned = self._clean_optional(candidate)
@@ -4798,6 +4949,13 @@ class SEOCompetitorProfileGenerationService:
             return int(value)
         except (TypeError, ValueError):
             return int(default)
+
+    @staticmethod
+    def _coerce_float(value: object, *, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
 
     @staticmethod
     def _delta_direction(value: int) -> int:

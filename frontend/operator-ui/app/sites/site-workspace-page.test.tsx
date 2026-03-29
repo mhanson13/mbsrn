@@ -2701,7 +2701,129 @@ describe("site workspace timeline controls", () => {
       "Why this matters: Competitors show stronger trust signals in this area.",
     );
     expect(screen.queryByText("Why this matters: Recommendation without evidence summary")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-priority")).not.toBeInTheDocument();
     expect(screen.queryByTestId("recommendation-lifecycle-state")).not.toBeInTheDocument();
+  });
+
+  it("sorts recommendation display by deterministic priority tier when priority metadata is present", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-priority-low",
+              title: "Low priority recommendation",
+              recommendation_priority: {
+                priority_level: "low",
+                priority_reason: "Limited competitor evidence; review later.",
+                effort_hint: "larger_change",
+              },
+            }),
+            buildRecommendation({
+              id: "rec-priority-high",
+              title: "High priority recommendation",
+              recommendation_priority: {
+                priority_level: "high",
+                priority_reason: "Strong competitor-backed gap with a clear next action.",
+                effort_hint: "quick_win",
+              },
+            }),
+          ],
+          total: 2,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    const priorityLines = screen.getAllByTestId("recommendation-priority");
+    expect(priorityLines).toHaveLength(2);
+    expect(priorityLines[0]).toHaveTextContent("Take first");
+    expect(priorityLines[0]).toHaveTextContent("Strong competitor-backed gap with a clear next action.");
+    expect(priorityLines[1]).toHaveTextContent("Later");
+    expect(priorityLines[1]).toHaveTextContent("Limited competitor evidence; review later.");
+  });
+
+  it("renders competitor linkage evidence when recommendation metadata includes linked competitors", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-link-1",
+              title: "Competitor-linked recommendation",
+              competitor_linkage_summary: "Competitors provide stronger local service coverage in this area.",
+              recommendation_priority: {
+                priority_level: "high",
+                priority_reason: "Strong competitor-backed gap with a clear next action.",
+                effort_hint: "quick_win",
+              },
+              recommendation_action_delta: {
+                observed_competitor_pattern: "Nearby seeded competitors show strong local service coverage.",
+                observed_site_gap: "Local/service-area relevance signals appear limited.",
+                recommended_operator_action: "Add location-specific service page coverage on core pages.",
+                evidence_strength: "high",
+              },
+              competitor_evidence_links: [
+                {
+                  competitor_draft_id: "draft-1",
+                  competitor_name: "North Metro Fire Protection",
+                  competitor_domain: "northmetrofire.example",
+                  confidence_level: "high",
+                  source_type: "places",
+                  evidence_summary: "Ranks as a strong local match from nearby-business discovery.",
+                },
+                {
+                  competitor_draft_id: "draft-2",
+                  competitor_name: "Regional Safety Systems",
+                  competitor_domain: "regionalsafety.example",
+                  confidence_level: "medium",
+                  source_type: "search",
+                  evidence_summary: "Shows moderate service and location relevance.",
+                },
+              ],
+            }),
+            buildRecommendation({
+              id: "rec-link-2",
+              title: "No linkage metadata recommendation",
+            }),
+          ],
+          total: 2,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    const linkageSummaries = screen.getAllByTestId("recommendation-competitor-linkage-summary");
+    expect(linkageSummaries).toHaveLength(1);
+    expect(linkageSummaries[0]).toHaveTextContent(
+      "Competitor linkage: Competitors provide stronger local service coverage in this area.",
+    );
+    const linkageLines = screen.getAllByTestId("recommendation-competitor-linkage");
+    expect(linkageLines).toHaveLength(1);
+    expect(linkageLines[0]).toHaveTextContent("North Metro Fire Protection (High confidence, Nearby seed)");
+    expect(linkageLines[0]).toHaveTextContent("Regional Safety Systems (Medium confidence, AI search)");
+    const actionDeltaLines = screen.getAllByTestId("recommendation-action-delta");
+    expect(actionDeltaLines).toHaveLength(1);
+    expect(actionDeltaLines[0]).toHaveTextContent(
+      "Action delta: Nearby seeded competitors show strong local service coverage.",
+    );
+    expect(actionDeltaLines[0]).toHaveTextContent("Site gap: Local/service-area relevance signals appear limited.");
+    expect(actionDeltaLines[0]).toHaveTextContent(
+      "Next action: Add location-specific service page coverage on core pages.",
+    );
+    expect(actionDeltaLines[0]).toHaveTextContent("Evidence strength: High.");
+    const priorityLines = screen.getAllByTestId("recommendation-priority");
+    expect(priorityLines).toHaveLength(1);
+    expect(priorityLines[0]).toHaveTextContent("Take first");
+    expect(priorityLines[0]).toHaveTextContent("Strong competitor-backed gap with a clear next action.");
+    expect(priorityLines[0]).toHaveTextContent("Effort: Quick win.");
+    expect(screen.queryByText(/Competitor linkage:.*No linkage metadata recommendation/i)).not.toBeInTheDocument();
   });
 
   it("renders recommendation action clarity and expected outcome lines when metadata is present", async () => {
@@ -5221,9 +5343,12 @@ describe("site workspace ai competitor profile drafts", () => {
           evidence: "Valid evidence",
           confidence_score: 0.7,
           source: "ai_generated",
+          confidence_level: "high",
+          source_type: "places",
           provenance_classification: "places_ai_enriched",
           provenance_explanation:
             "Discovered from nearby business seed data and enriched for service/location fit.",
+          operator_evidence_summary: "Ranks as a strong local match from nearby-business discovery.",
           review_status: "pending",
           edited_fields_json: null,
           review_notes: null,
@@ -5365,6 +5490,13 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(
       within(draftRows[0]).getByText(/Discovered from nearby business seed data and enriched/i),
     ).toBeInTheDocument();
+    expect(within(draftRows[0]).getByTestId("competitor-confidence-source-chips")).toHaveTextContent(
+      "High confidence",
+    );
+    expect(within(draftRows[0]).getByTestId("competitor-confidence-source-chips")).toHaveTextContent("Nearby seed");
+    expect(within(draftRows[0]).getByTestId("competitor-operator-evidence-summary")).toHaveTextContent(
+      "Evidence signal: Ranks as a strong local match",
+    );
 
     const tuningDebug = screen.getByTestId("tuning-rejected-competitor-candidates-debug");
     expect(within(tuningDebug).getByText(/Removed by tuning \(debug\)/i)).toBeInTheDocument();
@@ -5721,6 +5853,7 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(rows).toHaveLength(1);
     expect(within(rows[0]).queryByText(/Source:/i)).not.toBeInTheDocument();
     expect(within(rows[0]).queryByText(/Selection basis:/i)).not.toBeInTheDocument();
+    expect(within(rows[0]).queryByTestId("competitor-confidence-source-chips")).not.toBeInTheDocument();
   });
 
   it("triggers generation and refreshes visible drafts", async () => {
@@ -5809,7 +5942,7 @@ describe("site workspace ai competitor profile drafts", () => {
       "token-1",
       "biz-1",
       "site-1",
-      { candidate_count: 5 },
+      { candidate_count: 10 },
     );
     await waitFor(
       () => {
