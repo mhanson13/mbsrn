@@ -97,6 +97,25 @@ def test_startup_connectivity_retries_for_cloudsql_proxy_localhost(
     assert "postgresql+psycopg://" not in caplog.text
 
 
+def test_startup_connectivity_immediate_success_logs_without_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fake_engine = _FakeEngine(fail_attempts=0)
+    monkeypatch.setattr(main_module, "engine", fake_engine)
+    monkeypatch.setattr(main_module, "settings", SimpleNamespace(app_env="production", db_connection_mode="direct"))
+    monkeypatch.setattr(main_module, "DATABASE_TARGET_HOST", "db.internal")
+    caplog.set_level(logging.INFO)
+
+    main_module._ensure_database_connectivity()
+
+    assert fake_engine.connect_calls == 1
+    assert "Startup database connectivity check succeeded" in caplog.text
+    assert "proxy_retry_path_entered=False" in caplog.text
+    assert "recovered_after_retry=False" in caplog.text
+    assert "postgresql+psycopg://" not in caplog.text
+
+
 def test_startup_connectivity_fails_fast_on_production_localhost_regression(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -114,13 +133,37 @@ def test_startup_connectivity_fails_fast_on_production_localhost_regression(
     assert fake_engine.connect_calls == 0
 
 
-def test_startup_connectivity_raises_after_retry_budget_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_startup_connectivity_logs_guard_before_production_localhost_fail_fast(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fake_engine = _FakeEngine(fail_attempts=0)
+    monkeypatch.setattr(main_module, "engine", fake_engine)
+    monkeypatch.setattr(main_module, "settings", SimpleNamespace(app_env="production", db_connection_mode="direct"))
+    monkeypatch.setattr(main_module, "DATABASE_TARGET_HOST", "localhost")
+    caplog.set_level(logging.INFO)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Production DB config regression detected: resolved localhost target is invalid when APP_ENV=production",
+    ):
+        main_module._ensure_database_connectivity()
+
+    assert "Production DB config regression detected host=localhost port=5432 app_env=production db_connection_mode=direct" in caplog.text
+    assert "postgresql+psycopg://" not in caplog.text
+
+
+def test_startup_connectivity_raises_after_retry_budget_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     fake_engine = _FakeEngine(fail_attempts=10)
     monkeypatch.setattr(main_module, "engine", fake_engine)
     monkeypatch.setattr(main_module, "settings", SimpleNamespace(app_env="production", db_connection_mode="cloudsql_proxy"))
     monkeypatch.setattr(main_module, "DATABASE_TARGET_HOST", "127.0.0.1")
     monkeypatch.setattr(main_module, "_CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS", 2)
     monkeypatch.setattr(main_module.time, "sleep", lambda _seconds: None)
+    caplog.set_level(logging.INFO)
 
     with pytest.raises(
         RuntimeError,
@@ -129,6 +172,8 @@ def test_startup_connectivity_raises_after_retry_budget_exhausted(monkeypatch: p
         main_module._ensure_database_connectivity()
 
     assert fake_engine.connect_calls == 2
+    assert "Startup database connectivity check failed host=127.0.0.1 port=5432 app_env=production db_connection_mode=cloudsql_proxy attempt=2 max_attempts=2" in caplog.text
+    assert "postgresql+psycopg://" not in caplog.text
 
 
 def test_startup_logs_schema_expectation(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:

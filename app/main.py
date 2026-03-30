@@ -111,6 +111,13 @@ def _is_cloudsql_proxy_mode() -> bool:
 
 def _ensure_database_connectivity() -> None:
     if settings.app_env == "production" and _is_localhost_database_target() and not _is_cloudsql_proxy_mode():
+        logger.error(
+            "Production DB config regression detected host=%s port=%s app_env=%s db_connection_mode=%s",
+            DATABASE_TARGET_HOST,
+            DATABASE_TARGET_PORT_LABEL,
+            settings.app_env,
+            settings.db_connection_mode,
+        )
         raise RuntimeError(
             "Production DB config regression detected: resolved localhost target is invalid when APP_ENV=production"
         )
