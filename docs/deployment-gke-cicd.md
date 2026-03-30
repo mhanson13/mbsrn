@@ -156,9 +156,19 @@ Database URL safety contract:
   - localhost/loopback `DATABASE_URL` is allowed only when `DB_CONNECTION_MODE=cloudsql_proxy`
   - this is intended for the current in-pod Cloud SQL proxy sidecar model
 - Unknown or unset `APP_ENV` values reject localhost targets and require an explicit non-localhost `DATABASE_URL`.
-- API startup performs a fail-fast connectivity check (single `SELECT 1`) and exits on failure so Kubernetes can restart.
+- API startup performs a bounded connectivity check:
+  - default mode: single `SELECT 1` attempt, then fail fast
+  - `APP_ENV=production` + `DB_CONNECTION_MODE=cloudsql_proxy` + localhost target:
+    bounded retry window (15 attempts, 1s delay) before failing
+  - this reduces false startup crashes when the Cloud SQL proxy sidecar is still initializing
 - Startup logs emit sanitized DB target only (no credentials):
   - `Database target resolved: host=<host>, port=<port>`
+- Schema readiness expectation is resolved from Alembic head at runtime (current repo head: `0039_competitor_domain_verification_status`).
+- Production startup verification logs:
+  - `Startup schema readiness expectation ... expected_revision=0039_competitor_domain_verification_status ...`
+  - `Startup database connectivity check using cloudsql proxy retry budget ...` (only for proxy-backed localhost mode)
+  - `Startup database connectivity check succeeded ... proxy_retry_path_entered=<bool> recovered_after_retry=<bool>`
+  - `Schema readiness passed expected=... current=...`
 
 ### Production DATABASE_URL Source Of Truth (`deploy-prod.yml` path)
 - Production-authoritative deploy path (`.github/workflows/deploy-prod.yml` + `k8s/*`) sources

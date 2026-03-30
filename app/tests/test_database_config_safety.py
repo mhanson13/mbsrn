@@ -66,6 +66,19 @@ def test_localhost_database_url_allowed_in_production_with_cloudsql_proxy_mode(
     assert settings.db_connection_mode == "cloudsql_proxy"
 
 
+def test_remote_database_url_not_overridden_in_production_cloudsql_proxy_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_production_runtime(monkeypatch)
+    monkeypatch.setenv("DB_CONNECTION_MODE", "cloudsql_proxy")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://app_user:secret@db.internal:5432/mbsrn")
+
+    settings = get_settings()
+
+    assert settings.database_url == "postgresql+psycopg://app_user:secret@db.internal:5432/mbsrn"
+    assert settings.db_connection_mode == "cloudsql_proxy"
+
+
 def test_loopback_database_url_rejected_in_production_with_unrelated_connection_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -85,6 +85,18 @@ npm run build
 
 Coverage and test suites include SEO audit/crawl behavior, competitor candidate quality/deduplication, recommendation+narrative APIs, tuning preview/attribution flows, and business settings validation.
 
+## Database Runtime Safety
+- Authoritative env names: `APP_ENV`, `DATABASE_URL`, `DB_CONNECTION_MODE`, `CLOUD_SQL_INSTANCE_CONNECTION_NAME`.
+- Localhost database targets are allowed only for local-like app envs (`local`, `development`, `dev`, `test`, `ci`).
+- In production, localhost/loopback targets are invalid unless `DB_CONNECTION_MODE=cloudsql_proxy` (current sidecar model).
+- Production startup includes a bounded Cloud SQL proxy readiness retry (15 attempts, 1s delay) before failing.
+- Schema readiness checks Alembic head from the running image (current repo head: `0039_competitor_domain_verification_status`).
+- Post-deploy startup verification logs should include:
+  - `Startup schema readiness expectation ... expected_revision=0039_competitor_domain_verification_status`
+  - `Startup database connectivity check using cloudsql proxy retry budget ...` (proxy mode only)
+  - `Startup database connectivity check succeeded ... proxy_retry_path_entered=<bool> recovered_after_retry=<bool>`
+  - `Schema readiness passed expected=... current=...` (from readiness checks)
+
 ## GCP Logs Query Deployment Prerequisites
 The admin `GCP Logs Query` feature relies on runtime Application Default Credentials (Workload Identity) and project-id wiring in the API pod.
 

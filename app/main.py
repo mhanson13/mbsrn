@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from alembic.config import Config
@@ -86,25 +87,106 @@ def _resolve_expected_alembic_head() -> str | None:
 EXPECTED_ALEMBIC_HEAD = _resolve_expected_alembic_head()
 DATABASE_TARGET_HOST, DATABASE_TARGET_PORT = get_database_target()
 DATABASE_TARGET_PORT_LABEL = str(DATABASE_TARGET_PORT) if DATABASE_TARGET_PORT is not None else "default"
+_LOCALHOST_DATABASE_TARGETS = {"localhost", "127.0.0.1", "::1"}
+_CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS = 15
+_CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_RETRY_DELAY_SECONDS = 1.0
+_SCHEMA_READINESS_LOGGED_REVISION: str | None = None
+
+
+def _is_localhost_database_target() -> bool:
+    return DATABASE_TARGET_HOST.strip().lower() in _LOCALHOST_DATABASE_TARGETS
+
+
+def _database_target_classification() -> str:
+    if _is_localhost_database_target():
+        return "loopback"
+    if DATABASE_TARGET_HOST.strip():
+        return "network"
+    return "unknown"
+
+
+def _is_cloudsql_proxy_mode() -> bool:
+    return settings.app_env == "production" and settings.db_connection_mode == "cloudsql_proxy"
 
 
 def _ensure_database_connectivity() -> None:
-    try:
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-    except SQLAlchemyError as exc:
-        logger.error(
-            "Startup database connectivity check failed host=%s port=%s error=%s",
+    if settings.app_env == "production" and _is_localhost_database_target() and not _is_cloudsql_proxy_mode():
+        raise RuntimeError(
+            "Production DB config regression detected: resolved localhost target is invalid when APP_ENV=production"
+        )
+
+    max_attempts = 1
+    retry_delay_seconds = 0.0
+    if _is_cloudsql_proxy_mode() and _is_localhost_database_target():
+        max_attempts = _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS
+        retry_delay_seconds = _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_RETRY_DELAY_SECONDS
+        logger.info(
+            "Startup database connectivity check using cloudsql proxy retry budget host=%s port=%s app_env=%s "
+            "db_connection_mode=%s max_attempts=%s retry_delay_seconds=%s",
             DATABASE_TARGET_HOST,
             DATABASE_TARGET_PORT_LABEL,
-            exc,
+            settings.app_env,
+            settings.db_connection_mode,
+            max_attempts,
+            retry_delay_seconds,
         )
-        raise RuntimeError(
-            "Startup database connectivity check failed. Verify DATABASE_URL and database reachability."
-        ) from exc
+
+    start = time.monotonic()
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            logger.info(
+                "Startup database connectivity check succeeded host=%s port=%s app_env=%s db_connection_mode=%s "
+                "attempt=%s max_attempts=%s elapsed_ms=%s proxy_retry_path_entered=%s recovered_after_retry=%s",
+                DATABASE_TARGET_HOST,
+                DATABASE_TARGET_PORT_LABEL,
+                settings.app_env,
+                settings.db_connection_mode,
+                attempt,
+                max_attempts,
+                elapsed_ms,
+                max_attempts > 1,
+                attempt > 1,
+            )
+            return
+        except SQLAlchemyError as exc:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            if attempt >= max_attempts:
+                logger.error(
+                    "Startup database connectivity check failed host=%s port=%s app_env=%s db_connection_mode=%s "
+                    "attempt=%s max_attempts=%s elapsed_ms=%s error=%s",
+                    DATABASE_TARGET_HOST,
+                    DATABASE_TARGET_PORT_LABEL,
+                    settings.app_env,
+                    settings.db_connection_mode,
+                    attempt,
+                    max_attempts,
+                    elapsed_ms,
+                    exc,
+                )
+                raise RuntimeError(
+                    "Startup database connectivity check failed. Verify DATABASE_URL and database reachability."
+                ) from exc
+
+            logger.warning(
+                "Startup database connectivity check retrying host=%s port=%s app_env=%s db_connection_mode=%s "
+                "attempt=%s max_attempts=%s elapsed_ms=%s error=%s",
+                DATABASE_TARGET_HOST,
+                DATABASE_TARGET_PORT_LABEL,
+                settings.app_env,
+                settings.db_connection_mode,
+                attempt,
+                max_attempts,
+                elapsed_ms,
+                exc,
+            )
+            time.sleep(retry_delay_seconds)
 
 
 def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
+    global _SCHEMA_READINESS_LOGGED_REVISION
     if EXPECTED_ALEMBIC_HEAD is None:
         return False, {
             "status": "not_ready",
@@ -154,6 +236,17 @@ def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
             "expected_revision": EXPECTED_ALEMBIC_HEAD,
             "current_revisions": revisions,
         }
+    if _SCHEMA_READINESS_LOGGED_REVISION != revisions[0]:
+        logger.info(
+            "Schema readiness passed expected=%s current=%s host=%s port=%s app_env=%s db_connection_mode=%s",
+            EXPECTED_ALEMBIC_HEAD,
+            revisions[0],
+            DATABASE_TARGET_HOST,
+            DATABASE_TARGET_PORT_LABEL,
+            settings.app_env,
+            settings.db_connection_mode,
+        )
+        _SCHEMA_READINESS_LOGGED_REVISION = revisions[0]
     return True, {
         "status": "ok",
         "service": settings.app_name,
@@ -211,6 +304,16 @@ _configure_security_headers()
 @app.on_event("startup")
 def on_startup() -> None:
     if _should_enforce_schema_readiness():
+        logger.info(
+            "Startup schema readiness expectation expected_revision=%s app_env=%s db_connection_mode=%s "
+            "database_target_classification=%s host=%s port=%s",
+            EXPECTED_ALEMBIC_HEAD or "unresolved",
+            settings.app_env,
+            settings.db_connection_mode,
+            _database_target_classification(),
+            DATABASE_TARGET_HOST,
+            DATABASE_TARGET_PORT_LABEL,
+        )
         _ensure_database_connectivity()
 
     if _should_auto_create_schema():
