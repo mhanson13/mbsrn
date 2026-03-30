@@ -27,6 +27,11 @@ Primary endpoints:
 - `GET /api/integrations/google/business-profile/connection`
 - `POST /api/integrations/google/business-profile/disconnect`
 
+Callback completion behavior:
+- Browser callback requests (`Accept: text/html` or explicit `response_mode=redirect`) now end with a redirect back into the operator app at `/business-profile` instead of rendering raw JSON.
+- API/test callback requests can keep JSON response behavior with `response_mode=json`.
+- Redirect targets are derived from trusted server config only (CORS/operator origins + configured callback origin fallback); arbitrary callback return URLs are not accepted.
+
 ### Verification Workflow (Operator-Facing)
 Current implemented routes:
 - `GET /api/integrations/google/business-profile/locations/{location_id}/verification`

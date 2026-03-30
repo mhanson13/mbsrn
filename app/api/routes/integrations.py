@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Literal
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 
 from app.api.deps import (
     TenantContext,
@@ -10,6 +14,7 @@ from app.api.deps import (
     get_tenant_context,
     require_credential_manager_principal,
 )
+from app.core.config import Settings, get_settings
 from app.models.principal import Principal
 from app.schemas.google_business_profile import (
     GoogleBusinessProfileAccountsResponse,
@@ -95,12 +100,19 @@ def start_google_business_profile_connect(
 
 @router.get("/connect/callback", response_model=GoogleBusinessProfileConnectionStatusResponse)
 def google_business_profile_connect_callback(
+    request: Request,
     state: str | None = None,
     code: str | None = None,
     error: str | None = None,
     error_description: str | None = None,
+    response_mode: Literal["auto", "json", "redirect"] = "auto",
     service: GoogleBusinessProfileConnectionService = Depends(get_google_business_profile_connection_service),
-) -> GoogleBusinessProfileConnectionStatusResponse:
+) -> GoogleBusinessProfileConnectionStatusResponse | RedirectResponse:
+    browser_redirect = _callback_should_redirect_to_app(
+        request=request,
+        response_mode=response_mode,
+    )
+
     try:
         result = service.handle_callback(
             state=state,
@@ -109,10 +121,40 @@ def google_business_profile_connect_callback(
             error_description=error_description,
         )
     except GoogleBusinessProfileConnectionNotFoundError as exc:
+        if browser_redirect:
+            return RedirectResponse(
+                url=_build_connect_callback_redirect_url(
+                    request=request,
+                    success=False,
+                    error_code="not_found",
+                    reconnect_required=False,
+                ),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except GoogleBusinessProfileConnectionConfigurationError as exc:
+        if browser_redirect:
+            return RedirectResponse(
+                url=_build_connect_callback_redirect_url(
+                    request=request,
+                    success=False,
+                    error_code="configuration",
+                    reconnect_required=False,
+                ),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except GoogleBusinessProfileConnectionValidationError as exc:
+        if browser_redirect:
+            return RedirectResponse(
+                url=_build_connect_callback_redirect_url(
+                    request=request,
+                    success=False,
+                    error_code="validation",
+                    reconnect_required=exc.reconnect_required,
+                ),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
         detail: str | dict[str, object] = str(exc)
         if exc.reconnect_required:
             detail = {
@@ -120,6 +162,16 @@ def google_business_profile_connect_callback(
                 "reconnect_required": True,
             }
         raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+    if browser_redirect:
+        return RedirectResponse(
+            url=_build_connect_callback_redirect_url(
+                request=request,
+                success=True,
+                error_code=None,
+                reconnect_required=False,
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     return _to_connection_response(result)
 
 
@@ -361,6 +413,112 @@ def _to_connection_response(
         required_scopes_satisfied=result.required_scopes_satisfied,
         token_status=result.token_status,
     )
+
+
+def _callback_should_redirect_to_app(
+    *,
+    request: Request,
+    response_mode: Literal["auto", "json", "redirect"],
+) -> bool:
+    if response_mode == "json":
+        return False
+    if response_mode == "redirect":
+        return True
+
+    accept = (request.headers.get("accept") or "").lower()
+    sec_fetch_dest = (request.headers.get("sec-fetch-dest") or "").lower()
+    return ("text/html" in accept) or (sec_fetch_dest == "document")
+
+
+def _build_connect_callback_redirect_url(
+    *,
+    request: Request,
+    success: bool,
+    error_code: str | None,
+    reconnect_required: bool,
+) -> str:
+    settings = get_settings()
+    base_url = _resolve_connect_callback_return_base_url(
+        request=request,
+        settings=settings,
+    )
+
+    parsed = urlparse(base_url)
+    existing_params = parse_qs(parsed.query, keep_blank_values=True)
+    existing_params["gbp_connect"] = ["success" if success else "error"]
+    if not success and error_code:
+        existing_params["gbp_connect_error"] = [error_code]
+    if reconnect_required:
+        existing_params["gbp_reconnect_required"] = ["true"]
+
+    query = urlencode(existing_params, doseq=True)
+    return urlunparse(parsed._replace(query=query))
+
+
+def _resolve_connect_callback_return_base_url(
+    *,
+    request: Request,
+    settings: Settings,
+) -> str:
+    preferred = _preferred_operator_origin(settings=settings)
+    if preferred:
+        return f"{preferred.rstrip('/')}/business-profile"
+
+    request_origin = _normalize_origin(str(request.base_url))
+    if request_origin:
+        return f"{request_origin.rstrip('/')}/business-profile"
+
+    return "http://localhost:3000/business-profile"
+
+
+def _preferred_operator_origin(*, settings: Settings) -> str | None:
+    cors_origins = tuple(settings.api_cors_allowed_origins or ())
+    non_loopback = (
+        origin
+        for origin in cors_origins
+        if (_normalize_origin(origin) and not _origin_is_loopback(origin))
+    )
+    first_non_loopback = next(non_loopback, None)
+    if first_non_loopback:
+        return _normalize_origin(first_non_loopback)
+
+    redirect_origin = _normalize_origin(settings.google_business_profile_redirect_uri or "")
+    if redirect_origin:
+        return redirect_origin
+
+    first_cors = next((origin for origin in cors_origins if _normalize_origin(origin)), None)
+    if first_cors:
+        return _normalize_origin(first_cors)
+
+    return None
+
+
+def _normalize_origin(value: str) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if not parsed.netloc or not parsed.hostname:
+        return None
+    if parsed.username or parsed.password:
+        return None
+
+    hostname = parsed.hostname
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{hostname}{port}"
+
+
+def _origin_is_loopback(value: str) -> bool:
+    normalized = _normalize_origin(value)
+    if not normalized:
+        return False
+    hostname = (urlparse(normalized).hostname or "").lower()
+    return hostname in {"localhost", "127.0.0.1", "::1"}
 
 
 def _to_accounts_response(result: GoogleBusinessProfileAccountsResult) -> GoogleBusinessProfileAccountsResponse:

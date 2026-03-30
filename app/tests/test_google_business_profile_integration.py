@@ -474,6 +474,43 @@ def test_google_business_profile_callback_denied_consent(
     assert denied_events
 
 
+def test_google_business_profile_callback_denied_consent_redirects_for_browser_flow(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="admin-denied-browser")
+    monkeypatch.setenv("API_CORS_ALLOWED_ORIGINS", "https://app.mbsrn.example")
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=_StubGoogleOAuthClient(),
+        business_id=seeded_business.id,
+        principal_id="admin-denied-browser",
+    )
+
+    start_payload = _start_connect(client)
+    state = _extract_state(str(start_payload["authorization_url"]))
+    callback = client.get(
+        "/api/integrations/google/business-profile/connect/callback",
+        params={
+            "state": state,
+            "error": "access_denied",
+            "error_description": "The user denied access",
+        },
+        headers={"accept": "text/html,application/xhtml+xml"},
+        follow_redirects=False,
+    )
+    assert callback.status_code == 303
+    location = callback.headers.get("location")
+    assert location is not None
+    parsed = urlparse(location)
+    assert f"{parsed.scheme}://{parsed.netloc}" == "https://app.mbsrn.example"
+    assert parsed.path == "/business-profile"
+    query = parse_qs(parsed.query)
+    assert query["gbp_connect"] == ["error"]
+    assert query["gbp_connect_error"] == ["validation"]
+
+
 def test_google_business_profile_callback_success_persists_encrypted_tokens(
     db_session,
     seeded_business,
@@ -549,6 +586,131 @@ def test_google_business_profile_callback_success_persists_encrypted_tokens(
         )
         == "1//refresh-token"
     )
+
+
+def test_google_business_profile_callback_success_redirects_for_browser_flow(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="admin-browser-success")
+    monkeypatch.setenv("API_CORS_ALLOWED_ORIGINS", "https://app.mbsrn.example")
+    oauth_client = _StubGoogleOAuthClient()
+    oauth_client.exchange_map["valid-code"] = GoogleOAuthTokenResponse(
+        access_token="ya29.browser-access-token",
+        token_type="Bearer",
+        expires_in=3600,
+        refresh_token="1//browser-refresh-token",
+        scope="https://www.googleapis.com/auth/business.manage openid email",
+        id_token_subject="google-subject-browser",
+        id_token_email="owner@workboots.example",
+    )
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        business_id=seeded_business.id,
+        principal_id="admin-browser-success",
+    )
+
+    start_payload = _start_connect(client)
+    state = _extract_state(str(start_payload["authorization_url"]))
+    callback = client.get(
+        "/api/integrations/google/business-profile/connect/callback",
+        params={"state": state, "code": "valid-code"},
+        headers={"accept": "text/html,application/xhtml+xml"},
+        follow_redirects=False,
+    )
+    assert callback.status_code == 303, callback.text
+    location = callback.headers.get("location")
+    assert location is not None
+    parsed = urlparse(location)
+    assert f"{parsed.scheme}://{parsed.netloc}" == "https://app.mbsrn.example"
+    assert parsed.path == "/business-profile"
+    query = parse_qs(parsed.query)
+    assert query["gbp_connect"] == ["success"]
+
+    row = _provider_connection_for_business(db_session, seeded_business.id)
+    assert row is not None
+    assert row.is_active is True
+
+
+def test_google_business_profile_callback_json_response_mode_overrides_browser_redirect(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="admin-json-override")
+    oauth_client = _StubGoogleOAuthClient()
+    oauth_client.exchange_map["valid-code"] = GoogleOAuthTokenResponse(
+        access_token="ya29.json-access-token",
+        token_type="Bearer",
+        expires_in=3600,
+        refresh_token="1//json-refresh-token",
+        scope="https://www.googleapis.com/auth/business.manage openid email",
+        id_token_subject="google-subject-json",
+        id_token_email="owner@workboots.example",
+    )
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        business_id=seeded_business.id,
+        principal_id="admin-json-override",
+    )
+
+    start_payload = _start_connect(client)
+    state = _extract_state(str(start_payload["authorization_url"]))
+    callback = client.get(
+        "/api/integrations/google/business-profile/connect/callback",
+        params={"state": state, "code": "valid-code", "response_mode": "json"},
+        headers={"accept": "text/html,application/xhtml+xml"},
+    )
+    assert callback.status_code == 200
+    payload = callback.json()
+    assert payload["connected"] is True
+    assert payload["provider"] == "google_business_profile"
+
+
+def test_google_business_profile_callback_redirect_ignores_unsafe_origin_candidates(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="admin-unsafe-origin")
+    monkeypatch.setenv(
+        "API_CORS_ALLOWED_ORIGINS",
+        "javascript://not-allowed,https://safe.mbsrn.example",
+    )
+    oauth_client = _StubGoogleOAuthClient()
+    oauth_client.exchange_map["valid-code"] = GoogleOAuthTokenResponse(
+        access_token="ya29.safe-access-token",
+        token_type="Bearer",
+        expires_in=3600,
+        refresh_token="1//safe-refresh-token",
+        scope="https://www.googleapis.com/auth/business.manage openid email",
+        id_token_subject="google-subject-safe",
+        id_token_email="owner@workboots.example",
+    )
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        business_id=seeded_business.id,
+        principal_id="admin-unsafe-origin",
+    )
+
+    start_payload = _start_connect(client)
+    state = _extract_state(str(start_payload["authorization_url"]))
+    callback = client.get(
+        "/api/integrations/google/business-profile/connect/callback",
+        params={"state": state, "code": "valid-code"},
+        headers={"accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert callback.status_code == 303
+    location = callback.headers.get("location")
+    assert location is not None
+    parsed = urlparse(location)
+    assert f"{parsed.scheme}://{parsed.netloc}" == "https://safe.mbsrn.example"
+    assert parsed.path == "/business-profile"
 
 
 def test_google_business_profile_callback_fails_closed_when_pkce_verifier_missing(

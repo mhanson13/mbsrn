@@ -1894,6 +1894,13 @@ interface RecommendationPresentationBucket {
   items: Recommendation[];
 }
 
+interface RecommendationDetailClarityView {
+  observedPattern: string | null;
+  observedGap: string | null;
+  recommendedAction: string | null;
+  evidenceContextLines: string[];
+}
+
 function recommendationPresentationBucketBadgeClass(
   key: RecommendationPresentationBucketKey,
 ): string {
@@ -1913,15 +1920,15 @@ function recommendationPresentationStateLabel(
   key: RecommendationPresentationBucketKey,
 ): string {
   if (key === "ready_to_act") {
-    return "Actionable now";
+    return "Do next";
   }
   if (key === "applied_completed") {
-    return "Applied/completed";
+    return "Applied";
   }
   if (key === "needs_review_pending") {
-    return "Needs review";
+    return "Review needed";
   }
-  return "Informational";
+  return "Context only";
 }
 
 function recommendationPresentationStateBadgeClass(
@@ -2008,20 +2015,20 @@ function buildRecommendationPresentationBuckets(
     { label: string; subtitle: string }
   > = {
     ready_to_act: {
-      label: "Ready to act",
-      subtitle: "Highest-value recommendations that are ready for operator action.",
+      label: "Ready now",
+      subtitle: "Highest-impact recommendations you can act on immediately.",
     },
     applied_completed: {
       label: "Applied / completed",
-      subtitle: "Recommendations already applied or reflected in analysis outcomes.",
+      subtitle: "Already applied, or now reflected in the latest analysis.",
     },
     needs_review_pending: {
       label: "Needs review / pending",
-      subtitle: "Recommendations that still require operator review or follow-through.",
+      subtitle: "Still needs review, a decision, or follow-through.",
     },
     informational: {
       label: "Informational",
-      subtitle: "Lower-urgency recommendations kept for context and historical reference.",
+      subtitle: "Useful context with lower urgency.",
     },
   };
   return orderedKeys
@@ -2039,6 +2046,133 @@ function buildRecommendationPresentationBuckets(
       };
     })
     .filter((bucket): bucket is RecommendationPresentationBucket => bucket !== null);
+}
+
+function buildRecommendationDetailClarityView(params: {
+  actionDelta: {
+    observedCompetitorPattern: string;
+    observedSiteGap: string;
+    recommendedOperatorAction: string;
+    evidenceStrength: "high" | "medium" | "low";
+  } | null;
+  evidenceSummary: string | null;
+  observedGapSummary: string | null;
+  actionClarity: string | null;
+  expectedOutcome: string | null;
+  competitorLinkageSummary: string | null;
+  evidenceTrace: string[];
+  targetContext: RecommendationTargetContext | null;
+  targetPageHints: string[];
+}): RecommendationDetailClarityView {
+  const observedPattern =
+    params.actionDelta?.observedCompetitorPattern
+    || params.evidenceSummary
+    || null;
+  const observedGap =
+    params.actionDelta?.observedSiteGap
+    || params.observedGapSummary
+    || params.competitorLinkageSummary
+    || null;
+  const recommendedAction =
+    params.actionDelta?.recommendedOperatorAction
+    || params.actionClarity
+    || params.expectedOutcome
+    || null;
+  const evidenceContextLines: string[] = [];
+  if (params.actionDelta) {
+    evidenceContextLines.push(
+      `Evidence strength: ${formatRecommendationActionDeltaEvidenceStrength(params.actionDelta.evidenceStrength)}.`,
+    );
+  }
+  if (params.evidenceTrace.length > 0) {
+    evidenceContextLines.push(`Evidence trace: ${params.evidenceTrace.join(" · ")}`);
+  }
+  if (params.targetContext) {
+    evidenceContextLines.push(`Target context: ${formatRecommendationTargetContext(params.targetContext)}`);
+  }
+  if (params.targetPageHints.length > 0) {
+    evidenceContextLines.push(`Likely pages: ${params.targetPageHints.join(", ")}`);
+  }
+  if (params.expectedOutcome && params.expectedOutcome !== recommendedAction) {
+    evidenceContextLines.push(`Expected outcome: ${params.expectedOutcome}`);
+  }
+  return {
+    observedPattern,
+    observedGap,
+    recommendedAction,
+    evidenceContextLines,
+  };
+}
+
+function hasRecommendationDetailClarityContent(clarity: RecommendationDetailClarityView): boolean {
+  return Boolean(
+    clarity.observedPattern
+    || clarity.observedGap
+    || clarity.recommendedAction
+    || clarity.evidenceContextLines.length > 0,
+  );
+}
+
+function buildRecommendationDetailClarityFromItem(item: Recommendation): RecommendationDetailClarityView {
+  return buildRecommendationDetailClarityView({
+    actionDelta: normalizeRecommendationActionDelta(item),
+    evidenceSummary: normalizeRecommendationEvidenceSummary(item),
+    observedGapSummary: normalizeRecommendationObservedGapSummary(item),
+    actionClarity: normalizeRecommendationActionClarity(item),
+    expectedOutcome: normalizeRecommendationExpectedOutcome(item),
+    competitorLinkageSummary: normalizeRecommendationCompetitorLinkageSummary(item),
+    evidenceTrace: normalizeRecommendationEvidenceTrace(item),
+    targetContext: normalizeRecommendationTargetContext(item),
+    targetPageHints: normalizeRecommendationTargetPageHints(item),
+  });
+}
+
+function RecommendationDetailClarity({
+  clarity,
+  bucketKey,
+  testId = "recommendation-detail-clarity",
+}: {
+  clarity: RecommendationDetailClarityView;
+  bucketKey: RecommendationPresentationBucketKey;
+  testId?: string;
+}): JSX.Element | null {
+  if (!hasRecommendationDetailClarityContent(clarity)) {
+    return null;
+  }
+  return (
+    <div className={`recommendation-detail-clarity recommendation-detail-clarity-${bucketKey}`} data-testid={testId}>
+      {clarity.observedPattern ? (
+        <div className="recommendation-detail-clarity-row" data-testid="recommendation-clarity-observed-pattern">
+          <span className="recommendation-detail-clarity-label">What we observed</span>
+          <span className="hint muted">{clarity.observedPattern}</span>
+        </div>
+      ) : null}
+      {clarity.observedGap ? (
+        <div className="recommendation-detail-clarity-row" data-testid="recommendation-clarity-gap">
+          <span className="recommendation-detail-clarity-label">What needs improvement</span>
+          <span className="hint muted">{clarity.observedGap}</span>
+        </div>
+      ) : null}
+      {clarity.recommendedAction ? (
+        <div className="recommendation-detail-clarity-row recommendation-detail-clarity-row-action" data-testid="recommendation-clarity-action">
+          <span className="recommendation-detail-clarity-label">What to do next</span>
+          <strong>{clarity.recommendedAction}</strong>
+        </div>
+      ) : null}
+      {clarity.evidenceContextLines.length > 0 ? (
+        <div className="recommendation-detail-clarity-row recommendation-detail-clarity-row-evidence" data-testid="recommendation-clarity-evidence">
+          <span className="recommendation-detail-clarity-label">Why this is recommended</span>
+          <div className="stack-micro">
+            {clarity.evidenceContextLines.map((line, index) => (
+              <span key={`recommendation-clarity-evidence-${index}`} className="hint muted">
+                {line}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 interface CompetitorContextHealthCheckView {
@@ -5041,8 +5175,8 @@ export default function SiteWorkspacePage() {
 
       <SectionCard className="operator-shell-insights operator-shell-primary-zone" data-testid="operator-focus-zone">
         <SectionHeader
-          title="Top Insights"
-          subtitle="Priority actions, trust signals, and recommendation context."
+          title="Operator Focus"
+          subtitle="What changed, what needs attention, and what to do next."
           headingLevel={2}
           data-testid="top-insights-header"
         />
@@ -5062,7 +5196,7 @@ export default function SiteWorkspacePage() {
             </div>
 
             <div className="panel panel-compact stack operator-focus-next-step" data-testid="start-here-section">
-              <span className="hint muted">Start Here</span>
+              <span className="hint muted">Next best step</span>
               <strong>{startHereAction.title}</strong>
               <span className="hint">{startHereAction.detail}</span>
               <span className="hint muted">Why this first: {startHereAction.whyThisFirst}</span>
@@ -5077,21 +5211,21 @@ export default function SiteWorkspacePage() {
           <div className="operator-focus-support stack">
             <div className="metrics-grid operator-focus-metrics">
               <div className="panel panel-compact">
-                <strong>You have {actionableRecommendationCount} actionable improvements</strong>
+                <strong>{actionableRecommendationCount} recommendations are ready to act on</strong>
               </div>
               <div className="panel panel-compact">
-                <strong>{latestCompletedTuningSuggestions.length} tuning opportunities identified</strong>
+                <strong>{latestCompletedTuningSuggestions.length} tuning suggestions are available</strong>
               </div>
               <div className="panel panel-compact">
                 <strong>
-                  {latestPreviewInsight || "Preview a tuning suggestion to estimate included-candidate impact"}
+                  {latestPreviewInsight || "Preview a tuning suggestion to see expected impact"}
                 </strong>
               </div>
             </div>
 
             {recommendationApplyOutcome ? (
               <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="operator-focus-latest-change">
-                <span className="hint muted">Latest meaningful change</span>
+                <span className="hint muted">Latest change</span>
                 {recommendationApplyOutcome.appliedRecommendationTitle ? (
                   <span className="hint">
                     Applied recommendation: {recommendationApplyOutcome.appliedRecommendationTitle}
@@ -5108,7 +5242,7 @@ export default function SiteWorkspacePage() {
 
             {workspaceTrustSummary ? (
               <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="workspace-trust-summary">
-                <span className="hint muted">Workspace trust summary</span>
+                <span className="hint muted">Trust signals</span>
                 {workspaceTrustSummary.latestCompetitorStatus ? (
                   <span className="hint">
                     Latest competitor status:{" "}
@@ -5149,7 +5283,7 @@ export default function SiteWorkspacePage() {
                 className="panel panel-compact stack-tight operator-summary-callout"
                 data-testid="start-here-theme-helper"
               >
-                <span className="hint muted">Start here by theme</span>
+                <span className="hint muted">Suggested focus area</span>
                 <strong>{recommendationThemeStartHere.themeLabel}</strong>
                 <span className="hint">{recommendationThemeStartHere.title}</span>
                 <span className="hint muted">{recommendationThemeStartHere.reason}</span>
@@ -6491,7 +6625,7 @@ export default function SiteWorkspacePage() {
           <Link href="/recommendations">Open Recommendation Queue</Link>
         </p>
         {!queueError && (!queueResponse || queueResponse.items.length === 0) ? (
-          <p className="hint muted">No recommendations yet — generate recommendations to analyze this site.</p>
+          <p className="hint muted">No recommendations yet. Generate recommendations to see next best actions for this site.</p>
         ) : null}
         {queueResponse && queueResponse.items.length > 0 ? (
           <div className="table-container">
@@ -6585,7 +6719,7 @@ export default function SiteWorkspacePage() {
             </p>
             {recommendationOrderingExplanation ? (
               <div className="panel panel-compact stack-tight" data-testid="recommendation-ordering-explanation">
-                <span className="hint muted">Why this order</span>
+                <span className="hint muted">Why this priority order</span>
                 <span className="hint">{recommendationOrderingExplanation.message}</span>
                 {recommendationOrderingExplanation.contextReasons.length > 0 ? (
                   <div className="link-row">
@@ -6598,9 +6732,9 @@ export default function SiteWorkspacePage() {
                 ) : null}
               </div>
             ) : null}
-            <h4>Deterministic Recommendations</h4>
+            <h4>Recommendations</h4>
             {!latestCompletedRecommendationsError && latestCompletedRecommendations.length === 0 ? (
-              <p className="hint muted">No recommendations yet — generate recommendations to analyze this site.</p>
+              <p className="hint muted">No recommendations yet. Generate recommendations to see next best actions for this site.</p>
             ) : null}
             {latestCompletedRecommendations.length > 0 ? (
               <div className="recommendation-bucket-grid" data-testid="recommendation-buckets">
@@ -6624,7 +6758,11 @@ export default function SiteWorkspacePage() {
                         const recommendationProgress = normalizeRecommendationProgress(item);
                         const recommendationLifecycle = normalizeRecommendationLifecycle(item);
                         const recommendationPriority = normalizeRecommendationPriority(item);
-                        const recommendationActionSummary = normalizeRecommendationActionClarity(item)
+                        const recommendationDetailClarity = buildRecommendationDetailClarityFromItem(item);
+                        const hasRecommendationDetailClarity =
+                          hasRecommendationDetailClarityContent(recommendationDetailClarity);
+                        const recommendationActionSummary = recommendationDetailClarity.recommendedAction
+                          || normalizeRecommendationActionClarity(item)
                           || normalizeRecommendationEvidenceSummary(item)
                           || normalizeRecommendationExpectedOutcome(item)
                           || truncateText(item.rationale, 130);
@@ -6640,7 +6778,6 @@ export default function SiteWorkspacePage() {
                                 {recommendationPresentationStateLabel(bucket.key)}
                               </span>
                             </div>
-                            <span className="hint muted">{recommendationActionSummary}</span>
                             <div className="link-row recommendation-bucket-item-meta">
                               <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
                               {recommendationLifecycle ? (
@@ -6654,6 +6791,14 @@ export default function SiteWorkspacePage() {
                               <span className="badge badge-muted">{item.category}</span>
                               <span className="badge badge-muted">{item.severity}</span>
                             </div>
+                            <RecommendationDetailClarity
+                              clarity={recommendationDetailClarity}
+                              bucketKey={bucket.key}
+                              testId={`recommendation-detail-clarity-${bucket.key}-${item.id}`}
+                            />
+                            {!hasRecommendationDetailClarity && recommendationActionSummary ? (
+                              <span className="hint muted">{recommendationActionSummary}</span>
+                            ) : null}
                           </article>
                         );
                       })}
@@ -6678,7 +6823,7 @@ export default function SiteWorkspacePage() {
                         <th>Severity</th>
                         <th>Priority</th>
                         <th>Status</th>
-                        <th>Deterministic Rationale</th>
+                        <th>Why this was suggested</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -6704,6 +6849,18 @@ export default function SiteWorkspacePage() {
                           normalizeRecommendationCompetitorEvidenceLinks(item);
                         const recommendationActionDelta = normalizeRecommendationActionDelta(item);
                         const recommendationPriority = normalizeRecommendationPriority(item);
+                        const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
+                        const recommendationDetailClarity = buildRecommendationDetailClarityView({
+                          actionDelta: recommendationActionDelta,
+                          evidenceSummary: recommendationEvidenceSummary,
+                          observedGapSummary: recommendationObservedGapSummary,
+                          actionClarity: recommendationActionClarity,
+                          expectedOutcome: recommendationExpectedOutcome,
+                          competitorLinkageSummary: recommendationCompetitorLinkageSummary,
+                          evidenceTrace: recommendationEvidenceTrace,
+                          targetContext: recommendationTargetContext,
+                          targetPageHints: recommendationTargetPageHints,
+                        });
                         const rowId = recommendationRowId(item.id);
                         return (
                           <tr
@@ -6758,6 +6915,11 @@ export default function SiteWorkspacePage() {
                                   </div>
                                 </>
                               ) : null}
+                              <RecommendationDetailClarity
+                                clarity={recommendationDetailClarity}
+                                bucketKey={recommendationPresentationBucketKey}
+                                testId={`recommendation-detail-clarity-row-${item.id}`}
+                              />
                               {recommendationEvidenceSummary ? (
                                 <span className="hint muted" data-testid="recommendation-evidence-summary">
                                   Why this matters: {recommendationEvidenceSummary}
@@ -6884,7 +7046,7 @@ export default function SiteWorkspacePage() {
                               <th>Severity</th>
                               <th>Priority</th>
                               <th>Status</th>
-                              <th>Deterministic Rationale</th>
+                              <th>Why this was suggested</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -6910,6 +7072,18 @@ export default function SiteWorkspacePage() {
                                 normalizeRecommendationCompetitorEvidenceLinks(item);
                               const recommendationActionDelta = normalizeRecommendationActionDelta(item);
                               const recommendationPriority = normalizeRecommendationPriority(item);
+                              const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
+                              const recommendationDetailClarity = buildRecommendationDetailClarityView({
+                                actionDelta: recommendationActionDelta,
+                                evidenceSummary: recommendationEvidenceSummary,
+                                observedGapSummary: recommendationObservedGapSummary,
+                                actionClarity: recommendationActionClarity,
+                                expectedOutcome: recommendationExpectedOutcome,
+                                competitorLinkageSummary: recommendationCompetitorLinkageSummary,
+                                evidenceTrace: recommendationEvidenceTrace,
+                                targetContext: recommendationTargetContext,
+                                targetPageHints: recommendationTargetPageHints,
+                              });
                               const rowId = recommendationRowId(item.id);
                               return (
                                 <tr
@@ -6966,6 +7140,11 @@ export default function SiteWorkspacePage() {
                                         </div>
                                       </>
                                     ) : null}
+                                    <RecommendationDetailClarity
+                                      clarity={recommendationDetailClarity}
+                                      bucketKey={recommendationPresentationBucketKey}
+                                      testId={`recommendation-detail-clarity-row-${section.theme}-${item.id}`}
+                                    />
                                     {recommendationEvidenceSummary ? (
                                       <span className="hint muted" data-testid="recommendation-evidence-summary">
                                         Why this matters: {recommendationEvidenceSummary}
@@ -7219,7 +7398,7 @@ export default function SiteWorkspacePage() {
                     ) : null}
                     {recommendationApplyOutcome.nextRefreshExpectation ? (
                       <span className="hint muted">
-                        Next refresh expectation: {recommendationApplyOutcome.nextRefreshExpectation}
+                        You should see this after: {recommendationApplyOutcome.nextRefreshExpectation}
                       </span>
                     ) : null}
                     {recommendationApplyOutcome.appliedAt ? (

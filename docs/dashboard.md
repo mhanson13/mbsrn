@@ -51,6 +51,46 @@ They do not change backend recommendation scoring, generation, or persistence se
 - Applied recommendations stay visible but are visually separated from “do this now” items.
 - Informational recommendations remain visible with lighter emphasis.
 
+## Recommendation Detail Clarity v2
+
+Recommendation rows and bucket cards now render a compact deterministic detail block to improve actionability at a glance.
+
+### Per-item clarity structure
+- `Observed pattern`
+- `Gap to close`
+- `Recommended action`
+- `Supporting context`
+
+These fields are derived from existing deterministic recommendation metadata (`recommendation_action_delta`, evidence summary/trace, target context, and expected outcome). No recommendation generation or scoring behavior changes.
+
+### Presentation behavior
+- `Recommended action` is visually emphasized inside each item for faster operator scanning.
+- Applied/completed items remain visible but with lower-emphasis clarity styling than “ready to act” items.
+- When structured clarity metadata is absent, the UI falls back to existing grounded recommendation summaries.
+- The deterministic recommendation table/list remains intact for full detail access.
+
+## Workspace Copy + Label Tuning v1
+
+Workspace recommendation copy now uses more operator-natural language while preserving all existing trust/status semantics and deterministic behavior.
+
+### What changed
+- Recommendation section heading is now `Recommendations`.
+- Bucket copy was tuned for faster scanning:
+  - `Ready now`
+  - `Applied / completed`
+  - `Needs review / pending`
+  - `Informational`
+- Detail-clarity labels were tuned to operator language:
+  - `What we observed`
+  - `What needs improvement`
+  - `What to do next`
+  - `Why this is recommended`
+- Focus-zone and helper copy were tuned for direct action phrasing (for example, `Operator Focus`, `Next best step`, `Latest change`).
+
+### Behavior guarantees
+- This is presentation-only copy tuning.
+- Recommendation generation, scoring, status semantics, trust tiers, and API contracts are unchanged.
+
 ## Workspace Trust Summary
 
 The site workspace now includes a compact trust/status strip that rolls up the latest operator-relevant signals across competitor generation and recommendation apply actions.

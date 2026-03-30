@@ -1897,7 +1897,7 @@ describe("site workspace timeline controls", () => {
 
     await screen.findByRole("heading", { name: "Recommendation Runs and Narratives" });
     await screen.findByTestId("start-here-section");
-    expect(screen.getByText("Start Here")).toBeInTheDocument();
+    expect(screen.getByText("Next best step")).toBeInTheDocument();
     expect(screen.getByText("Adjust minimum relevance score from 35 -> 30")).toBeInTheDocument();
     const startHereButton = screen.getByRole("button", { name: "Preview and Focus" });
     expect((await screen.findAllByRole("link", { name: "run-1" })).length).toBeGreaterThan(0);
@@ -2575,9 +2575,9 @@ describe("site workspace timeline controls", () => {
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Top Insights" });
+    await screen.findByRole("heading", { name: "Operator Focus" });
     const startHereSection = await screen.findByTestId("start-here-section");
-    expect(within(startHereSection).getByText("Start Here")).toBeInTheDocument();
+    expect(within(startHereSection).getByText("Next best step")).toBeInTheDocument();
     expect(within(startHereSection).getByText("Fix title tags")).toBeInTheDocument();
     expect(within(startHereSection).getByText("Marked HIGH IMPACT")).toBeInTheDocument();
     expect(
@@ -2587,14 +2587,14 @@ describe("site workspace timeline controls", () => {
     ).toBeInTheDocument();
     const focusRecommendationButton = within(startHereSection).getByRole("button", { name: "Focus Recommendation" });
     expect(focusRecommendationButton).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("You have 1 actionable improvements")).toBeInTheDocument());
-    await waitFor(() => expect(screen.getByText("0 tuning opportunities identified")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("1 recommendations are ready to act on")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("0 tuning suggestions are available")).toBeInTheDocument());
     expect(
-      screen.getByText("Preview a tuning suggestion to estimate included-candidate impact"),
+      screen.getByText("Preview a tuning suggestion to see expected impact"),
     ).toBeInTheDocument();
     await screen.findByRole("heading", { name: "Recommendation Runs and Narratives" });
     await screen.findByRole("heading", { name: "Latest Completed Run" });
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     expect(screen.getByText("HIGH IMPACT")).toBeInTheDocument();
     expect(screen.getAllByText("Title tags are missing core keywords.").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "AI Narrative Overlay" })).toBeInTheDocument();
@@ -2649,7 +2649,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     expect(screen.getAllByText("Progress").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Suggested").length).toBeGreaterThan(0);
     expect(screen.getByText("Suggested action not yet applied.")).toBeInTheDocument();
@@ -2717,29 +2717,80 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     const buckets = screen.getByTestId("recommendation-buckets");
     expect(buckets).toBeInTheDocument();
 
     const readyBucket = screen.getByTestId("recommendation-bucket-ready_to_act");
-    expect(readyBucket).toHaveTextContent("Ready to act");
+    expect(readyBucket).toHaveTextContent("Ready now");
     expect(readyBucket).toHaveTextContent("Ready recommendation");
-    expect(readyBucket).toHaveTextContent("Actionable now");
+    expect(readyBucket).toHaveTextContent("Do next");
 
     const appliedBucket = screen.getByTestId("recommendation-bucket-applied_completed");
     expect(appliedBucket).toHaveTextContent("Applied / completed");
     expect(appliedBucket).toHaveTextContent("Applied recommendation");
-    expect(appliedBucket).toHaveTextContent("Applied/completed");
+    expect(appliedBucket).toHaveTextContent("Applied");
 
     const pendingBucket = screen.getByTestId("recommendation-bucket-needs_review_pending");
     expect(pendingBucket).toHaveTextContent("Needs review / pending");
     expect(pendingBucket).toHaveTextContent("Pending recommendation");
-    expect(pendingBucket).toHaveTextContent("Needs review");
+    expect(pendingBucket).toHaveTextContent("Review needed");
 
     const informationalBucket = screen.getByTestId("recommendation-bucket-informational");
     expect(informationalBucket).toHaveTextContent("Informational");
     expect(informationalBucket).toHaveTextContent("Informational recommendation");
     expect(informationalBucket).toHaveTextContent("Informational");
+  });
+
+  it("renders recommendation detail clarity with observed pattern, gap, action, and supporting context", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-clarity-ready",
+              title: "Ready clarity recommendation",
+              status: "open",
+              recommendation_action_delta: {
+                observed_competitor_pattern: "Top local competitors clearly emphasize emergency response intent.",
+                observed_site_gap: "Service pages do not call out emergency availability clearly.",
+                recommended_operator_action: "Add emergency response messaging to primary service pages.",
+                evidence_strength: "high",
+              },
+              recommendation_evidence_trace: ["Competitor-backed", "Emergency intent mismatch"],
+            }),
+            buildRecommendation({
+              id: "rec-clarity-applied",
+              title: "Applied clarity recommendation",
+              status: "accepted",
+              recommendation_lifecycle_state: "likely_resolved",
+              recommendation_action_clarity: "Keep trust proof modules updated in quarterly content reviews.",
+              recommendation_observed_gap_summary: "Trust modules were previously inconsistent across top service pages.",
+            }),
+          ],
+          total: 2,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Recommendations" });
+
+    const readyClarity = screen.getByTestId("recommendation-detail-clarity-ready_to_act-rec-clarity-ready");
+    expect(readyClarity).toHaveClass("recommendation-detail-clarity-ready_to_act");
+    expect(within(readyClarity).getByText("What we observed")).toBeInTheDocument();
+    expect(within(readyClarity).getByText("What needs improvement")).toBeInTheDocument();
+    expect(within(readyClarity).getByText("What to do next")).toBeInTheDocument();
+    expect(within(readyClarity).getByText("Why this is recommended")).toBeInTheDocument();
+    expect(readyClarity).toHaveTextContent("Add emergency response messaging to primary service pages.");
+
+    const appliedClarity = screen.getByTestId("recommendation-detail-clarity-applied_completed-rec-clarity-applied");
+    expect(appliedClarity).toHaveClass("recommendation-detail-clarity-applied_completed");
+    expect(appliedClarity).toHaveTextContent(
+      "Keep trust proof modules updated in quarterly content reviews.",
+    );
   });
 
   it("renders compact recommendation evidence summaries only when metadata is present", async () => {
@@ -2765,13 +2816,16 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     const evidenceSummaries = screen.getAllByTestId("recommendation-evidence-summary");
     expect(evidenceSummaries).toHaveLength(1);
     expect(evidenceSummaries[0]).toHaveTextContent(
       "Why this matters: Competitors show stronger trust signals in this area.",
     );
     expect(screen.queryByText("Why this matters: Recommendation without evidence summary")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("recommendation-detail-clarity-ready_to_act-rec-evidence-2"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTestId("recommendation-priority")).not.toBeInTheDocument();
     expect(screen.queryByTestId("recommendation-lifecycle-state")).not.toBeInTheDocument();
   });
@@ -2808,7 +2862,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     const priorityLines = screen.getAllByTestId("recommendation-priority");
     expect(priorityLines).toHaveLength(2);
     expect(priorityLines[0]).toHaveTextContent("Take first");
@@ -2869,7 +2923,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     const linkageSummaries = screen.getAllByTestId("recommendation-competitor-linkage-summary");
     expect(linkageSummaries).toHaveLength(1);
     expect(linkageSummaries[0]).toHaveTextContent(
@@ -2926,7 +2980,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     const actionLines = screen.getAllByTestId("recommendation-action-clarity");
     expect(actionLines).toHaveLength(1);
     expect(actionLines[0]).toHaveTextContent(
@@ -3019,7 +3073,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     const linkageLine = screen.getByTestId("recommendation-competitor-linkage");
     expect(linkageLine).toHaveTextContent("Verified Fire Systems (High confidence, Nearby seed)");
     expect(linkageLine).toHaveTextContent("Verified competitor");
@@ -3052,7 +3106,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     expect(screen.getByTestId("recommendation-evidence-summary")).toHaveTextContent(
       "Why this matters: Service-specific wording and proof appear weak or inconsistent.",
     );
@@ -3151,7 +3205,7 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     const helper = await screen.findByTestId("start-here-theme-helper");
-    expect(within(helper).getByText("Start here by theme")).toBeInTheDocument();
+    expect(within(helper).getByText("Suggested focus area")).toBeInTheDocument();
     expect(within(helper).getByText("Trust & legitimacy")).toBeInTheDocument();
     expect(within(helper).getByText("Fix title tags")).toBeInTheDocument();
     expect(
@@ -3379,7 +3433,7 @@ describe("site workspace timeline controls", () => {
     expect(within(priorityReasonBadges).getByText("Clear next step")).toBeInTheDocument();
 
     const orderingExplanation = screen.getByTestId("recommendation-ordering-explanation");
-    expect(within(orderingExplanation).getByText("Why this order")).toBeInTheDocument();
+    expect(within(orderingExplanation).getByText("Why this priority order")).toBeInTheDocument();
     expect(
       within(orderingExplanation).getByText(
         "Ordering reflects deterministic recommendation metadata only; no score is used.",
@@ -3509,7 +3563,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     const groupedBlock = screen.getByTestId("recommendation-theme-groups");
     expect(groupedBlock).toBeInTheDocument();
     const renderedThemeOrder = Array.from(
@@ -3531,7 +3585,7 @@ describe("site workspace timeline controls", () => {
         "Improve visible business trust signals like reviews, verification, and contact legitimacy.",
       ),
     ).toBeInTheDocument();
-    expect(within(trustGroup).getByText("Likely pages: /about, /contact")).toBeInTheDocument();
+    expect(within(trustGroup).getAllByText("Likely pages: /about, /contact").length).toBeGreaterThanOrEqual(1);
     expect(within(trustGroup).getAllByRole("row")).toHaveLength(2);
 
     const experienceGroup = screen.getByTestId("recommendation-theme-group-experience_and_proof");
@@ -3605,7 +3659,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    await screen.findByRole("heading", { name: "Recommendations" });
     expect(screen.queryByTestId("recommendation-theme-groups")).not.toBeInTheDocument();
     expect(screen.queryByTestId("recommendation-theme-summary-trust_and_legitimacy")).not.toBeInTheDocument();
     expect(screen.getAllByText("Publish trust proof across key service pages").length).toBeGreaterThan(0);
@@ -3651,7 +3705,7 @@ describe("site workspace timeline controls", () => {
     ).toBeInTheDocument();
     expect(
       within(applyOutcome).getByText(
-        "Next refresh expectation: The next completed recommendation or competitor generation run should reflect this change.",
+        "You should see this after: The next completed recommendation or competitor generation run should reflect this change.",
       ),
     ).toBeInTheDocument();
     expect(within(applyOutcome).getByText(/Applied at:/)).toBeInTheDocument();
@@ -3685,7 +3739,7 @@ describe("site workspace timeline controls", () => {
     ).toBeInTheDocument();
     expect(
       within(applyOutcome).getByText(
-        "Next refresh expectation: The next completed recommendation run should reflect this change.",
+        "You should see this after: The next completed recommendation run should reflect this change.",
       ),
     ).toBeInTheDocument();
     expect(within(applyOutcome).queryByText(/Preview used:/)).not.toBeInTheDocument();
@@ -3709,9 +3763,9 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Top Insights" });
+    await screen.findByRole("heading", { name: "Operator Focus" });
     const trustSummary = screen.getByTestId("workspace-trust-summary");
-    expect(within(trustSummary).getByText("Workspace trust summary")).toBeInTheDocument();
+    expect(within(trustSummary).getByText("Trust signals")).toBeInTheDocument();
     expect(within(trustSummary).getByText("Latest competitor status: Recovered")).toBeInTheDocument();
     expect(within(trustSummary).getByText("Nearby seed discovery used: yes.")).toBeInTheDocument();
     expect(within(trustSummary).getByText("Synthetic fallback used: no.")).toBeInTheDocument();
@@ -3742,7 +3796,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Top Insights" });
+    await screen.findByRole("heading", { name: "Operator Focus" });
     const trustSummary = screen.getByTestId("workspace-trust-summary");
     expect(within(trustSummary).getByText("Latest competitor status: Degraded")).toBeInTheDocument();
     expect(within(trustSummary).getByText("Synthetic fallback used: yes.")).toBeInTheDocument();
@@ -3760,7 +3814,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Top Insights" });
+    await screen.findByRole("heading", { name: "Operator Focus" });
     expect(screen.queryByTestId("workspace-trust-summary")).not.toBeInTheDocument();
   });
 
@@ -3858,10 +3912,10 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     const focusZone = await screen.findByTestId("operator-focus-zone");
-    expect(within(focusZone).getByRole("heading", { name: "Top Insights" })).toBeInTheDocument();
+    expect(within(focusZone).getByRole("heading", { name: "Operator Focus" })).toBeInTheDocument();
     expect(within(focusZone).getByTestId("operator-focus-callout")).toHaveTextContent("What needs attention now");
     expect(within(focusZone).getByText("Refresh pending")).toBeInTheDocument();
-    expect(within(focusZone).getByTestId("operator-focus-latest-change")).toHaveTextContent("Latest meaningful change");
+    expect(within(focusZone).getByTestId("operator-focus-latest-change")).toHaveTextContent("Latest change");
     expect(within(focusZone).getByTestId("start-here-section")).toBeInTheDocument();
   });
 
@@ -4639,7 +4693,7 @@ describe("site workspace timeline controls", () => {
     await user.click(within(aiOpportunitiesSection).getAllByRole("button", { name: "View details" })[0]);
     expect(within(aiOpportunitiesSection).getByText("Supporting signals")).toBeInTheDocument();
     expect(within(aiOpportunitiesSection).getByText(/Related context: titles, headings/)).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Deterministic Recommendations" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Recommendations" })).toBeInTheDocument();
   });
 
   it("bridges ai opportunities to linked tuning suggestions with temporary highlight", async () => {
@@ -5179,7 +5233,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByText("No recommendations yet — generate recommendations to analyze this site.");
+    await screen.findByText("No recommendations yet. Generate recommendations to see next best actions for this site.");
     await waitFor(() => {
       expect(screen.queryByText("Loading workspace data...")).not.toBeInTheDocument();
     });

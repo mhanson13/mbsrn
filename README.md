@@ -6,6 +6,7 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 
 ## What Is Shipped
 - Business-scoped operator auth (Google identity exchange to internal principal authorization)
+- Google Business Profile OAuth callback completion redirects browser flows back into the operator app (`/business-profile`) instead of ending on raw API JSON
 - SEO site management, deterministic audit runs, and findings/reporting
 - Competitor intelligence runs and comparison reporting
 - AI-assisted competitor profile draft generation with strict review gating
@@ -13,6 +14,8 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 - Manual, confirmed tuning apply flow (no automatic settings mutation)
 - Operator Shell v4 workspace presentation (workflow emphasis for attention/recency/next-action cues on top of v3 visual-token and density standardization)
 - Recommendation Presentation v1 (visual action-state buckets: ready/applied/pending/informational using existing recommendation semantics)
+- Recommendation Detail Clarity v2 (per-item observed pattern/gap/action/supporting-context blocks for faster operator understanding without changing recommendation logic)
+- Workspace Copy + Label Tuning v1 (operator-facing wording refinement across recommendation/focus surfaces with unchanged behavior/semantics)
 
 ## Trust Boundary
 AI features are advisory only:

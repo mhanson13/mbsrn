@@ -36,6 +36,10 @@ export default function BusinessProfilePage() {
   const context = useOperatorContext();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [callbackNotice, setCallbackNotice] = useState<{
+    className: string;
+    message: string;
+  } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [connection, setConnection] = useState<GoogleBusinessProfileConnectionStatusResponse | null>(null);
   const [locations, setLocations] = useState<GoogleBusinessProfileFlatLocation[]>([]);
@@ -120,6 +124,36 @@ export default function BusinessProfilePage() {
     }
     return "connected";
   }, [connection]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = (params.get("gbp_connect") || "").trim().toLowerCase();
+    if (!status) {
+      setCallbackNotice(null);
+      return;
+    }
+
+    if (status === "success") {
+      setCallbackNotice({
+        className: "hint success",
+        message: "Google Business Profile connected successfully.",
+      });
+      return;
+    }
+
+    if (status === "error") {
+      const reconnectRequired = (params.get("gbp_reconnect_required") || "").trim().toLowerCase() === "true";
+      setCallbackNotice({
+        className: "hint error",
+        message: reconnectRequired
+          ? "Google Business Profile connection requires reauthorization. Please reconnect."
+          : "Google Business Profile connection did not complete. Please try connecting again.",
+      });
+      return;
+    }
+
+    setCallbackNotice(null);
+  }, []);
 
   const selectedLocation = useMemo(
     () => locations.find((location) => location.location_id === selectedLocationId) ?? null,
@@ -291,6 +325,7 @@ export default function BusinessProfilePage() {
         {connectionUiState === "not_connected" ? (
           <p className="hint muted">No Google Business Profile connection exists for this business.</p>
         ) : null}
+        {callbackNotice ? <p className={callbackNotice.className}>{callbackNotice.message}</p> : null}
         {error ? <p className="hint error">{error}</p> : null}
       </SectionCard>
 
