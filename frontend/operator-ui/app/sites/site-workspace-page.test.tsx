@@ -2596,7 +2596,7 @@ describe("site workspace timeline controls", () => {
     await screen.findByRole("heading", { name: "Latest Completed Run" });
     await screen.findByRole("heading", { name: "Deterministic Recommendations" });
     expect(screen.getByText("HIGH IMPACT")).toBeInTheDocument();
-    expect(screen.getByText("Title tags are missing core keywords.")).toBeInTheDocument();
+    expect(screen.getAllByText("Title tags are missing core keywords.").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "AI Narrative Overlay" })).toBeInTheDocument();
     expect(screen.getByText("Narrative for run 1.")).toBeInTheDocument();
     await user.click(focusRecommendationButton);
@@ -2651,14 +2651,14 @@ describe("site workspace timeline controls", () => {
 
     await screen.findByRole("heading", { name: "Deterministic Recommendations" });
     expect(screen.getAllByText("Progress").length).toBeGreaterThan(0);
-    expect(screen.getByText("Suggested")).toBeInTheDocument();
+    expect(screen.getAllByText("Suggested").length).toBeGreaterThan(0);
     expect(screen.getByText("Suggested action not yet applied.")).toBeInTheDocument();
-    expect(screen.getByText("Applied, pending refresh")).toBeInTheDocument();
+    expect(screen.getAllByText("Applied, pending refresh").length).toBeGreaterThan(0);
     expect(
       screen.getByText("Applied. Waiting for the next analysis refresh to reflect this change."),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("Reflected in latest analysis")).toHaveLength(2);
-    expect(screen.getAllByText("Applied and reflected in the latest analysis.")).toHaveLength(2);
+    expect(screen.getAllByText("Reflected in latest analysis").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("Applied and reflected in the latest analysis.").length).toBeGreaterThanOrEqual(2);
     const lifecycleLines = screen.getAllByTestId("recommendation-lifecycle-state");
     expect(lifecycleLines).toHaveLength(4);
     expect(lifecycleLines[0]).toHaveTextContent("Active");
@@ -2669,6 +2669,77 @@ describe("site workspace timeline controls", () => {
     expect(lifecycleLines[2]).toHaveTextContent("Reflected in analysis, but still appears relevant.");
     expect(lifecycleLines[3]).toHaveTextContent("Likely resolved");
     expect(lifecycleLines[3]).toHaveTextContent("Likely addressed in the latest analysis.");
+  });
+
+  it("renders recommendation presentation buckets with actionable/applied/pending/informational clarity", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-bucket-ready",
+              title: "Ready recommendation",
+              status: "open",
+              recommendation_action_clarity: "Publish location-specific service page updates.",
+              recommendation_priority: {
+                priority_level: "high",
+                priority_reason: "Strong gap and clear operator action.",
+                effort_hint: "quick_win",
+              },
+              priority_band: "high",
+            }),
+            buildRecommendation({
+              id: "rec-bucket-applied",
+              title: "Applied recommendation",
+              status: "accepted",
+              recommendation_progress_status: "reflected_in_latest_analysis",
+              recommendation_lifecycle_state: "likely_resolved",
+              recommendation_lifecycle_summary: "Likely addressed in the latest analysis.",
+            }),
+            buildRecommendation({
+              id: "rec-bucket-pending",
+              title: "Pending recommendation",
+              status: "in_progress",
+              recommendation_action_clarity: "Review service-page keyword coverage before publishing.",
+            }),
+            buildRecommendation({
+              id: "rec-bucket-info",
+              title: "Informational recommendation",
+              status: "dismissed",
+              recommendation_evidence_summary: "Captured for context after manual review.",
+            }),
+          ],
+          total: 4,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    const buckets = screen.getByTestId("recommendation-buckets");
+    expect(buckets).toBeInTheDocument();
+
+    const readyBucket = screen.getByTestId("recommendation-bucket-ready_to_act");
+    expect(readyBucket).toHaveTextContent("Ready to act");
+    expect(readyBucket).toHaveTextContent("Ready recommendation");
+    expect(readyBucket).toHaveTextContent("Actionable now");
+
+    const appliedBucket = screen.getByTestId("recommendation-bucket-applied_completed");
+    expect(appliedBucket).toHaveTextContent("Applied / completed");
+    expect(appliedBucket).toHaveTextContent("Applied recommendation");
+    expect(appliedBucket).toHaveTextContent("Applied/completed");
+
+    const pendingBucket = screen.getByTestId("recommendation-bucket-needs_review_pending");
+    expect(pendingBucket).toHaveTextContent("Needs review / pending");
+    expect(pendingBucket).toHaveTextContent("Pending recommendation");
+    expect(pendingBucket).toHaveTextContent("Needs review");
+
+    const informationalBucket = screen.getByTestId("recommendation-bucket-informational");
+    expect(informationalBucket).toHaveTextContent("Informational");
+    expect(informationalBucket).toHaveTextContent("Informational recommendation");
+    expect(informationalBucket).toHaveTextContent("Informational");
   });
 
   it("renders compact recommendation evidence summaries only when metadata is present", async () => {
@@ -3691,6 +3762,124 @@ describe("site workspace timeline controls", () => {
 
     await screen.findByRole("heading", { name: "Top Insights" });
     expect(screen.queryByTestId("workspace-trust-summary")).not.toBeInTheDocument();
+  });
+
+  it("renders workspace snapshot summary strip with compact operator status cards", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        workspace_trust_summary: {
+          latest_competitor_status: "normal",
+          used_google_places_seeds: true,
+          used_synthetic_fallback: false,
+          latest_recommendation_apply_title: "Fix title tags",
+          latest_recommendation_apply_change_summary: "Minimum relevance score was updated from 35 to 30.",
+          next_refresh_expectation: "Visible after the next site analysis run.",
+        },
+        competitor_section_freshness: {
+          state: "fresh",
+          message: "Competitor section reflects the latest completed run.",
+          state_code: "fresh",
+          state_label: "Fresh",
+          state_reason: "Competitor section reflects the latest completed run.",
+        },
+        recommendation_section_freshness: {
+          state: "pending_refresh",
+          message: "Applied changes are waiting for the next completed recommendation run.",
+          state_code: "pending_refresh",
+          state_label: "Refresh pending",
+          state_reason: "Applied changes are waiting for the next completed recommendation run.",
+          refresh_expected: true,
+        },
+        apply_outcome: {
+          applied: true,
+          applied_at: "2026-03-21T01:40:00Z",
+          applied_recommendation_id: "rec-1",
+          applied_recommendation_title: "Fix title tags",
+          applied_change_summary: "Minimum relevance score was updated from 35 to 30.",
+          next_refresh_expectation: "Visible after the next site analysis run.",
+          recommendation_label: "Fix title tags",
+          expected_change: "Minimum relevance score was updated from 35 to 30.",
+          reflected_on_next_run: "Visible after the next site analysis run.",
+          source: "recommendation",
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Workspace Snapshot" });
+    const summaryStrip = screen.getByTestId("workspace-summary-strip");
+    expect(within(summaryStrip).getByTestId("workspace-summary-competitors")).toHaveTextContent("Fresh");
+    expect(within(summaryStrip).getByTestId("workspace-summary-recommendations")).toHaveTextContent("Refresh pending");
+    expect(within(summaryStrip).getByTestId("workspace-summary-actionable")).toHaveTextContent(
+      "Latest applied: Fix title tags",
+    );
+    expect(within(summaryStrip).getByTestId("workspace-summary-readiness")).toHaveTextContent(
+      "Nearby seed discovery used: yes",
+    );
+  });
+
+  it("renders workflow emphasis surfaces with latest change and next-step cues", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        competitor_section_freshness: {
+          state: "fresh",
+          message: "Competitor section reflects the latest completed run.",
+          state_code: "fresh",
+          state_label: "Fresh",
+          state_reason: "Competitor section reflects the latest completed run.",
+        },
+        recommendation_section_freshness: {
+          state: "pending_refresh",
+          message: "Applied changes are waiting for the next completed recommendation run.",
+          state_code: "pending_refresh",
+          state_label: "Refresh pending",
+          state_reason: "Applied changes are waiting for the next completed recommendation run.",
+          refresh_expected: true,
+        },
+        apply_outcome: {
+          applied: true,
+          applied_at: "2026-03-21T01:40:00Z",
+          applied_recommendation_id: "rec-1",
+          applied_recommendation_title: "Fix title tags",
+          applied_change_summary: "Minimum relevance score was updated from 35 to 30.",
+          applied_preview_summary: "Preview used title and meta tuning draft.",
+          next_refresh_expectation: "Visible after the next site analysis run.",
+          recommendation_label: "Fix title tags",
+          expected_change: "Minimum relevance score was updated from 35 to 30.",
+          reflected_on_next_run: "Visible after the next site analysis run.",
+          source: "recommendation",
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const focusZone = await screen.findByTestId("operator-focus-zone");
+    expect(within(focusZone).getByRole("heading", { name: "Top Insights" })).toBeInTheDocument();
+    expect(within(focusZone).getByTestId("operator-focus-callout")).toHaveTextContent("What needs attention now");
+    expect(within(focusZone).getByText("Refresh pending")).toBeInTheDocument();
+    expect(within(focusZone).getByTestId("operator-focus-latest-change")).toHaveTextContent("Latest meaningful change");
+    expect(within(focusZone).getByTestId("start-here-section")).toBeInTheDocument();
+  });
+
+  it("renders operator-shell section headers with compact metadata and primary actions", async () => {
+    seedRichWorkspaceData();
+    render(<SiteWorkspacePage />);
+
+    const competitorHeader = await screen.findByTestId("competitor-section-header");
+    expect(within(competitorHeader).getByRole("heading", { name: "AI Competitor Profiles" })).toBeInTheDocument();
+    expect(within(competitorHeader).getByRole("button", { name: "Generate Competitor Profiles" })).toBeInTheDocument();
+
+    const recommendationHeader = screen.getByTestId("recommendation-queue-header");
+    expect(within(recommendationHeader).getByRole("heading", { name: "Recommendation Queue" })).toBeInTheDocument();
+    expect(within(recommendationHeader).getByRole("button", { name: "Generate Recommendations" })).toBeInTheDocument();
+
+    const runsHeader = screen.getByTestId("recommendation-runs-header");
+    expect(within(runsHeader).getByRole("heading", { name: "Recommendation Runs and Narratives" })).toBeInTheDocument();
+    expect(within(runsHeader).getByText(/Latest completed run:/)).toBeInTheDocument();
   });
 
   it("renders competitor and recommendation section freshness indicators when provided", async () => {

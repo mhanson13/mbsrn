@@ -1,5 +1,16 @@
 # Competitor Insights
 
+## Workspace Presentation (Operator Shell v3)
+
+The site workspace competitor surfaces now use a denser Operator Shell v3 presentation style:
+- standardized section headers and compact action rows
+- stronger status/trust badge rhythm
+- denser competitor table scanability
+- token-consistent spacing/typography/card density for improved operator readability
+- unchanged synthetic scaffold semantics (visibility filtering only)
+
+This is presentation-only and does not change competitor generation, acceptance safeguards, or trust-tier rules.
+
 ## Normalization Layer
 
 ### Why this exists

@@ -28,3 +28,6 @@ frontend/operator-ui/test-results/
 
 # OS files
 .DS_Store
+
+# TypeScript incremental build artifacts
+*.tsbuildinfo

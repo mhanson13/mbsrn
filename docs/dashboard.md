@@ -1,3 +1,56 @@
+## Operator Shell v4
+
+The workspace now uses an Operator Shell v4 presentation pass inspired by compact admin-console patterns.
+This is a UI/readability enhancement only. Backend behavior, API contracts, trust semantics, and workflows are unchanged.
+
+### Visual changes
+- Compact top summary strip (`Workspace Snapshot`) with quick status cards for competitor state, recommendation state, actionable count, and readiness context.
+- Standardized section header treatment for major workspace sections with:
+  - title + subtitle rhythm
+  - compact metadata
+  - right-aligned primary actions where relevant
+- Visual-token normalization across the workspace for:
+  - spacing rhythm
+  - typography hierarchy
+  - section/card/table density
+  - badge/status family consistency
+- Denser table/list rhythm for faster scanability in operator workflows.
+- More consistent badge/chip emphasis for trust, freshness, and warning states.
+- Tighter toolbar layout above generation/review surfaces, including the synthetic scaffold filter row.
+- Improved section-to-section visual balance so summary, insights, and detail areas feel related without changing behavior.
+- Workflow emphasis updates:
+  - a primary operator-focus zone near the top of the workspace
+  - stronger “what changed recently” visibility
+  - clearer “what to do next” emphasis in action-oriented sections
+  - de-emphasized historical/reference sections while preserving readability
+
+### Behavior guarantees
+- No filtering, trust, acceptance, or generation logic changed by this pass.
+- `Hide synthetic scaffolds` remains visibility-only and never removes data from API/state.
+- Recommendation apply outcome and trust/freshness indicators remain authoritative and deterministic.
+
+## Recommendation Presentation v1
+
+Recommendation rows now include a compact presentation layer focused on operator action state clarity.
+
+### Bucketed recommendation view
+- `Ready to act`
+- `Applied / completed`
+- `Needs review / pending`
+- `Informational`
+
+These are deterministic UI buckets derived from existing recommendation status/progress/lifecycle/priority fields.
+They do not change backend recommendation scoring, generation, or persistence semantics.
+
+### Action-state clarity
+- Each bucket row now surfaces:
+  - recommendation title
+  - short action/rationale cue
+  - explicit state badge
+  - progress/lifecycle/priority badges
+- Applied recommendations stay visible but are visually separated from “do this now” items.
+- Informational recommendations remain visible with lighter emphasis.
+
 ## Workspace Trust Summary
 
 The site workspace now includes a compact trust/status strip that rolls up the latest operator-relevant signals across competitor generation and recommendation apply actions.

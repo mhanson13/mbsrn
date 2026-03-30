@@ -5,7 +5,9 @@ import { useParams } from "next/navigation";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../components/layout/PageContainer";
+import { SectionHeader } from "../../../components/layout/SectionHeader";
 import { SectionCard } from "../../../components/layout/SectionCard";
+import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
   acceptCompetitorProfileDraft,
@@ -1400,6 +1402,21 @@ function workspaceSectionFreshnessBadgeClass(
   }
 }
 
+function workspaceSectionFreshnessCardTone(
+  state: WorkspaceSectionFreshnessView["stateCode"] | WorkspaceSectionFreshnessView["state"] | null,
+): "neutral" | "success" | "warning" | "danger" {
+  if (state === "fresh") {
+    return "success";
+  }
+  if (state === "running") {
+    return "neutral";
+  }
+  if (state === "pending_refresh" || state === "stale" || state === "possibly_outdated") {
+    return "warning";
+  }
+  return "neutral";
+}
+
 interface RecommendationAnalysisFreshnessView {
   status: "fresh" | "pending_refresh" | "unknown";
   message: string;
@@ -1861,6 +1878,167 @@ function sortRecommendationsByDeterministicPriority(recommendations: Recommendat
     return left.index - right.index;
   });
   return indexed.map((entry) => entry.item);
+}
+
+type RecommendationPresentationBucketKey =
+  | "ready_to_act"
+  | "applied_completed"
+  | "needs_review_pending"
+  | "informational";
+
+interface RecommendationPresentationBucket {
+  key: RecommendationPresentationBucketKey;
+  label: string;
+  subtitle: string;
+  badgeClass: string;
+  items: Recommendation[];
+}
+
+function recommendationPresentationBucketBadgeClass(
+  key: RecommendationPresentationBucketKey,
+): string {
+  if (key === "ready_to_act") {
+    return "badge badge-critical";
+  }
+  if (key === "applied_completed") {
+    return "badge badge-success";
+  }
+  if (key === "needs_review_pending") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
+}
+
+function recommendationPresentationStateLabel(
+  key: RecommendationPresentationBucketKey,
+): string {
+  if (key === "ready_to_act") {
+    return "Actionable now";
+  }
+  if (key === "applied_completed") {
+    return "Applied/completed";
+  }
+  if (key === "needs_review_pending") {
+    return "Needs review";
+  }
+  return "Informational";
+}
+
+function recommendationPresentationStateBadgeClass(
+  key: RecommendationPresentationBucketKey,
+): string {
+  if (key === "ready_to_act") {
+    return "badge badge-critical";
+  }
+  if (key === "applied_completed") {
+    return "badge badge-success";
+  }
+  if (key === "needs_review_pending") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
+}
+
+function normalizeRecommendationStatusForPresentation(value: string | null | undefined): string {
+  return (value || "").trim().toLowerCase();
+}
+
+function classifyRecommendationPresentationBucket(
+  item: Recommendation,
+): RecommendationPresentationBucketKey {
+  const normalizedStatus = normalizeRecommendationStatusForPresentation(item.status);
+  const progress = normalizeRecommendationProgress(item);
+  const lifecycle = normalizeRecommendationLifecycle(item);
+  const recommendationPriority = normalizeRecommendationPriority(item);
+  const hasActionDelta = Boolean(normalizeRecommendationActionDelta(item));
+
+  const appliedOrCompleted =
+    progress.status === "applied_pending_refresh"
+    || progress.status === "reflected_in_latest_analysis"
+    || normalizedStatus === "accepted"
+    || normalizedStatus === "resolved"
+    || lifecycle?.state === "applied_waiting_validation"
+    || lifecycle?.state === "reflected_still_relevant"
+    || lifecycle?.state === "likely_resolved";
+  if (appliedOrCompleted) {
+    return "applied_completed";
+  }
+
+  if (normalizedStatus === "dismissed" || normalizedStatus === "snoozed") {
+    return "informational";
+  }
+
+  const isPriorityAction =
+    recommendationPriority?.priorityLevel === "high"
+    || item.priority_band === "critical"
+    || item.priority_band === "high"
+    || hasActionDelta;
+  if (normalizedStatus === "open" && isPriorityAction) {
+    return "ready_to_act";
+  }
+
+  if (normalizedStatus === "open" || normalizedStatus === "in_progress") {
+    return "needs_review_pending";
+  }
+
+  return "informational";
+}
+
+function buildRecommendationPresentationBuckets(
+  recommendations: Recommendation[],
+): RecommendationPresentationBucket[] {
+  const grouped: Record<RecommendationPresentationBucketKey, Recommendation[]> = {
+    ready_to_act: [],
+    applied_completed: [],
+    needs_review_pending: [],
+    informational: [],
+  };
+  for (const recommendation of recommendations) {
+    const key = classifyRecommendationPresentationBucket(recommendation);
+    grouped[key].push(recommendation);
+  }
+  const orderedKeys: RecommendationPresentationBucketKey[] = [
+    "ready_to_act",
+    "applied_completed",
+    "needs_review_pending",
+    "informational",
+  ];
+  const labels: Record<
+    RecommendationPresentationBucketKey,
+    { label: string; subtitle: string }
+  > = {
+    ready_to_act: {
+      label: "Ready to act",
+      subtitle: "Highest-value recommendations that are ready for operator action.",
+    },
+    applied_completed: {
+      label: "Applied / completed",
+      subtitle: "Recommendations already applied or reflected in analysis outcomes.",
+    },
+    needs_review_pending: {
+      label: "Needs review / pending",
+      subtitle: "Recommendations that still require operator review or follow-through.",
+    },
+    informational: {
+      label: "Informational",
+      subtitle: "Lower-urgency recommendations kept for context and historical reference.",
+    },
+  };
+  return orderedKeys
+    .map((key) => {
+      const items = grouped[key];
+      if (items.length === 0) {
+        return null;
+      }
+      return {
+        key,
+        label: labels[key].label,
+        subtitle: labels[key].subtitle,
+        badgeClass: recommendationPresentationBucketBadgeClass(key),
+        items,
+      };
+    })
+    .filter((bucket): bucket is RecommendationPresentationBucket => bucket !== null);
 }
 
 interface CompetitorContextHealthCheckView {
@@ -2958,6 +3136,10 @@ export default function SiteWorkspacePage() {
       ),
     [latestCompletedRecommendations, latestRecommendationGroupedRecommendations],
   );
+  const recommendationPresentationBuckets = useMemo(
+    () => buildRecommendationPresentationBuckets(latestCompletedRecommendations),
+    [latestCompletedRecommendations],
+  );
   const recommendationRankById = useMemo(() => {
     const rank = new Map<string, number>();
     latestCompletedRecommendations.forEach((recommendation, index) => {
@@ -3253,6 +3435,41 @@ export default function SiteWorkspacePage() {
     }
     return "This site has competitor and recommendation activity ready for investigation.";
   }, [competitorDomainCount, competitorSets.length, latestComparisonRun, latestSnapshotRun, selectedSite]);
+
+  const latestApplyTitle = recommendationApplyOutcome?.appliedRecommendationTitle || null;
+  const latestApplyExpectation = recommendationApplyOutcome?.nextRefreshExpectation || null;
+  const competitorSummaryTone = workspaceSectionFreshnessCardTone(competitorSectionFreshness?.stateCode || null);
+  const recommendationSummaryTone = workspaceSectionFreshnessCardTone(
+    recommendationSectionFreshness?.stateCode || null,
+  );
+  const trustSummaryTone: "neutral" | "success" | "warning" | "danger" =
+    workspaceTrustSummary?.latestCompetitorStatus === "failed"
+      ? "danger"
+      : workspaceTrustSummary?.usedSyntheticFallback
+        ? "warning"
+        : "neutral";
+  const operatorFocusStateCode =
+    recommendationSectionFreshness?.stateCode || competitorSectionFreshness?.stateCode || null;
+  const operatorFocusStateLabel = operatorFocusStateCode
+    ? workspaceSectionFreshnessLabel(operatorFocusStateCode)
+    : null;
+  const operatorFocusStateClass = operatorFocusStateCode
+    ? workspaceSectionFreshnessBadgeClass(operatorFocusStateCode)
+    : "badge badge-muted";
+  const operatorFocusHeadline = latestApplyTitle
+    ? `Latest change applied: ${latestApplyTitle}`
+    : actionableRecommendationCount > 0
+      ? `${actionableRecommendationCount} actionable recommendation${actionableRecommendationCount === 1 ? "" : "s"} need attention`
+      : "No immediate recommendation actions are pending";
+  const operatorFocusDetail =
+    recommendationSectionFreshness?.message || competitorSectionFreshness?.message || workspaceReadinessMessage;
+  const latestWorkflowChangeNote = recommendationApplyOutcome?.appliedAt
+    ? `Applied ${formatDateTime(recommendationApplyOutcome.appliedAt)}.`
+    : latestCompletedRecommendationRun?.completed_at
+      ? `Latest recommendation run completed ${formatDateTime(latestCompletedRecommendationRun.completed_at)}.`
+      : latestCompetitorProfileRun?.completed_at
+        ? `Latest competitor run completed ${formatDateTime(latestCompetitorProfileRun.completed_at)}.`
+        : null;
 
   const competitorSetNameById = useMemo(
     () => Object.fromEntries(competitorSets.map((item) => [item.id, item.name] as const)),
@@ -4732,127 +4949,229 @@ export default function SiteWorkspacePage() {
 
   return (
     <PageContainer>
-      <SectionCard>
-        <p>
-          <Link href="/sites">Back to Sites</Link>
-        </p>
-        <h1>Site SEO Workspace</h1>
-        <p>
-          Site: <strong>{selectedSite.display_name}</strong>
-        </p>
-        <p>
-          Business ID: <code>{selectedSite.business_id}</code>
-        </p>
-        <p>
-          Site ID: <code>{selectedSite.id}</code>
-        </p>
-        <p>Base URL: {selectedSite.base_url}</p>
-        <p>Domain: {selectedSite.normalized_domain}</p>
-        <p>Active: {selectedSite.is_active ? "yes" : "no"}</p>
-        <p>Primary: {selectedSite.is_primary ? "yes" : "no"}</p>
-        <p>
-          Last Audit Status: {selectedSite.last_audit_status || "-"} ({formatDateTime(selectedSite.last_audit_completed_at)})
-        </p>
-        <p>
-          Operator Context:{" "}
-          {context.selectedSiteId === selectedSite.id
-            ? "This site is currently selected in operator context."
-            : "This page is scoped to this site even if a different site is selected elsewhere."}
-        </p>
-        <div className="link-row">
-          <Link href="/audits">Audit Runs</Link>
-          <Link href={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}>Competitor Workspace</Link>
-          <Link href="/recommendations">Recommendation Queue</Link>
+      <SectionCard className="workspace-shell-overview">
+        <div className="workspace-section-header workspace-section-header-compact">
+          <div className="workspace-section-header-main">
+            <p>
+              <Link href="/sites">Back to Sites</Link>
+            </p>
+            <h1>Site SEO Workspace</h1>
+            <p className="hint muted workspace-section-subtitle">
+              Site: <strong>{selectedSite.display_name}</strong>
+            </p>
+            <div className="workspace-section-meta">
+              <span className="hint muted">Business ID: <code>{selectedSite.business_id}</code></span>
+              <span className="hint muted">Site ID: <code>{selectedSite.id}</code></span>
+              <span className="hint muted">Domain: {selectedSite.normalized_domain}</span>
+              <span className="hint muted">Base URL: {selectedSite.base_url}</span>
+              <span className="hint muted">Active: {selectedSite.is_active ? "yes" : "no"}</span>
+              <span className="hint muted">Primary: {selectedSite.is_primary ? "yes" : "no"}</span>
+              <span className="hint muted">
+                Last audit: {selectedSite.last_audit_status || "-"} ({formatDateTime(selectedSite.last_audit_completed_at)})
+              </span>
+              <span className="hint muted">
+                Operator context:{" "}
+                {context.selectedSiteId === selectedSite.id
+                  ? "currently selected"
+                  : "page-scoped to this site"}
+              </span>
+            </div>
+          </div>
+          <div className="workspace-section-actions">
+            <div className="toolbar-row toolbar-row-links">
+              <Link href="/audits">Audit Runs</Link>
+              <Link href={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}>Competitor Workspace</Link>
+              <Link href="/recommendations">Recommendation Queue</Link>
+            </div>
+          </div>
         </div>
         {loadingWorkspace ? <p className="hint muted">Loading workspace data...</p> : null}
       </SectionCard>
 
-      <SectionCard>
-        <h2>Top Insights</h2>
-        <div className="metrics-grid">
-          <div className="panel panel-compact">
-            <strong>You have {actionableRecommendationCount} actionable improvements</strong>
-          </div>
-          <div className="panel panel-compact">
-            <strong>{latestCompletedTuningSuggestions.length} tuning opportunities identified</strong>
-          </div>
-          <div className="panel panel-compact">
-            <strong>
-              {latestPreviewInsight || "Preview a tuning suggestion to estimate included-candidate impact"}
-            </strong>
-          </div>
+      <SectionCard className="operator-shell-summary-panel">
+        <SectionHeader
+          title="Workspace Snapshot"
+          subtitle="At-a-glance trust, freshness, and action visibility for this site."
+          headingLevel={2}
+          data-testid="workspace-snapshot-header"
+        />
+        <div className="workspace-summary-strip" data-testid="workspace-summary-strip">
+          <SummaryStatCard
+            label="Competitor section"
+            value={competitorSectionFreshness?.stateLabel || "No run state yet"}
+            detail={
+              latestCompetitorProfileRun
+                ? `${visibleCompetitorProfileDrafts.length} visible draft${visibleCompetitorProfileDrafts.length === 1 ? "" : "s"}`
+                : "No competitor profile run yet"
+            }
+            tone={competitorSummaryTone}
+            data-testid="workspace-summary-competitors"
+          />
+          <SummaryStatCard
+            label="Recommendation section"
+            value={recommendationSectionFreshness?.stateLabel || "No queue state yet"}
+            detail={`${recommendationQueueSummary.open} open of ${recommendationQueueSummary.total} total`}
+            tone={recommendationSummaryTone}
+            data-testid="workspace-summary-recommendations"
+          />
+          <SummaryStatCard
+            label="Actionable recommendations"
+            value={actionableRecommendationCount}
+            detail={
+              latestApplyTitle
+                ? `Latest applied: ${latestApplyTitle}`
+                : latestApplyExpectation || "No recent apply outcome"
+            }
+            tone={actionableRecommendationCount > 0 ? "success" : "neutral"}
+            data-testid="workspace-summary-actionable"
+          />
+          <SummaryStatCard
+            label="Competitor readiness"
+            value={workspaceReadinessMessage}
+            detail={
+              typeof workspaceTrustSummary?.usedGooglePlacesSeeds === "boolean"
+                ? `Nearby seed discovery used: ${workspaceTrustSummary.usedGooglePlacesSeeds ? "yes" : "no"}`
+                : "Nearby seed discovery telemetry not available"
+            }
+            tone={trustSummaryTone}
+            data-testid="workspace-summary-readiness"
+          />
         </div>
-        {workspaceTrustSummary ? (
-          <div className="panel panel-compact stack-tight" data-testid="workspace-trust-summary">
-            <span className="hint muted">Workspace trust summary</span>
-            {workspaceTrustSummary.latestCompetitorStatus ? (
-              <span className="hint">
-                Latest competitor status:{" "}
-                {formatCompetitorOutcomeStatusLevel(workspaceTrustSummary.latestCompetitorStatus)}
-              </span>
-            ) : null}
-            {workspaceTrustSummary.usedGooglePlacesSeeds !== null ? (
-              <span className="hint muted">
-                Nearby seed discovery used: {workspaceTrustSummary.usedGooglePlacesSeeds ? "yes" : "no"}.
-              </span>
-            ) : null}
-            {workspaceTrustSummary.usedSyntheticFallback !== null ? (
-              <span className={workspaceTrustSummary.usedSyntheticFallback ? "hint warning" : "hint muted"}>
-                Synthetic fallback used: {workspaceTrustSummary.usedSyntheticFallback ? "yes" : "no"}.
-              </span>
-            ) : null}
-            {workspaceTrustSummary.latestRecommendationApplyTitle ? (
-              <span className="hint">
-                Latest applied recommendation: {workspaceTrustSummary.latestRecommendationApplyTitle}.
-              </span>
-            ) : null}
-            {workspaceTrustSummary.latestRecommendationApplyChangeSummary ? (
-              <span className="hint muted">
-                Latest applied change: {workspaceTrustSummary.latestRecommendationApplyChangeSummary}
-              </span>
-            ) : null}
-            {workspaceTrustSummary.nextRefreshExpectation ? (
-              <span className="hint muted">Next refresh: {workspaceTrustSummary.nextRefreshExpectation}</span>
-            ) : null}
-            {workspaceTrustSummary.freshnessNote ? (
-              <span className="hint muted">Freshness: {workspaceTrustSummary.freshnessNote}</span>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="panel panel-compact stack" data-testid="start-here-section">
-          <span className="hint muted">Start Here</span>
-          <strong>{startHereAction.title}</strong>
-          <span className="hint">{startHereAction.detail}</span>
-          <span className="hint muted">Why this first: {startHereAction.whyThisFirst}</span>
-          {startHereAction.kind !== "none" ? (
-            <button type="button" className="button button-primary" onClick={() => void handleStartHereAction()}>
-              {startHereAction.buttonLabel}
-            </button>
-          ) : null}
-        </div>
-        {recommendationThemeStartHere ? (
-          <div className="panel panel-compact stack-tight" data-testid="start-here-theme-helper">
-            <span className="hint muted">Start here by theme</span>
-            <strong>{recommendationThemeStartHere.themeLabel}</strong>
-            <span className="hint">{recommendationThemeStartHere.title}</span>
-            <span className="hint muted">{recommendationThemeStartHere.reason}</span>
-            <div className="link-row">
-              {recommendationThemeStartHere.hasCompetitorBackedContext ? (
-                <span className="badge badge-muted">Competitor-backed</span>
-              ) : null}
-              {recommendationThemeStartHere.hasPendingRefreshContext ? (
-                <span className="badge badge-warn">Refresh pending</span>
+      </SectionCard>
+
+      <SectionCard className="operator-shell-insights operator-shell-primary-zone" data-testid="operator-focus-zone">
+        <SectionHeader
+          title="Top Insights"
+          subtitle="Priority actions, trust signals, and recommendation context."
+          headingLevel={2}
+          data-testid="top-insights-header"
+        />
+        <div className="operator-focus-grid">
+          <div className="operator-focus-main stack">
+            <div className="panel panel-compact stack-tight operator-focus-callout" data-testid="operator-focus-callout">
+              <span className="operator-focus-kicker">What needs attention now</span>
+              <div className="link-row operator-focus-status-row">
+                {operatorFocusStateLabel ? <span className={operatorFocusStateClass}>{operatorFocusStateLabel}</span> : null}
+                {recommendationSectionFreshness?.refreshExpected || competitorSectionFreshness?.refreshExpected ? (
+                  <span className="badge badge-warn">Refresh expected</span>
+                ) : null}
+              </div>
+              <strong>{operatorFocusHeadline}</strong>
+              <span className="hint">{operatorFocusDetail}</span>
+              {latestWorkflowChangeNote ? <span className="hint muted">{latestWorkflowChangeNote}</span> : null}
+            </div>
+
+            <div className="panel panel-compact stack operator-focus-next-step" data-testid="start-here-section">
+              <span className="hint muted">Start Here</span>
+              <strong>{startHereAction.title}</strong>
+              <span className="hint">{startHereAction.detail}</span>
+              <span className="hint muted">Why this first: {startHereAction.whyThisFirst}</span>
+              {startHereAction.kind !== "none" ? (
+                <button type="button" className="button button-primary" onClick={() => void handleStartHereAction()}>
+                  {startHereAction.buttonLabel}
+                </button>
               ) : null}
             </div>
-            <button
-              type="button"
-              className="button button-secondary button-inline"
-              onClick={() => focusActionTarget(recommendationRowId(recommendationThemeStartHere.recommendation_id))}
-            >
-              Jump to recommendation
-            </button>
           </div>
-        ) : null}
+
+          <div className="operator-focus-support stack">
+            <div className="metrics-grid operator-focus-metrics">
+              <div className="panel panel-compact">
+                <strong>You have {actionableRecommendationCount} actionable improvements</strong>
+              </div>
+              <div className="panel panel-compact">
+                <strong>{latestCompletedTuningSuggestions.length} tuning opportunities identified</strong>
+              </div>
+              <div className="panel panel-compact">
+                <strong>
+                  {latestPreviewInsight || "Preview a tuning suggestion to estimate included-candidate impact"}
+                </strong>
+              </div>
+            </div>
+
+            {recommendationApplyOutcome ? (
+              <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="operator-focus-latest-change">
+                <span className="hint muted">Latest meaningful change</span>
+                {recommendationApplyOutcome.appliedRecommendationTitle ? (
+                  <span className="hint">
+                    Applied recommendation: {recommendationApplyOutcome.appliedRecommendationTitle}
+                  </span>
+                ) : null}
+                {recommendationApplyOutcome.appliedChangeSummary ? (
+                  <span className="hint muted">What changed: {recommendationApplyOutcome.appliedChangeSummary}</span>
+                ) : null}
+                {recommendationApplyOutcome.nextRefreshExpectation ? (
+                  <span className="hint muted">Next refresh: {recommendationApplyOutcome.nextRefreshExpectation}</span>
+                ) : null}
+              </div>
+            ) : null}
+
+            {workspaceTrustSummary ? (
+              <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="workspace-trust-summary">
+                <span className="hint muted">Workspace trust summary</span>
+                {workspaceTrustSummary.latestCompetitorStatus ? (
+                  <span className="hint">
+                    Latest competitor status:{" "}
+                    {formatCompetitorOutcomeStatusLevel(workspaceTrustSummary.latestCompetitorStatus)}
+                  </span>
+                ) : null}
+                {workspaceTrustSummary.usedGooglePlacesSeeds !== null ? (
+                  <span className="hint muted">
+                    Nearby seed discovery used: {workspaceTrustSummary.usedGooglePlacesSeeds ? "yes" : "no"}.
+                  </span>
+                ) : null}
+                {workspaceTrustSummary.usedSyntheticFallback !== null ? (
+                  <span className={workspaceTrustSummary.usedSyntheticFallback ? "hint warning" : "hint muted"}>
+                    Synthetic fallback used: {workspaceTrustSummary.usedSyntheticFallback ? "yes" : "no"}.
+                  </span>
+                ) : null}
+                {workspaceTrustSummary.latestRecommendationApplyTitle ? (
+                  <span className="hint">
+                    Latest applied recommendation: {workspaceTrustSummary.latestRecommendationApplyTitle}.
+                  </span>
+                ) : null}
+                {workspaceTrustSummary.latestRecommendationApplyChangeSummary ? (
+                  <span className="hint muted">
+                    Latest applied change: {workspaceTrustSummary.latestRecommendationApplyChangeSummary}
+                  </span>
+                ) : null}
+                {workspaceTrustSummary.nextRefreshExpectation ? (
+                  <span className="hint muted">Next refresh: {workspaceTrustSummary.nextRefreshExpectation}</span>
+                ) : null}
+                {workspaceTrustSummary.freshnessNote ? (
+                  <span className="hint muted">Freshness: {workspaceTrustSummary.freshnessNote}</span>
+                ) : null}
+              </div>
+            ) : null}
+
+            {recommendationThemeStartHere ? (
+              <div
+                className="panel panel-compact stack-tight operator-summary-callout"
+                data-testid="start-here-theme-helper"
+              >
+                <span className="hint muted">Start here by theme</span>
+                <strong>{recommendationThemeStartHere.themeLabel}</strong>
+                <span className="hint">{recommendationThemeStartHere.title}</span>
+                <span className="hint muted">{recommendationThemeStartHere.reason}</span>
+                <div className="link-row">
+                  {recommendationThemeStartHere.hasCompetitorBackedContext ? (
+                    <span className="badge badge-muted">Competitor-backed</span>
+                  ) : null}
+                  {recommendationThemeStartHere.hasPendingRefreshContext ? (
+                    <span className="badge badge-warn">Refresh pending</span>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className="button button-secondary button-inline"
+                  onClick={() => focusActionTarget(recommendationRowId(recommendationThemeStartHere.recommendation_id))}
+                >
+                  Jump to recommendation
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </SectionCard>
 
       {showZipCaptureModal ? (
@@ -4905,9 +5224,12 @@ export default function SiteWorkspacePage() {
       ) : null}
 
       {aiOpportunities.length > 0 ? (
-        <SectionCard>
-          <h2>AI Opportunities</h2>
-          <p className="hint muted">AI suggestions are advisory and should be reviewed.</p>
+        <SectionCard className="operator-shell-section">
+          <SectionHeader
+            title="AI Opportunities"
+            subtitle="AI suggestions are advisory and should be reviewed."
+            headingLevel={2}
+          />
           <div className="stack" data-testid="ai-opportunities-section">
             {/* AI opportunity cards keep deterministic recommendations authoritative while exposing advisory AI context. */}
             {visibleAiOpportunities.map((opportunity) => {
@@ -5074,8 +5396,12 @@ export default function SiteWorkspacePage() {
         </SectionCard>
       ) : null}
 
-      <SectionCard>
-        <h2>Site Activity Timeline</h2>
+      <SectionCard className="operator-shell-section operator-shell-secondary-zone">
+        <SectionHeader
+          title="Site Activity Timeline"
+          subtitle="Recent audit, competitor, and recommendation activity for this site."
+          headingLevel={2}
+        />
         {loadingWorkspace ? <p className="hint muted">Loading recent site activity...</p> : null}
         {timelineWarning ? (
           <p className="hint warning">Some activity data could not be loaded. Available events are still shown.</p>
@@ -5124,7 +5450,7 @@ export default function SiteWorkspacePage() {
             ) : (
               <>
                 <div className="table-container">
-                  <table className="table">
+                  <table className="table table-dense">
                     <thead>
                       <tr>
                         <th>When</th>
@@ -5180,14 +5506,18 @@ export default function SiteWorkspacePage() {
         ) : null}
       </SectionCard>
 
-      <SectionCard>
-        <h2>Recent Audit Runs</h2>
+      <SectionCard className="operator-shell-section operator-shell-secondary-zone">
+        <SectionHeader
+          title="Recent Audit Runs"
+          subtitle="Latest crawl outcomes and deterministic audit status history."
+          headingLevel={2}
+        />
         {auditError ? <p className="hint error">{auditError}</p> : null}
         {auditRuns.length === 0 && !auditError ? (
           <p className="hint muted">No audit runs have been recorded for this site yet.</p>
         ) : (
           <div className="table-container">
-            <table className="table">
+            <table className="table table-dense">
               <thead>
                 <tr>
                   <th>Run ID</th>
@@ -5219,8 +5549,12 @@ export default function SiteWorkspacePage() {
         )}
       </SectionCard>
 
-      <SectionCard>
-        <h2>Competitor Readiness</h2>
+      <SectionCard className="operator-shell-section operator-shell-secondary-zone">
+        <SectionHeader
+          title="Competitor Readiness"
+          subtitle="Configured competitor sets, active domains, and recent snapshot/comparison activity."
+          headingLevel={2}
+        />
         {competitorError ? <p className="hint error">{competitorError}</p> : null}
         <p>{workspaceReadinessMessage}</p>
         <p>Active Competitor Sets: {activeCompetitorSetCount}</p>
@@ -5266,7 +5600,7 @@ export default function SiteWorkspacePage() {
         ) : (
           <>
             <div className="table-container">
-              <table className="table">
+              <table className="table table-dense">
                 <thead>
                   <tr>
                     <th>Set</th>
@@ -5318,11 +5652,35 @@ export default function SiteWorkspacePage() {
         )}
       </SectionCard>
 
-      <SectionCard>
-        <h2>AI Competitor Profiles</h2>
-        <p className="hint muted">
-          Generate AI-produced competitor profile drafts, then review and explicitly accept or reject each candidate.
-        </p>
+      <SectionCard className="operator-shell-section operator-shell-work-zone">
+        <SectionHeader
+          title="AI Competitor Profiles"
+          subtitle="Generate AI-produced competitor profile drafts, then review and explicitly accept or reject each candidate."
+          headingLevel={2}
+          data-testid="competitor-section-header"
+          actions={(
+            <div className="toolbar-row">
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => void handleGenerateCompetitorProfiles()}
+                disabled={loadingWorkspace || generationInFlight || retryInFlight || competitorProfileLoading}
+              >
+                {generationInFlight ? "Queuing..." : "Generate Competitor Profiles"}
+              </button>
+              {latestCompetitorProfileRun?.status === "failed" ? (
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => void handleRetryCompetitorProfileRun()}
+                  disabled={loadingWorkspace || generationInFlight || retryInFlight || competitorProfileLoading}
+                >
+                  {retryInFlight ? "Retrying..." : "Retry"}
+                </button>
+              ) : null}
+            </div>
+          )}
+        />
         {competitorSectionFreshness ? (
           <p className="hint muted" data-testid="competitor-section-freshness">
             <span className={workspaceSectionFreshnessBadgeClass(competitorSectionFreshness.stateCode)}>
@@ -5337,26 +5695,6 @@ export default function SiteWorkspacePage() {
         {competitorProfileSummaryError ? <p className="hint warning">{competitorProfileSummaryError}</p> : null}
         {competitorProfileActionError ? <p className="hint error">{competitorProfileActionError}</p> : null}
         {competitorProfileActionMessage ? <p className="hint success">{competitorProfileActionMessage}</p> : null}
-        <div className="form-actions">
-          <button
-            type="button"
-            className="button button-primary"
-            onClick={() => void handleGenerateCompetitorProfiles()}
-            disabled={loadingWorkspace || generationInFlight || retryInFlight || competitorProfileLoading}
-          >
-            {generationInFlight ? "Queuing..." : "Generate Competitor Profiles"}
-          </button>
-          {latestCompetitorProfileRun?.status === "failed" ? (
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => void handleRetryCompetitorProfileRun()}
-              disabled={loadingWorkspace || generationInFlight || retryInFlight || competitorProfileLoading}
-            >
-              {retryInFlight ? "Retrying..." : "Retry"}
-            </button>
-          ) : null}
-        </div>
         {latestCompetitorProfileRun ? (
           <p>
             Latest Run: <code>{latestCompetitorProfileRun.id}</code> ({latestCompetitorProfileRun.status}){" "}
@@ -5375,7 +5713,7 @@ export default function SiteWorkspacePage() {
           </p>
         ) : null}
         {competitorRunOutcomeSummary ? (
-          <div className="stack" data-testid="competitor-run-outcome-summary">
+          <div className="stack operator-summary-callout" data-testid="competitor-run-outcome-summary">
             <p className="hint muted">
               <strong>Run quality</strong>: proposed {competitorRunOutcomeSummary.proposedCount} | returned{" "}
               {competitorRunOutcomeSummary.returnedCount} | rejected {competitorRunOutcomeSummary.rejectedCount} |
@@ -5489,7 +5827,7 @@ export default function SiteWorkspacePage() {
               <strong>Rejected competitor candidates (debug)</strong>: {rejectedCompetitorCandidateCount}
             </p>
             <div className="table-container table-container-compact">
-              <table className="table">
+              <table className="table table-dense">
                 <thead>
                   <tr>
                     <th>Domain</th>
@@ -5542,7 +5880,7 @@ export default function SiteWorkspacePage() {
               </p>
             ) : null}
             <div className="table-container table-container-compact">
-              <table className="table">
+              <table className="table table-dense">
                 <thead>
                   <tr>
                     <th>Domain</th>
@@ -5621,7 +5959,7 @@ export default function SiteWorkspacePage() {
               Degraded timeout retry used: {competitorProviderDegradedRetryUsed ? "yes" : "no"}
             </p>
             <div className="table-container table-container-compact">
-              <table className="table">
+              <table className="table table-dense">
                 <thead>
                   <tr>
                     <th>Attempt</th>
@@ -5704,8 +6042,8 @@ export default function SiteWorkspacePage() {
           <p className="hint muted">This run did not produce any reviewable drafts.</p>
         ) : null}
         {!competitorProfileLoading && competitorProfileDrafts.length > 0 ? (
-          <div className="stack-tight">
-            <label className="hint muted" data-testid="toggle-hide-synthetic-scaffolds">
+          <div className="stack-tight workspace-filter-toolbar">
+            <label className="hint muted toolbar-toggle" data-testid="toggle-hide-synthetic-scaffolds">
               <input
                 type="checkbox"
                 checked={hideSyntheticScaffolds}
@@ -5728,7 +6066,7 @@ export default function SiteWorkspacePage() {
         ) : null}
         {!competitorProfileLoading && visibleCompetitorProfileDrafts.length > 0 ? (
           <div className="table-container">
-            <table className="table">
+            <table className="table table-dense">
               <thead>
                 <tr>
                   <th>Suggested Competitor</th>
@@ -6098,8 +6436,25 @@ export default function SiteWorkspacePage() {
         ) : null}
       </SectionCard>
 
-      <SectionCard>
-        <h2>Recommendation Queue</h2>
+      <SectionCard className="operator-shell-section operator-shell-work-zone">
+        <SectionHeader
+          title="Recommendation Queue"
+          subtitle="Run deterministic recommendation analysis from the latest audit and competitor comparison context."
+          headingLevel={2}
+          data-testid="recommendation-queue-header"
+          actions={(
+            <div className="toolbar-row">
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => void handleGenerateRecommendations()}
+                disabled={loadingWorkspace || recommendationGenerationInFlight || !recommendationGenerationPrerequisitesMet}
+              >
+                {recommendationGenerationInFlight ? "Generating..." : "Generate Recommendations"}
+              </button>
+            </div>
+          )}
+        />
         {recommendationSectionFreshness ? (
           <p className="hint muted" data-testid="recommendation-section-freshness">
             <span className={workspaceSectionFreshnessBadgeClass(recommendationSectionFreshness.stateCode)}>
@@ -6113,16 +6468,6 @@ export default function SiteWorkspacePage() {
           </p>
         ) : null}
         <div className="stack-tight">
-          <div className="form-actions">
-            <button
-              type="button"
-              className="button button-primary"
-              onClick={() => void handleGenerateRecommendations()}
-              disabled={loadingWorkspace || recommendationGenerationInFlight || !recommendationGenerationPrerequisitesMet}
-            >
-              {recommendationGenerationInFlight ? "Generating..." : "Generate Recommendations"}
-            </button>
-          </div>
           <p className="hint muted">
             Creates a recommendation run from the latest completed audit and/or competitor comparison inputs.
           </p>
@@ -6135,11 +6480,13 @@ export default function SiteWorkspacePage() {
           {recommendationGenerationMessage ? <p className="hint success">{recommendationGenerationMessage}</p> : null}
         </div>
         {queueError ? <p className="hint error">{queueError}</p> : null}
-        <p>Total: {recommendationQueueSummary.total}</p>
-        <p>Open: {recommendationQueueSummary.open}</p>
-        <p>Accepted: {recommendationQueueSummary.accepted}</p>
-        <p>Dismissed: {recommendationQueueSummary.dismissed}</p>
-        <p>High Priority: {recommendationQueueSummary.highPriority}</p>
+        <div className="workspace-section-meta">
+          <span className="badge badge-muted">Total {recommendationQueueSummary.total}</span>
+          <span className="badge badge-warn">Open {recommendationQueueSummary.open}</span>
+          <span className="badge badge-success">Accepted {recommendationQueueSummary.accepted}</span>
+          <span className="badge badge-muted">Dismissed {recommendationQueueSummary.dismissed}</span>
+          <span className="badge badge-critical">High priority {recommendationQueueSummary.highPriority}</span>
+        </div>
         <p>
           <Link href="/recommendations">Open Recommendation Queue</Link>
         </p>
@@ -6148,7 +6495,7 @@ export default function SiteWorkspacePage() {
         ) : null}
         {queueResponse && queueResponse.items.length > 0 ? (
           <div className="table-container">
-            <table className="table">
+            <table className="table table-dense">
               <thead>
                 <tr>
                   <th>Title</th>
@@ -6182,8 +6529,19 @@ export default function SiteWorkspacePage() {
         ) : null}
       </SectionCard>
 
-      <SectionCard>
-        <h2>Recommendation Runs and Narratives</h2>
+      <SectionCard className="operator-shell-section operator-shell-work-zone">
+        <SectionHeader
+          title="Recommendation Runs and Narratives"
+          subtitle="Review deterministic recommendations, AI narrative overlays, and recent tuning outcomes."
+          headingLevel={2}
+          data-testid="recommendation-runs-header"
+          meta={latestCompletedRecommendationRun ? (
+            <span className="hint muted">
+              Latest completed run: <code>{latestCompletedRecommendationRun.id}</code> (
+              {latestCompletedRecommendationRun.status})
+            </span>
+          ) : null}
+        />
         {recommendationRunError ? <p className="hint error">{recommendationRunError}</p> : null}
         {narrativeLookupError ? <p className="hint warning">{narrativeLookupError}</p> : null}
         <h3>Latest Completed Run</h3>
@@ -6245,9 +6603,74 @@ export default function SiteWorkspacePage() {
               <p className="hint muted">No recommendations yet — generate recommendations to analyze this site.</p>
             ) : null}
             {latestCompletedRecommendations.length > 0 ? (
+              <div className="recommendation-bucket-grid" data-testid="recommendation-buckets">
+                {recommendationPresentationBuckets.map((bucket) => (
+                  <div
+                    key={`recommendation-bucket-${bucket.key}`}
+                    className={`panel panel-compact stack recommendation-bucket recommendation-bucket-${bucket.key}`}
+                    data-testid={`recommendation-bucket-${bucket.key}`}
+                  >
+                    <div className="workspace-section-header workspace-section-header-compact">
+                      <div className="workspace-section-header-main">
+                        <h5 className="workspace-section-title">{bucket.label}</h5>
+                        <p className="hint muted workspace-section-subtitle">{bucket.subtitle}</p>
+                      </div>
+                      <div className="workspace-section-actions">
+                        <span className={bucket.badgeClass}>{bucket.items.length}</span>
+                      </div>
+                    </div>
+                    <div className="recommendation-bucket-list">
+                      {bucket.items.slice(0, 4).map((item) => {
+                        const recommendationProgress = normalizeRecommendationProgress(item);
+                        const recommendationLifecycle = normalizeRecommendationLifecycle(item);
+                        const recommendationPriority = normalizeRecommendationPriority(item);
+                        const recommendationActionSummary = normalizeRecommendationActionClarity(item)
+                          || normalizeRecommendationEvidenceSummary(item)
+                          || normalizeRecommendationExpectedOutcome(item)
+                          || truncateText(item.rationale, 130);
+                        return (
+                          <article
+                            key={`recommendation-bucket-item-${bucket.key}-${item.id}`}
+                            className="recommendation-bucket-item"
+                            data-testid={`recommendation-bucket-item-${bucket.key}`}
+                          >
+                            <div className="recommendation-bucket-item-header">
+                              <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
+                              <span className={recommendationPresentationStateBadgeClass(bucket.key)}>
+                                {recommendationPresentationStateLabel(bucket.key)}
+                              </span>
+                            </div>
+                            <span className="hint muted">{recommendationActionSummary}</span>
+                            <div className="link-row recommendation-bucket-item-meta">
+                              <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
+                              {recommendationLifecycle ? (
+                                <span className={recommendationLifecycle.badgeClass}>{recommendationLifecycle.label}</span>
+                              ) : null}
+                              {recommendationPriority ? (
+                                <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
+                                  {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
+                                </span>
+                              ) : null}
+                              <span className="badge badge-muted">{item.category}</span>
+                              <span className="badge badge-muted">{item.severity}</span>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                    {bucket.items.length > 4 ? (
+                      <span className="hint muted">
+                        +{bucket.items.length - 4} more recommendation(s) shown in the detailed table below.
+                      </span>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {latestCompletedRecommendations.length > 0 ? (
               recommendationThemeSections.length <= 1 ? (
                 <div className="table-container">
-                  <table className="table">
+                  <table className="table table-dense">
                     <thead>
                       <tr>
                         <th>Recommendation</th>
@@ -6453,7 +6876,7 @@ export default function SiteWorkspacePage() {
                         {formatRecommendationThemeSummary(section.theme)}
                       </span>
                       <div className="table-container">
-                        <table className="table">
+                        <table className="table table-dense">
                           <thead>
                             <tr>
                               <th>Recommendation</th>
@@ -6777,7 +7200,7 @@ export default function SiteWorkspacePage() {
                   </div>
                 ) : null}
                 {recommendationApplyOutcome ? (
-                  <div className="panel panel-compact stack-tight" data-testid="narrative-apply-outcome">
+                  <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="narrative-apply-outcome">
                     <span className="hint muted">Latest apply outcome</span>
                     <span className="hint success">Applied</span>
                     {recommendationApplyOutcome.appliedRecommendationTitle ? (
@@ -6988,7 +7411,7 @@ export default function SiteWorkspacePage() {
         <h3>Recent Run History</h3>
         {recommendationRuns.length > 0 ? (
           <div className="table-container">
-            <table className="table">
+            <table className="table table-dense">
               <thead>
                 <tr>
                   <th>Run ID</th>
@@ -7034,3 +7457,4 @@ export default function SiteWorkspacePage() {
     </PageContainer>
   );
 }
+
