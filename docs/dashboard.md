@@ -34,12 +34,18 @@ Workspace responses also include compact section-level freshness indicators so o
 Each object includes:
 - `state`: `fresh` | `pending_refresh` | `running` | `stale`
 - `message`: short deterministic backend-authored explanation
+- `state_code`: `fresh` | `pending_refresh` | `running` | `stale` | `possibly_outdated`
+- `state_label`: operator-ready label
+- `state_reason`: concise deterministic reason
+- `evaluated_at`: timestamp used for this section-state evaluation (when available)
+- `refresh_expected`: whether a near-term run is expected to update the section
 
 ### Meaning
 - `fresh`: section reflects the latest completed signals for that workflow.
 - `pending_refresh`: newer applied changes exist and next completed run should reflect them.
 - `running`: a run is currently in progress for that section.
 - `stale`: no completed run is available yet, a recent failure/degraded result needs refresh, or freshness cannot be confirmed safely.
+- `possibly_outdated`: section may be showing older results and should be refreshed soon.
 
 These indicators complement `workspace_trust_summary`:
 - `workspace_trust_summary` = compact cross-workspace trust roll-up

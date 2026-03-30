@@ -3637,10 +3637,20 @@ describe("site workspace timeline controls", () => {
         competitor_section_freshness: {
           state: "running",
           message: "Competitor generation is currently running and will refresh this section on completion.",
+          state_code: "running",
+          state_label: "Run in progress",
+          state_reason: "Competitor generation is currently running and will refresh this section on completion.",
+          evaluated_at: "2026-03-28T18:30:00Z",
+          refresh_expected: true,
         },
         recommendation_section_freshness: {
           state: "pending_refresh",
           message: "Applied changes are waiting for the next completed recommendation analysis run.",
+          state_code: "pending_refresh",
+          state_label: "Refresh pending",
+          state_reason: "Applied changes are waiting for the next completed recommendation analysis run.",
+          evaluated_at: "2026-03-28T19:00:00Z",
+          refresh_expected: true,
         },
       }),
     );
@@ -3652,17 +3662,48 @@ describe("site workspace timeline controls", () => {
     expect(within(competitorFreshness).getByText("Run in progress")).toBeInTheDocument();
     expect(
       within(competitorFreshness).getByText(
-        "Competitor generation is currently running and will refresh this section on completion.",
+        /Competitor generation is currently running and will refresh this section on completion\./i,
       ),
     ).toBeInTheDocument();
+    expect(within(competitorFreshness).getByText(/Refresh expected\./i)).toBeInTheDocument();
+    expect(within(competitorFreshness).getByText(/Evaluated/)).toBeInTheDocument();
 
     const recommendationFreshness = screen.getByTestId("recommendation-section-freshness");
     expect(within(recommendationFreshness).getByText("Refresh pending")).toBeInTheDocument();
     expect(
       within(recommendationFreshness).getByText(
-        "Applied changes are waiting for the next completed recommendation analysis run.",
+        /Applied changes are waiting for the next completed recommendation analysis run\./i,
       ),
     ).toBeInTheDocument();
+    expect(within(recommendationFreshness).getByText(/Refresh expected\./i)).toBeInTheDocument();
+  });
+
+  it("renders possibly outdated section-state labels when provided", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        competitor_section_freshness: {
+          state: "stale",
+          message: "Latest competitor results were degraded fallback output and may need a fresh run.",
+          state_code: "possibly_outdated",
+          state_label: "Possibly outdated",
+          state_reason: "Latest competitor results were degraded fallback output and may need a fresh run.",
+          refresh_expected: true,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "AI Competitor Profiles" });
+    const competitorFreshness = screen.getByTestId("competitor-section-freshness");
+    expect(within(competitorFreshness).getByText("Possibly outdated")).toBeInTheDocument();
+    expect(
+      within(competitorFreshness).getByText(
+        /Latest competitor results were degraded fallback output and may need a fresh run\./i,
+      ),
+    ).toBeInTheDocument();
+    expect(within(competitorFreshness).getByText(/Refresh expected\./i)).toBeInTheDocument();
   });
 
   it("keeps section freshness indicators hidden when freshness fields are absent", async () => {

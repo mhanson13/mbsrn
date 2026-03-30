@@ -1706,9 +1706,7 @@ class SEOCompetitorProfileGenerationService:
         final_candidates = candidate_processing.included_candidates[:target_candidate_count]
         forced_fallback_candidates: list[CompetitorCandidateInput] = []
         if (
-            (
-                enable_tiered_fill and len(final_candidates) < target_candidate_count
-            )
+            (enable_tiered_fill and len(final_candidates) < target_candidate_count)
             or (not enable_tiered_fill and not final_candidates)
         ) and proposed_candidate_count > 0:
             forced_candidate_pool = self._select_forced_fallback_candidates(
@@ -1808,9 +1806,7 @@ class SEOCompetitorProfileGenerationService:
             )
             forced_relevance = max(0, min(100, int(round(candidate.confidence_score * 100))))
             forced_draft_source = (
-                "ai_tier2_fallback"
-                if enable_tiered_fill and len(final_candidates) > 0
-                else _FORCED_DRAFT_SOURCE
+                "ai_tier2_fallback" if enable_tiered_fill and len(final_candidates) > 0 else _FORCED_DRAFT_SOURCE
             )
             draft = SEOCompetitorProfileDraft(
                 id=str(uuid4()),
@@ -1873,9 +1869,7 @@ class SEOCompetitorProfileGenerationService:
                             generation_run_id=run.id,
                             suggested_name=suggested_name,
                             suggested_domain=suggested_domain,
-                            competitor_type=self._normalize_competitor_type(
-                                synthetic_candidate.get("competitor_type")
-                            ),
+                            competitor_type=self._normalize_competitor_type(synthetic_candidate.get("competitor_type")),
                             summary=self._clean_optional(
                                 str(synthetic_candidate.get("summary"))
                                 if synthetic_candidate.get("summary") is not None

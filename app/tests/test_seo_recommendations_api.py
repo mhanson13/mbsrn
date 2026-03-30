@@ -2649,8 +2649,18 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
     assert payload["workspace_trust_summary"]["freshness_note"] == payload["analysis_freshness"]["message"]
     assert payload["competitor_section_freshness"]["state"] == "pending_refresh"
     assert payload["competitor_section_freshness"]["message"]
+    assert payload["competitor_section_freshness"]["state_code"] == "pending_refresh"
+    assert payload["competitor_section_freshness"]["state_label"] == "Refresh pending"
+    assert payload["competitor_section_freshness"]["state_reason"]
+    assert payload["competitor_section_freshness"]["refresh_expected"] is True
+    assert payload["competitor_section_freshness"]["evaluated_at"] is not None
     assert payload["recommendation_section_freshness"]["state"] == "pending_refresh"
     assert payload["recommendation_section_freshness"]["message"]
+    assert payload["recommendation_section_freshness"]["state_code"] == "pending_refresh"
+    assert payload["recommendation_section_freshness"]["state_label"] == "Refresh pending"
+    assert payload["recommendation_section_freshness"]["state_reason"]
+    assert payload["recommendation_section_freshness"]["refresh_expected"] is True
+    assert payload["recommendation_section_freshness"]["evaluated_at"] is not None
     assert payload["recommendations"]["items"][0]["recommendation_progress_status"] == "applied_pending_refresh"
     assert (
         payload["recommendations"]["items"][0]["recommendation_progress_summary"]
@@ -2729,7 +2739,13 @@ def test_recommendation_workspace_summary_handles_partial_apply_metadata_safely(
     assert payload["workspace_trust_summary"]["latest_recommendation_apply_change_summary"]
     assert payload["workspace_trust_summary"]["next_refresh_expectation"]
     assert payload["competitor_section_freshness"]["state"] == "stale"
+    assert payload["competitor_section_freshness"]["state_code"] == "stale"
+    assert payload["competitor_section_freshness"]["state_label"] == "Stale"
+    assert payload["competitor_section_freshness"]["refresh_expected"] is False
     assert payload["recommendation_section_freshness"]["state"] == "pending_refresh"
+    assert payload["recommendation_section_freshness"]["state_code"] == "pending_refresh"
+    assert payload["recommendation_section_freshness"]["state_label"] == "Refresh pending"
+    assert payload["recommendation_section_freshness"]["refresh_expected"] is True
     assert payload["analysis_freshness"]["status"] == "pending_refresh"
     assert payload["start_here"] is not None
     assert payload["start_here"]["context_flags"]
@@ -2737,6 +2753,60 @@ def test_recommendation_workspace_summary_handles_partial_apply_metadata_safely(
     assert payload["recommendations"]["items"][0]["competitor_linkage_summary"] is None
     assert payload["recommendations"]["items"][0]["recommendation_action_delta"] is None
     assert payload["recommendations"]["items"][0]["recommendation_priority"] is not None
+
+
+def test_recommendation_workspace_summary_marks_possibly_outdated_when_refresh_state_is_unknown_after_apply(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+    audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+    )
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    run = db_session.get(SEORecommendationRun, run_id)
+    assert run is not None
+    run.status = "completed"
+    run.completed_at = None
+    db_session.add(run)
+    db_session.flush()
+
+    db_session.add(
+        SEOCompetitorTuningPreviewEvent(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            source_narrative_id=None,
+            source_recommendation_run_id=run_id,
+            preview_request={},
+            preview_response={"estimated_impact": {}},
+            applied_at=utc_now(),
+            evaluated_generation_run_id=None,
+            evaluated_at=None,
+            estimated_included_delta=None,
+            actual_included_delta=None,
+            error_margin=None,
+            direction_correct=None,
+        )
+    )
+    db_session.commit()
+
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["analysis_freshness"]["status"] == "unknown"
+    assert payload["recommendation_section_freshness"]["state"] == "stale"
+    assert payload["recommendation_section_freshness"]["state_code"] == "possibly_outdated"
+    assert payload["recommendation_section_freshness"]["state_label"] == "Possibly outdated"
+    assert payload["recommendation_section_freshness"]["refresh_expected"] is True
 
 
 def test_recommendation_workspace_summary_handles_in_progress_runs_safely(db_session, seeded_business) -> None:
@@ -2778,7 +2848,12 @@ def test_recommendation_workspace_summary_handles_in_progress_runs_safely(db_ses
     assert payload["apply_outcome"] is None
     assert payload["workspace_trust_summary"] is None
     assert payload["competitor_section_freshness"]["state"] == "stale"
+    assert payload["competitor_section_freshness"]["state_code"] == "stale"
+    assert payload["competitor_section_freshness"]["refresh_expected"] is False
     assert payload["recommendation_section_freshness"]["state"] == "running"
+    assert payload["recommendation_section_freshness"]["state_code"] == "running"
+    assert payload["recommendation_section_freshness"]["state_label"] == "Run in progress"
+    assert payload["recommendation_section_freshness"]["refresh_expected"] is True
     assert payload["start_here"] is None
     assert payload["analysis_freshness"]["status"] == "unknown"
     assert payload["analysis_freshness"]["analysis_generated_at"] is None
@@ -2836,7 +2911,11 @@ def test_recommendation_workspace_summary_marks_fresh_when_apply_is_older_than_a
     assert payload["analysis_freshness"]["analysis_generated_at"] is not None
     assert payload["analysis_freshness"]["last_apply_at"] is not None
     assert payload["competitor_section_freshness"]["state"] == "stale"
+    assert payload["competitor_section_freshness"]["state_code"] == "stale"
     assert payload["recommendation_section_freshness"]["state"] == "fresh"
+    assert payload["recommendation_section_freshness"]["state_code"] == "fresh"
+    assert payload["recommendation_section_freshness"]["state_label"] == "Fresh"
+    assert payload["recommendation_section_freshness"]["refresh_expected"] is False
     assert payload["start_here"] is not None
     assert payload["start_here"]["context_flags"] == []
     assert payload["recommendations"]["items"][0]["recommendation_progress_status"] == "suggested"
@@ -2877,7 +2956,11 @@ def test_recommendation_workspace_summary_sets_competitor_freshness_running_when
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["competitor_section_freshness"]["state"] == "running"
+    assert payload["competitor_section_freshness"]["state_code"] == "running"
+    assert payload["competitor_section_freshness"]["state_label"] == "Run in progress"
+    assert payload["competitor_section_freshness"]["refresh_expected"] is True
     assert payload["recommendation_section_freshness"]["state"] == "stale"
+    assert payload["recommendation_section_freshness"]["state_code"] == "stale"
 
 
 def test_recommendation_workspace_summary_marks_reflected_when_apply_link_is_fresh(db_session, seeded_business) -> None:

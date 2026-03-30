@@ -174,10 +174,7 @@ def _is_localhost_allowed_for_app_env(app_env: str) -> bool:
 def _is_localhost_allowed_for_runtime(*, app_env: str, db_connection_mode: str) -> bool:
     if _is_localhost_allowed_for_app_env(app_env):
         return True
-    return (
-        app_env == "production"
-        and db_connection_mode in _PRODUCTION_LOCALHOST_ALLOWED_DB_CONNECTION_MODES
-    )
+    return app_env == "production" and db_connection_mode in _PRODUCTION_LOCALHOST_ALLOWED_DB_CONNECTION_MODES
 
 
 def _resolve_database_url(*, app_env: str, db_connection_mode: str) -> str:

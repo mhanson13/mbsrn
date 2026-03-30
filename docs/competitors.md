@@ -352,6 +352,14 @@ Competitor linkage and action-delta strength can elevate recommendation priority
 
 This remains deterministic and backend-authored; no additional provider call is introduced.
 
+### Competitor section freshness independence
+
+Competitor section-state metadata is evaluated independently from recommendation freshness:
+
+- competitor and recommendation sections can diverge (`fresh` vs `pending_refresh`, etc.)
+- competitor evidence may remain current while recommendation analysis waits for refresh
+- `state_code=possibly_outdated` indicates operator-safe caution without invalidating existing evidence
+
 ## Provider Error Visibility
 
 Competitor provider failures now emit bounded backend log metadata to improve debugging:

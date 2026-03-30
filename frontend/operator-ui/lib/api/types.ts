@@ -942,10 +942,21 @@ export type RecommendationWorkspaceSummaryState =
   | "completed_with_narrative";
 
 export type WorkspaceSectionFreshnessState = "fresh" | "pending_refresh" | "running" | "stale";
+export type WorkspaceSectionFreshnessStateCode =
+  | "fresh"
+  | "pending_refresh"
+  | "running"
+  | "stale"
+  | "possibly_outdated";
 
 export interface WorkspaceSectionFreshness {
   state: WorkspaceSectionFreshnessState;
   message: string;
+  state_code?: WorkspaceSectionFreshnessStateCode | null;
+  state_label?: string | null;
+  state_reason?: string | null;
+  evaluated_at?: string | null;
+  refresh_expected?: boolean | null;
 }
 
 export interface RecommendationWorkspaceSummaryResponse {

@@ -46,10 +46,7 @@ def main(argv: list[str] | None = None) -> int:
         print("DATABASE_URL env entry: missing")
     elif "valueFrom" in database_url_entry and "secretKeyRef" in database_url_entry["valueFrom"]:
         ref = database_url_entry["valueFrom"]["secretKeyRef"]
-        print(
-            "DATABASE_URL env entry: secretKeyRef "
-            f"name={ref.get('name')} key={ref.get('key')}"
-        )
+        print("DATABASE_URL env entry: secretKeyRef " f"name={ref.get('name')} key={ref.get('key')}")
     elif "value" in database_url_entry:
         print("DATABASE_URL env entry: literal value")
     else:

@@ -32,6 +32,13 @@ SEORecommendationApplyOutcomeSource = Literal["recommendation", "manual"]
 SEORecommendationAnalysisFreshnessStatus = Literal["fresh", "pending_refresh", "unknown"]
 SEORecommendationWorkspaceTrustCompetitorStatus = Literal["normal", "recovered", "degraded", "failed"]
 SEOWorkspaceSectionFreshnessState = Literal["fresh", "pending_refresh", "running", "stale"]
+SEOWorkspaceSectionFreshnessStateCode = Literal[
+    "fresh",
+    "pending_refresh",
+    "running",
+    "stale",
+    "possibly_outdated",
+]
 SEORecommendationProgressStatus = Literal[
     "suggested",
     "applied_pending_refresh",
@@ -1316,6 +1323,11 @@ class SEOWorkspaceSectionFreshnessRead(BaseModel):
 
     state: SEOWorkspaceSectionFreshnessState
     message: str = Field(min_length=1, max_length=_WORKSPACE_SECTION_FRESHNESS_MESSAGE_MAX_CHARS)
+    state_code: SEOWorkspaceSectionFreshnessStateCode | None = None
+    state_label: str | None = Field(default=None, max_length=80)
+    state_reason: str | None = Field(default=None, max_length=_WORKSPACE_SECTION_FRESHNESS_MESSAGE_MAX_CHARS)
+    evaluated_at: datetime | None = None
+    refresh_expected: bool | None = None
 
     @field_validator("state", mode="before")
     @classmethod
@@ -1332,6 +1344,49 @@ class SEOWorkspaceSectionFreshnessRead(BaseModel):
         if cleaned is None:
             raise ValueError("Workspace section freshness message is required")
         return cleaned
+
+    @field_validator("state_code", mode="before")
+    @classmethod
+    def normalize_state_code(cls, value: Any) -> SEOWorkspaceSectionFreshnessStateCode | None:
+        if value is None:
+            return None
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"fresh", "pending_refresh", "running", "stale", "possibly_outdated"}:
+            return None
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("state_label", mode="before")
+    @classmethod
+    def normalize_state_label(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=80)
+
+    @field_validator("state_reason", mode="before")
+    @classmethod
+    def normalize_state_reason(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_WORKSPACE_SECTION_FRESHNESS_MESSAGE_MAX_CHARS)
+
+    @model_validator(mode="after")
+    def derive_section_state_metadata(self) -> "SEOWorkspaceSectionFreshnessRead":
+        state_code = self.state_code
+        if state_code is None:
+            state_code = self.state
+            self.state_code = state_code
+
+        if self.state_label is None:
+            self.state_label = {
+                "fresh": "Fresh",
+                "pending_refresh": "Refresh pending",
+                "running": "Run in progress",
+                "stale": "Stale",
+                "possibly_outdated": "Possibly outdated",
+            }.get(state_code, "Stale")
+
+        if self.state_reason is None:
+            self.state_reason = self.message
+
+        if self.refresh_expected is None:
+            self.refresh_expected = state_code in {"pending_refresh", "running", "possibly_outdated"}
+        return self
 
 
 class SEOCompetitorContextHealthCheckRead(BaseModel):

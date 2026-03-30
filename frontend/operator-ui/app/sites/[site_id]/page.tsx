@@ -1202,6 +1202,11 @@ interface WorkspaceTrustSummaryView {
 interface WorkspaceSectionFreshnessView {
   state: "fresh" | "pending_refresh" | "running" | "stale";
   message: string;
+  stateCode: "fresh" | "pending_refresh" | "running" | "stale" | "possibly_outdated";
+  stateLabel: string;
+  stateReason: string;
+  evaluatedAt: string | null;
+  refreshExpected: boolean;
 }
 
 function normalizeRecommendationApplyOutcome(
@@ -1313,10 +1318,26 @@ function normalizeWorkspaceSectionFreshness(
   if (!state || !message) {
     return null;
   }
-  return { state, message };
+  const stateCode =
+    freshness.state_code === "fresh" ||
+    freshness.state_code === "pending_refresh" ||
+    freshness.state_code === "running" ||
+    freshness.state_code === "stale" ||
+    freshness.state_code === "possibly_outdated"
+      ? freshness.state_code
+      : state;
+  const stateLabel = truncateOptionalText(freshness.state_label, 80) || workspaceSectionFreshnessLabel(stateCode);
+  const stateReason = truncateOptionalText(freshness.state_reason, 220) || message;
+  const evaluatedAt = truncateOptionalText(freshness.evaluated_at, 64);
+  const refreshExpected = typeof freshness.refresh_expected === "boolean"
+    ? freshness.refresh_expected
+    : stateCode === "pending_refresh" || stateCode === "running" || stateCode === "possibly_outdated";
+  return { state, message, stateCode, stateLabel, stateReason, evaluatedAt, refreshExpected };
 }
 
-function workspaceSectionFreshnessLabel(state: WorkspaceSectionFreshnessView["state"]): string {
+function workspaceSectionFreshnessLabel(
+  state: WorkspaceSectionFreshnessView["stateCode"] | WorkspaceSectionFreshnessView["state"],
+): string {
   switch (state) {
     case "fresh":
       return "Fresh";
@@ -1324,13 +1345,17 @@ function workspaceSectionFreshnessLabel(state: WorkspaceSectionFreshnessView["st
       return "Refresh pending";
     case "running":
       return "Run in progress";
+    case "possibly_outdated":
+      return "Possibly outdated";
     case "stale":
     default:
       return "Stale";
   }
 }
 
-function workspaceSectionFreshnessBadgeClass(state: WorkspaceSectionFreshnessView["state"]): string {
+function workspaceSectionFreshnessBadgeClass(
+  state: WorkspaceSectionFreshnessView["stateCode"] | WorkspaceSectionFreshnessView["state"],
+): string {
   switch (state) {
     case "fresh":
       return "badge badge-success";
@@ -1338,6 +1363,8 @@ function workspaceSectionFreshnessBadgeClass(state: WorkspaceSectionFreshnessVie
       return "badge badge-warn";
     case "running":
       return "badge badge-muted";
+    case "possibly_outdated":
+      return "badge badge-warn";
     case "stale":
     default:
       return "badge badge-warn";
@@ -5145,10 +5172,12 @@ export default function SiteWorkspacePage() {
         </p>
         {competitorSectionFreshness ? (
           <p className="hint muted" data-testid="competitor-section-freshness">
-            <span className={workspaceSectionFreshnessBadgeClass(competitorSectionFreshness.state)}>
-              {workspaceSectionFreshnessLabel(competitorSectionFreshness.state)}
+            <span className={workspaceSectionFreshnessBadgeClass(competitorSectionFreshness.stateCode)}>
+              {competitorSectionFreshness.stateLabel}
             </span>{" "}
-            {competitorSectionFreshness.message}
+            {competitorSectionFreshness.stateReason}
+            {competitorSectionFreshness.refreshExpected ? " Refresh expected." : ""}
+            {competitorSectionFreshness.evaluatedAt ? ` Evaluated ${formatDateTime(competitorSectionFreshness.evaluatedAt)}.` : ""}
           </p>
         ) : null}
         {competitorProfileError ? <p className="hint error">{competitorProfileError}</p> : null}
@@ -5810,10 +5839,14 @@ export default function SiteWorkspacePage() {
         <h2>Recommendation Queue</h2>
         {recommendationSectionFreshness ? (
           <p className="hint muted" data-testid="recommendation-section-freshness">
-            <span className={workspaceSectionFreshnessBadgeClass(recommendationSectionFreshness.state)}>
-              {workspaceSectionFreshnessLabel(recommendationSectionFreshness.state)}
+            <span className={workspaceSectionFreshnessBadgeClass(recommendationSectionFreshness.stateCode)}>
+              {recommendationSectionFreshness.stateLabel}
             </span>{" "}
-            {recommendationSectionFreshness.message}
+            {recommendationSectionFreshness.stateReason}
+            {recommendationSectionFreshness.refreshExpected ? " Refresh expected." : ""}
+            {recommendationSectionFreshness.evaluatedAt
+              ? ` Evaluated ${formatDateTime(recommendationSectionFreshness.evaluatedAt)}.`
+              : ""}
           </p>
         ) : null}
         <div className="stack-tight">

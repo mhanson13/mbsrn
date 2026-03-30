@@ -82,10 +82,7 @@ def analyze_database_url(database_url: str, *, db_connection_mode: str) -> tuple
         )
         return (
             False,
-            (
-                "DB_CONNECTION_MODE must be one of: "
-                + ", ".join(sorted(_ALLOWED_DB_CONNECTION_MODES))
-            ),
+            ("DB_CONNECTION_MODE must be one of: " + ", ".join(sorted(_ALLOWED_DB_CONNECTION_MODES))),
             diagnostics,
         )
 
@@ -172,7 +169,11 @@ def analyze_database_url(database_url: str, *, db_connection_mode: str) -> tuple
             loopback_detected=False,
             proxy_mode_exception_applied=False,
         )
-        return False, "DATABASE_URL must include a resolvable non-loopback target host for production deploy.", diagnostics
+        return (
+            False,
+            "DATABASE_URL must include a resolvable non-loopback target host for production deploy.",
+            diagnostics,
+        )
 
     is_loopback = target in _LOOPBACK_HOSTS
     diagnostics = DatabaseUrlDiagnostics(

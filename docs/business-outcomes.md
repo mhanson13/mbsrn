@@ -39,3 +39,13 @@ Recommendations now expose deterministic priority metadata so operators can exec
 - `low`: queue for later (limited evidence or broad improvement scope)
 
 `effort_hint` helps operators choose between quick wins and larger changes without requiring additional narrative.
+
+## Freshness and pending-refresh interpretation
+
+Workspace section-state indicators are deterministic and section-specific:
+
+- competitors can be `fresh` while recommendations are `pending_refresh` (or the reverse)
+- `refresh_expected=true` means a near-term completed run should materially update the displayed section
+- `possibly_outdated` means data is usable for review but should be refreshed before high-confidence execution
+
+Operators should use these states to decide whether to execute immediately or trigger a new run first.
