@@ -28,6 +28,11 @@ SEORecommendationTuningSuggestionConfidence = Literal["low", "medium", "high"]
 SEORecommendationSignalSupportLevel = Literal["low", "medium", "high"]
 SEORecommendationPriorityLevel = Literal["high", "medium", "low"]
 SEORecommendationEffortHint = Literal["quick_win", "moderate", "larger_change"]
+SEORecommendationCompetitorEvidenceTrustTier = Literal[
+    "trusted_verified",
+    "informational_unverified",
+    "informational_candidate",
+]
 SEORecommendationApplyOutcomeSource = Literal["recommendation", "manual"]
 SEORecommendationAnalysisFreshnessStatus = Literal["fresh", "pending_refresh", "unknown"]
 SEORecommendationWorkspaceTrustCompetitorStatus = Literal["normal", "recovered", "degraded", "failed"]
@@ -1715,7 +1720,22 @@ class SEORecommendationCompetitorEvidenceLinkRead(BaseModel):
     competitor_domain: str | None = Field(default=None, max_length=_RECOMMENDATION_COMPETITOR_LINK_DOMAIN_MAX_CHARS)
     confidence_level: Literal["high", "medium", "low"] | None = None
     source_type: Literal["search", "places", "fallback", "synthetic"] | None = None
+    verification_status: Literal["verified", "unverified"] | None = None
+    trust_tier: SEORecommendationCompetitorEvidenceTrustTier = "informational_candidate"
+    # Backward-compatible mirror for older consumers. Use trust_tier as canonical field.
+    evidence_trust_tier: SEORecommendationCompetitorEvidenceTrustTier | None = None
     evidence_summary: str | None = Field(default=None, max_length=_RECOMMENDATION_COMPETITOR_LINK_SUMMARY_MAX_CHARS)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_trust_tier_key(cls, raw: Any) -> Any:
+        if not isinstance(raw, dict):
+            return raw
+        if "trust_tier" not in raw and "evidence_trust_tier" in raw:
+            normalized = dict(raw)
+            normalized["trust_tier"] = raw.get("evidence_trust_tier")
+            return normalized
+        return raw
 
     @field_validator("competitor_draft_id", mode="before")
     @classmethod
@@ -1758,10 +1778,43 @@ class SEORecommendationCompetitorEvidenceLinkRead(BaseModel):
             return None
         return normalized  # type: ignore[return-value]
 
+    @field_validator("verification_status", mode="before")
+    @classmethod
+    def normalize_verification_status(cls, value: Any) -> Literal["verified", "unverified"] | None:
+        if value is None:
+            return None
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"verified", "unverified"}:
+            return None
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("trust_tier", mode="before")
+    @classmethod
+    def normalize_trust_tier(cls, value: Any) -> SEORecommendationCompetitorEvidenceTrustTier:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"trusted_verified", "informational_unverified", "informational_candidate"}:
+            return "informational_candidate"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("evidence_trust_tier", mode="before")
+    @classmethod
+    def normalize_evidence_trust_tier(cls, value: Any) -> SEORecommendationCompetitorEvidenceTrustTier | None:
+        if value is None:
+            return None
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"trusted_verified", "informational_unverified", "informational_candidate"}:
+            return None
+        return normalized  # type: ignore[return-value]
+
     @field_validator("evidence_summary", mode="before")
     @classmethod
     def normalize_evidence_summary(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_COMPETITOR_LINK_SUMMARY_MAX_CHARS)
+
+    @model_validator(mode="after")
+    def sync_legacy_trust_tier_field(self) -> "SEORecommendationCompetitorEvidenceLinkRead":
+        self.evidence_trust_tier = self.trust_tier
+        return self
 
 
 class SEORecommendationActionDeltaRead(BaseModel):

@@ -168,8 +168,15 @@ _FORCED_DRAFT_MAX_COUNT = TARGET_COMPETITOR_COUNT
 _SYNTHETIC_FALLBACK_RECOVERY_PATH = "synthetic_fallback"
 _SYNTHETIC_FALLBACK_REASON_TIMEOUT_EXHAUSTED = "provider_timeout_exhausted"
 _SYNTHETIC_FALLBACK_REASON_ZERO_USABLE_CANDIDATES = "zero_usable_candidates_after_validation"
-_SYNTHETIC_FALLBACK_DOMAIN_SUFFIX = "mbsrn-fallback.local"
+_SYNTHETIC_FALLBACK_DOMAIN_PREFIX = "review-scaffold"
+_SYNTHETIC_FALLBACK_DOMAIN_SUFFIX = "invalid"
 _SYNTHETIC_FALLBACK_MIN_CONFIDENCE = 0.28
+_SYNTHETIC_FALLBACK_MAX_COUNT = 5
+_SYNTHETIC_FALLBACK_MAX_LOCATION_VARIANTS = 3
+_SYNTHETIC_DRAFT_SOURCES = {_FORCED_DRAFT_SOURCE, "synthetic_fallback"}
+_LEGACY_SYNTHETIC_PLACEHOLDER_DOMAIN_SUFFIX = ".mbsrn-fallback.local"
+_COMPETITOR_VERIFICATION_STATUS_VERIFIED = "verified"
+_COMPETITOR_VERIFICATION_STATUS_UNVERIFIED = "unverified"
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
 _UNKNOWN_NAME_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 _UNKNOWN_PLACEHOLDER_NAME_TOKENS = {
@@ -1571,8 +1578,39 @@ class SEOCompetitorProfileGenerationService:
         if draft.review_status == "rejected":
             raise SEOCompetitorProfileGenerationValidationError("Rejected drafts cannot be accepted")
 
-        updates = payload.model_dump(exclude_unset=True, exclude={"competitor_set_id", "review_notes"})
+        updates = payload.model_dump(
+            exclude_unset=True,
+            exclude={"competitor_set_id", "review_notes", "confirm_synthetic_scaffold", "accept_as_unverified"},
+        )
         changed_fields = self._apply_draft_updates(draft=draft, updates=updates)
+
+        is_synthetic_scaffold = self._is_synthetic_review_scaffold_draft(draft)
+        accept_as_unverified = bool(payload.accept_as_unverified)
+        if accept_as_unverified and not is_synthetic_scaffold:
+            raise SEOCompetitorProfileGenerationValidationError(
+                "accept_as_unverified is only supported for synthetic review scaffold drafts"
+            )
+
+        if is_synthetic_scaffold:
+            if not payload.confirm_synthetic_scaffold:
+                raise SEOCompetitorProfileGenerationValidationError(
+                    "Synthetic review scaffold drafts require explicit confirmation before acceptance"
+                )
+            confirmed_name = self._clean_optional(draft.suggested_name)
+            if confirmed_name is None:
+                raise SEOCompetitorProfileGenerationValidationError(
+                    "Synthetic review scaffold drafts require a confirmed competitor name before acceptance"
+                )
+            if self._is_synthetic_placeholder_domain(draft.suggested_domain) and not accept_as_unverified:
+                raise SEOCompetitorProfileGenerationValidationError(
+                    "Synthetic review scaffold drafts require a verified competitor website/domain before acceptance"
+                )
+
+        verification_status = (
+            _COMPETITOR_VERIFICATION_STATUS_UNVERIFIED
+            if is_synthetic_scaffold and accept_as_unverified
+            else _COMPETITOR_VERIFICATION_STATUS_VERIFIED
+        )
 
         normalized_domain = self._normalize_domain_value(draft.suggested_domain)
         existing_domain = self.seo_competitor_repository.get_domain_for_business_site_domain(
@@ -1600,13 +1638,17 @@ class SEOCompetitorProfileGenerationService:
             base_url=f"https://{normalized_domain}/",
             display_name=draft.suggested_name,
             source="ai_generated",
+            verification_status=verification_status,
             is_active=True,
-            notes=self._build_domain_notes_from_draft(draft),
+            notes=self._build_domain_notes_from_draft(draft, verification_status=verification_status),
         )
         self.seo_competitor_repository.create_domain(competitor_domain)
 
         draft.review_status = "accepted"
-        draft.review_notes = self._clean_optional(payload.review_notes)
+        draft.review_notes = self._build_accept_review_notes(
+            payload_review_notes=payload.review_notes,
+            verification_status=verification_status,
+        )
         draft.reviewed_by_principal_id = reviewed_by_principal_id
         draft.reviewed_at = utc_now()
         draft.accepted_competitor_set_id = target_set.id
@@ -1834,9 +1876,13 @@ class SEOCompetitorProfileGenerationService:
             )
             if synthetic_candidates:
                 seen_synthetic_domains = {
-                    (self._normalize_optional_domain_value(draft.suggested_domain) or "").lower() for draft in drafts
+                    normalized_domain.lower()
+                    for draft in drafts
+                    for normalized_domain in [self._normalize_optional_domain_value(draft.suggested_domain)]
+                    if normalized_domain
                 }
                 seen_synthetic_names = {(draft.suggested_name or "").strip().lower() for draft in drafts}
+                seen_synthetic_families: set[str] = set()
                 for synthetic_candidate in synthetic_candidates:
                     if len(drafts) >= target_candidate_count:
                         break
@@ -1847,15 +1893,31 @@ class SEOCompetitorProfileGenerationService:
                     )
                     if not suggested_name:
                         continue
-                    suggested_domain = self._normalize_optional_domain_value(
-                        synthetic_candidate.get("suggested_domain")
-                    ) or self._build_synthetic_fallback_domain(seed_name=suggested_name, location_label=site.id)
+                    suggested_domain = self._clean_optional(
+                        str(synthetic_candidate.get("suggested_domain"))
+                        if synthetic_candidate.get("suggested_domain") is not None
+                        else None
+                    ) or ""
                     synthetic_domain_key = suggested_domain.lower()
                     synthetic_name_key = suggested_name.strip().lower()
-                    if synthetic_domain_key in seen_synthetic_domains or synthetic_name_key in seen_synthetic_names:
+                    synthetic_family_key = self._clean_optional(
+                        str(synthetic_candidate.get("synthetic_phrase_family"))
+                        if synthetic_candidate.get("synthetic_phrase_family") is not None
+                        else None
+                    ) or self._synthetic_phrase_family_key(
+                        service_term=suggested_name,
+                        location_label=site.primary_location or "local area",
+                    )
+                    if synthetic_family_key in seen_synthetic_families:
                         continue
-                    seen_synthetic_domains.add(synthetic_domain_key)
+                    if suggested_domain and synthetic_domain_key in seen_synthetic_domains:
+                        continue
+                    if synthetic_name_key in seen_synthetic_names:
+                        continue
+                    if suggested_domain:
+                        seen_synthetic_domains.add(synthetic_domain_key)
                     seen_synthetic_names.add(synthetic_name_key)
+                    seen_synthetic_families.add(synthetic_family_key)
                     confidence_score = max(
                         0.0,
                         min(1.0, self._coerce_float(synthetic_candidate.get("confidence_score"), default=0.3)),
@@ -2115,7 +2177,7 @@ class SEOCompetitorProfileGenerationService:
         existing_domains: list[str],
     ) -> list[dict[str, object]]:
         target_count = min(
-            _FORCED_DRAFT_MAX_COUNT,
+            _SYNTHETIC_FALLBACK_MAX_COUNT,
             max(_FORCED_DRAFT_MIN_COUNT, max(1, int(requested_candidate_count or 1))),
         )
         if target_count <= 0:
@@ -2146,13 +2208,6 @@ class SEOCompetitorProfileGenerationService:
         if "unspecified" in location_label.lower():
             location_label = self._clean_optional(site.primary_location) or "local area"
 
-        business_name = (
-            self._clean_optional(
-                str(context.get("site_business_name")) if context.get("site_business_name") is not None else None
-            )
-            or self._clean_optional(site.display_name)
-            or "Local Business"
-        )
         industry_context = (
             self._clean_optional(
                 str(context.get("site_industry_context")) if context.get("site_industry_context") is not None else None
@@ -2162,14 +2217,20 @@ class SEOCompetitorProfileGenerationService:
         )
         service_terms_raw = context.get("service_focus_terms")
         service_terms: list[str] = []
+        seen_service_terms: set[str] = set()
         if isinstance(service_terms_raw, list):
             for item in service_terms_raw:
                 cleaned = self._clean_optional(str(item) if item is not None else None)
-                if cleaned and cleaned.lower() not in {term.lower() for term in service_terms}:
+                cleaned_key = cleaned.lower() if cleaned else ""
+                if cleaned and cleaned_key not in seen_service_terms:
                     service_terms.append(cleaned)
+                    seen_service_terms.add(cleaned_key)
         if not service_terms:
             service_terms.append(industry_context)
         service_terms = service_terms[:3]
+        location_variants = self._build_synthetic_location_variants(location_label=location_label)
+        if not location_variants:
+            location_variants = [location_label]
 
         reserved_domains = {
             normalized
@@ -2178,19 +2239,21 @@ class SEOCompetitorProfileGenerationService:
             if normalized
         }
         generated: list[dict[str, object]] = []
-        templates = (
-            "{service} in {location}",
-            "{service} near {location}",
-            "{service} company {location}",
-            "{location} {service} services",
-            "{service} specialists {location}",
-        )
+        seen_phrase_families: set[str] = set()
         for service in service_terms:
-            title_service = service.title()
-            for template in templates:
+            for location_variant in location_variants:
                 if len(generated) >= target_count:
                     break
-                suggested_name = template.format(service=title_service, location=location_label).strip()
+                phrase_family_key = self._synthetic_phrase_family_key(
+                    service_term=service,
+                    location_label=location_variant,
+                )
+                if phrase_family_key in seen_phrase_families:
+                    continue
+                suggested_name = self._build_synthetic_scaffold_name(
+                    service_term=service,
+                    location_label=location_variant,
+                )
                 suggested_domain = self._build_synthetic_fallback_domain(
                     seed_name=suggested_name,
                     reserved_domains=reserved_domains,
@@ -2200,55 +2263,104 @@ class SEOCompetitorProfileGenerationService:
                     self._build_synthetic_fallback_candidate_payload(
                         suggested_name=suggested_name,
                         suggested_domain=suggested_domain,
-                        business_name=business_name,
-                        location_label=location_label,
+                        location_label=location_variant,
                         service_term=service,
+                        phrase_family_key=phrase_family_key,
                     )
                 )
+                seen_phrase_families.add(phrase_family_key)
                 reserved_domains.add(suggested_domain.lower())
             if len(generated) >= target_count:
                 break
 
-        sequence = len(generated) + 1
-        while len(generated) < target_count:
-            fallback_service = service_terms[(sequence - 1) % len(service_terms)]
-            fallback_name = f"{fallback_service.title()} provider {location_label} {sequence}"
-            fallback_domain = self._build_synthetic_fallback_domain(
-                seed_name=fallback_name,
-                reserved_domains=reserved_domains,
-                sequence=sequence,
-            )
-            generated.append(
-                self._build_synthetic_fallback_candidate_payload(
-                    suggested_name=fallback_name,
-                    suggested_domain=fallback_domain,
-                    business_name=business_name,
-                    location_label=location_label,
-                    service_term=fallback_service,
-                )
-            )
-            reserved_domains.add(fallback_domain.lower())
-            sequence += 1
         return generated[:target_count]
+
+    def _build_synthetic_location_variants(self, *, location_label: str) -> list[str]:
+        variants: list[str] = []
+        seen_keys: set[str] = set()
+
+        def _append_variant(raw: str | None) -> None:
+            cleaned = self._clean_optional(raw)
+            if not cleaned:
+                return
+            key = self._clean_optional(re.sub(r"[^a-z0-9]+", " ", cleaned.lower()))
+            if not key or key in seen_keys:
+                return
+            seen_keys.add(key)
+            variants.append(cleaned)
+
+        _append_variant(location_label)
+        if "," in location_label:
+            primary_segment = self._clean_optional(location_label.split(",", 1)[0])
+            if primary_segment:
+                _append_variant(f"{primary_segment} metro")
+        zip_match = re.search(r"\b\d{5}(?:-\d{4})?\b", location_label)
+        if zip_match is not None:
+            _append_variant(f"ZIP {zip_match.group(0)}")
+        _append_variant("regional service area")
+
+        if not variants:
+            return ["local service area"]
+        return variants[:_SYNTHETIC_FALLBACK_MAX_LOCATION_VARIANTS]
+
+    def _build_synthetic_scaffold_name(self, *, service_term: str, location_label: str) -> str:
+        normalized_service = self._clean_optional(service_term) or "local services"
+        normalized_location = self._clean_optional(location_label) or "local area"
+        return f"Review scaffold: {normalized_service.title()} competitors ({normalized_location})"
+
+    def _synthetic_phrase_family_key(self, *, service_term: str, location_label: str) -> str:
+        drop_tokens = {
+            "and",
+            "area",
+            "around",
+            "business",
+            "businesses",
+            "city",
+            "co",
+            "company",
+            "competitors",
+            "contractor",
+            "contractors",
+            "in",
+            "local",
+            "market",
+            "metro",
+            "near",
+            "nearby",
+            "providers",
+            "regional",
+            "service",
+            "services",
+            "serving",
+            "the",
+        }
+        normalized_service = self._clean_optional(re.sub(r"[^a-z0-9]+", " ", service_term.lower())) or ""
+        service_tokens = [token for token in normalized_service.split() if token not in drop_tokens]
+        service_key = "-".join(service_tokens[:3]) or "local"
+
+        normalized_location = self._clean_optional(re.sub(r"[^a-z0-9]+", " ", location_label.lower())) or ""
+        location_tokens = [token for token in normalized_location.split() if token not in drop_tokens]
+        location_key = "-".join(location_tokens[:3]) or "local"
+        return f"{service_key}|{location_key}"
 
     def _build_synthetic_fallback_candidate_payload(
         self,
         *,
         suggested_name: str,
-        suggested_domain: str,
-        business_name: str,
+        suggested_domain: str | None,
         location_label: str,
         service_term: str,
+        phrase_family_key: str,
     ) -> dict[str, object]:
         clean_name = self._clean_required_value(suggested_name, field_name="synthetic_suggested_name")
-        clean_domain = self._normalize_domain_value(suggested_domain)
+        clean_domain = self._clean_optional(suggested_domain) or ""
         normalized_service = self._clean_optional(service_term) or "local services"
-        summary = (
-            "Deterministic fallback candidate generated from local site context "
-            "after provider attempts returned no usable competitors."
+        summary = "Synthetic review scaffold generated from local service and location context."
+        why_competitor = (
+            f"Review scaffold for '{normalized_service}' coverage in '{location_label}'. "
+            "Use this to identify a real local competitor."
         )
-        why_competitor = f"Fallback pattern '{normalized_service}' in '{location_label}' was used for operator review."
-        evidence = f"Synthetic fallback result for {business_name}; manually verify business fit and live website."
+        evidence = "Synthetic scaffold only; verify real business identity and website before accepting."
         return {
             "suggested_name": clean_name,
             "suggested_domain": clean_domain,
@@ -2257,6 +2369,7 @@ class SEOCompetitorProfileGenerationService:
             "why_competitor": why_competitor,
             "evidence": evidence,
             "confidence_score": _SYNTHETIC_FALLBACK_MIN_CONFIDENCE,
+            "synthetic_phrase_family": phrase_family_key,
         }
 
     def _build_synthetic_fallback_domain(
@@ -2266,21 +2379,17 @@ class SEOCompetitorProfileGenerationService:
         reserved_domains: set[str],
         sequence: int,
     ) -> str:
-        slug = re.sub(r"[^a-z0-9]+", "-", seed_name.lower()).strip("-")
-        if not slug:
-            slug = f"local-competitor-{max(1, int(sequence))}"
-        slug = slug[:48]
-        if not slug:
-            slug = f"local-competitor-{max(1, int(sequence))}"
-
-        candidate = f"{slug}.{_SYNTHETIC_FALLBACK_DOMAIN_SUFFIX}"
+        del seed_name
+        candidate = f"{_SYNTHETIC_FALLBACK_DOMAIN_PREFIX}-{max(1, int(sequence))}.{_SYNTHETIC_FALLBACK_DOMAIN_SUFFIX}"
         if candidate.lower() not in reserved_domains:
             return candidate
         counter = 2
         while True:
             suffix = f"-{counter}"
-            truncated = slug[: max(1, 48 - len(suffix))]
-            candidate = f"{truncated}{suffix}.{_SYNTHETIC_FALLBACK_DOMAIN_SUFFIX}"
+            candidate = (
+                f"{_SYNTHETIC_FALLBACK_DOMAIN_PREFIX}-{max(1, int(sequence))}{suffix}"
+                f".{_SYNTHETIC_FALLBACK_DOMAIN_SUFFIX}"
+            )
             if candidate.lower() not in reserved_domains:
                 return candidate
             counter += 1
@@ -2702,11 +2811,17 @@ class SEOCompetitorProfileGenerationService:
         self.seo_competitor_repository.create_set(generated_set)
         return generated_set
 
-    def _build_domain_notes_from_draft(self, draft: SEOCompetitorProfileDraft) -> str | None:
+    def _build_domain_notes_from_draft(
+        self,
+        draft: SEOCompetitorProfileDraft,
+        *,
+        verification_status: str,
+    ) -> str | None:
         parts = [
             "Added from AI-generated competitor profile draft.",
             f"Type: {draft.competitor_type}",
             f"Confidence: {draft.confidence_score:.2f}",
+            f"Verification status: {verification_status}",
         ]
         if draft.summary:
             parts.append(f"Summary: {draft.summary}")
@@ -2718,6 +2833,20 @@ class SEOCompetitorProfileGenerationService:
         if len(combined) > 2000:
             return combined[:1997] + "..."
         return combined or None
+
+    def _build_accept_review_notes(
+        self,
+        *,
+        payload_review_notes: str | None,
+        verification_status: str,
+    ) -> str | None:
+        base_note = self._clean_optional(payload_review_notes)
+        if verification_status == _COMPETITOR_VERIFICATION_STATUS_UNVERIFIED:
+            prefix = "Accepted as unverified competitor."
+            if base_note:
+                return f"{prefix} {base_note}".strip()
+            return prefix
+        return base_note
 
     def _get_run_for_site(
         self,
@@ -2852,6 +2981,23 @@ class SEOCompetitorProfileGenerationService:
             return self._normalize_domain_value(normalized)
         except SEOCompetitorProfileGenerationValidationError:
             return None
+
+    def _is_synthetic_review_scaffold_draft(self, draft: SEOCompetitorProfileDraft) -> bool:
+        source = self._clean_optional(draft.source)
+        if source is None:
+            return False
+        return source.lower() in _SYNTHETIC_DRAFT_SOURCES
+
+    def _is_synthetic_placeholder_domain(self, raw_domain: object | None) -> bool:
+        normalized = self._clean_optional(raw_domain)
+        if normalized is None:
+            return True
+        domain = normalized.lower()
+        return (
+            domain.startswith("unknown-domain-")
+            or domain.endswith(_LEGACY_SYNTHETIC_PLACEHOLDER_DOMAIN_SUFFIX)
+            or domain.endswith(f".{_SYNTHETIC_FALLBACK_DOMAIN_SUFFIX}")
+        )
 
     def _normalize_competitor_type(self, raw: str) -> str:
         normalized = (raw or "").strip().lower()

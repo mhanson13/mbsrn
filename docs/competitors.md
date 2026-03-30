@@ -282,6 +282,33 @@ Status mapping:
 Synthetic fallback behavior:
 - Fallback candidates are deterministic placeholders derived from local service/location context.
 - They are returned to avoid empty operator output and should be reviewed before acceptance.
+- Synthetic drafts require explicit operator confirmation before acceptance.
+- Synthetic drafts can be promoted in two explicit ways:
+  - **Accept (verified)**: requires a verified website/domain (placeholder domains are rejected for verified promotion).
+  - **Accept as unverified**: allows promotion without a verified website/domain and persists `verification_status=unverified`.
+- Synthetic rows are presented as **review scaffolds**, not discovered businesses:
+  - compact scaffold labels (for example: `Review scaffold: Fire Alarm Services competitors (Denver, CO)`)
+  - non-real placeholder domains (`review-scaffold-<n>.invalid`) so they are not mistaken for live sites
+  - UI can show these as "No verified website (review scaffold)" to reinforce manual review
+- Workspace includes a compact `Hide synthetic scaffolds` toggle for competitor draft review:
+  - defaults ON when at least 5 non-synthetic drafts exist in the current run
+  - defaults OFF for sparse runs
+  - hides only the visible table rows; synthetic data remains in API responses and can be re-shown instantly
+
+Domain verification state:
+- Competitor domain API responses now include `verification_status`:
+  - `verified`
+  - `unverified`
+- Non-synthetic acceptance defaults to `verified`.
+- `verification_status` is the downstream trust gate for website-backed competitor use:
+  - only `verified` competitors are used for trusted downstream snapshot/comparison inputs
+  - recommendation competitor evidence linkage excludes accepted competitors marked `unverified`
+  - accepted `unverified` competitors remain visible in operator management/read views
+- Domain text alone is not used as a trust proxy; downstream trusted paths do not infer verification from hostname strings.
+- Synthetic quality gating suppresses low-value near-duplicates:
+  - service/location phrase families are deduplicated
+  - wording variants that only differ by near/around/service-area phrasing are collapsed
+  - fallback may return fewer rows than target when additional synthetic rows add no distinct review value
 
 Source provenance behavior:
 - Google Places is a **seed discovery** layer only. It contributes nearby-business hypotheses (`used_google_places_seeds=true`).
@@ -325,10 +352,23 @@ Workspace recommendation items may include optional linkage fields:
 
 - `competitor_evidence_links` (up to 3 linked competitors)
 - `competitor_linkage_summary` (short gap/advantage context)
+- `competitor_evidence_links[].trust_tier`:
+  - `trusted_verified`
+  - `informational_unverified`
+  - `informational_candidate`
+
+Legacy compatibility note:
+- `competitor_evidence_links[].evidence_trust_tier` may still be present for older clients.
+- `trust_tier` is the canonical field for trust semantics.
 
 These fields are additive:
 - present when competitor-backed evidence is available
 - omitted/empty for low-data or non-competitor-backed recommendation rows
+
+Trust-tier semantics:
+- `trusted_verified`: accepted competitor with persisted `verification_status=verified`.
+- `informational_unverified`: accepted competitor with persisted `verification_status=unverified`.
+- `informational_candidate`: draft-only or unmatched linkage signal; useful context, not trusted website-backed evidence.
 
 ### Recommendation action-delta composition
 

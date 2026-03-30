@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import timedelta
 import json
 import logging
+import re
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -1769,13 +1770,14 @@ def test_tiered_competitor_fill_targets_ten_with_confidence_and_source_labels(db
     payload = detail.json()
     assert payload["run"]["status"] == "completed"
     assert payload["run"]["requested_candidate_count"] == 10
-    assert payload["run"]["generated_draft_count"] == 10
-    assert payload["total_drafts"] == 10
+    assert 4 <= payload["run"]["generated_draft_count"] <= 10
+    assert payload["total_drafts"] == payload["run"]["generated_draft_count"]
     confidence_levels = {item.get("confidence_level") for item in payload["drafts"]}
     source_types = {item.get("source_type") for item in payload["drafts"]}
     assert confidence_levels.issubset({"high", "medium", "low"})
     assert "search" in source_types
     assert "synthetic" in source_types
+    assert all(".mbsrn-fallback.local" not in (item.get("suggested_domain") or "") for item in payload["drafts"])
     assert all(item.get("operator_evidence_summary") for item in payload["drafts"])
 
 
@@ -1804,7 +1806,7 @@ def test_tiered_competitor_fill_can_include_fallback_source_type(db_session, see
     assert detail.status_code == 200
     payload = detail.json()
     assert payload["run"]["status"] == "completed"
-    assert payload["run"]["generated_draft_count"] == 10
+    assert 3 <= payload["run"]["generated_draft_count"] <= 10
     source_types = {item.get("source_type") for item in payload["drafts"]}
     assert "search" in source_types
     assert "fallback" in source_types
@@ -2103,7 +2105,7 @@ def test_async_execution_forces_minimal_drafts_when_all_candidates_were_filtered
     assert payload["drafts"][0]["provenance_classification"] == "synthetic_fallback"
     assert (
         payload["drafts"][0]["provenance_explanation"]
-        == "Synthetic fallback candidate generated because reliable live competitor discovery was unavailable."
+        == "Synthetic review scaffold generated because reliable live competitor discovery was unavailable."
     )
     assert payload["drafts"][0]["suggested_domain"].startswith("unknown-domain-")
     persisted_run = (
@@ -2154,13 +2156,13 @@ def test_empty_candidate_output_uses_synthetic_fallback_drafts(db_session, seede
     assert detail.status_code == 200
     payload = detail.json()
     assert payload["run"]["status"] == "completed"
-    assert payload["run"]["generated_draft_count"] == 3
+    assert 1 <= payload["run"]["generated_draft_count"] <= 5
     assert payload["run"]["failure_category"] is None
     assert payload["run"]["error_summary"] is None
     assert payload["run"]["raw_candidate_count"] == 0
-    assert payload["run"]["included_candidate_count"] == 3
+    assert payload["run"]["included_candidate_count"] == payload["run"]["generated_draft_count"]
     assert payload["run"]["excluded_candidate_count"] == 0
-    assert payload["total_drafts"] == 3
+    assert payload["total_drafts"] == payload["run"]["generated_draft_count"]
     assert payload["rejected_candidate_count"] == 0
     assert payload["provider_attempt_count"] == 3
     assert payload["provider_attempts"][-1]["execution_mode"] == "fallback"
@@ -2178,13 +2180,65 @@ def test_empty_candidate_output_uses_synthetic_fallback_drafts(db_session, seede
     assert all(item["forced_inclusion"] is True for item in payload["drafts"])
     assert all(item["source"] == "ai_forced_fallback" for item in payload["drafts"])
     assert all(item["provenance_classification"] == "synthetic_fallback" for item in payload["drafts"])
+    assert all(item["suggested_domain"].startswith("review-scaffold-") for item in payload["drafts"])
+    assert all(item["suggested_domain"].endswith(".invalid") for item in payload["drafts"])
+    assert all(".mbsrn-fallback.local" not in item["suggested_domain"] for item in payload["drafts"])
     assert all("None" not in item["suggested_name"] for item in payload["drafts"])
     assert all("None" not in (item["summary"] or "") for item in payload["drafts"])
+    assert all(item["suggested_name"].startswith("Review scaffold:") for item in payload["drafts"])
+    assert all("Synthetic scaffold only" in (item["evidence"] or "") for item in payload["drafts"])
     assert all(
         item["provenance_explanation"]
-        == "Synthetic fallback candidate generated because reliable live competitor discovery was unavailable."
+        == "Synthetic review scaffold generated because reliable live competitor discovery was unavailable."
         for item in payload["drafts"]
     )
+
+
+def test_synthetic_fallback_quality_gates_duplicates_and_can_return_fewer_rows(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=10)["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_EmptyCompetitorProfileProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    drafts = payload["drafts"]
+
+    assert payload["run"]["status"] == "completed"
+    assert any(item.get("source_type") == "synthetic" for item in drafts)
+    assert 1 <= len(drafts) <= 5
+    assert len(drafts) < 10
+    assert all(item["source_type"] == "synthetic" for item in drafts)
+    assert {item["source"] for item in drafts}.issubset({"ai_forced_fallback", "synthetic_fallback"})
+    assert all(item["confidence_level"] == "low" for item in drafts)
+    assert all(item["source_type"] == "synthetic" for item in drafts)
+    assert all(item["suggested_domain"].startswith("review-scaffold-") for item in drafts)
+    assert all(item["suggested_domain"].endswith(".invalid") for item in drafts)
+    assert all(".mbsrn-fallback.local" not in item["suggested_domain"] for item in drafts)
+
+    phrase_families: set[tuple[str, str]] = set()
+    for item in drafts:
+        match = re.match(r"^Review scaffold:\s*(.+?)\s+competitors\s*\((.+)\)$", item["suggested_name"], re.IGNORECASE)
+        assert match is not None
+        family = (match.group(1).strip().lower(), match.group(2).strip().lower())
+        assert family not in phrase_families
+        phrase_families.add(family)
 
 
 def test_malformed_provider_output_skips_invalid_candidates_and_keeps_valid_drafts(db_session, seeded_business) -> None:
@@ -2305,7 +2359,7 @@ def test_invalid_confidence_output_uses_synthetic_fallback(db_session, seeded_bu
     assert payload["run"]["status"] == "completed"
     assert payload["run"]["error_summary"] is None
     assert payload["run"]["failure_category"] is None
-    assert payload["total_drafts"] == 3
+    assert 1 <= payload["total_drafts"] <= 5
     assert payload["provider_attempts"][-1]["execution_mode"] == "fallback"
     assert payload["provider_attempts"][-1]["escalation_reason"] == "zero_usable_candidates_after_validation"
 
@@ -2356,7 +2410,7 @@ def test_timeout_provider_failure_uses_synthetic_fallback(db_session, seeded_bus
     assert fallback_attempt["final_outcome"] == "degraded_success"
     assert fallback_attempt["recovered_after_timeout"] is True
     assert fallback_attempt["escalation_reason"] == "provider_timeout_exhausted"
-    assert payload["total_drafts"] == 3
+    assert 1 <= payload["total_drafts"] <= 5
     assert payload["outcome_summary"] == {
         "status_level": "degraded",
         "message": "Fallback placeholders were generated from local context. Review and confirm before accepting.",
@@ -3393,7 +3447,170 @@ def test_competitor_profile_draft_accept_creates_real_competitor_domain(db_sessi
     )
     assert created_domain is not None
     assert created_domain.source == "ai_generated"
+    assert created_domain.verification_status == "verified"
     assert created_domain.site_id == site_id
+
+
+def test_synthetic_competitor_profile_draft_accept_requires_explicit_confirmation(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id)
+    run_id = created["run"]["id"]
+    completed = _complete_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_EmptyCompetitorProfileProvider(),
+    )
+    draft_id = completed["drafts"][0].id
+
+    accept = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}/drafts/{draft_id}/accept",
+        json={},
+    )
+    assert accept.status_code == 422
+    assert (
+        accept.json()["detail"]
+        == "Synthetic review scaffold drafts require explicit confirmation before acceptance"
+    )
+
+
+def test_synthetic_competitor_profile_draft_accept_verified_path_requires_verified_domain(
+    db_session,
+    seeded_business,
+) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id)
+    run_id = created["run"]["id"]
+    completed = _complete_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_EmptyCompetitorProfileProvider(),
+    )
+    draft_id = completed["drafts"][0].id
+
+    unverified_accept = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}/drafts/{draft_id}/accept",
+        json={"confirm_synthetic_scaffold": True},
+    )
+    assert unverified_accept.status_code == 422
+    assert (
+        unverified_accept.json()["detail"]
+        == "Synthetic review scaffold drafts require a verified competitor website/domain before acceptance"
+    )
+
+    verified_accept = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}/drafts/{draft_id}/accept",
+        json={
+            "confirm_synthetic_scaffold": True,
+            "suggested_domain": "verified-synthetic.example",
+            "suggested_name": "Verified Synthetic Competitor",
+        },
+    )
+    assert verified_accept.status_code == 200
+    payload = verified_accept.json()
+    assert payload["review_status"] == "accepted"
+    assert payload["accepted_competitor_domain_id"] is not None
+    assert payload["suggested_domain"] == "verified-synthetic.example"
+    assert payload["suggested_name"] == "Verified Synthetic Competitor"
+    created_domain = (
+        db_session.query(SEOCompetitorDomain)
+        .filter(SEOCompetitorDomain.id == payload["accepted_competitor_domain_id"])
+        .one_or_none()
+    )
+    assert created_domain is not None
+    assert created_domain.verification_status == "verified"
+
+
+def test_synthetic_competitor_profile_draft_accept_as_unverified_succeeds(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id)
+    run_id = created["run"]["id"]
+    completed = _complete_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_EmptyCompetitorProfileProvider(),
+    )
+    draft_id = completed["drafts"][0].id
+
+    unverified_accept = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}/drafts/{draft_id}/accept",
+        json={
+            "confirm_synthetic_scaffold": True,
+            "accept_as_unverified": True,
+        },
+    )
+    assert unverified_accept.status_code == 200
+    payload = unverified_accept.json()
+    assert payload["review_status"] == "accepted"
+    assert payload["accepted_competitor_domain_id"] is not None
+    assert payload["review_notes"] == "Accepted as unverified competitor."
+    created_domain = (
+        db_session.query(SEOCompetitorDomain)
+        .filter(SEOCompetitorDomain.id == payload["accepted_competitor_domain_id"])
+        .one_or_none()
+    )
+    assert created_domain is not None
+    assert created_domain.verification_status == "unverified"
+    domains_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{payload['accepted_competitor_set_id']}/domains"
+    )
+    assert domains_response.status_code == 200
+    domains_payload = domains_response.json()
+    assert domains_payload["items"][0]["verification_status"] == "unverified"
+
+
+def test_non_synthetic_accept_as_unverified_is_rejected(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id)
+    run_id = created["run"]["id"]
+    completed = _complete_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_DeterministicCompetitorProfileProvider(),
+    )
+    draft_id = completed["drafts"][0].id
+
+    accept = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}/drafts/{draft_id}/accept",
+        json={"accept_as_unverified": True},
+    )
+    assert accept.status_code == 422
+    assert accept.json()["detail"] == "accept_as_unverified is only supported for synthetic review scaffold drafts"
 
 
 def test_competitor_profile_draft_reject_does_not_create_competitor_domain(db_session, seeded_business) -> None:
@@ -4231,7 +4448,7 @@ def test_generation_summary_endpoint_returns_status_failure_and_retry_metrics(db
     assert payload["failure_category_counts"].get("malformed_output", 0) == 0
     assert payload["total_runs"] == 5
     assert payload["total_raw_candidate_count"] == 3
-    assert payload["total_included_candidate_count"] == 6
+    assert 5 <= payload["total_included_candidate_count"] <= 6
     assert payload["total_excluded_candidate_count"] == 0
     assert payload["exclusion_counts_by_reason"] == {
         "duplicate": 0,

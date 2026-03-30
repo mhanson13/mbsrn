@@ -184,12 +184,14 @@ class SEOCompetitorService:
     ) -> SEOCompetitorSnapshotRun:
         self._require_business(business_id)
         competitor_set = self.get_set(business_id=business_id, competitor_set_id=competitor_set_id)
-        active_domain_count = self.seo_competitor_repository.count_active_domains_for_set(
+        active_domain_count = self.seo_competitor_repository.count_active_verified_domains_for_set(
             business_id,
             competitor_set_id,
         )
         if active_domain_count == 0:
-            raise SEOCompetitorValidationError("Cannot create snapshot run without active competitor domains")
+            raise SEOCompetitorValidationError(
+                "Cannot create snapshot run without active verified competitor domains"
+            )
 
         snapshot_run = SEOCompetitorSnapshotRun(
             id=str(uuid4()),

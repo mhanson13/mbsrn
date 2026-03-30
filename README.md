@@ -19,6 +19,13 @@ AI features are advisory only:
 
 The backend remains authoritative for authorization, validation, and settings bounds.
 
+Competitor trust semantics:
+- Accepted competitors can be `verified` or `unverified`.
+- `verification_status` is enforced as the downstream website-backed trust gate.
+- `unverified` competitors remain operator-visible but are excluded from trusted comparison/recommendation evidence paths.
+- Recommendation competitor linkage exposes explicit trust tiers via `competitor_evidence_links[].trust_tier` (`trusted_verified`, `informational_unverified`, `informational_candidate`) so operators can distinguish trusted evidence from informational context.
+- Workspace competitor review includes a `Hide synthetic scaffolds` visibility toggle; it defaults ON only when 5+ non-synthetic drafts exist and never removes synthetic data from API/state.
+
 ## Repository Structure
 ```text
 app/                    FastAPI app (routes, services, models, repositories, tests)

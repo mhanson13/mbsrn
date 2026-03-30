@@ -50,6 +50,7 @@ class SEOCompetitorDomain(Base):
     base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    verification_status: Mapped[str] = mapped_column(String(16), nullable=False, default="verified")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)

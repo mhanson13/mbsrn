@@ -284,6 +284,7 @@ export interface CompetitorDomain {
   base_url: string;
   display_name: string | null;
   source: string;
+  verification_status?: "verified" | "unverified" | null;
   is_active: boolean;
   notes: string | null;
   created_at: string;
@@ -512,6 +513,8 @@ export interface CompetitorProfileDraftEditRequest {
 
 export interface CompetitorProfileDraftAcceptRequest extends CompetitorProfileDraftEditRequest {
   competitor_set_id?: string;
+  confirm_synthetic_scaffold?: boolean;
+  accept_as_unverified?: boolean;
   review_notes?: string | null;
 }
 
@@ -1020,6 +1023,9 @@ export interface RecommendationCompetitorEvidenceLink {
   competitor_domain?: string | null;
   confidence_level?: "high" | "medium" | "low" | null;
   source_type?: "search" | "places" | "fallback" | "synthetic" | null;
+  verification_status?: "verified" | "unverified" | null;
+  trust_tier?: "trusted_verified" | "informational_unverified" | "informational_candidate" | null;
+  evidence_trust_tier?: "trusted_verified" | "informational_unverified" | "informational_candidate" | null;
   evidence_summary?: string | null;
 }
 

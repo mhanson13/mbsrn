@@ -24,6 +24,7 @@ from app.repositories.seo_recommendation_repository import (
 )
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.schemas.seo_recommendation import (
+    SEORecommendationCompetitorEvidenceTrustTier,
     SEORecommendationListQuery,
     SEORecommendationRunCreateRequest,
     SEORecommendationWorkflowUpdateRequest,
@@ -54,6 +55,22 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "snoozed": {"open", "in_progress", "accepted", "resolved", "dismissed"},
     "resolved": {"open"},
 }
+
+
+def classify_competitor_evidence_link(
+    *,
+    review_status: str | None,
+    verification_status: str | None,
+) -> SEORecommendationCompetitorEvidenceTrustTier:
+    """Classify recommendation competitor evidence trust from persisted state only."""
+    normalized_review_status = str(review_status or "").strip().lower()
+    normalized_verification_status = str(verification_status or "").strip().lower()
+    if normalized_review_status == "accepted":
+        if normalized_verification_status == "verified":
+            return "trusted_verified"
+        if normalized_verification_status == "unverified":
+            return "informational_unverified"
+    return "informational_candidate"
 
 AUDIT_TEMPLATES: dict[str, tuple[str, str, str]] = {
     "missing_title": ("fix_missing_title_tags", "Fix missing title tags", "LOW"),

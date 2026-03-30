@@ -19,6 +19,7 @@ from app.models.seo_audit_page import SEOAuditPage
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_finding import SEOCompetitorComparisonFinding
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
+from app.models.seo_competitor_domain import SEOCompetitorDomain
 from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
 from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
 from app.models.seo_competitor_set import SEOCompetitorSet
@@ -2574,6 +2575,44 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
             created_by_principal_id="principal-1",
         )
     )
+    competitor_set = SEOCompetitorSet(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        name="Workspace Competitor Set",
+        city=None,
+        state=None,
+        is_active=True,
+    )
+    verified_domain = SEOCompetitorDomain(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        competitor_set_id=competitor_set.id,
+        domain="high-local.example",
+        base_url="https://high-local.example/",
+        display_name="High Confidence Local Competitor",
+        source="manual",
+        verification_status="verified",
+        is_active=True,
+        notes=None,
+    )
+    unverified_domain = SEOCompetitorDomain(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        competitor_set_id=competitor_set.id,
+        domain="secondary-regional.example",
+        base_url="https://secondary-regional.example/",
+        display_name="Secondary Regional Competitor",
+        source="manual",
+        verification_status="unverified",
+        is_active=True,
+        notes=None,
+    )
+    db_session.add_all([competitor_set, verified_domain, unverified_domain])
+    db_session.flush()
+
     db_session.add_all(
         [
             SEOCompetitorProfileDraft(
@@ -2589,6 +2628,9 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
                 evidence="Local service overlap",
                 confidence_score=0.84,
                 source="ai_places_enriched",
+                review_status="accepted",
+                accepted_competitor_set_id=competitor_set.id,
+                accepted_competitor_domain_id=verified_domain.id,
             ),
             SEOCompetitorProfileDraft(
                 id=str(uuid4()),
@@ -2603,6 +2645,24 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
                 evidence="Broader service coverage",
                 confidence_score=0.61,
                 source="ai_generated",
+                review_status="accepted",
+                accepted_competitor_set_id=competitor_set.id,
+                accepted_competitor_domain_id=unverified_domain.id,
+            ),
+            SEOCompetitorProfileDraft(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                generation_run_id=competitor_run_id,
+                suggested_name="Candidate Only Competitor",
+                suggested_domain="candidate-only.example",
+                competitor_type="local",
+                summary="Draft-only candidate linkage.",
+                why_competitor="Candidate linkage for operator review context.",
+                evidence="Draft-level signal only",
+                confidence_score=0.42,
+                source="ai_generated",
+                review_status="pending",
             ),
         ]
     )
@@ -2675,9 +2735,15 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
     competitor_links = payload["recommendations"]["items"][0]["competitor_evidence_links"]
     assert isinstance(competitor_links, list)
     assert len(competitor_links) >= 1
-    assert competitor_links[0]["competitor_name"]
-    assert competitor_links[0]["source_type"] in {"places", "search", "fallback", "synthetic", None}
-    assert competitor_links[0]["evidence_summary"]
+    by_name = {item["competitor_name"]: item for item in competitor_links}
+    assert by_name["High Confidence Local Competitor"]["source_type"] in {"places", "search", "fallback", "synthetic", None}
+    assert by_name["High Confidence Local Competitor"]["verification_status"] == "verified"
+    assert by_name["High Confidence Local Competitor"]["trust_tier"] == "trusted_verified"
+    assert by_name["Secondary Regional Competitor"]["verification_status"] == "unverified"
+    assert by_name["Secondary Regional Competitor"]["trust_tier"] == "informational_unverified"
+    assert by_name["Candidate Only Competitor"]["verification_status"] is None
+    assert by_name["Candidate Only Competitor"]["trust_tier"] == "informational_candidate"
+    assert all(item.get("evidence_summary") for item in competitor_links)
     action_delta = payload["recommendations"]["items"][0]["recommendation_action_delta"]
     assert action_delta is not None
     assert action_delta["observed_competitor_pattern"]
@@ -2753,6 +2819,90 @@ def test_recommendation_workspace_summary_handles_partial_apply_metadata_safely(
     assert payload["recommendations"]["items"][0]["competitor_linkage_summary"] is None
     assert payload["recommendations"]["items"][0]["recommendation_action_delta"] is None
     assert payload["recommendations"]["items"][0]["recommendation_priority"] is not None
+
+
+def test_recommendation_workspace_summary_does_not_infer_trusted_evidence_from_domain_text_alone(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+    audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+    )
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    recommendation_list = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert recommendation_list.status_code == 200
+    recommendation_id = recommendation_list.json()["items"][0]["id"]
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.comparison_run_id = str(uuid4())
+    db_session.add(recommendation)
+    db_session.flush()
+
+    competitor_run_id = str(uuid4())
+    db_session.add(
+        SEOCompetitorProfileGenerationRun(
+            id=competitor_run_id,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            parent_run_id=None,
+            status="completed",
+            requested_candidate_count=10,
+            generated_draft_count=1,
+            raw_candidate_count=1,
+            included_candidate_count=1,
+            excluded_candidate_count=0,
+            exclusion_counts_by_reason={},
+            provider_name="openai",
+            model_name="gpt-5-mini",
+            prompt_version="seo-competitor-profile-v4",
+            failure_category=None,
+            raw_output=json.dumps({"provider_attempt_count": 1}),
+            error_summary=None,
+            completed_at=utc_now(),
+            created_by_principal_id="principal-1",
+        )
+    )
+    db_session.add(
+        SEOCompetitorProfileDraft(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            generation_run_id=competitor_run_id,
+            suggested_name="Real Looking Domain Competitor",
+            suggested_domain="real-looking-competitor.example",
+            competitor_type="direct",
+            summary="Accepted draft missing persisted verification mapping.",
+            why_competitor="Has a realistic domain but no persisted verified status mapping.",
+            evidence="Draft-level evidence only",
+            confidence_score=0.78,
+            source="ai_generated",
+            review_status="accepted",
+            accepted_competitor_set_id=None,
+            accepted_competitor_domain_id=None,
+        )
+    )
+    db_session.commit()
+
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
+    assert summary.status_code == 200
+    payload = summary.json()
+    links = payload["recommendations"]["items"][0]["competitor_evidence_links"]
+    assert isinstance(links, list)
+    assert len(links) == 1
+    assert links[0]["competitor_name"] == "Real Looking Domain Competitor"
+    assert links[0]["verification_status"] is None
+    assert links[0]["trust_tier"] == "informational_candidate"
 
 
 def test_recommendation_workspace_summary_marks_possibly_outdated_when_refresh_state_is_unknown_after_apply(

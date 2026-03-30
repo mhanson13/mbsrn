@@ -88,6 +88,7 @@ const COMPETITOR_PROFILE_POLL_MAX_ATTEMPTS = 30;
 const MAX_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
 const MAX_TUNING_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
 const MAX_PROVIDER_ATTEMPT_DEBUG_ROWS = 2;
+const HIDE_SYNTHETIC_DEFAULT_NON_SYNTHETIC_THRESHOLD = 5;
 const ZIP_PROMPT_SESSION_KEY_PREFIX = "workspace:zip-prompt-dismissed";
 const SEARCH_ESCALATION_NOTE =
   "Expanded search was used after the initial pass returned no usable competitors.";
@@ -320,6 +321,34 @@ function competitorDraftSourceTypeBadgeClass(sourceType: CompetitorProfileDraft[
     return "badge badge-success";
   }
   return "badge badge-muted";
+}
+
+function isSyntheticScaffoldDomain(domain: string | null | undefined): boolean {
+  const normalized = (domain || "").trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return (
+    (normalized.startsWith("review-scaffold-") && normalized.endsWith(".invalid"))
+    || normalized.startsWith("unknown-domain-")
+    || normalized.endsWith(".mbsrn-fallback.local")
+  );
+}
+
+function isSyntheticCompetitorDraft(draft: CompetitorProfileDraft): boolean {
+  return draft.provenance_classification === "synthetic_fallback" || draft.source_type === "synthetic";
+}
+
+function formatCompetitorDraftDomainDisplay(draft: CompetitorProfileDraft): { value: string; asPlaceholder: boolean } {
+  const normalized = (draft.suggested_domain || "").trim();
+  const isSynthetic = isSyntheticCompetitorDraft(draft);
+  if (isSynthetic && isSyntheticScaffoldDomain(normalized)) {
+    return { value: "No verified website (review scaffold)", asPlaceholder: true };
+  }
+  if (!normalized) {
+    return { value: "No verified website", asPlaceholder: true };
+  }
+  return { value: normalized, asPlaceholder: false };
 }
 
 function runActivityTimestamp(
@@ -1608,6 +1637,8 @@ function normalizeRecommendationCompetitorEvidenceLinks(
   competitorDomain: string | null;
   confidenceLevel: "high" | "medium" | "low" | null;
   sourceType: "search" | "places" | "fallback" | "synthetic" | null;
+  verificationStatus: "verified" | "unverified" | null;
+  trustTier: "trusted_verified" | "informational_unverified" | "informational_candidate";
   evidenceSummary: string | null;
 }> {
   if (!Array.isArray(item.competitor_evidence_links)) {
@@ -1619,6 +1650,8 @@ function normalizeRecommendationCompetitorEvidenceLinks(
     competitorDomain: string | null;
     confidenceLevel: "high" | "medium" | "low" | null;
     sourceType: "search" | "places" | "fallback" | "synthetic" | null;
+    verificationStatus: "verified" | "unverified" | null;
+    trustTier: "trusted_verified" | "informational_unverified" | "informational_candidate";
     evidenceSummary: string | null;
   }> = [];
   const seenDraftIds = new Set<string>();
@@ -1640,12 +1673,28 @@ function normalizeRecommendationCompetitorEvidenceLinks(
       || rawLink?.source_type === "synthetic"
         ? rawLink.source_type
         : null;
+    const verificationStatus =
+      rawLink?.verification_status === "verified" || rawLink?.verification_status === "unverified"
+        ? rawLink.verification_status
+        : null;
+    const trustTier =
+      rawLink?.trust_tier === "trusted_verified"
+      || rawLink?.trust_tier === "informational_unverified"
+      || rawLink?.trust_tier === "informational_candidate"
+        ? rawLink.trust_tier
+        : rawLink?.evidence_trust_tier === "trusted_verified"
+          || rawLink?.evidence_trust_tier === "informational_unverified"
+          || rawLink?.evidence_trust_tier === "informational_candidate"
+            ? rawLink.evidence_trust_tier
+            : "informational_candidate";
     normalized.push({
       competitorDraftId,
       competitorName,
       competitorDomain: truncateOptionalText(rawLink?.competitor_domain, 255),
       confidenceLevel,
       sourceType,
+      verificationStatus,
+      trustTier,
       evidenceSummary: truncateOptionalText(rawLink?.evidence_summary, 220),
     });
     if (normalized.length >= 3) {
@@ -1665,6 +1714,33 @@ function formatRecommendationActionDeltaEvidenceStrength(
     return "Medium";
   }
   return "Low";
+}
+
+function formatRecommendationEvidenceTrustTierLabel(
+  value: "trusted_verified" | "informational_unverified" | "informational_candidate",
+): string | null {
+  if (value === "trusted_verified") {
+    return "Verified competitor";
+  }
+  if (value === "informational_unverified") {
+    return "Unverified competitor";
+  }
+  if (value === "informational_candidate") {
+    return "Candidate competitor";
+  }
+  return null;
+}
+
+function recommendationEvidenceTrustTierBadgeClass(
+  value: "trusted_verified" | "informational_unverified" | "informational_candidate",
+): string {
+  if (value === "trusted_verified") {
+    return "badge badge-success";
+  }
+  if (value === "informational_unverified") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
 }
 
 function normalizeRecommendationActionDelta(
@@ -2366,6 +2442,8 @@ export default function SiteWorkspacePage() {
   const [editFormState, setEditFormState] = useState<DraftEditFormState | null>(null);
   const [editActionInFlight, setEditActionInFlight] = useState(false);
   const [acceptTargetSetByDraftId, setAcceptTargetSetByDraftId] = useState<Record<string, string>>({});
+  const [confirmSyntheticAcceptByDraftId, setConfirmSyntheticAcceptByDraftId] = useState<Record<string, boolean>>({});
+  const [hideSyntheticScaffoldOverride, setHideSyntheticScaffoldOverride] = useState<boolean | null>(null);
 
   const [activeEventTypes, setActiveEventTypes] = useState<Set<SiteTimelineEventType>>(
     () => new Set(TIMELINE_EVENT_TYPE_OPTIONS.map((option) => option.value)),
@@ -2385,6 +2463,27 @@ export default function SiteWorkspacePage() {
     },
     [competitorProfileGenerationRuns, latestCompetitorProfileRunId],
   );
+  const syntheticCompetitorDraftCount = useMemo(
+    () => competitorProfileDrafts.filter((draft) => isSyntheticCompetitorDraft(draft)).length,
+    [competitorProfileDrafts],
+  );
+  const nonSyntheticCompetitorDraftCount = Math.max(0, competitorProfileDrafts.length - syntheticCompetitorDraftCount);
+  const defaultHideSyntheticScaffolds =
+    nonSyntheticCompetitorDraftCount >= HIDE_SYNTHETIC_DEFAULT_NON_SYNTHETIC_THRESHOLD;
+  const hideSyntheticScaffolds = hideSyntheticScaffoldOverride ?? defaultHideSyntheticScaffolds;
+  const visibleCompetitorProfileDrafts = useMemo(
+    () =>
+      hideSyntheticScaffolds
+        ? competitorProfileDrafts.filter((draft) => !isSyntheticCompetitorDraft(draft))
+        : competitorProfileDrafts,
+    [competitorProfileDrafts, hideSyntheticScaffolds],
+  );
+  const hiddenSyntheticDraftCount = hideSyntheticScaffolds ? syntheticCompetitorDraftCount : 0;
+
+  useEffect(() => {
+    setHideSyntheticScaffoldOverride(null);
+  }, [latestCompetitorProfileRun?.id]);
+
   const competitorRunOutcomeSummary = useMemo<CompetitorRunOutcomeSummaryView | null>(() => {
     if (
       !latestCompetitorProfileRun ||
@@ -3450,6 +3549,7 @@ export default function SiteWorkspacePage() {
         setCompetitorProfilePollingTargetRunId(null);
       }
       setCompetitorProfileDrafts(detail.drafts);
+      setConfirmSyntheticAcceptByDraftId({});
       setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
       setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
       setTuningRejectedCompetitorCandidateCount(Math.max(0, detail.tuning_rejected_candidate_count || 0));
@@ -3510,6 +3610,7 @@ export default function SiteWorkspacePage() {
         setCompetitorProfilePollingTargetRunId(null);
       }
       setCompetitorProfileDrafts(detail.drafts);
+      setConfirmSyntheticAcceptByDraftId({});
       setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
       setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
       setTuningRejectedCompetitorCandidateCount(Math.max(0, detail.tuning_rejected_candidate_count || 0));
@@ -3719,6 +3820,11 @@ export default function SiteWorkspacePage() {
         draftId,
       );
       upsertDraft(updated);
+      setConfirmSyntheticAcceptByDraftId((current) => {
+        const next = { ...current };
+        delete next[draftId];
+        return next;
+      });
       setCompetitorProfileActionMessage("Draft rejected. No competitor record was created.");
       if (editingDraftId === draftId) {
         setEditingDraftId(null);
@@ -3732,10 +3838,38 @@ export default function SiteWorkspacePage() {
   }
 
   async function handleAcceptCompetitorProfileDraft(
-    draftId: string,
+    draft: CompetitorProfileDraft,
     overrides?: ReturnType<typeof buildDraftEditPayloadFromFormState>,
+    options?: { acceptAsUnverified?: boolean },
   ): Promise<void> {
+    const draftId = draft.id;
     if (!context.token || !context.businessId || !siteId || !latestCompetitorProfileRunId) {
+      return;
+    }
+    const syntheticDraft = isSyntheticCompetitorDraft(draft);
+    const acceptAsUnverified = Boolean(options?.acceptAsUnverified);
+    const syntheticConfirmed = Boolean(confirmSyntheticAcceptByDraftId[draftId]);
+    const candidateDomain = (overrides?.suggested_domain ?? draft.suggested_domain ?? "").trim();
+    const hasVerifiedSyntheticDomain = !isSyntheticScaffoldDomain(candidateDomain);
+    if (acceptAsUnverified && !syntheticDraft) {
+      setCompetitorProfileActionError(
+        "Accept as unverified is only available for synthetic review scaffolds.",
+      );
+      setCompetitorProfileActionMessage(null);
+      return;
+    }
+    if (syntheticDraft && !syntheticConfirmed) {
+      setCompetitorProfileActionError(
+        "Synthetic review scaffold drafts require explicit confirmation before acceptance.",
+      );
+      setCompetitorProfileActionMessage(null);
+      return;
+    }
+    if (syntheticDraft && !hasVerifiedSyntheticDomain && !acceptAsUnverified) {
+      setCompetitorProfileActionError(
+        "Synthetic review scaffold drafts require a verified website/domain before acceptance.",
+      );
+      setCompetitorProfileActionMessage(null);
       return;
     }
     setDraftActionTargetId(draftId);
@@ -3752,10 +3886,21 @@ export default function SiteWorkspacePage() {
         {
           ...(overrides || {}),
           ...(selectedSetId ? { competitor_set_id: selectedSetId } : {}),
+          ...(syntheticDraft ? { confirm_synthetic_scaffold: syntheticConfirmed } : {}),
+          ...(acceptAsUnverified ? { accept_as_unverified: true } : {}),
         },
       );
       upsertDraft(updated);
-      setCompetitorProfileActionMessage("Draft accepted and added to competitors.");
+      setConfirmSyntheticAcceptByDraftId((current) => {
+        const next = { ...current };
+        delete next[draftId];
+        return next;
+      });
+      setCompetitorProfileActionMessage(
+        acceptAsUnverified
+          ? "Draft accepted as unverified competitor scaffold."
+          : "Draft accepted and added to competitors.",
+      );
       if (editingDraftId === draftId) {
         setEditingDraftId(null);
         setEditFormState(null);
@@ -3893,6 +4038,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
       setCompetitorProfileDrafts([]);
+      setConfirmSyntheticAcceptByDraftId({});
       setRejectedCompetitorCandidateCount(0);
       setRejectedCompetitorCandidates([]);
       setTuningRejectedCompetitorCandidateCount(0);
@@ -3917,6 +4063,7 @@ export default function SiteWorkspacePage() {
       setEditFormState(null);
       setEditActionInFlight(false);
       setAcceptTargetSetByDraftId({});
+      setConfirmSyntheticAcceptByDraftId({});
       return;
     }
 
@@ -3969,6 +4116,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
       setCompetitorProfileDrafts([]);
+      setConfirmSyntheticAcceptByDraftId({});
       setRejectedCompetitorCandidateCount(0);
       setRejectedCompetitorCandidates([]);
       setTuningRejectedCompetitorCandidateCount(0);
@@ -4294,6 +4442,7 @@ export default function SiteWorkspacePage() {
               !isCompetitorProfileRunTerminalStatus(detail.run.status) ? detail.run.id : null,
             );
             setCompetitorProfileDrafts(detail.drafts);
+            setConfirmSyntheticAcceptByDraftId({});
             setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
             setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
             setTuningRejectedCompetitorCandidateCount(Math.max(0, detail.tuning_rejected_candidate_count || 0));
@@ -4316,6 +4465,7 @@ export default function SiteWorkspacePage() {
               return;
             }
             setCompetitorProfileDrafts([]);
+            setConfirmSyntheticAcceptByDraftId({});
             setRejectedCompetitorCandidateCount(0);
             setRejectedCompetitorCandidates([]);
             setTuningRejectedCompetitorCandidateCount(0);
@@ -4334,6 +4484,7 @@ export default function SiteWorkspacePage() {
           }
         } else {
           setCompetitorProfileDrafts([]);
+          setConfirmSyntheticAcceptByDraftId({});
           setRejectedCompetitorCandidateCount(0);
           setRejectedCompetitorCandidates([]);
           setTuningRejectedCompetitorCandidateCount(0);
@@ -4351,6 +4502,7 @@ export default function SiteWorkspacePage() {
         setLatestCompetitorProfileRunId(null);
         setCompetitorProfilePollingTargetRunId(null);
         setCompetitorProfileDrafts([]);
+        setConfirmSyntheticAcceptByDraftId({});
         setRejectedCompetitorCandidateCount(0);
         setRejectedCompetitorCandidates([]);
         setTuningRejectedCompetitorCandidateCount(0);
@@ -4469,6 +4621,7 @@ export default function SiteWorkspacePage() {
           !isCompetitorProfileRunTerminalStatus(detail.run.status) ? detail.run.id : null,
         );
         setCompetitorProfileDrafts(detail.drafts);
+        setConfirmSyntheticAcceptByDraftId({});
         setRejectedCompetitorCandidateCount(Math.max(0, detail.rejected_candidate_count || 0));
         setRejectedCompetitorCandidates(normalizeRejectedCompetitorCandidates(detail.rejected_candidates));
         setTuningRejectedCompetitorCandidateCount(Math.max(0, detail.tuning_rejected_candidate_count || 0));
@@ -5551,6 +5704,29 @@ export default function SiteWorkspacePage() {
           <p className="hint muted">This run did not produce any reviewable drafts.</p>
         ) : null}
         {!competitorProfileLoading && competitorProfileDrafts.length > 0 ? (
+          <div className="stack-tight">
+            <label className="hint muted" data-testid="toggle-hide-synthetic-scaffolds">
+              <input
+                type="checkbox"
+                checked={hideSyntheticScaffolds}
+                onChange={(event) => setHideSyntheticScaffoldOverride(event.target.checked)}
+              />{" "}
+              Hide synthetic scaffolds
+            </label>
+            {hiddenSyntheticDraftCount > 0 ? (
+              <p className="hint muted" data-testid="hidden-synthetic-scaffolds-count">
+                {hiddenSyntheticDraftCount} synthetic scaffold
+                {hiddenSyntheticDraftCount === 1 ? " row hidden" : " rows hidden"}.
+              </p>
+            ) : null}
+            {hideSyntheticScaffolds && visibleCompetitorProfileDrafts.length === 0 ? (
+              <p className="hint muted">
+                All drafts in this run are synthetic scaffolds. Turn off the filter to review them.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {!competitorProfileLoading && visibleCompetitorProfileDrafts.length > 0 ? (
           <div className="table-container">
             <table className="table">
               <thead>
@@ -5564,21 +5740,37 @@ export default function SiteWorkspacePage() {
                 </tr>
               </thead>
               <tbody>
-                {competitorProfileDrafts.map((draft) => {
+                {visibleCompetitorProfileDrafts.map((draft) => {
                   const isEditing = editingDraftId === draft.id && editFormState !== null;
                   const actionDisabled =
                     draftActionTargetId === draft.id || editActionInFlight || generationInFlight || retryInFlight;
                   const editable = draft.review_status === "pending" || draft.review_status === "edited";
+                  const syntheticDraft = isSyntheticCompetitorDraft(draft);
+                  const syntheticConfirmed = Boolean(confirmSyntheticAcceptByDraftId[draft.id]);
+                  const editDomainValue =
+                    isEditing && editFormState ? editFormState.suggested_domain : draft.suggested_domain;
+                  const syntheticHasVerifiedDomain = !isSyntheticScaffoldDomain(editDomainValue);
+                  const syntheticVerifiedAcceptBlocked =
+                    syntheticDraft && (!syntheticConfirmed || !syntheticHasVerifiedDomain);
+                  const syntheticUnverifiedAcceptBlocked = syntheticDraft && !syntheticConfirmed;
+                  const acceptedAsUnverified =
+                    draft.review_status === "accepted"
+                    && (draft.review_notes || "").toLowerCase().includes("accepted as unverified competitor");
                   const provenanceLabel = formatCompetitorDraftProvenanceLabel(draft.provenance_classification);
                   const confidenceLevelLabel = formatCompetitorDraftConfidenceLevelLabel(draft.confidence_level);
                   const sourceTypeLabel = formatCompetitorDraftSourceTypeLabel(draft.source_type);
+                  const domainDisplay = formatCompetitorDraftDomainDisplay(draft);
                   return (
                     <Fragment key={draft.id}>
                       <tr data-testid="competitor-profile-draft-row">
                         <td className="table-cell-wrap">
                           <strong>{draft.suggested_name}</strong>
                           <br />
-                          <code>{draft.suggested_domain}</code>
+                          {domainDisplay.asPlaceholder ? (
+                            <span className="hint warning">{domainDisplay.value}</span>
+                          ) : (
+                            <code>{domainDisplay.value}</code>
+                          )}
                           {provenanceLabel ? (
                             <>
                               <br />
@@ -5630,7 +5822,15 @@ export default function SiteWorkspacePage() {
                             </>
                           ) : null}
                         </td>
-                        <td>{draft.review_status}</td>
+                        <td className="table-cell-wrap">
+                          {draft.review_status}
+                          {acceptedAsUnverified ? (
+                            <>
+                              <br />
+                              <span className="hint warning">Accepted as unverified competitor</span>
+                            </>
+                          ) : null}
+                        </td>
                         <td>
                           <div className="stack">
                             <label className="stack">
@@ -5653,15 +5853,54 @@ export default function SiteWorkspacePage() {
                                 ))}
                               </select>
                             </label>
+                            {syntheticDraft ? (
+                              <div className="stack">
+                                <label className="hint warning">
+                                  <input
+                                    type="checkbox"
+                                    checked={syntheticConfirmed}
+                                    onChange={(event) =>
+                                      setConfirmSyntheticAcceptByDraftId((current) => ({
+                                        ...current,
+                                        [draft.id]: event.target.checked,
+                                      }))
+                                    }
+                                    disabled={!editable || actionDisabled}
+                                  />{" "}
+                                  Confirm synthetic scaffold review
+                                </label>
+                                {!syntheticHasVerifiedDomain ? (
+                                  <span className="hint warning">
+                                    Edit this scaffold with a verified website/domain before accepting.
+                                  </span>
+                                ) : null}
+                              </div>
+                            ) : null}
                             <div className="form-actions">
                               <button
                                 type="button"
                                 className="button button-primary button-inline"
-                                onClick={() => void handleAcceptCompetitorProfileDraft(draft.id)}
-                                disabled={!editable || actionDisabled}
+                                onClick={() => void handleAcceptCompetitorProfileDraft(draft)}
+                                disabled={!editable || actionDisabled || syntheticVerifiedAcceptBlocked}
                               >
                                 {draftActionTargetId === draft.id ? "Applying..." : "Accept"}
                               </button>
+                              {syntheticDraft ? (
+                                <button
+                                  type="button"
+                                  className="button button-secondary button-inline"
+                                  onClick={() =>
+                                    void handleAcceptCompetitorProfileDraft(
+                                      draft,
+                                      undefined,
+                                      { acceptAsUnverified: true },
+                                    )
+                                  }
+                                  disabled={!editable || actionDisabled || syntheticUnverifiedAcceptBlocked}
+                                >
+                                  {draftActionTargetId === draft.id ? "Applying..." : "Accept as Unverified"}
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 className="button button-danger button-inline"
@@ -5805,14 +6044,38 @@ export default function SiteWorkspacePage() {
                                   className="button button-primary button-inline"
                                   onClick={() =>
                                     void handleAcceptCompetitorProfileDraft(
-                                      draft.id,
+                                      draft,
                                       buildDraftEditPayloadFromFormState(editFormState),
                                     )
                                   }
-                                  disabled={editActionInFlight || draftActionTargetId === draft.id}
+                                  disabled={
+                                    editActionInFlight
+                                    || draftActionTargetId === draft.id
+                                    || syntheticVerifiedAcceptBlocked
+                                  }
                                 >
                                   {draftActionTargetId === draft.id ? "Applying..." : "Accept Edited"}
                                 </button>
+                                {syntheticDraft ? (
+                                  <button
+                                    type="button"
+                                    className="button button-secondary button-inline"
+                                    onClick={() =>
+                                      void handleAcceptCompetitorProfileDraft(
+                                        draft,
+                                        buildDraftEditPayloadFromFormState(editFormState),
+                                        { acceptAsUnverified: true },
+                                      )
+                                    }
+                                    disabled={
+                                      editActionInFlight
+                                      || draftActionTargetId === draft.id
+                                      || syntheticUnverifiedAcceptBlocked
+                                    }
+                                  >
+                                    {draftActionTargetId === draft.id ? "Applying..." : "Accept Edited as Unverified"}
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
                                   className="button button-tertiary button-inline"
@@ -6114,17 +6377,24 @@ export default function SiteWorkspacePage() {
                               ) : null}
                               {recommendationCompetitorEvidenceLinks.length > 0 ? (
                                 <span className="hint muted" data-testid="recommendation-competitor-linkage">
-                                  Linked competitors:{" "}
-                                  {recommendationCompetitorEvidenceLinks
-                                    .map((link) => {
-                                      const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(link.confidenceLevel);
-                                      const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
-                                      const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
-                                      return suffixParts.length > 0
-                                        ? `${link.competitorName} (${suffixParts.join(", ")})`
-                                        : link.competitorName;
-                                    })
-                                    .join("; ")}
+                                  Linked competitor evidence:{" "}
+                                  {recommendationCompetitorEvidenceLinks.map((link, index) => {
+                                    const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(link.confidenceLevel);
+                                    const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
+                                    const trustTierLabel = formatRecommendationEvidenceTrustTierLabel(link.trustTier);
+                                    const trustTierBadgeClass = recommendationEvidenceTrustTierBadgeClass(link.trustTier);
+                                    const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
+                                    const competitorText = suffixParts.length > 0
+                                      ? `${link.competitorName} (${suffixParts.join(", ")})`
+                                      : link.competitorName;
+                                    return (
+                                      <span key={`${item.id}-${link.competitorDraftId}`} className="recommendation-linkage-entry">
+                                        {index > 0 ? "; " : null}
+                                        {competitorText}{" "}
+                                        {trustTierLabel ? <span className={trustTierBadgeClass}>{trustTierLabel}</span> : null}
+                                      </span>
+                                    );
+                                  })}
                                 </span>
                               ) : null}
                               {recommendationPriority ? (
@@ -6315,19 +6585,29 @@ export default function SiteWorkspacePage() {
                                     ) : null}
                                     {recommendationCompetitorEvidenceLinks.length > 0 ? (
                                       <span className="hint muted" data-testid="recommendation-competitor-linkage">
-                                        Linked competitors:{" "}
-                                        {recommendationCompetitorEvidenceLinks
-                                          .map((link) => {
-                                            const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(
-                                              link.confidenceLevel,
-                                            );
-                                            const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
-                                            const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
-                                            return suffixParts.length > 0
-                                              ? `${link.competitorName} (${suffixParts.join(", ")})`
-                                              : link.competitorName;
-                                          })
-                                          .join("; ")}
+                                        Linked competitor evidence:{" "}
+                                        {recommendationCompetitorEvidenceLinks.map((link, index) => {
+                                          const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(
+                                            link.confidenceLevel,
+                                          );
+                                          const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
+                                          const trustTierLabel = formatRecommendationEvidenceTrustTierLabel(link.trustTier);
+                                          const trustTierBadgeClass = recommendationEvidenceTrustTierBadgeClass(link.trustTier);
+                                          const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
+                                          const competitorText = suffixParts.length > 0
+                                            ? `${link.competitorName} (${suffixParts.join(", ")})`
+                                            : link.competitorName;
+                                          return (
+                                            <span
+                                              key={`${section.theme}-${item.id}-${link.competitorDraftId}`}
+                                              className="recommendation-linkage-entry"
+                                            >
+                                              {index > 0 ? "; " : null}
+                                              {competitorText}{" "}
+                                              {trustTierLabel ? <span className={trustTierBadgeClass}>{trustTierLabel}</span> : null}
+                                            </span>
+                                          );
+                                        })}
                                       </span>
                                     ) : null}
                                     {recommendationPriority ? (

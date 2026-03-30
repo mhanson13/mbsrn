@@ -129,6 +129,17 @@ class SEOCompetitorRepository:
         )
         return int(self.session.scalar(stmt) or 0)
 
+    def count_active_verified_domains_for_set(self, business_id: str, competitor_set_id: str) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(SEOCompetitorDomain)
+            .where(SEOCompetitorDomain.business_id == business_id)
+            .where(SEOCompetitorDomain.competitor_set_id == competitor_set_id)
+            .where(SEOCompetitorDomain.is_active.is_(True))
+            .where(SEOCompetitorDomain.verification_status == "verified")
+        )
+        return int(self.session.scalar(stmt) or 0)
+
     def delete_domain(self, competitor_domain: SEOCompetitorDomain) -> None:
         self.session.delete(competitor_domain)
         self.session.flush()

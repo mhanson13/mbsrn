@@ -51,6 +51,7 @@ SEOCompetitorProfileOutcomeStatusLevel = Literal["normal", "recovered", "degrade
 SEOCompetitorDraftProvenanceClassification = Literal["places_ai_enriched", "ai_only", "synthetic_fallback"]
 SEOCompetitorDraftConfidenceLevel = Literal["high", "medium", "low"]
 SEOCompetitorDraftSourceType = Literal["search", "places", "fallback", "synthetic"]
+SEOCompetitorDomainVerificationStatus = Literal["verified", "unverified"]
 SEOSummaryStatus = Literal["completed", "failed"]
 SEOFindingCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
 SEOFindingSeverity = Literal["INFO", "WARNING", "CRITICAL"]
@@ -98,7 +99,7 @@ _DRAFT_OPERATOR_EVIDENCE_SUMMARY_MAX_CHARS = 220
 _DRAFT_PROVENANCE_EXPLANATIONS: dict[str, str] = {
     "places_ai_enriched": "Discovered from nearby business seed data and enriched for service/location fit.",
     "ai_only": "Selected from AI discovery based on service/location relevance.",
-    "synthetic_fallback": "Synthetic fallback candidate generated because reliable live competitor discovery was unavailable.",
+    "synthetic_fallback": "Synthetic review scaffold generated because reliable live competitor discovery was unavailable.",
 }
 
 
@@ -118,7 +119,7 @@ def _derive_draft_operator_evidence_summary(
     forced_inclusion: bool,
 ) -> str:
     if provenance_classification == "synthetic_fallback" or source_type == "synthetic":
-        return "Lower-confidence synthetic candidate included for operator review."
+        return "Lower-confidence review scaffold included for operator review."
     if source_type == "places":
         if confidence_level == "high":
             return "Ranks as a strong local match from nearby-business discovery."
@@ -277,6 +278,7 @@ class SEOCompetitorDomainRead(BaseModel):
     base_url: str
     display_name: str | None
     source: str
+    verification_status: SEOCompetitorDomainVerificationStatus
     is_active: bool
     notes: str | None
     created_at: datetime
@@ -831,6 +833,8 @@ class SEOCompetitorProfileDraftAcceptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     competitor_set_id: str | None = Field(default=None, min_length=1, max_length=36)
+    confirm_synthetic_scaffold: bool = False
+    accept_as_unverified: bool = False
     suggested_name: str | None = Field(default=None, min_length=1, max_length=255)
     suggested_domain: str | None = Field(default=None, min_length=1, max_length=255)
     competitor_type: SEOCompetitorProfileType | None = None

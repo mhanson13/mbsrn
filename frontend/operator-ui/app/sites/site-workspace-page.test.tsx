@@ -2898,6 +2898,69 @@ describe("site workspace timeline controls", () => {
     expect(screen.queryByText("Evidence trace: Recommendation without action metadata")).not.toBeInTheDocument();
   });
 
+  it("labels unverified competitor linkage entries explicitly when present", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-unverified-link",
+              title: "Recommendation with mixed linkage verification",
+              competitor_linkage_summary: "Mixed competitor evidence is available.",
+              competitor_evidence_links: [
+                {
+                  competitor_draft_id: "draft-verified",
+                  competitor_name: "Verified Fire Systems",
+                  competitor_domain: "verified-fire.example",
+                  confidence_level: "high",
+                  source_type: "places",
+                  verification_status: "verified",
+                  trust_tier: "trusted_verified",
+                  evidence_summary: "Strong nearby verified competitor overlap.",
+                },
+                {
+                  competitor_draft_id: "draft-unverified",
+                  competitor_name: "Unverified Alarm Co",
+                  competitor_domain: "unverified-alarm.example",
+                  confidence_level: "medium",
+                  source_type: "search",
+                  verification_status: "unverified",
+                  trust_tier: "informational_unverified",
+                  evidence_summary: "Requires operator verification before trusted use.",
+                },
+                {
+                  competitor_draft_id: "draft-candidate",
+                  competitor_name: "Candidate Signal Co",
+                  competitor_domain: null,
+                  confidence_level: "low",
+                  source_type: "fallback",
+                  trust_tier: "informational_candidate",
+                  evidence_summary: "Draft-only candidate signal.",
+                },
+              ],
+            }),
+          ],
+          total: 1,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Deterministic Recommendations" });
+    const linkageLine = screen.getByTestId("recommendation-competitor-linkage");
+    expect(linkageLine).toHaveTextContent("Verified Fire Systems (High confidence, Nearby seed)");
+    expect(linkageLine).toHaveTextContent("Verified competitor");
+    expect(linkageLine).toHaveTextContent("Unverified Alarm Co (Medium confidence, AI search)");
+    expect(linkageLine).toHaveTextContent("Unverified competitor");
+    expect(linkageLine).toHaveTextContent("Candidate Signal Co (Low confidence, Fallback fill)");
+    expect(linkageLine).toHaveTextContent("Candidate competitor");
+    expect(linkageLine.querySelectorAll(".badge-success")).toHaveLength(1);
+    expect(linkageLine.querySelectorAll(".badge-warn")).toHaveLength(1);
+    expect(linkageLine.querySelectorAll(".badge-muted")).toHaveLength(1);
+  });
+
   it("suppresses observed gap line when it duplicates the evidence summary text", async () => {
     seedRichWorkspaceData();
     mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
@@ -5139,6 +5202,40 @@ describe("site workspace timeline controls", () => {
 });
 
 describe("site workspace ai competitor profile drafts", () => {
+  function buildDraft(
+    id: string,
+    name: string,
+    domain: string,
+    sourceType: CompetitorProfileDraft["source_type"],
+    provenanceClassification: CompetitorProfileDraft["provenance_classification"] | undefined = undefined,
+  ): CompetitorProfileDraft {
+    return {
+      id,
+      business_id: "biz-1",
+      site_id: "site-1",
+      generation_run_id: "gen-run-filter-test",
+      suggested_name: name,
+      suggested_domain: domain,
+      competitor_type: "direct",
+      summary: `${name} summary`,
+      why_competitor: `${name} rationale`,
+      evidence: `${name} evidence`,
+      confidence_score: 0.72,
+      source: "ai_generated",
+      source_type: sourceType,
+      provenance_classification: provenanceClassification,
+      review_status: "pending",
+      edited_fields_json: null,
+      review_notes: null,
+      reviewed_by_principal_id: null,
+      reviewed_at: null,
+      accepted_competitor_set_id: null,
+      accepted_competitor_domain_id: null,
+      created_at: "2026-03-21T01:00:00Z",
+      updated_at: "2026-03-21T01:00:00Z",
+    };
+  }
+
   it("renders generate control and latest draft review table", async () => {
     seedCompetitorProfileGenerationWorkspaceData();
     render(<SiteWorkspacePage />);
@@ -5177,6 +5274,161 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(mockFetchCompetitorProfileGenerationRuns).toHaveBeenCalled();
     expect(mockFetchCompetitorProfileGenerationRunDetail).toHaveBeenCalled();
     expect(mockFetchCompetitorProfileGenerationSummary).toHaveBeenCalled();
+  });
+
+  it("toggles synthetic scaffold visibility and reports hidden counts", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    const run = buildCompetitorProfileGenerationRun({
+      id: "gen-run-filter-test",
+      status: "completed",
+      generated_draft_count: 6,
+    });
+    const drafts: CompetitorProfileDraft[] = [
+      buildDraft("draft-real-1", "Real Competitor 1", "real-1.example", "places", "places_ai_enriched"),
+      buildDraft("draft-real-2", "Real Competitor 2", "real-2.example", "search", "ai_only"),
+      buildDraft("draft-real-3", "Real Competitor 3", "real-3.example", "search", "ai_only"),
+      buildDraft("draft-real-4", "Real Competitor 4", "real-4.example", "places", "places_ai_enriched"),
+      buildDraft("draft-synth-1", "Synthetic Scaffold A", "review-scaffold-1.invalid", "synthetic", "synthetic_fallback"),
+      buildDraft("draft-synth-2", "Synthetic Scaffold B", "review-scaffold-2.invalid", "synthetic", "synthetic_fallback"),
+    ];
+
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({ items: [run], total: 1 });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+      run,
+      drafts,
+      total_drafts: drafts.length,
+    });
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findAllByTestId("competitor-profile-draft-row");
+    const toggle = screen.getByRole("checkbox", { name: "Hide synthetic scaffolds" });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(6);
+    expect(screen.getByText("Synthetic Scaffold A")).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(4);
+    expect(screen.queryByText("Synthetic Scaffold A")).not.toBeInTheDocument();
+    expect(screen.getByTestId("hidden-synthetic-scaffolds-count")).toHaveTextContent(
+      "2 synthetic scaffold rows hidden.",
+    );
+
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(6);
+    expect(screen.getByText("Synthetic Scaffold A")).toBeInTheDocument();
+  });
+
+  it("defaults synthetic scaffold filter on when at least five non-synthetic drafts exist", async () => {
+    seedRichWorkspaceData();
+    const run = buildCompetitorProfileGenerationRun({
+      id: "gen-run-filter-default-on",
+      status: "completed",
+      generated_draft_count: 6,
+    });
+    const drafts: CompetitorProfileDraft[] = [
+      buildDraft("draft-real-a", "Real Competitor A", "real-a.example", "places", "places_ai_enriched"),
+      buildDraft("draft-real-b", "Real Competitor B", "real-b.example", "search", "ai_only"),
+      buildDraft("draft-real-c", "Real Competitor C", "real-c.example", "search", "ai_only"),
+      buildDraft("draft-real-d", "Real Competitor D", "real-d.example", "places", "places_ai_enriched"),
+      buildDraft("draft-real-e", "Real Competitor E", "real-e.example", "search", "ai_only"),
+      buildDraft("draft-synth-z", "Synthetic Scaffold Z", "review-scaffold-z.invalid", "synthetic", "synthetic_fallback"),
+    ];
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({ items: [run], total: 1 });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+      run,
+      drafts,
+      total_drafts: drafts.length,
+    });
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findAllByTestId("competitor-profile-draft-row");
+    const toggle = screen.getByRole("checkbox", { name: "Hide synthetic scaffolds" });
+    expect(toggle).toBeChecked();
+    expect(screen.getAllByTestId("competitor-profile-draft-row")).toHaveLength(5);
+    expect(screen.queryByText("Synthetic Scaffold Z")).not.toBeInTheDocument();
+    expect(screen.getByTestId("hidden-synthetic-scaffolds-count")).toHaveTextContent(
+      "1 synthetic scaffold row hidden.",
+    );
+  });
+
+  it("keeps recommendation trust-tier evidence rendering unchanged when competitor synthetic filter toggles", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-linkage-stability",
+              title: "Recommendation with linkage trust tiers",
+              competitor_linkage_summary: "Mixed competitor evidence is available.",
+              competitor_evidence_links: [
+                {
+                  competitor_draft_id: "draft-verified",
+                  competitor_name: "Verified Fire Systems",
+                  competitor_domain: "verified-fire.example",
+                  confidence_level: "high",
+                  source_type: "places",
+                  verification_status: "verified",
+                  trust_tier: "trusted_verified",
+                  evidence_summary: "Strong nearby verified competitor overlap.",
+                },
+                {
+                  competitor_draft_id: "draft-unverified",
+                  competitor_name: "Unverified Alarm Co",
+                  competitor_domain: "unverified-alarm.example",
+                  confidence_level: "medium",
+                  source_type: "search",
+                  verification_status: "unverified",
+                  trust_tier: "informational_unverified",
+                  evidence_summary: "Requires operator verification before trusted use.",
+                },
+              ],
+            }),
+          ],
+          total: 1,
+        },
+      }),
+    );
+
+    const run = buildCompetitorProfileGenerationRun({
+      id: "gen-run-filter-and-linkage",
+      status: "completed",
+      generated_draft_count: 6,
+    });
+    const drafts: CompetitorProfileDraft[] = [
+      buildDraft("draft-r1", "Real One", "real-one.example", "places", "places_ai_enriched"),
+      buildDraft("draft-r2", "Real Two", "real-two.example", "search", "ai_only"),
+      buildDraft("draft-r3", "Real Three", "real-three.example", "search", "ai_only"),
+      buildDraft("draft-r4", "Real Four", "real-four.example", "places", "places_ai_enriched"),
+      buildDraft("draft-r5", "Real Five", "real-five.example", "search", "ai_only"),
+      buildDraft("draft-s1", "Synthetic One", "review-scaffold-s1.invalid", "synthetic", "synthetic_fallback"),
+    ];
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({ items: [run], total: 1 });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+      run,
+      drafts,
+      total_drafts: drafts.length,
+    });
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findAllByTestId("competitor-profile-draft-row");
+    const linkageLine = await screen.findByTestId("recommendation-competitor-linkage");
+    expect(linkageLine).toHaveTextContent("Verified competitor");
+    expect(linkageLine).toHaveTextContent("Unverified competitor");
+
+    const toggle = screen.getByRole("checkbox", { name: "Hide synthetic scaffolds" });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByTestId("recommendation-competitor-linkage")).toHaveTextContent("Verified competitor");
+    expect(screen.getByTestId("recommendation-competitor-linkage")).toHaveTextContent("Unverified competitor");
   });
 
   it("reconstructs the latest completed run on page load and shows drafts without polling state", async () => {
@@ -5748,7 +6000,7 @@ describe("site workspace ai competitor profile drafts", () => {
           site_id: "site-1",
           generation_run_id: run.id,
           suggested_name: "Local Service Option 1",
-          suggested_domain: "local-service-option-1.mbsrn-fallback.local",
+          suggested_domain: "review-scaffold-1.invalid",
           competitor_type: "local",
           summary: "Fallback placeholder generated from local context.",
           why_competitor: "Deterministic fallback output for operator review.",
@@ -5757,7 +6009,7 @@ describe("site workspace ai competitor profile drafts", () => {
           source: "ai_forced_fallback",
           provenance_classification: "synthetic_fallback",
           provenance_explanation:
-            "Synthetic fallback candidate generated because reliable live competitor discovery was unavailable.",
+            "Synthetic review scaffold generated because reliable live competitor discovery was unavailable.",
           review_status: "pending",
           edited_fields_json: null,
           review_notes: null,
@@ -5811,8 +6063,9 @@ describe("site workspace ai competitor profile drafts", () => {
     const rows = screen.getAllByTestId("competitor-profile-draft-row");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toHaveTextContent("Source: Synthetic fallback");
+    expect(rows[0]).toHaveTextContent("No verified website (review scaffold)");
     expect(rows[0]).toHaveTextContent(
-      "Selection basis: Synthetic fallback candidate generated because reliable live competitor",
+      "Selection basis: Synthetic review scaffold generated because reliable live competitor",
     );
     expect(
       screen.queryByText("Nearby business seed discovery was used before AI enrichment in this run."),
@@ -6115,6 +6368,169 @@ describe("site workspace ai competitor profile drafts", () => {
     await user.click(enabledRejectButton as HTMLButtonElement);
     await screen.findByText("Draft rejected. No competitor record was created.");
     expect(mockRejectCompetitorProfileDraft).toHaveBeenCalled();
+  });
+
+  it("requires explicit synthetic scaffold confirmation and verified domain before acceptance", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+
+    const syntheticRun = buildCompetitorProfileGenerationRun({
+      id: "gen-run-synth",
+      status: "completed",
+      generated_draft_count: 1,
+    });
+    const syntheticDraft: CompetitorProfileDraft = {
+      id: "draft-synth-1",
+      business_id: "biz-1",
+      site_id: "site-1",
+      generation_run_id: "gen-run-synth",
+      suggested_name: "Review scaffold: fire protection competitors (Longmont, CO)",
+      suggested_domain: "review-scaffold-1.invalid",
+      competitor_type: "direct",
+      summary: "Synthetic scaffold only.",
+      why_competitor: "Review and confirm before promotion.",
+      evidence: "Synthetic scaffold only.",
+      confidence_score: 0.3,
+      source: "ai_forced_fallback",
+      source_type: "synthetic",
+      provenance_classification: "synthetic_fallback",
+      review_status: "pending",
+      edited_fields_json: null,
+      review_notes: null,
+      reviewed_by_principal_id: null,
+      reviewed_at: null,
+      accepted_competitor_set_id: null,
+      accepted_competitor_domain_id: null,
+      created_at: "2026-03-21T01:00:00Z",
+      updated_at: "2026-03-21T01:00:00Z",
+    };
+
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
+      items: [syntheticRun],
+      total: 1,
+    });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+      run: syntheticRun,
+      drafts: [syntheticDraft],
+      total_drafts: 1,
+    });
+    mockAcceptCompetitorProfileDraft.mockResolvedValue({
+      ...syntheticDraft,
+      suggested_name: "Verified Synthetic Competitor",
+      suggested_domain: "verified-synthetic-site.example",
+      review_status: "accepted",
+      accepted_competitor_set_id: "set-1",
+      accepted_competitor_domain_id: "domain-1",
+      reviewed_by_principal_id: "principal-1",
+      reviewed_at: "2026-03-21T01:30:00Z",
+    });
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByText("Confirm synthetic scaffold review");
+    expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Accept as Unverified" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const domainInput = screen.getByLabelText("Suggested Domain");
+    await user.clear(domainInput);
+    await user.type(domainInput, "verified-synthetic-site.example");
+
+    const acceptEditedButton = screen.getByRole("button", { name: "Accept Edited" });
+    expect(acceptEditedButton).toBeDisabled();
+
+    await user.click(screen.getByRole("checkbox", { name: "Confirm synthetic scaffold review" }));
+    expect(acceptEditedButton).toBeEnabled();
+
+    await user.click(acceptEditedButton);
+    await screen.findByText("Draft accepted and added to competitors.");
+    expect(mockAcceptCompetitorProfileDraft).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      "gen-run-synth",
+      "draft-synth-1",
+      expect.objectContaining({
+        confirm_synthetic_scaffold: true,
+        suggested_domain: "verified-synthetic-site.example",
+      }),
+    );
+  });
+
+  it("supports accepting a synthetic scaffold as unverified without a verified domain", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+
+    const syntheticRun = buildCompetitorProfileGenerationRun({
+      id: "gen-run-synth-unverified",
+      status: "completed",
+      generated_draft_count: 1,
+    });
+    const syntheticDraft: CompetitorProfileDraft = {
+      id: "draft-synth-unverified-1",
+      business_id: "biz-1",
+      site_id: "site-1",
+      generation_run_id: "gen-run-synth-unverified",
+      suggested_name: "Review scaffold: local fire alarm competitors (Longmont, CO)",
+      suggested_domain: "review-scaffold-1.invalid",
+      competitor_type: "direct",
+      summary: "Synthetic scaffold only.",
+      why_competitor: "Review and confirm before promotion.",
+      evidence: "Synthetic scaffold only.",
+      confidence_score: 0.32,
+      source: "ai_forced_fallback",
+      source_type: "synthetic",
+      provenance_classification: "synthetic_fallback",
+      review_status: "pending",
+      edited_fields_json: null,
+      review_notes: null,
+      reviewed_by_principal_id: null,
+      reviewed_at: null,
+      accepted_competitor_set_id: null,
+      accepted_competitor_domain_id: null,
+      created_at: "2026-03-21T01:00:00Z",
+      updated_at: "2026-03-21T01:00:00Z",
+    };
+
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
+      items: [syntheticRun],
+      total: 1,
+    });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+      run: syntheticRun,
+      drafts: [syntheticDraft],
+      total_drafts: 1,
+    });
+    mockAcceptCompetitorProfileDraft.mockResolvedValue({
+      ...syntheticDraft,
+      review_status: "accepted",
+      review_notes: "Accepted as unverified competitor.",
+      accepted_competitor_set_id: "set-1",
+      accepted_competitor_domain_id: "domain-2",
+      reviewed_by_principal_id: "principal-1",
+      reviewed_at: "2026-03-21T01:40:00Z",
+    });
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByText("Confirm synthetic scaffold review");
+    await user.click(screen.getByRole("checkbox", { name: "Confirm synthetic scaffold review" }));
+    await user.click(screen.getByRole("button", { name: "Accept as Unverified" }));
+
+    await screen.findByText("Draft accepted as unverified competitor scaffold.");
+    expect(screen.getByText("Accepted as unverified competitor")).toBeInTheDocument();
+    expect(mockAcceptCompetitorProfileDraft).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      "gen-run-synth-unverified",
+      "draft-synth-unverified-1",
+      expect.objectContaining({
+        confirm_synthetic_scaffold: true,
+        accept_as_unverified: true,
+      }),
+    );
   });
 
   it("renders safe failed-generation context", async () => {

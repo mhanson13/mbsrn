@@ -66,6 +66,19 @@ Each competitor also includes `source_type`:
 - `fallback`: deterministic fallback candidates derived from candidate overflow
 - `synthetic`: deterministic local-context synthetic placeholders
 
+Synthetic presentation notes:
+- Synthetic rows are review scaffolds, not verified discovered businesses.
+- Placeholder domains are intentionally non-real and may render as "No verified website (review scaffold)" in the workspace.
+- Synthetic rows require explicit operator confirmation before acceptance.
+- Workspace includes a `Hide synthetic scaffolds` toggle in the AI Competitor Profiles table.
+- The toggle defaults ON when at least 5 non-synthetic drafts exist for the current run, otherwise defaults OFF.
+- This is a visibility filter only; synthetic rows remain available and can be shown again instantly.
+- Synthetic rows support two explicit promotion paths:
+  - `Accept` (verified): requires a verified website/domain.
+  - `Accept as unverified (no website)`: promotes scaffold with an unverified marker.
+- Accepted unverified scaffolds are labeled in the draft table as **Accepted as unverified competitor**.
+- When duplicate/low-value synthetic variants are suppressed, synthetic fallback may return fewer rows than the target count.
+
 ## Competitor Evidence + Recommendation Linkage
 
 Workspace now surfaces lightweight competitor evidence in two places:
@@ -78,6 +91,18 @@ Workspace now surfaces lightweight competitor evidence in two places:
   - optional `competitor_evidence_links` (up to 3 linked competitors)
 
 This keeps recommendation rationale compact and evidence-based without exposing raw provider/debug payloads.
+
+Trust boundary note:
+- Website-backed downstream evidence uses verified competitors only (`verification_status=verified`).
+- Accepted competitors marked `unverified` remain visible to operators in management flows but are excluded from trusted recommendation-linkage evidence.
+- Recommendation linkage rows now expose explicit trust tiers via `competitor_evidence_links[].trust_tier`:
+  - `trusted_verified`
+  - `informational_unverified`
+  - `informational_candidate`
+- Workspace labels map these to compact operator wording:
+  - `Verified competitor`
+  - `Unverified competitor`
+  - `Candidate competitor`
 
 ## Recommendation Action Delta
 

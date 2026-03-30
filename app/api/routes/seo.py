@@ -16,6 +16,7 @@ from app.api.deps import (
     get_seo_competitor_profile_generation_repository,
     get_seo_competitor_profile_generation_run_executor,
     get_seo_competitor_profile_generation_service,
+    get_seo_competitor_repository,
     get_seo_competitor_summary_service,
     get_seo_recommendation_narrative_service,
     get_seo_competitor_service,
@@ -124,6 +125,7 @@ from app.schemas.seo_recommendation import (
 from app.repositories.seo_competitor_profile_generation_repository import (
     SEOCompetitorProfileGenerationRepository,
 )
+from app.repositories.seo_competitor_repository import SEOCompetitorRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.schemas.seo_automation import (
     SEOAutomationConfigPatchRequest,
@@ -159,6 +161,7 @@ from app.services.seo_recommendations import (
     SEORecommendationNotFoundError,
     SEORecommendationService,
     SEORecommendationValidationError,
+    classify_competitor_evidence_link,
 )
 from app.services.seo_recommendation_narratives import (
     SEORecommendationNarrativeNotFoundError,
@@ -208,6 +211,8 @@ _WORKSPACE_COMPETITOR_EVIDENCE_LINK_MAX_ITEMS = 3
 _WORKSPACE_COMPETITOR_EVIDENCE_TEXT_MAX_CHARS = 220
 _WORKSPACE_RECOMMENDATION_COMPETITOR_LINKAGE_SUMMARY_MAX_CHARS = 240
 _WORKSPACE_RECOMMENDATION_ACTION_DELTA_MAX_CHARS = 220
+_WORKSPACE_COMPETITOR_VERIFICATION_STATUS_VERIFIED = "verified"
+_WORKSPACE_COMPETITOR_VERIFICATION_STATUS_UNVERIFIED = "unverified"
 _WORKSPACE_EEAT_GAP_MAX_SIGNALS = 6
 _WORKSPACE_EEAT_GAP_SIGNAL_MAX_CHARS = 140
 _WORKSPACE_COMPETITOR_CONTEXT_HEALTH_DETAIL_MAX_CHARS = 220
@@ -1703,10 +1708,53 @@ def _workspace_competitor_link_rank_score(
     return score
 
 
+def _normalize_workspace_competitor_verification_status(raw: object) -> str | None:
+    normalized = str(raw or "").strip().lower()
+    if normalized in {
+        _WORKSPACE_COMPETITOR_VERIFICATION_STATUS_VERIFIED,
+        _WORKSPACE_COMPETITOR_VERIFICATION_STATUS_UNVERIFIED,
+    }:
+        return normalized
+    return None
+
+
+def _build_workspace_draft_verification_status_map(
+    *,
+    competitor_drafts: list[SEOCompetitorProfileDraftRead],
+    site_domains: list[object],
+) -> dict[str, str]:
+    if not competitor_drafts or not site_domains:
+        return {}
+
+    verification_status_by_domain_id: dict[str, str] = {}
+    for domain in site_domains:
+        domain_id = _compact_workspace_text(getattr(domain, "id", None), max_length=36)
+        if domain_id is None:
+            continue
+        verification_status = _normalize_workspace_competitor_verification_status(
+            getattr(domain, "verification_status", None)
+        )
+        if verification_status is None:
+            continue
+        verification_status_by_domain_id[domain_id] = verification_status
+
+    draft_verification_status_by_id: dict[str, str] = {}
+    for draft in competitor_drafts:
+        accepted_domain_id = _compact_workspace_text(draft.accepted_competitor_domain_id, max_length=36)
+        if accepted_domain_id is None:
+            continue
+        verification_status = verification_status_by_domain_id.get(accepted_domain_id)
+        if verification_status is None:
+            continue
+        draft_verification_status_by_id[draft.id] = verification_status
+    return draft_verification_status_by_id
+
+
 def _build_workspace_recommendation_competitor_linkage(
     *,
     recommendations: list[SEORecommendationRead],
     competitor_drafts: list[SEOCompetitorProfileDraftRead],
+    draft_verification_status_by_id: dict[str, str] | None = None,
 ) -> dict[str, dict[str, object]]:
     if not recommendations:
         return {}
@@ -1739,6 +1787,17 @@ def _build_workspace_recommendation_competitor_linkage(
             if draft.id in seen_draft_ids:
                 continue
             seen_draft_ids.add(draft.id)
+            draft_verification_status = (
+                _normalize_workspace_competitor_verification_status(
+                    (draft_verification_status_by_id or {}).get(draft.id)
+                )
+                if draft_verification_status_by_id
+                else None
+            )
+            trust_tier = classify_competitor_evidence_link(
+                review_status=draft.review_status,
+                verification_status=draft_verification_status,
+            )
             competitor_name = _compact_workspace_text(draft.suggested_name, max_length=180)
             if competitor_name is None:
                 continue
@@ -1751,6 +1810,9 @@ def _build_workspace_recommendation_competitor_linkage(
                             "competitor_domain": _compact_workspace_text(draft.suggested_domain, max_length=255),
                             "confidence_level": draft.confidence_level,
                             "source_type": draft.source_type,
+                            "verification_status": draft_verification_status,
+                            "trust_tier": trust_tier,
+                            "evidence_trust_tier": trust_tier,
                             "evidence_summary": _compact_workspace_text(
                                 draft.operator_evidence_summary
                                 or draft.provenance_explanation
@@ -1772,9 +1834,14 @@ def _build_workspace_recommendation_competitor_linkage(
         )
         if observed_gap_or_advantage is not None:
             linkage_summary = observed_gap_or_advantage
-        elif links:
+        elif any(link.trust_tier == "trusted_verified" for link in links):
             linkage_summary = _compact_workspace_text(
                 "Competitor evidence indicates this recommendation can close a local service visibility gap.",
+                max_length=_WORKSPACE_RECOMMENDATION_COMPETITOR_LINKAGE_SUMMARY_MAX_CHARS,
+            )
+        elif links:
+            linkage_summary = _compact_workspace_text(
+                "Competitor linkage is informational; verify websites before treating it as trusted evidence.",
                 max_length=_WORKSPACE_RECOMMENDATION_COMPETITOR_LINKAGE_SUMMARY_MAX_CHARS,
             )
         else:
@@ -2518,6 +2585,7 @@ def get_seo_recommendation_workspace_summary(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     seo_audit_repository: SEOAuditRepository = Depends(get_seo_audit_repository),
+    seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
     seo_competitor_profile_generation_repository: SEOCompetitorProfileGenerationRepository = Depends(
         get_seo_competitor_profile_generation_repository
     ),
@@ -2819,9 +2887,17 @@ def get_seo_recommendation_workspace_summary(
         applied_recommendation_ids=applied_recommendation_ids,
         analysis_freshness=analysis_freshness,
     )
+    draft_verification_status_by_id = _build_workspace_draft_verification_status_map(
+        competitor_drafts=latest_competitor_drafts,
+        site_domains=seo_competitor_repository.list_domains_for_business_site(
+            scoped_business_id,
+            site_id,
+        ),
+    )
     recommendation_competitor_linkage = _build_workspace_recommendation_competitor_linkage(
         recommendations=recommendations_payload.items,
         competitor_drafts=latest_competitor_drafts,
+        draft_verification_status_by_id=draft_verification_status_by_id,
     )
     recommendation_action_deltas = _build_workspace_recommendation_action_deltas(
         recommendations=recommendations_payload.items,

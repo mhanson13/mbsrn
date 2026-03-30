@@ -10,6 +10,7 @@ from app.api.routes.seo import router as seo_router
 from app.api.routes.seo import router_v1 as seo_v1_router
 from app.models.business import Business
 from app.models.seo_audit_run import SEOAuditRun
+from app.models.seo_competitor_domain import SEOCompetitorDomain
 from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage
 
 
@@ -174,6 +175,70 @@ def test_competitor_set_and_domain_crud_flow(db_session, seeded_business) -> Non
     list_domains_after_delete = client.get(f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{set_id}/domains")
     assert list_domains_after_delete.status_code == 200
     assert list_domains_after_delete.json()["total"] == 0
+
+
+def test_snapshot_run_requires_active_verified_competitor_domains(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    create_site = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Main", "base_url": "https://example.com/"},
+    )
+    assert create_site.status_code == 201
+    site_id = create_site.json()["id"]
+
+    create_set = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-sets",
+        json={"name": "Verified Domain Required"},
+    )
+    assert create_set.status_code == 201
+    set_id = create_set.json()["id"]
+
+    add_verified = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{set_id}/domains",
+        json={"domain": "verified-competitor.example"},
+    )
+    assert add_verified.status_code == 201
+    verified_domain_id = add_verified.json()["id"]
+
+    add_unverified = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{set_id}/domains",
+        json={"domain": "unverified-competitor.example"},
+    )
+    assert add_unverified.status_code == 201
+    unverified_domain_id = add_unverified.json()["id"]
+
+    unverified_domain = db_session.get(SEOCompetitorDomain, unverified_domain_id)
+    assert unverified_domain is not None
+    unverified_domain.verification_status = "unverified"
+    db_session.add(unverified_domain)
+    db_session.commit()
+
+    listed_domains = client.get(f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{set_id}/domains")
+    assert listed_domains.status_code == 200
+    listed_payload = listed_domains.json()
+    assert listed_payload["total"] == 2
+    assert any(item["verification_status"] == "unverified" for item in listed_payload["items"])
+
+    create_snapshot_with_mixed_verification = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{set_id}/snapshot-runs",
+        json={"max_domains": 10, "max_pages_per_domain": 3, "max_depth": 1},
+    )
+    assert create_snapshot_with_mixed_verification.status_code == 201
+    assert create_snapshot_with_mixed_verification.json()["domains_targeted"] == 1
+
+    verified_domain = db_session.get(SEOCompetitorDomain, verified_domain_id)
+    assert verified_domain is not None
+    verified_domain.verification_status = "unverified"
+    db_session.add(verified_domain)
+    db_session.commit()
+
+    create_snapshot_without_verified = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{set_id}/snapshot-runs",
+        json={},
+    )
+    assert create_snapshot_without_verified.status_code == 422
+    assert "active verified competitor domains" in create_snapshot_without_verified.json()["detail"]
 
 
 def test_competitor_routes_enforce_business_scoping(db_session, seeded_business) -> None:
