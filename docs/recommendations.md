@@ -264,6 +264,11 @@ The site workspace recommendations section now renders a compact **Recently appl
 
 If `apply_outcome` is absent, the card is hidden. This does not change recommendation apply behavior or backend/provider semantics.
 
+Recommendation visibility is now more action-oriented in the workspace:
+- `Ready now` recommendations are visually emphasized first.
+- Operator Focus can elevate a ready recommendation to the top page action when GBP is healthy.
+- Applied recommendations remain visible with explicit pending-visibility language when refresh is still required.
+
 ## Workspace Analysis Freshness
 
 Workspace summary responses now include an additive `analysis_freshness` object so operators can tell whether currently displayed analysis reflects the latest applied tuning changes.

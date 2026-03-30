@@ -3999,6 +3999,7 @@ describe("site workspace timeline controls", () => {
 
   it("renders workflow emphasis surfaces with latest change and next-step cues", async () => {
     seedRichWorkspaceData();
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(buildGoogleBusinessProfileConnection());
     mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
       buildRecommendationWorkspaceSummary({
         competitor_section_freshness: {
@@ -4036,16 +4037,238 @@ describe("site workspace timeline controls", () => {
 
     const focusZone = await screen.findByTestId("operator-focus-zone");
     expect(within(focusZone).getByRole("heading", { name: "Operator Focus" })).toBeInTheDocument();
-    expect(within(focusZone).getByTestId("operator-focus-callout")).toHaveTextContent("What needs attention now");
-    expect(within(focusZone).getByText("Refresh pending")).toBeInTheDocument();
+    const focusCallout = within(focusZone).getByTestId("operator-focus-callout");
+    expect(focusCallout).toHaveTextContent("What to do now");
+    expect(within(focusCallout).getByText("Ready now")).toBeInTheDocument();
+    expect(within(focusCallout).getAllByText("Fix title tags").length).toBeGreaterThan(0);
+    expect(within(focusCallout).getByTestId("operator-focus-primary-action-button")).toBeInTheDocument();
     expect(within(focusZone).getByTestId("operator-focus-latest-change")).toHaveTextContent("Latest change");
     expect(within(focusZone).getByTestId("start-here-section")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-ready-now-emphasis")).toHaveTextContent(
+      "Ready now recommendations",
+    );
 
     const summaryOutcome = screen.getByTestId("recommendation-apply-outcome-summary");
     expect(within(summaryOutcome).getByText("Needs review / pending")).toBeInTheDocument();
     expect(
       within(summaryOutcome).getByText("Expected visibility: Visible after the next site analysis run."),
     ).toBeInTheDocument();
+  });
+
+  it("prioritizes GBP connect action above all other workspace actions", async () => {
+    seedRichWorkspaceData();
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(
+      buildGoogleBusinessProfileConnection({
+        connected: false,
+        refresh_token_present: false,
+        required_scopes_satisfied: false,
+        token_status: "reconnect_required",
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const focusCallout = await screen.findByTestId("operator-focus-callout");
+    expect(within(focusCallout).getByText("Action needed")).toBeInTheDocument();
+    const actionLink = within(focusCallout).getByTestId("operator-focus-primary-action-link");
+    expect(actionLink).toHaveTextContent("Connect Google Business Profile");
+    expect(actionLink).toHaveAttribute("href", "/business-profile");
+  });
+
+  it("prioritizes GBP reconnect action above recommendation actions", async () => {
+    seedRichWorkspaceData();
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(
+      buildGoogleBusinessProfileConnection({
+        reconnect_required: true,
+        required_scopes_satisfied: false,
+        token_status: "reconnect_required",
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const focusCallout = await screen.findByTestId("operator-focus-callout");
+    const actionLink = within(focusCallout).getByTestId("operator-focus-primary-action-link");
+    expect(actionLink).toHaveTextContent("Reconnect Google Business Profile");
+    expect(actionLink).toHaveAttribute("href", "/business-profile");
+  });
+
+  it("uses ready-now recommendation as top action when GBP is healthy", async () => {
+    seedRichWorkspaceData();
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(buildGoogleBusinessProfileConnection());
+    const user = userEvent.setup();
+
+    render(<SiteWorkspacePage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-gbp-integration-status")).toHaveTextContent("Connected and usable");
+    });
+    const focusCallout = await screen.findByTestId("operator-focus-callout");
+    expect(within(focusCallout).getByText("Fix title tags")).toBeInTheDocument();
+    expect(within(focusCallout).getByText("Ready now")).toBeInTheDocument();
+    const focusButton = within(focusCallout).getByTestId("operator-focus-primary-action-button");
+    expect(focusButton).toHaveTextContent("Review top ready recommendation");
+    await user.click(focusButton);
+    expect(document.getElementById("workspace-recommendation-rec-1")).toHaveClass("start-here-target-active");
+  });
+
+  it("uses pending-visibility apply outcome as top action when no ready recommendation exists", async () => {
+    seedRichWorkspaceData();
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(buildGoogleBusinessProfileConnection());
+    mockFetchRecommendations.mockResolvedValue({
+      items: [
+        buildRecommendation({
+          id: "rec-low-1",
+          title: "Informational recommendation",
+          status: "dismissed",
+          priority_score: 10,
+          priority_band: "low",
+        }),
+      ],
+      total: 1,
+      filtered_summary: {
+        total: 1,
+        open: 0,
+        accepted: 0,
+        dismissed: 1,
+        high_priority: 0,
+      },
+    });
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-applied-1",
+              title: "Applied recommendation",
+              status: "accepted",
+              priority_score: 20,
+              priority_band: "low",
+            }),
+          ],
+          total: 1,
+        },
+        recommendation_section_freshness: {
+          state: "pending_refresh",
+          message: "Applied changes are waiting for refreshed analysis visibility.",
+          state_code: "pending_refresh",
+          state_label: "Refresh pending",
+          state_reason: "Applied changes are waiting for refreshed analysis visibility.",
+          refresh_expected: true,
+        },
+        apply_outcome: {
+          applied: true,
+          applied_at: "2026-03-21T01:40:00Z",
+          applied_recommendation_id: "rec-applied-1",
+          applied_recommendation_title: "Applied recommendation",
+          applied_change_summary: "Homepage metadata update was applied.",
+          next_refresh_expectation: "Visible after the next site analysis run.",
+          recommendation_label: "Applied recommendation",
+          expected_change: "Homepage metadata update was applied.",
+          reflected_on_next_run: "Visible after the next site analysis run.",
+          source: "recommendation",
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-gbp-integration-status")).toHaveTextContent("Connected and usable");
+    });
+    const focusCallout = await screen.findByTestId("operator-focus-callout");
+    expect(within(focusCallout).getByText("Recently applied change needs refresh")).toBeInTheDocument();
+    expect(within(focusCallout).getByText("Pending visibility")).toBeInTheDocument();
+    const focusButton = within(focusCallout).getByTestId("operator-focus-primary-action-button");
+    expect(focusButton).toHaveTextContent("Review recommendation outcomes");
+  });
+
+  it("uses stale freshness as top action when GBP and recommendation actions are clear", async () => {
+    seedRichWorkspaceData();
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(buildGoogleBusinessProfileConnection());
+    mockFetchRecommendations.mockResolvedValue({
+      items: [],
+      total: 0,
+      filtered_summary: {
+        total: 0,
+        open: 0,
+        accepted: 0,
+        dismissed: 0,
+        high_priority: 0,
+      },
+    });
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: { items: [], total: 0 },
+        recommendation_section_freshness: {
+          state: "stale",
+          message: "Recommendation insights are out of date.",
+          state_code: "possibly_outdated",
+          state_label: "Possibly outdated",
+          state_reason: "Recommendation insights are out of date.",
+          refresh_expected: true,
+        },
+        apply_outcome: null,
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-gbp-integration-status")).toHaveTextContent("Connected and usable");
+    });
+    const focusCallout = await screen.findByTestId("operator-focus-callout");
+    expect(within(focusCallout).getByText("Refresh recommendation insights")).toBeInTheDocument();
+    expect(within(focusCallout).getByText("Review")).toBeInTheDocument();
+    const focusButton = within(focusCallout).getByTestId("operator-focus-primary-action-button");
+    expect(focusButton).toHaveTextContent("Open recommendation queue");
+  });
+
+  it("renders calm no-immediate-action fallback when workspace is healthy", async () => {
+    seedRichWorkspaceData();
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(buildGoogleBusinessProfileConnection());
+    mockFetchRecommendations.mockResolvedValue({
+      items: [],
+      total: 0,
+      filtered_summary: {
+        total: 0,
+        open: 0,
+        accepted: 0,
+        dismissed: 0,
+        high_priority: 0,
+      },
+    });
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: { items: [], total: 0 },
+        recommendation_section_freshness: {
+          state: "fresh",
+          message: "Recommendation analysis is current.",
+          state_code: "fresh",
+          state_label: "Fresh",
+          state_reason: "Recommendation analysis is current.",
+        },
+        competitor_section_freshness: {
+          state: "fresh",
+          message: "Competitor insights are current.",
+          state_code: "fresh",
+          state_label: "Fresh",
+          state_reason: "Competitor insights are current.",
+        },
+        apply_outcome: null,
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workspace-gbp-integration-status")).toHaveTextContent("Connected and usable");
+    });
+    const focusCallout = await screen.findByTestId("operator-focus-callout");
+    expect(within(focusCallout).getByText("No urgent workspace action")).toBeInTheDocument();
+    expect(within(focusCallout).getByText("No immediate action needed")).toBeInTheDocument();
+    const focusButton = within(focusCallout).getByTestId("operator-focus-primary-action-button");
+    expect(focusButton).toHaveTextContent("Review latest recommendations");
   });
 
   it("renders operator-shell section headers with compact metadata and primary actions", async () => {
@@ -4062,7 +4285,7 @@ describe("site workspace timeline controls", () => {
 
     const runsHeader = screen.getByTestId("recommendation-runs-header");
     expect(within(runsHeader).getByRole("heading", { name: "Recommendation Runs and Narratives" })).toBeInTheDocument();
-    expect(within(runsHeader).getByText(/Latest completed run:/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Latest Completed Run" })).toBeInTheDocument();
   });
 
   it("renders competitor and recommendation section freshness indicators when provided", async () => {

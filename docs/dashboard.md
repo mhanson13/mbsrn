@@ -3,6 +3,20 @@
 The workspace now uses an Operator Shell v4 presentation pass inspired by compact admin-console patterns.
 This is a UI/readability enhancement only. Backend behavior, API contracts, trust semantics, and workflows are unchanged.
 
+### Operator Focus priority order
+The top-of-workspace **Operator Focus** block now shows a single deterministic next step using existing workspace state:
+1. Google Business Profile not connected
+2. Google Business Profile action/reconnect required
+3. High-value recommendation in `Ready now`
+4. Recently applied recommendation pending visibility
+5. Freshness review needed (stale/possibly outdated/status unavailable)
+6. No immediate action needed
+
+Operator Focus always includes:
+- one primary action title
+- one concise reason
+- one direct action control (navigate or focus)
+
 ### Visual changes
 - Compact top summary strip (`Workspace Snapshot`) with quick status cards for competitor state, recommendation state, actionable count, and readiness context.
 - Workspace snapshot now also includes Google Business Profile integration visibility (`Connected and usable`, `Action needed`, `Not connected`, or `Status unavailable`) with a direct link to `/business-profile`.

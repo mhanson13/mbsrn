@@ -32,6 +32,7 @@ Callback completion behavior:
 - API/test callback requests can keep JSON response behavior with `response_mode=json`.
 - Redirect targets are derived from trusted server config only (CORS/operator origins + configured callback origin fallback); arbitrary callback return URLs are not accepted.
 - Site workspace also surfaces a compact GBP integration state card and action link back to `/business-profile` so operators can see connect/reconnect health without leaving their active workflow.
+- In the site workspace, GBP disconnect/reconnect states now outrank other workspace actions in the top **Operator Focus** priority flow so integration health is handled first.
 
 ### Verification Workflow (Operator-Facing)
 Current implemented routes:

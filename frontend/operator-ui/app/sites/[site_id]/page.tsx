@@ -1230,6 +1230,25 @@ interface RecommendationApplyOutcomePresentationView {
   sourceGuidance: string | null;
 }
 
+interface OperatorPrimaryActionView {
+  priorityCode:
+    | "gbp_not_connected"
+    | "gbp_action_needed"
+    | "recommendation_ready_now"
+    | "applied_pending_visibility"
+    | "review_required"
+    | "no_immediate_action";
+  urgencyLabel: string;
+  urgencyBadgeClass: string;
+  title: string;
+  reason: string;
+  actionLabel: string;
+  actionHref: string;
+  actionKind: "navigate" | "focus";
+  actionTargetId: string | null;
+  contextHint: string | null;
+}
+
 interface WorkspaceTrustSummaryView {
   latestCompetitorStatus: CompetitorRunOutcomeSummary["status_level"] | null;
   usedGooglePlacesSeeds: boolean | null;
@@ -1331,6 +1350,171 @@ function normalizeRecommendationApplyOutcomePresentation(
     timingGuidance,
     sourceGuidance,
   };
+}
+
+function buildOperatorPrimaryAction(params: {
+  googleBusinessProfileStatus: GoogleBusinessProfileWorkspaceStatusView;
+  recommendations: Recommendation[];
+  recommendationApplyOutcome: RecommendationApplyOutcomeView | null;
+  recommendationApplyOutcomePresentation: RecommendationApplyOutcomePresentationView | null;
+  recommendationFreshness: WorkspaceSectionFreshnessView | null;
+  competitorFreshness: WorkspaceSectionFreshnessView | null;
+  workspaceReadinessMessage: string;
+}): OperatorPrimaryActionView {
+  const {
+    googleBusinessProfileStatus,
+    recommendations,
+    recommendationApplyOutcome,
+    recommendationApplyOutcomePresentation,
+    recommendationFreshness,
+    competitorFreshness,
+    workspaceReadinessMessage,
+  } = params;
+
+  if (googleBusinessProfileStatus.stateCode === "not_connected") {
+    return {
+      priorityCode: "gbp_not_connected",
+      urgencyLabel: "Action needed",
+      urgencyBadgeClass: "badge badge-critical",
+      title: "Connect Google Business Profile",
+      reason: "Business Profile data is not connected for this business yet.",
+      actionLabel: "Connect Google Business Profile",
+      actionHref: "/business-profile",
+      actionKind: "navigate",
+      actionTargetId: null,
+      contextHint: "Until this is connected, profile and location-backed workflows stay limited.",
+    };
+  }
+  if (googleBusinessProfileStatus.stateCode === "connected_action_needed") {
+    return {
+      priorityCode: "gbp_action_needed",
+      urgencyLabel: "Action needed",
+      urgencyBadgeClass: "badge badge-critical",
+      title: "Reconnect Google Business Profile",
+      reason: "The connection exists but needs reauthorization before it is fully usable.",
+      actionLabel: "Reconnect Google Business Profile",
+      actionHref: "/business-profile",
+      actionKind: "navigate",
+      actionTargetId: null,
+      contextHint: "Reconnect first so location and profile data can be used reliably.",
+    };
+  }
+
+  const topReadyNowRecommendation = firstReadyNowRecommendation(recommendations);
+  if (topReadyNowRecommendation) {
+    const targetId = recommendationRowId(topReadyNowRecommendation.id);
+    return {
+      priorityCode: "recommendation_ready_now",
+      urgencyLabel: "Ready now",
+      urgencyBadgeClass: "badge badge-critical",
+      title: topReadyNowRecommendation.title,
+      reason: "This is the highest-value recommendation currently ready for action.",
+      actionLabel: "Review top ready recommendation",
+      actionHref: `#${targetId}`,
+      actionKind: "focus",
+      actionTargetId: targetId,
+      contextHint: "Apply this first to move the strongest current gap.",
+    };
+  }
+
+  const pendingVisibility =
+    Boolean(recommendationApplyOutcome)
+    && recommendationApplyOutcomePresentation?.statusBucket === "needs_review_pending";
+  if (pendingVisibility) {
+    return {
+      priorityCode: "applied_pending_visibility",
+      urgencyLabel: "Pending visibility",
+      urgencyBadgeClass: "badge badge-warn",
+      title: "Recently applied change needs refresh",
+      reason:
+        recommendationApplyOutcomePresentation?.timingGuidance
+        || "A recent apply event is waiting for refreshed analysis visibility.",
+      actionLabel: "Review recommendation outcomes",
+      actionHref: "#recommendation-runs-section",
+      actionKind: "focus",
+      actionTargetId: "recommendation-runs-section",
+      contextHint: recommendationApplyOutcome?.appliedRecommendationTitle
+        ? `Latest applied: ${recommendationApplyOutcome.appliedRecommendationTitle}.`
+        : null,
+    };
+  }
+
+  const recommendationNeedsReview =
+    recommendationFreshness?.stateCode === "stale"
+    || recommendationFreshness?.stateCode === "possibly_outdated";
+  const competitorNeedsReview =
+    competitorFreshness?.stateCode === "stale"
+    || competitorFreshness?.stateCode === "possibly_outdated";
+  const gbpStatusUnavailable = googleBusinessProfileStatus.stateCode === "status_unavailable";
+  if (recommendationNeedsReview || competitorNeedsReview || gbpStatusUnavailable) {
+    if (recommendationNeedsReview) {
+      return {
+        priorityCode: "review_required",
+        urgencyLabel: "Review",
+        urgencyBadgeClass: "badge badge-warn",
+        title: "Refresh recommendation insights",
+        reason: recommendationFreshness?.stateReason || "Recommendation freshness needs review.",
+        actionLabel: "Open recommendation queue",
+        actionHref: "#recommendation-queue-section",
+        actionKind: "focus",
+        actionTargetId: "recommendation-queue-section",
+        contextHint: "Run or review recommendation analysis to confirm current action priorities.",
+      };
+    }
+    if (competitorNeedsReview) {
+      return {
+        priorityCode: "review_required",
+        urgencyLabel: "Review",
+        urgencyBadgeClass: "badge badge-warn",
+        title: "Review competitor profile freshness",
+        reason: competitorFreshness?.stateReason || "Competitor data may be outdated.",
+        actionLabel: "Open competitor profiles",
+        actionHref: "#competitor-profiles-section",
+        actionKind: "focus",
+        actionTargetId: "competitor-profiles-section",
+        contextHint: "Refresh competitor profiles before relying on downstream comparisons.",
+      };
+    }
+    return {
+      priorityCode: "review_required",
+      urgencyLabel: "Review",
+      urgencyBadgeClass: "badge badge-warn",
+      title: "Review Business Profile connection status",
+      reason: googleBusinessProfileStatus.detail,
+      actionLabel: "Open Business Profile",
+      actionHref: "/business-profile",
+      actionKind: "navigate",
+      actionTargetId: null,
+      contextHint: "Status data was unavailable, so verify integration health directly.",
+    };
+  }
+
+  return {
+    priorityCode: "no_immediate_action",
+    urgencyLabel: "No immediate action needed",
+    urgencyBadgeClass: "badge badge-success",
+    title: "No urgent workspace action",
+    reason: workspaceReadinessMessage,
+    actionLabel: "Review latest recommendations",
+    actionHref: "#recommendation-runs-section",
+    actionKind: "focus",
+    actionTargetId: "recommendation-runs-section",
+    contextHint: "Use this time to review outcomes and plan the next optimization pass.",
+  };
+}
+
+function firstReadyNowRecommendation(recommendations: Recommendation[]): Recommendation | null {
+  const readyNow = recommendations.filter((item) => classifyRecommendationPresentationBucket(item) === "ready_to_act");
+  if (readyNow.length === 0) {
+    return null;
+  }
+  const ranked = [...readyNow].sort((left, right) => {
+    if (right.priority_score !== left.priority_score) {
+      return right.priority_score - left.priority_score;
+    }
+    return right.updated_at.localeCompare(left.updated_at);
+  });
+  return ranked[0];
 }
 
 function normalizeWorkspaceTrustSummary(
@@ -3389,6 +3573,14 @@ export default function SiteWorkspacePage() {
     () => buildRecommendationPresentationBuckets(latestCompletedRecommendations),
     [latestCompletedRecommendations],
   );
+  const recommendationReadyNowBucket = useMemo(
+    () => recommendationPresentationBuckets.find((bucket) => bucket.key === "ready_to_act") || null,
+    [recommendationPresentationBuckets],
+  );
+  const topReadyNowRecommendation = useMemo(
+    () => (recommendationReadyNowBucket?.items[0] ? recommendationReadyNowBucket.items[0] : null),
+    [recommendationReadyNowBucket],
+  );
   const recommendationRankById = useMemo(() => {
     const rank = new Map<string, number>();
     latestCompletedRecommendations.forEach((recommendation, index) => {
@@ -3705,21 +3897,6 @@ export default function SiteWorkspacePage() {
       ),
     [googleBusinessProfileConnection, googleBusinessProfileConnectionError],
   );
-  const operatorFocusStateCode =
-    recommendationSectionFreshness?.stateCode || competitorSectionFreshness?.stateCode || null;
-  const operatorFocusStateLabel = operatorFocusStateCode
-    ? workspaceSectionFreshnessLabel(operatorFocusStateCode)
-    : null;
-  const operatorFocusStateClass = operatorFocusStateCode
-    ? workspaceSectionFreshnessBadgeClass(operatorFocusStateCode)
-    : "badge badge-muted";
-  const operatorFocusHeadline = latestApplyTitle
-    ? `Latest change applied: ${latestApplyTitle}`
-    : actionableRecommendationCount > 0
-      ? `${actionableRecommendationCount} actionable recommendation${actionableRecommendationCount === 1 ? "" : "s"} need attention`
-      : "No immediate recommendation actions are pending";
-  const operatorFocusDetail =
-    recommendationSectionFreshness?.message || competitorSectionFreshness?.message || workspaceReadinessMessage;
   const latestWorkflowChangeNote = recommendationApplyOutcome?.appliedAt
     ? `Applied ${formatDateTime(recommendationApplyOutcome.appliedAt)}.`
     : latestCompletedRecommendationRun?.completed_at
@@ -3727,6 +3904,34 @@ export default function SiteWorkspacePage() {
       : latestCompetitorProfileRun?.completed_at
         ? `Latest competitor run completed ${formatDateTime(latestCompetitorProfileRun.completed_at)}.`
         : null;
+  const operatorActionRecommendations = useMemo(
+    () =>
+      latestCompletedRecommendations.length > 0
+        ? latestCompletedRecommendations
+        : (queueResponse?.items || []),
+    [latestCompletedRecommendations, queueResponse?.items],
+  );
+  const operatorPrimaryAction = useMemo(
+    () =>
+      buildOperatorPrimaryAction({
+        googleBusinessProfileStatus: googleBusinessProfileWorkspaceStatus,
+        recommendations: operatorActionRecommendations,
+        recommendationApplyOutcome,
+        recommendationApplyOutcomePresentation,
+        recommendationFreshness: recommendationSectionFreshness,
+        competitorFreshness: competitorSectionFreshness,
+        workspaceReadinessMessage,
+      }),
+    [
+      competitorSectionFreshness,
+      googleBusinessProfileWorkspaceStatus,
+      operatorActionRecommendations,
+      recommendationApplyOutcome,
+      recommendationApplyOutcomePresentation,
+      recommendationSectionFreshness,
+      workspaceReadinessMessage,
+    ],
+  );
 
   const competitorSetNameById = useMemo(
     () => Object.fromEntries(competitorSets.map((item) => [item.id, item.name] as const)),
@@ -5337,15 +5542,47 @@ export default function SiteWorkspacePage() {
         <div className="operator-focus-grid">
           <div className="operator-focus-main stack">
             <div className="panel panel-compact stack-tight operator-focus-callout" data-testid="operator-focus-callout">
-              <span className="operator-focus-kicker">What needs attention now</span>
+              <span className="operator-focus-kicker">What to do now</span>
               <div className="link-row operator-focus-status-row">
-                {operatorFocusStateLabel ? <span className={operatorFocusStateClass}>{operatorFocusStateLabel}</span> : null}
+                <span
+                  className={operatorPrimaryAction.urgencyBadgeClass}
+                  data-testid="operator-focus-urgency-badge"
+                >
+                  {operatorPrimaryAction.urgencyLabel}
+                </span>
                 {recommendationSectionFreshness?.refreshExpected || competitorSectionFreshness?.refreshExpected ? (
                   <span className="badge badge-warn">Refresh expected</span>
                 ) : null}
               </div>
-              <strong>{operatorFocusHeadline}</strong>
-              <span className="hint">{operatorFocusDetail}</span>
+              <strong>{operatorPrimaryAction.title}</strong>
+              <span className="hint">{operatorPrimaryAction.reason}</span>
+              {operatorPrimaryAction.contextHint ? (
+                <span className="hint muted">{operatorPrimaryAction.contextHint}</span>
+              ) : null}
+              <div className="form-actions">
+                {operatorPrimaryAction.actionKind === "navigate" ? (
+                  <Link
+                    href={operatorPrimaryAction.actionHref}
+                    className="button button-primary"
+                    data-testid="operator-focus-primary-action-link"
+                  >
+                    {operatorPrimaryAction.actionLabel}
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    data-testid="operator-focus-primary-action-button"
+                    onClick={() => {
+                      if (operatorPrimaryAction.actionTargetId) {
+                        focusActionTarget(operatorPrimaryAction.actionTargetId);
+                      }
+                    }}
+                  >
+                    {operatorPrimaryAction.actionLabel}
+                  </button>
+                )}
+              </div>
               {latestWorkflowChangeNote ? <span className="hint muted">{latestWorkflowChangeNote}</span> : null}
             </div>
 
@@ -6949,6 +7186,48 @@ export default function SiteWorkspacePage() {
             ) : null}
             {!latestCompletedRecommendationsError && latestCompletedRecommendations.length === 0 ? (
               <p className="hint muted">No recommendations yet. Generate recommendations to see next best actions for this site.</p>
+            ) : null}
+            {latestCompletedRecommendations.length > 0 ? (
+              <div
+                className="panel panel-compact stack-tight operator-summary-callout"
+                data-testid="recommendation-ready-now-emphasis"
+              >
+                <div className="workspace-section-header workspace-section-header-compact">
+                  <div className="workspace-section-header-main">
+                    <h5 className="workspace-section-title">Ready now recommendations</h5>
+                    <p className="hint muted workspace-section-subtitle">
+                      Highest-value items to review and apply first.
+                    </p>
+                  </div>
+                  <div className="workspace-section-actions">
+                    <span className="badge badge-critical">
+                      {recommendationReadyNowBucket?.items.length || 0}
+                    </span>
+                  </div>
+                </div>
+                {topReadyNowRecommendation ? (
+                  <>
+                    <strong>{topReadyNowRecommendation.title}</strong>
+                    <span className="hint">
+                      This recommendation is currently the clearest action to move first.
+                    </span>
+                    <div className="form-actions">
+                      <button
+                        type="button"
+                        className="button button-primary button-inline"
+                        data-testid="recommendation-ready-now-focus-button"
+                        onClick={() => focusActionTarget(recommendationRowId(topReadyNowRecommendation.id))}
+                      >
+                        Focus ready recommendation
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <span className="hint muted">
+                    No recommendations are currently marked ready now. Review pending and informational items next.
+                  </span>
+                )}
+              </div>
             ) : null}
             {latestCompletedRecommendations.length > 0 ? (
               <div className="recommendation-bucket-grid" data-testid="recommendation-buckets">
