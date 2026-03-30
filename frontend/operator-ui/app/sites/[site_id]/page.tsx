@@ -17,6 +17,7 @@ import {
   editCompetitorProfileDraft,
   fetchAuditRuns,
   fetchBusinessSettings,
+  fetchGoogleBusinessProfileConnection,
   fetchCompetitorProfileGenerationRunDetail,
   fetchCompetitorProfileGenerationRuns,
   fetchCompetitorProfileGenerationSummary,
@@ -49,6 +50,7 @@ import type {
   TuningRejectedCompetitorCandidateDebug,
   CompetitorSet,
   CompetitorSnapshotRun,
+  GoogleBusinessProfileConnectionStatusResponse,
   RecommendationAnalysisFreshness,
   RecommendationApplyOutcome,
   RecommendationEEATCategory,
@@ -1220,6 +1222,14 @@ interface RecommendationApplyOutcomeView {
   source: "recommendation" | "manual" | null;
 }
 
+interface RecommendationApplyOutcomePresentationView {
+  statusBucket: "applied_completed" | "needs_review_pending";
+  statusLabel: "Applied / completed" | "Needs review / pending";
+  statusBadgeClass: string;
+  timingGuidance: string;
+  sourceGuidance: string | null;
+}
+
 interface WorkspaceTrustSummaryView {
   latestCompetitorStatus: CompetitorRunOutcomeSummary["status_level"] | null;
   usedGooglePlacesSeeds: boolean | null;
@@ -1283,6 +1293,43 @@ function normalizeRecommendationApplyOutcome(
     appliedPreviewSummary,
     nextRefreshExpectation,
     source,
+  };
+}
+
+function normalizeRecommendationApplyOutcomePresentation(
+  applyOutcome: RecommendationApplyOutcomeView | null,
+  recommendationFreshness: WorkspaceSectionFreshnessView | null,
+): RecommendationApplyOutcomePresentationView | null {
+  if (!applyOutcome) {
+    return null;
+  }
+  const pendingVisibility =
+    recommendationFreshness?.stateCode === "pending_refresh"
+    || recommendationFreshness?.stateCode === "running";
+  const statusBucket: RecommendationApplyOutcomePresentationView["statusBucket"] = pendingVisibility
+    ? "needs_review_pending"
+    : "applied_completed";
+  const statusLabel: RecommendationApplyOutcomePresentationView["statusLabel"] = pendingVisibility
+    ? "Needs review / pending"
+    : "Applied / completed";
+  const statusBadgeClass = recommendationPresentationBucketBadgeClass(statusBucket);
+  const timingGuidance = applyOutcome.nextRefreshExpectation
+    ? `Expected visibility: ${applyOutcome.nextRefreshExpectation}`
+    : pendingVisibility
+      ? "Expected visibility: Visible after next refresh."
+      : "Expected visibility: Reflected in the latest workspace analysis.";
+  const sourceGuidance =
+    applyOutcome.source === "manual"
+      ? "Next step: Review in Business Profile."
+      : applyOutcome.source === "recommendation"
+        ? "Source: Recommendation-guided update."
+        : null;
+  return {
+    statusBucket,
+    statusLabel,
+    statusBadgeClass,
+    timingGuidance,
+    sourceGuidance,
   };
 }
 
@@ -1415,6 +1462,67 @@ function workspaceSectionFreshnessCardTone(
     return "warning";
   }
   return "neutral";
+}
+
+interface GoogleBusinessProfileWorkspaceStatusView {
+  stateCode: "connected_usable" | "connected_action_needed" | "not_connected" | "status_unavailable";
+  stateLabel: string;
+  detail: string;
+  nextActionLabel: string;
+  tone: "neutral" | "success" | "warning" | "danger";
+  badgeClass: string;
+}
+
+function normalizeGoogleBusinessProfileWorkspaceStatus(
+  connection: GoogleBusinessProfileConnectionStatusResponse | null,
+  connectionError: string | null,
+): GoogleBusinessProfileWorkspaceStatusView {
+  if (connectionError) {
+    return {
+      stateCode: "status_unavailable",
+      stateLabel: "Status unavailable",
+      detail: "We could not load Google Business Profile integration status right now.",
+      nextActionLabel: "Review integration status",
+      tone: "warning",
+      badgeClass: "badge badge-warn",
+    };
+  }
+  if (!connection || !connection.connected) {
+    return {
+      stateCode: "not_connected",
+      stateLabel: "Not connected",
+      detail: "Connect Google Business Profile to load account and location access.",
+      nextActionLabel: "Connect Google Business Profile",
+      tone: "neutral",
+      badgeClass: "badge badge-muted",
+    };
+  }
+
+  const requiresAction = connection.reconnect_required
+    || connection.token_status === "reconnect_required"
+    || connection.token_status === "insufficient_scope"
+    || !connection.required_scopes_satisfied
+    || !connection.refresh_token_present;
+
+  if (requiresAction) {
+    return {
+      stateCode: "connected_action_needed",
+      stateLabel: "Action needed",
+      detail: "Connection exists, but reauthorization or scope review is required before data access is reliable.",
+      nextActionLabel: "Reconnect Google Business Profile",
+      tone: "warning",
+      badgeClass: "badge badge-warn",
+    };
+  }
+
+  return {
+    stateCode: "connected_usable",
+    stateLabel: "Connected and usable",
+    detail: "Google Business Profile access is healthy for this business.",
+    nextActionLabel: "Review integration status",
+    tone: "success",
+    badgeClass: "badge badge-success",
+  };
 }
 
 interface RecommendationAnalysisFreshnessView {
@@ -2641,6 +2749,9 @@ export default function SiteWorkspacePage() {
   const [snapshotRuns, setSnapshotRuns] = useState<CompetitorSnapshotRun[]>([]);
   const [comparisonRuns, setComparisonRuns] = useState<CompetitorComparisonRun[]>([]);
   const [competitorError, setCompetitorError] = useState<string | null>(null);
+  const [googleBusinessProfileConnection, setGoogleBusinessProfileConnection] =
+    useState<GoogleBusinessProfileConnectionStatusResponse | null>(null);
+  const [googleBusinessProfileConnectionError, setGoogleBusinessProfileConnectionError] = useState<string | null>(null);
 
   const [queueResponse, setQueueResponse] = useState<RecommendationListResponse | null>(null);
   const [queueError, setQueueError] = useState<string | null>(null);
@@ -3229,6 +3340,10 @@ export default function SiteWorkspacePage() {
     () => normalizeWorkspaceSectionFreshness(latestRecommendationSectionFreshness),
     [latestRecommendationSectionFreshness],
   );
+  const recommendationApplyOutcomePresentation = useMemo(
+    () => normalizeRecommendationApplyOutcomePresentation(recommendationApplyOutcome, recommendationSectionFreshness),
+    [recommendationApplyOutcome, recommendationSectionFreshness],
+  );
   const competitorContextHealth = useMemo(
     () => normalizeCompetitorContextHealth(latestCompetitorContextHealth),
     [latestCompetitorContextHealth],
@@ -3582,6 +3697,14 @@ export default function SiteWorkspacePage() {
       : workspaceTrustSummary?.usedSyntheticFallback
         ? "warning"
         : "neutral";
+  const googleBusinessProfileWorkspaceStatus = useMemo(
+    () =>
+      normalizeGoogleBusinessProfileWorkspaceStatus(
+        googleBusinessProfileConnection,
+        googleBusinessProfileConnectionError,
+      ),
+    [googleBusinessProfileConnection, googleBusinessProfileConnectionError],
+  );
   const operatorFocusStateCode =
     recommendationSectionFreshness?.stateCode || competitorSectionFreshness?.stateCode || null;
   const operatorFocusStateLabel = operatorFocusStateCode
@@ -4341,6 +4464,8 @@ export default function SiteWorkspacePage() {
       setSnapshotRuns([]);
       setComparisonRuns([]);
       setCompetitorError(null);
+      setGoogleBusinessProfileConnection(null);
+      setGoogleBusinessProfileConnectionError(null);
       setQueueResponse(null);
       setQueueError(null);
       setRecommendationRuns([]);
@@ -4494,6 +4619,8 @@ export default function SiteWorkspacePage() {
       setNotFound(false);
       setAuditError(null);
       setCompetitorError(null);
+      setGoogleBusinessProfileConnection(null);
+      setGoogleBusinessProfileConnectionError(null);
       setQueueError(null);
       setRecommendationRunError(null);
       setNarrativeLookupError(null);
@@ -4555,6 +4682,7 @@ export default function SiteWorkspacePage() {
         queueResult,
         recommendationRunsResult,
         recommendationWorkspaceSummaryResult,
+        googleBusinessProfileConnectionResult,
         businessSettingsResult,
         competitorProfileRunsResult,
         competitorProfileSummaryResult,
@@ -4571,6 +4699,7 @@ export default function SiteWorkspacePage() {
           }),
           fetchRecommendationRuns(context.token, context.businessId, siteId),
           fetchRecommendationWorkspaceSummary(context.token, context.businessId, siteId),
+          fetchGoogleBusinessProfileConnection(context.token),
           fetchBusinessSettings(context.token, context.businessId),
           fetchCompetitorProfileGenerationRuns(context.token, context.businessId, siteId),
           fetchCompetitorProfileGenerationSummary(context.token, context.businessId, siteId),
@@ -4648,6 +4777,19 @@ export default function SiteWorkspacePage() {
         }
       }
       setCompetitorError(nextCompetitorError);
+
+      if (googleBusinessProfileConnectionResult.status === "fulfilled") {
+        setGoogleBusinessProfileConnection(googleBusinessProfileConnectionResult.value);
+        setGoogleBusinessProfileConnectionError(null);
+      } else {
+        setGoogleBusinessProfileConnection(null);
+        setGoogleBusinessProfileConnectionError(
+          safeSectionErrorMessage(
+            "Google Business Profile integration status",
+            googleBusinessProfileConnectionResult.reason,
+          ),
+        );
+      }
 
       if (queueResult.status === "fulfilled") {
         setQueueResponse(queueResult.value);
@@ -5170,6 +5312,18 @@ export default function SiteWorkspacePage() {
             tone={trustSummaryTone}
             data-testid="workspace-summary-readiness"
           />
+          <SummaryStatCard
+            label="Google Business Profile"
+            value={googleBusinessProfileWorkspaceStatus.stateLabel}
+            detail={(
+              <>
+                {googleBusinessProfileWorkspaceStatus.detail}{" "}
+                <Link href="/business-profile">{googleBusinessProfileWorkspaceStatus.nextActionLabel}</Link>
+              </>
+            )}
+            tone={googleBusinessProfileWorkspaceStatus.tone}
+            data-testid="workspace-summary-gbp"
+          />
         </div>
       </SectionCard>
 
@@ -5221,6 +5375,20 @@ export default function SiteWorkspacePage() {
                   {latestPreviewInsight || "Preview a tuning suggestion to see expected impact"}
                 </strong>
               </div>
+            </div>
+
+            <div
+              className="panel panel-compact stack-tight operator-summary-callout"
+              data-testid="workspace-gbp-integration-status"
+            >
+              <span className="hint muted">Google Business Profile integration</span>
+              <div className="link-row">
+                <span className={googleBusinessProfileWorkspaceStatus.badgeClass}>
+                  {googleBusinessProfileWorkspaceStatus.stateLabel}
+                </span>
+              </div>
+              <span className="hint">{googleBusinessProfileWorkspaceStatus.detail}</span>
+              <Link href="/business-profile">{googleBusinessProfileWorkspaceStatus.nextActionLabel}</Link>
             </div>
 
             {recommendationApplyOutcome ? (
@@ -6733,6 +6901,52 @@ export default function SiteWorkspacePage() {
               </div>
             ) : null}
             <h4>Recommendations</h4>
+            {recommendationApplyOutcome && recommendationApplyOutcomePresentation ? (
+              <div
+                className="panel panel-compact stack-tight operator-summary-callout"
+                data-testid="recommendation-apply-outcome-summary"
+              >
+                <div className="workspace-section-header workspace-section-header-compact">
+                  <div className="workspace-section-header-main">
+                    <h5 className="workspace-section-title">Recently applied recommendation</h5>
+                    <p className="hint muted workspace-section-subtitle">
+                      Latest applied change and when to expect visibility updates.
+                    </p>
+                  </div>
+                  <div className="workspace-section-actions">
+                    <span className={recommendationApplyOutcomePresentation.statusBadgeClass}>
+                      {recommendationApplyOutcomePresentation.statusLabel}
+                    </span>
+                  </div>
+                </div>
+                {recommendationApplyOutcome.appliedRecommendationTitle ? (
+                  <strong>
+                    {recommendationApplyOutcome.appliedRecommendationTitle}
+                    {recommendationApplyOutcome.appliedRecommendationId
+                      ? ` (${recommendationApplyOutcome.appliedRecommendationId})`
+                      : ""}
+                  </strong>
+                ) : null}
+                {recommendationApplyOutcome.appliedChangeSummary ? (
+                  <span className="hint">What changed: {recommendationApplyOutcome.appliedChangeSummary}</span>
+                ) : null}
+                {recommendationApplyOutcome.appliedPreviewSummary ? (
+                  <span className="hint muted">
+                    Applied from preview: {recommendationApplyOutcome.appliedPreviewSummary}
+                  </span>
+                ) : null}
+                <span className="hint muted">{recommendationApplyOutcomePresentation.timingGuidance}</span>
+                {recommendationApplyOutcomePresentation.sourceGuidance ? (
+                  <span className="hint muted">{recommendationApplyOutcomePresentation.sourceGuidance}</span>
+                ) : null}
+                {recommendationApplyOutcome.source === "manual" ? (
+                  <Link href="/business-profile">Review in Business Profile</Link>
+                ) : null}
+                {recommendationApplyOutcome.appliedAt ? (
+                  <span className="hint muted">Applied at: {formatDateTime(recommendationApplyOutcome.appliedAt)}</span>
+                ) : null}
+              </div>
+            ) : null}
             {!latestCompletedRecommendationsError && latestCompletedRecommendations.length === 0 ? (
               <p className="hint muted">No recommendations yet. Generate recommendations to see next best actions for this site.</p>
             ) : null}

@@ -5,6 +5,7 @@ This is a UI/readability enhancement only. Backend behavior, API contracts, trus
 
 ### Visual changes
 - Compact top summary strip (`Workspace Snapshot`) with quick status cards for competitor state, recommendation state, actionable count, and readiness context.
+- Workspace snapshot now also includes Google Business Profile integration visibility (`Connected and usable`, `Action needed`, `Not connected`, or `Status unavailable`) with a direct link to `/business-profile`.
 - Standardized section header treatment for major workspace sections with:
   - title + subtitle rhythm
   - compact metadata
@@ -28,6 +29,8 @@ This is a UI/readability enhancement only. Backend behavior, API contracts, trus
 - No filtering, trust, acceptance, or generation logic changed by this pass.
 - `Hide synthetic scaffolds` remains visibility-only and never removes data from API/state.
 - Recommendation apply outcome and trust/freshness indicators remain authoritative and deterministic.
+- Google Business Profile state visibility is presentation-only in the workspace and reuses existing integration connection semantics (no OAuth/token behavior changes).
+- Recommendations now include a compact **Recently applied recommendation** outcome block that surfaces what changed, current apply visibility state (`Applied / completed` or `Needs review / pending`), and expected impact timing.
 
 ## Recommendation Presentation v1
 
@@ -90,6 +93,18 @@ Workspace recommendation copy now uses more operator-natural language while pres
 ### Behavior guarantees
 - This is presentation-only copy tuning.
 - Recommendation generation, scoring, status semantics, trust tiers, and API contracts are unchanged.
+
+## Recommendation Apply Outcome Visibility v1
+
+The recommendations section now surfaces a compact, operator-facing apply outcome card when apply metadata is available.
+
+It highlights:
+- which recommendation was applied
+- what changed
+- whether the change is `Applied / completed` or `Needs review / pending`
+- when visibility is expected to update (`Expected visibility: ...`)
+
+If no apply metadata exists, the card is hidden (no placeholder noise). This is a presentation-only enhancement and does not change apply semantics.
 
 ## Workspace Trust Summary
 

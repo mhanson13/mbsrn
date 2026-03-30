@@ -253,6 +253,17 @@ Workspace trust roll-up:
 - Workspace summary may also include `workspace_trust_summary` (see `docs/dashboard.md`), which reuses apply outcome fields alongside competitor outcome/provenance signals for a compact operator-visible trust/status strip.
 - Workspace summary may also include `recommendation_section_freshness` (see `docs/dashboard.md`) with section-level freshness state (`fresh|pending_refresh|running|stale`) and concise operator guidance.
 
+### Workspace operator visibility (presentation-only)
+
+The site workspace recommendations section now renders a compact **Recently applied recommendation** card when `apply_outcome` data is present. The card shows:
+- recommendation title/id
+- what changed
+- optional preview context used for the apply action
+- apply visibility state (`Applied / completed` or `Needs review / pending`)
+- expected visibility timing (`Expected visibility: ...`)
+
+If `apply_outcome` is absent, the card is hidden. This does not change recommendation apply behavior or backend/provider semantics.
+
 ## Workspace Analysis Freshness
 
 Workspace summary responses now include an additive `analysis_freshness` object so operators can tell whether currently displayed analysis reflects the latest applied tuning changes.

@@ -15,6 +15,7 @@ import type {
   CompetitorDomainListResponse,
   CompetitorSetListResponse,
   CompetitorSnapshotRunListResponse,
+  GoogleBusinessProfileConnectionStatusResponse,
   RecommendationAnalysisFreshness,
   Recommendation,
   RecommendationListResponse,
@@ -48,6 +49,10 @@ const mockFetchAuditRuns = jest.fn<Promise<SEOAuditRunListResponse>, unknown[]>(
 const mockFetchCompetitorSets = jest.fn<Promise<CompetitorSetListResponse>, unknown[]>();
 const mockFetchCompetitorDomains = jest.fn<Promise<CompetitorDomainListResponse>, unknown[]>();
 const mockFetchCompetitorSnapshotRuns = jest.fn<Promise<CompetitorSnapshotRunListResponse>, unknown[]>();
+const mockFetchGoogleBusinessProfileConnection = jest.fn<
+  Promise<GoogleBusinessProfileConnectionStatusResponse>,
+  unknown[]
+>();
 const mockFetchSiteCompetitorComparisonRuns = jest.fn<
   Promise<{ items: CompetitorComparisonRun[]; total: number }>,
   unknown[]
@@ -101,6 +106,7 @@ jest.mock("../../lib/api/client", () => {
     fetchCompetitorSets: (...args: unknown[]) => mockFetchCompetitorSets(...args),
     fetchCompetitorDomains: (...args: unknown[]) => mockFetchCompetitorDomains(...args),
     fetchCompetitorSnapshotRuns: (...args: unknown[]) => mockFetchCompetitorSnapshotRuns(...args),
+    fetchGoogleBusinessProfileConnection: (...args: unknown[]) => mockFetchGoogleBusinessProfileConnection(...args),
     fetchSiteCompetitorComparisonRuns: (...args: unknown[]) => mockFetchSiteCompetitorComparisonRuns(...args),
     fetchRecommendations: (...args: unknown[]) => mockFetchRecommendations(...args),
     fetchRecommendationWorkspaceSummary: (...args: unknown[]) => mockFetchRecommendationWorkspaceSummary(...args),
@@ -315,6 +321,25 @@ function buildRecommendationWorkspaceSummary(
   };
 }
 
+function buildGoogleBusinessProfileConnection(
+  overrides: Partial<GoogleBusinessProfileConnectionStatusResponse> = {},
+): GoogleBusinessProfileConnectionStatusResponse {
+  return {
+    provider: "google_business_profile",
+    connected: true,
+    business_id: "biz-1",
+    granted_scopes: ["https://www.googleapis.com/auth/business.manage"],
+    refresh_token_present: true,
+    expires_at: "2026-03-21T03:00:00Z",
+    connected_at: "2026-03-21T00:30:00Z",
+    last_refreshed_at: "2026-03-21T01:00:00Z",
+    reconnect_required: false,
+    required_scopes_satisfied: true,
+    token_status: "usable",
+    ...overrides,
+  };
+}
+
 function baseContext(overrides: Partial<OperatorContextMockValue> = {}): OperatorContextMockValue {
   return {
     loading: false,
@@ -331,6 +356,17 @@ function baseContext(overrides: Partial<OperatorContextMockValue> = {}): Operato
 
 function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchBusinessSettings.mockResolvedValue(buildBusinessSettings());
+  mockFetchGoogleBusinessProfileConnection.mockResolvedValue(
+    buildGoogleBusinessProfileConnection({
+      connected: false,
+      refresh_token_present: false,
+      expires_at: null,
+      connected_at: null,
+      last_refreshed_at: null,
+      required_scopes_satisfied: false,
+      token_status: "reconnect_required",
+    }),
+  );
   mockUpdateBusinessSettings.mockReset();
   mockUpdateSite.mockResolvedValue(
     buildSite({
@@ -3710,6 +3746,24 @@ describe("site workspace timeline controls", () => {
     ).toBeInTheDocument();
     expect(within(applyOutcome).getByText(/Applied at:/)).toBeInTheDocument();
     expect(within(applyOutcome).getByText("Source: recommendation-guided tuning action.")).toBeInTheDocument();
+
+    const summaryOutcome = screen.getByTestId("recommendation-apply-outcome-summary");
+    expect(within(summaryOutcome).getByText("Recently applied recommendation")).toBeInTheDocument();
+    expect(within(summaryOutcome).getByText("Applied / completed")).toBeInTheDocument();
+    expect(within(summaryOutcome).getByText("Fix title tags (rec-1)")).toBeInTheDocument();
+    expect(
+      within(summaryOutcome).getByText("What changed: Minimum relevance score was updated from 35 to 30."),
+    ).toBeInTheDocument();
+    expect(
+      within(summaryOutcome).getByText(
+        "Applied from preview: Estimated increase of 2 included candidates over the last 30 days of telemetry.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(summaryOutcome).getByText(
+        "Expected visibility: The next completed recommendation or competitor generation run should reflect this change.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("falls back to legacy apply outcome fields when additive apply metadata is missing", async () => {
@@ -3874,6 +3928,75 @@ describe("site workspace timeline controls", () => {
     );
   });
 
+  it("renders connected and usable Google Business Profile state with integration action link", async () => {
+    seedRichWorkspaceData();
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(buildGoogleBusinessProfileConnection());
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Workspace Snapshot" });
+    const summaryStrip = screen.getByTestId("workspace-summary-strip");
+    const gbpSummary = within(summaryStrip).getByTestId("workspace-summary-gbp");
+    expect(gbpSummary).toHaveTextContent("Connected and usable");
+    expect(gbpSummary).toHaveTextContent("Google Business Profile access is healthy for this business.");
+    expect(within(gbpSummary).getByRole("link", { name: "Review integration status" })).toHaveAttribute(
+      "href",
+      "/business-profile",
+    );
+
+    const gbpFocus = screen.getByTestId("workspace-gbp-integration-status");
+    expect(within(gbpFocus).getByText("Connected and usable")).toBeInTheDocument();
+    expect(within(gbpFocus).getByRole("link", { name: "Review integration status" })).toHaveAttribute(
+      "href",
+      "/business-profile",
+    );
+  });
+
+  it("renders reconnect guidance when Google Business Profile requires action", async () => {
+    seedRichWorkspaceData();
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(
+      buildGoogleBusinessProfileConnection({
+        reconnect_required: true,
+        required_scopes_satisfied: false,
+        token_status: "reconnect_required",
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Workspace Snapshot" });
+    const gbpSummary = screen.getByTestId("workspace-summary-gbp");
+    expect(gbpSummary).toHaveTextContent("Action needed");
+    expect(gbpSummary).toHaveTextContent("reauthorization or scope review is required");
+    expect(within(gbpSummary).getByRole("link", { name: "Reconnect Google Business Profile" })).toHaveAttribute(
+      "href",
+      "/business-profile",
+    );
+  });
+
+  it("renders connect guidance when Google Business Profile is not connected", async () => {
+    seedRichWorkspaceData();
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(
+      buildGoogleBusinessProfileConnection({
+        connected: false,
+        refresh_token_present: false,
+        required_scopes_satisfied: false,
+        token_status: "reconnect_required",
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Workspace Snapshot" });
+    const gbpSummary = screen.getByTestId("workspace-summary-gbp");
+    expect(gbpSummary).toHaveTextContent("Not connected");
+    expect(gbpSummary).toHaveTextContent("Connect Google Business Profile to load account and location access.");
+    expect(within(gbpSummary).getByRole("link", { name: "Connect Google Business Profile" })).toHaveAttribute(
+      "href",
+      "/business-profile",
+    );
+  });
+
   it("renders workflow emphasis surfaces with latest change and next-step cues", async () => {
     seedRichWorkspaceData();
     mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
@@ -3917,6 +4040,12 @@ describe("site workspace timeline controls", () => {
     expect(within(focusZone).getByText("Refresh pending")).toBeInTheDocument();
     expect(within(focusZone).getByTestId("operator-focus-latest-change")).toHaveTextContent("Latest change");
     expect(within(focusZone).getByTestId("start-here-section")).toBeInTheDocument();
+
+    const summaryOutcome = screen.getByTestId("recommendation-apply-outcome-summary");
+    expect(within(summaryOutcome).getByText("Needs review / pending")).toBeInTheDocument();
+    expect(
+      within(summaryOutcome).getByText("Expected visibility: Visible after the next site analysis run."),
+    ).toBeInTheDocument();
   });
 
   it("renders operator-shell section headers with compact metadata and primary actions", async () => {
@@ -4035,6 +4164,7 @@ describe("site workspace timeline controls", () => {
 
     await screen.findByRole("heading", { name: "AI Narrative Overlay" });
     expect(screen.queryByTestId("narrative-apply-outcome")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-apply-outcome-summary")).not.toBeInTheDocument();
   });
 
   it("keeps analysis freshness block hidden when workspace summary omits freshness metadata", async () => {
