@@ -5,6 +5,8 @@ import { useOperatorContext } from "../../components/useOperatorContext";
 import { useAuth } from "../../components/AuthProvider";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
+import { SectionHeader } from "../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 
 export default function DashboardPage() {
   const context = useOperatorContext();
@@ -25,25 +27,60 @@ export default function DashboardPage() {
 
   return (
     <PageContainer>
-      <SectionCard>
-        <h1>Dashboard</h1>
-        <p>
-          Business scope: <code>{context.businessId}</code>
-        </p>
-        <p>
-          Tracked SEO sites: <strong>{context.sites.length}</strong>
-        </p>
-        {!hasSites ? <p className="hint warning">No sites configured yet. Start by adding your first site.</p> : null}
-        {hasSites && hasUnauditedSite ? (
-          <p className="hint warning">At least one site has not been audited yet. Run your first audit from Sites.</p>
-        ) : null}
-        {hasCompletedAudit ? (
-          <p className="hint muted">Audit data is available. Next step: review recommendations.</p>
-        ) : null}
-      </SectionCard>
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="Dashboard"
+            subtitle="Role-aware workspace status and next-step navigation."
+            headingLevel={1}
+            variant="hero"
+            meta={(
+              <>
+                <span className="hint muted">Business scope: <code>{context.businessId}</code></span>
+                {principal ? <span className="hint muted">Role: {principal.role}</span> : null}
+              </>
+            )}
+          />
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Tracked sites"
+              value={context.sites.length}
+              detail={hasSites ? "Configured and available" : "No sites configured yet"}
+              tone={hasSites ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Audit coverage"
+              value={hasCompletedAudit ? "Available" : "Missing"}
+              detail={hasCompletedAudit ? "Completed audit data found" : "Run first audit from Sites"}
+              tone={hasCompletedAudit ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Action state"
+              value={hasUnauditedSite ? "Review needed" : "Stable"}
+              detail={hasUnauditedSite ? "At least one site has no audit run" : "All tracked sites have audit history"}
+              tone={hasUnauditedSite ? "warning" : "neutral"}
+              variant="elevated"
+            />
+          </div>
+          {!hasSites ? <p className="hint warning">No sites configured yet. Start by adding your first site.</p> : null}
+          {hasSites && hasUnauditedSite ? (
+            <p className="hint warning">At least one site has not been audited yet. Run your first audit from Sites.</p>
+          ) : null}
+          {hasCompletedAudit ? (
+            <p className="hint muted">Audit data is available. Next step: review recommendations.</p>
+          ) : null}
+        </SectionCard>
+      </div>
 
-      <SectionCard>
-        <h2>Operator Navigation</h2>
+      <SectionCard variant="summary" className="role-surface-support">
+        <SectionHeader
+          title="Operator Navigation"
+          subtitle="Open the primary workflow surfaces for this role."
+          headingLevel={2}
+          variant="support"
+        />
         <div className="link-row">
           <Link href="/sites">Sites</Link>
           <Link href="/audits">Audit Runs</Link>
@@ -54,8 +91,8 @@ export default function DashboardPage() {
         </div>
       </SectionCard>
 
-      <SectionCard>
-        <h2>Admin</h2>
+      <SectionCard variant="support" className="role-surface-support">
+        <SectionHeader title="Admin" headingLevel={2} variant="support" />
         {principal?.role === "admin" ? (
           <p className="hint muted">
             Business administration is available. Open <Link href="/admin">Admin</Link> to manage principals and settings.

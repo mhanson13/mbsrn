@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
+import { SectionHeader } from "../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -405,23 +407,41 @@ function CompetitorsPageContent() {
   if (contextLoading) {
     return (
       <PageContainer>
-        <SectionCard as="div">Loading competitor intelligence...</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Competitor Intelligence"
+            subtitle="Loading competitor set readiness for your selected site."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (contextError) {
     return (
       <PageContainer>
-        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Competitor Intelligence"
+            subtitle="Unable to load tenant context. Refresh and sign in again."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (sites.length === 0) {
     return (
       <PageContainer>
-        <SectionCard>
-          <h1>Competitors</h1>
-          <p className="hint muted">No SEO sites are configured yet. Add a site first to view competitors.</p>
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Competitor Intelligence"
+            subtitle="No SEO sites are configured yet. Add a site first to view competitors."
+            headingLevel={1}
+            variant="support"
+          />
         </SectionCard>
       </PageContainer>
     );
@@ -429,8 +449,71 @@ function CompetitorsPageContent() {
 
   return (
     <PageContainer>
-      <SectionCard>
-        <h1>Competitor Intelligence</h1>
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="Competitor Intelligence"
+            subtitle="Track competitor set readiness, run status, and domain coverage for the selected site."
+            headingLevel={1}
+            variant="hero"
+            meta={(
+              <span className="hint muted">
+                Selected site: <code>{selectedSite?.display_name || selectedSiteId || "none"}</code>
+              </span>
+            )}
+          />
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Competitor sets"
+              value={competitorSetCount}
+              detail={`${activeSetCount} active`}
+              tone={competitorSetCount > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Domains"
+              value={totalDomainCount}
+              detail={`${activeDomainCount} active domains`}
+              tone={totalDomainCount > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Snapshot status"
+              value={latestSnapshotRun ? formatRunStatus(latestSnapshotRun.status) : "none"}
+              detail={latestSnapshotRun ? latestSnapshotRun.competitor_set_name : "No snapshot run yet"}
+              tone={
+                latestSnapshotRun?.status?.toLowerCase() === "completed"
+                  ? "success"
+                  : latestSnapshotRun
+                    ? "warning"
+                    : "neutral"
+              }
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Comparison status"
+              value={latestComparisonRun ? formatRunStatus(latestComparisonRun.status) : "none"}
+              detail={latestComparisonRun ? latestComparisonRun.competitor_set_name : "No comparison run yet"}
+              tone={
+                latestComparisonRun?.status?.toLowerCase() === "completed"
+                  ? "success"
+                  : latestComparisonRun
+                    ? "warning"
+                    : "neutral"
+              }
+              variant="elevated"
+            />
+          </div>
+        </SectionCard>
+      </div>
+
+      <SectionCard variant="summary" className="role-surface-support">
+        <SectionHeader
+          title="Competitor set inventory"
+          subtitle="Review readiness diagnostics and open competitor sets, snapshot runs, and comparison runs."
+          headingLevel={2}
+          variant="support"
+        />
         <label htmlFor="site-picker-competitors">Site</label>
         <select
           id="site-picker-competitors"
@@ -444,7 +527,7 @@ function CompetitorsPageContent() {
           ))}
         </select>
 
-        <div className="panel stack">
+        <div className="panel stack section-card-variant-support">
           <h2 className="heading-reset">Readiness</h2>
           <p className="hint muted">
             Selected Site:{" "}
@@ -570,7 +653,14 @@ export default function CompetitorsPage() {
     <Suspense
       fallback={(
         <PageContainer>
-          <SectionCard as="div">Loading competitor intelligence...</SectionCard>
+          <SectionCard as="div" variant="support" className="role-surface-support">
+            <SectionHeader
+              title="Competitor Intelligence"
+              subtitle="Loading competitor set readiness for your selected site."
+              headingLevel={1}
+              variant="support"
+            />
+          </SectionCard>
         </PageContainer>
       )}
     >

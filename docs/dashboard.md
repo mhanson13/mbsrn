@@ -3,6 +3,52 @@
 The workspace now uses an Operator Shell v4 presentation pass inspired by compact admin-console patterns.
 This is a UI/readability enhancement only. Backend behavior, API contracts, trust semantics, and workflows are unchanged.
 
+## Shared Role-Aware Shell Uplift
+
+The dashboard shell treatment now applies across admin, operator, and user-facing workspace entry surfaces.
+This uplift is frontend-only and reuses the existing CSS/component system.
+
+Shared grammar now includes:
+- role-aware dashboard landing surfaces (`role-dashboard-landing`, `role-dashboard-hero`)
+- reusable panel hierarchy via `SectionCard` variants (`primary`, `summary`, `support`, `emphasis`)
+- reusable heading hierarchy via `SectionHeader` variants (`hero`, `focus`, `support`)
+- summary strips with elevated status cards via `SummaryStatCard` variants
+- consistent badge/state presentation across admin/operator/user pages
+
+Role behavior remains unchanged:
+- admin pages remain supervisory/management focused
+- operator pages remain workflow/action focused
+- user-facing task pages remain simpler and status-oriented
+
+## Phase-2 Cross-Route Consistency
+
+The shared shell language now extends beyond primary landing/workspace routes into high-traffic secondary operator routes:
+- `audits`
+- `automation`
+- `competitors`
+- `recommendations`
+
+These routes now reuse the same shared hero/header/panel/stat primitives and support-state treatment.
+
+### Standardized support states
+
+Loading, error, empty/no-site, and no-data states on the upgraded secondary routes now use consistent support-surface framing:
+- concise heading + subtitle structure via shared section headers
+- calmer panel treatment matching role-dashboard surfaces
+- compact action guidance copy where appropriate
+
+This remains a presentation-only pass; route behavior and backend semantics are unchanged.
+
+### Shared visual system uplift
+The operator shell now applies a stronger shared admin-console frame across workspace surfaces using the existing CSS/component system:
+- upgraded shell/page chrome layering via shared `NavShell` + main container framing
+- reusable `SectionCard` variants (`primary`, `summary`, `support`, `emphasis`) for consistent panel hierarchy
+- reusable `SectionHeader` variants (`focus`, `support`, `hero`) for clearer title/subtitle/meta rhythm
+- reusable `SummaryStatCard` variants (`elevated`, `focus`) for top-strip status readability
+- tighter badge/state consistency and refined panel depth treatment for clearer scanability
+
+These are presentation-only upgrades. No workflow logic, trust semantics, or backend behavior changed.
+
 ### Operator Focus priority order
 The top-of-workspace **Operator Focus** block now shows a single deterministic next step using existing workspace state:
 1. Google Business Profile not connected

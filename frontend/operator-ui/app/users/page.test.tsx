@@ -314,8 +314,8 @@ describe("admin page compatibility route", () => {
 
     await screen.findByText("inactive-1");
     expect(screen.getByText("Principals: 3")).toBeInTheDocument();
-    expect(screen.getByText("Sign-In Identities: 2")).toBeInTheDocument();
-    expect(screen.getByText("Principals Without Identity: 1")).toBeInTheDocument();
+    expect(screen.getByText("Sign-in identities: 2")).toBeInTheDocument();
+    expect(screen.getByText("Principals without identity: 1")).toBeInTheDocument();
     expect(screen.getByText(/admin@example\.com/)).toBeInTheDocument();
     expect(screen.getByText(/operator@example\.com/)).toBeInTheDocument();
   });

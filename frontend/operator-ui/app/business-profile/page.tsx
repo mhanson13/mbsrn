@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
+import { SectionHeader } from "../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -292,45 +294,79 @@ export default function BusinessProfilePage() {
 
   return (
     <PageContainer>
-      <SectionCard>
-        <h1>Google Business Profile</h1>
-        <p>
-          Connection status:{" "}
-          <span className={`badge ${connectionBadgeClass(connectionUiState)}`}>
-            {connectionUiLabel(connectionUiState)}
-          </span>
-        </p>
-        <p>
-          Business scope: <code>{context.businessId}</code>
-        </p>
-
-        <div className="row-wrap-tight">
-          <button className="primary" onClick={() => void handleConnect()} disabled={actionLoading}>
-            {connectionUiState === "connected" ? "Reconnect Google" : "Connect Google Business Profile"}
-          </button>
-          {connectionUiState === "connected" ? (
-            <button onClick={() => void handleDisconnect()} disabled={actionLoading}>
-              Disconnect
-            </button>
-          ) : null}
-          <button onClick={() => void loadData()} disabled={actionLoading}>
-            Refresh
-          </button>
-        </div>
-        {connectionUiState === "needs_reconnect" ? (
-          <p className="hint warning">
-            This connection needs reauthorization before Google Business Profile data can be used.
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="Google Business Profile"
+            subtitle="Connect, verify, and monitor Google Business Profile readiness for this business."
+            headingLevel={1}
+            variant="hero"
+            meta={(
+              <span className="hint muted">Business scope: <code>{context.businessId}</code></span>
+            )}
+          />
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Connection"
+              value={connectionUiLabel(connectionUiState)}
+              detail={connectionUiState === "connected" ? "Google account linked" : "Connection requires operator action"}
+              tone={connectionUiState === "connected" ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Usability"
+              value={connection?.token_status || "unknown"}
+              detail={connection?.required_scopes_satisfied ? "Required scopes granted" : "Scope review needed"}
+              tone={connection?.required_scopes_satisfied ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Locations"
+              value={locations.length}
+              detail={locations.length > 0 ? "Fetched from Google account" : "No locations currently loaded"}
+              tone={locations.length > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+          </div>
+          <p>
+            Connection status:{" "}
+            <span className={`badge ${connectionBadgeClass(connectionUiState)}`}>
+              {connectionUiLabel(connectionUiState)}
+            </span>
           </p>
-        ) : null}
-        {connectionUiState === "not_connected" ? (
-          <p className="hint muted">No Google Business Profile connection exists for this business.</p>
-        ) : null}
-        {callbackNotice ? <p className={callbackNotice.className}>{callbackNotice.message}</p> : null}
-        {error ? <p className="hint error">{error}</p> : null}
-      </SectionCard>
+          <div className="row-wrap-tight">
+            <button className="primary" onClick={() => void handleConnect()} disabled={actionLoading}>
+              {connectionUiState === "connected" ? "Reconnect Google" : "Connect Google Business Profile"}
+            </button>
+            {connectionUiState === "connected" ? (
+              <button onClick={() => void handleDisconnect()} disabled={actionLoading}>
+                Disconnect
+              </button>
+            ) : null}
+            <button onClick={() => void loadData()} disabled={actionLoading}>
+              Refresh
+            </button>
+          </div>
+          {connectionUiState === "needs_reconnect" ? (
+            <p className="hint warning">
+              This connection needs reauthorization before Google Business Profile data can be used.
+            </p>
+          ) : null}
+          {connectionUiState === "not_connected" ? (
+            <p className="hint muted">No Google Business Profile connection exists for this business.</p>
+          ) : null}
+          {callbackNotice ? <p className={callbackNotice.className}>{callbackNotice.message}</p> : null}
+          {error ? <p className="hint error">{error}</p> : null}
+        </SectionCard>
+      </div>
 
-      <SectionCard>
-        <h2>Locations</h2>
+      <SectionCard variant="summary" className="role-surface-support">
+        <SectionHeader
+          title="Locations"
+          subtitle="Review discovered GBP locations and jump into verification workflows."
+          headingLevel={2}
+          variant="support"
+        />
         {connectionUiState !== "connected" ? (
           <p className="hint muted">Connect Google Business Profile to load locations.</p>
         ) : locations.length === 0 ? (
@@ -378,8 +414,13 @@ export default function BusinessProfilePage() {
       </SectionCard>
 
       {selectedLocation ? (
-        <SectionCard>
-          <h2>Verification Workflow: {selectedLocation.title}</h2>
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title={`Verification Workflow: ${selectedLocation.title}`}
+            subtitle="Use the guided flow below to start, complete, or retry Google verification."
+            headingLevel={2}
+            variant="support"
+          />
           {verificationLoading ? <p className="hint muted">Loading verification workflow...</p> : null}
           {verificationStatus ? (
             <>

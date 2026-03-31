@@ -5430,50 +5430,52 @@ export default function SiteWorkspacePage() {
 
   return (
     <PageContainer>
-      <SectionCard className="workspace-shell-overview">
-        <div className="workspace-section-header workspace-section-header-compact">
-          <div className="workspace-section-header-main">
-            <p>
-              <Link href="/sites">Back to Sites</Link>
-            </p>
-            <h1>Site SEO Workspace</h1>
-            <p className="hint muted workspace-section-subtitle">
-              Site: <strong>{selectedSite.display_name}</strong>
-            </p>
-            <div className="workspace-section-meta">
-              <span className="hint muted">Business ID: <code>{selectedSite.business_id}</code></span>
-              <span className="hint muted">Site ID: <code>{selectedSite.id}</code></span>
-              <span className="hint muted">Domain: {selectedSite.normalized_domain}</span>
-              <span className="hint muted">Base URL: {selectedSite.base_url}</span>
-              <span className="hint muted">Active: {selectedSite.is_active ? "yes" : "no"}</span>
-              <span className="hint muted">Primary: {selectedSite.is_primary ? "yes" : "no"}</span>
-              <span className="hint muted">
-                Last audit: {selectedSite.last_audit_status || "-"} ({formatDateTime(selectedSite.last_audit_completed_at)})
-              </span>
-              <span className="hint muted">
-                Operator context:{" "}
-                {context.selectedSiteId === selectedSite.id
-                  ? "currently selected"
-                  : "page-scoped to this site"}
-              </span>
+      <div className="workspace-dashboard-landing">
+        <SectionCard className="workspace-shell-overview workspace-shell-overview-hero" variant="support">
+          <div className="workspace-section-header workspace-section-header-compact">
+            <div className="workspace-section-header-main">
+              <p>
+                <Link href="/sites">Back to Sites</Link>
+              </p>
+              <h1>Site SEO Workspace</h1>
+              <p className="hint muted workspace-section-subtitle">
+                Site: <strong>{selectedSite.display_name}</strong>
+              </p>
+              <div className="workspace-section-meta">
+                <span className="hint muted">Business ID: <code>{selectedSite.business_id}</code></span>
+                <span className="hint muted">Site ID: <code>{selectedSite.id}</code></span>
+                <span className="hint muted">Domain: {selectedSite.normalized_domain}</span>
+                <span className="hint muted">Base URL: {selectedSite.base_url}</span>
+                <span className="hint muted">Active: {selectedSite.is_active ? "yes" : "no"}</span>
+                <span className="hint muted">Primary: {selectedSite.is_primary ? "yes" : "no"}</span>
+                <span className="hint muted">
+                  Last audit: {selectedSite.last_audit_status || "-"} ({formatDateTime(selectedSite.last_audit_completed_at)})
+                </span>
+                <span className="hint muted">
+                  Operator context:{" "}
+                  {context.selectedSiteId === selectedSite.id
+                    ? "currently selected"
+                    : "page-scoped to this site"}
+                </span>
+              </div>
+            </div>
+            <div className="workspace-section-actions">
+              <div className="toolbar-row toolbar-row-links">
+                <Link href="/audits">Audit Runs</Link>
+                <Link href={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}>Competitor Workspace</Link>
+                <Link href="/recommendations">Recommendation Queue</Link>
+              </div>
             </div>
           </div>
-          <div className="workspace-section-actions">
-            <div className="toolbar-row toolbar-row-links">
-              <Link href="/audits">Audit Runs</Link>
-              <Link href={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}>Competitor Workspace</Link>
-              <Link href="/recommendations">Recommendation Queue</Link>
-            </div>
-          </div>
-        </div>
-        {loadingWorkspace ? <p className="hint muted">Loading workspace data...</p> : null}
-      </SectionCard>
+          {loadingWorkspace ? <p className="hint muted">Loading workspace data...</p> : null}
+        </SectionCard>
 
-      <SectionCard className="operator-shell-summary-panel">
+      <SectionCard className="operator-shell-summary-panel" variant="summary">
         <SectionHeader
           title="Workspace Snapshot"
           subtitle="At-a-glance trust, freshness, and action visibility for this site."
           headingLevel={2}
+          variant="support"
           data-testid="workspace-snapshot-header"
         />
         <div className="workspace-summary-strip" data-testid="workspace-summary-strip">
@@ -5486,6 +5488,7 @@ export default function SiteWorkspacePage() {
                 : "No competitor profile run yet"
             }
             tone={competitorSummaryTone}
+            variant="elevated"
             data-testid="workspace-summary-competitors"
           />
           <SummaryStatCard
@@ -5493,6 +5496,7 @@ export default function SiteWorkspacePage() {
             value={recommendationSectionFreshness?.stateLabel || "No queue state yet"}
             detail={`${recommendationQueueSummary.open} open of ${recommendationQueueSummary.total} total`}
             tone={recommendationSummaryTone}
+            variant="elevated"
             data-testid="workspace-summary-recommendations"
           />
           <SummaryStatCard
@@ -5504,6 +5508,7 @@ export default function SiteWorkspacePage() {
                 : latestApplyExpectation || "No recent apply outcome"
             }
             tone={actionableRecommendationCount > 0 ? "success" : "neutral"}
+            variant="elevated"
             data-testid="workspace-summary-actionable"
           />
           <SummaryStatCard
@@ -5515,6 +5520,7 @@ export default function SiteWorkspacePage() {
                 : "Nearby seed discovery telemetry not available"
             }
             tone={trustSummaryTone}
+            variant="elevated"
             data-testid="workspace-summary-readiness"
           />
           <SummaryStatCard
@@ -5527,16 +5533,22 @@ export default function SiteWorkspacePage() {
               </>
             )}
             tone={googleBusinessProfileWorkspaceStatus.tone}
+            variant="elevated"
             data-testid="workspace-summary-gbp"
           />
         </div>
       </SectionCard>
 
-      <SectionCard className="operator-shell-insights operator-shell-primary-zone" data-testid="operator-focus-zone">
+        <SectionCard
+          className="operator-shell-insights operator-shell-primary-zone"
+          variant="primary"
+          data-testid="operator-focus-zone"
+        >
         <SectionHeader
           title="Operator Focus"
           subtitle="What changed, what needs attention, and what to do next."
           headingLevel={2}
+          variant="focus"
           data-testid="top-insights-header"
         />
         <div className="operator-focus-grid">
@@ -5711,7 +5723,8 @@ export default function SiteWorkspacePage() {
             ) : null}
           </div>
         </div>
-      </SectionCard>
+        </SectionCard>
+      </div>
 
       {showZipCaptureModal ? (
         <div className="workspace-modal-backdrop" data-testid="zip-capture-modal">
@@ -7140,7 +7153,7 @@ export default function SiteWorkspacePage() {
             <h4>Recommendations</h4>
             {recommendationApplyOutcome && recommendationApplyOutcomePresentation ? (
               <div
-                className="panel panel-compact stack-tight operator-summary-callout"
+                className="panel panel-compact stack-tight operator-summary-callout recommendation-outcome-surface"
                 data-testid="recommendation-apply-outcome-summary"
               >
                 <div className="workspace-section-header workspace-section-header-compact">
@@ -7189,7 +7202,7 @@ export default function SiteWorkspacePage() {
             ) : null}
             {latestCompletedRecommendations.length > 0 ? (
               <div
-                className="panel panel-compact stack-tight operator-summary-callout"
+                className="panel panel-compact stack-tight operator-summary-callout recommendation-emphasis-surface"
                 data-testid="recommendation-ready-now-emphasis"
               >
                 <div className="workspace-section-header workspace-section-header-compact">

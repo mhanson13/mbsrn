@@ -7,6 +7,7 @@ type SectionHeaderProps = {
   actions?: ReactNode;
   headingLevel?: 1 | 2 | 3 | 4;
   compact?: boolean;
+  variant?: "default" | "hero" | "support" | "focus";
   "data-testid"?: string;
 };
 
@@ -17,16 +18,25 @@ export function SectionHeader({
   actions,
   headingLevel = 2,
   compact = false,
+  variant = "default",
   "data-testid": dataTestId,
 }: SectionHeaderProps) {
   const HeadingTag = `h${headingLevel}` as "h1" | "h2" | "h3" | "h4";
-  const headerClassName = compact
-    ? "workspace-section-header workspace-section-header-compact"
-    : "workspace-section-header";
+  const headerClassName = [
+    "workspace-section-header",
+    compact ? "workspace-section-header-compact" : "",
+    variant === "default" ? "" : `workspace-section-header-${variant}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div className={headerClassName} data-testid={dataTestId}>
-      <div className="workspace-section-header-main">
+      <div
+        className={`workspace-section-header-main${
+          variant === "default" ? "" : ` workspace-section-header-main-${variant}`
+        }`}
+      >
         <HeadingTag className="workspace-section-title">{title}</HeadingTag>
         {subtitle ? <p className="hint muted workspace-section-subtitle">{subtitle}</p> : null}
         {meta ? <div className="workspace-section-meta">{meta}</div> : null}

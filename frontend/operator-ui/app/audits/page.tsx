@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
+import { SectionHeader } from "../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import { ApiRequestError, fetchAuditRuns } from "../../lib/api/client";
 import type { SEOAuditRun } from "../../lib/api/types";
@@ -59,6 +61,14 @@ export default function AuditsPage() {
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [runsError, setRunsError] = useState<string | null>(null);
 
+  const selectedSite = context.sites.find((site) => site.id === context.selectedSiteId) || null;
+  const completedRuns = runs.filter((run) => run.status.toLowerCase() === "completed").length;
+  const inProgressRuns = runs.filter((run) => {
+    const normalized = run.status.toLowerCase();
+    return normalized === "queued" || normalized === "running";
+  }).length;
+  const failedRuns = runs.filter((run) => run.status.toLowerCase() === "failed").length;
+
   useEffect(() => {
     if (context.loading || context.error || !context.selectedSiteId) {
       setRuns([]);
@@ -96,23 +106,41 @@ export default function AuditsPage() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div">Loading audits...</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Audit Runs"
+            subtitle="Loading audit history and run status for the selected site."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Audit Runs"
+            subtitle="Unable to load tenant context. Refresh and sign in again."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (context.sites.length === 0) {
     return (
       <PageContainer>
-        <SectionCard>
-          <h1>Audit Runs</h1>
-          <p className="hint muted">No SEO sites are configured yet. Add a site first to view audit runs.</p>
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Audit Runs"
+            subtitle="No SEO sites are configured yet. Add a site first to view audit runs."
+            headingLevel={1}
+            variant="support"
+          />
         </SectionCard>
       </PageContainer>
     );
@@ -120,8 +148,59 @@ export default function AuditsPage() {
 
   return (
     <PageContainer>
-      <SectionCard>
-        <h1>Audit Runs</h1>
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="Audit Runs"
+            subtitle="Track crawl coverage, run outcomes, and retry needs across your selected site."
+            headingLevel={1}
+            variant="hero"
+            meta={(
+              <span className="hint muted">
+                Selected site: <code>{selectedSite?.display_name || context.selectedSiteId || "none"}</code>
+              </span>
+            )}
+          />
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Total runs"
+              value={runs.length}
+              detail={runs.length > 0 ? "Run history for selected site" : "No runs recorded yet"}
+              tone={runs.length > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Completed"
+              value={completedRuns}
+              detail="Successful crawl outcomes"
+              tone={completedRuns > 0 ? "success" : "neutral"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="In progress"
+              value={inProgressRuns}
+              detail="Queued or running now"
+              tone={inProgressRuns > 0 ? "warning" : "neutral"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Failed"
+              value={failedRuns}
+              detail="Runs needing investigation"
+              tone={failedRuns > 0 ? "danger" : "success"}
+              variant="elevated"
+            />
+          </div>
+        </SectionCard>
+      </div>
+
+      <SectionCard variant="summary" className="role-surface-support">
+        <SectionHeader
+          title="Audit run list"
+          subtitle="Select a site and open individual runs for details."
+          headingLevel={2}
+          variant="support"
+        />
         <label htmlFor="site-picker-audit">Site</label>
         <select
           id="site-picker-audit"

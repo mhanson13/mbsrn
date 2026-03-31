@@ -6,6 +6,8 @@ import { useAuth } from "../../components/AuthProvider";
 import { FormContainer } from "../../components/layout/FormContainer";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
+import { SectionHeader } from "../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   activatePrincipalIdentity,
@@ -1353,9 +1355,13 @@ export default function AdminPage() {
   if (!isAdmin) {
     return (
       <PageContainer>
-        <SectionCard>
-          <h1>Admin</h1>
-          <p className="hint muted">Business administration is available to admin principals only.</p>
+        <SectionCard variant="support">
+          <SectionHeader
+            title="Admin"
+            subtitle="Business administration is available to admin principals only."
+            headingLevel={1}
+            variant="support"
+          />
         </SectionCard>
       </PageContainer>
     );
@@ -1363,19 +1369,72 @@ export default function AdminPage() {
 
   return (
     <PageContainer>
-      <SectionCard>
-        <h1>Admin</h1>
-        <p>
-          Business: <code>{context.businessId}</code>
-        </p>
-        <div className="link-row">
-          <span className="hint muted">Principals: {users.length}</span>
-          <span className="hint muted">Active Principals: {activeUsersCount}</span>
-          <span className="hint muted">Sign-In Identities: {identities.length}</span>
-          <span className="hint muted">Principals Without Identity: {principalsWithoutIdentityCount}</span>
-        </div>
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="Admin Console"
+            subtitle="Manage principals, settings, integrations, and platform diagnostics for this business."
+            headingLevel={1}
+            variant="hero"
+            meta={(
+              <>
+                <span className="hint muted">Business: <code>{context.businessId}</code></span>
+                {principal ? <span className="hint muted">Role: {principal.role}</span> : null}
+              </>
+            )}
+          />
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Principals"
+              value={users.length}
+              detail={`${activeUsersCount} active`}
+              tone={activeUsersCount > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Sign-in identities"
+              value={identities.length}
+              detail={`${principalsWithoutIdentityCount} principals missing identity links`}
+              tone={principalsWithoutIdentityCount > 0 ? "warning" : "success"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Managed sites"
+              value={context.sites.length}
+              detail={context.sites.length > 0 ? "Admin edit and delete controls available" : "No sites configured"}
+              tone={context.sites.length > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Settings health"
+              value={
+                settingsHealth.crawl.status === "invalid" ||
+                settingsHealth.competitorQuality.status === "invalid" ||
+                settingsHealth.competitorTimeouts.status === "invalid" ||
+                settingsHealth.notifications.status === "invalid"
+                  ? "Review needed"
+                  : "Stable"
+              }
+              detail="Crawl, competitor quality, timeouts, and notification channels"
+              tone={
+                settingsHealth.crawl.status === "invalid" ||
+                settingsHealth.competitorQuality.status === "invalid" ||
+                settingsHealth.competitorTimeouts.status === "invalid" ||
+                settingsHealth.notifications.status === "invalid"
+                  ? "warning"
+                  : "success"
+              }
+              variant="elevated"
+            />
+          </div>
+          <div className="link-row">
+            <span className="hint muted">Principals: {users.length}</span>
+            <span className="hint muted">Active principals: {activeUsersCount}</span>
+            <span className="hint muted">Sign-in identities: {identities.length}</span>
+            <span className="hint muted">Principals without identity: {principalsWithoutIdentityCount}</span>
+          </div>
 
-        <FormContainer onSubmit={(event) => void handleCreateUser(event)}>
+          <FormContainer onSubmit={(event) => void handleCreateUser(event)}>
           <h2>Create User</h2>
           <label htmlFor="principal-id">User ID</label>
           <input
@@ -1799,12 +1858,15 @@ export default function AdminPage() {
           ) : null}
         </div>
       </SectionCard>
+      </div>
 
-      <SectionCard>
-        <h2>Site Management</h2>
-        <p className="hint muted">
-          Admin-only controls to rename sites, update site URLs, and permanently delete a site with all site-owned SEO data.
-        </p>
+      <SectionCard variant="summary" className="role-surface-support">
+        <SectionHeader
+          title="Site Management"
+          subtitle="Rename sites, update base URLs, and permanently delete site-owned SEO data."
+          headingLevel={2}
+          variant="support"
+        />
         <div className="message-stack">
           {siteManagementMessage ? <p className="hint">{siteManagementMessage}</p> : null}
           {siteManagementError ? <p className="hint error">{siteManagementError}</p> : null}
@@ -1878,11 +1940,13 @@ export default function AdminPage() {
         </div>
       </SectionCard>
 
-      <SectionCard>
-        <h2>GCP Logs Query</h2>
-        <p className="hint muted">
-          Admin-only Cloud Logging proxy query using runtime attached service-account credentials (ADC).
-        </p>
+      <SectionCard variant="support" className="role-surface-support">
+        <SectionHeader
+          title="GCP Logs Query"
+          subtitle="Admin-only Cloud Logging proxy query using runtime attached service-account credentials (ADC)."
+          headingLevel={2}
+          variant="support"
+        />
 
         <FormContainer onSubmit={(event) => void handleSubmitGcpLogsQuery(event)} noValidate>
           <label htmlFor="gcp-logs-filter">Logs Explorer Filter</label>
@@ -2025,8 +2089,13 @@ export default function AdminPage() {
         </div>
       </SectionCard>
 
-      <SectionCard>
-        <h2>Principals and Identities</h2>
+      <SectionCard variant="support" className="role-surface-support">
+        <SectionHeader
+          title="Principals and Identities"
+          subtitle="Manage business principals and linked sign-in identities."
+          headingLevel={2}
+          variant="support"
+        />
         <div className="table-container">
           <table className="table">
             <thead>

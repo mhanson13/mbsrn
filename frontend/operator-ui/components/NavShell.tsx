@@ -74,7 +74,9 @@ export function NavShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
-      <main>{children}</main>
+      <main className="operator-shell-main">
+        <div className="operator-shell-main-inner">{children}</div>
+      </main>
     </>
   );
 }

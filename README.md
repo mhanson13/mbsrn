@@ -13,6 +13,8 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 - Deterministic recommendation runs with AI narrative overlays and bounded tuning suggestions
 - Manual, confirmed tuning apply flow (no automatic settings mutation)
 - Operator Shell v4 workspace presentation (workflow emphasis for attention/recency/next-action cues on top of v3 visual-token and density standardization)
+- Shared role-aware dashboard shell uplift (admin/operator/user pages now share reusable panel/header/stat variants with stronger admin-console page chrome and hierarchy, presentation-only)
+- Phase-2 cross-route UI consistency uplift for high-traffic secondary operator routes (`audits`, `automation`, `competitors`, `recommendations`) including standardized loading/error/empty/no-data support states
 - Action-driven site workspace Operator Focus (deterministic top-priority next step with direct operator action links)
 - Recommendation Presentation v1 (visual action-state buckets: ready/applied/pending/informational using existing recommendation semantics)
 - Recommendation Detail Clarity v2 (per-item observed pattern/gap/action/supporting-context blocks for faster operator understanding without changing recommendation logic)

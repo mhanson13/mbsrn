@@ -194,7 +194,8 @@ describe("competitors page site-scoped loading", () => {
 
     render(<CompetitorsPage />);
 
-    await screen.findByText("Front Range");
+    const frontRangeRows = await screen.findAllByText("Front Range");
+    expect(frontRangeRows.length).toBeGreaterThan(0);
     expect(mockFetchCompetitorSets).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     expect(screen.getByText("Competitor Sets: 1")).toBeInTheDocument();
     expect(screen.getByText("Active Sets: 1/1")).toBeInTheDocument();

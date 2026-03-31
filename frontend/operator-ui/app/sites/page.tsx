@@ -7,6 +7,8 @@ import { useAuth } from "../../components/AuthProvider";
 import { FormContainer } from "../../components/layout/FormContainer";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
+import { SectionHeader } from "../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   activateSite,
@@ -153,6 +155,11 @@ export default function SitesPage() {
   const [siteActionSuccess, setSiteActionSuccess] = useState<string | null>(null);
 
   const isAdmin = principal?.role === "admin";
+  const activeSiteCount = context.sites.filter((site) => site.is_active).length;
+  const completedAuditSiteCount = context.sites.filter(
+    (site) => (site.last_audit_status || "").trim().toLowerCase() === "completed",
+  ).length;
+  const needsAuditSiteCount = context.sites.filter((site) => !site.last_audit_run_id).length;
 
   const statuses = useMemo(() => {
     return context.sites.reduce<Record<string, DerivedSiteStatus>>((acc, site) => {
@@ -378,48 +385,94 @@ export default function SitesPage() {
 
   return (
     <PageContainer>
-      <SectionCard>
-        <h1>SEO Sites</h1>
-        <p>
-          Business: <code>{context.businessId}</code>
-        </p>
-
-        <FormContainer onSubmit={(event) => void handleCreateSite(event)}>
-          <h2>Add Site</h2>
-          <label htmlFor="base-url">Base URL</label>
-          <input
-            id="base-url"
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="https://example.com"
-            required
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="SEO Sites"
+            subtitle="Manage tracked properties, trigger audits, and monitor site intelligence."
+            headingLevel={1}
+            variant="hero"
+            meta={(
+              <>
+                <span className="hint muted">Business: <code>{context.businessId}</code></span>
+                {principal ? <span className="hint muted">Role: {principal.role}</span> : null}
+              </>
+            )}
           />
-          <label htmlFor="display-name">Display Name (optional)</label>
-          <input
-            id="display-name"
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            placeholder="Example Site"
-          />
-          <div className="form-actions">
-            <button className="button button-primary" type="submit" disabled={submitLoading}>
-              {submitLoading ? "Adding site..." : "Add Site"}
-            </button>
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Tracked sites"
+              value={context.sites.length}
+              detail={context.sites.length === 0 ? "No sites configured yet" : "Currently configured"}
+              tone={context.sites.length > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Active sites"
+              value={activeSiteCount}
+              detail={`${Math.max(0, context.sites.length - activeSiteCount)} inactive`}
+              tone={activeSiteCount > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Audit-ready insight"
+              value={completedAuditSiteCount > 0 ? "Available" : "Missing"}
+              detail={`${completedAuditSiteCount} site${completedAuditSiteCount === 1 ? "" : "s"} with completed audits`}
+              tone={completedAuditSiteCount > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Needs first audit"
+              value={needsAuditSiteCount}
+              detail={needsAuditSiteCount > 0 ? "Run first audit from this page" : "All sites have at least one run"}
+              tone={needsAuditSiteCount > 0 ? "warning" : "neutral"}
+              variant="elevated"
+            />
           </div>
-        </FormContainer>
 
-        <div className="message-stack">
-          {submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
-          {submitError ? <p className="hint error">{submitError}</p> : null}
-          {triggerMessage ? <p className="hint">{triggerMessage}</p> : null}
-          {triggerError ? <p className="hint error">{triggerError}</p> : null}
-          {siteActionSuccess ? <p className="hint">{siteActionSuccess}</p> : null}
-          {siteActionError ? <p className="hint error">{siteActionError}</p> : null}
-        </div>
-      </SectionCard>
+          <FormContainer onSubmit={(event) => void handleCreateSite(event)}>
+            <h2>Add Site</h2>
+            <label htmlFor="base-url">Base URL</label>
+            <input
+              id="base-url"
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.target.value)}
+              placeholder="https://example.com"
+              required
+            />
+            <label htmlFor="display-name">Display Name (optional)</label>
+            <input
+              id="display-name"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder="Example Site"
+            />
+            <div className="form-actions">
+              <button className="button button-primary" type="submit" disabled={submitLoading}>
+                {submitLoading ? "Adding site..." : "Add Site"}
+              </button>
+            </div>
+          </FormContainer>
 
-      <SectionCard>
-        <h2>Configured Sites</h2>
+          <div className="message-stack">
+            {submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
+            {submitError ? <p className="hint error">{submitError}</p> : null}
+            {triggerMessage ? <p className="hint">{triggerMessage}</p> : null}
+            {triggerError ? <p className="hint error">{triggerError}</p> : null}
+            {siteActionSuccess ? <p className="hint">{siteActionSuccess}</p> : null}
+            {siteActionError ? <p className="hint error">{siteActionError}</p> : null}
+          </div>
+        </SectionCard>
+      </div>
+
+      <SectionCard variant="summary" className="role-surface-support">
+        <SectionHeader
+          title="Configured Sites"
+          subtitle="Current site inventory with audit status and direct workspace actions."
+          headingLevel={2}
+          variant="support"
+          meta={selectedSite ? <span className="hint muted">Selected site: <code>{selectedSite.id}</code></span> : null}
+        />
         <div className="table-container">
           <table className="table">
             <thead>
@@ -505,8 +558,13 @@ export default function SitesPage() {
         </div>
       </SectionCard>
 
-      <SectionCard>
-        <h2>Site Intelligence</h2>
+      <SectionCard variant="support" className="role-surface-support">
+        <SectionHeader
+          title="Site Intelligence"
+          subtitle="Latest audit findings, recommendations, and trend deltas for the selected site."
+          headingLevel={2}
+          variant="support"
+        />
 
         <div className="form-container">
           <label htmlFor="site-picker-intelligence">Selected Site</label>

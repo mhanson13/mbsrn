@@ -6,6 +6,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
+import { SectionHeader } from "../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -452,6 +454,10 @@ function RecommendationsPageContent() {
     const matchedPreset = QUEUE_PRESETS.find((preset) => matchesPresetState(filters, sort, preset));
     return matchedPreset ? matchedPreset.key : "__custom__";
   }, [filters, sort]);
+  const selectedSite = useMemo(
+    () => context.sites.find((site) => site.id === context.selectedSiteId) || null,
+    [context.selectedSiteId, context.sites],
+  );
 
   const resolvedTotalRecommendations = totalRecommendations ?? 0;
   const totalPages = useMemo<number>(() => {
@@ -805,23 +811,41 @@ function RecommendationsPageContent() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div">Loading recommendations...</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Workflow"
+            subtitle="Loading recommendation queue state for your selected site."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Workflow"
+            subtitle="Unable to load tenant context. Refresh and sign in again."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (context.sites.length === 0) {
     return (
       <PageContainer>
-        <SectionCard>
-          <h1>Recommendation Workflow</h1>
-          <p className="hint muted">No SEO sites are configured yet. Add a site first to view recommendations.</p>
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Workflow"
+            subtitle="No SEO sites are configured yet. Add a site first to view recommendations."
+            headingLevel={1}
+            variant="support"
+          />
         </SectionCard>
       </PageContainer>
     );
@@ -829,8 +853,59 @@ function RecommendationsPageContent() {
 
   return (
     <PageContainer>
-      <SectionCard>
-        <h1>Recommendation Workflow</h1>
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="Recommendation Workflow"
+            subtitle="Review priorities, update recommendation status, and keep action flow moving."
+            headingLevel={1}
+            variant="hero"
+            meta={(
+              <span className="hint muted">
+                Selected site: <code>{selectedSite?.display_name || context.selectedSiteId || "none"}</code>
+              </span>
+            )}
+          />
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Filtered recommendations"
+              value={queueSummary.total}
+              detail={hasActiveFilters ? "Current filter set" : "All statuses"}
+              tone={queueSummary.total > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Ready now"
+              value={queueSummary.open}
+              detail="Open recommendations awaiting action"
+              tone={queueSummary.open > 0 ? "success" : "neutral"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Applied / completed"
+              value={queueSummary.accepted}
+              detail="Accepted recommendations in current view"
+              tone={queueSummary.accepted > 0 ? "success" : "neutral"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="High priority"
+              value={queueSummary.highPriority}
+              detail="High or critical priorities in current view"
+              tone={queueSummary.highPriority > 0 ? "warning" : "neutral"}
+              variant="elevated"
+            />
+          </div>
+        </SectionCard>
+      </div>
+
+      <SectionCard variant="summary" className="role-surface-support">
+        <SectionHeader
+          title="Recommendation queue"
+          subtitle="Filter, sort, batch update, and open recommendation details."
+          headingLevel={2}
+          variant="support"
+        />
         <label htmlFor="site-picker-recommendations">Site</label>
         <select
           id="site-picker-recommendations"
@@ -1133,7 +1208,14 @@ export default function RecommendationsPage() {
     <Suspense
       fallback={
         <PageContainer>
-          <SectionCard as="div">Loading recommendations...</SectionCard>
+          <SectionCard as="div" variant="support" className="role-surface-support">
+            <SectionHeader
+              title="Recommendation Workflow"
+              subtitle="Loading recommendation queue state for your selected site."
+              headingLevel={1}
+              variant="support"
+            />
+          </SectionCard>
         </PageContainer>
       }
     >

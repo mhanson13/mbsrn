@@ -268,6 +268,7 @@ Recommendation visibility is now more action-oriented in the workspace:
 - `Ready now` recommendations are visually emphasized first.
 - Operator Focus can elevate a ready recommendation to the top page action when GBP is healthy.
 - Applied recommendations remain visible with explicit pending-visibility language when refresh is still required.
+- Recommendation emphasis and apply-outcome surfaces now use the shared operator shell panel variants for visual consistency (presentation-only).
 
 ## Workspace Analysis Freshness
 
