@@ -6,6 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../components/layout/PageContainer";
 import { SectionCard } from "../../../components/layout/SectionCard";
+import { SectionHeader } from "../../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
+import { WorkflowContextPanel } from "../../../components/layout/WorkflowContextPanel";
 import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -231,6 +234,50 @@ export default function AuditRunDetailPage() {
   const runCompleted = runStatus === "completed";
   const runFailed = runStatus === "failed";
 
+  const workflowContextLinks = useMemo(() => {
+    const links: Array<{ href: string; label: string }> = [
+      { href: "/audits", label: "Audit Runs" },
+      { href: "/recommendations", label: "Recommendation Queue" },
+      { href: run ? `/competitors?site_id=${encodeURIComponent(run.site_id)}` : "/competitors", label: "Competitor Sets" },
+    ];
+    if (relatedRecommendationRuns.length > 0) {
+      const topRun = relatedRecommendationRuns[0];
+      links.push({ href: buildRecommendationRunHref(topRun.id, topRun.site_id), label: "Top linked recommendation run" });
+    }
+    if (relatedComparisons.length > 0) {
+      const topComparison = relatedComparisons[0];
+      links.push({
+        href: buildComparisonRunHref(topComparison.id, topComparison.site_id, topComparison.competitor_set_id),
+        label: "Top linked comparison run",
+      });
+    }
+    return links;
+  }, [relatedComparisons, relatedRecommendationRuns, run]);
+
+  const workflowNextStep = useMemo(() => {
+    if (relatedRecommendationRuns.length > 0) {
+      const topRun = relatedRecommendationRuns[0];
+      return {
+        href: buildRecommendationRunHref(topRun.id, topRun.site_id),
+        label: "Review linked recommendation run",
+        note: "Validate recommended actions produced from this audit context.",
+      };
+    }
+    if (relatedComparisons.length > 0) {
+      const topComparison = relatedComparisons[0];
+      return {
+        href: buildComparisonRunHref(topComparison.id, topComparison.site_id, topComparison.competitor_set_id),
+        label: "Review linked competitor comparison",
+        note: "Inspect comparative findings that may influence recommendation priorities.",
+      };
+    }
+    return {
+      href: "/recommendations",
+      label: "Open recommendation queue",
+      note: "Generated recommendations appear after linked runs are completed.",
+    };
+  }, [relatedComparisons, relatedRecommendationRuns]);
+
   useEffect(() => {
     if (context.loading || context.error || !runId) {
       setRun(null);
@@ -392,26 +439,42 @@ export default function AuditRunDetailPage() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div">Loading audit run detail...</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Audit Run Detail"
+            subtitle="Loading audit run detail for the selected business context."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Audit Run Detail"
+            subtitle="Unable to load tenant context. Refresh and sign in again."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (!runId) {
     return (
       <PageContainer>
-        <SectionCard>
-          <h1>Audit Run Detail</h1>
-          <p className="hint warning">Audit run identifier is missing.</p>
-          <p>
-            <Link href="/audits">Back to Audit Runs</Link>
-          </p>
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Audit Run Detail"
+            subtitle="Audit run identifier is missing."
+            headingLevel={1}
+            variant="support"
+          />
+          <p><Link href="/audits">Back to Audit Runs</Link></p>
         </SectionCard>
       </PageContainer>
     );
@@ -419,28 +482,69 @@ export default function AuditRunDetailPage() {
 
   return (
     <PageContainer>
-      <div className="panel stack">
-        <p>
-          <Link href="/audits">Back to Audit Runs</Link>
-        </p>
-        <h1>Audit Run Detail</h1>
-        <p>
-          Audit Run: <code>{runId}</code>
-        </p>
-
-        {loading ? <p className="hint muted">Loading audit run detail...</p> : null}
-        {!loading && notFound ? (
-          <p className="hint warning">Audit run not found or not accessible in your tenant scope.</p>
-        ) : null}
-        {!loading && error ? <p className="hint error">{error}</p> : null}
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="Audit Run Detail"
+            subtitle="Inspect crawl outcomes, findings, and downstream recommendation lineage for this audit run."
+            headingLevel={1}
+            variant="hero"
+            meta={<span className="hint muted">Audit run: <code>{runId}</code></span>}
+            actions={<Link href="/audits">Back to Audit Runs</Link>}
+          />
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Run status"
+              value={run?.status || "Loading"}
+              detail={runCompleted ? "Completed and stable" : runFailed ? "Run failed" : "Pending completion"}
+              tone={runCompleted ? "success" : runFailed ? "danger" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Findings loaded"
+              value={findings.length}
+              detail={summary ? `Summary total: ${summary.total_findings}` : "Summary pending"}
+              tone={findings.length > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Related recommendation runs"
+              value={relatedRecommendationRuns.length}
+              detail="Lineage to recommendation outputs"
+              tone={relatedRecommendationRuns.length > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Related competitor analysis"
+              value={relatedComparisons.length}
+              detail="Comparison lineage linked to this run"
+              tone={relatedComparisons.length > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+          </div>
+          {loading ? <p className="hint muted">Loading audit run detail...</p> : null}
+          {!loading && notFound ? (
+            <p className="hint warning">Audit run not found or not accessible in your tenant scope.</p>
+          ) : null}
+          {!loading && error ? <p className="hint error">{error}</p> : null}
+        </SectionCard>
       </div>
+
+      {!loading && !notFound && !error && run ? (
+        <WorkflowContextPanel
+          data-testid="audit-run-workflow-context"
+          lineage="Audits → Audit run detail → Linked recommendation/comparison flows"
+          links={workflowContextLinks}
+          nextStep={workflowNextStep}
+        />
+      ) : null}
 
       {!loading && !notFound && !error && run ? (
         <>
           {relatedError ? (
-            <div className="panel stack">
+            <SectionCard variant="support" className="role-surface-support">
               <p className="hint warning">{relatedError}</p>
-            </div>
+            </SectionCard>
           ) : null}
 
           <div className="panel stack">
@@ -477,13 +581,8 @@ export default function AuditRunDetailPage() {
               </p>
             )}
             <p>Error Summary: {run.error_summary || "-"}</p>
-            <div className="row-wrap">
-              <Link href="/recommendations">Recommendation Queue</Link>
-              <Link href="/audits">Audit Runs</Link>
-              <Link href={`/competitors?site_id=${encodeURIComponent(run.site_id)}`}>Competitor Sets</Link>
-            </div>
             <p className="hint muted">
-              Recommendation and competitor list pages remain scoped by the currently selected site in operator context.
+              Use workflow context links above to move between this audit, linked recommendation runs, and competitor lineage.
             </p>
           </div>
 

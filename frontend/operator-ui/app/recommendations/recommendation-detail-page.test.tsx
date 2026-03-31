@@ -129,6 +129,8 @@ describe("recommendation detail optimistic single-item updates", () => {
     render(<RecommendationDetailPage />);
 
     await screen.findByText("Status: open");
+    expect(screen.getByTestId("recommendation-detail-workflow-context")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Parent Recommendation Run" })).toBeInTheDocument();
     await user.type(screen.getByLabelText("Operator Note"), "Ship this next sprint");
     await user.click(screen.getByRole("button", { name: "Accept" }));
 

@@ -13,10 +13,32 @@ export default function DashboardPage() {
   const { principal } = useAuth();
 
   if (context.loading) {
-    return <section className="panel">Loading dashboard...</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Dashboard"
+            subtitle="Loading dashboard overview and role-scoped status."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
+      </PageContainer>
+    );
   }
   if (context.error) {
-    return <section className="panel">Error: {context.error}</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Dashboard"
+            subtitle={`Error: ${context.error}`}
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
+      </PageContainer>
+    );
   }
 
   const hasSites = context.sites.length > 0;

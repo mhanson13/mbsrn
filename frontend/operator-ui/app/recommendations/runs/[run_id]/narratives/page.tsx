@@ -6,6 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../../../components/layout/PageContainer";
 import { SectionCard } from "../../../../../components/layout/SectionCard";
+import { SectionHeader } from "../../../../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../../../../components/layout/SummaryStatCard";
+import { WorkflowContextPanel } from "../../../../../components/layout/WorkflowContextPanel";
 import { useOperatorContext } from "../../../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -329,6 +332,84 @@ export default function RecommendationRunNarrativeHistoryPage() {
 
   const latestNarrative = sortedNarratives[0] || null;
 
+  const workflowContextLinks = useMemo(() => {
+    const links: Array<{ href: string; label: string }> = [
+      { href: backToRecommendationsHref, label: "Recommendation Queue" },
+      { href: parentRunHref, label: "Parent Recommendation Run" },
+    ];
+    if (run?.audit_run_id) {
+      links.push({ href: `/audits/${run.audit_run_id}`, label: "Linked Audit Run" });
+    }
+    if (run?.comparison_run_id) {
+      const params = new URLSearchParams();
+      params.set("site_id", run.site_id);
+      const query = params.toString();
+      links.push({
+        href: query
+          ? `/competitors/comparison-runs/${run.comparison_run_id}?${query}`
+          : `/competitors/comparison-runs/${run.comparison_run_id}`,
+        label: "Linked Comparison Run",
+      });
+    }
+    if (latestNarrative) {
+      links.push({
+        href: buildNarrativeDetailHref(
+          recommendationRunId,
+          latestNarrative.id,
+          run?.site_id || resolvedSiteId || requestedSiteId,
+          queueContextParams,
+        ),
+        label: "Latest Narrative Detail",
+      });
+    }
+    return links;
+  }, [
+    backToRecommendationsHref,
+    latestNarrative,
+    parentRunHref,
+    queueContextParams,
+    recommendationRunId,
+    requestedSiteId,
+    resolvedSiteId,
+    run,
+  ]);
+
+  const workflowNextStep = useMemo(() => {
+    if (sortedNarratives.length >= 2) {
+      return {
+        href: parentRunHref,
+        label: "Compare narrative versions",
+        note: "Use the compare panel to confirm reasoning changes before applying actions.",
+      };
+    }
+    if (latestNarrative) {
+      return {
+        href: buildNarrativeDetailHref(
+          recommendationRunId,
+          latestNarrative.id,
+          run?.site_id || resolvedSiteId || requestedSiteId,
+          queueContextParams,
+        ),
+        label: "Review latest narrative detail",
+        note: "Validate themes and structured sections for this run.",
+      };
+    }
+    return {
+      href: parentRunHref,
+      label: "Return to parent recommendation run",
+      note: "Narratives are generated during run processing and may appear after completion.",
+    };
+  }, [
+    latestNarrative,
+    parentRunHref,
+    queueContextParams,
+    recommendationRunId,
+    requestedSiteId,
+    resolvedSiteId,
+    run,
+    sortedNarratives.length,
+  ]);
+
   const selectedBaseNarrative = useMemo(() => {
     if (sortedNarratives.length === 0) {
       return null;
@@ -646,26 +727,42 @@ export default function RecommendationRunNarrativeHistoryPage() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div">Loading recommendation narrative history...</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Narrative History"
+            subtitle="Loading recommendation narrative history for the selected run."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Narrative History"
+            subtitle="Unable to load tenant context. Refresh and sign in again."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (!recommendationRunId) {
     return (
       <PageContainer>
-        <SectionCard>
-          <h1>Recommendation Narrative History</h1>
-          <p className="hint warning">Recommendation run identifier is missing.</p>
-          <p>
-            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-          </p>
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Narrative History"
+            subtitle="Recommendation run identifier is missing."
+            headingLevel={1}
+            variant="support"
+          />
+          <p><Link href={backToRecommendationsHref}>Back to Recommendations</Link></p>
         </SectionCard>
       </PageContainer>
     );
@@ -673,32 +770,87 @@ export default function RecommendationRunNarrativeHistoryPage() {
 
   return (
     <PageContainer>
-      <SectionCard>
-        <p>
-          <Link href={parentRunHref}>Back to Recommendation Run</Link>
-        </p>
-        <p>
-          <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-        </p>
-        <h1>Recommendation Narrative History</h1>
-        <p>
-          Recommendation Run ID: <code>{recommendationRunId}</code>
-        </p>
-        {resolvedSiteId ? (
-          <p>
-            Resolved Site ID: <code>{resolvedSiteId}</code>
-          </p>
-        ) : null}
-        {loading ? <p className="hint muted">Loading recommendation narrative history...</p> : null}
-        {!loading && notFound ? (
-          <p className="hint warning">Recommendation run narrative history not found or not accessible in your tenant scope.</p>
-        ) : null}
-        {!loading && error ? <p className="hint error">{error}</p> : null}
-      </SectionCard>
+      <div className="role-dashboard-landing">
+        <SectionCard
+          variant="primary"
+          className="role-dashboard-hero"
+          data-testid="recommendation-narrative-history-hero"
+        >
+          <SectionHeader
+            title="Recommendation Narrative History"
+            subtitle="Review version-to-version recommendation narratives and compare reasoning changes before applying actions."
+            headingLevel={1}
+            variant="hero"
+            meta={(
+              <span className="hint muted">
+                Recommendation run: <code>{recommendationRunId}</code>
+              </span>
+            )}
+            actions={(
+              <div className="row-wrap-tight">
+                <Link href={parentRunHref}>Back to Recommendation Run</Link>
+                <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
+              </div>
+            )}
+          />
+          <div
+            className="workspace-summary-strip role-summary-strip"
+            data-testid="recommendation-narrative-history-summary-strip"
+          >
+            <SummaryStatCard
+              label="Run status"
+              value={run?.status || "Loading"}
+              detail={run ? "Recommendation run context status" : "Run context pending"}
+              tone={run?.status === "completed" ? "success" : run?.status === "failed" ? "danger" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Narrative versions"
+              value={sortedNarratives.length}
+              detail={sortedNarratives.length > 0 ? "Version history available" : "No narrative versions yet"}
+              tone={sortedNarratives.length > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Compare readiness"
+              value={sortedNarratives.length >= 2 ? "Ready" : "Not ready"}
+              detail={sortedNarratives.length >= 2 ? "Two or more versions available" : "Need at least two versions"}
+              tone={sortedNarratives.length >= 2 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Produced recommendations"
+              value={report?.recommendations.total ?? 0}
+              detail="Available for recommendation-link impact context"
+              tone={(report?.recommendations.total ?? 0) > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+          </div>
+          {resolvedSiteId ? (
+            <p className="hint muted">
+              Resolved site: <code>{resolvedSiteId}</code>
+            </p>
+          ) : null}
+          {loading ? <p className="hint muted">Loading recommendation narrative history...</p> : null}
+          {!loading && notFound ? (
+            <p className="hint warning">Recommendation run narrative history not found or not accessible in your tenant scope.</p>
+          ) : null}
+          {!loading && error ? <p className="hint error">{error}</p> : null}
+        </SectionCard>
+      </div>
+
+      {!loading && !notFound && !error && run ? (
+        <WorkflowContextPanel
+          data-testid="recommendation-narrative-history-workflow-context"
+          lineage="Recommendations → Recommendation Run → Narrative history → Narrative comparison/detail"
+          links={workflowContextLinks}
+          nextStep={workflowNextStep}
+        />
+      ) : null}
 
       {!loading && !notFound && !error && run ? (
         <>
-          <SectionCard>
+          <SectionCard variant="summary" className="role-surface-support">
             <h2>Run Context</h2>
             <p>
               Business ID: <code>{run.business_id}</code>
@@ -713,17 +865,12 @@ export default function RecommendationRunNarrativeHistoryPage() {
             <p>Completed: {formatDateTime(run.completed_at)}</p>
             <p>Updated: {formatDateTime(run.updated_at)}</p>
             <p>Error Summary: {run.error_summary || "-"}</p>
-            <div className="link-row">
-              <Link href={parentRunHref}>Parent Recommendation Run</Link>
-              <Link href={backToRecommendationsHref}>Recommendation Queue</Link>
-              {run.audit_run_id ? <Link href={`/audits/${run.audit_run_id}`}>Linked Audit Run</Link> : null}
-              {run.comparison_run_id ? (
-                <Link href={buildComparisonRunHref(run.comparison_run_id, run.site_id)}>Linked Comparison Run</Link>
-              ) : null}
-            </div>
+            <p className="hint muted">
+              Workflow context links above keep navigation anchored to the parent run and related lineage.
+            </p>
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="summary" className="role-surface-support">
             <h2>Narrative Summary</h2>
             <p>Total Narrative Versions: {sortedNarratives.length}</p>
             {!latestNarrative ? (
@@ -759,7 +906,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
             )}
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="support" className="role-surface-support">
             <h2>Narrative Versions</h2>
             {sortedNarratives.length === 0 ? (
               <p className="hint muted">
@@ -810,7 +957,11 @@ export default function RecommendationRunNarrativeHistoryPage() {
             )}
           </SectionCard>
 
-          <SectionCard data-testid="narrative-compare-panel">
+          <SectionCard
+            variant="support"
+            className="role-surface-support"
+            data-testid="narrative-compare-panel"
+          >
             <h2>Narrative Version Compare</h2>
             {sortedNarratives.length < 2 ? (
               <p className="hint muted">At least two narrative versions are required to compare changes.</p>
@@ -1027,7 +1178,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
             )}
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="support" className="role-surface-support">
             <h2>Produced Recommendations ({report?.recommendations.total || 0})</h2>
             {producedRecommendations.length === 0 ? (
               <p className="hint muted">No produced recommendations are available for this run.</p>

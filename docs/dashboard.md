@@ -39,6 +39,64 @@ Loading, error, empty/no-site, and no-data states on the upgraded secondary rout
 
 This remains a presentation-only pass; route behavior and backend semantics are unchanged.
 
+## Phase-3 Detail-Route Consistency
+
+The shared shell/panel/header language now extends into deeper, high-traffic detail routes so the experience stays consistent after navigating past list pages.
+
+Primary detail routes uplifted in this pass:
+- `audits/[run_id]`
+- `competitors/[set_id]`
+- `competitors/snapshot-runs/[run_id]`
+- `competitors/comparison-runs/[run_id]`
+- `recommendations/[id]`
+
+### What was standardized
+- top-of-page detail hero framing now uses shared `SectionHeader` + summary-stat strip patterns
+- detail pages use stronger summary-before-detail composition
+- loading/error/missing-id entry states use shared support-surface framing
+- cross-role secondary surfaces (`dashboard`, `business-profile`) now use the same support-state panel treatment
+
+This remains presentation-only. No backend behavior, trust semantics, or workflow logic changed.
+
+## Phase-4 Recommendation Run + Narrative Route Consistency
+
+Recommendation-run workflow detail routes now use the same upgraded shared shell language already applied to primary workspace and detail pages:
+- `recommendations/runs/[run_id]`
+- `recommendations/runs/[run_id]/narratives`
+- `recommendations/runs/[run_id]/narratives/[narrative_id]`
+
+### What was standardized
+- shared hero framing with summary-before-detail context
+- elevated summary strips for run/narrative context cues
+- consistent support-state panels for loading, tenant-context errors, missing identifiers, and no-data branches
+- stronger visual continuity between recommendation queue, run detail, narrative history, and narrative detail pages
+
+This remains a presentation-only pass. Recommendation generation, lineage semantics, and apply behavior are unchanged.
+
+## Workflow Context + Cross-Route Navigation Clarity
+
+Deep workflow routes now include a consistent context panel so operators can immediately see:
+- where they are in the workflow hierarchy
+- which parent run/set/detail surface they came from
+- the most relevant adjacent next step
+
+Updated deep-route flows include:
+- `audits/[run_id]`
+- `competitors/[set_id]`
+- `competitors/snapshot-runs/[run_id]`
+- `competitors/comparison-runs/[run_id]`
+- `recommendations/[id]`
+- `recommendations/runs/[run_id]`
+- `recommendations/runs/[run_id]/narratives`
+- `recommendations/runs/[run_id]/narratives/[narrative_id]`
+
+### Operator-visible behavior
+- each route now presents compact, workflow-context back links near the top
+- parent/child lineage is explicit before deep detail sections
+- a concise next-step cue is included when deterministic route context supports it
+
+This is a navigation/context continuity improvement only. Route behavior, backend APIs, and workflow semantics are unchanged.
+
 ### Shared visual system uplift
 The operator shell now applies a stronger shared admin-console frame across workspace surfaces using the existing CSS/component system:
 - upgraded shell/page chrome layering via shared `NavShell` + main container framing

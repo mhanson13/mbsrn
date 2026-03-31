@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../../components/layout/PageContainer";
 import { SectionCard } from "../../../../components/layout/SectionCard";
+import { SectionHeader } from "../../../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../../../components/layout/SummaryStatCard";
+import { WorkflowContextPanel } from "../../../../components/layout/WorkflowContextPanel";
 import { useOperatorContext } from "../../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -134,7 +137,7 @@ export default function ComparisonRunDetailPage() {
     return queryText ? `/competitors/${parentSetId}?${queryText}` : `/competitors/${parentSetId}`;
   }, [backToListHref, requestedSetId, requestedSiteId, run]);
 
-  function buildSnapshotRunHref(snapshotId: string): string {
+  const buildSnapshotRunHref = useCallback((snapshotId: string): string => {
     const params = new URLSearchParams();
     const siteId = run?.site_id || requestedSiteId;
     const setId = run?.competitor_set_id || requestedSetId;
@@ -146,7 +149,7 @@ export default function ComparisonRunDetailPage() {
     }
     const query = params.toString();
     return query ? `/competitors/snapshot-runs/${snapshotId}?${query}` : `/competitors/snapshot-runs/${snapshotId}`;
-  }
+  }, [requestedSetId, requestedSiteId, run?.competitor_set_id, run?.site_id]);
 
   const findings = report?.findings.items || [];
   const findingsTotal = report?.findings.total ?? findings.length;
@@ -155,6 +158,53 @@ export default function ComparisonRunDetailPage() {
   const severityCounts = toSortedCountEntries(report?.rollups.findings_by_severity);
   const metricRollups = report?.rollups.metric_rollups || [];
   const linkedRecommendationRunIds = linkedRecommendationRuns.map((item) => item.id);
+
+  const workflowContextLinks = useMemo(() => {
+    const links: Array<{ href: string; label: string }> = [
+      { href: backToListHref, label: "Competitor Sets" },
+      { href: backToSetHref, label: "Parent Competitor Set" },
+      { href: run ? buildSnapshotRunHref(run.snapshot_run_id) : "", label: "Snapshot Run" },
+      { href: "/recommendations", label: "Recommendation Queue" },
+      { href: "/audits", label: "Audit Runs" },
+    ];
+    if (run?.baseline_audit_run_id) {
+      links.push({ href: `/audits/${run.baseline_audit_run_id}`, label: "Baseline Audit Run" });
+    }
+    if (snapshotRun?.client_audit_run_id) {
+      links.push({ href: `/audits/${snapshotRun.client_audit_run_id}`, label: "Client Audit Run" });
+    }
+    if (linkedRecommendationRuns.length > 0) {
+      const topRun = linkedRecommendationRuns[0];
+      links.push({
+        href: buildRecommendationRunHref(topRun.id, topRun.site_id),
+        label: "Top linked recommendation run",
+      });
+    }
+    return links;
+  }, [
+    backToListHref,
+    backToSetHref,
+    buildSnapshotRunHref,
+    linkedRecommendationRuns,
+    run,
+    snapshotRun,
+  ]);
+
+  const workflowNextStep = useMemo(() => {
+    if (linkedRecommendationRuns.length > 0) {
+      const topRun = linkedRecommendationRuns[0];
+      return {
+        href: buildRecommendationRunHref(topRun.id, topRun.site_id),
+        label: "Review linked recommendation run",
+        note: "Confirm action priorities from this comparison context.",
+      };
+    }
+    return {
+      href: "/recommendations",
+      label: "Open recommendation queue",
+      note: "Comparison findings feed recommendation generation and triage.",
+    };
+  }, [linkedRecommendationRuns]);
 
   useEffect(() => {
     if (context.loading || context.error || !comparisonRunId) {
@@ -329,26 +379,42 @@ export default function ComparisonRunDetailPage() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div">Loading comparison run detail...</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Comparison Run Detail"
+            subtitle="Loading comparison run detail for this competitor analysis."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Comparison Run Detail"
+            subtitle="Unable to load tenant context. Refresh and sign in again."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (!comparisonRunId) {
     return (
       <PageContainer>
-        <SectionCard>
-          <h1>Comparison Run Detail</h1>
-          <p className="hint warning">Comparison run identifier is missing.</p>
-          <p>
-            <Link href={backToListHref}>Back to Competitor Sets</Link>
-          </p>
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Comparison Run Detail"
+            subtitle="Comparison run identifier is missing."
+            headingLevel={1}
+            variant="support"
+          />
+          <p><Link href={backToListHref}>Back to Competitor Sets</Link></p>
         </SectionCard>
       </PageContainer>
     );
@@ -356,21 +422,62 @@ export default function ComparisonRunDetailPage() {
 
   return (
     <PageContainer>
-      <div className="panel stack">
-        <p>
-          <Link href={backToSetHref}>Back to Competitor Set</Link>
-        </p>
-        <h1>Comparison Run Detail</h1>
-        <p>
-          Comparison Run ID: <code>{comparisonRunId}</code>
-        </p>
-
-        {loading ? <p className="hint muted">Loading comparison run detail...</p> : null}
-        {!loading && notFound ? (
-          <p className="hint warning">Comparison run not found or not accessible in your tenant scope.</p>
-        ) : null}
-        {!loading && error ? <p className="hint error">{error}</p> : null}
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="Comparison Run Detail"
+            subtitle="Inspect comparative findings, metric rollups, and downstream recommendation linkage."
+            headingLevel={1}
+            variant="hero"
+            meta={<span className="hint muted">Comparison run: <code>{comparisonRunId}</code></span>}
+            actions={<Link href={backToSetHref}>Back to Competitor Set</Link>}
+          />
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Run status"
+              value={run?.status || "Loading"}
+              detail="Comparison execution state"
+              tone={run?.status?.toLowerCase() === "completed" ? "success" : run?.status?.toLowerCase() === "failed" ? "danger" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Total findings"
+              value={run?.total_findings ?? 0}
+              detail="Findings recorded in this run"
+              tone={(run?.total_findings || 0) > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Metric rollups"
+              value={metricRollups.length}
+              detail="Comparative metric summary rows"
+              tone={metricRollups.length > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Related recommendations"
+              value={relatedRecommendations.length}
+              detail="Recommendations linked to this comparison"
+              tone={relatedRecommendations.length > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+          </div>
+          {loading ? <p className="hint muted">Loading comparison run detail...</p> : null}
+          {!loading && notFound ? (
+            <p className="hint warning">Comparison run not found or not accessible in your tenant scope.</p>
+          ) : null}
+          {!loading && error ? <p className="hint error">{error}</p> : null}
+        </SectionCard>
       </div>
+
+      {!loading && !notFound && !error && run ? (
+        <WorkflowContextPanel
+          data-testid="comparison-run-workflow-context"
+          lineage="Competitors → Comparison run → Recommendation linkage"
+          links={workflowContextLinks}
+          nextStep={workflowNextStep}
+        />
+      ) : null}
 
       {!loading && !notFound && !error && run ? (
         <>
@@ -406,21 +513,9 @@ export default function ComparisonRunDetailPage() {
           </div>
 
           <div className="panel stack">
-            <h2>Related Navigation</h2>
-            <div className="row-wrap">
-              <Link href={backToSetHref}>Parent Competitor Set</Link>
-              <Link href={buildSnapshotRunHref(run.snapshot_run_id)}>Snapshot Run</Link>
-              <Link href="/recommendations">Recommendation Queue</Link>
-              <Link href="/audits">Audit Runs</Link>
-              {run.baseline_audit_run_id ? (
-                <Link href={`/audits/${run.baseline_audit_run_id}`}>Baseline Audit Run</Link>
-              ) : null}
-              {snapshotRun?.client_audit_run_id ? (
-                <Link href={`/audits/${snapshotRun.client_audit_run_id}`}>Client Audit Run</Link>
-              ) : null}
-            </div>
+            <h2>Related Workflow Scope</h2>
             <p className="hint muted">
-              Recommendation and audit list pages remain scoped to the currently selected site in the operator context.
+              Workflow context links above keep this comparison connected to snapshot, audit, and recommendation routes.
             </p>
           </div>
 

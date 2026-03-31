@@ -270,6 +270,35 @@ Recommendation visibility is now more action-oriented in the workspace:
 - Applied recommendations remain visible with explicit pending-visibility language when refresh is still required.
 - Recommendation emphasis and apply-outcome surfaces now use the shared operator shell panel variants for visual consistency (presentation-only).
 
+## Recommendation Run + Narrative Route Framing (Presentation-Only)
+
+Recommendation-run detail and narrative routes now follow the same shared admin-console shell framing used across the rest of the operator workspace:
+- run detail (`/recommendations/runs/[run_id]`)
+- narrative history (`/recommendations/runs/[run_id]/narratives`)
+- narrative detail (`/recommendations/runs/[run_id]/narratives/[narrative_id]`)
+
+Operator-facing improvements:
+- summary-before-detail hierarchy for run context and narrative lineage
+- compact status/count summary strip at the top of each route
+- consistent support-surface treatment for loading/error/missing-id/no-data states
+
+This is UI-only framing. Recommendation generation, scoring, linkage semantics, and apply behavior are unchanged.
+
+## Recommendation Workflow Context Navigation (Presentation-Only)
+
+Recommendation deep routes now include explicit workflow-context continuity at the top of each page:
+- run detail (`/recommendations/runs/[run_id]`)
+- narrative history (`/recommendations/runs/[run_id]/narratives`)
+- narrative detail (`/recommendations/runs/[run_id]/narratives/[narrative_id]`)
+- recommendation detail (`/recommendations/[id]`)
+
+Operator-facing improvements:
+- compact lineage/back-navigation links to parent workflow pages
+- clearer parent-child context before detailed narrative/run content
+- deterministic “next step” cues where route context provides a safe target
+
+This is presentation/navigation-only and does not change recommendation generation, narrative content, linkage logic, or apply semantics.
+
 ## Workspace Analysis Freshness
 
 Workspace summary responses now include an additive `analysis_freshness` object so operators can tell whether currently displayed analysis reflects the latest applied tuning changes.

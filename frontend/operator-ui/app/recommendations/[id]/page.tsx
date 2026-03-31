@@ -6,6 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../components/layout/PageContainer";
 import { SectionCard } from "../../../components/layout/SectionCard";
+import { SectionHeader } from "../../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
+import { WorkflowContextPanel } from "../../../components/layout/WorkflowContextPanel";
 import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -321,56 +324,156 @@ export default function RecommendationDetailPage() {
     }
   }
 
+  const workflowContextLinks = useMemo(() => {
+    const links: Array<{ href: string; label: string }> = [
+      { href: backToRecommendationsHref, label: "Recommendation Queue" },
+    ];
+    if (recommendation?.recommendation_run_id) {
+      links.push({
+        href: `/recommendations/runs/${recommendation.recommendation_run_id}?site_id=${encodeURIComponent(recommendation.site_id)}`,
+        label: "Parent Recommendation Run",
+      });
+    }
+    if (recommendation?.audit_run_id) {
+      links.push({ href: `/audits/${recommendation.audit_run_id}`, label: "Linked Audit Run" });
+    }
+    if (recommendation?.comparison_run_id) {
+      links.push({
+        href: buildComparisonRunHref(recommendation.comparison_run_id, recommendation.site_id),
+        label: "Linked Comparison Run",
+      });
+    }
+    return links;
+  }, [backToRecommendationsHref, recommendation]);
+
+  const workflowNextStep = useMemo(() => {
+    if (!recommendation) {
+      return null;
+    }
+    if (recommendation.status === "open" || recommendation.status === "in_progress") {
+      return {
+        href: `/recommendations/runs/${recommendation.recommendation_run_id}?site_id=${encodeURIComponent(recommendation.site_id)}`,
+        label: "Review parent run context",
+        note: "Confirm lineage context before accepting or dismissing this recommendation.",
+      };
+    }
+    return {
+      href: backToRecommendationsHref,
+      label: "Return to recommendation queue",
+      note: "Continue processing remaining recommendation actions.",
+    };
+  }, [backToRecommendationsHref, recommendation]);
+
   if (context.loading) {
-    return <section className="panel">Loading recommendation detail...</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Detail"
+            subtitle="Loading recommendation detail for the selected business context."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
+      </PageContainer>
+    );
   }
   if (context.error) {
-    return <section className="panel">Unable to load tenant context. Refresh and sign in again.</section>;
+    return (
+      <PageContainer>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Detail"
+            subtitle="Unable to load tenant context. Refresh and sign in again."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
+      </PageContainer>
+    );
   }
   if (!recommendationId) {
     return (
-      <section className="panel stack">
-        <h1>Recommendation Detail</h1>
-        <p className="hint warning">Recommendation identifier is missing.</p>
-        <p>
-          <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-        </p>
-      </section>
+      <PageContainer>
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Detail"
+            subtitle="Recommendation identifier is missing."
+            headingLevel={1}
+            variant="support"
+          />
+          <p><Link href={backToRecommendationsHref}>Back to Recommendations</Link></p>
+        </SectionCard>
+      </PageContainer>
     );
   }
 
   return (
     <PageContainer>
-      <SectionCard>
-        <p>
-          <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-        </p>
-        <h1>Recommendation Detail</h1>
-        <p>
-          Recommendation ID: <code>{recommendationId}</code>
-        </p>
-        {resolvedSiteId ? (
-          <p>
-            Resolved Site ID: <code>{resolvedSiteId}</code>
-          </p>
-        ) : null}
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="Recommendation Detail"
+            subtitle="Review recommendation context, update decision status, and track linked lineage."
+            headingLevel={1}
+            variant="hero"
+            meta={(
+              <span className="hint muted">Recommendation: <code>{recommendationId}</code></span>
+            )}
+            actions={<Link href={backToRecommendationsHref}>Back to Recommendations</Link>}
+          />
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Status"
+              value={recommendation?.status || "Loading"}
+              detail="Current workflow decision state"
+              tone={recommendation?.status === "accepted" ? "success" : recommendation?.status === "dismissed" ? "danger" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Priority"
+              value={recommendation ? `${recommendation.priority_score}` : "-"}
+              detail={recommendation ? recommendation.priority_band : "Priority band pending"}
+              tone="neutral"
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Category"
+              value={recommendation?.category || "-"}
+              detail={recommendation ? recommendationSourceType(recommendation) : "Recommendation lineage pending"}
+              tone="neutral"
+              variant="elevated"
+            />
+          </div>
+          {resolvedSiteId ? (
+            <p className="hint muted">Resolved site: <code>{resolvedSiteId}</code></p>
+          ) : null}
+          {loading ? <p className="hint muted">Loading recommendation detail...</p> : null}
+          {!loading && notFound ? (
+            <p className="hint warning">Recommendation not found or not accessible in your tenant scope.</p>
+          ) : null}
+          {!loading && error ? <p className="hint error">{error}</p> : null}
+        </SectionCard>
+      </div>
 
-        {loading ? <p className="hint muted">Loading recommendation detail...</p> : null}
-        {!loading && notFound ? (
-          <p className="hint warning">Recommendation not found or not accessible in your tenant scope.</p>
-        ) : null}
-        {!loading && error ? <p className="hint error">{error}</p> : null}
-      </SectionCard>
+      {!loading && !notFound && !error && recommendation ? (
+        <WorkflowContextPanel
+          data-testid="recommendation-detail-workflow-context"
+          lineage="Recommendations → Recommendation detail → Decision update"
+          links={workflowContextLinks}
+          nextStep={workflowNextStep}
+        />
+      ) : null}
 
       {!loading && !notFound && !error && recommendation ? (
         <>
-          <SectionCard>
+          <SectionCard variant="summary" className="role-surface-support">
             <h2>Recommendation Context</h2>
             <p>{recommendation.title}</p>
             <p>{recommendation.rationale}</p>
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="summary" className="role-surface-support">
             <h2>Priority and Status</h2>
             <p>
               Priority: {recommendation.priority_score} ({recommendation.priority_band})
@@ -380,7 +483,7 @@ export default function RecommendationDetailPage() {
             <p>Source Type: {recommendationSourceType(recommendation)}</p>
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="emphasis" className="role-surface-support">
             <h2>Actions</h2>
             <div className="row-wrap-tight">
               <button
@@ -429,12 +532,12 @@ export default function RecommendationDetailPage() {
             {actionError ? <p className="hint error">{actionError}</p> : null}
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="support" className="role-surface-support">
             <h2>Saved Note</h2>
             <p>{recommendation.decision_reason || "No operator note saved yet."}</p>
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="support" className="role-surface-support">
             <h2>Lineage</h2>
             <p>
               Audit Run ID:{" "}
@@ -464,7 +567,7 @@ export default function RecommendationDetailPage() {
             </p>
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="support" className="role-surface-support">
             <h2>Tenant Scope</h2>
             <p>
               Business ID: <code>{recommendation.business_id}</code>

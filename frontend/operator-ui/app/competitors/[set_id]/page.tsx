@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../components/layout/PageContainer";
 import { SectionCard } from "../../../components/layout/SectionCard";
+import { SectionHeader } from "../../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
+import { WorkflowContextPanel } from "../../../components/layout/WorkflowContextPanel";
 import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -130,7 +133,7 @@ export default function CompetitorSetDetailPage() {
     return `/competitors?${params.toString()}`;
   }, [competitorSet?.site_id, requestedSiteId]);
 
-  function buildComparisonRunHref(run: CompetitorComparisonRun): string {
+  const buildComparisonRunHref = useCallback((run: CompetitorComparisonRun): string => {
     const params = new URLSearchParams();
     const contextSiteId = competitorSet?.site_id || requestedSiteId || run.site_id;
     const contextSetId = competitorSet?.id || competitorSetId || run.competitor_set_id;
@@ -142,9 +145,9 @@ export default function CompetitorSetDetailPage() {
     }
     const query = params.toString();
     return query ? `/competitors/comparison-runs/${run.id}?${query}` : `/competitors/comparison-runs/${run.id}`;
-  }
+  }, [competitorSet?.id, competitorSet?.site_id, competitorSetId, requestedSiteId]);
 
-  function buildSnapshotRunHref(run: CompetitorSnapshotRun): string {
+  const buildSnapshotRunHref = useCallback((run: CompetitorSnapshotRun): string => {
     const params = new URLSearchParams();
     const contextSiteId = competitorSet?.site_id || requestedSiteId || run.site_id;
     const contextSetId = competitorSet?.id || competitorSetId || run.competitor_set_id;
@@ -156,7 +159,44 @@ export default function CompetitorSetDetailPage() {
     }
     const query = params.toString();
     return query ? `/competitors/snapshot-runs/${run.id}?${query}` : `/competitors/snapshot-runs/${run.id}`;
-  }
+  }, [competitorSet?.id, competitorSet?.site_id, competitorSetId, requestedSiteId]);
+
+  const workflowContextLinks = useMemo(() => {
+    const links: Array<{ href: string; label: string }> = [
+      { href: backToListHref, label: "Competitor Sets" },
+      { href: "/audits", label: "Audit Runs" },
+      { href: "/recommendations", label: "Recommendation Queue" },
+    ];
+    if (snapshotRuns.length > 0) {
+      links.push({ href: buildSnapshotRunHref(snapshotRuns[0]), label: "Latest snapshot run" });
+    }
+    if (latestComparisonRun) {
+      links.push({ href: buildComparisonRunHref(latestComparisonRun), label: "Latest comparison run" });
+    }
+    return links;
+  }, [backToListHref, buildComparisonRunHref, buildSnapshotRunHref, latestComparisonRun, snapshotRuns]);
+
+  const workflowNextStep = useMemo(() => {
+    if (latestComparisonRun) {
+      return {
+        href: buildComparisonRunHref(latestComparisonRun),
+        label: "Review latest comparison findings",
+        note: "Use findings to validate recommendation priorities and apply actions.",
+      };
+    }
+    if (snapshotRuns.length > 0) {
+      return {
+        href: buildSnapshotRunHref(snapshotRuns[0]),
+        label: "Review latest snapshot run",
+        note: "Inspect captured competitor pages before running comparison analysis.",
+      };
+    }
+    return {
+      href: backToListHref,
+      label: "Return to competitor sets",
+      note: "Create or run competitor analyses when additional lineage context is needed.",
+    };
+  }, [backToListHref, buildComparisonRunHref, buildSnapshotRunHref, latestComparisonRun, snapshotRuns]);
 
   useEffect(() => {
     if (context.loading || context.error || !competitorSetId) {
@@ -270,26 +310,42 @@ export default function CompetitorSetDetailPage() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div">Loading competitor set detail...</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Competitor Set Detail"
+            subtitle="Loading competitor set context and related run lineage."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Competitor Set Detail"
+            subtitle="Unable to load tenant context. Refresh and sign in again."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (!competitorSetId) {
     return (
       <PageContainer>
-        <SectionCard>
-          <h1>Competitor Set Detail</h1>
-          <p className="hint warning">Competitor set identifier is missing.</p>
-          <p>
-            <Link href={backToListHref}>Back to Competitor Sets</Link>
-          </p>
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Competitor Set Detail"
+            subtitle="Competitor set identifier is missing."
+            headingLevel={1}
+            variant="support"
+          />
+          <p><Link href={backToListHref}>Back to Competitor Sets</Link></p>
         </SectionCard>
       </PageContainer>
     );
@@ -297,21 +353,62 @@ export default function CompetitorSetDetailPage() {
 
   return (
     <PageContainer>
-      <div className="panel stack">
-        <p>
-          <Link href={backToListHref}>Back to Competitor Sets</Link>
-        </p>
-        <h1>Competitor Set Detail</h1>
-        <p>
-          Competitor Set ID: <code>{competitorSetId}</code>
-        </p>
-
-        {loading ? <p className="hint muted">Loading competitor set detail...</p> : null}
-        {!loading && notFound ? (
-          <p className="hint warning">Competitor set not found or not accessible in your tenant scope.</p>
-        ) : null}
-        {!loading && error ? <p className="hint error">{error}</p> : null}
+      <div className="role-dashboard-landing">
+        <SectionCard variant="primary" className="role-dashboard-hero">
+          <SectionHeader
+            title="Competitor Set Detail"
+            subtitle="Review accepted domains, run lineage, and recommendation links for this competitor set."
+            headingLevel={1}
+            variant="hero"
+            meta={<span className="hint muted">Competitor set: <code>{competitorSetId}</code></span>}
+            actions={<Link href={backToListHref}>Back to Competitor Sets</Link>}
+          />
+          <div className="workspace-summary-strip role-summary-strip">
+            <SummaryStatCard
+              label="Domains"
+              value={domains.length}
+              detail="Accepted domains in this set"
+              tone={domains.length > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Snapshot runs"
+              value={snapshotRuns.length}
+              detail="Captured competitor snapshot history"
+              tone={snapshotRuns.length > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Comparison runs"
+              value={comparisonRuns.length}
+              detail="Comparative analysis lineage"
+              tone={comparisonRuns.length > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Linked recommendations"
+              value={relatedRecommendations.length}
+              detail="Recommendations tied to latest comparison run"
+              tone={relatedRecommendations.length > 0 ? "success" : "warning"}
+              variant="elevated"
+            />
+          </div>
+          {loading ? <p className="hint muted">Loading competitor set detail...</p> : null}
+          {!loading && notFound ? (
+            <p className="hint warning">Competitor set not found or not accessible in your tenant scope.</p>
+          ) : null}
+          {!loading && error ? <p className="hint error">{error}</p> : null}
+        </SectionCard>
       </div>
+
+      {!loading && !notFound && !error && competitorSet ? (
+        <WorkflowContextPanel
+          data-testid="competitor-set-workflow-context"
+          lineage="Competitors → Competitor set → Snapshot/comparison runs → Recommendation linkage"
+          links={workflowContextLinks}
+          nextStep={workflowNextStep}
+        />
+      ) : null}
 
       {!loading && !notFound && !error && competitorSet ? (
         <>
@@ -335,14 +432,9 @@ export default function CompetitorSetDetailPage() {
           </div>
 
           <div className="panel stack">
-            <h2>Related SEO Navigation</h2>
-            <div className="row-wrap">
-              <Link href="/sites">View Sites</Link>
-              <Link href="/audits">View Audit Runs</Link>
-              <Link href="/recommendations">View Recommendation Queue</Link>
-            </div>
+            <h2>Related Workflow Scope</h2>
             <p className="hint muted">
-              Recommendation queue and audit views remain site-scoped in the operator context.
+              Use workflow context links above to move between this set, linked run detail routes, and downstream recommendation views.
             </p>
           </div>
 

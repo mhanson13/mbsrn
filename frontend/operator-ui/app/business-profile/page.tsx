@@ -280,14 +280,28 @@ export default function BusinessProfilePage() {
   if (context.loading || loading) {
     return (
       <PageContainer>
-        <SectionCard as="div">Loading Google Business Profile...</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Google Business Profile"
+            subtitle="Loading connection and verification state."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div">Error: {context.error}</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Google Business Profile"
+            subtitle={`Error: ${context.error}`}
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }

@@ -183,6 +183,43 @@ beforeEach(() => {
 });
 
 describe("recommendation narrative history compare", () => {
+  it("renders shared support loading framing", () => {
+    mockUseOperatorContext.mockReturnValue(baseContext({ loading: true }));
+
+    render(<RecommendationRunNarrativeHistoryPage />);
+
+    expect(screen.getByRole("heading", { name: "Recommendation Narrative History" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Loading recommendation narrative history for the selected run."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders missing identifier support state", () => {
+    navigationState.params = { run_id: "" };
+
+    render(<RecommendationRunNarrativeHistoryPage />);
+
+    expect(screen.getByRole("heading", { name: "Recommendation Narrative History" })).toBeInTheDocument();
+    expect(screen.getByText("Recommendation run identifier is missing.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to Recommendations" })).toBeInTheDocument();
+  });
+
+  it("renders hero summary strip and no-data narrative state", async () => {
+    seedNarrativeHistory([]);
+
+    render(<RecommendationRunNarrativeHistoryPage />);
+
+    await screen.findByRole("heading", { name: "Run Context" });
+    expect(screen.getByTestId("recommendation-narrative-history-hero")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-narrative-history-summary-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-narrative-history-workflow-context")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Parent Recommendation Run" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Recommendation Queue" })).toBeInTheDocument();
+    expect(screen.getByText("Run status")).toBeInTheDocument();
+    expect(screen.getByText("Narrative versions")).toBeInTheDocument();
+    await screen.findByText("No narrative history records are available for this run yet.");
+  });
+
   it("shows compare controls when two or more versions exist", async () => {
     seedNarrativeHistory([buildNarrative(1), buildNarrative(2)]);
     render(<RecommendationRunNarrativeHistoryPage />);

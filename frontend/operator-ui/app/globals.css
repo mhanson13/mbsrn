@@ -1179,6 +1179,42 @@ code {
   margin: 0;
 }
 
+.workflow-context-surface {
+  gap: var(--space-2);
+}
+
+.workflow-context-lineage {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--type-sm);
+}
+
+.workflow-context-link-row {
+  margin-top: 0;
+}
+
+.workflow-context-next-step {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.workflow-context-next-step a {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.workflow-context-next-step a:hover {
+  text-decoration: underline;
+}
+
+.workflow-context-next-note {
+  color: var(--text-soft);
+  font-size: var(--type-sm);
+}
+
 /* Shared shell chrome for all operator pages. Reuse this layout language for new routes. */
 .topnav {
   border-bottom: 1px solid var(--shell-header-border);

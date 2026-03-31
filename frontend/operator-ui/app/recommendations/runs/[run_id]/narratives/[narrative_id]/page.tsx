@@ -6,6 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../../../../components/layout/PageContainer";
 import { SectionCard } from "../../../../../../components/layout/SectionCard";
+import { SectionHeader } from "../../../../../../components/layout/SectionHeader";
+import { SummaryStatCard } from "../../../../../../components/layout/SummaryStatCard";
+import { WorkflowContextPanel } from "../../../../../../components/layout/WorkflowContextPanel";
 import { useOperatorContext } from "../../../../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -250,6 +253,39 @@ export default function RecommendationNarrativeDetailPage() {
     return Object.entries(narrative.sections_json);
   }, [narrative?.sections_json]);
 
+  const workflowContextLinks = useMemo(() => {
+    const links: Array<{ href: string; label: string }> = [
+      { href: backToRecommendationsHref, label: "Recommendation Queue" },
+      { href: parentRunHref, label: "Parent Recommendation Run" },
+      { href: narrativeHistoryHref, label: "Narrative History" },
+    ];
+    if (run?.audit_run_id) {
+      links.push({ href: `/audits/${run.audit_run_id}`, label: "Linked Audit Run" });
+    }
+    if (run?.comparison_run_id) {
+      links.push({
+        href: buildComparisonRunHref(run.comparison_run_id, run.site_id),
+        label: "Linked Comparison Run",
+      });
+    }
+    return links;
+  }, [backToRecommendationsHref, narrativeHistoryHref, parentRunHref, run]);
+
+  const workflowNextStep = useMemo(() => {
+    if ((report?.recommendations.total || 0) > 0) {
+      return {
+        href: parentRunHref,
+        label: "Review produced recommendations",
+        note: "Use this narrative context to validate recommendation action readiness.",
+      };
+    }
+    return {
+      href: narrativeHistoryHref,
+      label: "Return to narrative history",
+      note: "Compare versions to validate reasoning progression across this run.",
+    };
+  }, [narrativeHistoryHref, parentRunHref, report?.recommendations.total]);
+
   useEffect(() => {
     if (context.loading || context.error || !recommendationRunId || !narrativeId) {
       setReport(null);
@@ -358,26 +394,42 @@ export default function RecommendationNarrativeDetailPage() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div">Loading recommendation narrative detail...</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Narrative Detail"
+            subtitle="Loading recommendation narrative detail for the selected run."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Narrative Detail"
+            subtitle="Unable to load tenant context. Refresh and sign in again."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
       </PageContainer>
     );
   }
   if (!recommendationRunId || !narrativeId) {
     return (
       <PageContainer>
-        <SectionCard>
-          <h1>Recommendation Narrative Detail</h1>
-          <p className="hint warning">Recommendation run or narrative identifier is missing.</p>
-          <p>
-            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-          </p>
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Recommendation Narrative Detail"
+            subtitle="Recommendation run or narrative identifier is missing."
+            headingLevel={1}
+            variant="support"
+          />
+          <p><Link href={backToRecommendationsHref}>Back to Recommendations</Link></p>
         </SectionCard>
       </PageContainer>
     );
@@ -385,38 +437,88 @@ export default function RecommendationNarrativeDetailPage() {
 
   return (
     <PageContainer>
-      <SectionCard>
-        <p>
-          <Link href={narrativeHistoryHref}>Back to Narrative History</Link>
-        </p>
-        <p>
-          <Link href={parentRunHref}>Back to Recommendation Run</Link>
-        </p>
-        <p>
-          <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-        </p>
-        <h1>Recommendation Narrative Detail</h1>
-        <p>
-          Recommendation Run ID: <code>{recommendationRunId}</code>
-        </p>
-        <p>
-          Narrative ID: <code>{narrativeId}</code>
-        </p>
-        {resolvedSiteId ? (
-          <p>
-            Resolved Site ID: <code>{resolvedSiteId}</code>
-          </p>
-        ) : null}
-        {loading ? <p className="hint muted">Loading recommendation narrative detail...</p> : null}
-        {!loading && notFound ? (
-          <p className="hint warning">Recommendation narrative not found or not accessible in your tenant scope.</p>
-        ) : null}
-        {!loading && error ? <p className="hint error">{error}</p> : null}
-      </SectionCard>
+      <div className="role-dashboard-landing">
+        <SectionCard
+          variant="primary"
+          className="role-dashboard-hero"
+          data-testid="recommendation-narrative-detail-hero"
+        >
+          <SectionHeader
+            title="Recommendation Narrative Detail"
+            subtitle="Inspect this narrative version’s context, themes, structured sections, and recommendation linkage."
+            headingLevel={1}
+            variant="hero"
+            meta={(
+              <span className="hint muted">
+                Narrative: <code>{narrativeId}</code>
+              </span>
+            )}
+            actions={(
+              <div className="row-wrap-tight">
+                <Link href={narrativeHistoryHref}>Back to Narrative History</Link>
+                <Link href={parentRunHref}>Back to Recommendation Run</Link>
+                <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
+              </div>
+            )}
+          />
+          <div
+            className="workspace-summary-strip role-summary-strip"
+            data-testid="recommendation-narrative-detail-summary-strip"
+          >
+            <SummaryStatCard
+              label="Narrative status"
+              value={narrative?.status || "Loading"}
+              detail={narrative ? `Version ${narrative.version}` : "Narrative context pending"}
+              tone={narrative?.status === "completed" ? "success" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Prompt lineage"
+              value={narrative?.prompt_version || "-"}
+              detail={narrative ? `${narrative.provider_name} / ${narrative.model_name}` : "Provider/model pending"}
+              tone="neutral"
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Themes"
+              value={narrative?.top_themes_json.length ?? 0}
+              detail="Themes extracted for this narrative version"
+              tone={(narrative?.top_themes_json.length ?? 0) > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Produced recommendations"
+              value={report?.recommendations.total ?? 0}
+              detail="Run-level recommendation output context"
+              tone={(report?.recommendations.total ?? 0) > 0 ? "neutral" : "warning"}
+              variant="elevated"
+            />
+          </div>
+          {resolvedSiteId ? (
+            <p className="hint muted">
+              Recommendation run: <code>{recommendationRunId}</code> • Resolved site: <code>{resolvedSiteId}</code>
+            </p>
+          ) : null}
+          {loading ? <p className="hint muted">Loading recommendation narrative detail...</p> : null}
+          {!loading && notFound ? (
+            <p className="hint warning">Recommendation narrative not found or not accessible in your tenant scope.</p>
+          ) : null}
+          {!loading && error ? <p className="hint error">{error}</p> : null}
+        </SectionCard>
+      </div>
+
+      {!loading && !notFound && !error && run && narrative ? (
+        <WorkflowContextPanel
+          data-testid="recommendation-narrative-detail-workflow-context"
+          lineage="Recommendations → Recommendation Run → Narrative history → Narrative detail"
+          links={workflowContextLinks}
+          nextStep={workflowNextStep}
+        />
+      ) : null}
 
       {!loading && !notFound && !error && run && narrative ? (
         <>
-          <SectionCard>
+          <SectionCard variant="summary" className="role-surface-support">
             <h2>Narrative Metadata</h2>
             <p>Version: {narrative.version}</p>
             <p>Status: {narrative.status}</p>
@@ -430,7 +532,7 @@ export default function RecommendationNarrativeDetailPage() {
             <p>Error: {narrative.error_message || "-"}</p>
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="summary" className="role-surface-support">
             <h2>Run Lineage Context</h2>
             <p>
               Business ID: <code>{run.business_id}</code>
@@ -443,18 +545,12 @@ export default function RecommendationNarrativeDetailPage() {
             <p>Created: {formatDateTime(run.created_at)}</p>
             <p>Started: {formatDateTime(run.started_at)}</p>
             <p>Completed: {formatDateTime(run.completed_at)}</p>
-            <div className="link-row">
-              <Link href={parentRunHref}>Parent Recommendation Run</Link>
-              <Link href={narrativeHistoryHref}>Narrative History</Link>
-              <Link href={backToRecommendationsHref}>Recommendation Queue</Link>
-              {run.audit_run_id ? <Link href={`/audits/${run.audit_run_id}`}>Linked Audit Run</Link> : null}
-              {run.comparison_run_id ? (
-                <Link href={buildComparisonRunHref(run.comparison_run_id, run.site_id)}>Linked Comparison Run</Link>
-              ) : null}
-            </div>
+            <p className="hint muted">
+              Workflow context links above keep this narrative tied to the parent run and adjacent lineage steps.
+            </p>
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="support" className="role-surface-support">
             <h2>Themes</h2>
             {narrative.top_themes_json.length === 0 ? (
               <p className="hint muted">No top themes were recorded for this narrative version.</p>
@@ -467,7 +563,7 @@ export default function RecommendationNarrativeDetailPage() {
             )}
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="support" className="role-surface-support">
             <h2>Sections</h2>
             {narrativeSections.length === 0 ? (
               <p className="hint muted">No structured sections were returned for this narrative version.</p>
@@ -485,12 +581,12 @@ export default function RecommendationNarrativeDetailPage() {
             )}
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="support" className="role-surface-support">
             <h2>Narrative Text</h2>
             <p className="pre-wrap">{narrative.narrative_text || "No narrative text returned."}</p>
           </SectionCard>
 
-          <SectionCard>
+          <SectionCard variant="support" className="role-surface-support">
             <h2>Produced Recommendations ({report?.recommendations.total || 0})</h2>
             {producedRecommendations.length === 0 ? (
               <p className="hint muted">No produced recommendations are available for this run.</p>
