@@ -97,6 +97,21 @@ Updated deep-route flows include:
 
 This is a navigation/context continuity improvement only. Route behavior, backend APIs, and workflow semantics are unchanged.
 
+## Detail Density + Scanability Refinement
+
+Deep recommendation and competitor detail routes now include a compact summary-first focus block between workflow context and full-detail sections.
+
+### What operators see
+- a short **top takeaway** before dense tables/metadata
+- a clear **likely next action** with direct route context
+- a concise **where detail lives** cue to orient scanning
+
+### Where it applies
+- recommendation detail and recommendation run/narrative detail routes
+- competitor set, snapshot-run, and comparison-run detail routes
+
+This remains presentation-only. No trust semantics, recommendation/competitor logic, or API behavior changed.
+
 ### Shared visual system uplift
 The operator shell now applies a stronger shared admin-console frame across workspace surfaces using the existing CSS/component system:
 - upgraded shell/page chrome layering via shared `NavShell` + main container framing
@@ -388,3 +403,20 @@ Jobs Won
 Average Job Value
 Cost Per Job
 Return on Marketing
+
+## Recommendation Outcome Auditability + Scanability
+
+Recommendation-facing pages now use a consistent summary-first outcome snapshot so operators can quickly answer:
+- was this applied
+- what changed
+- does anything still require me
+- when should I expect visibility
+- where do I go next
+
+Updated surfaces:
+- `dashboard` (outcome visibility guidance)
+- `recommendations` queue (outcome snapshot before queue controls)
+- `recommendations/[id]` detail (recommendation outcome snapshot)
+- `recommendations/runs/[run_id]` detail (run outcome snapshot)
+
+This is presentation-only. Recommendation generation, apply behavior, trust semantics, and API contracts are unchanged.

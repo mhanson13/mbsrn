@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../../components/layout/PageContainer";
+import { DetailFocusPanel } from "../../../../components/layout/DetailFocusPanel";
 import { SectionCard } from "../../../../components/layout/SectionCard";
 import { SectionHeader } from "../../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../../components/layout/SummaryStatCard";
@@ -213,6 +214,42 @@ export default function SnapshotRunDetailPage() {
       href: backToSetHref,
       label: "Return to parent competitor set",
       note: "Snapshot context is ready for additional comparison runs when needed.",
+    };
+  }, [backToSetHref, buildComparisonRunHref, linkedRecommendationRuns, relatedComparisonRuns]);
+
+  const detailFocusTakeaway = useMemo(() => {
+    if (!snapshotRun) {
+      return "Snapshot run context is still loading.";
+    }
+    if (relatedComparisonRuns.length > 0) {
+      return `Snapshot completed with ${capturedPageTotal} captured page${capturedPageTotal === 1 ? "" : "s"} and linked comparison analysis.`;
+    }
+    if (capturedPageTotal > 0) {
+      return "Snapshot captured pages successfully, but no linked comparison run is available yet.";
+    }
+    return "Snapshot run has no captured pages yet; validate capture coverage before comparison analysis.";
+  }, [capturedPageTotal, relatedComparisonRuns.length, snapshotRun]);
+
+  const detailFocusNextStep = useMemo(() => {
+    if (relatedComparisonRuns.length > 0) {
+      return {
+        href: buildComparisonRunHref(relatedComparisonRuns[0]),
+        label: "Review linked comparison findings",
+        note: "Use comparison findings before acting on recommendation linkage.",
+      };
+    }
+    if (linkedRecommendationRuns.length > 0) {
+      const topRun = linkedRecommendationRuns[0];
+      return {
+        href: buildRecommendationRunHref(topRun.id, topRun.site_id),
+        label: "Review linked recommendation run",
+        note: "Recommendation linkage exists even without a comparison branch on this page.",
+      };
+    }
+    return {
+      href: backToSetHref,
+      label: "Return to parent competitor set",
+      note: "From the parent set, run comparison analysis when capture coverage is sufficient.",
     };
   }, [backToSetHref, buildComparisonRunHref, linkedRecommendationRuns, relatedComparisonRuns]);
 
@@ -507,6 +544,15 @@ export default function SnapshotRunDetailPage() {
           lineage="Competitors → Snapshot run → Comparison runs → Recommendation linkage"
           links={workflowContextLinks}
           nextStep={workflowNextStep}
+        />
+      ) : null}
+
+      {!loading && !notFound && !error && snapshotRun ? (
+        <DetailFocusPanel
+          data-testid="snapshot-run-detail-focus"
+          takeaway={detailFocusTakeaway}
+          nextStep={detailFocusNextStep}
+          detailHint="Run context and metrics appear first, followed by captured pages, linked comparisons, and recommendation lineage."
         />
       ) : null}
 

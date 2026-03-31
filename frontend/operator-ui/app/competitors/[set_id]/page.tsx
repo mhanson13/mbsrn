@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../components/layout/PageContainer";
+import { DetailFocusPanel } from "../../../components/layout/DetailFocusPanel";
 import { SectionCard } from "../../../components/layout/SectionCard";
 import { SectionHeader } from "../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
@@ -195,6 +196,41 @@ export default function CompetitorSetDetailPage() {
       href: backToListHref,
       label: "Return to competitor sets",
       note: "Create or run competitor analyses when additional lineage context is needed.",
+    };
+  }, [backToListHref, buildComparisonRunHref, buildSnapshotRunHref, latestComparisonRun, snapshotRuns]);
+
+  const detailFocusTakeaway = useMemo(() => {
+    if (!competitorSet) {
+      return "Competitor set context is still loading.";
+    }
+    if (comparisonRuns.length > 0) {
+      return `Comparison lineage is active with ${comparisonRuns.length} run${comparisonRuns.length === 1 ? "" : "s"} linked to this set.`;
+    }
+    if (snapshotRuns.length > 0) {
+      return "Snapshot lineage exists, but comparison analysis has not been generated yet.";
+    }
+    return "This competitor set has no run lineage yet; start with a snapshot run to build context.";
+  }, [comparisonRuns.length, competitorSet, snapshotRuns.length]);
+
+  const detailFocusNextStep = useMemo(() => {
+    if (latestComparisonRun) {
+      return {
+        href: buildComparisonRunHref(latestComparisonRun),
+        label: "Review latest comparison findings",
+        note: "Use findings to validate recommendation priorities.",
+      };
+    }
+    if (snapshotRuns.length > 0) {
+      return {
+        href: buildSnapshotRunHref(snapshotRuns[0]),
+        label: "Review latest snapshot run",
+        note: "Confirm captured competitor pages before running comparisons.",
+      };
+    }
+    return {
+      href: backToListHref,
+      label: "Return to competitor sets",
+      note: "Run capture/comparison from the set list when ready.",
     };
   }, [backToListHref, buildComparisonRunHref, buildSnapshotRunHref, latestComparisonRun, snapshotRuns]);
 
@@ -407,6 +443,15 @@ export default function CompetitorSetDetailPage() {
           lineage="Competitors → Competitor set → Snapshot/comparison runs → Recommendation linkage"
           links={workflowContextLinks}
           nextStep={workflowNextStep}
+        />
+      ) : null}
+
+      {!loading && !notFound && !error && competitorSet ? (
+        <DetailFocusPanel
+          data-testid="competitor-set-detail-focus"
+          takeaway={detailFocusTakeaway}
+          nextStep={detailFocusNextStep}
+          detailHint="Set context appears first, followed by domains, snapshot/comparison runs, and related recommendations."
         />
       ) : null}
 

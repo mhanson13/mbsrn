@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../../components/layout/PageContainer";
+import { DetailFocusPanel, type DetailFocusFact } from "../../../../components/layout/DetailFocusPanel";
 import { SectionCard } from "../../../../components/layout/SectionCard";
 import { SectionHeader } from "../../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../../components/layout/SummaryStatCard";
@@ -368,6 +369,96 @@ export default function RecommendationRunDetailPage() {
     };
   }, [latestNarrativeDetailHref, recommendationRunNarrativeHistoryHref]);
 
+  const detailFocusTakeaway = useMemo(() => {
+    if (!run) {
+      return "Run context is still loading.";
+    }
+    if (runCompleted) {
+      return `Run completed with ${run.total_recommendations} recommendation${run.total_recommendations === 1 ? "" : "s"}.`;
+    }
+    if (runFailed) {
+      return "Run failed before completion; treat recommendation and narrative context as partial until rerun.";
+    }
+    return `Run is currently "${run.status}" and recommendation output may still change.`;
+  }, [run, runCompleted, runFailed]);
+
+  const detailFocusNextStep = useMemo(() => {
+    if (latestNarrativeDetailHref) {
+      return {
+        href: latestNarrativeDetailHref,
+        label: "Review latest narrative detail",
+        note: "Validate reasoning before prioritizing recommendation actions.",
+      };
+    }
+    return {
+      href: recommendationRunNarrativeHistoryHref,
+      label: "Open narrative history",
+      note: "Narrative versions provide run-level reasoning continuity.",
+    };
+  }, [latestNarrativeDetailHref, recommendationRunNarrativeHistoryHref]);
+  const detailFocusFacts = useMemo<DetailFocusFact[]>(() => {
+    if (!run) {
+      return [];
+    }
+
+    const producedCount = report?.recommendations.total || 0;
+    const runStatusLabel = runCompleted
+      ? "Applied / completed"
+      : runFailed
+        ? "Needs review / pending"
+        : "Needs review / pending";
+    const whatChangedLabel = runCompleted
+      ? producedCount > 0
+        ? `Run produced ${producedCount} recommendation${producedCount === 1 ? "" : "s"} for operator review.`
+        : "Run completed with no generated recommendations."
+      : runFailed
+        ? "Run stopped before recommendation output completed."
+        : "Recommendation output is still processing.";
+    const manualFollowUpLabel = runCompleted
+      ? producedCount > 0
+        ? "Yes. Review and apply high-priority recommendations."
+        : "No immediate apply action is required from this run."
+      : runFailed
+        ? "Yes. Resolve run issues and retry."
+        : "Not yet. Wait for run completion before applying actions.";
+    const expectedVisibilityLabel = runCompleted
+      ? "Run output is visible now; applied impact appears after the next analysis refresh."
+      : runFailed
+        ? "No new recommendation visibility changes until a successful rerun."
+        : "Visibility updates when this run reaches completion.";
+    const sourceContextLabel = latestNarrative
+      ? `Narrative v${latestNarrative.version} (${latestNarrative.status})`
+      : "Narrative context not generated yet";
+
+    return [
+      {
+        label: "Current status",
+        value: runStatusLabel,
+        tone: runCompleted ? "success" : "warning",
+      },
+      {
+        label: "What changed",
+        value: whatChangedLabel,
+        tone: runCompleted ? "success" : "neutral",
+      },
+      {
+        label: "Manual follow-up",
+        value: manualFollowUpLabel,
+        tone: runCompleted && producedCount === 0 ? "neutral" : "warning",
+      },
+      {
+        label: "Expected visibility",
+        value: expectedVisibilityLabel,
+        tone: runCompleted ? "warning" : "neutral",
+      },
+      {
+        label: "Source context",
+        value: sourceContextLabel,
+        tone: "neutral",
+      },
+    ];
+  }, [latestNarrative, report?.recommendations.total, run, runCompleted, runFailed]);
+
   useEffect(() => {
     if (context.loading || context.error || !recommendationRunId) {
       setReport(null);
@@ -636,6 +727,17 @@ export default function RecommendationRunDetailPage() {
       ) : null}
 
       {!loading && !notFound && !error && run ? (
+        <DetailFocusPanel
+          data-testid="recommendation-run-detail-focus"
+          title="Run outcome snapshot"
+          takeaway={detailFocusTakeaway}
+          nextStep={detailFocusNextStep}
+          facts={detailFocusFacts}
+          detailHint="Run metrics, lineage, narrative context, and produced recommendations appear in the sections below."
+        />
+      ) : null}
+
+      {!loading && !notFound && !error && run ? (
         <>
           {relatedError ? (
             <SectionCard variant="support" className="role-surface-support">
@@ -660,26 +762,6 @@ export default function RecommendationRunDetailPage() {
             <p>Updated: {formatDateTime(run.updated_at)}</p>
             <p>Duration (ms): {run.duration_ms ?? "-"}</p>
             <p>Error Summary: {run.error_summary || "-"}</p>
-          </SectionCard>
-
-          <SectionCard variant="emphasis" className="role-surface-support">
-            <h2>Run Outcome</h2>
-            {runCompleted ? (
-              <p className="hint">
-                Recommendation run completed. Report counts and produced recommendations are stable.
-              </p>
-            ) : runFailed ? (
-              <p className="hint warning">
-                Recommendation run failed before completion. Partial recommendation data may be present.
-              </p>
-            ) : (
-              <p className="hint warning">
-                Recommendation run is still {run.status}. Recommendations and rollups may still change.
-              </p>
-            )}
-            <p className="hint muted">
-              Workflow context links above keep queue, narrative, and lineage navigation anchored to this run.
-            </p>
           </SectionCard>
 
           <SectionCard variant="summary" className="role-surface-support">

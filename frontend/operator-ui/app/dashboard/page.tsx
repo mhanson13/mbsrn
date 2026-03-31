@@ -96,6 +96,24 @@ export default function DashboardPage() {
         </SectionCard>
       </div>
 
+      <SectionCard variant="summary" className="role-surface-support recommendation-outcome-surface">
+        <SectionHeader
+          title="Recommendation outcome visibility"
+          subtitle="Use these states to audit what changed, what still needs operator follow-up, and when visibility should update."
+          headingLevel={2}
+          variant="support"
+          actions={<Link href="/recommendations">Open Recommendations</Link>}
+        />
+        <p className="hint">
+          <span className="text-strong">Applied / completed:</span> action was recorded. Confirm downstream visibility after
+          the next refresh cycle.
+        </p>
+        <p className="hint">
+          <span className="text-strong">Needs review / pending:</span> operator action is still required before visibility can
+          update.
+        </p>
+      </SectionCard>
+
       <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader
           title="Operator Navigation"

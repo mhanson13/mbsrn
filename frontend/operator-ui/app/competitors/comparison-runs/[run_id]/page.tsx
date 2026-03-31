@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../../components/layout/PageContainer";
+import { DetailFocusPanel } from "../../../../components/layout/DetailFocusPanel";
 import { SectionCard } from "../../../../components/layout/SectionCard";
 import { SectionHeader } from "../../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../../components/layout/SummaryStatCard";
@@ -203,6 +204,35 @@ export default function ComparisonRunDetailPage() {
       href: "/recommendations",
       label: "Open recommendation queue",
       note: "Comparison findings feed recommendation generation and triage.",
+    };
+  }, [linkedRecommendationRuns]);
+
+  const detailFocusTakeaway = useMemo(() => {
+    if (!run) {
+      return "Comparison run context is still loading.";
+    }
+    if (run.total_findings > 0) {
+      return `Comparison captured ${run.total_findings} finding${run.total_findings === 1 ? "" : "s"} across client and competitor pages.`;
+    }
+    if (metricRollups.length > 0) {
+      return "Comparison finished with metric rollups but no explicit findings.";
+    }
+    return "Comparison contains no findings yet; review upstream snapshot context if this is unexpected.";
+  }, [metricRollups.length, run]);
+
+  const detailFocusNextStep = useMemo(() => {
+    if (linkedRecommendationRuns.length > 0) {
+      const topRun = linkedRecommendationRuns[0];
+      return {
+        href: buildRecommendationRunHref(topRun.id, topRun.site_id),
+        label: "Review linked recommendation run",
+        note: "Use comparison findings as evidence for recommendation action priority.",
+      };
+    }
+    return {
+      href: "/recommendations",
+      label: "Open recommendation queue",
+      note: "Generate or review recommendation output using this comparison as context.",
     };
   }, [linkedRecommendationRuns]);
 
@@ -476,6 +506,15 @@ export default function ComparisonRunDetailPage() {
           lineage="Competitors → Comparison run → Recommendation linkage"
           links={workflowContextLinks}
           nextStep={workflowNextStep}
+        />
+      ) : null}
+
+      {!loading && !notFound && !error && run ? (
+        <DetailFocusPanel
+          data-testid="comparison-run-detail-focus"
+          takeaway={detailFocusTakeaway}
+          nextStep={detailFocusNextStep}
+          detailHint="Run context and aggregate metrics come first, followed by findings detail and recommendation linkage."
         />
       ) : null}
 

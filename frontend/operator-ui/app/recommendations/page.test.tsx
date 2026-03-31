@@ -199,6 +199,15 @@ describe("recommendations queue optimistic workflows", () => {
 
     await screen.findByText("Recommendation One");
     await screen.findByText("Recommendation Two");
+    expect(screen.getByTestId("recommendation-queue-outcome-focus")).toBeInTheDocument();
+    expect(screen.getByText("Recommendation outcome snapshot")).toBeInTheDocument();
+    expect(screen.getByText("Current status")).toBeInTheDocument();
+    expect(
+      screen.getByText("Yes. Ready-now recommendations still need an operator decision."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Queue controls and recommendation details below show action history/i),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Select all displayed recommendations"));
     expect(screen.getByText("2 selected on this page")).toBeInTheDocument();
@@ -227,7 +236,7 @@ describe("recommendations queue optimistic workflows", () => {
     expect(getRecommendationRow("Recommendation One")).toHaveTextContent("dismissed");
     expect(getRecommendationRow("Recommendation Two")).toHaveTextContent("open");
     expect(screen.getByText("1 selected on this page")).toBeInTheDocument();
-    expect(screen.getByText("Updated 1 recommendation to dismissed.")).toBeInTheDocument();
+    expect(screen.getAllByText("Updated 1 recommendation to dismissed.").length).toBeGreaterThan(0);
     expect(
       screen.getByText(
         "One or more recommendation updates are not allowed in the current state. 1 update failed.",
@@ -360,7 +369,7 @@ describe("recommendations queue optimistic workflows", () => {
     await user.click(screen.getByLabelText("Select recommendation rec-5"));
     await user.click(screen.getByRole("button", { name: "Accept Selected" }));
 
-    await screen.findByText("Updated 1 recommendation to accepted.");
+    await screen.findAllByText("Updated 1 recommendation to accepted.");
     await waitFor(() =>
       expect(mockFetchRecommendations).toHaveBeenLastCalledWith(
         "token-1",

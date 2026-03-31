@@ -299,6 +299,41 @@ Operator-facing improvements:
 
 This is presentation/navigation-only and does not change recommendation generation, narrative content, linkage logic, or apply semantics.
 
+## Recommendation Detail Scanability Refinement (Presentation-Only)
+
+Recommendation detail-heavy routes now use a compact summary-before-detail rhythm:
+- recommendation detail (`/recommendations/[id]`)
+- recommendation run detail (`/recommendations/runs/[run_id]`)
+- narrative detail (`/recommendations/runs/[run_id]/narratives/[narrative_id]`)
+
+Operator-visible improvements:
+- quick top takeaway before dense metadata/tables
+- clear likely next action near the top
+- concise cue for where deeper supporting detail is grouped
+
+These are UI framing improvements only. Recommendation meaning, trust semantics, status behavior, and apply/generation logic are unchanged.
+
+## Recommendation Outcome Snapshot Standardization (Presentation-Only)
+
+Recommendation-facing routes now share consistent operator wording and emphasis for outcome auditability:
+- `Current status`
+- `What changed`
+- `Manual follow-up`
+- `Expected visibility`
+- `Source context`
+
+This summary-first pattern is now surfaced on:
+- recommendation queue (`/recommendations`)
+- recommendation detail (`/recommendations/[id]`)
+- recommendation run detail (`/recommendations/runs/[run_id]`)
+
+Operator intent:
+- make apply/completed vs pending states scannable early
+- keep manual follow-up requirements obvious
+- keep visibility timing expectations explicit and conservative
+
+This does not change recommendation generation, apply behavior, trust semantics, or API contracts.
+
 ## Workspace Analysis Freshness
 
 Workspace summary responses now include an additive `analysis_freshness` object so operators can tell whether currently displayed analysis reflects the latest applied tuning changes.

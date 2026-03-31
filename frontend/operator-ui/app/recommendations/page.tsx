@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { DetailFocusPanel, type DetailFocusFact } from "../../components/layout/DetailFocusPanel";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
@@ -483,6 +484,110 @@ function RecommendationsPageContent() {
   const allDisplayedSelected =
     displayedRecommendationIds.length > 0 &&
     displayedRecommendationIds.every((id) => selectedRecommendationIds.includes(id));
+  const buildRecommendationDetailHref = useCallback((item: Recommendation): string => {
+    const params = new URLSearchParams();
+    params.set("site_id", item.site_id);
+    if (filters.status) {
+      params.set("status", filters.status);
+    }
+    if (filters.priorityBand) {
+      params.set("priority", filters.priorityBand);
+    }
+    if (filters.category) {
+      params.set("category", filters.category);
+    }
+    if (sort !== DEFAULT_SORT) {
+      params.set("sort", sort);
+    }
+    if (activePage > DEFAULT_PAGE) {
+      params.set("page", String(activePage));
+    }
+    if (pageSize !== DEFAULT_PAGE_SIZE) {
+      params.set("page_size", String(pageSize));
+    }
+    return `/recommendations/${item.id}?${params.toString()}`;
+  }, [activePage, filters.category, filters.priorityBand, filters.status, pageSize, sort]);
+  const topReadyRecommendation = useMemo(() => {
+    const openItems = items.filter((item) => item.status === "open" || item.status === "in_progress");
+    if (openItems.length === 0) {
+      return null;
+    }
+    return [...openItems].sort((left, right) => {
+      if (right.priority_score !== left.priority_score) {
+        return right.priority_score - left.priority_score;
+      }
+      return right.created_at.localeCompare(left.created_at);
+    })[0] || null;
+  }, [items]);
+  const recommendationQueueTakeaway = useMemo(() => {
+    if (loadingItems) {
+      return "Recommendation queue status is still loading.";
+    }
+    if (queueSummary.open > 0) {
+      return `${queueSummary.open} recommendation${queueSummary.open === 1 ? "" : "s"} are ready for action now.`;
+    }
+    if (queueSummary.accepted > 0) {
+      return `No ready-now items in this view; ${queueSummary.accepted} recommendation${queueSummary.accepted === 1 ? "" : "s"} are already applied/completed.`;
+    }
+    return "No immediate recommendation action is required for the current queue filters.";
+  }, [loadingItems, queueSummary.accepted, queueSummary.open]);
+  const recommendationQueueNextStep = useMemo(() => {
+    if (topReadyRecommendation) {
+      return {
+        href: buildRecommendationDetailHref(topReadyRecommendation),
+        label: "Open top ready recommendation",
+        note: "Review what changed and confirm whether follow-up is still required.",
+      };
+    }
+    if (queueSummary.accepted > 0 && items.length > 0) {
+      return {
+        href: buildRecommendationDetailHref(items[0]),
+        label: "Review latest applied recommendation",
+        note: "Confirm pending visibility timing and downstream follow-up.",
+      };
+    }
+    return {
+      href: "/sites",
+      label: "Open site workspace",
+      note: "Run or refresh recommendations when new analysis context is available.",
+    };
+  }, [buildRecommendationDetailHref, items, queueSummary.accepted, topReadyRecommendation]);
+  const recommendationQueueFacts = useMemo<DetailFocusFact[]>(() => {
+    if (loadingItems) {
+      return [];
+    }
+    const manualFollowUpText = queueSummary.open > 0
+      ? "Yes. Ready-now recommendations still need an operator decision."
+      : queueSummary.accepted > 0
+        ? "Yes. Validate accepted recommendation visibility after the next refresh."
+        : "No immediate follow-up is required for the current view.";
+    const visibilityTimingText = queueSummary.accepted > 0
+      ? "Accepted items may need one refresh cycle before downstream visibility fully updates."
+      : "Queue status updates immediately for this view.";
+
+    return [
+      {
+        label: "Current status",
+        value: queueSummary.open > 0 ? "Needs review / pending" : "Applied / completed",
+        tone: queueSummary.open > 0 ? "warning" : "success",
+      },
+      {
+        label: "What changed",
+        value: bulkActionSuccess || "No recent queue status change in this session.",
+        tone: bulkActionSuccess ? "success" : "neutral",
+      },
+      {
+        label: "Manual follow-up",
+        value: manualFollowUpText,
+        tone: queueSummary.open > 0 || queueSummary.accepted > 0 ? "warning" : "neutral",
+      },
+      {
+        label: "Expected visibility",
+        value: visibilityTimingText,
+        tone: queueSummary.accepted > 0 ? "warning" : "neutral",
+      },
+    ];
+  }, [bulkActionSuccess, loadingItems, queueSummary.accepted, queueSummary.open]);
 
   function updateQueueParams(nextFilters: FilterState, nextSort: SortState) {
     const params = new URLSearchParams(searchParams.toString());
@@ -554,30 +659,6 @@ function RecommendationsPageContent() {
   function goToPage(nextPage: number) {
     const boundedPage = Math.min(Math.max(nextPage, DEFAULT_PAGE), totalPages);
     updatePaginationParams(boundedPage, pageSize);
-  }
-
-  function buildRecommendationDetailHref(item: Recommendation): string {
-    const params = new URLSearchParams();
-    params.set("site_id", item.site_id);
-    if (filters.status) {
-      params.set("status", filters.status);
-    }
-    if (filters.priorityBand) {
-      params.set("priority", filters.priorityBand);
-    }
-    if (filters.category) {
-      params.set("category", filters.category);
-    }
-    if (sort !== DEFAULT_SORT) {
-      params.set("sort", sort);
-    }
-    if (activePage > DEFAULT_PAGE) {
-      params.set("page", String(activePage));
-    }
-    if (pageSize !== DEFAULT_PAGE_SIZE) {
-      params.set("page_size", String(pageSize));
-    }
-    return `/recommendations/${item.id}?${params.toString()}`;
   }
 
   function buildRecommendationRunDetailHref(item: Recommendation): string {
@@ -898,6 +979,15 @@ function RecommendationsPageContent() {
           </div>
         </SectionCard>
       </div>
+
+      <DetailFocusPanel
+        data-testid="recommendation-queue-outcome-focus"
+        title="Recommendation outcome snapshot"
+        takeaway={recommendationQueueTakeaway}
+        nextStep={recommendationQueueNextStep}
+        facts={recommendationQueueFacts}
+        detailHint="Queue controls and recommendation details below show action history, rationale, and lineage."
+      />
 
       <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader

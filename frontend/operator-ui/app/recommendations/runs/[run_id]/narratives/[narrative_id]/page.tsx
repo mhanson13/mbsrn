@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../../../../components/layout/PageContainer";
+import { DetailFocusPanel } from "../../../../../../components/layout/DetailFocusPanel";
 import { SectionCard } from "../../../../../../components/layout/SectionCard";
 import { SectionHeader } from "../../../../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../../../../components/layout/SummaryStatCard";
@@ -286,6 +287,32 @@ export default function RecommendationNarrativeDetailPage() {
     };
   }, [narrativeHistoryHref, parentRunHref, report?.recommendations.total]);
 
+  const detailFocusTakeaway = useMemo(() => {
+    if (!narrative || !run) {
+      return "Narrative detail is still loading.";
+    }
+    const producedCount = report?.recommendations.total || 0;
+    if (narrative.status === "completed") {
+      return `Narrative version ${narrative.version} is completed with ${producedCount} linked recommendation${producedCount === 1 ? "" : "s"}.`;
+    }
+    return `Narrative version ${narrative.version} is in "${narrative.status}" state; verify run context before acting.`;
+  }, [narrative, report?.recommendations.total, run]);
+
+  const detailFocusNextStep = useMemo(() => {
+    if ((report?.recommendations.total || 0) > 0) {
+      return {
+        href: parentRunHref,
+        label: "Review produced recommendations",
+        note: "Use this narrative as decision context, not as a standalone output.",
+      };
+    }
+    return {
+      href: narrativeHistoryHref,
+      label: "Return to narrative history",
+      note: "Compare versions and then return to the parent run.",
+    };
+  }, [narrativeHistoryHref, parentRunHref, report?.recommendations.total]);
+
   useEffect(() => {
     if (context.loading || context.error || !recommendationRunId || !narrativeId) {
       setReport(null);
@@ -513,6 +540,15 @@ export default function RecommendationNarrativeDetailPage() {
           lineage="Recommendations → Recommendation Run → Narrative history → Narrative detail"
           links={workflowContextLinks}
           nextStep={workflowNextStep}
+        />
+      ) : null}
+
+      {!loading && !notFound && !error && run && narrative ? (
+        <DetailFocusPanel
+          data-testid="recommendation-narrative-detail-focus"
+          takeaway={detailFocusTakeaway}
+          nextStep={detailFocusNextStep}
+          detailHint="Narrative metadata, structured sections, full text, and produced recommendations are organized below."
         />
       ) : null}
 

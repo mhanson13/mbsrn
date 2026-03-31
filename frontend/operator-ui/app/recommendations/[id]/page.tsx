@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../components/layout/PageContainer";
+import { DetailFocusPanel, type DetailFocusFact } from "../../../components/layout/DetailFocusPanel";
 import { SectionCard } from "../../../components/layout/SectionCard";
 import { SectionHeader } from "../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
@@ -364,6 +365,103 @@ export default function RecommendationDetailPage() {
     };
   }, [backToRecommendationsHref, recommendation]);
 
+  const detailFocusTakeaway = useMemo(() => {
+    if (!recommendation) {
+      return "Recommendation context is still loading.";
+    }
+    if (recommendation.status === "open" || recommendation.status === "in_progress") {
+      return `This recommendation is still actionable and currently in "${recommendation.status}" state.`;
+    }
+    if (recommendation.status === "accepted") {
+      return "This recommendation has been accepted; confirm downstream visibility on the next analysis refresh.";
+    }
+    if (recommendation.status === "dismissed") {
+      return "This recommendation is dismissed; keep lineage available for auditability and future review.";
+    }
+    return `This recommendation is in "${recommendation.status}" state.`;
+  }, [recommendation]);
+
+  const detailFocusNextStep = useMemo(() => {
+    if (!recommendation) {
+      return null;
+    }
+    if (recommendation.status === "open" || recommendation.status === "in_progress") {
+      return {
+        href: "#recommendation-actions",
+        label: "Review rationale, then accept or dismiss",
+        note: "Use the action controls below once decision context is clear.",
+      };
+    }
+    return {
+      href: backToRecommendationsHref,
+      label: "Return to recommendation queue",
+      note: "Continue with remaining recommendation actions.",
+    };
+  }, [backToRecommendationsHref, recommendation]);
+  const detailFocusFacts = useMemo<DetailFocusFact[]>(() => {
+    if (!recommendation) {
+      return [];
+    }
+
+    const applied = recommendation.status === "accepted";
+    const pending = recommendation.status === "open" || recommendation.status === "in_progress";
+    const dismissed = recommendation.status === "dismissed";
+
+    const currentStatusLabel = applied
+      ? "Applied / completed"
+      : pending
+        ? "Needs review / pending"
+        : dismissed
+          ? "Dismissed"
+          : recommendation.status;
+
+    const whatChangedLabel = applied
+      ? "Recommendation is marked accepted for this site."
+      : dismissed
+        ? "Recommendation is marked dismissed in the queue."
+        : "No apply change has been recorded yet.";
+
+    const manualFollowUpLabel = applied
+      ? "Yes. Confirm this change in the next analysis refresh."
+      : pending
+        ? "Yes. Review the recommendation and choose accept or dismiss."
+        : "Optional. Re-open only if context changes.";
+
+    const expectedVisibilityLabel = applied
+      ? "Visible after the next refresh; external channels may take additional time to reflect."
+      : pending
+        ? "No downstream visibility change until an apply action is recorded."
+        : "Dismissal is reflected in the queue immediately.";
+
+    return [
+      {
+        label: "Current status",
+        value: currentStatusLabel,
+        tone: applied ? "success" : pending ? "warning" : "neutral",
+      },
+      {
+        label: "What changed",
+        value: whatChangedLabel,
+        tone: applied ? "success" : "neutral",
+      },
+      {
+        label: "Manual follow-up",
+        value: manualFollowUpLabel,
+        tone: pending || applied ? "warning" : "neutral",
+      },
+      {
+        label: "Expected visibility",
+        value: expectedVisibilityLabel,
+        tone: applied ? "warning" : "neutral",
+      },
+      {
+        label: "Source context",
+        value: `${recommendationSourceType(recommendation)} lineage`,
+        tone: "neutral",
+      },
+    ];
+  }, [recommendation]);
+
   if (context.loading) {
     return (
       <PageContainer>
@@ -466,6 +564,17 @@ export default function RecommendationDetailPage() {
       ) : null}
 
       {!loading && !notFound && !error && recommendation ? (
+        <DetailFocusPanel
+          data-testid="recommendation-detail-focus"
+          title="Recommendation outcome snapshot"
+          takeaway={detailFocusTakeaway}
+          nextStep={detailFocusNextStep}
+          facts={detailFocusFacts}
+          detailHint="Recommendation context, decision controls, lineage, and tenant scope are grouped in the sections below."
+        />
+      ) : null}
+
+      {!loading && !notFound && !error && recommendation ? (
         <>
           <SectionCard variant="summary" className="role-surface-support">
             <h2>Recommendation Context</h2>
@@ -483,7 +592,7 @@ export default function RecommendationDetailPage() {
             <p>Source Type: {recommendationSourceType(recommendation)}</p>
           </SectionCard>
 
-          <SectionCard variant="emphasis" className="role-surface-support">
+          <SectionCard variant="emphasis" className="role-surface-support" id="recommendation-actions">
             <h2>Actions</h2>
             <div className="row-wrap-tight">
               <button

@@ -202,6 +202,10 @@ describe("recommendation narrative detail page presentation", () => {
     expect(screen.getByTestId("recommendation-narrative-detail-hero")).toBeInTheDocument();
     expect(screen.getByTestId("recommendation-narrative-detail-summary-strip")).toBeInTheDocument();
     expect(screen.getByTestId("recommendation-narrative-detail-workflow-context")).toBeInTheDocument();
+    const detailFocus = screen.getByTestId("recommendation-narrative-detail-focus");
+    expect(detailFocus).toBeInTheDocument();
+    const metadataHeading = screen.getByRole("heading", { name: "Narrative Metadata" });
+    expect(detailFocus.compareDocumentPosition(metadataHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("link", { name: "Parent Recommendation Run" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Narrative History" })).toBeInTheDocument();
     expect(screen.getByText("Narrative status")).toBeInTheDocument();

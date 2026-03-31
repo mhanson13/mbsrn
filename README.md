@@ -18,11 +18,13 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 - Phase-3 detail-route consistency uplift for deeper workspace views (`audits/[run_id]`, competitor run/set detail routes, recommendation detail) plus shared support-state framing on secondary cross-role surfaces (`dashboard`, `business-profile`)
 - Phase-4 recommendation-flow detail consistency uplift for recommendation run and narrative routes (`recommendations/runs/[run_id]`, narrative history, narrative detail) with shared hero/summary/support-state framing
 - Deep workflow context continuity uplift across audit/competitor/recommendation detail routes with clearer lineage back-links and adjacent next-step guidance
+- Summary-before-detail refinement on recommendation/competitor deep routes (top takeaway + likely next action before dense supporting detail)
 - Action-driven site workspace Operator Focus (deterministic top-priority next step with direct operator action links)
 - Recommendation Presentation v1 (visual action-state buckets: ready/applied/pending/informational using existing recommendation semantics)
 - Recommendation Detail Clarity v2 (per-item observed pattern/gap/action/supporting-context blocks for faster operator understanding without changing recommendation logic)
 - Workspace Copy + Label Tuning v1 (operator-facing wording refinement across recommendation/focus surfaces with unchanged behavior/semantics)
 - Recommendation apply outcome visibility v1 (compact workspace outcome card showing what changed, current apply visibility state, and expected refresh timing)
+- Recommendation outcome snapshot standardization across recommendation-facing routes (dashboard guidance + queue/detail/run summary-first status/change/follow-up/visibility cues)
 - Site workspace Google Business Profile integration visibility (connected/action-needed/not-connected/status-unavailable) with direct connect/reconnect navigation to `/business-profile`
 
 ## Trust Boundary

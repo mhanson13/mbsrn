@@ -140,6 +140,10 @@ describe("comparison run detail workflow context", () => {
     render(<ComparisonRunDetailPage />);
 
     await screen.findByTestId("comparison-run-workflow-context");
+    const detailFocus = screen.getByTestId("comparison-run-detail-focus");
+    expect(detailFocus).toBeInTheDocument();
+    const runContextHeading = screen.getByRole("heading", { name: "Run Context" });
+    expect(detailFocus.compareDocumentPosition(runContextHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("link", { name: "Parent Competitor Set" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Snapshot Run" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Recommendation Queue" })).toBeInTheDocument();

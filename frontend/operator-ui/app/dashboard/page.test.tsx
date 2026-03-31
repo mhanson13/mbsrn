@@ -74,6 +74,13 @@ describe("dashboard shared support-state framing", () => {
     render(<DashboardPage />);
 
     expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    const recommendationOutcomeHeading = screen.getByRole("heading", { name: "Recommendation outcome visibility" });
+    expect(recommendationOutcomeHeading).toBeInTheDocument();
+    const recommendationOutcomeSection = recommendationOutcomeHeading.closest("section");
+    expect(recommendationOutcomeSection).not.toBeNull();
+    expect(recommendationOutcomeSection).toHaveTextContent(
+      "Applied / completed: action was recorded. Confirm downstream visibility after the next refresh cycle.",
+    );
     expect(screen.getByRole("link", { name: "Sites" })).toHaveAttribute("href", "/sites");
     expect(screen.getByRole("link", { name: "Google Business Profile" })).toHaveAttribute(
       "href",

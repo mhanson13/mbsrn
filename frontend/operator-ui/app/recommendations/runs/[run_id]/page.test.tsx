@@ -185,6 +185,22 @@ describe("recommendation run detail page presentation", () => {
     await screen.findByTestId("recommendation-run-detail-hero");
     expect(screen.getByTestId("recommendation-run-detail-summary-strip")).toBeInTheDocument();
     expect(screen.getByTestId("recommendation-run-workflow-context")).toBeInTheDocument();
+    const detailFocus = screen.getByTestId("recommendation-run-detail-focus");
+    expect(detailFocus).toBeInTheDocument();
+    expect(screen.getByText("Run outcome snapshot")).toBeInTheDocument();
+    expect(
+      screen.getByText("Run produced 1 recommendation for operator review."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Yes. Review and apply high-priority recommendations."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Run output is visible now; applied impact appears after the next analysis refresh.",
+      ),
+    ).toBeInTheDocument();
+    const runContextHeading = screen.getByRole("heading", { name: "Run Context" });
+    expect(detailFocus.compareDocumentPosition(runContextHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("link", { name: "Recommendation Queue" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Narrative History" })).toBeInTheDocument();
     expect(screen.getByText("Run status")).toBeInTheDocument();

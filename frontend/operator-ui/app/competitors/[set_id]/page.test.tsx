@@ -144,6 +144,10 @@ describe("competitor set detail workflow context", () => {
     render(<CompetitorSetDetailPage />);
 
     await screen.findByTestId("competitor-set-workflow-context");
+    const detailFocus = screen.getByTestId("competitor-set-detail-focus");
+    expect(detailFocus).toBeInTheDocument();
+    const setContextHeading = screen.getByRole("heading", { name: "Set Context" });
+    expect(detailFocus.compareDocumentPosition(setContextHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("link", { name: "Competitor Sets" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Latest snapshot run" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Latest comparison run" })).toBeInTheDocument();

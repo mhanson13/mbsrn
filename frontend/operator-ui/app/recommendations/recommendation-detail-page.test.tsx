@@ -130,11 +130,24 @@ describe("recommendation detail optimistic single-item updates", () => {
 
     await screen.findByText("Status: open");
     expect(screen.getByTestId("recommendation-detail-workflow-context")).toBeInTheDocument();
+    const detailFocus = screen.getByTestId("recommendation-detail-focus");
+    expect(detailFocus).toBeInTheDocument();
+    expect(screen.getByText("Recommendation outcome snapshot")).toBeInTheDocument();
+    expect(
+      screen.getByText("Yes. Review the recommendation and choose accept or dismiss."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("No downstream visibility change until an apply action is recorded."),
+    ).toBeInTheDocument();
+    const recommendationContextHeading = screen.getByRole("heading", { name: "Recommendation Context" });
+    expect(detailFocus.compareDocumentPosition(recommendationContextHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("link", { name: "Parent Recommendation Run" })).toBeInTheDocument();
     await user.type(screen.getByLabelText("Operator Note"), "Ship this next sprint");
     await user.click(screen.getByRole("button", { name: "Accept" }));
 
     expect(screen.getByText("Status: accepted")).toBeInTheDocument();
+    expect(screen.getByText("Recommendation is marked accepted for this site.")).toBeInTheDocument();
+    expect(screen.getByText("Yes. Confirm this change in the next analysis refresh.")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Ship this next sprint")).toBeInTheDocument();
 
     await act(async () => {

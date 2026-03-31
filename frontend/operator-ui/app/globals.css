@@ -1215,6 +1215,73 @@ code {
   font-size: var(--type-sm);
 }
 
+.detail-focus-surface {
+  gap: var(--space-2);
+  border-color: rgba(79, 70, 229, 0.34);
+  background: linear-gradient(180deg, rgba(224, 231, 255, 0.42) 0%, var(--panel) 100%);
+}
+
+.detail-focus-line {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+
+.detail-focus-line a {
+  font-weight: 600;
+}
+
+.detail-focus-note {
+  color: var(--text-soft);
+  font-size: var(--type-sm);
+}
+
+.detail-focus-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-2);
+}
+
+.detail-focus-fact {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  padding: 0.44rem 0.52rem;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.detail-focus-fact dt {
+  margin: 0;
+  font-size: var(--type-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  color: var(--workspace-summary-muted);
+}
+
+.detail-focus-fact dd {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--type-sm);
+  line-height: 1.35;
+}
+
+.detail-focus-fact-success {
+  border-color: rgba(16, 185, 129, 0.34);
+}
+
+.detail-focus-fact-warning {
+  border-color: rgba(245, 158, 11, 0.34);
+}
+
+.detail-focus-fact-danger {
+  border-color: rgba(244, 63, 94, 0.34);
+}
+
 /* Shared shell chrome for all operator pages. Reuse this layout language for new routes. */
 .topnav {
   border-bottom: 1px solid var(--shell-header-border);
