@@ -188,6 +188,19 @@ describe("recommendation run detail page presentation", () => {
     const detailFocus = screen.getByTestId("recommendation-run-detail-focus");
     expect(detailFocus).toBeInTheDocument();
     expect(screen.getByText("Run outcome snapshot")).toBeInTheDocument();
+    expect(screen.getByText("Why this matters now")).toBeInTheDocument();
+    expect(screen.getByText("Can I act now")).toBeInTheDocument();
+    expect(screen.getByText("Blocking state")).toBeInTheDocument();
+    expect(screen.getByText("After action")).toBeInTheDocument();
+    expect(screen.getByText("Evidence preview")).toBeInTheDocument();
+    expect(screen.getByText("Evidence trust")).toBeInTheDocument();
+    expect(
+      screen.getByText("Run produced actionable recommendations that should be reviewed now."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Support cue: operator review required")).toBeInTheDocument();
+    expect(
+      screen.getByText("Yes. Review recommendations and start with the highest-priority items."),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Run produced 1 recommendation for operator review."),
     ).toBeInTheDocument();

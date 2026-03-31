@@ -74,12 +74,21 @@ describe("dashboard shared support-state framing", () => {
     render(<DashboardPage />);
 
     expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
-    const recommendationOutcomeHeading = screen.getByRole("heading", { name: "Recommendation outcome visibility" });
+    const recommendationOutcomeHeading = screen.getByRole("heading", { name: "Recommendation decisiveness cues" });
     expect(recommendationOutcomeHeading).toBeInTheDocument();
     const recommendationOutcomeSection = recommendationOutcomeHeading.closest("section");
     expect(recommendationOutcomeSection).not.toBeNull();
     expect(recommendationOutcomeSection).toHaveTextContent(
-      "Applied / completed: action was recorded. Confirm downstream visibility after the next refresh cycle.",
+      "Why now: High-value next step Ready now indicates the top item to review first.",
+    );
+    expect(recommendationOutcomeSection).toHaveTextContent(
+      "Blocking: Waiting on visibility or Manual follow-up required means action is recorded but confirmation is still pending.",
+    );
+    expect(recommendationOutcomeSection).toHaveTextContent(
+      "After action: Review before applying for undecided items; after apply, verify visibility on the next refresh.",
+    );
+    expect(recommendationOutcomeSection).toHaveTextContent(
+      "Evidence preview: queue/detail views show one compact proof line plus a trust-safe support cue.",
     );
     expect(screen.getByRole("link", { name: "Sites" })).toHaveAttribute("href", "/sites");
     expect(screen.getByRole("link", { name: "Google Business Profile" })).toHaveAttribute(

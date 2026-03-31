@@ -98,19 +98,32 @@ export default function DashboardPage() {
 
       <SectionCard variant="summary" className="role-surface-support recommendation-outcome-surface">
         <SectionHeader
-          title="Recommendation outcome visibility"
-          subtitle="Use these states to audit what changed, what still needs operator follow-up, and when visibility should update."
+          title="Recommendation decisiveness cues"
+          subtitle="Use this short scan order: why now, blocker, then after-action visibility."
           headingLevel={2}
           variant="support"
           actions={<Link href="/recommendations">Open Recommendations</Link>}
         />
         <p className="hint">
-          <span className="text-strong">Applied / completed:</span> action was recorded. Confirm downstream visibility after
-          the next refresh cycle.
+          <span className="text-strong">Why now:</span>{" "}
+          <span className="badge badge-warn">High-value next step</span>{" "}
+          <span className="badge badge-success">Ready now</span>{" "}
+          indicates the top item to review first.
         </p>
         <p className="hint">
-          <span className="text-strong">Needs review / pending:</span> operator action is still required before visibility can
-          update.
+          <span className="text-strong">Blocking:</span>{" "}
+          <span className="badge badge-warn">Waiting on visibility</span>{" "}
+          or{" "}
+          <span className="badge badge-warn">Manual follow-up required</span>{" "}
+          means action is recorded but confirmation is still pending.
+        </p>
+        <p className="hint">
+          <span className="text-strong">After action:</span>{" "}
+          <span className="badge badge-muted">Review before applying</span>{" "}
+          for undecided items; after apply, verify visibility on the next refresh.
+        </p>
+        <p className="hint">
+          <span className="text-strong">Evidence preview:</span> queue/detail views show one compact proof line plus a trust-safe support cue.
         </p>
       </SectionCard>
 

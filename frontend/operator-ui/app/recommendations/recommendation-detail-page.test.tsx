@@ -133,6 +133,19 @@ describe("recommendation detail optimistic single-item updates", () => {
     const detailFocus = screen.getByTestId("recommendation-detail-focus");
     expect(detailFocus).toBeInTheDocument();
     expect(screen.getByText("Recommendation outcome snapshot")).toBeInTheDocument();
+    expect(screen.getByText("Why this matters now")).toBeInTheDocument();
+    expect(screen.getByText("Can I act now")).toBeInTheDocument();
+    expect(screen.getByText("Blocking state")).toBeInTheDocument();
+    expect(screen.getByText("After action")).toBeInTheDocument();
+    expect(screen.getByText("Evidence preview")).toBeInTheDocument();
+    expect(screen.getByText("Evidence trust")).toBeInTheDocument();
+    expect(
+      screen.getByText("High-value next step based on current priority and open status."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Support cue: operator review required")).toBeInTheDocument();
+    expect(
+      screen.getByText("Yes. Open actions below and choose accept or dismiss."),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Yes. Review the recommendation and choose accept or dismiss."),
     ).toBeInTheDocument();
@@ -164,6 +177,8 @@ describe("recommendation detail optimistic single-item updates", () => {
     await screen.findByText("Recommendation marked as accepted.");
     expect(screen.getByText("Status: accepted")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Backend normalized note")).toBeInTheDocument();
+    expect(screen.getByText("Apply is complete and now needs visibility confirmation.")).toBeInTheDocument();
+    expect(screen.getByText("No. Wait for refresh, then verify outcome.")).toBeInTheDocument();
     expect(mockUpdateRecommendationStatus).toHaveBeenCalledWith(
       "token-1",
       "biz-1",

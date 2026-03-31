@@ -201,10 +201,28 @@ describe("recommendations queue optimistic workflows", () => {
     await screen.findByText("Recommendation Two");
     expect(screen.getByTestId("recommendation-queue-outcome-focus")).toBeInTheDocument();
     expect(screen.getByText("Recommendation outcome snapshot")).toBeInTheDocument();
+    expect(screen.getByText("Why this matters now")).toBeInTheDocument();
     expect(screen.getByText("Current status")).toBeInTheDocument();
+    expect(screen.getByText("Can I act now")).toBeInTheDocument();
+    expect(screen.getByText("Blocking state")).toBeInTheDocument();
+    expect(screen.getByText("After action")).toBeInTheDocument();
+    expect(screen.getByText("Evidence preview")).toBeInTheDocument();
+    expect(screen.getByText("Evidence trust")).toBeInTheDocument();
     expect(
       screen.getByText("Yes. Ready-now recommendations still need an operator decision."),
     ).toBeInTheDocument();
+    const decisivenessCellOne = screen.getByTestId("recommendation-decisiveness-rec-1");
+    expect(decisivenessCellOne).toHaveTextContent("High-value next step");
+    expect(decisivenessCellOne).toHaveTextContent("Ready now");
+    expect(decisivenessCellOne).toHaveTextContent("Why now:");
+    expect(decisivenessCellOne).toHaveTextContent("Blocking:");
+    expect(decisivenessCellOne).toHaveTextContent("After action:");
+    expect(decisivenessCellOne).toHaveTextContent("Evidence:");
+    expect(decisivenessCellOne).toHaveTextContent("Support cue:");
+    expect(decisivenessCellOne).toHaveTextContent("operator review required");
+    const decisivenessCellTwo = screen.getByTestId("recommendation-decisiveness-rec-2");
+    expect(decisivenessCellTwo).toHaveTextContent("Review before applying");
+    expect(decisivenessCellTwo).toHaveTextContent("Ready now");
     expect(
       screen.getByText(/Queue controls and recommendation details below show action history/i),
     ).toBeInTheDocument();
@@ -366,6 +384,9 @@ describe("recommendations queue optimistic workflows", () => {
     render(<RecommendationsPage />);
 
     await screen.findByText("Recommendation Five");
+    const decisivenessCell = screen.getByTestId("recommendation-decisiveness-rec-5");
+    expect(decisivenessCell).toHaveTextContent("High-value next step");
+    expect(decisivenessCell).toHaveTextContent("Ready now");
     await user.click(screen.getByLabelText("Select recommendation rec-5"));
     await user.click(screen.getByRole("button", { name: "Accept Selected" }));
 

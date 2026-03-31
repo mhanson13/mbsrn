@@ -39,6 +39,19 @@ type QueueSummary = {
   dismissed: number;
   highPriority: number;
 };
+
+type RecommendationDecisiveness = {
+  priorityCue: string;
+  priorityCueTone: "badge-success" | "badge-warn" | "badge-muted";
+  actionabilityCue: string;
+  actionabilityTone: "badge-success" | "badge-warn" | "badge-muted";
+  whyNow: string;
+  blockingState: string;
+  afterAction: string;
+  evidencePreview: string;
+  evidenceTrustCue: string;
+  evidenceTrustTone: "badge-success" | "badge-warn" | "badge-muted";
+};
 type OptimisticBulkQueueState = {
   items: Recommendation[];
   totalRecommendations: number | null;
@@ -263,6 +276,141 @@ function deriveSourceType(item: Recommendation): string {
     return "comparison";
   }
   return "unknown";
+}
+
+function truncateRecommendationEvidence(text: string, maxChars: number): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+function deriveRecommendationEvidencePreview(item: Recommendation): string {
+  const firstCompetitorEvidence = (item.competitor_evidence_links || [])
+    .map((link) => (link.evidence_summary || "").trim())
+    .find((value) => value.length > 0);
+
+  const candidates = [
+    item.recommendation_evidence_summary || "",
+    item.recommendation_observed_gap_summary || "",
+    item.recommendation_action_delta?.observed_site_gap || "",
+    firstCompetitorEvidence || "",
+    (item.recommendation_evidence_trace || [])[0] || "",
+    item.rationale || "",
+  ]
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  if (candidates.length === 0) {
+    return "No supporting proof captured yet.";
+  }
+  return truncateRecommendationEvidence(candidates[0], 118);
+}
+
+function deriveRecommendationEvidenceTrust(item: Recommendation): {
+  cue: string;
+  tone: "badge-success" | "badge-warn" | "badge-muted";
+} {
+  const trustedCount = (item.competitor_evidence_links || []).filter((link) => {
+    const tier = link.trust_tier || link.evidence_trust_tier || null;
+    return tier === "trusted_verified";
+  }).length;
+  const informationalCount = (item.competitor_evidence_links || []).filter((link) => {
+    const tier = link.trust_tier || link.evidence_trust_tier || null;
+    return tier === "informational_unverified" || tier === "informational_candidate";
+  }).length;
+
+  if (trustedCount > 0) {
+    return { cue: "Support cue: verified linkage evidence", tone: "badge-success" };
+  }
+  if (informationalCount > 0) {
+    return { cue: "Support cue: informational linkage evidence", tone: "badge-muted" };
+  }
+  if ((item.recommendation_evidence_trace || []).length > 0 || (item.recommendation_evidence_summary || "").trim().length > 0) {
+    return { cue: "Support cue: recommendation-context evidence", tone: "badge-muted" };
+  }
+  return { cue: "Support cue: operator review required", tone: "badge-warn" };
+}
+
+function recommendationIsReadyNow(item: Recommendation): boolean {
+  return item.status === "open" || item.status === "in_progress";
+}
+
+function deriveRecommendationDecisiveness(item: Recommendation): RecommendationDecisiveness {
+  const evidencePreview = deriveRecommendationEvidencePreview(item);
+  const evidenceTrust = deriveRecommendationEvidenceTrust(item);
+  if (recommendationIsReadyNow(item)) {
+    if (item.priority_band === "critical" || item.priority_band === "high") {
+      return {
+        priorityCue: "High-value next step",
+        priorityCueTone: "badge-warn",
+        actionabilityCue: "Ready now",
+        actionabilityTone: "badge-success",
+        whyNow: "Open high-priority recommendation is ready for operator decision.",
+        blockingState: "No blocker detected.",
+        afterAction: "Queue status updates now; confirm external visibility on next refresh.",
+        evidencePreview,
+        evidenceTrustCue: evidenceTrust.cue,
+        evidenceTrustTone: evidenceTrust.tone,
+      };
+    }
+    return {
+      priorityCue: "Review before applying",
+      priorityCueTone: "badge-muted",
+      actionabilityCue: "Ready now",
+      actionabilityTone: "badge-success",
+      whyNow: "Recommendation is ready but lower priority than top urgent items.",
+      blockingState: "Awaiting operator decision.",
+      afterAction: "Queue status updates now; visibility follows after refresh.",
+      evidencePreview,
+      evidenceTrustCue: evidenceTrust.cue,
+      evidenceTrustTone: evidenceTrust.tone,
+    };
+  }
+
+  if (item.status === "accepted") {
+    return {
+      priorityCue: "Waiting on visibility",
+      priorityCueTone: "badge-warn",
+      actionabilityCue: "Manual follow-up required",
+      actionabilityTone: "badge-warn",
+      whyNow: "Apply was recorded and now requires visibility confirmation.",
+      blockingState: "Pending next refresh for visibility confirmation.",
+      afterAction: "Re-check after next refresh and confirm observed impact.",
+      evidencePreview,
+      evidenceTrustCue: evidenceTrust.cue,
+      evidenceTrustTone: evidenceTrust.tone,
+    };
+  }
+
+  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
+    return {
+      priorityCue: "Informational",
+      priorityCueTone: "badge-muted",
+      actionabilityCue: "No immediate action",
+      actionabilityTone: "badge-muted",
+      whyNow: "Recommendation is retained for history and auditability.",
+      blockingState: "No active blocker.",
+      afterAction: "No further effect unless recommendation is re-opened.",
+      evidencePreview,
+      evidenceTrustCue: evidenceTrust.cue,
+      evidenceTrustTone: evidenceTrust.tone,
+    };
+  }
+
+  return {
+    priorityCue: "Needs review / pending",
+    priorityCueTone: "badge-warn",
+    actionabilityCue: "Review required",
+    actionabilityTone: "badge-warn",
+    whyNow: "Current status still requires an operator decision.",
+    blockingState: "Current status requires operator review.",
+    afterAction: "Once applied, visibility can be confirmed after refresh.",
+    evidencePreview,
+    evidenceTrustCue: evidenceTrust.cue,
+    evidenceTrustTone: evidenceTrust.tone,
+  };
 }
 
 function isHighPriority(item: Recommendation): boolean {
@@ -508,7 +656,7 @@ function RecommendationsPageContent() {
     return `/recommendations/${item.id}?${params.toString()}`;
   }, [activePage, filters.category, filters.priorityBand, filters.status, pageSize, sort]);
   const topReadyRecommendation = useMemo(() => {
-    const openItems = items.filter((item) => item.status === "open" || item.status === "in_progress");
+    const openItems = items.filter((item) => recommendationIsReadyNow(item));
     if (openItems.length === 0) {
       return null;
     }
@@ -519,31 +667,121 @@ function RecommendationsPageContent() {
       return right.created_at.localeCompare(left.created_at);
     })[0] || null;
   }, [items]);
+  const topAppliedRecommendation = useMemo(() => {
+    const acceptedItems = items.filter((item) => item.status === "accepted");
+    if (acceptedItems.length === 0) {
+      return null;
+    }
+    return [...acceptedItems].sort((left, right) => {
+      return right.updated_at.localeCompare(left.updated_at);
+    })[0] || null;
+  }, [items]);
+  const recommendationQueueWhyNow = useMemo(() => {
+    if (loadingItems) {
+      return "Queue decisiveness context is still loading.";
+    }
+    if (topReadyRecommendation) {
+      if (isHighPriority(topReadyRecommendation)) {
+        return `"${topReadyRecommendation.title}" is a high-value next step and ready now.`;
+      }
+      return `"${topReadyRecommendation.title}" is ready now and surfaced for review before apply.`;
+    }
+    if (topAppliedRecommendation) {
+      return `"${topAppliedRecommendation.title}" was applied and now needs visibility confirmation.`;
+    }
+    if (queueSummary.total > 0) {
+      return "Queue has recommendations, but no top-priority ready-now action in this filter view.";
+    }
+    return "No recommendation items are currently available in this queue view.";
+  }, [loadingItems, queueSummary.total, topAppliedRecommendation, topReadyRecommendation]);
+  const recommendationQueueActionability = useMemo(() => {
+    if (loadingItems) {
+      return "Actionability is pending while queue data loads.";
+    }
+    if (topReadyRecommendation) {
+      return "Yes. You can act now by reviewing the top ready recommendation.";
+    }
+    if (topAppliedRecommendation) {
+      return "Not yet. Wait for visibility refresh, then validate the applied change.";
+    }
+    if (queueSummary.total > 0) {
+      return "Review current statuses to identify the next actionable item.";
+    }
+    return "No immediate recommendation action is required.";
+  }, [loadingItems, queueSummary.total, topAppliedRecommendation, topReadyRecommendation]);
+  const recommendationQueueBlockingState = useMemo(() => {
+    if (loadingItems) {
+      return "Queue data is still loading.";
+    }
+    if (topReadyRecommendation) {
+      return "No blocking state detected.";
+    }
+    if (topAppliedRecommendation) {
+      return "Blocked by pending visibility timing until next refresh.";
+    }
+    if (queueSummary.total > 0) {
+      return "No ready-now recommendation is available in this filter set.";
+    }
+    return "No blocking state because there are no queue items.";
+  }, [loadingItems, queueSummary.total, topAppliedRecommendation, topReadyRecommendation]);
+  const recommendationQueueEvidencePreview = useMemo(() => {
+    const candidate = topReadyRecommendation || topAppliedRecommendation || items[0] || null;
+    if (!candidate) {
+      return "No supporting proof is available in this queue view yet.";
+    }
+    return deriveRecommendationEvidencePreview(candidate);
+  }, [items, topAppliedRecommendation, topReadyRecommendation]);
+  const recommendationQueueEvidenceTrust = useMemo(() => {
+    const candidate = topReadyRecommendation || topAppliedRecommendation || items[0] || null;
+    if (!candidate) {
+      return "Support cue: no evidence signal available";
+    }
+    return deriveRecommendationEvidenceTrust(candidate).cue;
+  }, [items, topAppliedRecommendation, topReadyRecommendation]);
+  const recommendationQueueAfterAction = useMemo(() => {
+    if (loadingItems) {
+      return "After-action visibility is pending while queue data loads.";
+    }
+    if (topReadyRecommendation) {
+      return "After apply, queue status updates immediately and impact should be verified after the next refresh.";
+    }
+    if (topAppliedRecommendation) {
+      return "After refresh, validate whether the applied change is now visible.";
+    }
+    if (queueSummary.total > 0) {
+      return "After decision updates, queue status reflects changes immediately.";
+    }
+    return "No after-action step is required for the current view.";
+  }, [loadingItems, queueSummary.total, topAppliedRecommendation, topReadyRecommendation]);
   const recommendationQueueTakeaway = useMemo(() => {
     if (loadingItems) {
       return "Recommendation queue status is still loading.";
     }
-    if (queueSummary.open > 0) {
+    if (topReadyRecommendation) {
       return `${queueSummary.open} recommendation${queueSummary.open === 1 ? "" : "s"} are ready for action now.`;
     }
-    if (queueSummary.accepted > 0) {
+    if (topAppliedRecommendation || queueSummary.accepted > 0) {
       return `No ready-now items in this view; ${queueSummary.accepted} recommendation${queueSummary.accepted === 1 ? "" : "s"} are already applied/completed.`;
     }
     return "No immediate recommendation action is required for the current queue filters.";
-  }, [loadingItems, queueSummary.accepted, queueSummary.open]);
+  }, [loadingItems, queueSummary.accepted, queueSummary.open, topAppliedRecommendation, topReadyRecommendation]);
   const recommendationQueueNextStep = useMemo(() => {
     if (topReadyRecommendation) {
       return {
         href: buildRecommendationDetailHref(topReadyRecommendation),
         label: "Open top ready recommendation",
-        note: "Review what changed and confirm whether follow-up is still required.",
+        note: "High-value next step. Confirm rationale and decide whether to apply now.",
       };
     }
-    if (queueSummary.accepted > 0 && items.length > 0) {
+    if (topAppliedRecommendation || (queueSummary.accepted > 0 && items.length > 0)) {
+      const candidateItem = topAppliedRecommendation || items[0];
+      if (!candidateItem) {
+        return null;
+      }
       return {
-        href: buildRecommendationDetailHref(items[0]),
+        href: buildRecommendationDetailHref(candidateItem),
         label: "Review latest applied recommendation",
-        note: "Confirm pending visibility timing and downstream follow-up.",
+        note: "Waiting on visibility. Confirm downstream refresh timing and follow-up.",
       };
     }
     return {
@@ -551,7 +789,7 @@ function RecommendationsPageContent() {
       label: "Open site workspace",
       note: "Run or refresh recommendations when new analysis context is available.",
     };
-  }, [buildRecommendationDetailHref, items, queueSummary.accepted, topReadyRecommendation]);
+  }, [buildRecommendationDetailHref, items, queueSummary.accepted, topAppliedRecommendation, topReadyRecommendation]);
   const recommendationQueueFacts = useMemo<DetailFocusFact[]>(() => {
     if (loadingItems) {
       return [];
@@ -567,9 +805,39 @@ function RecommendationsPageContent() {
 
     return [
       {
+        label: "Why this matters now",
+        value: recommendationQueueWhyNow,
+        tone: topReadyRecommendation ? "warning" : topAppliedRecommendation ? "neutral" : "neutral",
+      },
+      {
         label: "Current status",
         value: queueSummary.open > 0 ? "Needs review / pending" : "Applied / completed",
         tone: queueSummary.open > 0 ? "warning" : "success",
+      },
+      {
+        label: "Can I act now",
+        value: recommendationQueueActionability,
+        tone: topReadyRecommendation ? "success" : "neutral",
+      },
+      {
+        label: "Blocking state",
+        value: recommendationQueueBlockingState,
+        tone: topAppliedRecommendation ? "warning" : "neutral",
+      },
+      {
+        label: "After action",
+        value: recommendationQueueAfterAction,
+        tone: topReadyRecommendation || topAppliedRecommendation ? "warning" : "neutral",
+      },
+      {
+        label: "Evidence preview",
+        value: recommendationQueueEvidencePreview,
+        tone: "neutral",
+      },
+      {
+        label: "Evidence trust",
+        value: recommendationQueueEvidenceTrust,
+        tone: "neutral",
       },
       {
         label: "What changed",
@@ -581,13 +849,22 @@ function RecommendationsPageContent() {
         value: manualFollowUpText,
         tone: queueSummary.open > 0 || queueSummary.accepted > 0 ? "warning" : "neutral",
       },
-      {
-        label: "Expected visibility",
-        value: visibilityTimingText,
-        tone: queueSummary.accepted > 0 ? "warning" : "neutral",
-      },
+      { label: "Expected visibility", value: visibilityTimingText, tone: queueSummary.accepted > 0 ? "warning" : "neutral" },
     ];
-  }, [bulkActionSuccess, loadingItems, queueSummary.accepted, queueSummary.open]);
+  }, [
+    bulkActionSuccess,
+    loadingItems,
+    queueSummary.accepted,
+    queueSummary.open,
+    recommendationQueueActionability,
+    recommendationQueueAfterAction,
+    recommendationQueueBlockingState,
+    recommendationQueueEvidencePreview,
+    recommendationQueueEvidenceTrust,
+    recommendationQueueWhyNow,
+    topAppliedRecommendation,
+    topReadyRecommendation,
+  ]);
 
   function updateQueueParams(nextFilters: FilterState, nextSort: SortState) {
     const params = new URLSearchParams(searchParams.toString());
@@ -1221,6 +1498,7 @@ function RecommendationsPageContent() {
                 <th>Title</th>
                 <th>Summary</th>
                 <th>Status</th>
+                <th>Decisiveness</th>
                 <th>Category</th>
                 <th>Priority</th>
                 <th>Source</th>
@@ -1230,7 +1508,9 @@ function RecommendationsPageContent() {
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
+              {items.map((item) => {
+                const decisiveness = deriveRecommendationDecisiveness(item);
+                return (
                 <tr
                   key={item.id}
                   role="link"
@@ -1258,6 +1538,29 @@ function RecommendationsPageContent() {
                   <td>{item.title}</td>
                   <td>{item.rationale}</td>
                   <td>{item.status}</td>
+                  <td data-testid={`recommendation-decisiveness-${item.id}`}>
+                    <div className="recommendation-decisiveness">
+                      <div className="recommendation-decisiveness-badges">
+                        <span className={`badge ${decisiveness.priorityCueTone}`}>{decisiveness.priorityCue}</span>
+                        <span className={`badge ${decisiveness.actionabilityTone}`}>{decisiveness.actionabilityCue}</span>
+                      </div>
+                      <p className="hint muted">
+                        <span className="text-strong">Why now:</span> {decisiveness.whyNow}
+                      </p>
+                      <p className="hint muted">
+                        <span className="text-strong">Blocking:</span> {decisiveness.blockingState}
+                      </p>
+                      <p className="hint muted">
+                        <span className="text-strong">After action:</span> {decisiveness.afterAction}
+                      </p>
+                      <p className="hint muted">
+                        <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
+                      </p>
+                      <p className="hint muted">
+                        <span className={`badge ${decisiveness.evidenceTrustTone}`}>{decisiveness.evidenceTrustCue}</span>
+                      </p>
+                    </div>
+                  </td>
                   <td>{item.category}</td>
                   <td>
                     {item.priority_score} ({item.priority_band})
@@ -1275,10 +1578,11 @@ function RecommendationsPageContent() {
                   <td>{item.business_id}</td>
                   <td>{item.site_id}</td>
                 </tr>
-              ))}
+                );
+              })}
               {items.length === 0 && !loadingItems ? (
                 <tr>
-                  <td colSpan={10}>
+                  <td colSpan={11}>
                     {hasActiveFilters
                       ? "No recommendations match the current filters."
                       : "No recommendations found for this site."}

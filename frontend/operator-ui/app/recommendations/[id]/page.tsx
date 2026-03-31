@@ -44,6 +44,48 @@ function recommendationSourceType(item: Recommendation): string {
   return "unknown";
 }
 
+function truncateEvidenceText(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+function deriveRecommendationEvidencePreview(item: Recommendation): string {
+  const firstCompetitorEvidence = (item.competitor_evidence_links || [])
+    .map((link) => (link.evidence_summary || "").trim())
+    .find((value) => value.length > 0);
+  const candidates = [
+    item.recommendation_evidence_summary || "",
+    item.recommendation_observed_gap_summary || "",
+    item.recommendation_action_delta?.observed_site_gap || "",
+    firstCompetitorEvidence || "",
+    (item.recommendation_evidence_trace || [])[0] || "",
+    item.rationale || "",
+  ]
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  if (candidates.length === 0) {
+    return "No supporting proof captured yet.";
+  }
+  return truncateEvidenceText(candidates[0], 128);
+}
+
+function deriveRecommendationEvidenceTrustCue(item: Recommendation): string {
+  const tiers = (item.competitor_evidence_links || []).map((link) => link.trust_tier || link.evidence_trust_tier || null);
+  if (tiers.includes("trusted_verified")) {
+    return "Support cue: verified linkage evidence";
+  }
+  if (tiers.includes("informational_unverified") || tiers.includes("informational_candidate")) {
+    return "Support cue: informational linkage evidence";
+  }
+  if ((item.recommendation_evidence_summary || "").trim().length > 0 || (item.recommendation_evidence_trace || []).length > 0) {
+    return "Support cue: recommendation-context evidence";
+  }
+  return "Support cue: operator review required";
+}
+
 function safeRecommendationDetailErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 401) {
@@ -406,6 +448,7 @@ export default function RecommendationDetailPage() {
     const applied = recommendation.status === "accepted";
     const pending = recommendation.status === "open" || recommendation.status === "in_progress";
     const dismissed = recommendation.status === "dismissed";
+    const highValue = recommendation.priority_band === "critical" || recommendation.priority_band === "high";
 
     const currentStatusLabel = applied
       ? "Applied / completed"
@@ -432,8 +475,57 @@ export default function RecommendationDetailPage() {
       : pending
         ? "No downstream visibility change until an apply action is recorded."
         : "Dismissal is reflected in the queue immediately.";
+    const whyThisMattersLabel = pending
+      ? highValue
+        ? "High-value next step based on current priority and open status."
+        : "Review before applying so status and action stay aligned."
+      : applied
+        ? "Apply is complete and now needs visibility confirmation."
+        : "Item remains in history for reference and auditability.";
+    const canActNowLabel = pending
+      ? "Yes. Open actions below and choose accept or dismiss."
+      : applied
+        ? "No. Wait for refresh, then verify outcome."
+        : "No immediate action is required.";
+    const blockingStateLabel = pending
+      ? "Blocked by pending operator decision."
+      : applied
+        ? "Blocked by visibility timing until next refresh."
+        : "No active blocker.";
+    const evidencePreviewLabel = deriveRecommendationEvidencePreview(recommendation);
+    const evidenceTrustLabel = deriveRecommendationEvidenceTrustCue(recommendation);
 
     return [
+      {
+        label: "Why this matters now",
+        value: whyThisMattersLabel,
+        tone: pending ? "warning" : "neutral",
+      },
+      {
+        label: "Can I act now",
+        value: canActNowLabel,
+        tone: pending ? "success" : "neutral",
+      },
+      {
+        label: "Blocking state",
+        value: blockingStateLabel,
+        tone: pending || applied ? "warning" : "neutral",
+      },
+      {
+        label: "After action",
+        value: expectedVisibilityLabel,
+        tone: applied ? "warning" : "neutral",
+      },
+      {
+        label: "Evidence preview",
+        value: evidencePreviewLabel,
+        tone: "neutral",
+      },
+      {
+        label: "Evidence trust",
+        value: evidenceTrustLabel,
+        tone: "neutral",
+      },
       {
         label: "Current status",
         value: currentStatusLabel,
@@ -448,11 +540,6 @@ export default function RecommendationDetailPage() {
         label: "Manual follow-up",
         value: manualFollowUpLabel,
         tone: pending || applied ? "warning" : "neutral",
-      },
-      {
-        label: "Expected visibility",
-        value: expectedVisibilityLabel,
-        tone: applied ? "warning" : "neutral",
       },
       {
         label: "Source context",

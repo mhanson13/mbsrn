@@ -322,6 +322,21 @@ Recommendation-facing routes now share consistent operator wording and emphasis 
 - `Expected visibility`
 - `Source context`
 
+Queue/detail surfaces now also expose deterministic decisiveness cues:
+- `Why this matters now`
+- `Can I act now`
+- `Blocking state`
+- `After action`
+- compact row-level cue badges (`High-value next step`, `Ready now`, `Waiting on visibility`, `Manual follow-up required`, `Review before applying`)
+- `Evidence preview` (single strongest supporting proof line)
+- `Evidence trust` (trust-safe support cue: verified linkage, informational linkage, recommendation-context evidence, or operator review required)
+
+Presentation intent:
+- compress rationale into short, high-signal lines
+- keep blocker visibility explicit when present
+- keep post-action visibility expectations obvious without adding extra prose
+- keep evidence preview compact and deterministic without overstating trust
+
 This summary-first pattern is now surfaced on:
 - recommendation queue (`/recommendations`)
 - recommendation detail (`/recommendations/[id]`)

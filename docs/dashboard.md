@@ -419,4 +419,19 @@ Updated surfaces:
 - `recommendations/[id]` detail (recommendation outcome snapshot)
 - `recommendations/runs/[run_id]` detail (run outcome snapshot)
 
+Decisiveness cues are now aligned across dashboard and recommendations:
+- `High-value next step`
+- `Ready now`
+- `Waiting on visibility`
+- `Manual follow-up required`
+- `Review before applying`
+
+Queue rows and summary snapshots now also surface:
+- why this recommendation is emphasized now
+- whether action can be taken now
+- what is currently blocking progress (if anything)
+- the next operator action
+- what happens after action / expected visibility timing
+- one compact evidence preview line with trust-safe support wording
+
 This is presentation-only. Recommendation generation, apply behavior, trust semantics, and API contracts are unchanged.

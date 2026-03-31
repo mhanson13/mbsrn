@@ -49,6 +49,48 @@ function truncateText(value: string, limit: number): string {
   return `${normalized.slice(0, limit - 1)}…`;
 }
 
+function truncateEvidenceText(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+function deriveRecommendationEvidencePreview(item: Recommendation): string {
+  const firstCompetitorEvidence = (item.competitor_evidence_links || [])
+    .map((link) => (link.evidence_summary || "").trim())
+    .find((value) => value.length > 0);
+  const candidates = [
+    item.recommendation_evidence_summary || "",
+    item.recommendation_observed_gap_summary || "",
+    item.recommendation_action_delta?.observed_site_gap || "",
+    firstCompetitorEvidence || "",
+    (item.recommendation_evidence_trace || [])[0] || "",
+    item.rationale || "",
+  ]
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  if (candidates.length === 0) {
+    return "No supporting proof captured yet.";
+  }
+  return truncateEvidenceText(candidates[0], 128);
+}
+
+function deriveRecommendationEvidenceTrustCue(item: Recommendation): string {
+  const tiers = (item.competitor_evidence_links || []).map((link) => link.trust_tier || link.evidence_trust_tier || null);
+  if (tiers.includes("trusted_verified")) {
+    return "Support cue: verified linkage evidence";
+  }
+  if (tiers.includes("informational_unverified") || tiers.includes("informational_candidate")) {
+    return "Support cue: informational linkage evidence";
+  }
+  if ((item.recommendation_evidence_summary || "").trim().length > 0 || (item.recommendation_evidence_trace || []).length > 0) {
+    return "Support cue: recommendation-context evidence";
+  }
+  return "Support cue: operator review required";
+}
+
 function isNotFoundError(error: unknown): boolean {
   return error instanceof ApiRequestError && error.status === 404;
 }
@@ -268,6 +310,20 @@ export default function RecommendationRunDetailPage() {
       })
       .slice(0, RECOMMENDATION_PREVIEW_LIMIT);
   }, [report?.recommendations.items]);
+  const strongestRecommendationEvidencePreview = useMemo(() => {
+    const topRecommendation = recommendations[0];
+    if (!topRecommendation) {
+      return "No recommendation evidence preview is available for this run yet.";
+    }
+    return deriveRecommendationEvidencePreview(topRecommendation);
+  }, [recommendations]);
+  const strongestRecommendationEvidenceTrust = useMemo(() => {
+    const topRecommendation = recommendations[0];
+    if (!topRecommendation) {
+      return "Support cue: no evidence signal available";
+    }
+    return deriveRecommendationEvidenceTrustCue(topRecommendation);
+  }, [recommendations]);
 
   const recommendationsByStatus = useMemo(
     () => toSortedCountEntries(report?.recommendations.by_status),
@@ -402,6 +458,7 @@ export default function RecommendationRunDetailPage() {
     }
 
     const producedCount = report?.recommendations.total || 0;
+    const hasActionableOutput = runCompleted && producedCount > 0;
     const runStatusLabel = runCompleted
       ? "Applied / completed"
       : runFailed
@@ -426,11 +483,62 @@ export default function RecommendationRunDetailPage() {
       : runFailed
         ? "No new recommendation visibility changes until a successful rerun."
         : "Visibility updates when this run reaches completion.";
+    const whyThisMattersLabel = hasActionableOutput
+      ? "Run produced actionable recommendations that should be reviewed now."
+      : runFailed
+        ? "Run requires follow-up before recommendation output can be trusted."
+        : runCompleted
+          ? "Run completed without actionable output."
+          : "Run is still processing and may change.";
+    const canActNowLabel = hasActionableOutput
+      ? "Yes. Review recommendations and start with the highest-priority items."
+      : runFailed
+        ? "No. Resolve run issues before taking recommendation actions."
+        : runCompleted
+          ? "No immediate recommendation action is required."
+          : "Not yet. Wait for run completion.";
+    const blockingStateLabel = hasActionableOutput
+      ? "No blocker detected."
+      : runFailed
+        ? "Blocked by failed run state."
+        : runCompleted
+          ? "No active blocker."
+          : "Blocked until run processing completes.";
     const sourceContextLabel = latestNarrative
       ? `Narrative v${latestNarrative.version} (${latestNarrative.status})`
       : "Narrative context not generated yet";
 
     return [
+      {
+        label: "Why this matters now",
+        value: whyThisMattersLabel,
+        tone: hasActionableOutput ? "warning" : "neutral",
+      },
+      {
+        label: "Can I act now",
+        value: canActNowLabel,
+        tone: hasActionableOutput ? "success" : "neutral",
+      },
+      {
+        label: "Blocking state",
+        value: blockingStateLabel,
+        tone: hasActionableOutput ? "neutral" : "warning",
+      },
+      {
+        label: "After action",
+        value: expectedVisibilityLabel,
+        tone: runCompleted ? "warning" : "neutral",
+      },
+      {
+        label: "Evidence preview",
+        value: strongestRecommendationEvidencePreview,
+        tone: "neutral",
+      },
+      {
+        label: "Evidence trust",
+        value: strongestRecommendationEvidenceTrust,
+        tone: "neutral",
+      },
       {
         label: "Current status",
         value: runStatusLabel,
@@ -447,17 +555,20 @@ export default function RecommendationRunDetailPage() {
         tone: runCompleted && producedCount === 0 ? "neutral" : "warning",
       },
       {
-        label: "Expected visibility",
-        value: expectedVisibilityLabel,
-        tone: runCompleted ? "warning" : "neutral",
-      },
-      {
         label: "Source context",
         value: sourceContextLabel,
         tone: "neutral",
       },
     ];
-  }, [latestNarrative, report?.recommendations.total, run, runCompleted, runFailed]);
+  }, [
+    latestNarrative,
+    report?.recommendations.total,
+    run,
+    runCompleted,
+    runFailed,
+    strongestRecommendationEvidencePreview,
+    strongestRecommendationEvidenceTrust,
+  ]);
 
   useEffect(() => {
     if (context.loading || context.error || !recommendationRunId) {

@@ -1167,6 +1167,23 @@ code {
   background: linear-gradient(180deg, rgba(220, 252, 231, 0.42) 0%, var(--panel) 100%);
 }
 
+.recommendation-decisiveness {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 220px;
+}
+
+.recommendation-decisiveness-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.recommendation-decisiveness .hint {
+  margin: 0;
+  line-height: 1.3;
+}
+
 .recommendation-emphasis-surface {
   border-color: rgba(244, 63, 94, 0.34);
   background: linear-gradient(180deg, rgba(255, 228, 230, 0.42) 0%, var(--panel) 100%);
