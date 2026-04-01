@@ -326,10 +326,18 @@ Queue/detail surfaces now also expose deterministic decisiveness cues:
 - `Why this matters now`
 - `Can I act now`
 - `Blocking state`
+- `Lifecycle stage`
+- `Revisit timing`
 - `After action`
 - compact row-level cue badges (`High-value next step`, `Ready now`, `Waiting on visibility`, `Manual follow-up required`, `Review before applying`)
+- compact comparative choice-support cues (`Best immediate move`, `Quick win`, `More involved`, `Lower-immediacy background item`)
 - `Evidence preview` (single strongest supporting proof line)
 - `Evidence trust` (trust-safe support cue: verified linkage, informational linkage, recommendation-context evidence, or operator review required)
+
+Lifecycle-stage interpretation on recommendation-facing pages:
+- `Needs review / pending`: still actionable and requires operator review/decision.
+- `Applied / completed`: handled, but may still be waiting on downstream visibility confirmation.
+- `Background item / revisit later`: currently lower-immediacy (dismissed/resolved/snoozed) and safe to defer unless context changes.
 
 Presentation intent:
 - compress rationale into short, high-signal lines

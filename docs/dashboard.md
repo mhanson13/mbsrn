@@ -430,6 +430,9 @@ Queue rows and summary snapshots now also surface:
 - why this recommendation is emphasized now
 - whether action can be taken now
 - what is currently blocking progress (if anything)
+- comparative choice support (`Best immediate move`, `Quick win`, `More involved`, `Lower-immediacy background item`)
+- lifecycle-stage visibility (`Needs review / pending`, `Applied / completed`, `Background item / revisit later`)
+- compact revisit guidance (`Revisit now`, `Revisit after visibility refresh`, or `Ignore for now unless context changes`)
 - the next operator action
 - what happens after action / expected visibility timing
 - one compact evidence preview line with trust-safe support wording

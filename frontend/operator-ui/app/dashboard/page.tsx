@@ -125,6 +125,20 @@ export default function DashboardPage() {
         <p className="hint">
           <span className="text-strong">Evidence preview:</span> queue/detail views show one compact proof line plus a trust-safe support cue.
         </p>
+        <p className="hint">
+          <span className="text-strong">Choice support:</span>{" "}
+          <span className="badge badge-warn">Best immediate move</span>{" "}
+          <span className="badge badge-success">Quick win</span>{" "}
+          <span className="badge badge-muted">Lower-immediacy background item</span>{" "}
+          clarify what to do first versus what can be deferred.
+        </p>
+        <p className="hint">
+          <span className="text-strong">Lifecycle stage:</span>{" "}
+          <span className="badge badge-warn">Needs review / pending</span>{" "}
+          <span className="badge badge-success">Applied / completed</span>{" "}
+          <span className="badge badge-muted">Background item / revisit later</span>{" "}
+          keeps revisit timing explicit without opening detail pages.
+        </p>
       </SectionCard>
 
       <SectionCard variant="summary" className="role-surface-support">

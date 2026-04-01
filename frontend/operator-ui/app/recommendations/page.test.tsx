@@ -203,6 +203,10 @@ describe("recommendations queue optimistic workflows", () => {
     expect(screen.getByText("Recommendation outcome snapshot")).toBeInTheDocument();
     expect(screen.getByText("Why this matters now")).toBeInTheDocument();
     expect(screen.getByText("Current status")).toBeInTheDocument();
+    expect(screen.getByText("Lifecycle stage")).toBeInTheDocument();
+    expect(screen.getByText("Revisit timing")).toBeInTheDocument();
+    expect(screen.getByText("Choice support")).toBeInTheDocument();
+    expect(screen.getByText("Effort signal")).toBeInTheDocument();
     expect(screen.getByText("Can I act now")).toBeInTheDocument();
     expect(screen.getByText("Blocking state")).toBeInTheDocument();
     expect(screen.getByText("After action")).toBeInTheDocument();
@@ -214,8 +218,13 @@ describe("recommendations queue optimistic workflows", () => {
     const decisivenessCellOne = screen.getByTestId("recommendation-decisiveness-rec-1");
     expect(decisivenessCellOne).toHaveTextContent("High-value next step");
     expect(decisivenessCellOne).toHaveTextContent("Ready now");
+    expect(decisivenessCellOne).toHaveTextContent("Best immediate move");
+    expect(decisivenessCellOne).toHaveTextContent("Quick win");
+    expect(decisivenessCellOne).toHaveTextContent("Needs review / pending");
+    expect(decisivenessCellOne).toHaveTextContent("Revisit now");
     expect(decisivenessCellOne).toHaveTextContent("Why now:");
     expect(decisivenessCellOne).toHaveTextContent("Blocking:");
+    expect(decisivenessCellOne).toHaveTextContent("Blocked by operator review");
     expect(decisivenessCellOne).toHaveTextContent("After action:");
     expect(decisivenessCellOne).toHaveTextContent("Evidence:");
     expect(decisivenessCellOne).toHaveTextContent("Support cue:");
@@ -223,6 +232,8 @@ describe("recommendations queue optimistic workflows", () => {
     const decisivenessCellTwo = screen.getByTestId("recommendation-decisiveness-rec-2");
     expect(decisivenessCellTwo).toHaveTextContent("Review before applying");
     expect(decisivenessCellTwo).toHaveTextContent("Ready now");
+    expect(decisivenessCellTwo).toHaveTextContent("Quick win alternative");
+    expect(decisivenessCellTwo).toHaveTextContent("Needs review / pending");
     expect(
       screen.getByText(/Queue controls and recommendation details below show action history/i),
     ).toBeInTheDocument();
@@ -260,6 +271,39 @@ describe("recommendations queue optimistic workflows", () => {
         "One or more recommendation updates are not allowed in the current state. 1 update failed.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows waiting/manual/deferred choice cues for accepted and dismissed recommendations", async () => {
+    const accepted = createRecommendation("rec-21", "accepted", "high", "Accepted Recommendation");
+    const dismissed = createRecommendation("rec-22", "dismissed", "low", "Dismissed Recommendation");
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [accepted, dismissed],
+        {
+          total: 2,
+          open: 0,
+          accepted: 1,
+          dismissed: 1,
+          high_priority: 1,
+        },
+        2,
+      ),
+    );
+
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Accepted Recommendation");
+    const acceptedDecisiveness = screen.getByTestId("recommendation-decisiveness-rec-21");
+    expect(acceptedDecisiveness).toHaveTextContent("Waiting on visibility");
+    expect(acceptedDecisiveness).toHaveTextContent("Manual follow-up required");
+    expect(acceptedDecisiveness).toHaveTextContent("Applied / completed");
+    expect(acceptedDecisiveness).toHaveTextContent("Revisit after visibility refresh");
+
+    const dismissedDecisiveness = screen.getByTestId("recommendation-decisiveness-rec-22");
+    expect(dismissedDecisiveness).toHaveTextContent("Lower-immediacy background item");
+    expect(dismissedDecisiveness).toHaveTextContent("No blocker");
+    expect(dismissedDecisiveness).toHaveTextContent("Background item / revisit later");
+    expect(dismissedDecisiveness).toHaveTextContent("Ignore for now unless context changes");
   });
 
   it("removes rows excluded by status filter and reconciles summary to backend truth after refresh", async () => {

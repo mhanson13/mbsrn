@@ -139,9 +139,17 @@ describe("recommendation detail optimistic single-item updates", () => {
     expect(screen.getByText("After action")).toBeInTheDocument();
     expect(screen.getByText("Evidence preview")).toBeInTheDocument();
     expect(screen.getByText("Evidence trust")).toBeInTheDocument();
+    expect(screen.getByText("Lifecycle stage")).toBeInTheDocument();
+    expect(screen.getByText("Revisit timing")).toBeInTheDocument();
+    expect(screen.getByText("Choice support")).toBeInTheDocument();
+    expect(screen.getByText("Effort signal")).toBeInTheDocument();
     expect(
       screen.getByText("High-value next step based on current priority and open status."),
     ).toBeInTheDocument();
+    expect(screen.getByText("High-value next step")).toBeInTheDocument();
+    expect(screen.getAllByText("Needs review / pending").length).toBeGreaterThan(0);
+    expect(screen.getByText("Revisit now.")).toBeInTheDocument();
+    expect(screen.getByText("Quick win")).toBeInTheDocument();
     expect(screen.getByText("Support cue: operator review required")).toBeInTheDocument();
     expect(
       screen.getByText("Yes. Open actions below and choose accept or dismiss."),
@@ -178,6 +186,9 @@ describe("recommendation detail optimistic single-item updates", () => {
     expect(screen.getByText("Status: accepted")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Backend normalized note")).toBeInTheDocument();
     expect(screen.getByText("Apply is complete and now needs visibility confirmation.")).toBeInTheDocument();
+    expect(screen.getByText("Waiting on visibility")).toBeInTheDocument();
+    expect(screen.getAllByText("Applied / completed").length).toBeGreaterThan(0);
+    expect(screen.getByText("Revisit after visibility refresh.")).toBeInTheDocument();
     expect(screen.getByText("No. Wait for refresh, then verify outcome.")).toBeInTheDocument();
     expect(mockUpdateRecommendationStatus).toHaveBeenCalledWith(
       "token-1",
@@ -193,26 +204,19 @@ describe("recommendation detail optimistic single-item updates", () => {
 
   it("rolls back optimistic status and shows safe error when save fails", async () => {
     mockFetchRecommendation.mockResolvedValueOnce(createRecommendation());
-    const updateDeferred = createDeferred<Recommendation>();
-    mockUpdateRecommendationStatus.mockImplementationOnce(() => updateDeferred.promise);
+    mockUpdateRecommendationStatus.mockRejectedValueOnce(
+      new ApiRequestError("invalid transition", {
+        status: 422,
+        detail: null,
+      }),
+    );
 
     const user = userEvent.setup();
     render(<RecommendationDetailPage />);
 
     await screen.findByText("Status: open");
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
-    expect(screen.getByText("Status: dismissed")).toBeInTheDocument();
-
-    await act(async () => {
-      updateDeferred.reject(
-        new ApiRequestError("invalid transition", {
-          status: 422,
-          detail: null,
-        }),
-      );
-      await Promise.resolve();
-    });
-
+    expect(mockUpdateRecommendationStatus).toHaveBeenCalledTimes(1);
     await screen.findByText("Recommendation update is not allowed in the current state.");
     expect(screen.getByText("Status: open")).toBeInTheDocument();
   });

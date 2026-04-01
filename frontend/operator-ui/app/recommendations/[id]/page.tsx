@@ -86,6 +86,84 @@ function deriveRecommendationEvidenceTrustCue(item: Recommendation): string {
   return "Support cue: operator review required";
 }
 
+function deriveRecommendationEffortCue(item: Recommendation): string {
+  const effortHint = item.recommendation_priority?.effort_hint || null;
+  if (effortHint === "quick_win") {
+    return "Quick win";
+  }
+  if (effortHint === "larger_change") {
+    return "More involved";
+  }
+  if (effortHint === "moderate") {
+    return "Moderate lift";
+  }
+  const effortBucket = (item.effort_bucket || "").trim().toLowerCase();
+  if (effortBucket === "small") {
+    return "Quick win";
+  }
+  if (effortBucket === "large" || effortBucket === "xlarge") {
+    return "More involved";
+  }
+  if (effortBucket.length > 0) {
+    return "Moderate lift";
+  }
+  return "Effort not specified";
+}
+
+function deriveRecommendationChoiceSupport(item: Recommendation): string {
+  if (item.status === "accepted") {
+    return "Waiting on visibility";
+  }
+  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
+    return "Lower-immediacy background item";
+  }
+  if (item.status === "open" || item.status === "in_progress") {
+    if (item.priority_band === "high" || item.priority_band === "critical") {
+      return "High-value next step";
+    }
+    return "Review before applying";
+  }
+  return "Needs review / pending";
+}
+
+function deriveRecommendationLifecycleSupport(item: Recommendation): {
+  stage: string;
+  stageTone: "neutral" | "success" | "warning";
+  revisit: string;
+  revisitTone: "neutral" | "success" | "warning";
+} {
+  if (item.status === "accepted") {
+    return {
+      stage: "Applied / completed",
+      stageTone: "success",
+      revisit: "Revisit after visibility refresh.",
+      revisitTone: "warning",
+    };
+  }
+  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
+    return {
+      stage: "Background item / revisit later",
+      stageTone: "neutral",
+      revisit: "Ignore for now unless context changes.",
+      revisitTone: "neutral",
+    };
+  }
+  if (item.status === "open" || item.status === "in_progress") {
+    return {
+      stage: "Needs review / pending",
+      stageTone: "warning",
+      revisit: "Revisit now.",
+      revisitTone: "success",
+    };
+  }
+  return {
+    stage: "Needs review / pending",
+    stageTone: "warning",
+    revisit: "Revisit now.",
+    revisitTone: "warning",
+  };
+}
+
 function safeRecommendationDetailErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 401) {
@@ -492,6 +570,9 @@ export default function RecommendationDetailPage() {
       : applied
         ? "Blocked by visibility timing until next refresh."
         : "No active blocker.";
+    const choiceSupportLabel = deriveRecommendationChoiceSupport(recommendation);
+    const effortSignalLabel = deriveRecommendationEffortCue(recommendation);
+    const lifecycleSupport = deriveRecommendationLifecycleSupport(recommendation);
     const evidencePreviewLabel = deriveRecommendationEvidencePreview(recommendation);
     const evidenceTrustLabel = deriveRecommendationEvidenceTrustCue(recommendation);
 
@@ -502,6 +583,16 @@ export default function RecommendationDetailPage() {
         tone: pending ? "warning" : "neutral",
       },
       {
+        label: "Current status",
+        value: currentStatusLabel,
+        tone: applied ? "success" : pending ? "warning" : "neutral",
+      },
+      {
+        label: "Lifecycle stage",
+        value: lifecycleSupport.stage,
+        tone: lifecycleSupport.stageTone,
+      },
+      {
         label: "Can I act now",
         value: canActNowLabel,
         tone: pending ? "success" : "neutral",
@@ -510,6 +601,11 @@ export default function RecommendationDetailPage() {
         label: "Blocking state",
         value: blockingStateLabel,
         tone: pending || applied ? "warning" : "neutral",
+      },
+      {
+        label: "Revisit timing",
+        value: lifecycleSupport.revisit,
+        tone: lifecycleSupport.revisitTone,
       },
       {
         label: "After action",
@@ -527,9 +623,14 @@ export default function RecommendationDetailPage() {
         tone: "neutral",
       },
       {
-        label: "Current status",
-        value: currentStatusLabel,
-        tone: applied ? "success" : pending ? "warning" : "neutral",
+        label: "Choice support",
+        value: choiceSupportLabel,
+        tone: pending ? "warning" : applied ? "warning" : "neutral",
+      },
+      {
+        label: "Effort signal",
+        value: effortSignalLabel,
+        tone: "neutral",
       },
       {
         label: "What changed",

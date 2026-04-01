@@ -91,6 +91,100 @@ function deriveRecommendationEvidenceTrustCue(item: Recommendation): string {
   return "Support cue: operator review required";
 }
 
+function deriveRecommendationEffortCue(item: Recommendation): string {
+  const effortHint = item.recommendation_priority?.effort_hint || null;
+  if (effortHint === "quick_win") {
+    return "Quick win";
+  }
+  if (effortHint === "larger_change") {
+    return "More involved";
+  }
+  if (effortHint === "moderate") {
+    return "Moderate lift";
+  }
+  const effortBucket = (item.effort_bucket || "").trim().toLowerCase();
+  if (effortBucket === "small") {
+    return "Quick win";
+  }
+  if (effortBucket === "large" || effortBucket === "xlarge") {
+    return "More involved";
+  }
+  if (effortBucket.length > 0) {
+    return "Moderate lift";
+  }
+  return "Effort not specified";
+}
+
+function deriveRecommendationChoiceCue(item: Recommendation, topRecommendationId: string | null): string {
+  if (item.id === topRecommendationId && (item.status === "open" || item.status === "in_progress")) {
+    return "Best immediate move";
+  }
+  if (item.status === "accepted") {
+    return "Waiting on visibility";
+  }
+  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
+    return "Lower-immediacy background item";
+  }
+  if (item.status === "open" || item.status === "in_progress") {
+    if (item.priority_band === "high" || item.priority_band === "critical") {
+      return "High-value next step";
+    }
+    return "Ready-now alternative";
+  }
+  return "Review before applying";
+}
+
+function deriveRecommendationBlockerCue(item: Recommendation): string {
+  if (item.status === "accepted") {
+    return "Manual follow-up required";
+  }
+  if (item.status === "open" || item.status === "in_progress") {
+    return "Blocked by operator review";
+  }
+  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
+    return "No blocker";
+  }
+  return "Review required";
+}
+
+function deriveRecommendationLifecycleSupport(item: Recommendation): {
+  stage: string;
+  stageTone: "neutral" | "success" | "warning";
+  revisit: string;
+  revisitTone: "neutral" | "success" | "warning";
+} {
+  if (item.status === "accepted") {
+    return {
+      stage: "Applied / completed",
+      stageTone: "success",
+      revisit: "Revisit after visibility refresh.",
+      revisitTone: "warning",
+    };
+  }
+  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
+    return {
+      stage: "Background item / revisit later",
+      stageTone: "neutral",
+      revisit: "Ignore for now unless context changes.",
+      revisitTone: "neutral",
+    };
+  }
+  if (item.status === "open" || item.status === "in_progress") {
+    return {
+      stage: "Needs review / pending",
+      stageTone: "warning",
+      revisit: "Revisit now.",
+      revisitTone: "success",
+    };
+  }
+  return {
+    stage: "Needs review / pending",
+    stageTone: "warning",
+    revisit: "Revisit now.",
+    revisitTone: "warning",
+  };
+}
+
 function isNotFoundError(error: unknown): boolean {
   return error instanceof ApiRequestError && error.status === 404;
 }
@@ -324,6 +418,34 @@ export default function RecommendationRunDetailPage() {
     }
     return deriveRecommendationEvidenceTrustCue(topRecommendation);
   }, [recommendations]);
+  const strongestRecommendationChoiceCue = useMemo(() => {
+    const topRecommendation = recommendations[0];
+    if (!topRecommendation) {
+      return "No immediate recommendation choice is available.";
+    }
+    return deriveRecommendationChoiceCue(topRecommendation, topRecommendation.id);
+  }, [recommendations]);
+  const strongestRecommendationEffortCue = useMemo(() => {
+    const topRecommendation = recommendations[0];
+    if (!topRecommendation) {
+      return "Effort signal unavailable.";
+    }
+    return deriveRecommendationEffortCue(topRecommendation);
+  }, [recommendations]);
+  const strongestRecommendationLifecycleStage = useMemo(() => {
+    const topRecommendation = recommendations[0];
+    if (!topRecommendation) {
+      return "No lifecycle stage is available for this run yet.";
+    }
+    return deriveRecommendationLifecycleSupport(topRecommendation).stage;
+  }, [recommendations]);
+  const strongestRecommendationRevisitTiming = useMemo(() => {
+    const topRecommendation = recommendations[0];
+    if (!topRecommendation) {
+      return "No revisit timing is available for this run yet.";
+    }
+    return deriveRecommendationLifecycleSupport(topRecommendation).revisit;
+  }, [recommendations]);
 
   const recommendationsByStatus = useMemo(
     () => toSortedCountEntries(report?.recommendations.by_status),
@@ -520,9 +642,19 @@ export default function RecommendationRunDetailPage() {
         tone: hasActionableOutput ? "success" : "neutral",
       },
       {
+        label: "Lifecycle stage",
+        value: strongestRecommendationLifecycleStage,
+        tone: hasActionableOutput ? "warning" : runCompleted ? "success" : "neutral",
+      },
+      {
         label: "Blocking state",
         value: blockingStateLabel,
         tone: hasActionableOutput ? "neutral" : "warning",
+      },
+      {
+        label: "Revisit timing",
+        value: strongestRecommendationRevisitTiming,
+        tone: runCompleted ? "warning" : "neutral",
       },
       {
         label: "After action",
@@ -537,6 +669,16 @@ export default function RecommendationRunDetailPage() {
       {
         label: "Evidence trust",
         value: strongestRecommendationEvidenceTrust,
+        tone: "neutral",
+      },
+      {
+        label: "Choice support",
+        value: strongestRecommendationChoiceCue,
+        tone: hasActionableOutput ? "warning" : "neutral",
+      },
+      {
+        label: "Effort signal",
+        value: strongestRecommendationEffortCue,
         tone: "neutral",
       },
       {
@@ -566,8 +708,12 @@ export default function RecommendationRunDetailPage() {
     run,
     runCompleted,
     runFailed,
+    strongestRecommendationChoiceCue,
     strongestRecommendationEvidencePreview,
+    strongestRecommendationEffortCue,
     strongestRecommendationEvidenceTrust,
+    strongestRecommendationLifecycleStage,
+    strongestRecommendationRevisitTiming,
   ]);
 
   useEffect(() => {
@@ -1070,6 +1216,7 @@ export default function RecommendationRunDetailPage() {
                     <thead>
                       <tr>
                         <th>Title</th>
+                        <th>Choice support</th>
                         <th>Priority</th>
                         <th>Status</th>
                         <th>Category</th>
@@ -1079,12 +1226,41 @@ export default function RecommendationRunDetailPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {recommendations.map((item) => (
+                      {recommendations.map((item) => {
+                        const lifecycleSupport = deriveRecommendationLifecycleSupport(item);
+                        return (
                         <tr key={item.id}>
                           <td className="table-cell-wrap">
                             <Link href={buildRecommendationDetailHref(item)}>{item.title}</Link>
                             <br />
                             <span className="hint muted"><code>{item.id}</code></span>
+                          </td>
+                          <td className="table-cell-wrap">
+                            <div className="recommendation-decisiveness">
+                              <div className="recommendation-decisiveness-badges">
+                                <span className="badge badge-warn">
+                                  {deriveRecommendationChoiceCue(item, recommendations[0]?.id || null)}
+                                </span>
+                                <span className="badge badge-muted">{deriveRecommendationEffortCue(item)}</span>
+                                <span className={`badge ${lifecycleSupport.stageTone === "success" ? "badge-success" : lifecycleSupport.stageTone === "warning" ? "badge-warn" : "badge-muted"}`}>
+                                  {lifecycleSupport.stage}
+                                </span>
+                              </div>
+                              <p className="hint muted">
+                                <span className="text-strong">Blocking:</span> {deriveRecommendationBlockerCue(item)}
+                              </p>
+                              <p className="hint muted">
+                                <span className="text-strong">Revisit:</span> {lifecycleSupport.revisit}
+                              </p>
+                              <p className="hint muted">
+                                <span className="text-strong">After action:</span>{" "}
+                                {item.status === "accepted"
+                                  ? "Validate visibility after the next refresh."
+                                  : item.status === "open" || item.status === "in_progress"
+                                    ? "Apply decision now, then verify visibility on refresh."
+                                    : "No immediate after-action step is required."}
+                              </p>
+                            </div>
                           </td>
                           <td>
                             {item.priority_score} ({item.priority_band})
@@ -1095,7 +1271,8 @@ export default function RecommendationRunDetailPage() {
                           <td>{truncateText(item.rationale, RECOMMENDATION_RATIONALE_PREVIEW_LIMIT)}</td>
                           <td>{formatDateTime(item.created_at)}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

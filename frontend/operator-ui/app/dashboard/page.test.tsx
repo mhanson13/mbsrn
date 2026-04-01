@@ -90,6 +90,12 @@ describe("dashboard shared support-state framing", () => {
     expect(recommendationOutcomeSection).toHaveTextContent(
       "Evidence preview: queue/detail views show one compact proof line plus a trust-safe support cue.",
     );
+    expect(recommendationOutcomeSection).toHaveTextContent(
+      "Choice support: Best immediate move Quick win Lower-immediacy background item clarify what to do first versus what can be deferred.",
+    );
+    expect(recommendationOutcomeSection).toHaveTextContent(
+      "Lifecycle stage: Needs review / pending Applied / completed Background item / revisit later keeps revisit timing explicit without opening detail pages.",
+    );
     expect(screen.getByRole("link", { name: "Sites" })).toHaveAttribute("href", "/sites");
     expect(screen.getByRole("link", { name: "Google Business Profile" })).toHaveAttribute(
       "href",

@@ -194,10 +194,18 @@ describe("recommendation run detail page presentation", () => {
     expect(screen.getByText("After action")).toBeInTheDocument();
     expect(screen.getByText("Evidence preview")).toBeInTheDocument();
     expect(screen.getByText("Evidence trust")).toBeInTheDocument();
+    expect(screen.getByText("Lifecycle stage")).toBeInTheDocument();
+    expect(screen.getByText("Revisit timing")).toBeInTheDocument();
+    expect(screen.getAllByText("Choice support").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Effort signal").length).toBeGreaterThan(0);
     expect(
       screen.getByText("Run produced actionable recommendations that should be reviewed now."),
     ).toBeInTheDocument();
     expect(screen.getByText("Support cue: operator review required")).toBeInTheDocument();
+    expect(screen.getAllByText("Best immediate move").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Quick win").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Needs review / pending").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Revisit now.").length).toBeGreaterThan(0);
     expect(
       screen.getByText("Yes. Review recommendations and start with the highest-priority items."),
     ).toBeInTheDocument();
@@ -219,6 +227,7 @@ describe("recommendation run detail page presentation", () => {
     expect(screen.getByText("Run status")).toBeInTheDocument();
     expect(screen.getByText("Recommendations")).toBeInTheDocument();
     expect(screen.getByText("Latest Narrative")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Choice support" })).toBeInTheDocument();
     expect(
       screen.getByText("No generated narrative is currently available for this recommendation run."),
     ).toBeInTheDocument();
