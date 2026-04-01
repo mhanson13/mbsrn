@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { ActionControls } from "../../components/action-execution/ActionControls";
+import { OutputReview } from "../../components/action-execution/OutputReview";
 import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
@@ -11,7 +13,12 @@ import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import { fetchAutomationRuns } from "../../lib/api/client";
 import { deriveAutomationRunOperatorActionState } from "../../lib/operatorActionState";
-import type { AutomationRun, AutomationRunStep } from "../../lib/api/types";
+import {
+  applyActionDecisionLocally,
+  deriveActionControls,
+  deriveActionStatePresentation,
+} from "../../lib/transforms/actionExecution";
+import type { ActionControl, ActionDecision, ActionExecutionItem, AutomationRun, AutomationRunStep } from "../../lib/api/types";
 
 const AUTOMATION_STEP_LABELS: Record<string, string> = {
   audit_run: "Audit run",
@@ -113,6 +120,75 @@ function buildAutomationRecommendationNarrativeHref(
     : `/recommendations/runs/${recommendationRunId}/narratives/${recommendationNarrativeId}`;
 }
 
+function buildAutomationStatusHref(siteId: string): string {
+  const params = new URLSearchParams();
+  if (siteId.trim().length > 0) {
+    params.set("site_id", siteId);
+  }
+  const query = params.toString();
+  return query ? `/automation?${query}` : "/automation";
+}
+
+function deriveAutomationActionExecutionItem(params: {
+  run: AutomationRun;
+  recommendationRunOutputId: string | null;
+  recommendationNarrativeOutputId: string | null;
+}): ActionExecutionItem {
+  const { run, recommendationRunOutputId, recommendationNarrativeOutputId } = params;
+  const normalizedStatus = normalizeStatusValue(run.status);
+  return {
+    id: run.id,
+    title: `Automation run ${run.id}`,
+    actionStateCode: deriveAutomationRunOperatorActionState({
+      runStatus: run.status,
+      hasRecommendationOutput: Boolean(recommendationRunOutputId),
+      hasNarrativeOutput: Boolean(recommendationNarrativeOutputId),
+    }).code,
+    linkedOutputId: recommendationRunOutputId,
+    linkedNarrativeId: recommendationNarrativeOutputId,
+    automationAvailable: true,
+    automationInFlight: normalizedStatus === "queued" || normalizedStatus === "running",
+    blockedReason:
+      normalizedStatus === "failed"
+        ? "Automation failed before linked outputs completed."
+        : undefined,
+    triggerSource: run.trigger_source,
+    outputReview: recommendationRunOutputId || recommendationNarrativeOutputId
+      ? {
+          outputId: recommendationRunOutputId || recommendationNarrativeOutputId,
+          summary: summarizeAutomationRunOutcome(run),
+          details: summarizeAutomationRunNextStep(run),
+          sourceLabel: "Automation output",
+        }
+      : undefined,
+  };
+}
+
+function resolveAutomationControlHref(
+  control: ActionControl,
+  run: AutomationRun,
+  recommendationRunOutputId: string | null,
+  recommendationNarrativeOutputId: string | null,
+): string | undefined {
+  if (control.type === "review_output" || control.type === "review_recommendation" || control.type === "mark_completed") {
+    if (recommendationRunOutputId) {
+      return buildAutomationRecommendationRunHref(recommendationRunOutputId, run.site_id);
+    }
+    return "/recommendations";
+  }
+  if (control.type === "run_automation" || control.type === "view_automation_status") {
+    return buildAutomationStatusHref(run.site_id);
+  }
+  if (control.type === "blocked" && recommendationNarrativeOutputId && recommendationRunOutputId) {
+    return buildAutomationRecommendationNarrativeHref(
+      recommendationRunOutputId,
+      recommendationNarrativeOutputId,
+      run.site_id,
+    );
+  }
+  return undefined;
+}
+
 function automationStepOutcomeLabel(step: AutomationRunStep): string {
   const normalizedStatus = normalizeStatusValue(step.status);
   if (normalizedStatus === "completed") {
@@ -198,6 +274,7 @@ export default function AutomationPage() {
   const [items, setItems] = useState<AutomationRun[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
+  const [actionDecisions, setActionDecisions] = useState<Record<string, ActionDecision>>({});
 
   const selectedSite = context.sites.find((site) => site.id === context.selectedSiteId) || null;
   const completedRuns = items.filter((run) => run.status.toLowerCase() === "completed").length;
@@ -214,6 +291,37 @@ export default function AutomationPage() {
     hasRecommendationOutput: Boolean(latestRecommendationRunOutputId),
     hasNarrativeOutput: Boolean(latestRecommendationNarrativeOutputId),
   });
+  const latestRunBaseActionExecutionItem = latestRun
+    ? deriveAutomationActionExecutionItem({
+        run: latestRun,
+        recommendationRunOutputId: latestRecommendationRunOutputId,
+        recommendationNarrativeOutputId: latestRecommendationNarrativeOutputId,
+      })
+    : null;
+  const latestRunEffectiveActionExecutionItem = latestRunBaseActionExecutionItem
+    ? (actionDecisions[latestRunBaseActionExecutionItem.id]
+      ? applyActionDecisionLocally(latestRunBaseActionExecutionItem, actionDecisions[latestRunBaseActionExecutionItem.id])
+      : latestRunBaseActionExecutionItem)
+    : null;
+  const latestRunActionPresentation = latestRunEffectiveActionExecutionItem
+    ? deriveActionStatePresentation({
+        item: latestRunEffectiveActionExecutionItem,
+        fallbackLabel: latestRunActionState.label,
+        fallbackBadgeClass: latestRunActionState.badgeClass,
+        fallbackOutcome: latestRunActionState.outcome,
+        fallbackNextStep: latestRunActionState.nextStep,
+      })
+    : null;
+  const latestRunActionControls = latestRunEffectiveActionExecutionItem
+    ? deriveActionControls(latestRunEffectiveActionExecutionItem)
+    : [];
+
+  function handleLocalDecision(actionItemId: string, decision: ActionDecision): void {
+    setActionDecisions((current) => ({
+      ...current,
+      [actionItemId]: decision,
+    }));
+  }
 
   useEffect(() => {
     if (!context.selectedSiteId || context.loading || context.error) {
@@ -373,14 +481,39 @@ export default function AutomationPage() {
                   <span className={`badge ${automationStatusBadgeClass(latestRun.status)}`}>
                     {latestRun.status}
                   </span>
-                  <span className={latestRunActionState.badgeClass}>{latestRunActionState.label}</span>
+                  <span className={latestRunActionPresentation?.badgeClass || latestRunActionState.badgeClass}>
+                    {latestRunActionPresentation?.label || latestRunActionState.label}
+                  </span>
                   <span className="badge badge-muted">Trigger: {latestRun.trigger_source}</span>
                   <span className="badge badge-muted">Run: {latestRun.id}</span>
                 </div>
                 <span className="hint">{summarizeAutomationRunOutcome(latestRun)}</span>
-                <span className="hint muted">{latestRunActionState.outcome}</span>
-                <span className="hint muted">Next step: {latestRunActionState.nextStep}</span>
+                <span className="hint muted">{latestRunActionPresentation?.outcome || latestRunActionState.outcome}</span>
+                <span className="hint muted">Next step: {latestRunActionPresentation?.nextStep || latestRunActionState.nextStep}</span>
                 <span className="hint muted">{summarizeAutomationRunNextStep(latestRun)}</span>
+                <ActionControls
+                  controls={latestRunActionControls}
+                  resolveHref={(control) =>
+                    resolveAutomationControlHref(
+                      control,
+                      latestRun,
+                      latestRecommendationRunOutputId,
+                      latestRecommendationNarrativeOutputId,
+                    )}
+                  data-testid="automation-latest-run-controls"
+                  />
+                {latestRunEffectiveActionExecutionItem ? (
+                  <OutputReview
+                    item={latestRunEffectiveActionExecutionItem}
+                    stateLabel={latestRunActionPresentation?.label || latestRunActionState.label}
+                    stateBadgeClass={latestRunActionPresentation?.badgeClass || latestRunActionState.badgeClass}
+                    outcome={latestRunActionPresentation?.outcome || latestRunActionState.outcome}
+                    nextStep={latestRunActionPresentation?.nextStep || latestRunActionState.nextStep}
+                    onDecision={(decision) => handleLocalDecision(latestRunEffectiveActionExecutionItem.id, decision)}
+                    resolveOutputHref={(outputId) => buildAutomationRecommendationRunHref(outputId, latestRun.site_id)}
+                    data-testid="automation-latest-run-output-review"
+                  />
+                ) : null}
                 <span className="hint muted">
                   Started: {formatDateTime(latestRun.started_at)} · Finished: {formatDateTime(latestRun.finished_at)}
                 </span>
@@ -431,6 +564,22 @@ export default function AutomationPage() {
                   hasRecommendationOutput: Boolean(recommendationRunOutputId),
                   hasNarrativeOutput: Boolean(recommendationNarrativeOutputId),
                 });
+                const baseActionExecutionItem = deriveAutomationActionExecutionItem({
+                  run: item,
+                  recommendationRunOutputId,
+                  recommendationNarrativeOutputId,
+                });
+                const effectiveActionExecutionItem = actionDecisions[baseActionExecutionItem.id]
+                  ? applyActionDecisionLocally(baseActionExecutionItem, actionDecisions[baseActionExecutionItem.id])
+                  : baseActionExecutionItem;
+                const actionPresentation = deriveActionStatePresentation({
+                  item: effectiveActionExecutionItem,
+                  fallbackLabel: actionStateCue.label,
+                  fallbackBadgeClass: actionStateCue.badgeClass,
+                  fallbackOutcome: actionStateCue.outcome,
+                  fallbackNextStep: actionStateCue.nextStep,
+                });
+                const actionControls = deriveActionControls(effectiveActionExecutionItem);
                 const statusBadgeClass =
                   normalizedStatus === "completed"
                     ? "badge-success"
@@ -456,7 +605,7 @@ export default function AutomationPage() {
                     title={`Automation run ${item.id}`}
                     chips={(
                       <>
-                        <span className={actionStateCue.badgeClass}>{actionStateCue.label}</span>
+                        <span className={actionPresentation.badgeClass}>{actionPresentation.label}</span>
                         <span className={`badge ${statusBadgeClass}`}>{item.status}</span>
                         <span className="badge badge-muted">{item.trigger_source}</span>
                         {steps.length > 0 ? (
@@ -470,18 +619,21 @@ export default function AutomationPage() {
                       summarizeAutomationRunOutcome(item)
                     }
                     primaryAction={
-                      recommendationRunOutputId ? (
-                        <Link
-                          href={buildAutomationRecommendationRunHref(recommendationRunOutputId, item.site_id)}
-                          className="button button-tertiary button-inline"
-                        >
-                          Review recommendation output
-                        </Link>
-                      ) : undefined
+                      <ActionControls
+                        controls={actionControls}
+                        resolveHref={(control) =>
+                          resolveAutomationControlHref(
+                            control,
+                            item,
+                            recommendationRunOutputId,
+                            recommendationNarrativeOutputId,
+                          )}
+                        data-testid={`automation-action-controls-${item.id}`}
+                      />
                     }
                     secondaryMeta={
                       <>
-                        <span className="hint muted">Next step: {actionStateCue.nextStep}</span>
+                        <span className="hint muted">Next step: {actionPresentation.nextStep}</span>
                         <span className="hint muted">
                           Started: {formatDateTime(item.started_at)} | Finished: {formatDateTime(item.finished_at)}
                         </span>
@@ -490,8 +642,18 @@ export default function AutomationPage() {
                     expandedDetail={
                       <>
                         <p className="hint muted">
-                          <span className="text-strong">Action state:</span> {actionStateCue.outcome}
+                          <span className="text-strong">Action state:</span> {actionPresentation.outcome}
                         </p>
+                        <OutputReview
+                          item={effectiveActionExecutionItem}
+                          stateLabel={actionPresentation.label}
+                          stateBadgeClass={actionPresentation.badgeClass}
+                          outcome={actionPresentation.outcome}
+                          nextStep={actionPresentation.nextStep}
+                          onDecision={(decision) => handleLocalDecision(effectiveActionExecutionItem.id, decision)}
+                          resolveOutputHref={(outputId) => buildAutomationRecommendationRunHref(outputId, item.site_id)}
+                          data-testid={`automation-output-review-${item.id}`}
+                        />
                         <p className="hint muted">
                           <span className="text-strong">Business:</span> {item.business_id}
                         </p>

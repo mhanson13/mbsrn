@@ -4,6 +4,8 @@ import Link from "next/link";
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { ActionControls } from "../../components/action-execution/ActionControls";
+import { OutputReview } from "../../components/action-execution/OutputReview";
 import { DetailFocusPanel, type DetailFocusFact } from "../../components/layout/DetailFocusPanel";
 import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { PageContainer } from "../../components/layout/PageContainer";
@@ -18,7 +20,15 @@ import {
   updateRecommendationStatus,
 } from "../../lib/api/client";
 import { deriveRecommendationOperatorActionState } from "../../lib/operatorActionState";
+import {
+  applyActionDecisionLocally,
+  deriveActionControls,
+  deriveActionStatePresentation,
+} from "../../lib/transforms/actionExecution";
 import type {
+  ActionControl,
+  ActionDecision,
+  ActionExecutionItem,
   AutomationRun,
   RecommendationFilteredSummary,
   Recommendation,
@@ -253,6 +263,67 @@ function deriveRecommendationAutomationOriginCue(
   return {
     label: "No automation linkage detected",
     badgeClass: "badge-muted",
+  };
+}
+
+function deriveRecommendationTrustTier(
+  item: Recommendation,
+): ActionExecutionItem["trustTier"] {
+  const tiers = (item.competitor_evidence_links || [])
+    .map((link) => link.trust_tier || link.evidence_trust_tier || null)
+    .filter((value): value is NonNullable<typeof value> => Boolean(value));
+  if (tiers.includes("trusted_verified")) {
+    return "trusted_verified";
+  }
+  if (tiers.includes("informational_unverified")) {
+    return "informational_unverified";
+  }
+  if (tiers.includes("informational_candidate")) {
+    return "informational_candidate";
+  }
+  return null;
+}
+
+function deriveRecommendationActionExecutionItem(params: {
+  item: Recommendation;
+  actionStateCode: ActionExecutionItem["actionStateCode"];
+  automationLinkedOutput: boolean;
+  automationContextAvailable: boolean;
+  automationInFlight: boolean;
+}): ActionExecutionItem {
+  const { item, actionStateCode, automationLinkedOutput, automationContextAvailable, automationInFlight } = params;
+  const hasOutputReviewContext =
+    automationLinkedOutput
+    || (item.recommendation_action_clarity || "").trim().length > 0
+    || (item.recommendation_evidence_summary || "").trim().length > 0;
+
+  return {
+    id: item.id,
+    title: item.title,
+    actionStateCode,
+    priorityBand: item.priority_band,
+    trustTier: deriveRecommendationTrustTier(item),
+    linkedOutputId: automationLinkedOutput ? item.recommendation_run_id : null,
+    automationAvailable: automationContextAvailable,
+    automationInFlight,
+    blockedReason:
+      actionStateCode === "blocked_unavailable"
+        ? "Recommendation state is blocked. Resolve run issues before action."
+        : undefined,
+    outputReview: hasOutputReviewContext
+      ? {
+          outputId: automationLinkedOutput ? item.recommendation_run_id : null,
+          summary:
+            item.recommendation_action_clarity
+            || item.recommendation_evidence_summary
+            || item.rationale,
+          details:
+            item.recommendation_expected_outcome
+            || item.recommendation_observed_gap_summary
+            || null,
+          sourceLabel: automationLinkedOutput ? "Automation recommendation output" : "Recommendation context",
+        }
+      : undefined,
   };
 }
 
@@ -892,6 +963,7 @@ function RecommendationsPageContent() {
     () => new Set<string>(),
   );
   const [automationLinkageReady, setAutomationLinkageReady] = useState(false);
+  const [automationInFlight, setAutomationInFlight] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [selectedRecommendationIds, setSelectedRecommendationIds] = useState<string[]>([]);
@@ -900,6 +972,9 @@ function RecommendationsPageContent() {
   const [bulkActionError, setBulkActionError] = useState<string | null>(null);
   const [bulkRefreshNonce, setBulkRefreshNonce] = useState(0);
   const [expandedRecommendationIds, setExpandedRecommendationIds] = useState<Set<string>>(() => new Set());
+  const [actionDecisionByItemId, setActionDecisionByItemId] = useState<Record<string, ActionDecision>>({});
+  const [actionDecisionSavingByItemId, setActionDecisionSavingByItemId] = useState<Record<string, boolean>>({});
+  const [actionDecisionErrorByItemId, setActionDecisionErrorByItemId] = useState<Record<string, string | null>>({});
 
   const filters = useMemo<FilterState>(() => {
     return {
@@ -1400,6 +1475,99 @@ function RecommendationsPageContent() {
     return `/recommendations/runs/${item.recommendation_run_id}?${params.toString()}`;
   }
 
+  function resolveRecommendationControlHref(control: ActionControl, item: Recommendation): string | undefined {
+    if (control.type === "review_recommendation" || control.type === "mark_completed") {
+      return buildRecommendationDetailHref(item);
+    }
+    if (control.type === "review_output") {
+      return buildRecommendationRunDetailHref(item);
+    }
+    if (control.type === "run_automation" || control.type === "view_automation_status") {
+      const params = new URLSearchParams();
+      if (item.site_id) {
+        params.set("site_id", item.site_id);
+      }
+      const query = params.toString();
+      return query ? `/automation?${query}` : "/automation";
+    }
+    return undefined;
+  }
+
+  function resolveRecommendationOutputReviewHref(
+    outputId: string,
+    recommendation: Recommendation,
+  ): string | undefined {
+    if (outputId.length === 0) {
+      return undefined;
+    }
+    return buildRecommendationRunDetailHref(recommendation);
+  }
+
+  function applyLocalActionDecision(
+    actionExecutionItem: ActionExecutionItem,
+  ): ActionExecutionItem {
+    const decision = actionDecisionByItemId[actionExecutionItem.id];
+    if (!decision) {
+      return actionExecutionItem;
+    }
+    return applyActionDecisionLocally(actionExecutionItem, decision);
+  }
+
+  async function handleRecommendationActionDecision(
+    recommendation: Recommendation,
+    decision: ActionDecision,
+  ): Promise<void> {
+    const actionId = recommendation.id;
+    setActionDecisionByItemId((current) => ({
+      ...current,
+      [actionId]: decision,
+    }));
+    setActionDecisionErrorByItemId((current) => ({
+      ...current,
+      [actionId]: null,
+    }));
+
+    if (decision === "deferred") {
+      return;
+    }
+
+    const nextStatus: RecommendationActionStatus = decision === "accepted" ? "accepted" : "dismissed";
+    setActionDecisionSavingByItemId((current) => ({
+      ...current,
+      [actionId]: true,
+    }));
+    try {
+      await updateRecommendationStatus(
+        context.token,
+        context.businessId,
+        recommendation.site_id,
+        recommendation.id,
+        { status: nextStatus },
+      );
+      setItems((currentItems) =>
+        currentItems.map((item) =>
+          item.id === recommendation.id
+            ? {
+                ...item,
+                status: nextStatus,
+                updated_at: new Date().toISOString(),
+              }
+            : item,
+        ),
+      );
+    } catch (error) {
+      setActionDecisionErrorByItemId((current) => ({
+        ...current,
+        [actionId]: safeBulkRecommendationErrorMessage(error),
+      }));
+    } finally {
+      setActionDecisionSavingByItemId((current) => ({
+        ...current,
+        [actionId]: false,
+      }));
+    }
+  }
+
   function toggleRecommendationSelection(recommendationId: string) {
     setSelectedRecommendationIds((current) => {
       if (current.includes(recommendationId)) {
@@ -1540,6 +1708,10 @@ function RecommendationsPageContent() {
       setQueueSummary(EMPTY_QUEUE_SUMMARY);
       setAutomationLinkedRecommendationRunIds(new Set<string>());
       setAutomationLinkageReady(false);
+      setAutomationInFlight(false);
+      setActionDecisionByItemId({});
+      setActionDecisionSavingByItemId({});
+      setActionDecisionErrorByItemId({});
       setItemsError(null);
       setLoadingItems(false);
       setSelectedRecommendationIds([]);
@@ -1555,6 +1727,7 @@ function RecommendationsPageContent() {
       setLoadingItems(true);
       setItemsError(null);
       setAutomationLinkageReady(false);
+      setAutomationInFlight(false);
       try {
         const activeFilters: RecommendationListFilters = {};
         if (filters.status) {
@@ -1580,6 +1753,9 @@ function RecommendationsPageContent() {
             setItems(recommendationsResult.value.items);
             setTotalRecommendations(recommendationsResult.value.total);
             setQueueSummary(deriveQueueSummary(recommendationsResult.value));
+            setActionDecisionByItemId({});
+            setActionDecisionSavingByItemId({});
+            setActionDecisionErrorByItemId({});
           } else {
             throw recommendationsResult.reason;
           }
@@ -1588,8 +1764,15 @@ function RecommendationsPageContent() {
             setAutomationLinkedRecommendationRunIds(
               extractAutomationLinkedRecommendationRunIds(automationRunsResult.value.items),
             );
+            setAutomationInFlight(
+              automationRunsResult.value.items.some((run) => {
+                const normalizedStatus = (run.status || "").trim().toLowerCase();
+                return normalizedStatus === "queued" || normalizedStatus === "running";
+              }),
+            );
           } else {
             setAutomationLinkedRecommendationRunIds(new Set<string>());
+            setAutomationInFlight(false);
           }
           setAutomationLinkageReady(true);
         }
@@ -1599,6 +1782,10 @@ function RecommendationsPageContent() {
           setQueueSummary(EMPTY_QUEUE_SUMMARY);
           setAutomationLinkedRecommendationRunIds(new Set<string>());
           setAutomationLinkageReady(false);
+          setAutomationInFlight(false);
+          setActionDecisionByItemId({});
+          setActionDecisionSavingByItemId({});
+          setActionDecisionErrorByItemId({});
         }
       } finally {
         if (!cancelled) {
@@ -1899,6 +2086,22 @@ function RecommendationsPageContent() {
                   automationLinkedOutput: automationLinkedRecommendationRunIds.has(item.recommendation_run_id),
                   automationContextAvailable: automationLinkageReady,
                 });
+                const actionExecutionItem = deriveRecommendationActionExecutionItem({
+                  item,
+                  actionStateCode: actionStateCue.code,
+                  automationLinkedOutput: automationLinkedRecommendationRunIds.has(item.recommendation_run_id),
+                  automationContextAvailable: automationLinkageReady,
+                  automationInFlight,
+                });
+                const effectiveActionExecutionItem = applyLocalActionDecision(actionExecutionItem);
+                const actionPresentation = deriveActionStatePresentation({
+                  item: effectiveActionExecutionItem,
+                  fallbackLabel: actionStateCue.label,
+                  fallbackBadgeClass: actionStateCue.badgeClass,
+                  fallbackOutcome: actionStateCue.outcome,
+                  fallbackNextStep: actionStateCue.nextStep,
+                });
+                const actionControls = deriveActionControls(effectiveActionExecutionItem);
                 const showBlockerBadge =
                   decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
                 return (
@@ -1909,7 +2112,7 @@ function RecommendationsPageContent() {
                     identity={<code>{item.id}</code>}
                     chips={(
                       <>
-                        <span className={actionStateCue.badgeClass}>{actionStateCue.label}</span>
+                        <span className={actionPresentation.badgeClass}>{actionPresentation.label}</span>
                         <span className={`badge ${decisiveness.actionabilityTone}`}>
                           {decisiveness.actionabilityCue}
                         </span>
@@ -1925,9 +2128,11 @@ function RecommendationsPageContent() {
                       </span>
                     }
                     primaryAction={
-                      <Link href={buildRecommendationDetailHref(item)} className="button button-tertiary button-inline">
-                        Open detail
-                      </Link>
+                      <ActionControls
+                        controls={actionControls}
+                        resolveHref={(control) => resolveRecommendationControlHref(control, item)}
+                        data-testid={`recommendation-action-controls-${item.id}`}
+                      />
                     }
                     secondaryMeta={
                       <>
@@ -1940,11 +2145,25 @@ function RecommendationsPageContent() {
                     expandedDetail={
                       <>
                         <p className="hint muted">
-                          <span className="text-strong">Action state:</span> {actionStateCue.outcome}
+                          <span className="text-strong">Action state:</span> {actionPresentation.outcome}
                         </p>
                         <p className="hint muted">
-                          <span className="text-strong">Next step:</span> {actionStateCue.nextStep}
+                          <span className="text-strong">Next step:</span> {actionPresentation.nextStep}
                         </p>
+                        <OutputReview
+                          item={effectiveActionExecutionItem}
+                          stateLabel={actionPresentation.label}
+                          stateBadgeClass={actionPresentation.badgeClass}
+                          outcome={actionPresentation.outcome}
+                          nextStep={actionPresentation.nextStep}
+                          onDecision={(decision) => {
+                            void handleRecommendationActionDecision(item, decision);
+                          }}
+                          decisionPending={Boolean(actionDecisionSavingByItemId[item.id])}
+                          decisionError={actionDecisionErrorByItemId[item.id]}
+                          resolveOutputHref={(outputId) => resolveRecommendationOutputReviewHref(outputId, item)}
+                          data-testid={`recommendation-output-review-${item.id}`}
+                        />
                         <p className="hint muted">
                           <span className="text-strong">Blocking:</span> {decisiveness.blockingState}
                         </p>
@@ -2077,6 +2296,22 @@ function RecommendationsPageContent() {
                   automationLinkedOutput: automationLinkedRecommendationRunIds.has(item.recommendation_run_id),
                   automationContextAvailable: automationLinkageReady,
                 });
+                const actionExecutionItem = deriveRecommendationActionExecutionItem({
+                  item,
+                  actionStateCode: actionStateCue.code,
+                  automationLinkedOutput: automationLinkedRecommendationRunIds.has(item.recommendation_run_id),
+                  automationContextAvailable: automationLinkageReady,
+                  automationInFlight,
+                });
+                const effectiveActionExecutionItem = applyLocalActionDecision(actionExecutionItem);
+                const actionPresentation = deriveActionStatePresentation({
+                  item: effectiveActionExecutionItem,
+                  fallbackLabel: actionStateCue.label,
+                  fallbackBadgeClass: actionStateCue.badgeClass,
+                  fallbackOutcome: actionStateCue.outcome,
+                  fallbackNextStep: actionStateCue.nextStep,
+                });
+                const actionControls = deriveActionControls(effectiveActionExecutionItem);
                 const isExpanded = expandedRecommendationIds.has(item.id);
                 const detailsId = `recommendation-details-${item.id}`;
                 const showBlockerBadge = decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
@@ -2112,7 +2347,7 @@ function RecommendationsPageContent() {
                         <div className="recommendation-decisiveness">
                           <div className="recommendation-decisiveness-badge-row">
                             <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-primary">
-                              <span className={actionStateCue.badgeClass}>{actionStateCue.label}</span>
+                              <span className={actionPresentation.badgeClass}>{actionPresentation.label}</span>
                               <span className={`badge ${decisiveness.actionabilityTone}`}>{decisiveness.actionabilityCue}</span>
                               <span className={`badge ${decisiveness.effortCueTone}`}>{decisiveness.effortCue}</span>
                             </div>
@@ -2169,11 +2404,30 @@ function RecommendationsPageContent() {
                             data-testid={`recommendation-decisiveness-detail-panel-${item.id}`}
                           >
                             <p className="hint muted">
-                              <span className="text-strong">Action state:</span> {actionStateCue.outcome}
+                              <span className="text-strong">Action state:</span> {actionPresentation.outcome}
                             </p>
                             <p className="hint muted">
-                              <span className="text-strong">Next step:</span> {actionStateCue.nextStep}
+                              <span className="text-strong">Next step:</span> {actionPresentation.nextStep}
                             </p>
+                            <ActionControls
+                              controls={actionControls}
+                              resolveHref={(control) => resolveRecommendationControlHref(control, item)}
+                              data-testid={`recommendation-expanded-action-controls-${item.id}`}
+                            />
+                            <OutputReview
+                              item={effectiveActionExecutionItem}
+                              stateLabel={actionPresentation.label}
+                              stateBadgeClass={actionPresentation.badgeClass}
+                              outcome={actionPresentation.outcome}
+                              nextStep={actionPresentation.nextStep}
+                              onDecision={(decision) => {
+                                void handleRecommendationActionDecision(item, decision);
+                              }}
+                              decisionPending={Boolean(actionDecisionSavingByItemId[item.id])}
+                              decisionError={actionDecisionErrorByItemId[item.id]}
+                              resolveOutputHref={(outputId) => resolveRecommendationOutputReviewHref(outputId, item)}
+                              data-testid={`recommendation-expanded-output-review-${item.id}`}
+                            />
                             <p className="hint muted">
                               <span className="text-strong">Priority:</span>{" "}
                               <span className={`badge ${decisiveness.priorityCueTone}`}>{decisiveness.priorityCue}</span>

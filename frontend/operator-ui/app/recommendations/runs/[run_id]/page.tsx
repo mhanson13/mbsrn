@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { ActionControls } from "../../../../components/action-execution/ActionControls";
+import { OutputReview } from "../../../../components/action-execution/OutputReview";
 import { PageContainer } from "../../../../components/layout/PageContainer";
 import { DetailFocusPanel, type DetailFocusFact } from "../../../../components/layout/DetailFocusPanel";
 import { SectionCard } from "../../../../components/layout/SectionCard";
@@ -19,7 +21,15 @@ import {
   fetchRecommendationRunReport,
 } from "../../../../lib/api/client";
 import { deriveRecommendationRunOperatorActionState } from "../../../../lib/operatorActionState";
+import {
+  applyActionDecisionLocally,
+  deriveActionControls,
+  deriveActionStatePresentation,
+} from "../../../../lib/transforms/actionExecution";
 import type {
+  ActionControl,
+  ActionDecision,
+  ActionExecutionItem,
   AutomationRun,
   CompetitorComparisonReport,
   Recommendation,
@@ -362,6 +372,66 @@ function buildRecommendationDetailHref(item: Recommendation): string {
   return `/recommendations/${item.id}?${params.toString()}`;
 }
 
+function buildAutomationStatusHref(siteId: string): string {
+  const params = new URLSearchParams();
+  if (siteId.trim().length > 0) {
+    params.set("site_id", siteId);
+  }
+  const query = params.toString();
+  return query ? `/automation?${query}` : "/automation";
+}
+
+function deriveRecommendationRunTrustTier(recommendations: Recommendation[]): ActionExecutionItem["trustTier"] {
+  const tiers = recommendations
+    .flatMap((recommendation) => recommendation.competitor_evidence_links || [])
+    .map((link) => link.trust_tier || link.evidence_trust_tier || null)
+    .filter((value): value is NonNullable<typeof value> => Boolean(value));
+  if (tiers.includes("trusted_verified")) {
+    return "trusted_verified";
+  }
+  if (tiers.includes("informational_unverified")) {
+    return "informational_unverified";
+  }
+  if (tiers.includes("informational_candidate")) {
+    return "informational_candidate";
+  }
+  return null;
+}
+
+function resolveRecommendationRunControlHref(params: {
+  control: ActionControl;
+  run: RecommendationRun;
+  topRecommendation: Recommendation | null;
+  narrativeHistoryHref: string;
+  latestNarrativeDetailHref: string | null;
+  backToRecommendationsHref: string;
+}): string | undefined {
+  const {
+    control,
+    run,
+    topRecommendation,
+    narrativeHistoryHref,
+    latestNarrativeDetailHref,
+    backToRecommendationsHref,
+  } = params;
+  if (control.type === "review_recommendation") {
+    if (topRecommendation) {
+      return buildRecommendationDetailHref(topRecommendation);
+    }
+    return backToRecommendationsHref;
+  }
+  if (control.type === "review_output") {
+    return latestNarrativeDetailHref || narrativeHistoryHref;
+  }
+  if (control.type === "run_automation" || control.type === "view_automation_status") {
+    return buildAutomationStatusHref(run.site_id);
+  }
+  if (control.type === "mark_completed") {
+    return backToRecommendationsHref;
+  }
+  return undefined;
+}
+
 function buildNarrativeHistoryHref(
   recommendationRunId: string,
   siteId: string,
@@ -472,6 +542,7 @@ export default function RecommendationRunDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [relatedError, setRelatedError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [actionDecisionByItemId, setActionDecisionByItemId] = useState<Record<string, ActionDecision>>({});
 
   const run: RecommendationRun | null = report?.recommendation_run || null;
   const runOriginLabel = automationOrigin ? "Automation-triggered" : run ? "Manual / direct" : "Loading";
@@ -614,6 +685,78 @@ export default function RecommendationRunDetailPage() {
       }),
     [automationOrigin, report?.recommendations.total, run?.status],
   );
+  const topRecommendation = recommendations[0] || null;
+  const recommendationRunBaseActionExecutionItem = useMemo<ActionExecutionItem | null>(() => {
+    if (!run) {
+      return null;
+    }
+    return {
+      id: run.id,
+      title: `Recommendation run ${run.id}`,
+      actionStateCode: runActionState.code,
+      trustTier: deriveRecommendationRunTrustTier(recommendations),
+      linkedOutputId: run.total_recommendations > 0 ? (automationOrigin?.recommendationRunOutputId || run.id) : null,
+      linkedNarrativeId: automationOrigin?.recommendationNarrativeOutputId || latestNarrative?.id || null,
+      automationAvailable: true,
+      automationInFlight: runStatus === "queued" || runStatus === "running",
+      blockedReason: runFailed ? "Run failed before reliable output was ready." : undefined,
+      outputReview: {
+        outputId: run.total_recommendations > 0 ? (automationOrigin?.recommendationRunOutputId || run.id) : null,
+        summary: runActionState.outcome,
+        details: runActionState.nextStep,
+        sourceLabel: automationOrigin ? "Automation recommendation run output" : "Recommendation run output",
+      },
+    };
+  }, [
+    automationOrigin,
+    latestNarrative?.id,
+    recommendations,
+    run,
+    runActionState.code,
+    runActionState.nextStep,
+    runActionState.outcome,
+    runFailed,
+    runStatus,
+  ]);
+  const recommendationRunActionExecutionItem = useMemo(
+    () => (
+      recommendationRunBaseActionExecutionItem && actionDecisionByItemId[recommendationRunBaseActionExecutionItem.id]
+        ? applyActionDecisionLocally(
+            recommendationRunBaseActionExecutionItem,
+            actionDecisionByItemId[recommendationRunBaseActionExecutionItem.id],
+          )
+        : recommendationRunBaseActionExecutionItem
+    ),
+    [actionDecisionByItemId, recommendationRunBaseActionExecutionItem],
+  );
+  const recommendationRunActionPresentation = useMemo(
+    () => (
+      recommendationRunActionExecutionItem
+        ? deriveActionStatePresentation({
+            item: recommendationRunActionExecutionItem,
+            fallbackLabel: runActionState.label,
+            fallbackBadgeClass: runActionState.badgeClass,
+            fallbackOutcome: runActionState.outcome,
+            fallbackNextStep: runActionState.nextStep,
+          })
+        : null
+    ),
+    [recommendationRunActionExecutionItem, runActionState.badgeClass, runActionState.label, runActionState.nextStep, runActionState.outcome],
+  );
+  const recommendationRunActionControls = useMemo(
+    () => (recommendationRunActionExecutionItem ? deriveActionControls(recommendationRunActionExecutionItem) : []),
+    [recommendationRunActionExecutionItem],
+  );
+
+  function handleRunLevelDecision(decision: ActionDecision): void {
+    if (!recommendationRunActionExecutionItem) {
+      return;
+    }
+    setActionDecisionByItemId((current) => ({
+      ...current,
+      [recommendationRunActionExecutionItem.id]: decision,
+    }));
+  }
 
   const comparisonRun = comparisonReport?.run || null;
 
@@ -1146,8 +1289,8 @@ export default function RecommendationRunDetailPage() {
             />
             <SummaryStatCard
               label="Operator action state"
-              value={runActionState.label}
-              detail={runActionState.nextStep}
+              value={recommendationRunActionPresentation?.label || runActionState.label}
+              detail={recommendationRunActionPresentation?.nextStep || runActionState.nextStep}
               tone={runActionState.summaryTone}
               variant="elevated"
             />
@@ -1173,6 +1316,38 @@ export default function RecommendationRunDetailPage() {
               variant="elevated"
             />
           </div>
+          {run ? (
+            <ActionControls
+              controls={recommendationRunActionControls}
+              resolveHref={(control) =>
+                resolveRecommendationRunControlHref({
+                  control,
+                  run,
+                  topRecommendation,
+                  narrativeHistoryHref: recommendationRunNarrativeHistoryHref,
+                  latestNarrativeDetailHref,
+                  backToRecommendationsHref,
+                })}
+              data-testid="recommendation-run-action-controls"
+            />
+          ) : null}
+          {run && recommendationRunActionExecutionItem ? (
+            <OutputReview
+              item={recommendationRunActionExecutionItem}
+              stateLabel={recommendationRunActionPresentation?.label || runActionState.label}
+              stateBadgeClass={recommendationRunActionPresentation?.badgeClass || runActionState.badgeClass}
+              outcome={recommendationRunActionPresentation?.outcome || runActionState.outcome}
+              nextStep={recommendationRunActionPresentation?.nextStep || runActionState.nextStep}
+              onDecision={handleRunLevelDecision}
+              resolveOutputHref={(outputId) => {
+                if (outputId && outputId === run.id) {
+                  return recommendationRunNarrativeHistoryHref;
+                }
+                return latestNarrativeDetailHref || recommendationRunNarrativeHistoryHref;
+              }}
+              data-testid="recommendation-run-output-review"
+            />
+          ) : null}
           {resolvedSiteId ? (
             <p className="hint muted">
               Resolved site: <code>{resolvedSiteId}</code>

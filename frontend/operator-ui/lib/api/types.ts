@@ -1121,6 +1121,57 @@ export interface RecommendationListResponse {
   by_priority_band?: Record<string, number>;
 }
 
+export type ActionControlType =
+  | "review_recommendation"
+  | "run_automation"
+  | "view_automation_status"
+  | "review_output"
+  | "mark_completed"
+  | "blocked";
+
+export type ActionControlEmphasis = "primary" | "secondary" | "muted";
+
+export type ActionDecision = "accepted" | "rejected" | "deferred";
+
+export interface ActionOutputReview {
+  outputId?: string | null;
+  summary?: string | null;
+  details?: string | null;
+  sourceLabel?: string | null;
+}
+
+export interface ActionControl {
+  type: ActionControlType;
+  label: string;
+  enabled: boolean;
+  reason?: string;
+  emphasis?: ActionControlEmphasis;
+}
+
+export type ActionExecutionStateCode =
+  | "informational_only"
+  | "recommendation_only_review"
+  | "automation_output_ready"
+  | "waiting_on_automation"
+  | "blocked_unavailable"
+  | "completed_acted";
+
+export interface ActionExecutionItem {
+  id: string;
+  title: string;
+  actionStateCode: ActionExecutionStateCode;
+  priorityBand?: string | null;
+  trustTier?: "trusted_verified" | "informational_unverified" | "informational_candidate" | null;
+  automationAvailable?: boolean;
+  automationInFlight?: boolean;
+  linkedOutputId?: string | null;
+  linkedNarrativeId?: string | null;
+  blockedReason?: string | null;
+  triggerSource?: string | null;
+  outputReview?: ActionOutputReview | null;
+  decision?: ActionDecision | null;
+}
+
 export interface AutomationRun {
   id: string;
   business_id: string;

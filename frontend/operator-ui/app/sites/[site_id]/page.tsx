@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
+import { ActionControls } from "../../../components/action-execution/ActionControls";
+import { OutputReview } from "../../../components/action-execution/OutputReview";
 import { PageContainer } from "../../../components/layout/PageContainer";
 import { SectionHeader } from "../../../components/layout/SectionHeader";
 import { SectionCard } from "../../../components/layout/SectionCard";
@@ -35,12 +37,21 @@ import {
   retryCompetitorProfileGenerationRun,
   updateSite,
   updateBusinessSettings,
+  updateRecommendationStatus,
 } from "../../../lib/api/client";
 import {
   deriveAutomationRunOperatorActionState,
   deriveRecommendationOperatorActionState,
 } from "../../../lib/operatorActionState";
+import {
+  applyActionDecisionLocally,
+  deriveActionControls,
+  deriveActionStatePresentation,
+} from "../../../lib/transforms/actionExecution";
 import type {
+  ActionControl,
+  ActionDecision,
+  ActionExecutionItem,
   AIPromptPreview,
   AutomationRun,
   BusinessSettings,
@@ -2992,6 +3003,162 @@ function buildNarrativeDetailHref(recommendationRunId: string, narrativeId: stri
   return `/recommendations/runs/${recommendationRunId}/narratives/${narrativeId}?${params.toString()}`;
 }
 
+function buildAutomationPageHref(siteId: string): string {
+  const params = new URLSearchParams();
+  params.set("site_id", siteId);
+  return `/automation?${params.toString()}`;
+}
+
+function deriveRecommendationTrustTier(
+  recommendation: Recommendation,
+): ActionExecutionItem["trustTier"] {
+  const tiers = (recommendation.competitor_evidence_links || [])
+    .map((link) => link.trust_tier || link.evidence_trust_tier || null)
+    .filter((value): value is NonNullable<typeof value> => Boolean(value));
+  if (tiers.includes("trusted_verified")) {
+    return "trusted_verified";
+  }
+  if (tiers.includes("informational_unverified")) {
+    return "informational_unverified";
+  }
+  if (tiers.includes("informational_candidate")) {
+    return "informational_candidate";
+  }
+  return null;
+}
+
+function deriveWorkspaceRecommendationActionExecutionItem(params: {
+  recommendation: Recommendation;
+  actionStateCode: ActionExecutionItem["actionStateCode"];
+  automationContextAvailable: boolean;
+  automationInFlight: boolean;
+  linkedRecommendationRunOutputId: string | null;
+  linkedRecommendationNarrativeOutputId: string | null;
+}): ActionExecutionItem {
+  const {
+    recommendation,
+    actionStateCode,
+    automationContextAvailable,
+    automationInFlight,
+    linkedRecommendationRunOutputId,
+    linkedRecommendationNarrativeOutputId,
+  } = params;
+  const linkedRecommendationRunId =
+    linkedRecommendationRunOutputId === recommendation.recommendation_run_id
+      ? recommendation.recommendation_run_id
+      : null;
+  return {
+    id: recommendation.id,
+    title: recommendation.title,
+    actionStateCode,
+    priorityBand: recommendation.priority_band,
+    trustTier: deriveRecommendationTrustTier(recommendation),
+    linkedOutputId: linkedRecommendationRunId,
+    linkedNarrativeId: linkedRecommendationRunId ? linkedRecommendationNarrativeOutputId : null,
+    automationAvailable: automationContextAvailable,
+    automationInFlight,
+    blockedReason:
+      actionStateCode === "blocked_unavailable"
+        ? "Recommendation is blocked until required automation or run dependencies are available."
+        : undefined,
+    triggerSource: recommendationSourceType(recommendation),
+    outputReview: linkedRecommendationRunId
+      ? {
+          outputId: linkedRecommendationRunId,
+          summary:
+            recommendation.recommendation_action_clarity
+            || recommendation.recommendation_evidence_summary
+            || recommendation.rationale,
+          details:
+            recommendation.recommendation_expected_outcome
+            || recommendation.recommendation_observed_gap_summary
+            || null,
+          sourceLabel: "Automation recommendation output",
+        }
+      : undefined,
+  };
+}
+
+function deriveWorkspaceAutomationActionExecutionItem(params: {
+  run: AutomationRun;
+  actionStateCode: ActionExecutionItem["actionStateCode"];
+  linkedRecommendationRunOutputId: string | null;
+  linkedRecommendationNarrativeOutputId: string | null;
+}): ActionExecutionItem {
+  const { run, actionStateCode, linkedRecommendationRunOutputId, linkedRecommendationNarrativeOutputId } = params;
+  const normalizedStatus = normalizeAutomationRunStatus(run.status);
+  return {
+    id: run.id,
+    title: `Automation run ${run.id}`,
+    actionStateCode,
+    linkedOutputId: linkedRecommendationRunOutputId,
+    linkedNarrativeId: linkedRecommendationNarrativeOutputId,
+    automationAvailable: true,
+    automationInFlight: normalizedStatus === "queued" || normalizedStatus === "running",
+    blockedReason:
+      normalizedStatus === "failed"
+        ? "Automation failed before linked recommendation output completed."
+        : undefined,
+    triggerSource: run.trigger_source,
+    outputReview: linkedRecommendationRunOutputId || linkedRecommendationNarrativeOutputId
+      ? {
+          outputId: linkedRecommendationRunOutputId || linkedRecommendationNarrativeOutputId,
+          summary:
+            normalizedStatus === "completed"
+              ? "Automation output is ready for operator review."
+              : "Automation output context is available for review.",
+          details:
+            normalizedStatus === "failed"
+              ? "Automation failed before all outputs were completed."
+              : "Use linked recommendation outputs to confirm next operator steps.",
+          sourceLabel: "Automation output",
+        }
+      : undefined,
+  };
+}
+
+function resolveWorkspaceRecommendationControlHref(params: {
+  control: ActionControl;
+  recommendation: Recommendation;
+  siteId: string;
+  linkedRecommendationRunOutputId: string | null;
+}): string | undefined {
+  const { control, recommendation, siteId, linkedRecommendationRunOutputId } = params;
+  if (control.type === "review_recommendation" || control.type === "mark_completed") {
+    return buildRecommendationDetailHref(recommendation.id, siteId);
+  }
+  if (control.type === "review_output") {
+    const recommendationRunId = linkedRecommendationRunOutputId || recommendation.recommendation_run_id;
+    return buildRecommendationRunHref(recommendationRunId, siteId);
+  }
+  if (control.type === "run_automation" || control.type === "view_automation_status") {
+    return buildAutomationPageHref(siteId);
+  }
+  return undefined;
+}
+
+function resolveWorkspaceAutomationControlHref(params: {
+  control: ActionControl;
+  siteId: string;
+  linkedRecommendationRunOutputId: string | null;
+}): string | undefined {
+  const { control, siteId, linkedRecommendationRunOutputId } = params;
+  if (control.type === "run_automation" || control.type === "view_automation_status") {
+    return buildAutomationPageHref(siteId);
+  }
+  if (
+    control.type === "review_output"
+    || control.type === "review_recommendation"
+    || control.type === "mark_completed"
+  ) {
+    if (linkedRecommendationRunOutputId) {
+      return buildRecommendationRunHref(linkedRecommendationRunOutputId, siteId);
+    }
+    return "/recommendations";
+  }
+  return undefined;
+}
+
 export default function SiteWorkspacePage() {
   const params = useParams<{ site_id: string }>();
   const siteId = (params?.site_id || "").trim();
@@ -3018,6 +3185,14 @@ export default function SiteWorkspacePage() {
 
   const [queueResponse, setQueueResponse] = useState<RecommendationListResponse | null>(null);
   const [queueError, setQueueError] = useState<string | null>(null);
+  const [recommendationActionDecisionByItemId, setRecommendationActionDecisionByItemId] =
+    useState<Record<string, ActionDecision>>({});
+  const [recommendationActionDecisionSavingByItemId, setRecommendationActionDecisionSavingByItemId] =
+    useState<Record<string, boolean>>({});
+  const [recommendationActionDecisionErrorByItemId, setRecommendationActionDecisionErrorByItemId] =
+    useState<Record<string, string | null>>({});
+  const [automationActionDecisionByItemId, setAutomationActionDecisionByItemId] =
+    useState<Record<string, ActionDecision>>({});
 
   const [recommendationRuns, setRecommendationRuns] = useState<RecommendationRun[]>([]);
   const [recommendationRunError, setRecommendationRunError] = useState<string | null>(null);
@@ -4894,6 +5069,10 @@ export default function SiteWorkspacePage() {
       setGoogleBusinessProfileConnectionError(null);
       setQueueResponse(null);
       setQueueError(null);
+      setRecommendationActionDecisionByItemId({});
+      setRecommendationActionDecisionSavingByItemId({});
+      setRecommendationActionDecisionErrorByItemId({});
+      setAutomationActionDecisionByItemId({});
       setRecommendationRuns([]);
       setRecommendationRunError(null);
       setRecommendationGenerationInFlight(false);
@@ -5225,8 +5404,14 @@ export default function SiteWorkspacePage() {
 
       if (queueResult.status === "fulfilled") {
         setQueueResponse(queueResult.value);
+        setRecommendationActionDecisionByItemId({});
+        setRecommendationActionDecisionSavingByItemId({});
+        setRecommendationActionDecisionErrorByItemId({});
       } else {
         setQueueResponse(null);
+        setRecommendationActionDecisionByItemId({});
+        setRecommendationActionDecisionSavingByItemId({});
+        setRecommendationActionDecisionErrorByItemId({});
         setQueueError(safeSectionErrorMessage("recommendation queue", queueResult.reason));
       }
 
@@ -5706,15 +5891,144 @@ export default function SiteWorkspacePage() {
     hasRecommendationOutput: Boolean(latestAutomationRecommendationRunOutputId),
     hasNarrativeOutput: Boolean(latestAutomationRecommendationNarrativeOutputId),
   });
+  const automationContextAvailable = automationRuns.length > 0 && !automationRunError;
+  const automationInFlight = automationRuns.some((run) => {
+    const normalizedStatus = normalizeAutomationRunStatus(run.status);
+    return normalizedStatus === "queued" || normalizedStatus === "running";
+  });
   const topQueueRecommendation = queueResponse?.items?.[0] || null;
   const topQueueRecommendationActionState = topQueueRecommendation
     ? deriveRecommendationOperatorActionState({
       status: topQueueRecommendation.status,
       automationLinkedOutput:
         latestAutomationRecommendationRunOutputId === topQueueRecommendation.recommendation_run_id,
-      automationContextAvailable: automationRuns.length > 0 && !automationRunError,
+      automationContextAvailable,
     })
     : null;
+  const topQueueRecommendationActionExecutionItem =
+    topQueueRecommendation && topQueueRecommendationActionState
+      ? deriveWorkspaceRecommendationActionExecutionItem({
+        recommendation: topQueueRecommendation,
+        actionStateCode: topQueueRecommendationActionState.code,
+        automationContextAvailable,
+        automationInFlight,
+        linkedRecommendationRunOutputId: latestAutomationRecommendationRunOutputId,
+        linkedRecommendationNarrativeOutputId: latestAutomationRecommendationNarrativeOutputId,
+      })
+      : null;
+  const effectiveTopQueueRecommendationActionExecutionItem =
+    topQueueRecommendationActionExecutionItem && recommendationActionDecisionByItemId[topQueueRecommendationActionExecutionItem.id]
+      ? applyActionDecisionLocally(
+        topQueueRecommendationActionExecutionItem,
+        recommendationActionDecisionByItemId[topQueueRecommendationActionExecutionItem.id],
+      )
+      : topQueueRecommendationActionExecutionItem;
+  const topQueueRecommendationActionPresentation = effectiveTopQueueRecommendationActionExecutionItem
+    ? deriveActionStatePresentation({
+      item: effectiveTopQueueRecommendationActionExecutionItem,
+      fallbackLabel: topQueueRecommendationActionState?.label,
+      fallbackBadgeClass: topQueueRecommendationActionState?.badgeClass,
+      fallbackOutcome: topQueueRecommendationActionState?.outcome,
+      fallbackNextStep: topQueueRecommendationActionState?.nextStep,
+    })
+    : null;
+  const topQueueRecommendationActionControls = effectiveTopQueueRecommendationActionExecutionItem
+    ? deriveActionControls(effectiveTopQueueRecommendationActionExecutionItem)
+    : [];
+  const latestAutomationActionExecutionItem = latestAutomationRun
+    ? deriveWorkspaceAutomationActionExecutionItem({
+      run: latestAutomationRun,
+      actionStateCode: latestAutomationActionState.code,
+      linkedRecommendationRunOutputId: latestAutomationRecommendationRunOutputId,
+      linkedRecommendationNarrativeOutputId: latestAutomationRecommendationNarrativeOutputId,
+    })
+    : null;
+  const effectiveLatestAutomationActionExecutionItem =
+    latestAutomationActionExecutionItem && automationActionDecisionByItemId[latestAutomationActionExecutionItem.id]
+      ? applyActionDecisionLocally(
+        latestAutomationActionExecutionItem,
+        automationActionDecisionByItemId[latestAutomationActionExecutionItem.id],
+      )
+      : latestAutomationActionExecutionItem;
+  const latestAutomationActionPresentation = effectiveLatestAutomationActionExecutionItem
+    ? deriveActionStatePresentation({
+      item: effectiveLatestAutomationActionExecutionItem,
+      fallbackLabel: latestAutomationActionState.label,
+      fallbackBadgeClass: latestAutomationActionState.badgeClass,
+      fallbackOutcome: latestAutomationActionState.outcome,
+      fallbackNextStep: latestAutomationActionState.nextStep,
+    })
+    : null;
+  const latestAutomationActionControls = effectiveLatestAutomationActionExecutionItem
+    ? deriveActionControls(effectiveLatestAutomationActionExecutionItem)
+    : [];
+
+  async function handleWorkspaceRecommendationDecision(
+    recommendation: Recommendation,
+    decision: ActionDecision,
+  ): Promise<void> {
+    setRecommendationActionDecisionByItemId((current) => ({
+      ...current,
+      [recommendation.id]: decision,
+    }));
+    setRecommendationActionDecisionErrorByItemId((current) => ({
+      ...current,
+      [recommendation.id]: null,
+    }));
+
+    if (decision === "deferred") {
+      return;
+    }
+
+    const nextStatus = decision === "accepted" ? "accepted" : "dismissed";
+    setRecommendationActionDecisionSavingByItemId((current) => ({
+      ...current,
+      [recommendation.id]: true,
+    }));
+    try {
+      await updateRecommendationStatus(
+        context.token,
+        context.businessId,
+        recommendation.site_id,
+        recommendation.id,
+        { status: nextStatus },
+      );
+      setQueueResponse((current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          items: current.items.map((item) =>
+            item.id === recommendation.id
+              ? {
+                  ...item,
+                  status: nextStatus,
+                  updated_at: new Date().toISOString(),
+                }
+              : item,
+          ),
+        };
+      });
+    } catch (error) {
+      setRecommendationActionDecisionErrorByItemId((current) => ({
+        ...current,
+        [recommendation.id]: safeSectionErrorMessage("recommendation action decision", error),
+      }));
+    } finally {
+      setRecommendationActionDecisionSavingByItemId((current) => ({
+        ...current,
+        [recommendation.id]: false,
+      }));
+    }
+  }
+
+  function handleWorkspaceAutomationDecision(actionId: string, decision: ActionDecision): void {
+    setAutomationActionDecisionByItemId((current) => ({
+      ...current,
+      [actionId]: decision,
+    }));
+  }
 
   return (
     <PageContainer width="full" density="compact">
@@ -6132,13 +6446,39 @@ export default function SiteWorkspacePage() {
             <span className="hint muted">Automation status and outcomes</span>
             <div className="link-row">
               <span className={`badge ${latestAutomationStatusBadgeClass}`}>{latestAutomationStatus}</span>
-              <span className={latestAutomationActionState.badgeClass}>{latestAutomationActionState.label}</span>
+              <span className={latestAutomationActionPresentation?.badgeClass || latestAutomationActionState.badgeClass}>
+                {latestAutomationActionPresentation?.label || latestAutomationActionState.label}
+              </span>
               <span className="badge badge-muted">Trigger: {latestAutomationTriggerSource}</span>
               {latestAutomationRun ? <span className="badge badge-muted">Run: {latestAutomationRun.id}</span> : null}
             </div>
             <span className="hint">{latestAutomationOutcomeCue}</span>
-            <span className="hint muted">{latestAutomationActionState.outcome}</span>
-            <span className="hint muted">Next step: {latestAutomationActionState.nextStep}</span>
+            <span className="hint muted">{latestAutomationActionPresentation?.outcome || latestAutomationActionState.outcome}</span>
+            <span className="hint muted">Next step: {latestAutomationActionPresentation?.nextStep || latestAutomationActionState.nextStep}</span>
+            {latestAutomationActionControls.length > 0 ? (
+              <ActionControls
+                controls={latestAutomationActionControls}
+                resolveHref={(control) =>
+                  resolveWorkspaceAutomationControlHref({
+                    control,
+                    siteId: selectedSite.id,
+                    linkedRecommendationRunOutputId: latestAutomationRecommendationRunOutputId,
+                  })}
+                data-testid="workspace-automation-action-controls"
+              />
+            ) : null}
+            {effectiveLatestAutomationActionExecutionItem ? (
+              <OutputReview
+                item={effectiveLatestAutomationActionExecutionItem}
+                stateLabel={latestAutomationActionPresentation?.label || latestAutomationActionState.label}
+                stateBadgeClass={latestAutomationActionPresentation?.badgeClass || latestAutomationActionState.badgeClass}
+                outcome={latestAutomationActionPresentation?.outcome || latestAutomationActionState.outcome}
+                nextStep={latestAutomationActionPresentation?.nextStep || latestAutomationActionState.nextStep}
+                onDecision={(decision) => handleWorkspaceAutomationDecision(effectiveLatestAutomationActionExecutionItem.id, decision)}
+                resolveOutputHref={(outputId) => buildRecommendationRunHref(outputId, selectedSite.id)}
+                data-testid="workspace-automation-output-review"
+              />
+            ) : null}
             {latestAutomationRun ? (
               <span className="hint muted">
                 Started: {formatDateTime(latestAutomationRun.started_at)} · Finished: {formatDateTime(latestAutomationRun.finished_at)}
@@ -7538,8 +7878,8 @@ export default function SiteWorkspacePage() {
           >
             <span className="hint muted">Top recommendation action state</span>
             <div className="link-row">
-              <span className={topQueueRecommendationActionState.badgeClass}>
-                {topQueueRecommendationActionState.label}
+              <span className={topQueueRecommendationActionPresentation?.badgeClass || topQueueRecommendationActionState.badgeClass}>
+                {topQueueRecommendationActionPresentation?.label || topQueueRecommendationActionState.label}
               </span>
               <span className="badge badge-muted">{topQueueRecommendation.status}</span>
               <span className="badge badge-muted">{topQueueRecommendation.priority_band}</span>
@@ -7549,8 +7889,37 @@ export default function SiteWorkspacePage() {
                 {topQueueRecommendation.title}
               </Link>
             </span>
-            <span className="hint muted">{topQueueRecommendationActionState.outcome}</span>
-            <span className="hint muted">Next step: {topQueueRecommendationActionState.nextStep}</span>
+            <span className="hint muted">{topQueueRecommendationActionPresentation?.outcome || topQueueRecommendationActionState.outcome}</span>
+            <span className="hint muted">Next step: {topQueueRecommendationActionPresentation?.nextStep || topQueueRecommendationActionState.nextStep}</span>
+            {topQueueRecommendationActionControls.length > 0 ? (
+              <ActionControls
+                controls={topQueueRecommendationActionControls}
+                resolveHref={(control) =>
+                  resolveWorkspaceRecommendationControlHref({
+                    control,
+                    recommendation: topQueueRecommendation,
+                    siteId: selectedSite.id,
+                    linkedRecommendationRunOutputId: latestAutomationRecommendationRunOutputId,
+                  })}
+                data-testid="workspace-recommendation-action-controls"
+              />
+            ) : null}
+            {effectiveTopQueueRecommendationActionExecutionItem ? (
+              <OutputReview
+                item={effectiveTopQueueRecommendationActionExecutionItem}
+                stateLabel={topQueueRecommendationActionPresentation?.label || topQueueRecommendationActionState.label}
+                stateBadgeClass={topQueueRecommendationActionPresentation?.badgeClass || topQueueRecommendationActionState.badgeClass}
+                outcome={topQueueRecommendationActionPresentation?.outcome || topQueueRecommendationActionState.outcome}
+                nextStep={topQueueRecommendationActionPresentation?.nextStep || topQueueRecommendationActionState.nextStep}
+                onDecision={(decision) => {
+                  void handleWorkspaceRecommendationDecision(topQueueRecommendation, decision);
+                }}
+                decisionPending={Boolean(recommendationActionDecisionSavingByItemId[topQueueRecommendation.id])}
+                decisionError={recommendationActionDecisionErrorByItemId[topQueueRecommendation.id]}
+                resolveOutputHref={(outputId) => buildRecommendationRunHref(outputId, selectedSite.id)}
+                data-testid="workspace-recommendation-output-review"
+              />
+            ) : null}
           </div>
         ) : null}
         <p>

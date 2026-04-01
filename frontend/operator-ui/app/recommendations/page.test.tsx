@@ -222,6 +222,9 @@ describe("recommendations queue optimistic workflows", () => {
     expect(quickScanItem).toHaveTextContent("Quick win");
     expect(quickScanItem).toHaveTextContent("Blocked by operator review");
     expect(quickScanItem).toHaveTextContent("No automation linkage detected");
+    const quickScanControls = screen.getByTestId("recommendation-action-controls-rec-1");
+    expect(quickScanControls).toHaveTextContent("Review recommendation");
+    expect(quickScanControls).toHaveTextContent("Run automation");
     const quickScanToggle = within(quickScanItem).getByRole("button", { name: "Show details" });
     expect(quickScanToggle).toHaveAttribute("aria-expanded", "false");
     await user.click(quickScanToggle);
@@ -263,6 +266,9 @@ describe("recommendations queue optimistic workflows", () => {
     );
     const recOneDetailRow = screen.getByTestId("recommendation-decisiveness-detail-row-rec-1");
     const recOneDetailPanel = screen.getByTestId("recommendation-decisiveness-detail-panel-rec-1");
+    const recOneExpandedControls = screen.getByTestId("recommendation-expanded-action-controls-rec-1");
+    expect(recOneExpandedControls).toHaveTextContent("Review recommendation");
+    expect(recOneExpandedControls).toHaveTextContent("Run automation");
     expect(recOneDetailRow).toBeInTheDocument();
     expect(recOneDetailPanel.closest("td")).toHaveAttribute("colspan", "11");
     expect(recOneDetailPanel).toHaveTextContent("High-value next step");
@@ -567,10 +573,139 @@ describe("recommendations queue optimistic workflows", () => {
     render(<RecommendationsPage />);
 
     await screen.findByText("Recommendation One");
-    expect(screen.getByTestId("recommendation-quick-scan-item-rec-1")).toHaveTextContent("Automation-triggered output");
-    expect(screen.getByTestId("recommendation-quick-scan-item-rec-1")).toHaveTextContent("Automation output ready");
+    const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-1");
+    expect(quickScanItem).toHaveTextContent("Automation-triggered output");
+    expect(quickScanItem).toHaveTextContent("Automation output ready");
+    const quickScanControls = screen.getByTestId("recommendation-action-controls-rec-1");
+    expect(quickScanControls).toHaveTextContent("Review output");
+    expect(quickScanControls).toHaveTextContent("Mark completed");
     expect(screen.getByTestId("recommendation-automation-origin-rec-1")).toHaveTextContent(
       "Automation-triggered output",
     );
+  });
+
+  it("captures deferred output-review decisions locally without backend mutation", async () => {
+    const recOne = createRecommendation("rec-31", "open", "high", "Deferred Output Recommendation");
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [recOne],
+        {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+    mockFetchAutomationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "automation-run-31",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "completed",
+          trigger_source: "scheduled",
+          started_at: "2026-03-20T00:00:00Z",
+          finished_at: "2026-03-20T00:01:00Z",
+          error_message: null,
+          steps_json: [
+            {
+              step_name: "recommendation_run",
+              status: "completed",
+              started_at: "2026-03-20T00:00:10Z",
+              finished_at: "2026-03-20T00:00:40Z",
+              linked_output_id: "rec-run-1",
+              error_message: null,
+            },
+          ],
+        },
+      ],
+      total: 1,
+    });
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const quickScanItem = await screen.findByTestId("recommendation-quick-scan-item-rec-31");
+    await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
+
+    const outputReview = await screen.findByTestId("recommendation-output-review-rec-31");
+    await user.click(within(outputReview).getByRole("button", { name: "Defer" }));
+
+    expect(mockUpdateRecommendationStatus).not.toHaveBeenCalled();
+    expect(await screen.findByText("Decision captured: deferred")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-quick-scan-item-rec-31")).toHaveTextContent("Recommendation-only review");
+    expect(screen.getByTestId("recommendation-quick-scan-item-rec-31")).toHaveTextContent(
+      "Automation output review deferred.",
+    );
+  });
+
+  it("captures rejected output-review decisions and persists dismissed status", async () => {
+    const recOne = createRecommendation("rec-41", "open", "high", "Rejected Output Recommendation");
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [recOne],
+        {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+    mockFetchAutomationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "automation-run-41",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "completed",
+          trigger_source: "scheduled",
+          started_at: "2026-03-20T00:00:00Z",
+          finished_at: "2026-03-20T00:01:00Z",
+          error_message: null,
+          steps_json: [
+            {
+              step_name: "recommendation_run",
+              status: "completed",
+              started_at: "2026-03-20T00:00:10Z",
+              finished_at: "2026-03-20T00:00:40Z",
+              linked_output_id: "rec-run-1",
+              error_message: null,
+            },
+          ],
+        },
+      ],
+      total: 1,
+    });
+    mockUpdateRecommendationStatus.mockResolvedValueOnce({
+      ...recOne,
+      status: "dismissed",
+      updated_at: "2026-03-20T02:00:00Z",
+    });
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const quickScanItem = await screen.findByTestId("recommendation-quick-scan-item-rec-41");
+    await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
+
+    const outputReview = await screen.findByTestId("recommendation-output-review-rec-41");
+    await user.click(within(outputReview).getByRole("button", { name: "Reject" }));
+
+    await waitFor(() =>
+      expect(mockUpdateRecommendationStatus).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "rec-41",
+        { status: "dismissed" },
+      ),
+    );
+    expect(await screen.findByText("Decision captured: rejected")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-quick-scan-item-rec-41")).toHaveTextContent("Blocked / unavailable");
+    expect(screen.getByTestId("recommendation-quick-scan-item-rec-41")).toHaveTextContent("Automation output rejected.");
   });
 });

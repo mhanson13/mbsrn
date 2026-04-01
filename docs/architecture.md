@@ -97,6 +97,72 @@ Frontend contract note:
 - Verify token usability and scope enforcement before provider-call paths.
 - Keep tests deterministic (fixed fixtures, explicit error mapping expectations).
 
+## Frontend Action Control Layer
+
+The operator UI includes a frontend-only Action Control Layer for recommendation/automation decision surfaces.
+
+Implementation points:
+- types: `frontend/operator-ui/lib/api/types.ts`
+- pure derivation: `frontend/operator-ui/lib/transforms/actionExecution.ts`
+- presentation: `frontend/operator-ui/components/action-execution/ActionControls.tsx`
+
+Core contract:
+- controls are derived from existing read-model state (`actionStateCode`, automation lifecycle, linkage ids, trust tier)
+- controls are deterministic and additive
+- controls do not mutate backend workflow semantics
+
+Separation of concerns:
+- **Visibility**: what happened (status/outcome)
+- **Execution readiness**: what can be done now (`review`, `run`, `view status`, `blocked`)
+- **Completion**: what is already acted-on (`completed_acted`)
+
+Trust boundary:
+- weaker trust tiers remain review-first and do not imply automatic completion
+- informational states still render explicit non-actionable/blocked guidance instead of empty UI
+
+Local validation strategy:
+- mock-driven transform tests (`actionExecution.test.ts`)
+- route-level UI tests using mocked payloads only (no provider/runtime dependency)
+
+## Automation Output Review + Decision Capture
+
+The Action Control Layer now includes a thin Output Review + Decision Capture step to close the operator loop for output-ready items.
+
+Implementation points:
+- output review component: `frontend/operator-ui/components/action-execution/OutputReview.tsx`
+- state/decision transforms: `frontend/operator-ui/lib/transforms/actionExecution.ts`
+- additive UI types: `frontend/operator-ui/lib/api/types.ts`
+
+Decision model (frontend-derived):
+- `accepted`
+- `rejected`
+- `deferred`
+
+Deterministic local state transitions:
+- `accepted` -> `completed_acted`
+- `rejected` -> `blocked_unavailable`
+- `deferred` -> `recommendation_only_review`
+
+Deterministic operator-facing outcome mapping:
+- accepted outcome: "Automation output accepted."
+- rejected outcome: "Automation output rejected."
+- deferred outcome: "Automation output review deferred."
+
+Readiness vs completion boundary:
+- Output review is explicit before completion for `automation_output_ready`.
+- Informational/lower-trust items remain review-first and are not auto-promoted to done.
+- If no action is available, UI still renders blocked/muted guidance instead of empty controls.
+
+Persistence boundary:
+- Frontend updates local decision state immediately.
+- Existing safe mutation path is reused only where already available (`updateRecommendationStatus` for accepted/rejected recommendation decisions).
+- No automation engine or orchestration changes are introduced.
+
+Local test strategy:
+- mocked transform tests for decision transitions and presentation defaults
+- mocked page tests for recommendation/workspace/automation run surfaces
+- no provider/runtime dependency required for decision-capture validation
+
 ## AI Provider Execution Modes
 Competitor profile generation now routes provider calls by explicit execution mode and call capability, not by hardcoded endpoint selection in service logic.
 

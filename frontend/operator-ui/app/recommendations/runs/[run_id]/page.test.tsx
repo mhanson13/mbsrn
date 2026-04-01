@@ -1,5 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
+import userEvent from "@testing-library/user-event";
 
 import RecommendationRunDetailPage from "./page";
 import { ApiRequestError } from "../../../../lib/api/client";
@@ -218,6 +219,9 @@ describe("recommendation run detail page presentation", () => {
     expect(screen.getByText("Automation-triggered")).toBeInTheDocument();
     expect(screen.getAllByText("Automation output ready").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Automation run automation-run-1 (scheduled)").length).toBeGreaterThan(0);
+    const actionControls = screen.getByTestId("recommendation-run-action-controls");
+    expect(actionControls).toHaveTextContent("Review output");
+    expect(actionControls).toHaveTextContent("Mark completed");
     expect(screen.getByTestId("recommendation-run-workflow-context")).toBeInTheDocument();
     const detailFocus = screen.getByTestId("recommendation-run-detail-focus");
     expect(detailFocus).toBeInTheDocument();
@@ -273,6 +277,55 @@ describe("recommendation run detail page presentation", () => {
       screen.getByText("No generated narrative is currently available for this recommendation run."),
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Run Context" })).toBeInTheDocument();
+  });
+
+  it("captures local output-review decisions for run-level action control", async () => {
+    const user = userEvent.setup();
+    mockFetchRecommendationRunReport.mockResolvedValueOnce(buildRunReport());
+    mockFetchLatestRecommendationRunNarrative.mockRejectedValueOnce(
+      new ApiRequestError("not found", { status: 404, detail: null }),
+    );
+    mockFetchAutomationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "automation-run-2",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "completed",
+          trigger_source: "scheduled",
+          started_at: "2026-03-21T09:58:00Z",
+          finished_at: "2026-03-21T10:00:00Z",
+          error_message: null,
+          steps_json: [
+            {
+              step_name: "recommendation_run",
+              status: "completed",
+              started_at: "2026-03-21T09:58:30Z",
+              finished_at: "2026-03-21T09:59:10Z",
+              linked_output_id: "run-1",
+              error_message: null,
+            },
+          ],
+        },
+      ],
+      total: 1,
+    });
+
+    render(<RecommendationRunDetailPage />);
+
+    const outputReview = await screen.findByTestId("recommendation-run-output-review");
+    await user.click(within(outputReview).getByRole("button", { name: "Defer" }));
+
+    expect(await screen.findByText("Decision captured: deferred")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-run-detail-summary-strip")).toHaveTextContent(
+      "Recommendation-only review",
+    );
+    expect(screen.getByTestId("recommendation-run-detail-summary-strip")).toHaveTextContent(
+      "Return later to review this output before acting.",
+    );
+    expect(screen.getByTestId("recommendation-run-output-review")).toHaveTextContent(
+      "Automation output review deferred.",
+    );
   });
 });
 

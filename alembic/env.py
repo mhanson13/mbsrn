@@ -34,6 +34,7 @@ from app.models import (
     seo_audit_summary,
     seo_automation_config,
     seo_automation_run,
+    seo_action_decision,
     seo_competitor_comparison_finding,
     seo_competitor_comparison_run,
     seo_competitor_comparison_summary,

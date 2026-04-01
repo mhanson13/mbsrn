@@ -1573,6 +1573,9 @@ describe("site workspace timeline controls", () => {
     expect(screen.getByTestId("workspace-automation-status-summary")).toBeInTheDocument();
     expect(screen.getByText("Automation status and outcomes")).toBeInTheDocument();
     expect(screen.getByTestId("workspace-automation-status-summary")).toHaveTextContent("Next step:");
+    const automationActionControls = await screen.findByTestId("workspace-automation-action-controls");
+    expect(automationActionControls).toHaveTextContent("Review output");
+    expect(automationActionControls).toHaveTextContent("Mark completed");
     expect(await screen.findByText("Review recommendation run output")).toBeInTheDocument();
   });
 
@@ -1599,6 +1602,43 @@ describe("site workspace timeline controls", () => {
     expect(screen.getByRole("heading", { name: "Recommendation Runs and Narratives" })).toBeInTheDocument();
     expect(screen.getByTestId("workspace-recommendation-action-state")).toBeInTheDocument();
     expect(screen.getByTestId("workspace-recommendation-action-state")).toHaveTextContent("Next step:");
+    const recommendationActionControls = await screen.findByTestId("workspace-recommendation-action-controls");
+    expect(recommendationActionControls).toHaveTextContent("Review output");
+    expect(recommendationActionControls).toHaveTextContent("Mark completed");
+  });
+
+  it("captures automation output decisions from the workspace summary block", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    const outputReview = await screen.findByTestId("workspace-automation-output-review");
+    await user.click(within(outputReview).getByRole("button", { name: "Accept" }));
+
+    expect(await screen.findByText("Decision captured: accepted")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-automation-status-summary")).toHaveTextContent("Completed / acted on");
+    expect(screen.getByTestId("workspace-automation-status-summary")).toHaveTextContent(
+      "Track execution impact or move to the next recommended action.",
+    );
+  });
+
+  it("captures recommendation output defer decisions from the recommendations tab", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    const recommendationsTab = await screen.findByRole("tab", { name: "Recommendations" });
+    await user.click(recommendationsTab);
+    await waitFor(() => expect(recommendationsTab).toHaveAttribute("aria-selected", "true"));
+
+    const outputReview = await screen.findByTestId("workspace-recommendation-output-review");
+    await user.click(within(outputReview).getByRole("button", { name: "Defer" }));
+
+    expect(await screen.findByText("Decision captured: deferred")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-recommendation-action-state")).toHaveTextContent("Recommendation-only review");
+    expect(screen.getByTestId("workspace-recommendation-action-state")).toHaveTextContent(
+      "Automation output review deferred.",
+    );
   });
 
   it("renders 10 events by default and shows show-more control when timeline has more than 10 events", async () => {
@@ -7073,8 +7113,9 @@ describe("site workspace ai competitor profile drafts", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findAllByTestId("competitor-profile-draft-row");
+    const firstDraftRow = screen.getAllByTestId("competitor-profile-draft-row")[0];
 
-    await user.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    await user.click(within(firstDraftRow).getByRole("button", { name: "Edit" }));
     const nameInput = screen.getByLabelText("Suggested Name");
     await user.clear(nameInput);
     await user.type(nameInput, "Edited Competitor Name");
@@ -7082,12 +7123,14 @@ describe("site workspace ai competitor profile drafts", () => {
     await screen.findByText("Draft edits saved. Accept explicitly to create competitor records.");
     expect(mockEditCompetitorProfileDraft).toHaveBeenCalled();
 
-    await user.click(screen.getAllByRole("button", { name: "Accept" })[0]);
+    await user.click(within(firstDraftRow).getByRole("button", { name: "Accept" }));
     await screen.findByText("Draft accepted and added to competitors.");
     expect(mockAcceptCompetitorProfileDraft).toHaveBeenCalled();
 
-    const rejectButtons = screen.getAllByRole("button", { name: "Reject" });
-    const enabledRejectButton = rejectButtons.find((button) => !button.hasAttribute("disabled"));
+    const enabledRejectButton = screen
+      .getAllByTestId("competitor-profile-draft-row")
+      .map((row) => within(row).getByRole("button", { name: "Reject" }))
+      .find((button) => !button.hasAttribute("disabled"));
     expect(enabledRejectButton).toBeDefined();
     await user.click(enabledRejectButton as HTMLButtonElement);
     await screen.findByText("Draft rejected. No competitor record was created.");
@@ -7152,10 +7195,11 @@ describe("site workspace ai competitor profile drafts", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findByText("Confirm synthetic scaffold review");
-    expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Accept as Unverified" })).toBeDisabled();
+    const syntheticRow = screen.getAllByTestId("competitor-profile-draft-row")[0];
+    expect(within(syntheticRow).getByRole("button", { name: "Accept" })).toBeDisabled();
+    expect(within(syntheticRow).getByRole("button", { name: "Accept as Unverified" })).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(within(syntheticRow).getByRole("button", { name: "Edit" }));
 
     const domainInput = screen.getByLabelText("Suggested Domain");
     await user.clear(domainInput);
@@ -7164,7 +7208,7 @@ describe("site workspace ai competitor profile drafts", () => {
     const acceptEditedButton = screen.getByRole("button", { name: "Accept Edited" });
     expect(acceptEditedButton).toBeDisabled();
 
-    await user.click(screen.getByRole("checkbox", { name: "Confirm synthetic scaffold review" }));
+    await user.click(within(syntheticRow).getByRole("checkbox", { name: "Confirm synthetic scaffold review" }));
     expect(acceptEditedButton).toBeEnabled();
 
     await user.click(acceptEditedButton);

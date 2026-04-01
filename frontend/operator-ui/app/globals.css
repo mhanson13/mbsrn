@@ -805,6 +805,55 @@ main {
   gap: var(--space-2);
 }
 
+.action-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.action-control-item {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.action-control-reason {
+  margin: 0;
+  max-width: 34rem;
+}
+
+.output-review {
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  padding: 0.52rem 0.6rem;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.output-review .hint {
+  margin: 0;
+}
+
+.output-review-details {
+  margin: 0;
+}
+
+.output-review-details summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.output-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .operational-item-expanded {
   border: 1px solid var(--section-divider);
   border-radius: var(--radius-sm);
