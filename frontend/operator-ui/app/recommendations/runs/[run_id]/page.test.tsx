@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import RecommendationRunDetailPage from "./page";
 import { ApiRequestError } from "../../../../lib/api/client";
 import type {
+  AutomationRunListResponse,
   Recommendation,
   RecommendationNarrative,
   RecommendationRun,
@@ -29,6 +30,7 @@ const navigationState = {
 const mockUseOperatorContext = jest.fn<OperatorContextMockValue, []>();
 const mockFetchRecommendationRunReport = jest.fn<Promise<RecommendationRunReport>, unknown[]>();
 const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<RecommendationNarrative>, unknown[]>();
+const mockFetchAutomationRuns = jest.fn<Promise<AutomationRunListResponse>, unknown[]>();
 const mockFetchCompetitorComparisonReport = jest.fn();
 
 jest.mock("next/link", () => {
@@ -59,6 +61,7 @@ jest.mock("../../../../lib/api/client", () => {
     fetchRecommendationRunReport: (...args: unknown[]) => mockFetchRecommendationRunReport(...args),
     fetchLatestRecommendationRunNarrative: (...args: unknown[]) =>
       mockFetchLatestRecommendationRunNarrative(...args),
+    fetchAutomationRuns: (...args: unknown[]) => mockFetchAutomationRuns(...args),
     fetchCompetitorComparisonReport: (...args: unknown[]) => mockFetchCompetitorComparisonReport(...args),
   };
 });
@@ -150,6 +153,7 @@ beforeEach(() => {
   navigationState.params = { run_id: "run-1" };
   navigationState.searchParams = new URLSearchParams("site_id=site-1");
   mockUseOperatorContext.mockReturnValue(baseContext());
+  mockFetchAutomationRuns.mockResolvedValue({ items: [], total: 0 });
 });
 
 describe("recommendation run detail page presentation", () => {
@@ -179,15 +183,47 @@ describe("recommendation run detail page presentation", () => {
     mockFetchLatestRecommendationRunNarrative.mockRejectedValueOnce(
       new ApiRequestError("not found", { status: 404, detail: null }),
     );
+    mockFetchAutomationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "automation-run-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "completed",
+          trigger_source: "scheduled",
+          started_at: "2026-03-21T09:58:00Z",
+          finished_at: "2026-03-21T10:00:00Z",
+          error_message: null,
+          steps_json: [
+            {
+              step_name: "recommendation_run",
+              status: "completed",
+              started_at: "2026-03-21T09:58:30Z",
+              finished_at: "2026-03-21T09:59:10Z",
+              linked_output_id: "run-1",
+              error_message: null,
+            },
+          ],
+        },
+      ],
+      total: 1,
+    });
 
     render(<RecommendationRunDetailPage />);
 
     await screen.findByTestId("recommendation-run-detail-hero");
     expect(screen.getByTestId("recommendation-run-detail-summary-strip")).toBeInTheDocument();
+    expect(screen.getByText("Run origin")).toBeInTheDocument();
+    expect(screen.getByText("Operator action state")).toBeInTheDocument();
+    expect(screen.getByText("Automation-triggered")).toBeInTheDocument();
+    expect(screen.getAllByText("Automation output ready").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Automation run automation-run-1 (scheduled)").length).toBeGreaterThan(0);
     expect(screen.getByTestId("recommendation-run-workflow-context")).toBeInTheDocument();
     const detailFocus = screen.getByTestId("recommendation-run-detail-focus");
     expect(detailFocus).toBeInTheDocument();
     expect(screen.getByText("Run outcome snapshot")).toBeInTheDocument();
+    expect(screen.getByText("Action state")).toBeInTheDocument();
+    expect(screen.getByText("Next step cue")).toBeInTheDocument();
     expect(screen.getByText("Why this matters now")).toBeInTheDocument();
     expect(screen.getByText("Can I act now")).toBeInTheDocument();
     expect(screen.getByText("Blocking state")).toBeInTheDocument();
@@ -227,6 +263,7 @@ describe("recommendation run detail page presentation", () => {
     const runContextHeading = screen.getByRole("heading", { name: "Run Context" });
     expect(detailFocus.compareDocumentPosition(runContextHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("link", { name: "Recommendation Queue" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Linked Automation Run" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Narrative History" })).toBeInTheDocument();
     expect(screen.getByText("Run status")).toBeInTheDocument();
     expect(screen.getByText("Recommendations")).toBeInTheDocument();
@@ -238,3 +275,4 @@ describe("recommendation run detail page presentation", () => {
     expect(screen.getByRole("heading", { name: "Run Context" })).toBeInTheDocument();
   });
 });
+

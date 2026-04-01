@@ -139,6 +139,15 @@ Operator Focus always includes:
 ### Visual changes
 - Compact top summary strip (`Workspace Snapshot`) with quick status cards for competitor state, recommendation state, actionable count, and readiness context.
 - Workspace snapshot now also includes Google Business Profile integration visibility (`Connected and usable`, `Action needed`, `Not connected`, or `Status unavailable`) with a direct link to `/business-profile`.
+- Workspace snapshot now includes compact automation visibility (`workspace-summary-automation`) showing latest lifecycle status, trigger source, and outcome cue from existing automation read endpoints.
+- Summary tab also includes a compact automation outcome block (`Automation status and outcomes`) with deterministic "what happened" and "what next" signals, plus links to:
+  - automation run history (`/automation`)
+  - linked recommendation run/narrative output when output ids are present
+- Recommendation and automation sections now align on compact operator action-state cues:
+  - one action-state badge
+  - one outcome cue
+  - one next-step cue
+  - deterministic wording based on existing read-model data only
 - Standardized section header treatment for major workspace sections with:
   - title + subtitle rhythm
   - compact metadata
@@ -163,6 +172,7 @@ Operator Focus always includes:
 - `Hide synthetic scaffolds` remains visibility-only and never removes data from API/state.
 - Recommendation apply outcome and trust/freshness indicators remain authoritative and deterministic.
 - Google Business Profile state visibility is presentation-only in the workspace and reuses existing integration connection semantics (no OAuth/token behavior changes).
+- Automation visibility is presentation-only and read-model based; it does not change automation execution/orchestration semantics.
 - Recommendations now include a compact **Recently applied recommendation** outcome block that surfaces what changed, current apply visibility state (`Applied / completed` or `Needs review / pending`), and expected impact timing.
 
 ## Workspace Content Tabs
@@ -237,6 +247,11 @@ The operator workspace now enforces three shared presentation rules across recom
 - Use one consistent select style/behavior pattern for operator pages.
 - Keep full-width alignment, consistent control height/padding/border/focus treatment, and safe layering behavior.
 - Apply the shared pattern consistently across dense operator surfaces (sites workspace, recommendations, competitors, audits/activity, automation) and related admin/business-profile controls when they use the same shell.
+- Option-row hover/selected highlighting now fills the intended menu row width more consistently across shared `operator-select` controls.
+
+4. Site inventory action affordance rule
+- Primary workspace navigation from site inventory should use the same inline button treatment as other operator actions.
+- `Open Workspace` now follows the shared button-action family used by controls like `Run Audit Again`.
 
 This is a presentation-only refinement and does not alter backend APIs, trust semantics, or business logic.
 

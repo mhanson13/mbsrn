@@ -13,11 +13,14 @@ import { WorkflowContextPanel } from "../../../../components/layout/WorkflowCont
 import { useOperatorContext } from "../../../../components/useOperatorContext";
 import {
   ApiRequestError,
+  fetchAutomationRuns,
   fetchCompetitorComparisonReport,
   fetchLatestRecommendationRunNarrative,
   fetchRecommendationRunReport,
 } from "../../../../lib/api/client";
+import { deriveRecommendationRunOperatorActionState } from "../../../../lib/operatorActionState";
 import type {
+  AutomationRun,
   CompetitorComparisonReport,
   Recommendation,
   RecommendationNarrative,
@@ -266,6 +269,73 @@ function safeRecommendationRunRelatedErrorMessage(error: unknown): string {
   return "Some related recommendation-run context could not be loaded. The available data is still shown.";
 }
 
+type RecommendationRunAutomationOrigin = {
+  automationRunId: string;
+  triggerSource: string;
+  runStatus: string;
+  recommendationRunOutputId: string;
+  recommendationNarrativeOutputId: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+function deriveRecommendationRunAutomationOrigin(
+  automationRuns: AutomationRun[],
+  recommendationRunId: string,
+): RecommendationRunAutomationOrigin | null {
+  const sortedRuns = [...automationRuns].sort((left, right) => {
+    const leftMs = Date.parse(left.created_at || left.started_at || "");
+    const rightMs = Date.parse(right.created_at || right.started_at || "");
+    if (Number.isNaN(leftMs) || Number.isNaN(rightMs)) {
+      return right.id.localeCompare(left.id);
+    }
+    return rightMs - leftMs;
+  });
+
+  for (const run of sortedRuns) {
+    if (!Array.isArray(run.steps_json)) {
+      continue;
+    }
+    const recommendationRunStep = run.steps_json.find((step) => {
+      if (!step || typeof step !== "object") {
+        return false;
+      }
+      const stepName = typeof step.step_name === "string" ? step.step_name : "";
+      const stepStatus = typeof step.status === "string" ? step.status.toLowerCase() : "";
+      const linkedOutputId = typeof step.linked_output_id === "string" ? step.linked_output_id.trim() : "";
+      return stepName === "recommendation_run" && stepStatus === "completed" && linkedOutputId === recommendationRunId;
+    });
+
+    if (!recommendationRunStep) {
+      continue;
+    }
+
+    const recommendationNarrativeStep = run.steps_json.find((step) => {
+      if (!step || typeof step !== "object") {
+        return false;
+      }
+      const stepName = typeof step.step_name === "string" ? step.step_name : "";
+      const stepStatus = typeof step.status === "string" ? step.status.toLowerCase() : "";
+      return stepName === "recommendation_narrative" && stepStatus === "completed";
+    });
+
+    return {
+      automationRunId: run.id,
+      triggerSource: run.trigger_source,
+      runStatus: run.status,
+      recommendationRunOutputId: recommendationRunId,
+      recommendationNarrativeOutputId:
+        recommendationNarrativeStep && typeof recommendationNarrativeStep.linked_output_id === "string"
+          ? recommendationNarrativeStep.linked_output_id
+          : null,
+      startedAt: run.started_at || null,
+      finishedAt: run.finished_at || null,
+    };
+  }
+
+  return null;
+}
+
 function deriveRecommendationSourceType(item: Recommendation): string {
   if (item.audit_run_id && item.comparison_run_id) {
     return "mixed";
@@ -396,6 +466,7 @@ export default function RecommendationRunDetailPage() {
   const [report, setReport] = useState<RecommendationRunReport | null>(null);
   const [latestNarrative, setLatestNarrative] = useState<RecommendationNarrative | null>(null);
   const [comparisonReport, setComparisonReport] = useState<CompetitorComparisonReport | null>(null);
+  const [automationOrigin, setAutomationOrigin] = useState<RecommendationRunAutomationOrigin | null>(null);
   const [resolvedSiteId, setResolvedSiteId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -403,6 +474,12 @@ export default function RecommendationRunDetailPage() {
   const [notFound, setNotFound] = useState(false);
 
   const run: RecommendationRun | null = report?.recommendation_run || null;
+  const runOriginLabel = automationOrigin ? "Automation-triggered" : run ? "Manual / direct" : "Loading";
+  const runOriginDetail = automationOrigin
+    ? `Automation run ${automationOrigin.automationRunId} (${automationOrigin.triggerSource})`
+    : run
+      ? "No linked automation run found for this recommendation run."
+      : "Run origin is loading.";
 
   const selectedSiteDisplayName = useMemo(() => {
     if (!run) {
@@ -528,6 +605,15 @@ export default function RecommendationRunDetailPage() {
   const runStatus = (run?.status || "").trim().toLowerCase();
   const runCompleted = runStatus === "completed";
   const runFailed = runStatus === "failed";
+  const runActionState = useMemo(
+    () =>
+      deriveRecommendationRunOperatorActionState({
+        runStatus: run?.status || null,
+        producedRecommendationCount: report?.recommendations.total || 0,
+        automationLinkedOutput: Boolean(automationOrigin),
+      }),
+    [automationOrigin, report?.recommendations.total, run?.status],
+  );
 
   const comparisonRun = comparisonReport?.run || null;
 
@@ -581,12 +667,19 @@ export default function RecommendationRunDetailPage() {
     if (comparisonRunHref) {
       links.push({ href: comparisonRunHref, label: "Linked Comparison Run" });
     }
+    if (automationOrigin && run?.site_id) {
+      links.push({
+        href: `/automation?site_id=${encodeURIComponent(run.site_id)}`,
+        label: "Linked Automation Run",
+      });
+    }
     if (latestNarrativeDetailHref) {
       links.push({ href: latestNarrativeDetailHref, label: "Latest Narrative Detail" });
     }
     return links;
   }, [
     backToRecommendationsHref,
+    automationOrigin,
     comparisonRunHref,
     latestNarrativeDetailHref,
     recommendationRunNarrativeHistoryHref,
@@ -693,6 +786,16 @@ export default function RecommendationRunDetailPage() {
 
     return [
       {
+        label: "Action state",
+        value: runActionState.label,
+        tone: runActionState.summaryTone,
+      },
+      {
+        label: "Next step cue",
+        value: runActionState.nextStep,
+        tone: runActionState.summaryTone,
+      },
+      {
         label: "Why this matters now",
         value: whyThisMattersLabel,
         tone: hasActionableOutput ? "warning" : "neutral",
@@ -772,13 +875,22 @@ export default function RecommendationRunDetailPage() {
         value: sourceContextLabel,
         tone: "neutral",
       },
+      {
+        label: "Automation origin",
+        value: runOriginDetail,
+        tone: automationOrigin ? "success" : "neutral",
+      },
     ];
   }, [
+    automationOrigin,
     latestNarrative,
     report?.recommendations.total,
     run,
     runCompleted,
     runFailed,
+    runActionState.label,
+    runActionState.nextStep,
+    runActionState.summaryTone,
     strongestRecommendationChoiceCue,
     strongestRecommendationEvidencePreview,
     strongestRecommendationEffortCue,
@@ -787,6 +899,7 @@ export default function RecommendationRunDetailPage() {
     strongestRecommendationFreshnessPosture,
     strongestRecommendationRefreshCheck,
     strongestRecommendationRevisitTiming,
+    runOriginDetail,
   ]);
 
   useEffect(() => {
@@ -794,6 +907,7 @@ export default function RecommendationRunDetailPage() {
       setReport(null);
       setLatestNarrative(null);
       setComparisonReport(null);
+      setAutomationOrigin(null);
       setResolvedSiteId(null);
       setLoading(false);
       setError(null);
@@ -806,6 +920,7 @@ export default function RecommendationRunDetailPage() {
       setReport(null);
       setLatestNarrative(null);
       setComparisonReport(null);
+      setAutomationOrigin(null);
       setResolvedSiteId(null);
       setLoading(false);
       setError("No site context is available to resolve this recommendation run.");
@@ -824,6 +939,7 @@ export default function RecommendationRunDetailPage() {
       setReport(null);
       setLatestNarrative(null);
       setComparisonReport(null);
+      setAutomationOrigin(null);
       setResolvedSiteId(null);
 
       try {
@@ -865,7 +981,7 @@ export default function RecommendationRunDetailPage() {
 
         const relatedErrors: unknown[] = [];
 
-        const [narrativeResult, comparisonResult] = await Promise.allSettled([
+        const [narrativeResult, comparisonResult, automationRunsResult] = await Promise.allSettled([
           fetchLatestRecommendationRunNarrative(
             context.token,
             context.businessId,
@@ -879,6 +995,7 @@ export default function RecommendationRunDetailPage() {
                 resolvedReport.recommendation_run.comparison_run_id,
               )
             : Promise.resolve(null),
+          fetchAutomationRuns(context.token, context.businessId, resolvedSite),
         ]);
 
         if (cancelled) {
@@ -897,6 +1014,14 @@ export default function RecommendationRunDetailPage() {
           }
         } else if (!isNotFoundError(comparisonResult.reason)) {
           relatedErrors.push(comparisonResult.reason);
+        }
+
+        if (automationRunsResult.status === "fulfilled") {
+          setAutomationOrigin(
+            deriveRecommendationRunAutomationOrigin(automationRunsResult.value.items, recommendationRunId),
+          );
+        } else {
+          setAutomationOrigin(null);
         }
 
         if (relatedErrors.length > 0) {
@@ -1010,6 +1135,20 @@ export default function RecommendationRunDetailPage() {
                     : "Pending completion"
               }
               tone={runCompleted ? "success" : runFailed ? "danger" : "warning"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Run origin"
+              value={runOriginLabel}
+              detail={runOriginDetail}
+              tone={automationOrigin ? "success" : "neutral"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Operator action state"
+              value={runActionState.label}
+              detail={runActionState.nextStep}
+              tone={runActionState.summaryTone}
               variant="elevated"
             />
             <SummaryStatCard

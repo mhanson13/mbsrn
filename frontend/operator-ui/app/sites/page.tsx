@@ -504,7 +504,9 @@ export default function SitesPage() {
                   <td>{site.is_primary ? "yes" : "no"}</td>
                   <td>{site.is_active ? "yes" : "no"}</td>
                   <td>
-                    <Link href={`/sites/${site.id}`}>Open Workspace</Link>
+                    <Link href={`/sites/${site.id}`} className="button button-secondary button-inline">
+                      Open Workspace
+                    </Link>
                   </td>
                   <td>
                     <button

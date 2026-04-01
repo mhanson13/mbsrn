@@ -13,10 +13,13 @@ import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
+  fetchAutomationRuns,
   fetchRecommendations,
   updateRecommendationStatus,
 } from "../../lib/api/client";
+import { deriveRecommendationOperatorActionState } from "../../lib/operatorActionState";
 import type {
+  AutomationRun,
   RecommendationFilteredSummary,
   Recommendation,
   RecommendationActionStatus,
@@ -65,6 +68,11 @@ type RecommendationDecisiveness = {
   evidencePreview: string;
   evidenceTrustCue: string;
   evidenceTrustTone: "badge-success" | "badge-warn" | "badge-muted";
+};
+
+type RecommendationAutomationOriginCue = {
+  label: string;
+  badgeClass: "badge-success" | "badge-muted";
 };
 type OptimisticBulkQueueState = {
   items: Recommendation[];
@@ -202,6 +210,50 @@ function parseCategoryFilter(value: string | null): FilterState["category"] {
     return "";
   }
   return normalized as FilterState["category"];
+}
+
+function extractAutomationLinkedRecommendationRunIds(runs: AutomationRun[]): Set<string> {
+  const linkedRecommendationRunIds = new Set<string>();
+  for (const run of runs) {
+    if (!Array.isArray(run.steps_json)) {
+      continue;
+    }
+    for (const step of run.steps_json) {
+      if (!step || typeof step !== "object") {
+        continue;
+      }
+      const stepName = typeof step.step_name === "string" ? step.step_name : "";
+      const stepStatus = typeof step.status === "string" ? step.status.toLowerCase() : "";
+      const linkedOutputId = typeof step.linked_output_id === "string" ? step.linked_output_id.trim() : "";
+      if (stepName === "recommendation_run" && stepStatus === "completed" && linkedOutputId.length > 0) {
+        linkedRecommendationRunIds.add(linkedOutputId);
+      }
+    }
+  }
+  return linkedRecommendationRunIds;
+}
+
+function deriveRecommendationAutomationOriginCue(
+  item: Recommendation,
+  linkedRecommendationRunIds: Set<string>,
+  automationLinkageReady: boolean,
+): RecommendationAutomationOriginCue {
+  if (linkedRecommendationRunIds.has(item.recommendation_run_id)) {
+    return {
+      label: "Automation-triggered output",
+      badgeClass: "badge-success",
+    };
+  }
+  if (!automationLinkageReady) {
+    return {
+      label: "Automation linkage unavailable",
+      badgeClass: "badge-muted",
+    };
+  }
+  return {
+    label: "No automation linkage detected",
+    badgeClass: "badge-muted",
+  };
 }
 
 function parseSortOption(
@@ -836,6 +888,10 @@ function RecommendationsPageContent() {
   const [items, setItems] = useState<Recommendation[]>([]);
   const [totalRecommendations, setTotalRecommendations] = useState<number | null>(null);
   const [queueSummary, setQueueSummary] = useState<QueueSummary>(EMPTY_QUEUE_SUMMARY);
+  const [automationLinkedRecommendationRunIds, setAutomationLinkedRecommendationRunIds] = useState<Set<string>>(
+    () => new Set<string>(),
+  );
+  const [automationLinkageReady, setAutomationLinkageReady] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [selectedRecommendationIds, setSelectedRecommendationIds] = useState<string[]>([]);
@@ -1482,6 +1538,8 @@ function RecommendationsPageContent() {
       setItems([]);
       setTotalRecommendations(null);
       setQueueSummary(EMPTY_QUEUE_SUMMARY);
+      setAutomationLinkedRecommendationRunIds(new Set<string>());
+      setAutomationLinkageReady(false);
       setItemsError(null);
       setLoadingItems(false);
       setSelectedRecommendationIds([]);
@@ -1496,6 +1554,7 @@ function RecommendationsPageContent() {
     async function loadRecommendations() {
       setLoadingItems(true);
       setItemsError(null);
+      setAutomationLinkageReady(false);
       try {
         const activeFilters: RecommendationListFilters = {};
         if (filters.status) {
@@ -1512,16 +1571,34 @@ function RecommendationsPageContent() {
         activeFilters.sort_order = sortConfig.sort_order;
         activeFilters.page = currentPage;
         activeFilters.page_size = pageSize;
-        const response = await fetchRecommendations(context.token, context.businessId, selectedSiteId, activeFilters);
+        const [recommendationsResult, automationRunsResult] = await Promise.allSettled([
+          fetchRecommendations(context.token, context.businessId, selectedSiteId, activeFilters),
+          fetchAutomationRuns(context.token, context.businessId, selectedSiteId),
+        ]);
         if (!cancelled) {
-          setItems(response.items);
-          setTotalRecommendations(response.total);
-          setQueueSummary(deriveQueueSummary(response));
+          if (recommendationsResult.status === "fulfilled") {
+            setItems(recommendationsResult.value.items);
+            setTotalRecommendations(recommendationsResult.value.total);
+            setQueueSummary(deriveQueueSummary(recommendationsResult.value));
+          } else {
+            throw recommendationsResult.reason;
+          }
+
+          if (automationRunsResult.status === "fulfilled") {
+            setAutomationLinkedRecommendationRunIds(
+              extractAutomationLinkedRecommendationRunIds(automationRunsResult.value.items),
+            );
+          } else {
+            setAutomationLinkedRecommendationRunIds(new Set<string>());
+          }
+          setAutomationLinkageReady(true);
         }
       } catch (err) {
         if (!cancelled) {
           setItemsError(safeRecommendationsErrorMessage(err));
           setQueueSummary(EMPTY_QUEUE_SUMMARY);
+          setAutomationLinkedRecommendationRunIds(new Set<string>());
+          setAutomationLinkageReady(false);
         }
       } finally {
         if (!cancelled) {
@@ -1812,6 +1889,16 @@ function RecommendationsPageContent() {
             <div className="operational-item-list">
               {recommendationQuickScanItems.map((item) => {
                 const decisiveness = deriveRecommendationDecisiveness(item, topReadyRecommendation?.id || null);
+                const automationOriginCue = deriveRecommendationAutomationOriginCue(
+                  item,
+                  automationLinkedRecommendationRunIds,
+                  automationLinkageReady,
+                );
+                const actionStateCue = deriveRecommendationOperatorActionState({
+                  status: item.status,
+                  automationLinkedOutput: automationLinkedRecommendationRunIds.has(item.recommendation_run_id),
+                  automationContextAvailable: automationLinkageReady,
+                });
                 const showBlockerBadge =
                   decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
                 return (
@@ -1822,6 +1909,7 @@ function RecommendationsPageContent() {
                     identity={<code>{item.id}</code>}
                     chips={(
                       <>
+                        <span className={actionStateCue.badgeClass}>{actionStateCue.label}</span>
                         <span className={`badge ${decisiveness.actionabilityTone}`}>
                           {decisiveness.actionabilityCue}
                         </span>
@@ -1846,10 +1934,17 @@ function RecommendationsPageContent() {
                         <span className="badge badge-muted">{item.status}</span>
                         <span className="badge badge-muted">{item.priority_band}</span>
                         <span className="badge badge-muted">{deriveSourceType(item)}</span>
+                        <span className={`badge ${automationOriginCue.badgeClass}`}>{automationOriginCue.label}</span>
                       </>
                     }
                     expandedDetail={
                       <>
+                        <p className="hint muted">
+                          <span className="text-strong">Action state:</span> {actionStateCue.outcome}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">Next step:</span> {actionStateCue.nextStep}
+                        </p>
                         <p className="hint muted">
                           <span className="text-strong">Blocking:</span> {decisiveness.blockingState}
                         </p>
@@ -1972,6 +2067,16 @@ function RecommendationsPageContent() {
             <tbody>
               {items.map((item) => {
                 const decisiveness = deriveRecommendationDecisiveness(item, topReadyRecommendation?.id || null);
+                const automationOriginCue = deriveRecommendationAutomationOriginCue(
+                  item,
+                  automationLinkedRecommendationRunIds,
+                  automationLinkageReady,
+                );
+                const actionStateCue = deriveRecommendationOperatorActionState({
+                  status: item.status,
+                  automationLinkedOutput: automationLinkedRecommendationRunIds.has(item.recommendation_run_id),
+                  automationContextAvailable: automationLinkageReady,
+                });
                 const isExpanded = expandedRecommendationIds.has(item.id);
                 const detailsId = `recommendation-details-${item.id}`;
                 const showBlockerBadge = decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
@@ -2007,6 +2112,7 @@ function RecommendationsPageContent() {
                         <div className="recommendation-decisiveness">
                           <div className="recommendation-decisiveness-badge-row">
                             <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-primary">
+                              <span className={actionStateCue.badgeClass}>{actionStateCue.label}</span>
                               <span className={`badge ${decisiveness.actionabilityTone}`}>{decisiveness.actionabilityCue}</span>
                               <span className={`badge ${decisiveness.effortCueTone}`}>{decisiveness.effortCue}</span>
                             </div>
@@ -2047,6 +2153,9 @@ function RecommendationsPageContent() {
                         >
                           <code>{item.recommendation_run_id}</code>
                         </Link>
+                        <p className="hint muted" data-testid={`recommendation-automation-origin-${item.id}`}>
+                          {automationOriginCue.label}
+                        </p>
                       </td>
                       <td>{item.business_id}</td>
                       <td>{item.site_id}</td>
@@ -2059,6 +2168,12 @@ function RecommendationsPageContent() {
                             className="table-expanded-panel recommendation-decisiveness-details"
                             data-testid={`recommendation-decisiveness-detail-panel-${item.id}`}
                           >
+                            <p className="hint muted">
+                              <span className="text-strong">Action state:</span> {actionStateCue.outcome}
+                            </p>
+                            <p className="hint muted">
+                              <span className="text-strong">Next step:</span> {actionStateCue.nextStep}
+                            </p>
                             <p className="hint muted">
                               <span className="text-strong">Priority:</span>{" "}
                               <span className={`badge ${decisiveness.priorityCueTone}`}>{decisiveness.priorityCue}</span>

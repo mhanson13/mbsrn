@@ -44,6 +44,47 @@ Expanded quick-scan detail keeps deeper context available without forcing full-t
 
 This is additive presentation only. The underlying recommendation data model, status semantics, trust semantics, and API contracts are unchanged.
 
+## Automation-Origin Cues (Presentation-Only)
+
+Recommendation surfaces now include compact automation-origin cues when linkage can be derived from existing automation run payloads.
+
+Where shown:
+- recommendation queue (`/recommendations`)
+- recommendation run detail (`/recommendations/runs/[run_id]`)
+- site workspace recommendation areas that render linked run context
+
+Operator-facing behavior:
+- `Automation-triggered output` when the recommendation run id is linked from an automation step output
+- `No automation linkage detected` when no linkage is found
+- `Automation linkage unavailable` when linkage data is not available for that load
+
+These cues are deterministic and read-only. They do not change recommendation ranking, apply behavior, trust semantics, or API contracts.
+
+## Operator Action-State Cues
+
+Recommendation-facing surfaces now use a compact, deterministic action-state presentation model derived from existing queue/run/automation linkage fields.
+
+Action-state labels:
+- `Needs operator review`
+- `Recommendation-only review`
+- `Automation output ready`
+- `Waiting on automation`
+- `Blocked / unavailable`
+- `Completed / acted on`
+- `Informational only`
+
+Operator cue contract:
+- one action-state badge
+- one outcome cue (`what happened`)
+- one next-step cue (`what to do now`)
+
+Where shown:
+- `/recommendations`
+- `/recommendations/runs/[run_id]`
+- recommendation sections inside `/sites/[site_id]`
+
+This is a read-model/presentation layer only. Recommendation generation, apply behavior, trust semantics, and API contracts are unchanged.
+
 ## Site Workspace Recommendation Row Grouping
 
 The recommendation tables inside the site workspace now use a bounded summary-first row layout for dense operator scans:
@@ -52,6 +93,11 @@ The recommendation tables inside the site workspace now use a bounded summary-fi
 
 This keeps high-signal supporting metadata visible without mixing it into long narrative text blocks.  
 Behavior and recommendation semantics are unchanged.
+
+Latest polish updates:
+- Recommendation row main content now uses a stronger bounded panel treatment to reduce cramped rendering on dense site workspace tables.
+- Support rails remain compact-signal only and avoid repeating full narrative reasoning.
+- Shared select/dropdown option highlighting is aligned across recommendation-adjacent filters for cleaner row-width hover/selected states.
 
 ### Left/right content rule
 - Left: narrative explanation, action clarity, evidence/rationale language.

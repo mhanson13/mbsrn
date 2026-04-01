@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
@@ -9,7 +10,188 @@ import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import { fetchAutomationRuns } from "../../lib/api/client";
-import type { AutomationRun } from "../../lib/api/types";
+import { deriveAutomationRunOperatorActionState } from "../../lib/operatorActionState";
+import type { AutomationRun, AutomationRunStep } from "../../lib/api/types";
+
+const AUTOMATION_STEP_LABELS: Record<string, string> = {
+  audit_run: "Audit run",
+  audit_summary: "Audit summary",
+  competitor_snapshot_run: "Competitor snapshot",
+  comparison_run: "Competitor comparison",
+  competitor_summary: "Competitor summary",
+  recommendation_run: "Recommendation run",
+  recommendation_narrative: "Recommendation narrative",
+};
+
+function formatDateTime(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
+function normalizeAutomationRunSteps(run: AutomationRun): AutomationRunStep[] {
+  if (!Array.isArray(run.steps_json)) {
+    return [];
+  }
+  return run.steps_json
+    .filter((step): step is AutomationRunStep => Boolean(step && typeof step === "object"))
+    .map((step) => ({
+      step_name: typeof step.step_name === "string" ? step.step_name : "unknown",
+      status: typeof step.status === "string" ? step.status : "queued",
+      started_at: typeof step.started_at === "string" ? step.started_at : null,
+      finished_at: typeof step.finished_at === "string" ? step.finished_at : null,
+      linked_output_id: typeof step.linked_output_id === "string" ? step.linked_output_id : null,
+      error_message: typeof step.error_message === "string" ? step.error_message : null,
+    }));
+}
+
+function normalizeStatusValue(status: string | null | undefined): string {
+  return (status || "").trim().toLowerCase();
+}
+
+function automationStatusBadgeClass(status: string | null | undefined): string {
+  const normalized = normalizeStatusValue(status);
+  if (normalized === "completed") {
+    return "badge-success";
+  }
+  if (normalized === "failed") {
+    return "badge-error";
+  }
+  if (normalized === "running" || normalized === "queued") {
+    return "badge-warn";
+  }
+  return "badge-muted";
+}
+
+function formatAutomationStepName(stepName: string): string {
+  return AUTOMATION_STEP_LABELS[stepName] || stepName.replace(/_/g, " ");
+}
+
+function findAutomationRecommendationRunOutputId(steps: AutomationRunStep[]): string | null {
+  const recommendationRunStep = steps.find(
+    (step) => normalizeStatusValue(step.status) === "completed" && step.step_name === "recommendation_run" && step.linked_output_id,
+  );
+  return recommendationRunStep?.linked_output_id || null;
+}
+
+function findAutomationRecommendationNarrativeOutputId(steps: AutomationRunStep[]): string | null {
+  const recommendationNarrativeStep = steps.find(
+    (step) =>
+      normalizeStatusValue(step.status) === "completed"
+      && step.step_name === "recommendation_narrative"
+      && step.linked_output_id,
+  );
+  return recommendationNarrativeStep?.linked_output_id || null;
+}
+
+function buildAutomationRecommendationRunHref(recommendationRunId: string, siteId: string): string {
+  const params = new URLSearchParams();
+  if (siteId.trim().length > 0) {
+    params.set("site_id", siteId);
+  }
+  const query = params.toString();
+  return query ? `/recommendations/runs/${recommendationRunId}?${query}` : `/recommendations/runs/${recommendationRunId}`;
+}
+
+function buildAutomationRecommendationNarrativeHref(
+  recommendationRunId: string,
+  recommendationNarrativeId: string,
+  siteId: string,
+): string {
+  const params = new URLSearchParams();
+  if (siteId.trim().length > 0) {
+    params.set("site_id", siteId);
+  }
+  const query = params.toString();
+  return query
+    ? `/recommendations/runs/${recommendationRunId}/narratives/${recommendationNarrativeId}?${query}`
+    : `/recommendations/runs/${recommendationRunId}/narratives/${recommendationNarrativeId}`;
+}
+
+function automationStepOutcomeLabel(step: AutomationRunStep): string {
+  const normalizedStatus = normalizeStatusValue(step.status);
+  if (normalizedStatus === "completed") {
+    return step.linked_output_id ? "Completed with linked output" : "Completed";
+  }
+  if (normalizedStatus === "failed") {
+    return "Failed before output";
+  }
+  if (normalizedStatus === "running") {
+    return "Running";
+  }
+  if (normalizedStatus === "queued") {
+    return "Queued";
+  }
+  return step.status;
+}
+
+function summarizeAutomationRunOutcome(run: AutomationRun): string {
+  const steps = normalizeAutomationRunSteps(run);
+  const completedStepCount = steps.filter((step) => normalizeStatusValue(step.status) === "completed").length;
+  const failedStepCount = steps.filter((step) => normalizeStatusValue(step.status) === "failed").length;
+  const totalSteps = steps.length;
+  const recommendationRunOutputId = findAutomationRecommendationRunOutputId(steps);
+  const recommendationNarrativeOutputId = findAutomationRecommendationNarrativeOutputId(steps);
+  const runStatus = normalizeStatusValue(run.status);
+
+  const stepSummary =
+    totalSteps > 0 ? `${completedStepCount}/${totalSteps} steps completed` : "No step detail recorded";
+  const outputSummary = recommendationNarrativeOutputId
+    ? "narrative output produced"
+    : recommendationRunOutputId
+      ? "recommendation output produced"
+      : failedStepCount > 0
+        ? "no linked output due to failed steps"
+        : "no linked output recorded";
+
+  if (runStatus === "completed") {
+    return `Completed. ${stepSummary}; ${outputSummary}.`;
+  }
+  if (runStatus === "running") {
+    return `Running. ${stepSummary}; output may still change.`;
+  }
+  if (runStatus === "queued") {
+    return `Queued. ${stepSummary}; waiting for execution.`;
+  }
+  if (runStatus === "failed") {
+    return `Failed. ${stepSummary}; ${outputSummary}.`;
+  }
+  return `Status ${run.status}. ${stepSummary}; ${outputSummary}.`;
+}
+
+function summarizeAutomationRunNextStep(run: AutomationRun): string {
+  const status = normalizeStatusValue(run.status);
+  if (status === "completed") {
+    return "Review linked recommendation artifacts and decide next operator action.";
+  }
+  if (status === "failed") {
+    return "Review failed step details and rerun automation after addressing blockers.";
+  }
+  if (status === "running" || status === "queued") {
+    return "Wait for completion before taking downstream recommendation actions.";
+  }
+  return "Review run detail to confirm lifecycle and output state.";
+}
+
+function deriveLatestAutomationRun(items: AutomationRun[]): AutomationRun | null {
+  if (items.length === 0) {
+    return null;
+  }
+  const sorted = [...items].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || left.started_at || "");
+    const rightTime = Date.parse(right.created_at || right.started_at || "");
+    if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+      return right.id.localeCompare(left.id);
+    }
+    return rightTime - leftTime;
+  });
+  return sorted[0] || null;
+}
 
 export default function AutomationPage() {
   const context = useOperatorContext();
@@ -21,6 +203,17 @@ export default function AutomationPage() {
   const completedRuns = items.filter((run) => run.status.toLowerCase() === "completed").length;
   const runningRuns = items.filter((run) => run.status.toLowerCase() === "running").length;
   const failedRuns = items.filter((run) => run.status.toLowerCase() === "failed").length;
+  const latestRun = deriveLatestAutomationRun(items);
+  const latestRunSteps = latestRun ? normalizeAutomationRunSteps(latestRun) : [];
+  const latestRecommendationRunOutputId = latestRun ? findAutomationRecommendationRunOutputId(latestRunSteps) : null;
+  const latestRecommendationNarrativeOutputId = latestRun
+    ? findAutomationRecommendationNarrativeOutputId(latestRunSteps)
+    : null;
+  const latestRunActionState = deriveAutomationRunOperatorActionState({
+    runStatus: latestRun?.status || null,
+    hasRecommendationOutput: Boolean(latestRecommendationRunOutputId),
+    hasNarrativeOutput: Boolean(latestRecommendationNarrativeOutputId),
+  });
 
   useEffect(() => {
     if (!context.selectedSiteId || context.loading || context.error) {
@@ -167,6 +360,56 @@ export default function AutomationPage() {
         {itemsError ? <p className="hint error">{itemsError}</p> : null}
 
         <div className="stack" data-testid="automation-quick-scan">
+          {latestRun ? (
+            <SectionCard variant="summary" className="role-surface-support" data-testid="automation-latest-run-summary">
+              <SectionHeader
+                title="Latest automation outcome"
+                subtitle="Summary-first lifecycle and output visibility for the most recent run."
+                headingLevel={3}
+                variant="support"
+              />
+              <div className="stack-tight">
+                <div className="link-row">
+                  <span className={`badge ${automationStatusBadgeClass(latestRun.status)}`}>
+                    {latestRun.status}
+                  </span>
+                  <span className={latestRunActionState.badgeClass}>{latestRunActionState.label}</span>
+                  <span className="badge badge-muted">Trigger: {latestRun.trigger_source}</span>
+                  <span className="badge badge-muted">Run: {latestRun.id}</span>
+                </div>
+                <span className="hint">{summarizeAutomationRunOutcome(latestRun)}</span>
+                <span className="hint muted">{latestRunActionState.outcome}</span>
+                <span className="hint muted">Next step: {latestRunActionState.nextStep}</span>
+                <span className="hint muted">{summarizeAutomationRunNextStep(latestRun)}</span>
+                <span className="hint muted">
+                  Started: {formatDateTime(latestRun.started_at)} · Finished: {formatDateTime(latestRun.finished_at)}
+                </span>
+                <div className="link-row">
+                  {latestRecommendationRunOutputId ? (
+                    <Link
+                      href={buildAutomationRecommendationRunHref(latestRecommendationRunOutputId, latestRun.site_id)}
+                    >
+                      Review recommendation run output
+                    </Link>
+                  ) : null}
+                  {latestRecommendationRunOutputId && latestRecommendationNarrativeOutputId ? (
+                    <Link
+                      href={buildAutomationRecommendationNarrativeHref(
+                        latestRecommendationRunOutputId,
+                        latestRecommendationNarrativeOutputId,
+                        latestRun.site_id,
+                      )}
+                    >
+                      Review latest narrative output
+                    </Link>
+                  ) : null}
+                  {!latestRecommendationRunOutputId ? (
+                    <span className="hint muted">No linked recommendation output recorded yet.</span>
+                  ) : null}
+                </div>
+              </div>
+            </SectionCard>
+          ) : null}
           <h3 className="heading-reset">Run quick scan</h3>
           <p className="hint muted">
             Summary-first cards show automation status, blockers, and follow-up urgency before deep history review.
@@ -178,6 +421,16 @@ export default function AutomationPage() {
             <div className="operational-item-list">
               {items.slice(0, 6).map((item) => {
                 const normalizedStatus = item.status.toLowerCase();
+                const steps = normalizeAutomationRunSteps(item);
+                const completedStepCount = steps.filter((step) => normalizeStatusValue(step.status) === "completed").length;
+                const failedStepCount = steps.filter((step) => normalizeStatusValue(step.status) === "failed").length;
+                const recommendationRunOutputId = findAutomationRecommendationRunOutputId(steps);
+                const recommendationNarrativeOutputId = findAutomationRecommendationNarrativeOutputId(steps);
+                const actionStateCue = deriveAutomationRunOperatorActionState({
+                  runStatus: item.status,
+                  hasRecommendationOutput: Boolean(recommendationRunOutputId),
+                  hasNarrativeOutput: Boolean(recommendationNarrativeOutputId),
+                });
                 const statusBadgeClass =
                   normalizedStatus === "completed"
                     ? "badge-success"
@@ -203,27 +456,42 @@ export default function AutomationPage() {
                     title={`Automation run ${item.id}`}
                     chips={(
                       <>
+                        <span className={actionStateCue.badgeClass}>{actionStateCue.label}</span>
                         <span className={`badge ${statusBadgeClass}`}>{item.status}</span>
                         <span className="badge badge-muted">{item.trigger_source}</span>
+                        {steps.length > 0 ? (
+                          <span className="badge badge-muted">{completedStepCount}/{steps.length} steps completed</span>
+                        ) : null}
+                        {failedStepCount > 0 ? <span className="badge badge-warn">{failedStepCount} failed</span> : null}
                         <span className={`badge ${blockerClass}`}>{blockerLabel}</span>
                       </>
                     )}
                     summary={
-                      normalizedStatus === "completed"
-                        ? "Run completed. Confirm downstream visibility where applicable."
-                        : normalizedStatus === "running"
-                          ? "Run is active. Wait for finish before acting on output."
-                          : normalizedStatus === "failed"
-                            ? "Run failed and needs operator follow-up."
-                            : "Run state requires review."
+                      summarizeAutomationRunOutcome(item)
+                    }
+                    primaryAction={
+                      recommendationRunOutputId ? (
+                        <Link
+                          href={buildAutomationRecommendationRunHref(recommendationRunOutputId, item.site_id)}
+                          className="button button-tertiary button-inline"
+                        >
+                          Review recommendation output
+                        </Link>
+                      ) : undefined
                     }
                     secondaryMeta={
-                      <span className="hint muted">
-                        Started: {item.started_at || "-"} | Finished: {item.finished_at || "-"}
-                      </span>
+                      <>
+                        <span className="hint muted">Next step: {actionStateCue.nextStep}</span>
+                        <span className="hint muted">
+                          Started: {formatDateTime(item.started_at)} | Finished: {formatDateTime(item.finished_at)}
+                        </span>
+                      </>
                     }
                     expandedDetail={
                       <>
+                        <p className="hint muted">
+                          <span className="text-strong">Action state:</span> {actionStateCue.outcome}
+                        </p>
                         <p className="hint muted">
                           <span className="text-strong">Business:</span> {item.business_id}
                         </p>
@@ -233,6 +501,79 @@ export default function AutomationPage() {
                         <p className="hint muted">
                           <span className="text-strong">Error:</span> {item.error_message || "None"}
                         </p>
+                        {steps.length > 0 ? (
+                          <div className="stack-tight">
+                            <span className="hint muted text-strong">Step outcomes</span>
+                            <ul className="list-compact-reset">
+                              {steps.map((step, index) => {
+                                const stepRecommendationRunOutputId = step.step_name === "recommendation_run"
+                                  ? step.linked_output_id
+                                  : null;
+                                const stepRecommendationNarrativeOutputId = step.step_name === "recommendation_narrative"
+                                  ? step.linked_output_id
+                                  : null;
+                                return (
+                                  <li key={`automation-step-${item.id}-${step.step_name}-${index}`} className="hint muted">
+                                    <span className={`badge ${automationStatusBadgeClass(step.status)}`}>{step.status}</span>{" "}
+                                    <span className="text-strong">{formatAutomationStepName(step.step_name)}</span>:{" "}
+                                    {automationStepOutcomeLabel(step)}
+                                    {step.started_at ? ` · started ${formatDateTime(step.started_at)}` : ""}
+                                    {step.finished_at ? ` · finished ${formatDateTime(step.finished_at)}` : ""}
+                                    {step.error_message ? ` · error: ${step.error_message}` : ""}
+                                    {stepRecommendationRunOutputId ? (
+                                      <>
+                                        {" "}
+                                        ·{" "}
+                                        <Link
+                                          href={buildAutomationRecommendationRunHref(stepRecommendationRunOutputId, item.site_id)}
+                                        >
+                                          Recommendation run output
+                                        </Link>
+                                      </>
+                                    ) : null}
+                                    {recommendationRunOutputId && stepRecommendationNarrativeOutputId ? (
+                                      <>
+                                        {" "}
+                                        ·{" "}
+                                        <Link
+                                          href={buildAutomationRecommendationNarrativeHref(
+                                            recommendationRunOutputId,
+                                            stepRecommendationNarrativeOutputId,
+                                            item.site_id,
+                                          )}
+                                        >
+                                          Narrative output
+                                        </Link>
+                                      </>
+                                    ) : null}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        ) : (
+                          <p className="hint muted">No step-level lifecycle detail is available for this run.</p>
+                        )}
+                        {recommendationRunOutputId ? (
+                          <p className="hint muted">
+                            <Link href={buildAutomationRecommendationRunHref(recommendationRunOutputId, item.site_id)}>
+                              Open linked recommendation run
+                            </Link>
+                          </p>
+                        ) : null}
+                        {recommendationRunOutputId && recommendationNarrativeOutputId ? (
+                          <p className="hint muted">
+                            <Link
+                              href={buildAutomationRecommendationNarrativeHref(
+                                recommendationRunOutputId,
+                                recommendationNarrativeOutputId,
+                                item.site_id,
+                              )}
+                            >
+                              Open linked recommendation narrative
+                            </Link>
+                          </p>
+                        ) : null}
                       </>
                     }
                   />

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import RecommendationsPage from "./page";
 import { ApiRequestError } from "../../lib/api/client";
 import type {
+  AutomationRunListResponse,
   Recommendation,
   RecommendationActionStatus,
   RecommendationListResponse,
@@ -35,6 +36,7 @@ const navigationState = {
 
 const mockUseOperatorContext = jest.fn<OperatorContextMockValue, []>();
 const mockFetchRecommendations = jest.fn<Promise<RecommendationListResponse>, unknown[]>();
+const mockFetchAutomationRuns = jest.fn<Promise<AutomationRunListResponse>, unknown[]>();
 const mockUpdateRecommendationStatus = jest.fn<Promise<Recommendation>, unknown[]>();
 
 jest.mock("next/navigation", () => ({
@@ -55,6 +57,7 @@ jest.mock("../../lib/api/client", () => {
   return {
     ...actual,
     fetchRecommendations: (...args: unknown[]) => mockFetchRecommendations(...args),
+    fetchAutomationRuns: (...args: unknown[]) => mockFetchAutomationRuns(...args),
     updateRecommendationStatus: (...args: unknown[]) => mockUpdateRecommendationStatus(...args),
   };
 });
@@ -150,11 +153,13 @@ function baseOperatorContext(): OperatorContextMockValue {
 beforeEach(() => {
   jest.clearAllMocks();
   mockFetchRecommendations.mockReset();
+  mockFetchAutomationRuns.mockReset();
   mockUpdateRecommendationStatus.mockReset();
   mockUseOperatorContext.mockReset();
   navigationState.pathname = "/recommendations";
   navigationState.searchParams = new URLSearchParams();
   mockUseOperatorContext.mockReturnValue(baseOperatorContext());
+  mockFetchAutomationRuns.mockResolvedValue({ items: [], total: 0 });
 });
 
 describe("recommendations queue optimistic workflows", () => {
@@ -203,12 +208,20 @@ describe("recommendations queue optimistic workflows", () => {
     await screen.findByText("Recommendation One");
     await screen.findByText("Recommendation Two");
     expect(screen.getByLabelText("Site")).toHaveClass("operator-select");
+    expect(screen.getByLabelText("Preset")).toHaveClass("operator-select");
+    expect(screen.getByLabelText("Status")).toHaveClass("operator-select");
+    expect(screen.getByLabelText("Priority")).toHaveClass("operator-select");
+    expect(screen.getByLabelText("Category")).toHaveClass("operator-select");
+    expect(screen.getByLabelText("Sort")).toHaveClass("operator-select");
+    expect(screen.getByLabelText("Results per page")).toHaveClass("operator-select");
     expect(document.querySelector(".page-container-width-full")).toBeTruthy();
     expect(screen.getByTestId("recommendation-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-1");
+    expect(quickScanItem).toHaveTextContent("Recommendation-only review");
     expect(quickScanItem).toHaveTextContent("Ready now");
     expect(quickScanItem).toHaveTextContent("Quick win");
     expect(quickScanItem).toHaveTextContent("Blocked by operator review");
+    expect(quickScanItem).toHaveTextContent("No automation linkage detected");
     const quickScanToggle = within(quickScanItem).getByRole("button", { name: "Show details" });
     expect(quickScanToggle).toHaveAttribute("aria-expanded", "false");
     await user.click(quickScanToggle);
@@ -258,11 +271,16 @@ describe("recommendations queue optimistic workflows", () => {
     expect(recOneDetailPanel).toHaveTextContent("Fresh enough to act");
     expect(recOneDetailPanel).toHaveTextContent("No refresh required before acting.");
     expect(recOneDetailPanel).toHaveTextContent("No blocker detected.");
+    expect(recOneDetailPanel).toHaveTextContent("Action state:");
+    expect(recOneDetailPanel).toHaveTextContent("Next step:");
     expect(recOneDetailPanel).toHaveTextContent("After action:");
     expect(recOneDetailPanel).toHaveTextContent("Evidence:");
     expect(recOneDetailPanel).toHaveTextContent("Support cue:");
     expect(recOneDetailPanel).toHaveTextContent("Revisit:");
     expect(recOneDetailPanel).toHaveTextContent("operator review required");
+    expect(screen.getByTestId("recommendation-automation-origin-rec-1")).toHaveTextContent(
+      "No automation linkage detected",
+    );
     const decisivenessCellTwo = screen.getByTestId("recommendation-decisiveness-rec-2");
     expect(decisivenessCellTwo).toHaveTextContent("Ready now");
     expect(decisivenessCellTwo).toHaveTextContent("Quick win");
@@ -503,6 +521,56 @@ describe("recommendations queue optimistic workflows", () => {
     await user.click(screen.getByText("Recommendation Five"));
     expect(navigationState.push).toHaveBeenCalledWith(
       "/recommendations/rec-5?site_id=site-1&category=SEO&sort=oldest&page=3&page_size=50",
+    );
+  });
+
+  it("renders automation-triggered provenance cues when recommendation run linkage is present", async () => {
+    const recOne = createRecommendation("rec-1", "open", "high", "Recommendation One");
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [recOne],
+        {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+    mockFetchAutomationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "automation-run-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "completed",
+          trigger_source: "scheduled",
+          started_at: "2026-03-20T00:00:00Z",
+          finished_at: "2026-03-20T00:01:00Z",
+          error_message: null,
+          steps_json: [
+            {
+              step_name: "recommendation_run",
+              status: "completed",
+              started_at: "2026-03-20T00:00:10Z",
+              finished_at: "2026-03-20T00:00:40Z",
+              linked_output_id: "rec-run-1",
+              error_message: null,
+            },
+          ],
+        },
+      ],
+      total: 1,
+    });
+
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Recommendation One");
+    expect(screen.getByTestId("recommendation-quick-scan-item-rec-1")).toHaveTextContent("Automation-triggered output");
+    expect(screen.getByTestId("recommendation-quick-scan-item-rec-1")).toHaveTextContent("Automation output ready");
+    expect(screen.getByTestId("recommendation-automation-origin-rec-1")).toHaveTextContent(
+      "Automation-triggered output",
     );
   });
 });

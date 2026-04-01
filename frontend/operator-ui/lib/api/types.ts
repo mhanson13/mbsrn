@@ -1125,10 +1125,32 @@ export interface AutomationRun {
   id: string;
   business_id: string;
   site_id: string;
+  automation_config_id?: string;
   status: string;
   trigger_source: string;
   started_at: string | null;
   finished_at: string | null;
+  error_message: string | null;
+  steps_json?: AutomationRunStep[] | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type AutomationStepName =
+  | "audit_run"
+  | "audit_summary"
+  | "competitor_snapshot_run"
+  | "comparison_run"
+  | "competitor_summary"
+  | "recommendation_run"
+  | "recommendation_narrative";
+
+export interface AutomationRunStep {
+  step_name: AutomationStepName | string;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  linked_output_id: string | null;
   error_message: string | null;
 }
 

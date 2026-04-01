@@ -16,6 +16,7 @@ import {
   createRecommendationRun,
   editCompetitorProfileDraft,
   fetchAuditRuns,
+  fetchAutomationRuns,
   fetchBusinessSettings,
   fetchGoogleBusinessProfileConnection,
   fetchCompetitorProfileGenerationRunDetail,
@@ -35,8 +36,13 @@ import {
   updateSite,
   updateBusinessSettings,
 } from "../../../lib/api/client";
+import {
+  deriveAutomationRunOperatorActionState,
+  deriveRecommendationOperatorActionState,
+} from "../../../lib/operatorActionState";
 import type {
   AIPromptPreview,
+  AutomationRun,
   BusinessSettings,
   CompetitorCandidatePipelineSummary,
   CompetitorContextHealth,
@@ -80,6 +86,7 @@ const MAX_AUDIT_ROWS = 8;
 const MAX_COMPETITOR_ROWS = 8;
 const MAX_RECOMMENDATION_ROWS = 8;
 const MAX_RECOMMENDATION_RUN_ROWS = 8;
+const MAX_AUTOMATION_RUN_ROWS = 8;
 const NARRATIVE_LOOKUP_LIMIT = 5;
 const MAX_TIMELINE_EVENTS = 20;
 const TIMELINE_INITIAL_VISIBLE_COUNT = 10;
@@ -227,6 +234,71 @@ function formatDateTime(value: string | null): string {
     return value;
   }
   return parsed.toLocaleString();
+}
+
+function normalizeAutomationRunStatus(status: string | null | undefined): string {
+  return (status || "").trim().toLowerCase();
+}
+
+function automationRunStatusBadgeClass(status: string | null | undefined): string {
+  const normalized = normalizeAutomationRunStatus(status);
+  if (normalized === "completed") {
+    return "badge-success";
+  }
+  if (normalized === "failed") {
+    return "badge-error";
+  }
+  if (normalized === "running" || normalized === "queued") {
+    return "badge-warn";
+  }
+  return "badge-muted";
+}
+
+function extractAutomationRecommendationRunOutputId(run: AutomationRun | null): string | null {
+  if (!run || !Array.isArray(run.steps_json)) {
+    return null;
+  }
+  for (const step of run.steps_json) {
+    if (!step || typeof step !== "object") {
+      continue;
+    }
+    const stepName = typeof step.step_name === "string" ? step.step_name : "";
+    const stepStatus = typeof step.status === "string" ? step.status.toLowerCase() : "";
+    const linkedOutputId = typeof step.linked_output_id === "string" ? step.linked_output_id.trim() : "";
+    if (stepName === "recommendation_run" && stepStatus === "completed" && linkedOutputId.length > 0) {
+      return linkedOutputId;
+    }
+  }
+  return null;
+}
+
+function extractAutomationRecommendationNarrativeOutputId(run: AutomationRun | null): string | null {
+  if (!run || !Array.isArray(run.steps_json)) {
+    return null;
+  }
+  for (const step of run.steps_json) {
+    if (!step || typeof step !== "object") {
+      continue;
+    }
+    const stepName = typeof step.step_name === "string" ? step.step_name : "";
+    const stepStatus = typeof step.status === "string" ? step.status.toLowerCase() : "";
+    const linkedOutputId = typeof step.linked_output_id === "string" ? step.linked_output_id.trim() : "";
+    if (stepName === "recommendation_narrative" && stepStatus === "completed" && linkedOutputId.length > 0) {
+      return linkedOutputId;
+    }
+  }
+  return null;
+}
+
+function sortAutomationRunsNewestFirst(runs: AutomationRun[]): AutomationRun[] {
+  return [...runs].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || left.started_at || "");
+    const rightTime = Date.parse(right.created_at || right.started_at || "");
+    if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+      return right.id.localeCompare(left.id);
+    }
+    return rightTime - leftTime;
+  });
 }
 
 function formatCompetitorOutcomeStatusLevel(level: CompetitorRunOutcomeSummary["status_level"]): string {
@@ -2949,6 +3021,8 @@ export default function SiteWorkspacePage() {
 
   const [recommendationRuns, setRecommendationRuns] = useState<RecommendationRun[]>([]);
   const [recommendationRunError, setRecommendationRunError] = useState<string | null>(null);
+  const [automationRuns, setAutomationRuns] = useState<AutomationRun[]>([]);
+  const [automationRunError, setAutomationRunError] = useState<string | null>(null);
   const [recommendationGenerationInFlight, setRecommendationGenerationInFlight] = useState(false);
   const [recommendationGenerationMessage, setRecommendationGenerationMessage] = useState<string | null>(null);
   const [recommendationGenerationError, setRecommendationGenerationError] = useState<string | null>(null);
@@ -4961,6 +5035,8 @@ export default function SiteWorkspacePage() {
       setRetryInFlight(false);
       setCompetitorProfilePolling(false);
       setCompetitorProfilePollingTargetRunId(null);
+      setAutomationRuns([]);
+      setAutomationRunError(null);
       return;
     }
 
@@ -4975,6 +5051,8 @@ export default function SiteWorkspacePage() {
       setGoogleBusinessProfileConnectionError(null);
       setQueueError(null);
       setRecommendationRunError(null);
+      setAutomationRuns([]);
+      setAutomationRunError(null);
       setNarrativeLookupError(null);
       setLatestCompletedRecommendationRun(null);
       setLatestCompletedRecommendations([]);
@@ -5033,6 +5111,7 @@ export default function SiteWorkspacePage() {
         comparisonRunsResult,
         queueResult,
         recommendationRunsResult,
+        automationRunsResult,
         recommendationWorkspaceSummaryResult,
         googleBusinessProfileConnectionResult,
         businessSettingsResult,
@@ -5050,6 +5129,7 @@ export default function SiteWorkspacePage() {
             sort_order: "desc",
           }),
           fetchRecommendationRuns(context.token, context.businessId, siteId),
+          fetchAutomationRuns(context.token, context.businessId, siteId),
           fetchRecommendationWorkspaceSummary(context.token, context.businessId, siteId),
           fetchGoogleBusinessProfileConnection(context.token),
           fetchBusinessSettings(context.token, context.businessId),
@@ -5205,6 +5285,14 @@ export default function SiteWorkspacePage() {
         setTuningPreviewErrorByKey({});
         setTuningPreviewLoadingKey(null);
         setRecommendationRunError(safeSectionErrorMessage("recommendation runs", recommendationRunsResult.reason));
+      }
+
+      if (automationRunsResult.status === "fulfilled") {
+        setAutomationRuns(sortAutomationRunsNewestFirst(automationRunsResult.value.items).slice(0, MAX_AUTOMATION_RUN_ROWS));
+        setAutomationRunError(null);
+      } else {
+        setAutomationRuns([]);
+        setAutomationRunError(safeSectionErrorMessage("automation runs", automationRunsResult.reason));
       }
 
       if (recommendationWorkspaceSummaryResult.status === "fulfilled") {
@@ -5584,6 +5672,49 @@ export default function SiteWorkspacePage() {
   const compactAuditCompletedAt = latestAuditRun?.completed_at || selectedSite.last_audit_completed_at;
   const compactAuditPagesCrawled = latestAuditRun?.pages_crawled;
   const compactAuditErrors = latestAuditRun?.errors_encountered;
+  const latestAutomationRun = automationRuns[0] || null;
+  const latestAutomationRecommendationRunOutputId = extractAutomationRecommendationRunOutputId(latestAutomationRun);
+  const latestAutomationRecommendationNarrativeOutputId =
+    extractAutomationRecommendationNarrativeOutputId(latestAutomationRun);
+  const latestAutomationStatus = latestAutomationRun?.status || "No automation run yet";
+  const latestAutomationTriggerSource = latestAutomationRun?.trigger_source || "none";
+  const latestAutomationStatusBadgeClass = automationRunStatusBadgeClass(latestAutomationStatus);
+  const latestAutomationOutcomeCue = latestAutomationRun
+    ? (() => {
+      const normalizedStatus = normalizeAutomationRunStatus(latestAutomationRun.status);
+      if (normalizedStatus === "completed") {
+        return latestAutomationRecommendationNarrativeOutputId
+          ? "Completed with recommendation narrative output."
+          : latestAutomationRecommendationRunOutputId
+            ? "Completed with recommendation output."
+            : "Completed without linked recommendation output.";
+      }
+      if (normalizedStatus === "failed") {
+        return "Failed before linked recommendation output completed.";
+      }
+      if (normalizedStatus === "running") {
+        return "Automation is running; output may still change.";
+      }
+      if (normalizedStatus === "queued") {
+        return "Automation is queued and waiting to run.";
+      }
+      return `Automation status is ${latestAutomationRun.status}.`;
+    })()
+    : "No automation lifecycle signal is available for this site yet.";
+  const latestAutomationActionState = deriveAutomationRunOperatorActionState({
+    runStatus: latestAutomationRun?.status || null,
+    hasRecommendationOutput: Boolean(latestAutomationRecommendationRunOutputId),
+    hasNarrativeOutput: Boolean(latestAutomationRecommendationNarrativeOutputId),
+  });
+  const topQueueRecommendation = queueResponse?.items?.[0] || null;
+  const topQueueRecommendationActionState = topQueueRecommendation
+    ? deriveRecommendationOperatorActionState({
+      status: topQueueRecommendation.status,
+      automationLinkedOutput:
+        latestAutomationRecommendationRunOutputId === topQueueRecommendation.recommendation_run_id,
+      automationContextAvailable: automationRuns.length > 0 && !automationRunError,
+    })
+    : null;
 
   return (
     <PageContainer width="full" density="compact">
@@ -5667,6 +5798,18 @@ export default function SiteWorkspacePage() {
             tone={actionableRecommendationCount > 0 ? "success" : "neutral"}
             variant="elevated"
             data-testid="workspace-summary-actionable"
+          />
+          <SummaryStatCard
+            label="Automation lifecycle"
+            value={latestAutomationStatus}
+            detail={
+              latestAutomationRun
+                ? `Trigger: ${latestAutomationTriggerSource} · ${latestAutomationOutcomeCue}`
+                : automationRunError || latestAutomationOutcomeCue
+            }
+            tone={latestAutomationStatus === "failed" ? "danger" : latestAutomationStatus === "completed" ? "success" : "neutral"}
+            variant="elevated"
+            data-testid="workspace-summary-automation"
           />
           <SummaryStatCard
             label="Competitor readiness"
@@ -5984,6 +6127,43 @@ export default function SiteWorkspacePage() {
               variant="elevated"
               data-testid="summary-comparison-activity"
             />
+          </div>
+          <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="workspace-automation-status-summary">
+            <span className="hint muted">Automation status and outcomes</span>
+            <div className="link-row">
+              <span className={`badge ${latestAutomationStatusBadgeClass}`}>{latestAutomationStatus}</span>
+              <span className={latestAutomationActionState.badgeClass}>{latestAutomationActionState.label}</span>
+              <span className="badge badge-muted">Trigger: {latestAutomationTriggerSource}</span>
+              {latestAutomationRun ? <span className="badge badge-muted">Run: {latestAutomationRun.id}</span> : null}
+            </div>
+            <span className="hint">{latestAutomationOutcomeCue}</span>
+            <span className="hint muted">{latestAutomationActionState.outcome}</span>
+            <span className="hint muted">Next step: {latestAutomationActionState.nextStep}</span>
+            {latestAutomationRun ? (
+              <span className="hint muted">
+                Started: {formatDateTime(latestAutomationRun.started_at)} · Finished: {formatDateTime(latestAutomationRun.finished_at)}
+              </span>
+            ) : null}
+            {automationRunError ? <span className="hint warning">{automationRunError}</span> : null}
+            <div className="toolbar-row toolbar-row-links">
+              <Link href={`/automation?site_id=${encodeURIComponent(selectedSite.id)}`}>Review automation runs</Link>
+              {latestAutomationRecommendationRunOutputId ? (
+                <Link href={buildRecommendationRunHref(latestAutomationRecommendationRunOutputId, selectedSite.id)}>
+                  Review recommendation run output
+                </Link>
+              ) : null}
+              {latestAutomationRecommendationRunOutputId && latestAutomationRecommendationNarrativeOutputId ? (
+                <Link
+                  href={buildNarrativeDetailHref(
+                    latestAutomationRecommendationRunOutputId,
+                    latestAutomationRecommendationNarrativeOutputId,
+                    selectedSite.id,
+                  )}
+                >
+                  Review recommendation narrative output
+                </Link>
+              ) : null}
+            </div>
           </div>
         </SectionCard>
       ) : null}
@@ -7351,6 +7531,28 @@ export default function SiteWorkspacePage() {
           <span className="badge badge-muted">Dismissed {recommendationQueueSummary.dismissed}</span>
           <span className="badge badge-critical">High priority {recommendationQueueSummary.highPriority}</span>
         </div>
+        {topQueueRecommendation && topQueueRecommendationActionState ? (
+          <div
+            className="panel panel-compact stack-tight operator-summary-callout"
+            data-testid="workspace-recommendation-action-state"
+          >
+            <span className="hint muted">Top recommendation action state</span>
+            <div className="link-row">
+              <span className={topQueueRecommendationActionState.badgeClass}>
+                {topQueueRecommendationActionState.label}
+              </span>
+              <span className="badge badge-muted">{topQueueRecommendation.status}</span>
+              <span className="badge badge-muted">{topQueueRecommendation.priority_band}</span>
+            </div>
+            <span className="hint">
+              <Link href={buildRecommendationDetailHref(topQueueRecommendation.id, selectedSite.id)}>
+                {topQueueRecommendation.title}
+              </Link>
+            </span>
+            <span className="hint muted">{topQueueRecommendationActionState.outcome}</span>
+            <span className="hint muted">Next step: {topQueueRecommendationActionState.nextStep}</span>
+          </div>
+        ) : null}
         <p>
           <Link href="/recommendations">Open Recommendation Queue</Link>
         </p>
@@ -7688,7 +7890,10 @@ export default function SiteWorkspacePage() {
                           >
                             <td className="table-cell-wrap">
                               <div className="workspace-recommendation-row-layout">
-                                <div className="workspace-recommendation-row-main">
+                                <div
+                                  className="workspace-recommendation-row-main workspace-recommendation-row-main-bounded"
+                                  data-testid={`recommendation-row-main-${item.id}`}
+                                >
                                   <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
                                   <RecommendationDetailClarity
                                     clarity={recommendationDetailClarity}
@@ -7916,7 +8121,10 @@ export default function SiteWorkspacePage() {
                                 >
                                   <td className="table-cell-wrap">
                                     <div className="workspace-recommendation-row-layout">
-                                      <div className="workspace-recommendation-row-main">
+                                      <div
+                                        className="workspace-recommendation-row-main workspace-recommendation-row-main-bounded"
+                                        data-testid={`recommendation-row-main-${item.id}`}
+                                      >
                                         <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
                                         <RecommendationDetailClarity
                                           clarity={recommendationDetailClarity}

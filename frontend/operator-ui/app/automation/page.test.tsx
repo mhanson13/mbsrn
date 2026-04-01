@@ -61,6 +61,26 @@ describe("automation page shared-shell framing", () => {
           started_at: "2026-03-25T10:00:00Z",
           finished_at: "2026-03-25T10:01:00Z",
           error_message: null,
+          steps_json: [
+            {
+              step_name: "recommendation_run",
+              status: "completed",
+              started_at: "2026-03-25T10:00:05Z",
+              finished_at: "2026-03-25T10:00:45Z",
+              linked_output_id: "rec-run-99",
+              error_message: null,
+            },
+            {
+              step_name: "recommendation_narrative",
+              status: "completed",
+              started_at: "2026-03-25T10:00:45Z",
+              finished_at: "2026-03-25T10:00:59Z",
+              linked_output_id: "narrative-99",
+              error_message: null,
+            },
+          ],
+          created_at: "2026-03-25T10:00:00Z",
+          updated_at: "2026-03-25T10:01:00Z",
         },
       ],
       total: 1,
@@ -72,11 +92,16 @@ describe("automation page shared-shell framing", () => {
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
     expect(screen.getByTestId("automation-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("automation-quick-scan-item-run-1");
+    expect(quickScanItem).toHaveTextContent("Automation output ready");
     expect(quickScanItem).toHaveTextContent("completed");
     expect(quickScanItem).toHaveTextContent("No blocker");
     expect(screen.getByText("Total runs")).toBeInTheDocument();
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("Running")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Latest automation outcome");
+    expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Next step:");
+    expect(screen.getByText("Review recommendation run output")).toBeInTheDocument();
+    expect(screen.getByText("Review latest narrative output")).toBeInTheDocument();
   });
 });

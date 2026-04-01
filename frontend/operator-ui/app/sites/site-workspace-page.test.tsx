@@ -5,6 +5,7 @@ import SiteWorkspacePage from "./[site_id]/page";
 import { ApiRequestError } from "../../lib/api/client";
 import type {
   AIPromptPreview,
+  AutomationRunListResponse,
   BusinessSettings,
   CompetitorComparisonRun,
   CompetitorProfileDraft,
@@ -60,6 +61,7 @@ const mockFetchSiteCompetitorComparisonRuns = jest.fn<
 const mockFetchRecommendations = jest.fn<Promise<RecommendationListResponse>, unknown[]>();
 const mockFetchRecommendationWorkspaceSummary = jest.fn<Promise<RecommendationWorkspaceSummaryResponse>, unknown[]>();
 const mockFetchRecommendationRuns = jest.fn<Promise<RecommendationRunListResponse>, unknown[]>();
+const mockFetchAutomationRuns = jest.fn<Promise<AutomationRunListResponse>, unknown[]>();
 const mockCreateRecommendationRun = jest.fn<Promise<RecommendationRun>, unknown[]>();
 const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<RecommendationNarrative>, unknown[]>();
 const mockPreviewRecommendationTuningImpact = jest.fn<Promise<RecommendationTuningImpactPreview>, unknown[]>();
@@ -111,6 +113,7 @@ jest.mock("../../lib/api/client", () => {
     fetchRecommendations: (...args: unknown[]) => mockFetchRecommendations(...args),
     fetchRecommendationWorkspaceSummary: (...args: unknown[]) => mockFetchRecommendationWorkspaceSummary(...args),
     fetchRecommendationRuns: (...args: unknown[]) => mockFetchRecommendationRuns(...args),
+    fetchAutomationRuns: (...args: unknown[]) => mockFetchAutomationRuns(...args),
     createRecommendationRun: (...args: unknown[]) => mockCreateRecommendationRun(...args),
     fetchLatestRecommendationRunNarrative: (...args: unknown[]) =>
       mockFetchLatestRecommendationRunNarrative(...args),
@@ -376,6 +379,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   );
   mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({ items: [], total: 0 });
   mockFetchCompetitorProfileGenerationRunDetail.mockReset();
+  mockFetchAutomationRuns.mockResolvedValue({ items: [], total: 0 });
   mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
     business_id: "biz-1",
     site_id: "site-1",
@@ -867,6 +871,43 @@ function seedRichWorkspaceData(): void {
       },
     ],
     total: 3,
+  });
+
+  mockFetchAutomationRuns.mockResolvedValue({
+    items: [
+      {
+        id: "automation-run-1",
+        business_id: "biz-1",
+        site_id: "site-1",
+        automation_config_id: "automation-config-1",
+        trigger_source: "scheduled",
+        status: "completed",
+        started_at: "2026-03-21T00:28:00Z",
+        finished_at: "2026-03-21T00:30:00Z",
+        error_message: null,
+        steps_json: [
+          {
+            step_name: "recommendation_run",
+            status: "completed",
+            started_at: "2026-03-21T00:29:00Z",
+            finished_at: "2026-03-21T00:29:45Z",
+            linked_output_id: "run-1",
+            error_message: null,
+          },
+          {
+            step_name: "recommendation_narrative",
+            status: "completed",
+            started_at: "2026-03-21T00:29:45Z",
+            finished_at: "2026-03-21T00:30:00Z",
+            linked_output_id: "narrative-1",
+            error_message: null,
+          },
+        ],
+        created_at: "2026-03-21T00:28:00Z",
+        updated_at: "2026-03-21T00:30:00Z",
+      },
+    ],
+    total: 1,
   });
 
   const narrativesByRunId: Record<string, RecommendationNarrative> = {
@@ -1528,6 +1569,11 @@ describe("site workspace timeline controls", () => {
     expect(screen.getByTestId("workspace-operational-summary")).toBeInTheDocument();
     expect(screen.getByTestId("summary-audit-status")).toBeInTheDocument();
     expect(screen.getByTestId("summary-audit-metrics")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-summary-automation")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-automation-status-summary")).toBeInTheDocument();
+    expect(screen.getByText("Automation status and outcomes")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-automation-status-summary")).toHaveTextContent("Next step:");
+    expect(await screen.findByText("Review recommendation run output")).toBeInTheDocument();
   });
 
   it("shows full audit history tables in activity tab", async () => {
@@ -1551,6 +1597,8 @@ describe("site workspace timeline controls", () => {
 
     expect(screen.getByRole("heading", { name: "Recommendation Queue" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Recommendation Runs and Narratives" })).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-recommendation-action-state")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-recommendation-action-state")).toHaveTextContent("Next step:");
   });
 
   it("renders 10 events by default and shows show-more control when timeline has more than 10 events", async () => {
@@ -2875,6 +2923,9 @@ describe("site workspace timeline controls", () => {
 
     await screen.findByRole("heading", { name: "Recommendations" });
     expect(screen.getAllByTestId("recommendation-row-support").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("recommendation-row-main-rec-clarity-ready")).toHaveClass(
+      "workspace-recommendation-row-main-bounded",
+    );
 
     const readyClarity = screen.getByTestId("recommendation-detail-clarity-ready_to_act-rec-clarity-ready");
     expect(readyClarity).toHaveClass("recommendation-detail-clarity-ready_to_act");

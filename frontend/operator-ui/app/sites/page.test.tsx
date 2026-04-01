@@ -121,4 +121,12 @@ describe("sites admin deactivate controls", () => {
     expect(screen.queryByRole("button", { name: "Deactivate Site" })).not.toBeInTheDocument();
     expect(screen.queryByText("Admin Action")).not.toBeInTheDocument();
   });
+
+  it("renders Open Workspace using the shared inline button action style", () => {
+    render(<SitesPage />);
+
+    const openWorkspaceAction = screen.getByRole("link", { name: "Open Workspace" });
+    expect(openWorkspaceAction).toHaveClass("button", "button-secondary", "button-inline");
+    expect(openWorkspaceAction).toHaveAttribute("href", "/sites/site-1");
+  });
 });
