@@ -1454,7 +1454,12 @@ export default function AdminPage() {
           />
 
           <label htmlFor="user-role">Role</label>
-          <select id="user-role" value={role} onChange={(event) => setRole(event.target.value as PrincipalRole)}>
+          <select
+            id="user-role"
+            className="operator-select"
+            value={role}
+            onChange={(event) => setRole(event.target.value as PrincipalRole)}
+          >
             <option value="operator">operator</option>
             <option value="admin">admin</option>
           </select>
@@ -1475,6 +1480,7 @@ export default function AdminPage() {
           <label htmlFor="identity-principal">Principal</label>
           <select
             id="identity-principal"
+            className="operator-select"
             value={identityPrincipalId}
             onChange={(event) => setIdentityPrincipalId(event.target.value)}
             required
@@ -1963,6 +1969,7 @@ export default function AdminPage() {
           <label htmlFor="gcp-logs-page-size">Page Size</label>
           <select
             id="gcp-logs-page-size"
+            className="operator-select"
             value={String(gcpLogsPageSize)}
             onChange={(event) => setGcpLogsPageSize(Number(event.target.value))}
             disabled={gcpLogsLoading}

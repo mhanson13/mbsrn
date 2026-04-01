@@ -520,6 +520,7 @@ function CompetitorsPageContent() {
         <label htmlFor="site-picker-competitors">Site</label>
         <select
           id="site-picker-competitors"
+          className="operator-select"
           value={selectedSiteId || ""}
           onChange={(event) => setSelectedSiteId(event.target.value)}
         >

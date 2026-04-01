@@ -50,7 +50,12 @@ export function VerificationMethodsList({
   return (
     <label className="label-stack label-stack-medium">
       <span className="text-muted-small">Verification method</span>
-      <select value={selectedOptionId} onChange={(event) => onChange(event.target.value)} disabled={disabled}>
+      <select
+        className="operator-select"
+        value={selectedOptionId}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+      >
         <option value="">Select a method</option>
         {methods.map((method) => (
           <option key={method.option_id} value={method.option_id}>

@@ -1094,13 +1094,58 @@ button:disabled,
   opacity: 1;
 }
 
-input, select, textarea {
+input,
+select,
+textarea,
+.operator-select {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0.48rem 0.62rem;
   background: var(--panel);
   color: var(--text);
+  min-height: 2.2rem;
+  line-height: 1.35;
+  font: inherit;
+}
+
+select,
+.operator-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2364748b' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 8 5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.58rem center;
+  background-size: 0.86rem;
+  padding-right: 2rem;
+}
+
+input:hover,
+select:hover,
+textarea:hover,
+.operator-select:hover {
+  border-color: var(--button-secondary-border);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.operator-select:focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.28);
+  outline-offset: 1px;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.3);
+}
+
+select:focus-visible,
+.operator-select:focus-visible {
+  position: relative;
+  z-index: 6;
+}
+
+select:disabled,
+.operator-select:disabled {
+  opacity: 0.85;
+  cursor: not-allowed;
 }
 
 code {
@@ -1154,6 +1199,30 @@ code {
 
 .table tbody tr:hover {
   background: var(--table-row-hover);
+}
+
+.table-expanded-row {
+  background: transparent !important;
+}
+
+.table-expanded-row:hover {
+  background: transparent !important;
+}
+
+.table-expanded-row td {
+  padding: 0.5rem 0.56rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+}
+
+.table-expanded-panel {
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--surface-subtle) 0%, var(--panel) 100%);
+  padding: 0.58rem 0.66rem;
+  display: grid;
+  gap: 0.34rem;
+  box-shadow: 0 12px 22px -24px var(--panel-depth-shadow);
 }
 
 .table-dense thead th {
@@ -1390,11 +1459,7 @@ code {
 
 .recommendation-decisiveness-details {
   display: grid;
-  gap: 0.26rem;
-  padding: 0.48rem 0.56rem;
-  border: 1px solid var(--section-divider);
-  border-radius: var(--radius-sm);
-  background: var(--surface-subtle);
+  gap: 0.3rem;
 }
 
 .recommendation-decisiveness-details .hint {

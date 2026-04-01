@@ -2757,23 +2757,15 @@ describe("site workspace timeline controls", () => {
     await screen.findByRole("heading", { name: "Recommendations" });
     expect(screen.getAllByText("Progress").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Suggested").length).toBeGreaterThan(0);
-    expect(screen.getByText("Suggested action not yet applied.")).toBeInTheDocument();
+    expect(screen.queryByText("Suggested action not yet applied.")).not.toBeInTheDocument();
     expect(screen.getAllByText("Applied, pending refresh").length).toBeGreaterThan(0);
-    expect(
-      screen.getByText("Applied. Waiting for the next analysis refresh to reflect this change."),
-    ).toBeInTheDocument();
     expect(screen.getAllByText("Reflected in latest analysis").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText("Applied and reflected in the latest analysis.").length).toBeGreaterThanOrEqual(2);
     const lifecycleLines = screen.getAllByTestId("recommendation-lifecycle-state");
     expect(lifecycleLines).toHaveLength(4);
     expect(lifecycleLines[0]).toHaveTextContent("Active");
-    expect(lifecycleLines[0]).toHaveTextContent("Still an active recommendation.");
     expect(lifecycleLines[1]).toHaveTextContent("Applied, waiting validation");
-    expect(lifecycleLines[1]).toHaveTextContent("Applied and waiting for refreshed validation.");
     expect(lifecycleLines[2]).toHaveTextContent("Reflected, still relevant");
-    expect(lifecycleLines[2]).toHaveTextContent("Reflected in analysis, but still appears relevant.");
     expect(lifecycleLines[3]).toHaveTextContent("Likely resolved");
-    expect(lifecycleLines[3]).toHaveTextContent("Likely addressed in the latest analysis.");
   });
 
   it("renders recommendation presentation buckets with actionable/applied/pending/informational clarity", async () => {
@@ -2972,9 +2964,11 @@ describe("site workspace timeline controls", () => {
     const priorityLines = screen.getAllByTestId("recommendation-priority");
     expect(priorityLines).toHaveLength(2);
     expect(priorityLines[0]).toHaveTextContent("Take first");
-    expect(priorityLines[0]).toHaveTextContent("Strong competitor-backed gap with a clear next action.");
+    expect(priorityLines[0]).toHaveTextContent("Effort: Quick win");
     expect(priorityLines[1]).toHaveTextContent("Later");
-    expect(priorityLines[1]).toHaveTextContent("Limited competitor evidence; review later.");
+    expect(priorityLines[1]).toHaveTextContent("Effort: Larger change");
+    expect(screen.queryByText("Strong competitor-backed gap with a clear next action.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Limited competitor evidence; review later.")).not.toBeInTheDocument();
   });
 
   it("renders competitor linkage evidence when recommendation metadata includes linked competitors", async () => {
@@ -3052,8 +3046,8 @@ describe("site workspace timeline controls", () => {
     const priorityLines = screen.getAllByTestId("recommendation-priority");
     expect(priorityLines).toHaveLength(1);
     expect(priorityLines[0]).toHaveTextContent("Take first");
-    expect(priorityLines[0]).toHaveTextContent("Strong competitor-backed gap with a clear next action.");
-    expect(priorityLines[0]).toHaveTextContent("Effort: Quick win.");
+    expect(priorityLines[0]).toHaveTextContent("Effort: Quick win");
+    expect(screen.queryByText("Strong competitor-backed gap with a clear next action.")).not.toBeInTheDocument();
     expect(screen.queryByText(/Competitor linkage:.*No linkage metadata recommendation/i)).not.toBeInTheDocument();
   });
 

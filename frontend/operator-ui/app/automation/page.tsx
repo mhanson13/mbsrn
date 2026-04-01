@@ -152,6 +152,7 @@ export default function AutomationPage() {
         <label htmlFor="site-picker-automation">Site</label>
         <select
           id="site-picker-automation"
+          className="operator-select"
           value={context.selectedSiteId || ""}
           onChange={(event) => context.setSelectedSiteId(event.target.value)}
         >

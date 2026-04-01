@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { DetailFocusPanel, type DetailFocusFact } from "../../components/layout/DetailFocusPanel";
@@ -1658,6 +1658,7 @@ function RecommendationsPageContent() {
         <label htmlFor="site-picker-recommendations">Site</label>
         <select
           id="site-picker-recommendations"
+          className="operator-select"
           value={context.selectedSiteId || ""}
           onChange={(event) => context.setSelectedSiteId(event.target.value)}
         >
@@ -1673,6 +1674,7 @@ function RecommendationsPageContent() {
           <label htmlFor="recommendation-preset">Preset</label>
           <select
             id="recommendation-preset"
+            className="operator-select"
             value={activePreset}
             onChange={(event) => {
               const selectedValue = event.target.value as QueuePresetSelection;
@@ -1693,6 +1695,7 @@ function RecommendationsPageContent() {
           <label htmlFor="recommendation-filter-status">Status</label>
           <select
             id="recommendation-filter-status"
+            className="operator-select"
             value={filters.status}
             onChange={(event) =>
               updateFilterParams({
@@ -1712,6 +1715,7 @@ function RecommendationsPageContent() {
           <label htmlFor="recommendation-filter-priority">Priority</label>
           <select
             id="recommendation-filter-priority"
+            className="operator-select"
             value={filters.priorityBand}
             onChange={(event) =>
               updateFilterParams({
@@ -1731,6 +1735,7 @@ function RecommendationsPageContent() {
           <label htmlFor="recommendation-filter-category">Category</label>
           <select
             id="recommendation-filter-category"
+            className="operator-select"
             value={filters.category}
             onChange={(event) =>
               updateFilterParams({
@@ -1750,6 +1755,7 @@ function RecommendationsPageContent() {
           <label htmlFor="recommendation-sort">Sort</label>
           <select
             id="recommendation-sort"
+            className="operator-select"
             value={sort}
             onChange={(event) => updateSortParam(event.target.value as SortState)}
           >
@@ -1872,6 +1878,7 @@ function RecommendationsPageContent() {
           <label htmlFor="recommendation-page-size">Results per page</label>
           <select
             id="recommendation-page-size"
+            className="operator-select"
             value={pageSize}
             onChange={(event) => updatePageSizeParam(Number.parseInt(event.target.value, 10))}
           >
@@ -1969,121 +1976,130 @@ function RecommendationsPageContent() {
                 const detailsId = `recommendation-details-${item.id}`;
                 const showBlockerBadge = decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
                 return (
-                <tr
-                  key={item.id}
-                  role="link"
-                  tabIndex={0}
-                  className="clickable-row"
-                  onClick={() => router.push(buildRecommendationDetailHref(item))}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      router.push(buildRecommendationDetailHref(item));
-                    }
-                  }}
-                >
-                  <td>
-                    <input
-                      type="checkbox"
-                      aria-label={`Select recommendation ${item.id}`}
-                      checked={selectedRecommendationIds.includes(item.id)}
-                      disabled={bulkActionInFlight !== null}
-                      onClick={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => event.stopPropagation()}
-                      onChange={() => toggleRecommendationSelection(item.id)}
-                    />
-                  </td>
-                  <td>{item.title}</td>
-                  <td>{item.rationale}</td>
-                  <td>{item.status}</td>
-                  <td data-testid={`recommendation-decisiveness-${item.id}`}>
-                    <div className="recommendation-decisiveness">
-                      <div className="recommendation-decisiveness-badge-row">
-                        <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-primary">
-                          <span className={`badge ${decisiveness.actionabilityTone}`}>{decisiveness.actionabilityCue}</span>
-                          <span className={`badge ${decisiveness.effortCueTone}`}>{decisiveness.effortCue}</span>
-                        </div>
-                        {showBlockerBadge ? (
-                          <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-blocker">
-                            <span className={`badge ${decisiveness.blockerCueTone}`}>{decisiveness.blockerCue}</span>
-                          </div>
-                        ) : null}
-                      </div>
-                      <p className="hint muted recommendation-decisiveness-why-now">
-                        <span className="text-strong">Why now:</span> {truncateRecommendationWhyNow(decisiveness.whyNow)}
-                      </p>
-                      <button
-                        type="button"
-                        className="button button-tertiary button-inline recommendation-decisiveness-toggle"
-                        aria-expanded={isExpanded}
-                        aria-controls={detailsId}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleRecommendationDetails(item.id);
-                        }}
-                        onKeyDown={(event) => event.stopPropagation()}
-                      >
-                        {isExpanded ? "Hide details" : "View details"}
-                      </button>
-                      {isExpanded ? (
-                        <div id={detailsId} className="recommendation-decisiveness-details">
-                          <p className="hint muted">
-                            <span className="text-strong">Priority:</span>{" "}
-                            <span className={`badge ${decisiveness.priorityCueTone}`}>{decisiveness.priorityCue}</span>
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">Choice support:</span>{" "}
-                            <span className={`badge ${decisiveness.choiceCueTone}`}>{decisiveness.choiceCue}</span>
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">Lifecycle:</span>{" "}
-                            <span className={`badge ${decisiveness.lifecycleCueTone}`}>{decisiveness.lifecycleCue}</span>
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">Freshness:</span>{" "}
-                            <span className={`badge ${decisiveness.freshnessCueTone}`}>{decisiveness.freshnessCue}</span>{" "}
-                            {decisiveness.refreshCheck}
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">Why now:</span> {decisiveness.whyNow}
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">Blocking:</span> {decisiveness.blockingState}
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">After action:</span> {decisiveness.afterAction}
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
-                          </p>
-                          <p className="hint muted">
-                            <span className={`badge ${decisiveness.evidenceTrustTone}`}>{decisiveness.evidenceTrustCue}</span>
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">Revisit:</span>{" "}
-                            <span className={`badge ${decisiveness.revisitCueTone}`}>{decisiveness.revisitCue}</span>
-                          </p>
-                        </div>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td>{item.category}</td>
-                  <td>
-                    {item.priority_score} ({item.priority_band})
-                  </td>
-                  <td>{deriveSourceType(item)}</td>
-                  <td>
-                    <Link
-                      href={buildRecommendationRunDetailHref(item)}
-                      onClick={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => event.stopPropagation()}
+                  <Fragment key={item.id}>
+                    <tr
+                      role="link"
+                      tabIndex={0}
+                      className="clickable-row"
+                      onClick={() => router.push(buildRecommendationDetailHref(item))}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          router.push(buildRecommendationDetailHref(item));
+                        }
+                      }}
                     >
-                      <code>{item.recommendation_run_id}</code>
-                    </Link>
-                  </td>
-                  <td>{item.business_id}</td>
-                  <td>{item.site_id}</td>
-                </tr>
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select recommendation ${item.id}`}
+                          checked={selectedRecommendationIds.includes(item.id)}
+                          disabled={bulkActionInFlight !== null}
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => event.stopPropagation()}
+                          onChange={() => toggleRecommendationSelection(item.id)}
+                        />
+                      </td>
+                      <td>{item.title}</td>
+                      <td>{item.rationale}</td>
+                      <td>{item.status}</td>
+                      <td data-testid={`recommendation-decisiveness-${item.id}`}>
+                        <div className="recommendation-decisiveness">
+                          <div className="recommendation-decisiveness-badge-row">
+                            <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-primary">
+                              <span className={`badge ${decisiveness.actionabilityTone}`}>{decisiveness.actionabilityCue}</span>
+                              <span className={`badge ${decisiveness.effortCueTone}`}>{decisiveness.effortCue}</span>
+                            </div>
+                            {showBlockerBadge ? (
+                              <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-blocker">
+                                <span className={`badge ${decisiveness.blockerCueTone}`}>{decisiveness.blockerCue}</span>
+                              </div>
+                            ) : null}
+                          </div>
+                          <p className="hint muted recommendation-decisiveness-why-now">
+                            <span className="text-strong">Why now:</span> {truncateRecommendationWhyNow(decisiveness.whyNow)}
+                          </p>
+                          <button
+                            type="button"
+                            className="button button-tertiary button-inline recommendation-decisiveness-toggle"
+                            aria-expanded={isExpanded}
+                            aria-controls={detailsId}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleRecommendationDetails(item.id);
+                            }}
+                            onKeyDown={(event) => event.stopPropagation()}
+                          >
+                            {isExpanded ? "Hide details" : "View details"}
+                          </button>
+                        </div>
+                      </td>
+                      <td>{item.category}</td>
+                      <td>
+                        {item.priority_score} ({item.priority_band})
+                      </td>
+                      <td>{deriveSourceType(item)}</td>
+                      <td>
+                        <Link
+                          href={buildRecommendationRunDetailHref(item)}
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => event.stopPropagation()}
+                        >
+                          <code>{item.recommendation_run_id}</code>
+                        </Link>
+                      </td>
+                      <td>{item.business_id}</td>
+                      <td>{item.site_id}</td>
+                    </tr>
+                    {isExpanded ? (
+                      <tr className="table-expanded-row" data-testid={`recommendation-decisiveness-detail-row-${item.id}`}>
+                        <td colSpan={11}>
+                          <div
+                            id={detailsId}
+                            className="table-expanded-panel recommendation-decisiveness-details"
+                            data-testid={`recommendation-decisiveness-detail-panel-${item.id}`}
+                          >
+                            <p className="hint muted">
+                              <span className="text-strong">Priority:</span>{" "}
+                              <span className={`badge ${decisiveness.priorityCueTone}`}>{decisiveness.priorityCue}</span>
+                            </p>
+                            <p className="hint muted">
+                              <span className="text-strong">Choice support:</span>{" "}
+                              <span className={`badge ${decisiveness.choiceCueTone}`}>{decisiveness.choiceCue}</span>
+                            </p>
+                            <p className="hint muted">
+                              <span className="text-strong">Lifecycle:</span>{" "}
+                              <span className={`badge ${decisiveness.lifecycleCueTone}`}>{decisiveness.lifecycleCue}</span>
+                            </p>
+                            <p className="hint muted">
+                              <span className="text-strong">Freshness:</span>{" "}
+                              <span className={`badge ${decisiveness.freshnessCueTone}`}>{decisiveness.freshnessCue}</span>{" "}
+                              {decisiveness.refreshCheck}
+                            </p>
+                            <p className="hint muted">
+                              <span className="text-strong">Why now:</span> {decisiveness.whyNow}
+                            </p>
+                            <p className="hint muted">
+                              <span className="text-strong">Blocking:</span> {decisiveness.blockingState}
+                            </p>
+                            <p className="hint muted">
+                              <span className="text-strong">After action:</span> {decisiveness.afterAction}
+                            </p>
+                            <p className="hint muted">
+                              <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
+                            </p>
+                            <p className="hint muted">
+                              <span className={`badge ${decisiveness.evidenceTrustTone}`}>{decisiveness.evidenceTrustCue}</span>
+                            </p>
+                            <p className="hint muted">
+                              <span className="text-strong">Revisit:</span>{" "}
+                              <span className={`badge ${decisiveness.revisitCueTone}`}>{decisiveness.revisitCue}</span>
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 );
               })}
               {items.length === 0 && !loadingItems ? (

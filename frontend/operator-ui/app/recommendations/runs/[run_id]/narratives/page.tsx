@@ -972,6 +972,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
                     <span>Base Version</span>
                     <select
                       aria-label="Base Version"
+                      className="operator-select"
                       value={selectedBaseNarrative?.id || ""}
                       onChange={(event) => setSelectedBaseNarrativeId(event.target.value)}
                     >
@@ -987,6 +988,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
                     <span>Compare Version</span>
                     <select
                       aria-label="Compare Version"
+                      className="operator-select"
                       value={selectedCompareNarrative?.id || ""}
                       onChange={(event) => setSelectedCompareNarrativeId(event.target.value)}
                     >

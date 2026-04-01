@@ -225,8 +225,8 @@ describe("recommendation narrative history compare", () => {
     render(<RecommendationRunNarrativeHistoryPage />);
 
     await screen.findByRole("heading", { name: "Narrative Version Compare" });
-    expect(screen.getByLabelText("Base Version")).toBeInTheDocument();
-    expect(screen.getByLabelText("Compare Version")).toBeInTheDocument();
+    expect(screen.getByLabelText("Base Version")).toHaveClass("operator-select");
+    expect(screen.getByLabelText("Compare Version")).toHaveClass("operator-select");
   });
 
   it("shows a disabled state message when fewer than two versions exist", async () => {

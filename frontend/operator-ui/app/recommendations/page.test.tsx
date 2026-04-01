@@ -202,6 +202,7 @@ describe("recommendations queue optimistic workflows", () => {
 
     await screen.findByText("Recommendation One");
     await screen.findByText("Recommendation Two");
+    expect(screen.getByLabelText("Site")).toHaveClass("operator-select");
     expect(document.querySelector(".page-container-width-full")).toBeTruthy();
     expect(screen.getByTestId("recommendation-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-1");
@@ -247,17 +248,21 @@ describe("recommendations queue optimistic workflows", () => {
       "aria-expanded",
       "true",
     );
-    expect(decisivenessCellOne).toHaveTextContent("High-value next step");
-    expect(decisivenessCellOne).toHaveTextContent("Best immediate move");
-    expect(decisivenessCellOne).toHaveTextContent("Needs review / pending");
-    expect(decisivenessCellOne).toHaveTextContent("Fresh enough to act");
-    expect(decisivenessCellOne).toHaveTextContent("No refresh required before acting.");
-    expect(decisivenessCellOne).toHaveTextContent("Blocked by operator review");
-    expect(decisivenessCellOne).toHaveTextContent("After action:");
-    expect(decisivenessCellOne).toHaveTextContent("Evidence:");
-    expect(decisivenessCellOne).toHaveTextContent("Support cue:");
-    expect(decisivenessCellOne).toHaveTextContent("Revisit:");
-    expect(decisivenessCellOne).toHaveTextContent("operator review required");
+    const recOneDetailRow = screen.getByTestId("recommendation-decisiveness-detail-row-rec-1");
+    const recOneDetailPanel = screen.getByTestId("recommendation-decisiveness-detail-panel-rec-1");
+    expect(recOneDetailRow).toBeInTheDocument();
+    expect(recOneDetailPanel.closest("td")).toHaveAttribute("colspan", "11");
+    expect(recOneDetailPanel).toHaveTextContent("High-value next step");
+    expect(recOneDetailPanel).toHaveTextContent("Best immediate move");
+    expect(recOneDetailPanel).toHaveTextContent("Needs review / pending");
+    expect(recOneDetailPanel).toHaveTextContent("Fresh enough to act");
+    expect(recOneDetailPanel).toHaveTextContent("No refresh required before acting.");
+    expect(recOneDetailPanel).toHaveTextContent("No blocker detected.");
+    expect(recOneDetailPanel).toHaveTextContent("After action:");
+    expect(recOneDetailPanel).toHaveTextContent("Evidence:");
+    expect(recOneDetailPanel).toHaveTextContent("Support cue:");
+    expect(recOneDetailPanel).toHaveTextContent("Revisit:");
+    expect(recOneDetailPanel).toHaveTextContent("operator review required");
     const decisivenessCellTwo = screen.getByTestId("recommendation-decisiveness-rec-2");
     expect(decisivenessCellTwo).toHaveTextContent("Ready now");
     expect(decisivenessCellTwo).toHaveTextContent("Quick win");
@@ -329,10 +334,11 @@ describe("recommendations queue optimistic workflows", () => {
     expect(acceptedDecisiveness).toHaveTextContent("Quick win");
     expect(acceptedDecisiveness).not.toHaveTextContent("Applied / completed");
     await user.click(within(acceptedDecisiveness).getByRole("button", { name: "View details" }));
-    expect(acceptedDecisiveness).toHaveTextContent("Waiting on visibility");
-    expect(acceptedDecisiveness).toHaveTextContent("Applied / completed");
-    expect(acceptedDecisiveness).toHaveTextContent("Pending refresh");
-    expect(acceptedDecisiveness).toHaveTextContent("Revisit after visibility refresh");
+    const acceptedDetailPanel = screen.getByTestId("recommendation-decisiveness-detail-panel-rec-21");
+    expect(acceptedDetailPanel).toHaveTextContent("Waiting on visibility");
+    expect(acceptedDetailPanel).toHaveTextContent("Applied / completed");
+    expect(acceptedDetailPanel).toHaveTextContent("Pending refresh");
+    expect(acceptedDetailPanel).toHaveTextContent("Revisit after visibility refresh");
 
     const dismissedDecisiveness = screen.getByTestId("recommendation-decisiveness-rec-22");
     expect(dismissedDecisiveness).toHaveTextContent("No immediate action");
@@ -340,10 +346,11 @@ describe("recommendations queue optimistic workflows", () => {
     expect(dismissedDecisiveness).not.toHaveTextContent("No blocker");
     expect(dismissedDecisiveness).not.toHaveTextContent("Background item / revisit later");
     await user.click(within(dismissedDecisiveness).getByRole("button", { name: "View details" }));
-    expect(dismissedDecisiveness).toHaveTextContent("Lower-immediacy background item");
-    expect(dismissedDecisiveness).toHaveTextContent("Background item / revisit later");
-    expect(dismissedDecisiveness).toHaveTextContent("Review soon");
-    expect(dismissedDecisiveness).toHaveTextContent("Ignore for now unless context changes");
+    const dismissedDetailPanel = screen.getByTestId("recommendation-decisiveness-detail-panel-rec-22");
+    expect(dismissedDetailPanel).toHaveTextContent("Lower-immediacy background item");
+    expect(dismissedDetailPanel).toHaveTextContent("Background item / revisit later");
+    expect(dismissedDetailPanel).toHaveTextContent("Review soon");
+    expect(dismissedDetailPanel).toHaveTextContent("Ignore for now unless context changes");
   });
 
   it("removes rows excluded by status filter and reconciles summary to backend truth after refresh", async () => {

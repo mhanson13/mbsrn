@@ -21,6 +21,11 @@ Recommendation queue rows now use a compact default view with expandable detail.
 
 This is presentation-only. Recommendation logic, trust semantics, and backend data contracts are unchanged.
 
+### Expanded detail placement rule
+- Keep summary decision cues in the table row.
+- Render expanded recommendation detail in a full-width bounded panel row below the summary row.
+- Do not render expanded detail inside narrow decisiveness/status table cells.
+
 ## Recommendation Queue Quick-Scan Cards
 
 The queue now also includes a compact summary-first quick-scan card list above the full table.
@@ -47,6 +52,16 @@ The recommendation tables inside the site workspace now use a bounded summary-fi
 
 This keeps high-signal supporting metadata visible without mixing it into long narrative text blocks.  
 Behavior and recommendation semantics are unchanged.
+
+### Left/right content rule
+- Left: narrative explanation, action clarity, evidence/rationale language.
+- Right: compact signals only (chips/badges, small metadata).
+- Avoid duplicating left-side natural-language reasoning in the right-side support rail.
+
+### Select/dropdown consistency rule
+- Recommendation-facing filters/site pickers use one shared select pattern.
+- Controls keep consistent sizing, spacing, border/focus states, and safe layering behavior.
+- Narrative compare selectors (`Base Version` / `Compare Version`) follow the same shared select treatment for consistent containment and scanability.
 
 ## Optional Competitor Signal Integration
 

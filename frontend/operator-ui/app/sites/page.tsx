@@ -570,6 +570,7 @@ export default function SitesPage() {
           <label htmlFor="site-picker-intelligence">Selected Site</label>
           <select
             id="site-picker-intelligence"
+            className="operator-select"
             value={context.selectedSiteId || ""}
             onChange={(event) => context.setSelectedSiteId(event.target.value)}
             disabled={context.sites.length === 0}

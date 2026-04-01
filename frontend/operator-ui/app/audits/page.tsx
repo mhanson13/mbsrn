@@ -205,6 +205,7 @@ export default function AuditsPage() {
         <label htmlFor="site-picker-audit">Site</label>
         <select
           id="site-picker-audit"
+          className="operator-select"
           value={context.selectedSiteId || ""}
           onChange={(event) => context.setSelectedSiteId(event.target.value)}
         >

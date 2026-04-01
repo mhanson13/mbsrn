@@ -6799,6 +6799,7 @@ export default function SiteWorkspacePage() {
                             <label className="stack">
                               <span className="hint muted">Target Set</span>
                               <select
+                                className="operator-select"
                                 value={acceptTargetSetByDraftId[draft.id] || ""}
                                 onChange={(event) =>
                                   setAcceptTargetSetByDraftId((current) => ({
@@ -6920,6 +6921,7 @@ export default function SiteWorkspacePage() {
                               <label className="stack">
                                 Competitor Type
                                 <select
+                                  className="operator-select"
                                   value={editFormState.competitor_type}
                                   onChange={(event) =>
                                     setEditFormState((current) =>
@@ -7799,7 +7801,6 @@ export default function SiteWorkspacePage() {
                                     <span className="workspace-recommendation-row-support-label">Progress</span>
                                     <div className="link-row" data-testid="recommendation-progress-status">
                                       <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
-                                      <span className="hint muted">{recommendationProgress.summary}</span>
                                     </div>
                                   </div>
                                   {recommendationLifecycle ? (
@@ -7807,22 +7808,24 @@ export default function SiteWorkspacePage() {
                                       <span className="workspace-recommendation-row-support-label">Lifecycle</span>
                                       <div className="link-row" data-testid="recommendation-lifecycle-state">
                                         <span className={recommendationLifecycle.badgeClass}>{recommendationLifecycle.label}</span>
-                                        <span className="hint muted">{recommendationLifecycle.summary}</span>
                                       </div>
                                     </div>
                                   ) : null}
                                   {recommendationPriority ? (
-                                    <span className="hint muted" data-testid="recommendation-priority">
-                                      <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
-                                        {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
-                                      </span>{" "}
-                                      {recommendationPriority.priorityReason}
-                                      {recommendationPriority.effortHint ? (
-                                        <> Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}.</>
-                                      ) : null}
-                                    </span>
+                                    <div className="workspace-recommendation-row-support-group" data-testid="recommendation-priority">
+                                      <span className="workspace-recommendation-row-support-label">Priority</span>
+                                      <div className="link-row">
+                                        <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
+                                          {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
+                                        </span>
+                                        {recommendationPriority.effortHint ? (
+                                          <span className="badge badge-muted">
+                                            Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </div>
                                   ) : null}
-                                  <span className="hint muted"><code>{item.id}</code></span>
                                 </aside>
                               </div>
                             </td>
@@ -8031,7 +8034,6 @@ export default function SiteWorkspacePage() {
                                           <span className="workspace-recommendation-row-support-label">Progress</span>
                                           <div className="link-row" data-testid="recommendation-progress-status">
                                             <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
-                                            <span className="hint muted">{recommendationProgress.summary}</span>
                                           </div>
                                         </div>
                                         {recommendationLifecycle ? (
@@ -8041,22 +8043,24 @@ export default function SiteWorkspacePage() {
                                               <span className={recommendationLifecycle.badgeClass}>
                                                 {recommendationLifecycle.label}
                                               </span>
-                                              <span className="hint muted">{recommendationLifecycle.summary}</span>
                                             </div>
                                           </div>
                                         ) : null}
                                         {recommendationPriority ? (
-                                          <span className="hint muted" data-testid="recommendation-priority">
-                                            <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
-                                              {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
-                                            </span>{" "}
-                                            {recommendationPriority.priorityReason}
-                                            {recommendationPriority.effortHint ? (
-                                              <> Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}.</>
-                                            ) : null}
-                                          </span>
+                                          <div className="workspace-recommendation-row-support-group" data-testid="recommendation-priority">
+                                            <span className="workspace-recommendation-row-support-label">Priority</span>
+                                            <div className="link-row">
+                                              <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
+                                                {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
+                                              </span>
+                                              {recommendationPriority.effortHint ? (
+                                                <span className="badge badge-muted">
+                                                  Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                          </div>
                                         ) : null}
-                                        <span className="hint muted"><code>{item.id}</code></span>
                                       </aside>
                                     </div>
                                   </td>

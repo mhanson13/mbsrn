@@ -219,6 +219,27 @@ Current usage:
 
 This remains presentation-only and does not change trust semantics, business logic, or API behavior.
 
+## UI Consistency Cleanup Rules (Frontend-Only)
+
+The operator workspace now enforces three shared presentation rules across recommendations, competitors, audits/activity, automation, and site workspace surfaces:
+
+1. Expanded detail rendering rule
+- Compact summary rows stay inside tables/grids.
+- Expanded detail must render in a full-width bounded panel outside row/column constraints.
+- Use the existing bounded panel/card treatment for expanded content.
+
+2. Left vs right content rule
+- Left side carries narrative/action explanation.
+- Right side is signals-only (status chips, compact metadata, IDs/counts).
+- Avoid duplicating or restating left-side natural-language rationale in the right rail.
+
+3. Dropdown/select standardization rule
+- Use one consistent select style/behavior pattern for operator pages.
+- Keep full-width alignment, consistent control height/padding/border/focus treatment, and safe layering behavior.
+- Apply the shared pattern consistently across dense operator surfaces (sites workspace, recommendations, competitors, audits/activity, automation) and related admin/business-profile controls when they use the same shell.
+
+This is a presentation-only refinement and does not alter backend APIs, trust semantics, or business logic.
+
 ## Recommendation Presentation v1
 
 Recommendation rows now include a compact presentation layer focused on operator action state clarity.
