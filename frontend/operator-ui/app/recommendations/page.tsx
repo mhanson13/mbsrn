@@ -100,6 +100,7 @@ const DEFAULT_SORT: SortState = "priority_desc";
 const DEFAULT_PAGE = 1;
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
+const BULK_ACTION_CONCURRENCY_LIMIT = 4;
 const EMPTY_QUEUE_SUMMARY: QueueSummary = {
   total: 0,
   open: 0,
@@ -108,6 +109,12 @@ const EMPTY_QUEUE_SUMMARY: QueueSummary = {
   highPriority: 0,
 };
 const RECOMMENDATION_COLLAPSED_WHY_NOW_MAX_CHARS = 96;
+type BulkActionProgress = {
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+};
 
 const SORT_OPTIONS: Array<{ label: string; value: SortState }> = [
   { label: "Priority: High to Low", value: "priority_desc" },
@@ -970,6 +977,7 @@ function RecommendationsPageContent() {
   const [bulkActionInFlight, setBulkActionInFlight] = useState<RecommendationActionStatus | null>(null);
   const [bulkActionSuccess, setBulkActionSuccess] = useState<string | null>(null);
   const [bulkActionError, setBulkActionError] = useState<string | null>(null);
+  const [bulkActionProgress, setBulkActionProgress] = useState<BulkActionProgress | null>(null);
   const [bulkRefreshNonce, setBulkRefreshNonce] = useState(0);
   const [expandedRecommendationIds, setExpandedRecommendationIds] = useState<Set<string>>(() => new Set());
   const [actionDecisionByItemId, setActionDecisionByItemId] = useState<Record<string, ActionDecision>>({});
@@ -1611,34 +1619,75 @@ function RecommendationsPageContent() {
     setBulkActionInFlight(status);
     setBulkActionSuccess(null);
     setBulkActionError(null);
+    setBulkActionProgress({
+      total: selectedItems.length,
+      processed: 0,
+      succeeded: 0,
+      failed: 0,
+    });
     setItems(optimisticState.items);
     setTotalRecommendations(optimisticState.totalRecommendations);
     setQueueSummary(optimisticState.queueSummary);
     setSelectedRecommendationIds([]);
 
     try {
-      const results = await Promise.allSettled(
-        selectedItems.map((item) =>
-          updateRecommendationStatus(context.token, context.businessId, item.site_id, item.id, { status }),
-        ),
-      );
       const successfulItems: Recommendation[] = [];
       const successfulItemIds: string[] = [];
       const failedItems: Recommendation[] = [];
       const failedErrors: unknown[] = [];
-      results.forEach((result, index) => {
-        const selectedItem = selectedItems[index];
-        if (!selectedItem) {
-          return;
+
+      const workerCount = Math.min(BULK_ACTION_CONCURRENCY_LIMIT, selectedItems.length);
+      let nextItemIndex = 0;
+
+      const runWorker = async () => {
+        while (true) {
+          const currentIndex = nextItemIndex;
+          nextItemIndex += 1;
+          if (currentIndex >= selectedItems.length) {
+            return;
+          }
+          const selectedItem = selectedItems[currentIndex];
+          if (!selectedItem) {
+            continue;
+          }
+          try {
+            const updated = await updateRecommendationStatus(
+              context.token,
+              context.businessId,
+              selectedItem.site_id,
+              selectedItem.id,
+              { status },
+            );
+            successfulItems.push(updated);
+            successfulItemIds.push(selectedItem.id);
+            setBulkActionProgress((current) => {
+              if (!current) {
+                return current;
+              }
+              return {
+                ...current,
+                processed: current.processed + 1,
+                succeeded: current.succeeded + 1,
+              };
+            });
+          } catch (error) {
+            failedItems.push(selectedItem);
+            failedErrors.push(error);
+            setBulkActionProgress((current) => {
+              if (!current) {
+                return current;
+              }
+              return {
+                ...current,
+                processed: current.processed + 1,
+                failed: current.failed + 1,
+              };
+            });
+          }
         }
-        if (result.status === "fulfilled") {
-          successfulItems.push(result.value);
-          successfulItemIds.push(selectedItem.id);
-          return;
-        }
-        failedItems.push(selectedItem);
-        failedErrors.push(result.reason);
-      });
+      };
+
+      await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
 
       const successfulCount = successfulItems.length;
       const failedCount = failedItems.length;
@@ -1657,10 +1706,10 @@ function RecommendationsPageContent() {
       setTotalRecommendations(reconciledState.totalRecommendations);
       setQueueSummary(reconciledState.queueSummary);
 
+      setBulkActionSuccess(
+        `Bulk ${status} complete: ${successfulCount}/${selectedItems.length} succeeded, ${failedCount} failed.`,
+      );
       if (successfulCount > 0) {
-        setBulkActionSuccess(
-          `Updated ${successfulCount} recommendation${successfulCount === 1 ? "" : "s"} to ${status}.`,
-        );
         setBulkRefreshNonce((current) => current + 1);
       }
 
@@ -1675,6 +1724,7 @@ function RecommendationsPageContent() {
       }
     } finally {
       setBulkActionInFlight(null);
+      setBulkActionProgress(null);
     }
   }
 
@@ -1718,6 +1768,7 @@ function RecommendationsPageContent() {
       setBulkActionInFlight(null);
       setBulkActionSuccess(null);
       setBulkActionError(null);
+      setBulkActionProgress(null);
       return;
     }
     let cancelled = false;
@@ -2233,6 +2284,12 @@ function RecommendationsPageContent() {
         {itemsError ? <p className="hint error">{itemsError}</p> : null}
         {bulkActionSuccess ? <p className="hint">{bulkActionSuccess}</p> : null}
         {bulkActionError ? <p className="hint error">{bulkActionError}</p> : null}
+        {bulkActionProgress ? (
+          <p className="hint muted" data-testid="bulk-action-progress">
+            Processing {bulkActionProgress.processed}/{bulkActionProgress.total} • {bulkActionProgress.succeeded} succeeded •{" "}
+            {bulkActionProgress.failed} failed
+          </p>
+        ) : null}
 
         <div className="row-wrap-tight">
           <button

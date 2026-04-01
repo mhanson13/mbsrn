@@ -87,3 +87,28 @@ This is additive frontend behavior on top of existing recommendation/automation 
 
 - Decision capture does not alter recommendation trust semantics.
 - Informational trust tiers remain review-first and are not implicitly marked as complete.
+
+## Bulk Action Burst Protection
+
+The recommendations queue now applies a bounded client-side mutation queue for bulk status updates instead of launching one request per selected item in an unbounded parallel burst.
+
+### Processing model
+
+- Bulk mutations are processed with a fixed in-flight concurrency cap (`4`).
+- The queue remains interactive and shows live progress while updates run:
+  - total selected
+  - processed
+  - succeeded
+  - failed
+- Partial failures are preserved and surfaced explicitly; failed rows are re-selected for follow-up.
+
+### Refresh behavior
+
+- Per-item optimistic state updates remain in place for immediate operator feedback.
+- Full list refresh is controlled (single post-batch refresh when at least one update succeeds).
+- The UI no longer triggers full data refresh per individual mutation.
+
+### Why this exists
+
+- Production incidents showed large bulk actions (for example, 50+ recommendation updates) could overwhelm API/database connection pools when requests were fired in parallel.
+- The bounded queue reduces pool pressure while preserving current recommendation workflow semantics.

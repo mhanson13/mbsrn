@@ -301,6 +301,7 @@ describe("recommendations queue optimistic workflows", () => {
     expect(screen.getByText("2 selected on this page")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Dismiss Selected" }));
+    expect(screen.getByTestId("bulk-action-progress")).toHaveTextContent("Processing 0/2");
 
     expect(getRecommendationRow("Recommendation One")).toHaveTextContent("dismissed");
     expect(getRecommendationRow("Recommendation Two")).toHaveTextContent("dismissed");
@@ -324,7 +325,7 @@ describe("recommendations queue optimistic workflows", () => {
     expect(getRecommendationRow("Recommendation One")).toHaveTextContent("dismissed");
     expect(getRecommendationRow("Recommendation Two")).toHaveTextContent("open");
     expect(screen.getByText("1 selected on this page")).toBeInTheDocument();
-    expect(screen.getAllByText("Updated 1 recommendation to dismissed.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Bulk dismissed complete: 1/2 succeeded, 1 failed.").length).toBeGreaterThan(0);
     expect(
       screen.getByText(
         "One or more recommendation updates are not allowed in the current state. 1 update failed.",
@@ -506,7 +507,7 @@ describe("recommendations queue optimistic workflows", () => {
     await user.click(screen.getByLabelText("Select recommendation rec-5"));
     await user.click(screen.getByRole("button", { name: "Accept Selected" }));
 
-    await screen.findAllByText("Updated 1 recommendation to accepted.");
+    await screen.findAllByText("Bulk accepted complete: 1/1 succeeded, 0 failed.");
     await waitFor(() =>
       expect(mockFetchRecommendations).toHaveBeenLastCalledWith(
         "token-1",
@@ -528,6 +529,115 @@ describe("recommendations queue optimistic workflows", () => {
     expect(navigationState.push).toHaveBeenCalledWith(
       "/recommendations/rec-5?site_id=site-1&category=SEO&sort=oldest&page=3&page_size=50",
     );
+  });
+
+  it("caps bulk mutation concurrency and reports queue progress", async () => {
+    const recommendations = Array.from({ length: 6 }, (_, index) =>
+      createRecommendation(`rec-bulk-${index + 1}`, "open", "high", `Bulk Recommendation ${index + 1}`),
+    );
+    mockFetchRecommendations
+      .mockResolvedValueOnce(
+        createListResponse(
+          recommendations,
+          {
+            total: 6,
+            open: 6,
+            accepted: 0,
+            dismissed: 0,
+            high_priority: 6,
+          },
+          6,
+        ),
+      )
+      .mockResolvedValueOnce(
+        createListResponse(
+          recommendations.map((item) => ({
+            ...item,
+            status: "accepted",
+            updated_at: "2026-03-20T05:00:00Z",
+          })),
+          {
+            total: 6,
+            open: 0,
+            accepted: 6,
+            dismissed: 0,
+            high_priority: 6,
+          },
+          6,
+        ),
+      );
+
+    const deferredById = new Map<string, Deferred<Recommendation>>();
+    let inFlightRequests = 0;
+    let maxInFlightRequests = 0;
+    mockUpdateRecommendationStatus.mockImplementation(
+      (...args: unknown[]) => {
+        const recommendationId = String(args[3] || "");
+        const deferred = createDeferred<Recommendation>();
+        deferredById.set(recommendationId, deferred);
+        inFlightRequests += 1;
+        maxInFlightRequests = Math.max(maxInFlightRequests, inFlightRequests);
+        deferred.promise.finally(() => {
+          inFlightRequests -= 1;
+        });
+        return deferred.promise;
+      },
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Bulk Recommendation 1");
+    await user.click(screen.getByLabelText("Select all displayed recommendations"));
+    await user.click(screen.getByRole("button", { name: "Accept Selected" }));
+
+    await waitFor(() => {
+      expect(mockUpdateRecommendationStatus).toHaveBeenCalledTimes(4);
+    });
+    expect(maxInFlightRequests).toBeLessThanOrEqual(4);
+    expect(screen.getByTestId("bulk-action-progress")).toHaveTextContent("Processing 0/6");
+
+    const firstCallRecommendationId = String(mockUpdateRecommendationStatus.mock.calls[0]?.[3] || "");
+    const secondCallRecommendationId = String(mockUpdateRecommendationStatus.mock.calls[1]?.[3] || "");
+    deferredById.get(firstCallRecommendationId)?.resolve({
+      ...recommendations[0],
+      status: "accepted",
+      updated_at: "2026-03-20T05:00:01Z",
+    });
+    deferredById.delete(firstCallRecommendationId);
+    await waitFor(() => {
+      expect(mockUpdateRecommendationStatus).toHaveBeenCalledTimes(5);
+    });
+    deferredById.get(secondCallRecommendationId)?.resolve({
+      ...recommendations[1],
+      status: "accepted",
+      updated_at: "2026-03-20T05:00:02Z",
+    });
+    deferredById.delete(secondCallRecommendationId);
+    await waitFor(() => {
+      expect(mockUpdateRecommendationStatus).toHaveBeenCalledTimes(6);
+    });
+    expect(screen.getByTestId("bulk-action-progress")).toHaveTextContent("Processing 2/6");
+
+    const pendingRecommendationIds = mockUpdateRecommendationStatus.mock.calls
+      .map((call) => String(call[3]))
+      .filter((recommendationId) => deferredById.has(recommendationId));
+    for (const recommendationId of pendingRecommendationIds) {
+      const recommendation = recommendations.find((item) => item.id === recommendationId);
+      if (!recommendation) {
+        continue;
+      }
+      deferredById.get(recommendationId)?.resolve({
+        ...recommendation,
+        status: "accepted",
+        updated_at: "2026-03-20T05:00:10Z",
+      });
+      deferredById.delete(recommendationId);
+    }
+
+    await screen.findAllByText("Bulk accepted complete: 6/6 succeeded, 0 failed.");
+    expect(maxInFlightRequests).toBeLessThanOrEqual(4);
+    expect(mockFetchRecommendations).toHaveBeenCalledTimes(2);
   });
 
   it("renders automation-triggered provenance cues when recommendation run linkage is present", async () => {

@@ -163,6 +163,23 @@ Local test strategy:
 - mocked page tests for recommendation/workspace/automation run surfaces
 - no provider/runtime dependency required for decision-capture validation
 
+## Recommendation Bulk Mutation Resilience
+
+Bulk recommendation status mutations now use bounded frontend concurrency instead of unbounded parallel fan-out.
+
+Implementation boundary:
+- UI queue processing: `frontend/operator-ui/app/recommendations/page.tsx`
+- per-item mutation endpoint remains unchanged: `PATCH /api/.../sites/{site_id}/recommendations/{recommendation_id}`
+
+Operational behavior:
+- fixed in-flight concurrency cap (`4`) for bulk accept/dismiss workflows
+- optimistic row-level status updates during processing
+- single controlled post-batch refresh instead of per-item refresh storms
+- partial failures are reported explicitly and retained for follow-up selection
+
+Pool-pressure observability:
+- API now emits structured route-context logging for SQLAlchemy pool timeout exceptions and returns a transient `503` response instead of an opaque unhandled `500`.
+
 ## AI Provider Execution Modes
 Competitor profile generation now routes provider calls by explicit execution mode and call capability, not by hardcoded endpoint selection in service logic.
 

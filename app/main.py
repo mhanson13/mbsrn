@@ -9,7 +9,7 @@ from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, TimeoutError as SQLAlchemyTimeoutError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -363,6 +363,24 @@ def readiness_health() -> Response:
     if ready:
         return JSONResponse(status_code=200, content=payload)
     return JSONResponse(status_code=503, content=payload)
+
+
+@app.exception_handler(SQLAlchemyTimeoutError)
+async def handle_sqlalchemy_pool_timeout(request: Request, exc: SQLAlchemyTimeoutError) -> JSONResponse:
+    logger.error(
+        "database_pool_timeout method=%s path=%s app_env=%s db_connection_mode=%s host=%s port=%s error=%s",
+        request.method,
+        request.url.path,
+        settings.app_env,
+        settings.db_connection_mode,
+        DATABASE_TARGET_HOST,
+        DATABASE_TARGET_PORT_LABEL,
+        exc,
+    )
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database temporarily unavailable due to pool pressure. Please retry."},
+    )
 
 
 app.include_router(intake_router)
