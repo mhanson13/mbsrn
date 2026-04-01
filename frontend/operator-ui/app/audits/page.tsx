@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
@@ -105,7 +106,7 @@ export default function AuditsPage() {
 
   if (context.loading) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Audit Runs"
@@ -119,7 +120,7 @@ export default function AuditsPage() {
   }
   if (context.error) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Audit Runs"
@@ -133,7 +134,7 @@ export default function AuditsPage() {
   }
   if (context.sites.length === 0) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard variant="support" className="role-surface-support">
           <SectionHeader
             title="Audit Runs"
@@ -147,7 +148,7 @@ export default function AuditsPage() {
   }
 
   return (
-    <PageContainer>
+    <PageContainer width="wide" density="compact">
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -217,8 +218,82 @@ export default function AuditsPage() {
         {loadingRuns ? <p className="hint muted">Loading audit runs...</p> : null}
         {runsError ? <p className="hint error">{runsError}</p> : null}
 
+        <div className="stack" data-testid="audit-quick-scan">
+          <h3 className="heading-reset">Run quick scan</h3>
+          <p className="hint muted">
+            Summary-first cards surface current run state before full run-history table review.
+          </p>
+          {runs.length === 0 && !loadingRuns ? (
+            <p className="hint muted">No audit runs available for quick scan.</p>
+          ) : null}
+          {runs.length > 0 ? (
+            <div className="operational-item-list">
+              {runs.slice(0, 6).map((run) => {
+                const normalizedStatus = run.status.toLowerCase();
+                const statusBadgeClass =
+                  normalizedStatus === "completed"
+                    ? "badge-success"
+                    : normalizedStatus === "failed"
+                      ? "badge-error"
+                      : "badge-warn";
+                return (
+                  <OperationalItemCard
+                    key={`audit-quick-scan-${run.id}`}
+                    data-testid={`audit-quick-scan-item-${run.id}`}
+                    title={`Audit run ${run.id}`}
+                    chips={(
+                      <>
+                        <span className={`badge ${statusBadgeClass}`}>{run.status}</span>
+                        <span className="badge badge-muted">{run.pages_crawled} crawled</span>
+                        <span
+                          className={`badge ${
+                            run.errors_encountered > 0 ? "badge-warn" : "badge-success"
+                          }`}
+                        >
+                          {run.errors_encountered} errors
+                        </span>
+                      </>
+                    )}
+                    summary={deriveResultIndicator(run)}
+                    primaryAction={
+                      <button
+                        type="button"
+                        className="button button-tertiary button-inline"
+                        onClick={() => router.push(`/audits/${run.id}`)}
+                      >
+                        Open run detail
+                      </button>
+                    }
+                    secondaryMeta={
+                      <span className="hint muted">
+                        Completed: {formatDateTime(run.completed_at)} | Started: {formatDateTime(run.started_at)}
+                      </span>
+                    }
+                    expandedDetail={
+                      <>
+                        <p className="hint muted">
+                          <span className="text-strong">Business:</span> {run.business_id}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">Site:</span> {run.site_id}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">Created:</span> {formatDateTime(run.created_at)}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">Error summary:</span> {run.error_summary || "None"}
+                        </p>
+                      </>
+                    }
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+
         <div className="table-container">
-          <table className="table">
+          <table className="table table-dense">
             <thead>
               <tr>
                 <th>Run ID</th>

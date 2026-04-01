@@ -21,6 +21,24 @@ Recommendation queue rows now use a compact default view with expandable detail.
 
 This is presentation-only. Recommendation logic, trust semantics, and backend data contracts are unchanged.
 
+## Recommendation Queue Quick-Scan Cards
+
+The queue now also includes a compact summary-first quick-scan card list above the full table.
+
+Each quick-scan card keeps key decision signals visible before expansion:
+- actionability
+- effort
+- blocker (when present)
+- short why-now line
+- direct action link to recommendation detail
+
+Expanded quick-scan detail keeps deeper context available without forcing full-table scanning:
+- blocking context
+- after-action expectation
+- compact evidence preview + trust cue
+
+This is additive presentation only. The underlying recommendation data model, status semantics, trust semantics, and API contracts are unchanged.
+
 ## Optional Competitor Signal Integration
 
 Recommendation narrative generation can consume an optional, bounded competitor context signal. This is additive and does not change deterministic recommendation artifacts or provider/model architecture.

@@ -73,6 +73,7 @@ describe("dashboard shared support-state framing", () => {
     mockUseOperatorContext.mockReturnValue(baseContext());
     render(<DashboardPage />);
 
+    expect(document.querySelector(".page-container-width-default")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
     const recommendationOutcomeHeading = screen.getByRole("heading", { name: "Recommendation decisiveness cues" });
     expect(recommendationOutcomeHeading).toBeInTheDocument();

@@ -196,6 +196,11 @@ describe("competitors page site-scoped loading", () => {
 
     const frontRangeRows = await screen.findAllByText("Front Range");
     expect(frontRangeRows.length).toBeGreaterThan(0);
+    expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
+    expect(screen.getByTestId("competitor-quick-scan")).toBeInTheDocument();
+    const quickScanItem = screen.getByTestId("competitor-quick-scan-item-set-1");
+    expect(quickScanItem).toHaveTextContent("Active set");
+    expect(quickScanItem).toHaveTextContent("Snapshot: completed");
     expect(mockFetchCompetitorSets).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     expect(screen.getByText("Competitor Sets: 1")).toBeInTheDocument();
     expect(screen.getByText("Active Sets: 1/1")).toBeInTheDocument();

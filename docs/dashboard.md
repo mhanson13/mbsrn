@@ -184,6 +184,32 @@ The AI Competitor Profiles workspace section now uses the same structured rhythm
 
 This is a presentation/layout update only. Competitor generation behavior and trust semantics are unchanged.
 
+## Shared Operational Item Pattern + Layout Width Modes
+
+Operator data-dense pages now share a compact operational item pattern for faster scanability:
+- summary-first card header (item identity + status chips)
+- short why-it-matters line
+- visible primary action
+- optional expandable detail for deeper evidence/timestamps/debug context
+
+This pattern is now used on:
+- recommendations (queue quick scan)
+- competitors (set quick scan)
+- audits (run quick scan)
+- automation (run quick scan)
+
+Layout width is now explicitly controlled with frontend container modes:
+- `default`: existing baseline width
+- `wide`: reduced side margins for dense list/table pages
+- `full`: near edge-to-edge (with safe padding) for highest-density workspace pages
+
+Current usage:
+- recommendations, competitors, audits, automation: `wide`
+- site workspace (`/sites/[site_id]`): `full`
+- non-dense pages remain `default`
+
+This remains presentation-only and does not change trust semantics, business logic, or API behavior.
+
 ## Recommendation Presentation v1
 
 Recommendation rows now include a compact presentation layer focused on operator action state clarity.

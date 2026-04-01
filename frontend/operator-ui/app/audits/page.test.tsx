@@ -87,6 +87,11 @@ describe("audits page shared-shell framing", () => {
     render(<AuditsPage />);
 
     await screen.findByText("run-1");
+    expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
+    expect(screen.getByTestId("audit-quick-scan")).toBeInTheDocument();
+    const quickScanItem = screen.getByTestId("audit-quick-scan-item-run-1");
+    expect(quickScanItem).toHaveTextContent("completed");
+    expect(quickScanItem).toHaveTextContent("0 errors");
     expect(screen.getByText("Total runs")).toBeInTheDocument();
     expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
     expect(screen.getByText("Failed")).toBeInTheDocument();

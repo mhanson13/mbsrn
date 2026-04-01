@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { PageContainer } from "../../components/layout/PageContainer";
+import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
@@ -26,6 +27,7 @@ interface CompetitorSetRow extends CompetitorSet {
   active_domain_count: number;
   source_summary: string;
   latest_domain_updated_at: string | null;
+  latest_snapshot_status: string | null;
 }
 
 interface LatestSiteRun {
@@ -320,6 +322,7 @@ function CompetitorsPageContent() {
                 active_domain_count: activeDomainCount,
                 source_summary: sourceSet.size > 0 ? [...sourceSet].sort().join(", ") : "-",
                 latest_domain_updated_at: latestDomainUpdatedAt,
+                latest_snapshot_status: latestSnapshotCandidate ? latestSnapshotCandidate.status : null,
               },
               latestSnapshotCandidate,
             };
@@ -406,7 +409,7 @@ function CompetitorsPageContent() {
 
   if (contextLoading) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Competitor Intelligence"
@@ -420,7 +423,7 @@ function CompetitorsPageContent() {
   }
   if (contextError) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Competitor Intelligence"
@@ -434,7 +437,7 @@ function CompetitorsPageContent() {
   }
   if (sites.length === 0) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard variant="support" className="role-surface-support">
           <SectionHeader
             title="Competitor Intelligence"
@@ -448,7 +451,7 @@ function CompetitorsPageContent() {
   }
 
   return (
-    <PageContainer>
+    <PageContainer width="wide" density="compact">
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -579,11 +582,76 @@ function CompetitorsPageContent() {
           <span className="hint muted">Domains Across Sets: {totalDomainCount}</span>
         </div>
 
+        <div className="stack" data-testid="competitor-quick-scan">
+          <h3 className="heading-reset">Set quick scan</h3>
+          <p className="hint muted">
+            Summary-first cards highlight readiness and the next set to review before opening full tables.
+          </p>
+          {competitorSets.length === 0 && !loadingCompetitors ? (
+            <p className="hint muted">No competitor sets available for quick scan.</p>
+          ) : null}
+          {competitorSets.length > 0 ? (
+            <div className="operational-item-list">
+              {competitorSets.slice(0, 6).map((item) => {
+                const snapshotStatus = item.latest_snapshot_status
+                  ? formatRunStatus(item.latest_snapshot_status)
+                  : "No snapshot";
+                return (
+                  <OperationalItemCard
+                    key={`competitor-quick-scan-${item.id}`}
+                    data-testid={`competitor-quick-scan-item-${item.id}`}
+                    title={`Set: ${item.name}`}
+                    identity={<code>{item.id}</code>}
+                    chips={(
+                      <>
+                        <span className={`badge ${item.is_active ? "badge-success" : "badge-muted"}`}>
+                          {item.is_active ? "Active set" : "Inactive set"}
+                        </span>
+                        <span className="badge badge-muted">{item.active_domain_count}/{item.domain_count} active domains</span>
+                        <span className={`badge ${snapshotStatus.toLowerCase() === "completed" ? "badge-success" : "badge-warn"}`}>
+                          Snapshot: {snapshotStatus}
+                        </span>
+                      </>
+                    )}
+                    summary={`Location: ${formatLocation(item.city, item.state)}. Provenance: ${item.source_summary}.`}
+                    primaryAction={
+                      <Link href={buildSetDetailHref(item)} className="button button-tertiary button-inline">
+                        Open set detail
+                      </Link>
+                    }
+                    secondaryMeta={
+                      <>
+                        <span className="hint muted">Latest domain update: {formatDateTime(item.latest_domain_updated_at)}</span>
+                      </>
+                    }
+                    expandedDetail={
+                      <>
+                        <p className="hint muted">
+                          <span className="text-strong">Business:</span> {item.business_id}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">Site:</span> {item.site_id}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">Created:</span> {formatDateTime(item.created_at)}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">Updated:</span> {formatDateTime(item.updated_at)}
+                        </p>
+                      </>
+                    }
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+
         {loadingCompetitors ? <p className="hint muted">Loading competitors...</p> : null}
         {competitorsError ? <p className="hint error">{competitorsError}</p> : null}
 
         <div className="table-container">
-          <table className="table">
+          <table className="table table-dense">
             <thead>
               <tr>
                 <th>Set</th>
@@ -652,7 +720,7 @@ export default function CompetitorsPage() {
   return (
     <Suspense
       fallback={(
-        <PageContainer>
+        <PageContainer width="wide" density="compact">
           <SectionCard as="div" variant="support" className="role-surface-support">
             <SectionHeader
               title="Competitor Intelligence"

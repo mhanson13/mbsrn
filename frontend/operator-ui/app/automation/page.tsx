@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
@@ -52,7 +53,7 @@ export default function AutomationPage() {
 
   if (context.loading) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Automation Run History"
@@ -66,7 +67,7 @@ export default function AutomationPage() {
   }
   if (context.error) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Automation Run History"
@@ -80,7 +81,7 @@ export default function AutomationPage() {
   }
   if (context.sites.length === 0) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard variant="support" className="role-surface-support">
           <SectionHeader
             title="Automation Run History"
@@ -94,7 +95,7 @@ export default function AutomationPage() {
   }
 
   return (
-    <PageContainer>
+    <PageContainer width="wide" density="compact">
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -164,8 +165,84 @@ export default function AutomationPage() {
         {loadingItems ? <p className="hint muted">Loading automation runs...</p> : null}
         {itemsError ? <p className="hint error">{itemsError}</p> : null}
 
+        <div className="stack" data-testid="automation-quick-scan">
+          <h3 className="heading-reset">Run quick scan</h3>
+          <p className="hint muted">
+            Summary-first cards show automation status, blockers, and follow-up urgency before deep history review.
+          </p>
+          {items.length === 0 && !loadingItems ? (
+            <p className="hint muted">No automation runs available for quick scan.</p>
+          ) : null}
+          {items.length > 0 ? (
+            <div className="operational-item-list">
+              {items.slice(0, 6).map((item) => {
+                const normalizedStatus = item.status.toLowerCase();
+                const statusBadgeClass =
+                  normalizedStatus === "completed"
+                    ? "badge-success"
+                    : normalizedStatus === "failed"
+                      ? "badge-error"
+                      : "badge-warn";
+                const blockerLabel =
+                  normalizedStatus === "failed"
+                    ? "Manual follow-up required"
+                    : normalizedStatus === "running"
+                      ? "In progress"
+                      : "No blocker";
+                const blockerClass =
+                  normalizedStatus === "failed"
+                    ? "badge-warn"
+                    : normalizedStatus === "running"
+                      ? "badge-warn"
+                      : "badge-muted";
+                return (
+                  <OperationalItemCard
+                    key={`automation-quick-scan-${item.id}`}
+                    data-testid={`automation-quick-scan-item-${item.id}`}
+                    title={`Automation run ${item.id}`}
+                    chips={(
+                      <>
+                        <span className={`badge ${statusBadgeClass}`}>{item.status}</span>
+                        <span className="badge badge-muted">{item.trigger_source}</span>
+                        <span className={`badge ${blockerClass}`}>{blockerLabel}</span>
+                      </>
+                    )}
+                    summary={
+                      normalizedStatus === "completed"
+                        ? "Run completed. Confirm downstream visibility where applicable."
+                        : normalizedStatus === "running"
+                          ? "Run is active. Wait for finish before acting on output."
+                          : normalizedStatus === "failed"
+                            ? "Run failed and needs operator follow-up."
+                            : "Run state requires review."
+                    }
+                    secondaryMeta={
+                      <span className="hint muted">
+                        Started: {item.started_at || "-"} | Finished: {item.finished_at || "-"}
+                      </span>
+                    }
+                    expandedDetail={
+                      <>
+                        <p className="hint muted">
+                          <span className="text-strong">Business:</span> {item.business_id}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">Site:</span> {item.site_id}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">Error:</span> {item.error_message || "None"}
+                        </p>
+                      </>
+                    }
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+
         <div className="table-container">
-          <table className="table">
+          <table className="table table-dense">
             <thead>
               <tr>
                 <th>Run ID</th>

@@ -5,6 +5,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { DetailFocusPanel, type DetailFocusFact } from "../../components/layout/DetailFocusPanel";
+import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
@@ -1245,6 +1246,7 @@ function RecommendationsPageContent() {
     topAppliedRecommendation,
     topReadyRecommendation,
   ]);
+  const recommendationQuickScanItems = useMemo(() => items.slice(0, 6), [items]);
 
   function updateQueueParams(nextFilters: FilterState, nextSort: SortState) {
     const params = new URLSearchParams(searchParams.toString());
@@ -1548,7 +1550,7 @@ function RecommendationsPageContent() {
 
   if (context.loading) {
     return (
-      <PageContainer>
+      <PageContainer width="full" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Recommendation Workflow"
@@ -1562,7 +1564,7 @@ function RecommendationsPageContent() {
   }
   if (context.error) {
     return (
-      <PageContainer>
+      <PageContainer width="full" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Recommendation Workflow"
@@ -1576,7 +1578,7 @@ function RecommendationsPageContent() {
   }
   if (context.sites.length === 0) {
     return (
-      <PageContainer>
+      <PageContainer width="full" density="compact">
         <SectionCard variant="support" className="role-surface-support">
           <SectionHeader
             title="Recommendation Workflow"
@@ -1590,7 +1592,7 @@ function RecommendationsPageContent() {
   }
 
   return (
-    <PageContainer>
+    <PageContainer width="full" density="compact">
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -1792,6 +1794,79 @@ function RecommendationsPageContent() {
         </div>
         <p className="hint muted">Summary cards reflect all filtered results across pages.</p>
 
+        <div className="stack" data-testid="recommendation-quick-scan">
+          <h3 className="heading-reset">Queue quick scan</h3>
+          <p className="hint muted">
+            Summary-first cards show what each recommendation is, its current readiness, and the best next action.
+          </p>
+          {recommendationQuickScanItems.length === 0 && !loadingItems ? (
+            <p className="hint muted">No recommendation items available for quick scan.</p>
+          ) : null}
+          {recommendationQuickScanItems.length > 0 ? (
+            <div className="operational-item-list">
+              {recommendationQuickScanItems.map((item) => {
+                const decisiveness = deriveRecommendationDecisiveness(item, topReadyRecommendation?.id || null);
+                const showBlockerBadge =
+                  decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
+                return (
+                  <OperationalItemCard
+                    key={`quick-scan-${item.id}`}
+                    data-testid={`recommendation-quick-scan-item-${item.id}`}
+                    title={`Queue item: ${item.title}`}
+                    identity={<code>{item.id}</code>}
+                    chips={(
+                      <>
+                        <span className={`badge ${decisiveness.actionabilityTone}`}>
+                          {decisiveness.actionabilityCue}
+                        </span>
+                        <span className={`badge ${decisiveness.effortCueTone}`}>{decisiveness.effortCue}</span>
+                        {showBlockerBadge ? (
+                          <span className={`badge ${decisiveness.blockerCueTone}`}>{decisiveness.blockerCue}</span>
+                        ) : null}
+                      </>
+                    )}
+                    summary={
+                      <span>
+                        <span className="text-strong">Why now:</span> {truncateRecommendationWhyNow(decisiveness.whyNow)}
+                      </span>
+                    }
+                    primaryAction={
+                      <Link href={buildRecommendationDetailHref(item)} className="button button-tertiary button-inline">
+                        Open detail
+                      </Link>
+                    }
+                    secondaryMeta={
+                      <>
+                        <span className="badge badge-muted">{item.status}</span>
+                        <span className="badge badge-muted">{item.priority_band}</span>
+                        <span className="badge badge-muted">{deriveSourceType(item)}</span>
+                      </>
+                    }
+                    expandedDetail={
+                      <>
+                        <p className="hint muted">
+                          <span className="text-strong">Blocking:</span> {decisiveness.blockingState}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">After action:</span> {decisiveness.afterAction}
+                        </p>
+                        <p className="hint muted">
+                          <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
+                        </p>
+                        <p className="hint muted">
+                          <span className={`badge ${decisiveness.evidenceTrustTone}`}>
+                            {decisiveness.evidenceTrustCue}
+                          </span>
+                        </p>
+                      </>
+                    }
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+
         <div className="row-wrap-end">
           <div className="stack-tight min-width-140">
           <label htmlFor="recommendation-page-size">Results per page</label>
@@ -1863,7 +1938,7 @@ function RecommendationsPageContent() {
         </div>
 
         <div className="table-container">
-          <table className="table">
+          <table className="table table-dense">
             <thead>
               <tr>
                 <th>
@@ -2032,7 +2107,7 @@ export default function RecommendationsPage() {
   return (
     <Suspense
       fallback={
-        <PageContainer>
+        <PageContainer width="full" density="compact">
           <SectionCard as="div" variant="support" className="role-surface-support">
             <SectionHeader
               title="Recommendation Workflow"

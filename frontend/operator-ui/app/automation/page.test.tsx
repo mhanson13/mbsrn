@@ -69,6 +69,11 @@ describe("automation page shared-shell framing", () => {
     render(<AutomationPage />);
 
     await screen.findByText("run-1");
+    expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
+    expect(screen.getByTestId("automation-quick-scan")).toBeInTheDocument();
+    const quickScanItem = screen.getByTestId("automation-quick-scan-item-run-1");
+    expect(quickScanItem).toHaveTextContent("completed");
+    expect(quickScanItem).toHaveTextContent("No blocker");
     expect(screen.getByText("Total runs")).toBeInTheDocument();
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("Running")).toBeInTheDocument();

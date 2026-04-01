@@ -16,9 +16,33 @@ const links = [
   { href: "/admin", label: "Admin", adminOnly: true },
 ];
 
+type ShellWidthMode = "default" | "wide" | "full";
+
+function resolveShellWidthMode(pathname: string): ShellWidthMode {
+  if (pathname.startsWith("/sites/")) {
+    return "full";
+  }
+  if (
+    pathname.startsWith("/recommendations")
+    || pathname.startsWith("/competitors")
+    || pathname.startsWith("/audits")
+    || pathname.startsWith("/automation")
+  ) {
+    return "wide";
+  }
+  return "default";
+}
+
 export function NavShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { token, refreshToken, principal, clearSession } = useAuth();
+  const shellWidthMode = resolveShellWidthMode(pathname);
+  const shellMainInnerClassName = [
+    "operator-shell-main-inner",
+    shellWidthMode === "default" ? "" : `operator-shell-main-inner-${shellWidthMode}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   async function handleSignOut() {
     try {
@@ -75,7 +99,7 @@ export function NavShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <main className="operator-shell-main">
-        <div className="operator-shell-main-inner">{children}</div>
+        <div className={shellMainInnerClassName}>{children}</div>
       </main>
     </>
   );

@@ -46,6 +46,9 @@ describe("NavShell", () => {
     expect(adminLink).toBeInTheDocument();
     expect(adminLink).toHaveAttribute("href", "/admin");
     expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
+    expect(document.querySelector(".operator-shell-main-inner")).toBeTruthy();
+    expect(document.querySelector(".operator-shell-main-inner-wide")).toBeNull();
+    expect(document.querySelector(".operator-shell-main-inner-full")).toBeNull();
   });
 
   it("marks the matching top navigation link as active for nested routes", () => {
@@ -73,5 +76,30 @@ describe("NavShell", () => {
     expect(sitesLink).toHaveClass("topnav-link", "is-active");
     expect(sitesLink).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveClass("is-active");
+    expect(document.querySelector(".operator-shell-main-inner-full")).toBeTruthy();
+  });
+
+  it("applies wide shell width mode for dense workflow routes", () => {
+    mockUsePathname.mockReturnValue("/recommendations");
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-2",
+        display_name: "Operator Two",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    expect(document.querySelector(".operator-shell-main-inner-wide")).toBeTruthy();
   });
 });

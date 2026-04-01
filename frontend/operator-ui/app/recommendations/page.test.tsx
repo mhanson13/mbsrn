@@ -202,6 +202,20 @@ describe("recommendations queue optimistic workflows", () => {
 
     await screen.findByText("Recommendation One");
     await screen.findByText("Recommendation Two");
+    expect(document.querySelector(".page-container-width-full")).toBeTruthy();
+    expect(screen.getByTestId("recommendation-quick-scan")).toBeInTheDocument();
+    const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-1");
+    expect(quickScanItem).toHaveTextContent("Ready now");
+    expect(quickScanItem).toHaveTextContent("Quick win");
+    expect(quickScanItem).toHaveTextContent("Blocked by operator review");
+    const quickScanToggle = within(quickScanItem).getByRole("button", { name: "Show details" });
+    expect(quickScanToggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(quickScanToggle);
+    expect(within(quickScanItem).getByRole("button", { name: "Hide details" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(quickScanItem).toHaveTextContent("After action:");
     expect(screen.getByTestId("recommendation-queue-outcome-focus")).toBeInTheDocument();
     expect(screen.getByText("Recommendation outcome snapshot")).toBeInTheDocument();
     expect(screen.getByText("Why this matters now")).toBeInTheDocument();

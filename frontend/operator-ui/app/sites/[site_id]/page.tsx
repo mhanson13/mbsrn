@@ -5536,21 +5536,21 @@ export default function SiteWorkspacePage() {
 
   if (context.loading) {
     return (
-      <PageContainer>
+      <PageContainer width="full" density="compact">
         <SectionCard as="div">Loading site workspace...</SectionCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
-      <PageContainer>
+      <PageContainer width="full" density="compact">
         <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
       </PageContainer>
     );
   }
   if (!siteId) {
     return (
-      <PageContainer>
+      <PageContainer width="full" density="compact">
         <SectionCard>
           <h1>Site SEO Workspace</h1>
           <p className="hint warning">Site identifier is missing.</p>
@@ -5563,7 +5563,7 @@ export default function SiteWorkspacePage() {
   }
   if (notFound || !selectedSite) {
     return (
-      <PageContainer>
+      <PageContainer width="full" density="compact">
         <SectionCard>
           <p>
             <Link href="/sites">Back to Sites</Link>
@@ -5586,7 +5586,7 @@ export default function SiteWorkspacePage() {
   const compactAuditErrors = latestAuditRun?.errors_encountered;
 
   return (
-    <PageContainer>
+    <PageContainer width="full" density="compact">
       <div className="workspace-dashboard-landing">
         <SectionCard className="workspace-shell-overview workspace-shell-overview-hero" variant="support">
           <div className="workspace-section-header workspace-section-header-compact">
