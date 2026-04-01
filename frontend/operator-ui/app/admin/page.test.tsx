@@ -64,6 +64,7 @@ describe("admin route", () => {
 
     expect(screen.getByRole("heading", { name: "Admin" })).toBeInTheDocument();
     expect(screen.getByText("Business administration is available to admin principals only.")).toBeInTheDocument();
+    expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
   });
 
   it("keeps /users as a compatibility alias", () => {

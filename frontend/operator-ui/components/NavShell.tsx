@@ -22,15 +22,10 @@ function resolveShellWidthMode(pathname: string): ShellWidthMode {
   if (pathname.startsWith("/sites/")) {
     return "full";
   }
-  if (
-    pathname.startsWith("/recommendations")
-    || pathname.startsWith("/competitors")
-    || pathname.startsWith("/audits")
-    || pathname.startsWith("/automation")
-  ) {
-    return "wide";
+  if (pathname === "/dashboard") {
+    return "default";
   }
-  return "default";
+  return "wide";
 }
 
 export function NavShell({ children }: { children: React.ReactNode }) {

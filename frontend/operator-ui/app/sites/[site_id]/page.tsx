@@ -7685,142 +7685,146 @@ export default function SiteWorkspacePage() {
                             className={startHereFocusedTargetId === rowId ? "start-here-target-active" : undefined}
                           >
                             <td className="table-cell-wrap">
-                              <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
-                              <br />
-                              {impactLabel ? (
-                                <>
-                                  <span className={recommendationImpactBadgeClass(impactLabel)}>{impactLabel}</span>
-                                  <br />
-                                </>
-                              ) : null}
-                              {eeatCategories.length > 0 ? (
-                                <>
-                                  <span className="hint muted">EEAT impact</span>
-                                  <div className="link-row" data-testid="recommendation-eeat-badges">
-                                    {eeatCategories.map((category) => (
-                                      <span key={`${item.id}-${category}`} className="badge badge-muted">
-                                        {formatEEATCategory(category)}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </>
-                              ) : null}
-                              {priorityReasons.length > 0 ? (
-                                <>
-                                  <span className="hint muted">Why surfaced</span>
-                                  <div className="link-row" data-testid="recommendation-priority-reasons">
-                                    {priorityReasons.map((reason) => (
-                                      <span key={`${item.id}-${reason}`} className="badge badge-muted">
-                                        {formatPriorityReason(reason)}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </>
-                              ) : null}
-                              <span className="hint muted">Progress</span>
-                              <div className="link-row" data-testid="recommendation-progress-status">
-                                <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
-                                <span className="hint muted">{recommendationProgress.summary}</span>
-                              </div>
-                              {recommendationLifecycle ? (
-                                <>
-                                  <span className="hint muted">Lifecycle</span>
-                                  <div className="link-row" data-testid="recommendation-lifecycle-state">
-                                    <span className={recommendationLifecycle.badgeClass}>{recommendationLifecycle.label}</span>
-                                    <span className="hint muted">{recommendationLifecycle.summary}</span>
-                                  </div>
-                                </>
-                              ) : null}
-                              <RecommendationDetailClarity
-                                clarity={recommendationDetailClarity}
-                                bucketKey={recommendationPresentationBucketKey}
-                                testId={`recommendation-detail-clarity-row-${item.id}`}
-                              />
-                              {recommendationEvidenceSummary ? (
-                                <span className="hint muted" data-testid="recommendation-evidence-summary">
-                                  Why this matters: {recommendationEvidenceSummary}
-                                </span>
-                              ) : null}
-                              {recommendationEvidenceTrace.length > 0 ? (
-                                <span className="hint muted" data-testid="recommendation-evidence-trace">
-                                  Evidence trace: {recommendationEvidenceTrace.join(" · ")}
-                                </span>
-                              ) : null}
-                              {renderObservedGapSummary ? (
-                                <span className="hint muted" data-testid="recommendation-observed-gap-summary">
-                                  Observed gap: {recommendationObservedGapSummary}
-                                </span>
-                              ) : null}
-                              {recommendationActionClarity ? (
-                                <span className="hint muted" data-testid="recommendation-action-clarity">
-                                  Action: {recommendationActionClarity}
-                                </span>
-                              ) : null}
-                              {recommendationExpectedOutcome ? (
-                                <span className="hint muted" data-testid="recommendation-expected-outcome">
-                                  Expected outcome: {recommendationExpectedOutcome}
-                                </span>
-                              ) : null}
-                              {recommendationTargetContext ? (
-                                <span className="hint muted" data-testid="recommendation-target-context">
-                                  Where: {formatRecommendationTargetContext(recommendationTargetContext)}
-                                </span>
-                              ) : null}
-                              {recommendationTargetPageHints.length > 0 ? (
-                                <span className="hint muted" data-testid="recommendation-target-page-hints">
-                                  Likely pages: {recommendationTargetPageHints.join(", ")}
-                                </span>
-                              ) : null}
-                              {recommendationCompetitorLinkageSummary ? (
-                                <span className="hint muted" data-testid="recommendation-competitor-linkage-summary">
-                                  Competitor linkage: {recommendationCompetitorLinkageSummary}
-                                </span>
-                              ) : null}
-                              {recommendationCompetitorEvidenceLinks.length > 0 ? (
-                                <span className="hint muted" data-testid="recommendation-competitor-linkage">
-                                  Linked competitor evidence:{" "}
-                                  {recommendationCompetitorEvidenceLinks.map((link, index) => {
-                                    const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(link.confidenceLevel);
-                                    const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
-                                    const trustTierLabel = formatRecommendationEvidenceTrustTierLabel(link.trustTier);
-                                    const trustTierBadgeClass = recommendationEvidenceTrustTierBadgeClass(link.trustTier);
-                                    const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
-                                    const competitorText = suffixParts.length > 0
-                                      ? `${link.competitorName} (${suffixParts.join(", ")})`
-                                      : link.competitorName;
-                                    return (
-                                      <span key={`${item.id}-${link.competitorDraftId}`} className="recommendation-linkage-entry">
-                                        {index > 0 ? "; " : null}
-                                        {competitorText}{" "}
-                                        {trustTierLabel ? <span className={trustTierBadgeClass}>{trustTierLabel}</span> : null}
-                                      </span>
-                                    );
-                                  })}
-                                </span>
-                              ) : null}
-                              {recommendationPriority ? (
-                                <span className="hint muted" data-testid="recommendation-priority">
-                                  <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
-                                    {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
-                                  </span>{" "}
-                                  {recommendationPriority.priorityReason}
-                                  {recommendationPriority.effortHint ? (
-                                    <> Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}.</>
+                              <div className="workspace-recommendation-row-layout">
+                                <div className="workspace-recommendation-row-main">
+                                  <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
+                                  <RecommendationDetailClarity
+                                    clarity={recommendationDetailClarity}
+                                    bucketKey={recommendationPresentationBucketKey}
+                                    testId={`recommendation-detail-clarity-row-${item.id}`}
+                                  />
+                                  {recommendationEvidenceSummary ? (
+                                    <span className="hint muted" data-testid="recommendation-evidence-summary">
+                                      Why this matters: {recommendationEvidenceSummary}
+                                    </span>
                                   ) : null}
-                                </span>
-                              ) : null}
-                              {recommendationActionDelta ? (
-                                <span className="hint muted" data-testid="recommendation-action-delta">
-                                  Action delta: {recommendationActionDelta.observedCompetitorPattern} Site gap:{" "}
-                                  {recommendationActionDelta.observedSiteGap} Next action:{" "}
-                                  {recommendationActionDelta.recommendedOperatorAction} Evidence strength:{" "}
-                                  {formatRecommendationActionDeltaEvidenceStrength(
-                                    recommendationActionDelta.evidenceStrength,
-                                  )}
-                                  .
-                                </span>
-                              ) : null}
-                              <span className="hint muted"><code>{item.id}</code></span>
+                                  {recommendationEvidenceTrace.length > 0 ? (
+                                    <span className="hint muted" data-testid="recommendation-evidence-trace">
+                                      Evidence trace: {recommendationEvidenceTrace.join(" · ")}
+                                    </span>
+                                  ) : null}
+                                  {renderObservedGapSummary ? (
+                                    <span className="hint muted" data-testid="recommendation-observed-gap-summary">
+                                      Observed gap: {recommendationObservedGapSummary}
+                                    </span>
+                                  ) : null}
+                                  {recommendationActionClarity ? (
+                                    <span className="hint muted" data-testid="recommendation-action-clarity">
+                                      Action: {recommendationActionClarity}
+                                    </span>
+                                  ) : null}
+                                  {recommendationExpectedOutcome ? (
+                                    <span className="hint muted" data-testid="recommendation-expected-outcome">
+                                      Expected outcome: {recommendationExpectedOutcome}
+                                    </span>
+                                  ) : null}
+                                  {recommendationTargetContext ? (
+                                    <span className="hint muted" data-testid="recommendation-target-context">
+                                      Where: {formatRecommendationTargetContext(recommendationTargetContext)}
+                                    </span>
+                                  ) : null}
+                                  {recommendationTargetPageHints.length > 0 ? (
+                                    <span className="hint muted" data-testid="recommendation-target-page-hints">
+                                      Likely pages: {recommendationTargetPageHints.join(", ")}
+                                    </span>
+                                  ) : null}
+                                  {recommendationCompetitorLinkageSummary ? (
+                                    <span className="hint muted" data-testid="recommendation-competitor-linkage-summary">
+                                      Competitor linkage: {recommendationCompetitorLinkageSummary}
+                                    </span>
+                                  ) : null}
+                                  {recommendationCompetitorEvidenceLinks.length > 0 ? (
+                                    <span className="hint muted" data-testid="recommendation-competitor-linkage">
+                                      Linked competitor evidence:{" "}
+                                      {recommendationCompetitorEvidenceLinks.map((link, index) => {
+                                        const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(link.confidenceLevel);
+                                        const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
+                                        const trustTierLabel = formatRecommendationEvidenceTrustTierLabel(link.trustTier);
+                                        const trustTierBadgeClass = recommendationEvidenceTrustTierBadgeClass(link.trustTier);
+                                        const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
+                                        const competitorText = suffixParts.length > 0
+                                          ? `${link.competitorName} (${suffixParts.join(", ")})`
+                                          : link.competitorName;
+                                        return (
+                                          <span key={`${item.id}-${link.competitorDraftId}`} className="recommendation-linkage-entry">
+                                            {index > 0 ? "; " : null}
+                                            {competitorText}{" "}
+                                            {trustTierLabel ? <span className={trustTierBadgeClass}>{trustTierLabel}</span> : null}
+                                          </span>
+                                        );
+                                      })}
+                                    </span>
+                                  ) : null}
+                                  {recommendationActionDelta ? (
+                                    <span className="hint muted" data-testid="recommendation-action-delta">
+                                      Action delta: {recommendationActionDelta.observedCompetitorPattern} Site gap:{" "}
+                                      {recommendationActionDelta.observedSiteGap} Next action:{" "}
+                                      {recommendationActionDelta.recommendedOperatorAction} Evidence strength:{" "}
+                                      {formatRecommendationActionDeltaEvidenceStrength(
+                                        recommendationActionDelta.evidenceStrength,
+                                      )}
+                                      .
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <aside className="workspace-recommendation-row-support" data-testid="recommendation-row-support">
+                                  {impactLabel ? (
+                                    <span className={recommendationImpactBadgeClass(impactLabel)}>{impactLabel}</span>
+                                  ) : null}
+                                  {eeatCategories.length > 0 ? (
+                                    <div className="workspace-recommendation-row-support-group">
+                                      <span className="workspace-recommendation-row-support-label">EEAT impact</span>
+                                      <div className="link-row" data-testid="recommendation-eeat-badges">
+                                        {eeatCategories.map((category) => (
+                                          <span key={`${item.id}-${category}`} className="badge badge-muted">
+                                            {formatEEATCategory(category)}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  {priorityReasons.length > 0 ? (
+                                    <div className="workspace-recommendation-row-support-group">
+                                      <span className="workspace-recommendation-row-support-label">Why surfaced</span>
+                                      <div className="link-row" data-testid="recommendation-priority-reasons">
+                                        {priorityReasons.map((reason) => (
+                                          <span key={`${item.id}-${reason}`} className="badge badge-muted">
+                                            {formatPriorityReason(reason)}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  <div className="workspace-recommendation-row-support-group">
+                                    <span className="workspace-recommendation-row-support-label">Progress</span>
+                                    <div className="link-row" data-testid="recommendation-progress-status">
+                                      <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
+                                      <span className="hint muted">{recommendationProgress.summary}</span>
+                                    </div>
+                                  </div>
+                                  {recommendationLifecycle ? (
+                                    <div className="workspace-recommendation-row-support-group">
+                                      <span className="workspace-recommendation-row-support-label">Lifecycle</span>
+                                      <div className="link-row" data-testid="recommendation-lifecycle-state">
+                                        <span className={recommendationLifecycle.badgeClass}>{recommendationLifecycle.label}</span>
+                                        <span className="hint muted">{recommendationLifecycle.summary}</span>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  {recommendationPriority ? (
+                                    <span className="hint muted" data-testid="recommendation-priority">
+                                      <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
+                                        {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
+                                      </span>{" "}
+                                      {recommendationPriority.priorityReason}
+                                      {recommendationPriority.effortHint ? (
+                                        <> Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}.</>
+                                      ) : null}
+                                    </span>
+                                  ) : null}
+                                  <span className="hint muted"><code>{item.id}</code></span>
+                                </aside>
+                              </div>
                             </td>
                             <td>{item.category}</td>
                             <td>{item.severity}</td>
@@ -7908,149 +7912,153 @@ export default function SiteWorkspacePage() {
                                   className={startHereFocusedTargetId === rowId ? "start-here-target-active" : undefined}
                                 >
                                   <td className="table-cell-wrap">
-                                    <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
-                                    <br />
-                                    {impactLabel ? (
-                                      <>
-                                        <span className={recommendationImpactBadgeClass(impactLabel)}>{impactLabel}</span>
-                                        <br />
-                                      </>
-                                    ) : null}
-                                    {eeatCategories.length > 0 ? (
-                                      <>
-                                        <span className="hint muted">EEAT impact</span>
-                                        <div className="link-row" data-testid="recommendation-eeat-badges">
-                                          {eeatCategories.map((category) => (
-                                            <span key={`${item.id}-${category}`} className="badge badge-muted">
-                                              {formatEEATCategory(category)}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      </>
-                                    ) : null}
-                                    {priorityReasons.length > 0 ? (
-                                      <>
-                                        <span className="hint muted">Why surfaced</span>
-                                        <div className="link-row" data-testid="recommendation-priority-reasons">
-                                          {priorityReasons.map((reason) => (
-                                            <span key={`${item.id}-${reason}`} className="badge badge-muted">
-                                              {formatPriorityReason(reason)}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      </>
-                                    ) : null}
-                                    <span className="hint muted">Progress</span>
-                                    <div className="link-row" data-testid="recommendation-progress-status">
-                                      <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
-                                      <span className="hint muted">{recommendationProgress.summary}</span>
-                                    </div>
-                                    {recommendationLifecycle ? (
-                                      <>
-                                        <span className="hint muted">Lifecycle</span>
-                                        <div className="link-row" data-testid="recommendation-lifecycle-state">
-                                          <span className={recommendationLifecycle.badgeClass}>
-                                            {recommendationLifecycle.label}
+                                    <div className="workspace-recommendation-row-layout">
+                                      <div className="workspace-recommendation-row-main">
+                                        <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
+                                        <RecommendationDetailClarity
+                                          clarity={recommendationDetailClarity}
+                                          bucketKey={recommendationPresentationBucketKey}
+                                          testId={`recommendation-detail-clarity-row-${section.theme}-${item.id}`}
+                                        />
+                                        {recommendationEvidenceSummary ? (
+                                          <span className="hint muted" data-testid="recommendation-evidence-summary">
+                                            Why this matters: {recommendationEvidenceSummary}
                                           </span>
-                                          <span className="hint muted">{recommendationLifecycle.summary}</span>
-                                        </div>
-                                      </>
-                                    ) : null}
-                                    <RecommendationDetailClarity
-                                      clarity={recommendationDetailClarity}
-                                      bucketKey={recommendationPresentationBucketKey}
-                                      testId={`recommendation-detail-clarity-row-${section.theme}-${item.id}`}
-                                    />
-                                    {recommendationEvidenceSummary ? (
-                                      <span className="hint muted" data-testid="recommendation-evidence-summary">
-                                        Why this matters: {recommendationEvidenceSummary}
-                                      </span>
-                                    ) : null}
-                                    {recommendationEvidenceTrace.length > 0 ? (
-                                      <span className="hint muted" data-testid="recommendation-evidence-trace">
-                                        Evidence trace: {recommendationEvidenceTrace.join(" · ")}
-                                      </span>
-                                    ) : null}
-                                    {renderObservedGapSummary ? (
-                                      <span className="hint muted" data-testid="recommendation-observed-gap-summary">
-                                        Observed gap: {recommendationObservedGapSummary}
-                                      </span>
-                                    ) : null}
-                                    {recommendationActionClarity ? (
-                                      <span className="hint muted" data-testid="recommendation-action-clarity">
-                                        Action: {recommendationActionClarity}
-                                      </span>
-                                    ) : null}
-                                    {recommendationExpectedOutcome ? (
-                                      <span className="hint muted" data-testid="recommendation-expected-outcome">
-                                        Expected outcome: {recommendationExpectedOutcome}
-                                      </span>
-                                    ) : null}
-                                    {recommendationTargetContext ? (
-                                      <span className="hint muted" data-testid="recommendation-target-context">
-                                        Where: {formatRecommendationTargetContext(recommendationTargetContext)}
-                                      </span>
-                                    ) : null}
-                                    {recommendationTargetPageHints.length > 0 ? (
-                                      <span className="hint muted" data-testid="recommendation-target-page-hints">
-                                        Likely pages: {recommendationTargetPageHints.join(", ")}
-                                      </span>
-                                    ) : null}
-                                    {recommendationCompetitorLinkageSummary ? (
-                                      <span className="hint muted" data-testid="recommendation-competitor-linkage-summary">
-                                        Competitor linkage: {recommendationCompetitorLinkageSummary}
-                                      </span>
-                                    ) : null}
-                                    {recommendationCompetitorEvidenceLinks.length > 0 ? (
-                                      <span className="hint muted" data-testid="recommendation-competitor-linkage">
-                                        Linked competitor evidence:{" "}
-                                        {recommendationCompetitorEvidenceLinks.map((link, index) => {
-                                          const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(
-                                            link.confidenceLevel,
-                                          );
-                                          const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
-                                          const trustTierLabel = formatRecommendationEvidenceTrustTierLabel(link.trustTier);
-                                          const trustTierBadgeClass = recommendationEvidenceTrustTierBadgeClass(link.trustTier);
-                                          const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
-                                          const competitorText = suffixParts.length > 0
-                                            ? `${link.competitorName} (${suffixParts.join(", ")})`
-                                            : link.competitorName;
-                                          return (
-                                            <span
-                                              key={`${section.theme}-${item.id}-${link.competitorDraftId}`}
-                                              className="recommendation-linkage-entry"
-                                            >
-                                              {index > 0 ? "; " : null}
-                                              {competitorText}{" "}
-                                              {trustTierLabel ? <span className={trustTierBadgeClass}>{trustTierLabel}</span> : null}
-                                            </span>
-                                          );
-                                        })}
-                                      </span>
-                                    ) : null}
-                                    {recommendationPriority ? (
-                                      <span className="hint muted" data-testid="recommendation-priority">
-                                        <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
-                                          {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
-                                        </span>{" "}
-                                        {recommendationPriority.priorityReason}
-                                        {recommendationPriority.effortHint ? (
-                                          <> Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}.</>
                                         ) : null}
-                                      </span>
-                                    ) : null}
-                                    {recommendationActionDelta ? (
-                                      <span className="hint muted" data-testid="recommendation-action-delta">
-                                        Action delta: {recommendationActionDelta.observedCompetitorPattern} Site gap:{" "}
-                                        {recommendationActionDelta.observedSiteGap} Next action:{" "}
-                                        {recommendationActionDelta.recommendedOperatorAction} Evidence strength:{" "}
-                                        {formatRecommendationActionDeltaEvidenceStrength(
-                                          recommendationActionDelta.evidenceStrength,
-                                        )}
-                                        .
-                                      </span>
-                                    ) : null}
-                                    <span className="hint muted"><code>{item.id}</code></span>
+                                        {recommendationEvidenceTrace.length > 0 ? (
+                                          <span className="hint muted" data-testid="recommendation-evidence-trace">
+                                            Evidence trace: {recommendationEvidenceTrace.join(" · ")}
+                                          </span>
+                                        ) : null}
+                                        {renderObservedGapSummary ? (
+                                          <span className="hint muted" data-testid="recommendation-observed-gap-summary">
+                                            Observed gap: {recommendationObservedGapSummary}
+                                          </span>
+                                        ) : null}
+                                        {recommendationActionClarity ? (
+                                          <span className="hint muted" data-testid="recommendation-action-clarity">
+                                            Action: {recommendationActionClarity}
+                                          </span>
+                                        ) : null}
+                                        {recommendationExpectedOutcome ? (
+                                          <span className="hint muted" data-testid="recommendation-expected-outcome">
+                                            Expected outcome: {recommendationExpectedOutcome}
+                                          </span>
+                                        ) : null}
+                                        {recommendationTargetContext ? (
+                                          <span className="hint muted" data-testid="recommendation-target-context">
+                                            Where: {formatRecommendationTargetContext(recommendationTargetContext)}
+                                          </span>
+                                        ) : null}
+                                        {recommendationTargetPageHints.length > 0 ? (
+                                          <span className="hint muted" data-testid="recommendation-target-page-hints">
+                                            Likely pages: {recommendationTargetPageHints.join(", ")}
+                                          </span>
+                                        ) : null}
+                                        {recommendationCompetitorLinkageSummary ? (
+                                          <span className="hint muted" data-testid="recommendation-competitor-linkage-summary">
+                                            Competitor linkage: {recommendationCompetitorLinkageSummary}
+                                          </span>
+                                        ) : null}
+                                        {recommendationCompetitorEvidenceLinks.length > 0 ? (
+                                          <span className="hint muted" data-testid="recommendation-competitor-linkage">
+                                            Linked competitor evidence:{" "}
+                                            {recommendationCompetitorEvidenceLinks.map((link, index) => {
+                                              const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(
+                                                link.confidenceLevel,
+                                              );
+                                              const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
+                                              const trustTierLabel = formatRecommendationEvidenceTrustTierLabel(link.trustTier);
+                                              const trustTierBadgeClass = recommendationEvidenceTrustTierBadgeClass(link.trustTier);
+                                              const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
+                                              const competitorText = suffixParts.length > 0
+                                                ? `${link.competitorName} (${suffixParts.join(", ")})`
+                                                : link.competitorName;
+                                              return (
+                                                <span
+                                                  key={`${section.theme}-${item.id}-${link.competitorDraftId}`}
+                                                  className="recommendation-linkage-entry"
+                                                >
+                                                  {index > 0 ? "; " : null}
+                                                  {competitorText}{" "}
+                                                  {trustTierLabel ? <span className={trustTierBadgeClass}>{trustTierLabel}</span> : null}
+                                                </span>
+                                              );
+                                            })}
+                                          </span>
+                                        ) : null}
+                                        {recommendationActionDelta ? (
+                                          <span className="hint muted" data-testid="recommendation-action-delta">
+                                            Action delta: {recommendationActionDelta.observedCompetitorPattern} Site gap:{" "}
+                                            {recommendationActionDelta.observedSiteGap} Next action:{" "}
+                                            {recommendationActionDelta.recommendedOperatorAction} Evidence strength:{" "}
+                                            {formatRecommendationActionDeltaEvidenceStrength(
+                                              recommendationActionDelta.evidenceStrength,
+                                            )}
+                                            .
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <aside className="workspace-recommendation-row-support" data-testid="recommendation-row-support">
+                                        {impactLabel ? (
+                                          <span className={recommendationImpactBadgeClass(impactLabel)}>{impactLabel}</span>
+                                        ) : null}
+                                        {eeatCategories.length > 0 ? (
+                                          <div className="workspace-recommendation-row-support-group">
+                                            <span className="workspace-recommendation-row-support-label">EEAT impact</span>
+                                            <div className="link-row" data-testid="recommendation-eeat-badges">
+                                              {eeatCategories.map((category) => (
+                                                <span key={`${item.id}-${category}`} className="badge badge-muted">
+                                                  {formatEEATCategory(category)}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ) : null}
+                                        {priorityReasons.length > 0 ? (
+                                          <div className="workspace-recommendation-row-support-group">
+                                            <span className="workspace-recommendation-row-support-label">Why surfaced</span>
+                                            <div className="link-row" data-testid="recommendation-priority-reasons">
+                                              {priorityReasons.map((reason) => (
+                                                <span key={`${item.id}-${reason}`} className="badge badge-muted">
+                                                  {formatPriorityReason(reason)}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ) : null}
+                                        <div className="workspace-recommendation-row-support-group">
+                                          <span className="workspace-recommendation-row-support-label">Progress</span>
+                                          <div className="link-row" data-testid="recommendation-progress-status">
+                                            <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
+                                            <span className="hint muted">{recommendationProgress.summary}</span>
+                                          </div>
+                                        </div>
+                                        {recommendationLifecycle ? (
+                                          <div className="workspace-recommendation-row-support-group">
+                                            <span className="workspace-recommendation-row-support-label">Lifecycle</span>
+                                            <div className="link-row" data-testid="recommendation-lifecycle-state">
+                                              <span className={recommendationLifecycle.badgeClass}>
+                                                {recommendationLifecycle.label}
+                                              </span>
+                                              <span className="hint muted">{recommendationLifecycle.summary}</span>
+                                            </div>
+                                          </div>
+                                        ) : null}
+                                        {recommendationPriority ? (
+                                          <span className="hint muted" data-testid="recommendation-priority">
+                                            <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
+                                              {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
+                                            </span>{" "}
+                                            {recommendationPriority.priorityReason}
+                                            {recommendationPriority.effortHint ? (
+                                              <> Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}.</>
+                                            ) : null}
+                                          </span>
+                                        ) : null}
+                                        <span className="hint muted"><code>{item.id}</code></span>
+                                      </aside>
+                                    </div>
                                   </td>
                                   <td>{item.category}</td>
                                   <td>{item.severity}</td>

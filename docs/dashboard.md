@@ -206,7 +206,16 @@ Layout width is now explicitly controlled with frontend container modes:
 Current usage:
 - recommendations, competitors, audits, automation: `wide`
 - site workspace (`/sites/[site_id]`): `full`
-- non-dense pages remain `default`
+- dashboard remains `default` for concise landing readability
+- business profile and admin now follow the same `wide` operator-shell convention
+- future operator-shell pages default to `wide` unless explicitly marked `default` or `full`
+
+### Site workspace dense-row cleanup
+- Recommendation rows in the site workspace detailed tables now use a bounded two-area layout:
+  - left: primary narrative/action context
+  - right: grouped support metadata/status rail
+- The support rail keeps progress/lifecycle/priority/context chips visually connected to the row instead of floating in long text blocks.
+- This is presentation-only; recommendation semantics and trust logic are unchanged.
 
 This remains presentation-only and does not change trust semantics, business logic, or API behavior.
 

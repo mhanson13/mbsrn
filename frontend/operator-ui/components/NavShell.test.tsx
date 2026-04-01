@@ -102,4 +102,35 @@ describe("NavShell", () => {
 
     expect(document.querySelector(".operator-shell-main-inner-wide")).toBeTruthy();
   });
+
+  it("applies wide shell width mode for business profile and admin routes", () => {
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-2",
+        display_name: "Admin Two",
+        role: "admin",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+
+    mockUsePathname.mockReturnValue("/business-profile");
+    const { rerender } = render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+    expect(document.querySelector(".operator-shell-main-inner-wide")).toBeTruthy();
+
+    mockUsePathname.mockReturnValue("/admin");
+    rerender(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+    expect(document.querySelector(".operator-shell-main-inner-wide")).toBeTruthy();
+  });
 });

@@ -39,6 +39,15 @@ Expanded quick-scan detail keeps deeper context available without forcing full-t
 
 This is additive presentation only. The underlying recommendation data model, status semantics, trust semantics, and API contracts are unchanged.
 
+## Site Workspace Recommendation Row Grouping
+
+The recommendation tables inside the site workspace now use a bounded summary-first row layout for dense operator scans:
+- primary recommendation narrative/context remains in the left content area
+- grouped status/support metadata (progress, lifecycle, priority, surfaced reasons) is rendered in a bounded right-side support rail
+
+This keeps high-signal supporting metadata visible without mixing it into long narrative text blocks.  
+Behavior and recommendation semantics are unchanged.
+
 ## Optional Competitor Signal Integration
 
 Recommendation narrative generation can consume an optional, bounded competitor context signal. This is additive and does not change deterministic recommendation artifacts or provider/model architecture.

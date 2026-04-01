@@ -2882,6 +2882,7 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "Recommendations" });
+    expect(screen.getAllByTestId("recommendation-row-support").length).toBeGreaterThan(0);
 
     const readyClarity = screen.getByTestId("recommendation-detail-clarity-ready_to_act-rec-clarity-ready");
     expect(readyClarity).toHaveClass("recommendation-detail-clarity-ready_to_act");

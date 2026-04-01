@@ -83,6 +83,7 @@ describe("business profile callback notice UX", () => {
     await waitFor(() =>
       expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1"),
     );
+    expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
     expect(
       await screen.findByText("Google Business Profile connected successfully."),
     ).toBeInTheDocument();

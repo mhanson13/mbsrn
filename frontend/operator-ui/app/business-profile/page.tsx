@@ -279,7 +279,7 @@ export default function BusinessProfilePage() {
 
   if (context.loading || loading) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Google Business Profile"
@@ -293,7 +293,7 @@ export default function BusinessProfilePage() {
   }
   if (context.error) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Google Business Profile"
@@ -307,7 +307,7 @@ export default function BusinessProfilePage() {
   }
 
   return (
-    <PageContainer>
+    <PageContainer width="wide" density="compact">
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader

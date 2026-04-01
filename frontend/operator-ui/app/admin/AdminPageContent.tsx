@@ -1340,21 +1340,21 @@ export default function AdminPage() {
 
   if (context.loading) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard as="div">Loading users...</SectionCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard as="div">Error: {context.error}</SectionCard>
       </PageContainer>
     );
   }
   if (!isAdmin) {
     return (
-      <PageContainer>
+      <PageContainer width="wide" density="compact">
         <SectionCard variant="support">
           <SectionHeader
             title="Admin"
@@ -1368,7 +1368,7 @@ export default function AdminPage() {
   }
 
   return (
-    <PageContainer>
+    <PageContainer width="wide" density="compact">
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
