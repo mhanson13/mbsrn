@@ -19,6 +19,7 @@ import {
   fetchRecommendations,
   updateRecommendationStatus,
 } from "../../lib/api/client";
+import { runBoundedBulkActionQueue, type BulkActionQueueProgress } from "../../lib/bulkActionQueue";
 import { deriveRecommendationOperatorActionState } from "../../lib/operatorActionState";
 import {
   applyActionDecisionLocally,
@@ -109,12 +110,6 @@ const EMPTY_QUEUE_SUMMARY: QueueSummary = {
   highPriority: 0,
 };
 const RECOMMENDATION_COLLAPSED_WHY_NOW_MAX_CHARS = 96;
-type BulkActionProgress = {
-  total: number;
-  processed: number;
-  succeeded: number;
-  failed: number;
-};
 
 const SORT_OPTIONS: Array<{ label: string; value: SortState }> = [
   { label: "Priority: High to Low", value: "priority_desc" },
@@ -977,7 +972,7 @@ function RecommendationsPageContent() {
   const [bulkActionInFlight, setBulkActionInFlight] = useState<RecommendationActionStatus | null>(null);
   const [bulkActionSuccess, setBulkActionSuccess] = useState<string | null>(null);
   const [bulkActionError, setBulkActionError] = useState<string | null>(null);
-  const [bulkActionProgress, setBulkActionProgress] = useState<BulkActionProgress | null>(null);
+  const [bulkActionProgress, setBulkActionProgress] = useState<BulkActionQueueProgress | null>(null);
   const [bulkRefreshNonce, setBulkRefreshNonce] = useState(0);
   const [expandedRecommendationIds, setExpandedRecommendationIds] = useState<Set<string>>(() => new Set());
   const [actionDecisionByItemId, setActionDecisionByItemId] = useState<Record<string, ActionDecision>>({});
@@ -1631,66 +1626,24 @@ function RecommendationsPageContent() {
     setSelectedRecommendationIds([]);
 
     try {
-      const successfulItems: Recommendation[] = [];
-      const successfulItemIds: string[] = [];
-      const failedItems: Recommendation[] = [];
-      const failedErrors: unknown[] = [];
+      const queueResult = await runBoundedBulkActionQueue({
+        items: selectedItems,
+        concurrency: BULK_ACTION_CONCURRENCY_LIMIT,
+        worker: (selectedItem) =>
+          updateRecommendationStatus(context.token, context.businessId, selectedItem.site_id, selectedItem.id, {
+            status,
+          }),
+        onProgress: (progress) => {
+          setBulkActionProgress(progress);
+        },
+      });
 
-      const workerCount = Math.min(BULK_ACTION_CONCURRENCY_LIMIT, selectedItems.length);
-      let nextItemIndex = 0;
-
-      const runWorker = async () => {
-        while (true) {
-          const currentIndex = nextItemIndex;
-          nextItemIndex += 1;
-          if (currentIndex >= selectedItems.length) {
-            return;
-          }
-          const selectedItem = selectedItems[currentIndex];
-          if (!selectedItem) {
-            continue;
-          }
-          try {
-            const updated = await updateRecommendationStatus(
-              context.token,
-              context.businessId,
-              selectedItem.site_id,
-              selectedItem.id,
-              { status },
-            );
-            successfulItems.push(updated);
-            successfulItemIds.push(selectedItem.id);
-            setBulkActionProgress((current) => {
-              if (!current) {
-                return current;
-              }
-              return {
-                ...current,
-                processed: current.processed + 1,
-                succeeded: current.succeeded + 1,
-              };
-            });
-          } catch (error) {
-            failedItems.push(selectedItem);
-            failedErrors.push(error);
-            setBulkActionProgress((current) => {
-              if (!current) {
-                return current;
-              }
-              return {
-                ...current,
-                processed: current.processed + 1,
-                failed: current.failed + 1,
-              };
-            });
-          }
-        }
-      };
-
-      await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
-
-      const successfulCount = successfulItems.length;
-      const failedCount = failedItems.length;
+      const successfulItems = queueResult.successes.map((entry) => entry.value);
+      const successfulItemIds = queueResult.successes.map((entry) => entry.item.id);
+      const failedItems = queueResult.failures.map((entry) => entry.item);
+      const failedErrors = queueResult.failures.map((entry) => entry.error);
+      const successfulCount = queueResult.succeeded;
+      const failedCount = queueResult.failed;
       const reconciledState = applyOptimisticBulkStatusToQueueState({
         baselineItems,
         baselineTotalRecommendations,
@@ -1707,7 +1660,7 @@ function RecommendationsPageContent() {
       setQueueSummary(reconciledState.queueSummary);
 
       setBulkActionSuccess(
-        `Bulk ${status} complete: ${successfulCount}/${selectedItems.length} succeeded, ${failedCount} failed.`,
+        `Bulk ${status} complete: ${successfulCount}/${queueResult.total} succeeded, ${failedCount} failed.`,
       );
       if (successfulCount > 0) {
         setBulkRefreshNonce((current) => current + 1);

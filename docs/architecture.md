@@ -169,6 +169,7 @@ Bulk recommendation status mutations now use bounded frontend concurrency instea
 
 Implementation boundary:
 - UI queue processing: `frontend/operator-ui/app/recommendations/page.tsx`
+- shared bounded queue helper: `frontend/operator-ui/lib/bulkActionQueue.ts`
 - per-item mutation endpoint remains unchanged: `PATCH /api/.../sites/{site_id}/recommendations/{recommendation_id}`
 
 Operational behavior:

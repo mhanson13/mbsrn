@@ -95,6 +95,7 @@ The recommendations queue now applies a bounded client-side mutation queue for b
 ### Processing model
 
 - Bulk mutations are processed with a fixed in-flight concurrency cap (`4`).
+- Queue execution is handled by shared utility: `frontend/operator-ui/lib/bulkActionQueue.ts`.
 - The queue remains interactive and shows live progress while updates run:
   - total selected
   - processed

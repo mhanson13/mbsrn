@@ -7,6 +7,7 @@ Prevent and diagnose API/database pool pressure caused by large recommendation b
 ## Current Processing Model
 
 - Bulk recommendation updates are queued client-side with a fixed concurrency cap of `4`.
+- Queue execution uses shared helper `frontend/operator-ui/lib/bulkActionQueue.ts` so other mass-action flows can reuse the same bounded pattern.
 - The queue surfaces live progress:
   - total selected
   - processed
