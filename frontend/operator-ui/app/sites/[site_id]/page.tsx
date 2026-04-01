@@ -105,6 +105,7 @@ type SiteTimelineEventType =
   | "comparison_run"
   | "recommendation_run"
   | "narrative";
+type WorkspaceContentTab = "summary" | "recommendations" | "activity";
 
 const TIMELINE_EVENT_TYPE_OPTIONS: Array<{ value: SiteTimelineEventType; label: string }> = [
   { value: "audit_run", label: "Audit Runs" },
@@ -209,6 +210,12 @@ interface CompetitorRunOutcomeSummaryView {
   relaxedFilteringNote: string | null;
   statusNote: string | null;
   lowResultNote: string | null;
+}
+
+interface CompetitorPipelineStageRow {
+  stage: string;
+  count: number;
+  description: string;
 }
 
 function formatDateTime(value: string | null): string {
@@ -3057,6 +3064,7 @@ export default function SiteWorkspacePage() {
   );
   const [activeStatuses, setActiveStatuses] = useState<Set<string>>(() => new Set());
   const [expandedTimeline, setExpandedTimeline] = useState(false);
+  const [activeWorkspaceContentTab, setActiveWorkspaceContentTab] = useState<WorkspaceContentTab>("summary");
 
   const latestCompetitorProfileRun = useMemo(
     () => {
@@ -3206,6 +3214,145 @@ export default function SiteWorkspacePage() {
     rejectedCompetitorCandidateCount,
     tuningRejectedCompetitorCandidateCount,
   ]);
+
+  const competitorSummaryStripMetrics = useMemo(() => {
+    const proposedFromPipeline = competitorCandidatePipelineSummary?.proposed_candidate_count;
+    const finalFromPipeline = competitorCandidatePipelineSummary?.final_candidate_count;
+    const rejectedEligibilityFromPipeline =
+      competitorCandidatePipelineSummary?.rejected_by_eligibility_count || 0;
+    const fallbackProposedCount =
+      competitorProfileDrafts.length + Math.max(rejectedCompetitorCandidateCount, rejectedEligibilityFromPipeline);
+    const totalCandidates = Math.max(
+      0,
+      proposedFromPipeline
+        ?? latestCompetitorProfileRun?.requested_candidate_count
+        ?? fallbackProposedCount,
+    );
+    const eligibleCandidates = Math.max(
+      0,
+      competitorCandidatePipelineSummary?.eligible_candidate_count
+        ?? totalCandidates - Math.max(0, rejectedCompetitorCandidateCount),
+    );
+    const finalReturned = Math.max(0, finalFromPipeline ?? competitorProfileDrafts.length);
+    const excludedCandidates = Math.max(0, totalCandidates - finalReturned);
+    const failureCountFromAttempts = competitorProviderAttempts.reduce((count, attempt) => {
+      const outcome = (attempt.outcome || "").trim().toLowerCase();
+      return outcome === "success" ? count : count + 1;
+    }, 0);
+    const failureCount = failureCountFromAttempts > 0
+      ? failureCountFromAttempts
+      : latestCompetitorProfileRun?.status === "failed"
+        ? 1
+        : 0;
+    const retryCountBase = Math.max(
+      0,
+      (competitorProviderAttemptCount || competitorProviderAttempts.length || 0) - 1,
+    );
+    const retryCount = retryCountBase > 0
+      ? retryCountBase
+      : latestCompetitorProfileRun?.parent_run_id
+        ? 1
+        : 0;
+    return {
+      totalCandidates,
+      eligibleCandidates,
+      finalReturned,
+      excludedCandidates,
+      failureCount,
+      retryCount,
+    };
+  }, [
+    competitorCandidatePipelineSummary,
+    competitorProfileDrafts.length,
+    competitorProviderAttemptCount,
+    competitorProviderAttempts,
+    latestCompetitorProfileRun,
+    rejectedCompetitorCandidateCount,
+  ]);
+
+  const competitorPipelineStageRows = useMemo<CompetitorPipelineStageRow[]>(() => {
+    if (!competitorCandidatePipelineSummary) {
+      return [];
+    }
+    return [
+      {
+        stage: "Proposed",
+        count: competitorCandidatePipelineSummary.proposed_candidate_count,
+        description: "Candidates parsed from provider output before deterministic filtering.",
+      },
+      {
+        stage: "Rejected by eligibility",
+        count: competitorCandidatePipelineSummary.rejected_by_eligibility_count,
+        description: "Removed by strict eligibility rules.",
+      },
+      {
+        stage: "Eligible",
+        count: competitorCandidatePipelineSummary.eligible_candidate_count,
+        description: "Candidates that passed eligibility checks.",
+      },
+      {
+        stage: "Removed by tuning",
+        count: competitorCandidatePipelineSummary.rejected_by_tuning_count,
+        description: "Filtered out by deterministic tuning thresholds.",
+      },
+      {
+        stage: "Survived tuning",
+        count: competitorCandidatePipelineSummary.survived_tuning_count,
+        description: "Candidates still in the pool after tuning.",
+      },
+      {
+        stage: "Removed by existing-domain match",
+        count: competitorCandidatePipelineSummary.removed_by_existing_domain_match_count,
+        description: "Dropped because domain already exists in known competitors.",
+      },
+      {
+        stage: "Removed by deduplication",
+        count: competitorCandidatePipelineSummary.removed_by_deduplication_count,
+        description: "Removed as duplicates.",
+      },
+      {
+        stage: "Removed by final limit",
+        count: competitorCandidatePipelineSummary.removed_by_final_limit_count,
+        description: "Trimmed by final output cap.",
+      },
+      {
+        stage: "Final returned",
+        count: competitorCandidatePipelineSummary.final_candidate_count,
+        description: "Reviewable drafts returned to operators.",
+      },
+    ];
+  }, [competitorCandidatePipelineSummary]);
+
+  const competitorFailureCategoryChips = useMemo(
+    () =>
+      competitorProfileSummary
+        ? Object.entries(competitorProfileSummary.failure_category_counts)
+            .filter(([, value]) => value > 0)
+            .sort(([left], [right]) => left.localeCompare(right))
+        : [],
+    [competitorProfileSummary],
+  );
+
+  const competitorExclusionReasonChips = useMemo(
+    () =>
+      competitorProfileSummary
+        ? Object.entries(competitorProfileSummary.exclusion_counts_by_reason)
+            .filter(([, value]) => value > 0)
+            .sort(([left], [right]) => left.localeCompare(right))
+        : [],
+    [competitorProfileSummary],
+  );
+
+  const hasCompetitorDebugDetails = Boolean(
+    latestCompetitorPromptPreview
+    || competitorProfileSummary
+    || (rejectedCompetitorCandidateCount > 0 && rejectedCompetitorCandidates.length > 0)
+    || (tuningRejectedCompetitorCandidateCount > 0 && tuningRejectedCompetitorCandidates.length > 0)
+    || (competitorProviderAttemptCount > 0 && competitorProviderAttempts.length > 0)
+    || latestCompetitorProfileRun?.parent_run_id
+    || latestCompetitorProfileRun?.failure_category
+    || latestCompetitorProfileRun?.error_summary,
+  );
 
   function toEditFormState(draft: CompetitorProfileDraft): DraftEditFormState {
     return {
@@ -5428,6 +5575,16 @@ export default function SiteWorkspacePage() {
     );
   }
 
+  const showSummaryTab = activeWorkspaceContentTab === "summary";
+  const showRecommendationsTab = activeWorkspaceContentTab === "recommendations";
+  const showRecommendationSections = showSummaryTab || showRecommendationsTab;
+  const showActivityTab = activeWorkspaceContentTab === "activity";
+  const latestAuditRun = auditRuns[0] || null;
+  const compactAuditStatus = latestAuditRun?.status || selectedSite.last_audit_status || "No audit run yet";
+  const compactAuditCompletedAt = latestAuditRun?.completed_at || selectedSite.last_audit_completed_at;
+  const compactAuditPagesCrawled = latestAuditRun?.pages_crawled;
+  const compactAuditErrors = latestAuditRun?.errors_encountered;
+
   return (
     <PageContainer>
       <div className="workspace-dashboard-landing">
@@ -5726,6 +5883,111 @@ export default function SiteWorkspacePage() {
         </SectionCard>
       </div>
 
+      <SectionCard className="operator-shell-section operator-shell-secondary-zone workspace-content-tab-shell">
+        <div className="workspace-subtabs" role="tablist" aria-label="Workspace content views">
+          <button
+            type="button"
+            id="workspace-content-tab-summary"
+            role="tab"
+            className={`button button-secondary workspace-subtab-button ${
+              activeWorkspaceContentTab === "summary" ? "workspace-subtab-button-active" : ""
+            }`}
+            aria-selected={activeWorkspaceContentTab === "summary"}
+            aria-controls="workspace-content-summary-panel"
+            onClick={() => setActiveWorkspaceContentTab("summary")}
+          >
+            Summary
+          </button>
+          <button
+            type="button"
+            id="workspace-content-tab-recommendations"
+            role="tab"
+            className={`button button-secondary workspace-subtab-button ${
+              activeWorkspaceContentTab === "recommendations" ? "workspace-subtab-button-active" : ""
+            }`}
+            aria-selected={activeWorkspaceContentTab === "recommendations"}
+            aria-controls="workspace-content-recommendations-panel"
+            onClick={() => setActiveWorkspaceContentTab("recommendations")}
+          >
+            Recommendations
+          </button>
+          <button
+            type="button"
+            id="workspace-content-tab-activity"
+            role="tab"
+            className={`button button-secondary workspace-subtab-button ${
+              activeWorkspaceContentTab === "activity" ? "workspace-subtab-button-active" : ""
+            }`}
+            aria-selected={activeWorkspaceContentTab === "activity"}
+            aria-controls="workspace-content-activity-panel"
+            onClick={() => setActiveWorkspaceContentTab("activity")}
+          >
+            Activity
+          </button>
+        </div>
+        <p className="hint muted">
+          {activeWorkspaceContentTab === "activity"
+            ? "Activity keeps full timeline and run-history tables separated from decision surfaces."
+            : activeWorkspaceContentTab === "recommendations"
+              ? "Recommendations keeps recommendation queue and run narratives front and center."
+              : "Summary keeps top operator actions and compact status signals in front."}
+        </p>
+      </SectionCard>
+
+      {showSummaryTab ? (
+        <SectionCard
+          className="operator-shell-section operator-shell-secondary-zone"
+          role="tabpanel"
+          id="workspace-content-summary-panel"
+          aria-labelledby="workspace-content-tab-summary"
+          data-testid="workspace-summary-tab-panel"
+        >
+          <SectionHeader
+            title="Summary Signals"
+            subtitle="Compact audit and competitor readiness context while you work recommendations."
+            headingLevel={2}
+          />
+          <div className="workspace-summary-strip" data-testid="workspace-operational-summary">
+            <SummaryStatCard
+              label="Last audit"
+              value={compactAuditStatus}
+              detail={compactAuditCompletedAt ? formatDateTime(compactAuditCompletedAt) : "No completed audit yet"}
+              tone={compactAuditStatus === "completed" ? "success" : compactAuditStatus === "failed" ? "warning" : "neutral"}
+              variant="elevated"
+              data-testid="summary-audit-status"
+            />
+            <SummaryStatCard
+              label="Pages crawled"
+              value={compactAuditPagesCrawled ?? "-"}
+              detail={compactAuditErrors !== undefined && compactAuditErrors !== null ? `Errors: ${compactAuditErrors}` : "No audit metrics yet"}
+              tone={compactAuditErrors && compactAuditErrors > 0 ? "warning" : "neutral"}
+              variant="elevated"
+              data-testid="summary-audit-metrics"
+            />
+            <SummaryStatCard
+              label="Competitor readiness"
+              value={workspaceReadinessMessage}
+              detail={`${activeCompetitorSetCount} active sets · ${activeCompetitorDomainCount} active domains`}
+              tone={activeCompetitorSetCount > 0 ? "success" : "neutral"}
+              variant="elevated"
+              data-testid="summary-competitor-readiness"
+            />
+            <SummaryStatCard
+              label="Latest comparison activity"
+              value={latestComparisonRun ? latestComparisonRun.status : "No comparison run yet"}
+              detail={
+                latestComparisonRun
+                  ? formatDateTime(latestComparisonRun.completed_at || latestComparisonRun.updated_at)
+                  : "Run competitor comparison to populate"
+              }
+              tone={latestComparisonRun?.status === "completed" ? "neutral" : "warning"}
+              variant="elevated"
+              data-testid="summary-comparison-activity"
+            />
+          </div>
+        </SectionCard>
+      ) : null}
+
       {showZipCaptureModal ? (
         <div className="workspace-modal-backdrop" data-testid="zip-capture-modal">
           <div className="workspace-modal panel stack">
@@ -5948,7 +6210,14 @@ export default function SiteWorkspacePage() {
         </SectionCard>
       ) : null}
 
-      <SectionCard className="operator-shell-section operator-shell-secondary-zone">
+      {showActivityTab ? (
+      <SectionCard
+        className="operator-shell-section operator-shell-secondary-zone"
+        role="tabpanel"
+        id="workspace-content-activity-panel"
+        aria-labelledby="workspace-content-tab-activity"
+        data-testid="workspace-timeline-panel"
+      >
         <SectionHeader
           title="Site Activity Timeline"
           subtitle="Recent audit, competitor, and recommendation activity for this site."
@@ -6057,7 +6326,10 @@ export default function SiteWorkspacePage() {
           </>
         ) : null}
       </SectionCard>
+      ) : null}
 
+      {showActivityTab ? (
+      <>
       <SectionCard className="operator-shell-section operator-shell-secondary-zone">
         <SectionHeader
           title="Recent Audit Runs"
@@ -6203,6 +6475,8 @@ export default function SiteWorkspacePage() {
           </>
         )}
       </SectionCard>
+      </>
+      ) : null}
 
       <SectionCard className="operator-shell-section operator-shell-work-zone">
         <SectionHeader
@@ -6312,273 +6586,72 @@ export default function SiteWorkspacePage() {
             ) : null}
           </div>
         ) : null}
-        {latestCompetitorPromptPreview ? (
-          <PromptPreviewPanel
-            preview={latestCompetitorPromptPreview}
-            copyFeedback={promptPreviewCopyFeedbackByType.competitor}
-            onCopy={() => void handleCopyPromptPreview("competitor")}
-            onDownload={() => handleDownloadPromptPreview("competitor")}
-            testId="competitor-prompt-preview"
-          />
-        ) : null}
-        {competitorProfileSummary ? (
-          <Fragment>
+        <div className="stack-tight" data-testid="competitor-summary-strip">
+          <div className="workspace-section-meta">
+            <span className="badge badge-muted">
+              Total candidates {competitorSummaryStripMetrics.totalCandidates}
+            </span>
+            <span className="badge badge-success">
+              Eligible {competitorSummaryStripMetrics.eligibleCandidates}
+            </span>
+            <span className="badge badge-success">
+              Final returned {competitorSummaryStripMetrics.finalReturned}
+            </span>
+            <span className="badge badge-warn">
+              Excluded {competitorSummaryStripMetrics.excludedCandidates}
+            </span>
+            <span className="badge badge-error">
+              Failure count {competitorSummaryStripMetrics.failureCount}
+            </span>
+            <span className="badge badge-muted">
+              Retry count {competitorSummaryStripMetrics.retryCount}
+            </span>
+          </div>
+          {competitorFailureCategoryChips.length > 0 ? (
+            <div className="workspace-section-meta" data-testid="competitor-failure-category-chips">
+              {competitorFailureCategoryChips.map(([category, count]) => (
+                <span key={`failure-${category}`} className="badge badge-muted">
+                  {formatFailureCategory(category)} {count}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {competitorExclusionReasonChips.length > 0 ? (
+            <div className="workspace-section-meta" data-testid="competitor-exclusion-reason-chips">
+              {competitorExclusionReasonChips.map(([reason, count]) => (
+                <span key={`exclusion-${reason}`} className="badge badge-muted">
+                  {formatFailureCategory(reason)} {count}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        {competitorPipelineStageRows.length > 0 ? (
+          <div className="stack-tight" data-testid="competitor-candidate-pipeline-summary-debug">
             <p className="hint muted">
-              Last {competitorProfileSummary.lookback_days}d: queued {competitorProfileSummary.queued_count} |
-              running {competitorProfileSummary.running_count} | completed {competitorProfileSummary.completed_count} |
-              failed {competitorProfileSummary.failed_count}
-            </p>
-            <p className="hint muted">
-              Retry runs: {competitorProfileSummary.retry_child_runs} | retried parents:{" "}
-              {competitorProfileSummary.retried_parent_runs} | failed runs later retried:{" "}
-              {competitorProfileSummary.failed_runs_retried}
-            </p>
-            <p className="hint muted">
-              Candidate telemetry ({competitorProfileSummary.total_runs} runs): raw{" "}
-              {competitorProfileSummary.total_raw_candidate_count} | included{" "}
-              {competitorProfileSummary.total_included_candidate_count} | excluded{" "}
-              {competitorProfileSummary.total_excluded_candidate_count}
-            </p>
-            {competitorProfileSummary.last_n_preview_accuracy &&
-            competitorProfileSummary.last_n_preview_accuracy.sample_size > 0 ? (
-              <p className="hint muted">
-                Preview accuracy (last {competitorProfileSummary.last_n_preview_accuracy.sample_size}):{" "}
-                {Math.round(
-                  (competitorProfileSummary.last_n_preview_accuracy.accuracy_rate || 0) * 100,
-                )}
-                % directionally correct
-                {typeof competitorProfileSummary.last_n_preview_accuracy.avg_error_margin === "number"
-                  ? ` | avg error margin ${competitorProfileSummary.last_n_preview_accuracy.avg_error_margin.toFixed(1)}`
-                  : ""}
-              </p>
-            ) : null}
-            {Object.keys(competitorProfileSummary.failure_category_counts).length > 0 ? (
-              <p className="hint muted">
-                Failure categories:{" "}
-                {Object.entries(competitorProfileSummary.failure_category_counts)
-                  .sort(([left], [right]) => left.localeCompare(right))
-                  .map(([key, value]) => `${formatFailureCategory(key)}=${value}`)
-                  .join(", ")}
-              </p>
-            ) : null}
-            {Object.values(competitorProfileSummary.exclusion_counts_by_reason).some((count) => count > 0) ? (
-              <p className="hint muted">
-                Exclusion reasons:{" "}
-                {Object.entries(competitorProfileSummary.exclusion_counts_by_reason)
-                  .filter(([, value]) => value > 0)
-                  .sort(([left], [right]) => left.localeCompare(right))
-                  .map(([key, value]) => `${formatFailureCategory(key)}=${value}`)
-                  .join(", ")}
-              </p>
-            ) : null}
-          </Fragment>
-        ) : null}
-        {rejectedCompetitorCandidateCount > 0 && rejectedCompetitorCandidates.length > 0 ? (
-          <div className="stack" data-testid="rejected-competitor-candidates-debug">
-            <p className="hint muted">
-              <strong>Rejected competitor candidates (debug)</strong>: {rejectedCompetitorCandidateCount}
+              <strong>Candidate pipeline</strong>
             </p>
             <div className="table-container table-container-compact">
-              <table className="table table-dense">
+              <table className="table table-dense" data-testid="competitor-candidate-pipeline-table">
                 <thead>
                   <tr>
-                    <th>Domain</th>
-                    <th>Reasons</th>
-                    <th>Summary</th>
+                    <th>Stage</th>
+                    <th>Count</th>
+                    <th>Description</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rejectedCompetitorCandidates.map((candidate) => (
-                    <tr key={`${candidate.domain}-${candidate.reasons.join("-")}`}>
-                      <td>
-                        <code>{candidate.domain}</code>
-                      </td>
-                      <td>
-                        <div className="stack-micro">
-                          {candidate.reasons.map((reason) => (
-                            <span key={`${candidate.domain}-${reason}`} className="badge badge-muted">
-                              {formatFailureCategory(reason)}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="table-cell-wrap">{candidate.summary || "-"}</td>
+                  {competitorPipelineStageRows.map((row) => (
+                    <tr key={`competitor-pipeline-${row.stage}`}>
+                      <td>{row.stage}</td>
+                      <td>{row.count}</td>
+                      <td className="table-cell-wrap">{row.description}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            {rejectedCompetitorCandidateCount > rejectedCompetitorCandidates.length ? (
-              <p className="hint muted">
-                Showing {rejectedCompetitorCandidates.length} of {rejectedCompetitorCandidateCount} rejected
-                candidates.
-              </p>
-            ) : null}
           </div>
-        ) : null}
-        {tuningRejectedCompetitorCandidateCount > 0 && tuningRejectedCompetitorCandidates.length > 0 ? (
-          <div className="stack" data-testid="tuning-rejected-competitor-candidates-debug">
-            <p className="hint muted">
-              <strong>Removed by tuning (debug)</strong>: {tuningRejectedCompetitorCandidateCount}
-            </p>
-            {Object.values(tuningRejectionReasonCounts).some((count) => count > 0) ? (
-              <p className="hint muted">
-                Reason counts:{" "}
-                {Object.entries(tuningRejectionReasonCounts)
-                  .filter(([, count]) => count > 0)
-                  .sort(([left], [right]) => left.localeCompare(right))
-                  .map(([reason, count]) => `${formatFailureCategory(reason)}=${count}`)
-                  .join(", ")}
-              </p>
-            ) : null}
-            <div className="table-container table-container-compact">
-              <table className="table table-dense">
-                <thead>
-                  <tr>
-                    <th>Domain</th>
-                    <th>Reasons</th>
-                    <th>Final score</th>
-                    <th>Summary</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tuningRejectedCompetitorCandidates.map((candidate) => (
-                    <tr key={`${candidate.domain}-${candidate.reasons.join("-")}`}>
-                      <td>
-                        <code>{candidate.domain}</code>
-                      </td>
-                      <td>
-                        <div className="stack-micro">
-                          {candidate.reasons.map((reason) => (
-                            <span key={`${candidate.domain}-${reason}`} className="badge badge-muted">
-                              {formatFailureCategory(reason)}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td>{typeof candidate.final_score === "number" ? candidate.final_score : "-"}</td>
-                      <td className="table-cell-wrap">{candidate.summary || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {tuningRejectedCompetitorCandidateCount > tuningRejectedCompetitorCandidates.length ? (
-              <p className="hint muted">
-                Showing {tuningRejectedCompetitorCandidates.length} of {tuningRejectedCompetitorCandidateCount}{" "}
-                removed-by-tuning candidates.
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-        {competitorCandidatePipelineSummary ? (
-          <div className="stack" data-testid="competitor-candidate-pipeline-summary-debug">
-            <p className="hint muted">
-              <strong>Candidate pipeline (debug)</strong>
-            </p>
-            <p className="hint muted">Proposed: {competitorCandidatePipelineSummary.proposed_candidate_count}</p>
-            <p className="hint muted">
-              Rejected by eligibility: {competitorCandidatePipelineSummary.rejected_by_eligibility_count}
-            </p>
-            <p className="hint muted">
-              Eligible after filtering: {competitorCandidatePipelineSummary.eligible_candidate_count}
-            </p>
-            <p className="hint muted">
-              Removed by tuning: {competitorCandidatePipelineSummary.rejected_by_tuning_count}
-            </p>
-            <p className="hint muted">
-              Survived tuning: {competitorCandidatePipelineSummary.survived_tuning_count}
-            </p>
-            <p className="hint muted">
-              Removed by existing-domain match:{" "}
-              {competitorCandidatePipelineSummary.removed_by_existing_domain_match_count}
-            </p>
-            <p className="hint muted">
-              Removed by deduplication: {competitorCandidatePipelineSummary.removed_by_deduplication_count}
-            </p>
-            <p className="hint muted">
-              Removed by final limit: {competitorCandidatePipelineSummary.removed_by_final_limit_count}
-            </p>
-            <p className="hint muted">Final returned: {competitorCandidatePipelineSummary.final_candidate_count}</p>
-          </div>
-        ) : null}
-        {competitorProviderAttemptCount > 0 && competitorProviderAttempts.length > 0 ? (
-          <div className="stack" data-testid="competitor-provider-attempts-debug">
-            <p className="hint muted">
-              <strong>Provider attempts (debug)</strong>: {competitorProviderAttemptCount}
-            </p>
-            <p className="hint muted">
-              Degraded timeout retry used: {competitorProviderDegradedRetryUsed ? "yes" : "no"}
-            </p>
-            <div className="table-container table-container-compact">
-              <table className="table table-dense">
-                <thead>
-                  <tr>
-                    <th>Attempt</th>
-                    <th>Mode</th>
-                    <th>Reduced context</th>
-                    <th>Outcome</th>
-                    <th>Duration</th>
-                    <th>Prompt chars</th>
-                    <th>Timeout</th>
-                    <th>Endpoint</th>
-                    <th>Web search</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {competitorProviderAttempts.map((attempt) => (
-                    <tr key={`provider-attempt-${attempt.attempt_number}`}>
-                      <td>{attempt.attempt_number}</td>
-                      <td>{attempt.degraded_mode ? "degraded_retry" : "standard"}</td>
-                      <td>{attempt.reduced_context_mode ? "yes" : "no"}</td>
-                      <td>{formatProviderAttemptOutcome(attempt.outcome, attempt.failure_kind)}</td>
-                      <td>
-                        {typeof attempt.request_duration_ms === "number"
-                          ? `${Math.max(0, Math.round(attempt.request_duration_ms))} ms`
-                          : "-"}
-                      </td>
-                      <td>
-                        {typeof attempt.prompt_total_chars === "number"
-                          ? Math.max(0, Math.round(attempt.prompt_total_chars)).toLocaleString()
-                          : "-"}
-                      </td>
-                      <td>
-                        {typeof attempt.timeout_seconds === "number"
-                          ? `${Math.max(1, Math.round(attempt.timeout_seconds))} s`
-                          : "-"}
-                      </td>
-                      <td>{attempt.endpoint_path || "-"}</td>
-                      <td>
-                        {attempt.web_search_enabled === null
-                          ? "-"
-                          : attempt.web_search_enabled
-                            ? "enabled"
-                            : "disabled"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {competitorProviderAttemptCount > competitorProviderAttempts.length ? (
-              <p className="hint muted">
-                Showing {competitorProviderAttempts.length} of {competitorProviderAttemptCount} provider attempts.
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-        {latestCompetitorProfileRun?.parent_run_id ? (
-          <p className="hint muted">
-            Retry of run <code>{latestCompetitorProfileRun.parent_run_id}</code>.
-          </p>
-        ) : null}
-        {latestCompetitorProfileRun?.failure_category ? (
-          <p className="hint muted">
-            Failure Category: <code>{formatFailureCategory(latestCompetitorProfileRun.failure_category)}</code>
-          </p>
-        ) : null}
-        {latestCompetitorProfileRun?.error_summary ? (
-          <p className="hint warning">{latestCompetitorProfileRun.error_summary}</p>
         ) : null}
         {competitorProfileLoading || competitorProfilePolling ? (
           <p className="hint muted">Refreshing generated draft status...</p>
@@ -6986,9 +7059,246 @@ export default function SiteWorkspacePage() {
             </table>
           </div>
         ) : null}
+        {hasCompetitorDebugDetails ? (
+          <div className="panel panel-compact stack-tight operator-shell-secondary-zone" data-testid="competitor-debug-secondary-section">
+            <SectionHeader
+              title="Debug details"
+              subtitle="Secondary prompt and provider telemetry details for run inspection."
+              headingLevel={3}
+              variant="support"
+            />
+            {latestCompetitorPromptPreview ? (
+              <PromptPreviewPanel
+                preview={latestCompetitorPromptPreview}
+                copyFeedback={promptPreviewCopyFeedbackByType.competitor}
+                onCopy={() => void handleCopyPromptPreview("competitor")}
+                onDownload={() => handleDownloadPromptPreview("competitor")}
+                testId="competitor-prompt-preview"
+              />
+            ) : null}
+            {competitorProfileSummary ? (
+              <Fragment>
+                <p className="hint muted">
+                  Last {competitorProfileSummary.lookback_days}d: queued {competitorProfileSummary.queued_count} |
+                  running {competitorProfileSummary.running_count} | completed {competitorProfileSummary.completed_count} |
+                  failed {competitorProfileSummary.failed_count}
+                </p>
+                <p className="hint muted">
+                  Retry runs: {competitorProfileSummary.retry_child_runs} | retried parents:{" "}
+                  {competitorProfileSummary.retried_parent_runs} | failed runs later retried:{" "}
+                  {competitorProfileSummary.failed_runs_retried}
+                </p>
+                <p className="hint muted">
+                  Candidate telemetry ({competitorProfileSummary.total_runs} runs): raw{" "}
+                  {competitorProfileSummary.total_raw_candidate_count} | included{" "}
+                  {competitorProfileSummary.total_included_candidate_count} | excluded{" "}
+                  {competitorProfileSummary.total_excluded_candidate_count}
+                </p>
+                {competitorProfileSummary.last_n_preview_accuracy &&
+                competitorProfileSummary.last_n_preview_accuracy.sample_size > 0 ? (
+                  <p className="hint muted">
+                    Preview accuracy (last {competitorProfileSummary.last_n_preview_accuracy.sample_size}):{" "}
+                    {Math.round(
+                      (competitorProfileSummary.last_n_preview_accuracy.accuracy_rate || 0) * 100,
+                    )}
+                    % directionally correct
+                    {typeof competitorProfileSummary.last_n_preview_accuracy.avg_error_margin === "number"
+                      ? ` | avg error margin ${competitorProfileSummary.last_n_preview_accuracy.avg_error_margin.toFixed(1)}`
+                      : ""}
+                  </p>
+                ) : null}
+              </Fragment>
+            ) : null}
+            {rejectedCompetitorCandidateCount > 0 && rejectedCompetitorCandidates.length > 0 ? (
+              <div className="stack" data-testid="rejected-competitor-candidates-debug">
+                <p className="hint muted">
+                  <strong>Rejected competitor candidates (debug)</strong>: {rejectedCompetitorCandidateCount}
+                </p>
+                <div className="table-container table-container-compact">
+                  <table className="table table-dense">
+                    <thead>
+                      <tr>
+                        <th>Domain</th>
+                        <th>Reasons</th>
+                        <th>Summary</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rejectedCompetitorCandidates.map((candidate) => (
+                        <tr key={`${candidate.domain}-${candidate.reasons.join("-")}`}>
+                          <td>
+                            <code>{candidate.domain}</code>
+                          </td>
+                          <td>
+                            <div className="stack-micro">
+                              {candidate.reasons.map((reason) => (
+                                <span key={`${candidate.domain}-${reason}`} className="badge badge-muted">
+                                  {formatFailureCategory(reason)}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="table-cell-wrap">{candidate.summary || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {rejectedCompetitorCandidateCount > rejectedCompetitorCandidates.length ? (
+                  <p className="hint muted">
+                    Showing {rejectedCompetitorCandidates.length} of {rejectedCompetitorCandidateCount} rejected
+                    candidates.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {tuningRejectedCompetitorCandidateCount > 0 && tuningRejectedCompetitorCandidates.length > 0 ? (
+              <div className="stack" data-testid="tuning-rejected-competitor-candidates-debug">
+                <p className="hint muted">
+                  <strong>Removed by tuning (debug)</strong>: {tuningRejectedCompetitorCandidateCount}
+                </p>
+                {Object.values(tuningRejectionReasonCounts).some((count) => count > 0) ? (
+                  <div className="workspace-section-meta">
+                    {Object.entries(tuningRejectionReasonCounts)
+                      .filter(([, count]) => count > 0)
+                      .sort(([left], [right]) => left.localeCompare(right))
+                      .map(([reason, count]) => (
+                        <span key={`tuning-${reason}`} className="badge badge-muted">
+                          {formatFailureCategory(reason)} {count}
+                        </span>
+                      ))}
+                  </div>
+                ) : null}
+                <div className="table-container table-container-compact">
+                  <table className="table table-dense">
+                    <thead>
+                      <tr>
+                        <th>Domain</th>
+                        <th>Reasons</th>
+                        <th>Final score</th>
+                        <th>Summary</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tuningRejectedCompetitorCandidates.map((candidate) => (
+                        <tr key={`${candidate.domain}-${candidate.reasons.join("-")}`}>
+                          <td>
+                            <code>{candidate.domain}</code>
+                          </td>
+                          <td>
+                            <div className="stack-micro">
+                              {candidate.reasons.map((reason) => (
+                                <span key={`${candidate.domain}-${reason}`} className="badge badge-muted">
+                                  {formatFailureCategory(reason)}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td>{typeof candidate.final_score === "number" ? candidate.final_score : "-"}</td>
+                          <td className="table-cell-wrap">{candidate.summary || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {tuningRejectedCompetitorCandidateCount > tuningRejectedCompetitorCandidates.length ? (
+                  <p className="hint muted">
+                    Showing {tuningRejectedCompetitorCandidates.length} of {tuningRejectedCompetitorCandidateCount}{" "}
+                    removed-by-tuning candidates.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {competitorProviderAttemptCount > 0 && competitorProviderAttempts.length > 0 ? (
+              <div className="stack" data-testid="competitor-provider-attempts-debug">
+                <p className="hint muted">
+                  <strong>Provider attempts (debug)</strong>: {competitorProviderAttemptCount}
+                </p>
+                <p className="hint muted">
+                  Degraded timeout retry used: {competitorProviderDegradedRetryUsed ? "yes" : "no"}
+                </p>
+                <div className="table-container table-container-compact">
+                  <table className="table table-dense">
+                    <thead>
+                      <tr>
+                        <th>Attempt</th>
+                        <th>Mode</th>
+                        <th>Reduced context</th>
+                        <th>Outcome</th>
+                        <th>Duration</th>
+                        <th>Prompt chars</th>
+                        <th>Timeout</th>
+                        <th>Endpoint</th>
+                        <th>Web search</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {competitorProviderAttempts.map((attempt) => (
+                        <tr key={`provider-attempt-${attempt.attempt_number}`}>
+                          <td>{attempt.attempt_number}</td>
+                          <td>{attempt.degraded_mode ? "degraded_retry" : "standard"}</td>
+                          <td>{attempt.reduced_context_mode ? "yes" : "no"}</td>
+                          <td>{formatProviderAttemptOutcome(attempt.outcome, attempt.failure_kind)}</td>
+                          <td>
+                            {typeof attempt.request_duration_ms === "number"
+                              ? `${Math.max(0, Math.round(attempt.request_duration_ms))} ms`
+                              : "-"}
+                          </td>
+                          <td>
+                            {typeof attempt.prompt_total_chars === "number"
+                              ? Math.max(0, Math.round(attempt.prompt_total_chars)).toLocaleString()
+                              : "-"}
+                          </td>
+                          <td>
+                            {typeof attempt.timeout_seconds === "number"
+                              ? `${Math.max(1, Math.round(attempt.timeout_seconds))} s`
+                              : "-"}
+                          </td>
+                          <td>{attempt.endpoint_path || "-"}</td>
+                          <td>
+                            {attempt.web_search_enabled === null
+                              ? "-"
+                              : attempt.web_search_enabled
+                                ? "enabled"
+                                : "disabled"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {competitorProviderAttemptCount > competitorProviderAttempts.length ? (
+                  <p className="hint muted">
+                    Showing {competitorProviderAttempts.length} of {competitorProviderAttemptCount} provider attempts.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {latestCompetitorProfileRun?.parent_run_id ? (
+              <p className="hint muted">
+                Retry of run <code>{latestCompetitorProfileRun.parent_run_id}</code>.
+              </p>
+            ) : null}
+            {latestCompetitorProfileRun?.failure_category ? (
+              <p className="hint muted">
+                Failure Category: <code>{formatFailureCategory(latestCompetitorProfileRun.failure_category)}</code>
+              </p>
+            ) : null}
+            {latestCompetitorProfileRun?.error_summary ? (
+              <p className="hint warning">{latestCompetitorProfileRun.error_summary}</p>
+            ) : null}
+          </div>
+        ) : null}
       </SectionCard>
 
-      <SectionCard className="operator-shell-section operator-shell-work-zone">
+      {showRecommendationSections ? (
+      <>
+      <SectionCard
+        className="operator-shell-section operator-shell-work-zone"
+        role="tabpanel"
+        id="workspace-content-recommendations-panel"
+        aria-labelledby="workspace-content-tab-recommendations"
+      >
         <SectionHeader
           title="Recommendation Queue"
           subtitle="Run deterministic recommendation analysis from the latest audit and competitor comparison context."
@@ -8139,6 +8449,8 @@ export default function SiteWorkspacePage() {
           </div>
         ) : null}
       </SectionCard>
+      </>
+      ) : null}
     </PageContainer>
   );
 }

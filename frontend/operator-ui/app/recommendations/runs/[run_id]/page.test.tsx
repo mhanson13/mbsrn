@@ -196,6 +196,8 @@ describe("recommendation run detail page presentation", () => {
     expect(screen.getByText("Evidence trust")).toBeInTheDocument();
     expect(screen.getByText("Lifecycle stage")).toBeInTheDocument();
     expect(screen.getByText("Revisit timing")).toBeInTheDocument();
+    expect(screen.getByText("Freshness posture")).toBeInTheDocument();
+    expect(screen.getByText("Refresh check")).toBeInTheDocument();
     expect(screen.getAllByText("Choice support").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Effort signal").length).toBeGreaterThan(0);
     expect(
@@ -205,7 +207,9 @@ describe("recommendation run detail page presentation", () => {
     expect(screen.getAllByText("Best immediate move").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Quick win").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Needs review / pending").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Fresh enough to act").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Revisit now.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("No refresh required before acting.").length).toBeGreaterThan(0);
     expect(
       screen.getByText("Yes. Review recommendations and start with the highest-priority items."),
     ).toBeInTheDocument();

@@ -96,6 +96,9 @@ describe("dashboard shared support-state framing", () => {
     expect(recommendationOutcomeSection).toHaveTextContent(
       "Lifecycle stage: Needs review / pending Applied / completed Background item / revisit later keeps revisit timing explicit without opening detail pages.",
     );
+    expect(recommendationOutcomeSection).toHaveTextContent(
+      "Freshness posture: Fresh enough to act Review soon Pending refresh Possibly outdated shows whether a refresh is likely needed before action.",
+    );
     expect(screen.getByRole("link", { name: "Sites" })).toHaveAttribute("href", "/sites");
     expect(screen.getByRole("link", { name: "Google Business Profile" })).toHaveAttribute(
       "href",

@@ -55,6 +55,9 @@ type RecommendationDecisiveness = {
   lifecycleCueTone: "badge-success" | "badge-warn" | "badge-muted";
   revisitCue: string;
   revisitCueTone: "badge-success" | "badge-warn" | "badge-muted";
+  freshnessCue: string;
+  freshnessCueTone: "badge-success" | "badge-warn" | "badge-muted";
+  refreshCheck: string;
   whyNow: string;
   blockingState: string;
   afterAction: string;
@@ -85,6 +88,7 @@ const EMPTY_QUEUE_SUMMARY: QueueSummary = {
   dismissed: 0,
   highPriority: 0,
 };
+const RECOMMENDATION_COLLAPSED_WHY_NOW_MAX_CHARS = 96;
 
 const SORT_OPTIONS: Array<{ label: string; value: SortState }> = [
   { label: "Priority: High to Low", value: "priority_desc" },
@@ -296,6 +300,10 @@ function truncateRecommendationEvidence(text: string, maxChars: number): string 
   return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
 }
 
+function truncateRecommendationWhyNow(text: string): string {
+  return truncateRecommendationEvidence(text, RECOMMENDATION_COLLAPSED_WHY_NOW_MAX_CHARS);
+}
+
 function deriveRecommendationEvidencePreview(item: Recommendation): string {
   const firstCompetitorEvidence = (item.competitor_evidence_links || [])
     .map((link) => (link.evidence_summary || "").trim())
@@ -382,6 +390,47 @@ function deriveRecommendationLifecycleSupport(item: Recommendation): {
     lifecycleCueTone: "badge-warn",
     revisitCue: "Revisit now",
     revisitCueTone: "badge-warn",
+  };
+}
+
+function deriveRecommendationFreshnessSupport(item: Recommendation): {
+  freshnessCue: string;
+  freshnessCueTone: "badge-success" | "badge-warn" | "badge-muted";
+  refreshCheck: string;
+} {
+  const hasTimestamp = (item.updated_at || item.created_at || "").trim().length > 0;
+  if (!hasTimestamp) {
+    return {
+      freshnessCue: "Possibly outdated",
+      freshnessCueTone: "badge-warn",
+      refreshCheck: "Refresh likely needed before acting.",
+    };
+  }
+  if (item.status === "accepted") {
+    return {
+      freshnessCue: "Pending refresh",
+      freshnessCueTone: "badge-warn",
+      refreshCheck: "Refresh not required before acting. Validate visibility after next refresh.",
+    };
+  }
+  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
+    return {
+      freshnessCue: "Review soon",
+      freshnessCueTone: "badge-muted",
+      refreshCheck: "No immediate refresh needed while deferred.",
+    };
+  }
+  if (recommendationIsReadyNow(item)) {
+    return {
+      freshnessCue: "Fresh enough to act",
+      freshnessCueTone: "badge-success",
+      refreshCheck: "No refresh required before acting.",
+    };
+  }
+  return {
+    freshnessCue: "Possibly outdated",
+    freshnessCueTone: "badge-warn",
+    refreshCheck: "Refresh likely needed before acting.",
   };
 }
 
@@ -480,6 +529,7 @@ function deriveRecommendationDecisiveness(
   const evidenceTrust = deriveRecommendationEvidenceTrust(item);
   const effortCue = deriveRecommendationEffortCue(item);
   const lifecycleSupport = deriveRecommendationLifecycleSupport(item);
+  const freshnessSupport = deriveRecommendationFreshnessSupport(item);
   const choiceSupport = deriveRecommendationChoiceSupport({
     item,
     topReadyRecommendationId,
@@ -502,6 +552,9 @@ function deriveRecommendationDecisiveness(
         lifecycleCueTone: lifecycleSupport.lifecycleCueTone,
         revisitCue: lifecycleSupport.revisitCue,
         revisitCueTone: lifecycleSupport.revisitCueTone,
+        freshnessCue: freshnessSupport.freshnessCue,
+        freshnessCueTone: freshnessSupport.freshnessCueTone,
+        refreshCheck: freshnessSupport.refreshCheck,
         whyNow: "Open high-priority recommendation is ready for operator decision.",
         blockingState: "No blocker detected.",
         afterAction: "Queue status updates now; confirm external visibility on next refresh.",
@@ -525,6 +578,9 @@ function deriveRecommendationDecisiveness(
       lifecycleCueTone: lifecycleSupport.lifecycleCueTone,
       revisitCue: lifecycleSupport.revisitCue,
       revisitCueTone: lifecycleSupport.revisitCueTone,
+      freshnessCue: freshnessSupport.freshnessCue,
+      freshnessCueTone: freshnessSupport.freshnessCueTone,
+      refreshCheck: freshnessSupport.refreshCheck,
       whyNow: "Recommendation is ready but lower priority than top urgent items.",
       blockingState: "Awaiting operator decision.",
       afterAction: "Queue status updates now; visibility follows after refresh.",
@@ -550,6 +606,9 @@ function deriveRecommendationDecisiveness(
       lifecycleCueTone: lifecycleSupport.lifecycleCueTone,
       revisitCue: lifecycleSupport.revisitCue,
       revisitCueTone: lifecycleSupport.revisitCueTone,
+      freshnessCue: freshnessSupport.freshnessCue,
+      freshnessCueTone: freshnessSupport.freshnessCueTone,
+      refreshCheck: freshnessSupport.refreshCheck,
       whyNow: "Apply was recorded and now requires visibility confirmation.",
       blockingState: "Pending next refresh for visibility confirmation.",
       afterAction: "Re-check after next refresh and confirm observed impact.",
@@ -575,6 +634,9 @@ function deriveRecommendationDecisiveness(
       lifecycleCueTone: lifecycleSupport.lifecycleCueTone,
       revisitCue: lifecycleSupport.revisitCue,
       revisitCueTone: lifecycleSupport.revisitCueTone,
+      freshnessCue: freshnessSupport.freshnessCue,
+      freshnessCueTone: freshnessSupport.freshnessCueTone,
+      refreshCheck: freshnessSupport.refreshCheck,
       whyNow: "Recommendation is retained for history and auditability.",
       blockingState: "No active blocker.",
       afterAction: "No further effect unless recommendation is re-opened.",
@@ -599,6 +661,9 @@ function deriveRecommendationDecisiveness(
     lifecycleCueTone: lifecycleSupport.lifecycleCueTone,
     revisitCue: lifecycleSupport.revisitCue,
     revisitCueTone: lifecycleSupport.revisitCueTone,
+    freshnessCue: freshnessSupport.freshnessCue,
+    freshnessCueTone: freshnessSupport.freshnessCueTone,
+    refreshCheck: freshnessSupport.refreshCheck,
     whyNow: "Current status still requires an operator decision.",
     blockingState: "Current status requires operator review.",
     afterAction: "Once applied, visibility can be confirmed after refresh.",
@@ -777,6 +842,7 @@ function RecommendationsPageContent() {
   const [bulkActionSuccess, setBulkActionSuccess] = useState<string | null>(null);
   const [bulkActionError, setBulkActionError] = useState<string | null>(null);
   const [bulkRefreshNonce, setBulkRefreshNonce] = useState(0);
+  const [expandedRecommendationIds, setExpandedRecommendationIds] = useState<Set<string>>(() => new Set());
 
   const filters = useMemo<FilterState>(() => {
     return {
@@ -827,6 +893,17 @@ function RecommendationsPageContent() {
   const allDisplayedSelected =
     displayedRecommendationIds.length > 0 &&
     displayedRecommendationIds.every((id) => selectedRecommendationIds.includes(id));
+  const toggleRecommendationDetails = useCallback((recommendationId: string) => {
+    setExpandedRecommendationIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(recommendationId)) {
+        next.delete(recommendationId);
+      } else {
+        next.add(recommendationId);
+      }
+      return next;
+    });
+  }, []);
   const buildRecommendationDetailHref = useCallback((item: Recommendation): string => {
     const params = new URLSearchParams();
     params.set("site_id", item.site_id);
@@ -978,6 +1055,26 @@ function RecommendationsPageContent() {
     }
     return "No revisit is needed for this queue view.";
   }, [loadingItems, queueSummary.total, topAppliedRecommendation, topReadyRecommendation]);
+  const recommendationQueueFreshnessPosture = useMemo(() => {
+    if (loadingItems) {
+      return "Freshness posture is pending while queue data loads.";
+    }
+    const candidate = topReadyRecommendation || topAppliedRecommendation || items[0] || null;
+    if (!candidate) {
+      return "No freshness posture is available for this queue view.";
+    }
+    return deriveRecommendationFreshnessSupport(candidate).freshnessCue;
+  }, [items, loadingItems, topAppliedRecommendation, topReadyRecommendation]);
+  const recommendationQueueRefreshCheck = useMemo(() => {
+    if (loadingItems) {
+      return "Refresh check is pending while queue data loads.";
+    }
+    const candidate = topReadyRecommendation || topAppliedRecommendation || items[0] || null;
+    if (!candidate) {
+      return "No refresh check is required for this queue view.";
+    }
+    return deriveRecommendationFreshnessSupport(candidate).refreshCheck;
+  }, [items, loadingItems, topAppliedRecommendation, topReadyRecommendation]);
   const recommendationQueueEffortSignal = useMemo(() => {
     const candidate = topReadyRecommendation || topAppliedRecommendation || items[0] || null;
     if (!candidate) {
@@ -1067,19 +1164,9 @@ function RecommendationsPageContent() {
         tone: topReadyRecommendation ? "warning" : topAppliedRecommendation ? "success" : "neutral",
       },
       {
-        label: "Revisit timing",
-        value: recommendationQueueRevisitTiming,
-        tone: topReadyRecommendation || topAppliedRecommendation ? "warning" : "neutral",
-      },
-      {
-        label: "Choice support",
-        value: recommendationQueueChoiceSupport,
-        tone: topReadyRecommendation ? "warning" : "neutral",
-      },
-      {
-        label: "Effort signal",
-        value: recommendationQueueEffortSignal,
-        tone: "neutral",
+        label: "Freshness posture",
+        value: recommendationQueueFreshnessPosture,
+        tone: topReadyRecommendation ? "success" : topAppliedRecommendation ? "warning" : "neutral",
       },
       {
         label: "Can I act now",
@@ -1090,6 +1177,26 @@ function RecommendationsPageContent() {
         label: "Blocking state",
         value: recommendationQueueBlockingState,
         tone: topAppliedRecommendation ? "warning" : "neutral",
+      },
+      {
+        label: "Revisit timing",
+        value: recommendationQueueRevisitTiming,
+        tone: topReadyRecommendation || topAppliedRecommendation ? "warning" : "neutral",
+      },
+      {
+        label: "Refresh check",
+        value: recommendationQueueRefreshCheck,
+        tone: topAppliedRecommendation ? "warning" : "neutral",
+      },
+      {
+        label: "Choice support",
+        value: recommendationQueueChoiceSupport,
+        tone: topReadyRecommendation ? "warning" : "neutral",
+      },
+      {
+        label: "Effort signal",
+        value: recommendationQueueEffortSignal,
+        tone: "neutral",
       },
       {
         label: "After action",
@@ -1131,6 +1238,8 @@ function RecommendationsPageContent() {
     recommendationQueueEffortSignal,
     recommendationQueueEvidenceTrust,
     recommendationQueueLifecycleStage,
+    recommendationQueueFreshnessPosture,
+    recommendationQueueRefreshCheck,
     recommendationQueueRevisitTiming,
     recommendationQueueWhyNow,
     topAppliedRecommendation,
@@ -1781,6 +1890,9 @@ function RecommendationsPageContent() {
             <tbody>
               {items.map((item) => {
                 const decisiveness = deriveRecommendationDecisiveness(item, topReadyRecommendation?.id || null);
+                const isExpanded = expandedRecommendationIds.has(item.id);
+                const detailsId = `recommendation-details-${item.id}`;
+                const showBlockerBadge = decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
                 return (
                 <tr
                   key={item.id}
@@ -1811,34 +1923,73 @@ function RecommendationsPageContent() {
                   <td>{item.status}</td>
                   <td data-testid={`recommendation-decisiveness-${item.id}`}>
                     <div className="recommendation-decisiveness">
-                      <div className="recommendation-decisiveness-badges">
-                        <span className={`badge ${decisiveness.priorityCueTone}`}>{decisiveness.priorityCue}</span>
-                        <span className={`badge ${decisiveness.actionabilityTone}`}>{decisiveness.actionabilityCue}</span>
-                        <span className={`badge ${decisiveness.choiceCueTone}`}>{decisiveness.choiceCue}</span>
-                        <span className={`badge ${decisiveness.effortCueTone}`}>{decisiveness.effortCue}</span>
-                        <span className={`badge ${decisiveness.lifecycleCueTone}`}>{decisiveness.lifecycleCue}</span>
+                      <div className="recommendation-decisiveness-badge-row">
+                        <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-primary">
+                          <span className={`badge ${decisiveness.actionabilityTone}`}>{decisiveness.actionabilityCue}</span>
+                          <span className={`badge ${decisiveness.effortCueTone}`}>{decisiveness.effortCue}</span>
+                        </div>
+                        {showBlockerBadge ? (
+                          <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-blocker">
+                            <span className={`badge ${decisiveness.blockerCueTone}`}>{decisiveness.blockerCue}</span>
+                          </div>
+                        ) : null}
                       </div>
-                      <p className="hint muted">
-                        <span className="text-strong">Why now:</span> {decisiveness.whyNow}
+                      <p className="hint muted recommendation-decisiveness-why-now">
+                        <span className="text-strong">Why now:</span> {truncateRecommendationWhyNow(decisiveness.whyNow)}
                       </p>
-                      <p className="hint muted">
-                        <span className="text-strong">Revisit:</span>{" "}
-                        <span className={`badge ${decisiveness.revisitCueTone}`}>{decisiveness.revisitCue}</span>
-                      </p>
-                      <p className="hint muted">
-                        <span className="text-strong">Blocking:</span>{" "}
-                        <span className={`badge ${decisiveness.blockerCueTone}`}>{decisiveness.blockerCue}</span>{" "}
-                        {decisiveness.blockingState}
-                      </p>
-                      <p className="hint muted">
-                        <span className="text-strong">After action:</span> {decisiveness.afterAction}
-                      </p>
-                      <p className="hint muted">
-                        <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
-                      </p>
-                      <p className="hint muted">
-                        <span className={`badge ${decisiveness.evidenceTrustTone}`}>{decisiveness.evidenceTrustCue}</span>
-                      </p>
+                      <button
+                        type="button"
+                        className="button button-tertiary button-inline recommendation-decisiveness-toggle"
+                        aria-expanded={isExpanded}
+                        aria-controls={detailsId}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleRecommendationDetails(item.id);
+                        }}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        {isExpanded ? "Hide details" : "View details"}
+                      </button>
+                      {isExpanded ? (
+                        <div id={detailsId} className="recommendation-decisiveness-details">
+                          <p className="hint muted">
+                            <span className="text-strong">Priority:</span>{" "}
+                            <span className={`badge ${decisiveness.priorityCueTone}`}>{decisiveness.priorityCue}</span>
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">Choice support:</span>{" "}
+                            <span className={`badge ${decisiveness.choiceCueTone}`}>{decisiveness.choiceCue}</span>
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">Lifecycle:</span>{" "}
+                            <span className={`badge ${decisiveness.lifecycleCueTone}`}>{decisiveness.lifecycleCue}</span>
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">Freshness:</span>{" "}
+                            <span className={`badge ${decisiveness.freshnessCueTone}`}>{decisiveness.freshnessCue}</span>{" "}
+                            {decisiveness.refreshCheck}
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">Why now:</span> {decisiveness.whyNow}
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">Blocking:</span> {decisiveness.blockingState}
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">After action:</span> {decisiveness.afterAction}
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
+                          </p>
+                          <p className="hint muted">
+                            <span className={`badge ${decisiveness.evidenceTrustTone}`}>{decisiveness.evidenceTrustCue}</span>
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">Revisit:</span>{" "}
+                            <span className={`badge ${decisiveness.revisitCueTone}`}>{decisiveness.revisitCue}</span>
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
                   </td>
                   <td>{item.category}</td>

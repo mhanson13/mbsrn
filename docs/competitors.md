@@ -610,6 +610,25 @@ Low-result behavior:
 
 This message is operator-facing guidance only and does not alter ranking, filtering, or persistence.
 
+## Workspace Pipeline View (Structured)
+
+The site workspace AI competitor panel now presents run-debug/reference data in a structured operator layout:
+
+- **summary strip** with compact count chips (total, eligible, final returned, excluded, failures, retries)
+- **primary candidate pipeline table** with deterministic stage counts:
+  - proposed
+  - rejected by eligibility
+  - eligible
+  - removed by tuning
+  - survived tuning
+  - removed by existing-domain match
+  - removed by deduplication
+  - removed by final limit
+  - final returned
+- **secondary debug details** (prompt inspection, provider attempts, rejected-candidate tables, historical telemetry)
+
+No competitor generation logic, ranking semantics, or trust behavior changed in this pass.
+
 ## Discovery vs Filtering Stages
 
 Competitor generation uses a two-stage yield model:

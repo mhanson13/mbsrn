@@ -1,5 +1,26 @@
 # Recommendations
 
+## Recommendation Queue Progressive Disclosure
+
+Recommendation queue rows now use a compact default view with expandable detail.
+
+### Collapsed row (default)
+- Title, status, category/priority columns remain visible.
+- Decisiveness cell shows up to three quick decision badges:
+  - actionability
+  - effort
+  - blocker (only when present)
+- A single-line `Why now` summary is shown for fast scanning.
+
+### Expanded row (`View details`)
+- Full `Why now` explanation
+- Blocking explanation
+- After-action expectation
+- Evidence preview + support cue
+- Revisit guidance and freshness context
+
+This is presentation-only. Recommendation logic, trust semantics, and backend data contracts are unchanged.
+
 ## Optional Competitor Signal Integration
 
 Recommendation narrative generation can consume an optional, bounded competitor context signal. This is additive and does not change deterministic recommendation artifacts or provider/model architecture.
@@ -328,6 +349,8 @@ Queue/detail surfaces now also expose deterministic decisiveness cues:
 - `Blocking state`
 - `Lifecycle stage`
 - `Revisit timing`
+- `Freshness posture`
+- `Refresh check`
 - `After action`
 - compact row-level cue badges (`High-value next step`, `Ready now`, `Waiting on visibility`, `Manual follow-up required`, `Review before applying`)
 - compact comparative choice-support cues (`Best immediate move`, `Quick win`, `More involved`, `Lower-immediacy background item`)
@@ -338,6 +361,12 @@ Lifecycle-stage interpretation on recommendation-facing pages:
 - `Needs review / pending`: still actionable and requires operator review/decision.
 - `Applied / completed`: handled, but may still be waiting on downstream visibility confirmation.
 - `Background item / revisit later`: currently lower-immediacy (dismissed/resolved/snoozed) and safe to defer unless context changes.
+
+Freshness/review interpretation on recommendation-facing pages:
+- `Fresh enough to act`: context is current enough to proceed without a pre-action refresh.
+- `Review soon`: not urgent, but should be revisited in normal workflow cadence.
+- `Pending refresh`: action is recorded and should be rechecked after the next visibility refresh.
+- `Possibly outdated`: context should be refreshed before acting.
 
 Presentation intent:
 - compress rationale into short, high-signal lines

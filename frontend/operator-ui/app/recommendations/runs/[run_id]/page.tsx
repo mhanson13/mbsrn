@@ -185,6 +185,53 @@ function deriveRecommendationLifecycleSupport(item: Recommendation): {
   };
 }
 
+function deriveRecommendationFreshnessSupport(item: Recommendation): {
+  freshness: string;
+  freshnessTone: "neutral" | "success" | "warning";
+  refreshCheck: string;
+  refreshCheckTone: "neutral" | "success" | "warning";
+} {
+  const hasTimestamp = (item.updated_at || item.created_at || "").trim().length > 0;
+  if (!hasTimestamp) {
+    return {
+      freshness: "Possibly outdated",
+      freshnessTone: "warning",
+      refreshCheck: "Refresh likely needed before acting.",
+      refreshCheckTone: "warning",
+    };
+  }
+  if (item.status === "accepted") {
+    return {
+      freshness: "Pending refresh",
+      freshnessTone: "warning",
+      refreshCheck: "Refresh not required before acting. Validate visibility after next refresh.",
+      refreshCheckTone: "warning",
+    };
+  }
+  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
+    return {
+      freshness: "Review soon",
+      freshnessTone: "neutral",
+      refreshCheck: "No immediate refresh needed while deferred.",
+      refreshCheckTone: "neutral",
+    };
+  }
+  if (item.status === "open" || item.status === "in_progress") {
+    return {
+      freshness: "Fresh enough to act",
+      freshnessTone: "success",
+      refreshCheck: "No refresh required before acting.",
+      refreshCheckTone: "success",
+    };
+  }
+  return {
+    freshness: "Possibly outdated",
+    freshnessTone: "warning",
+    refreshCheck: "Refresh likely needed before acting.",
+    refreshCheckTone: "warning",
+  };
+}
+
 function isNotFoundError(error: unknown): boolean {
   return error instanceof ApiRequestError && error.status === 404;
 }
@@ -446,6 +493,20 @@ export default function RecommendationRunDetailPage() {
     }
     return deriveRecommendationLifecycleSupport(topRecommendation).revisit;
   }, [recommendations]);
+  const strongestRecommendationFreshnessPosture = useMemo(() => {
+    const topRecommendation = recommendations[0];
+    if (!topRecommendation) {
+      return "No freshness posture is available for this run yet.";
+    }
+    return deriveRecommendationFreshnessSupport(topRecommendation).freshness;
+  }, [recommendations]);
+  const strongestRecommendationRefreshCheck = useMemo(() => {
+    const topRecommendation = recommendations[0];
+    if (!topRecommendation) {
+      return "No refresh check is available for this run yet.";
+    }
+    return deriveRecommendationFreshnessSupport(topRecommendation).refreshCheck;
+  }, [recommendations]);
 
   const recommendationsByStatus = useMemo(
     () => toSortedCountEntries(report?.recommendations.by_status),
@@ -647,6 +708,11 @@ export default function RecommendationRunDetailPage() {
         tone: hasActionableOutput ? "warning" : runCompleted ? "success" : "neutral",
       },
       {
+        label: "Freshness posture",
+        value: strongestRecommendationFreshnessPosture,
+        tone: hasActionableOutput ? "success" : runCompleted ? "warning" : "neutral",
+      },
+      {
         label: "Blocking state",
         value: blockingStateLabel,
         tone: hasActionableOutput ? "neutral" : "warning",
@@ -654,6 +720,11 @@ export default function RecommendationRunDetailPage() {
       {
         label: "Revisit timing",
         value: strongestRecommendationRevisitTiming,
+        tone: runCompleted ? "warning" : "neutral",
+      },
+      {
+        label: "Refresh check",
+        value: strongestRecommendationRefreshCheck,
         tone: runCompleted ? "warning" : "neutral",
       },
       {
@@ -713,6 +784,8 @@ export default function RecommendationRunDetailPage() {
     strongestRecommendationEffortCue,
     strongestRecommendationEvidenceTrust,
     strongestRecommendationLifecycleStage,
+    strongestRecommendationFreshnessPosture,
+    strongestRecommendationRefreshCheck,
     strongestRecommendationRevisitTiming,
   ]);
 
@@ -1228,6 +1301,7 @@ export default function RecommendationRunDetailPage() {
                     <tbody>
                       {recommendations.map((item) => {
                         const lifecycleSupport = deriveRecommendationLifecycleSupport(item);
+                        const freshnessSupport = deriveRecommendationFreshnessSupport(item);
                         return (
                         <tr key={item.id}>
                           <td className="table-cell-wrap">
@@ -1245,9 +1319,15 @@ export default function RecommendationRunDetailPage() {
                                 <span className={`badge ${lifecycleSupport.stageTone === "success" ? "badge-success" : lifecycleSupport.stageTone === "warning" ? "badge-warn" : "badge-muted"}`}>
                                   {lifecycleSupport.stage}
                                 </span>
+                                <span className={`badge ${freshnessSupport.freshnessTone === "success" ? "badge-success" : freshnessSupport.freshnessTone === "warning" ? "badge-warn" : "badge-muted"}`}>
+                                  {freshnessSupport.freshness}
+                                </span>
                               </div>
                               <p className="hint muted">
                                 <span className="text-strong">Blocking:</span> {deriveRecommendationBlockerCue(item)}
+                              </p>
+                              <p className="hint muted">
+                                <span className="text-strong">Freshness:</span> {freshnessSupport.refreshCheck}
                               </p>
                               <p className="hint muted">
                                 <span className="text-strong">Revisit:</span> {lifecycleSupport.revisit}

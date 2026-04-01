@@ -1498,10 +1498,66 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
+async function switchToActivityTab(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  const activityTab = await screen.findByRole("tab", { name: "Activity" });
+  if (activityTab.getAttribute("aria-selected") !== "true") {
+    await user.click(activityTab);
+  }
+  await waitFor(() => expect(activityTab).toHaveAttribute("aria-selected", "true"));
+}
+
 describe("site workspace timeline controls", () => {
-  it("renders 10 events by default and shows show-more control when timeline has more than 10 events", async () => {
+  it("keeps timeline hidden in summary tab by default and shows it in activity tab", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("tab", { name: "Summary" });
+    expect(screen.queryByRole("heading", { name: "Site Activity Timeline" })).not.toBeInTheDocument();
+
+    await switchToActivityTab(user);
+    expect(screen.getByRole("heading", { name: "Site Activity Timeline" })).toBeInTheDocument();
+  });
+
+  it("hides full audit history in summary tab and shows compact audit signals", async () => {
     seedRichWorkspaceData();
     render(<SiteWorkspacePage />);
+
+    await screen.findByRole("tab", { name: "Summary" });
+    expect(screen.queryByRole("heading", { name: "Recent Audit Runs" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("workspace-operational-summary")).toBeInTheDocument();
+    expect(screen.getByTestId("summary-audit-status")).toBeInTheDocument();
+    expect(screen.getByTestId("summary-audit-metrics")).toBeInTheDocument();
+  });
+
+  it("shows full audit history tables in activity tab", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    await switchToActivityTab(user);
+    expect(screen.getByRole("heading", { name: "Recent Audit Runs" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Competitor Readiness" })).toBeInTheDocument();
+  });
+
+  it("keeps recommendation decision surfaces available from recommendations tab", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    const recommendationsTab = await screen.findByRole("tab", { name: "Recommendations" });
+    await user.click(recommendationsTab);
+    await waitFor(() => expect(recommendationsTab).toHaveAttribute("aria-selected", "true"));
+
+    expect(screen.getByRole("heading", { name: "Recommendation Queue" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recommendation Runs and Narratives" })).toBeInTheDocument();
+  });
+
+  it("renders 10 events by default and shows show-more control when timeline has more than 10 events", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByText("Showing 10 of 19 events");
     expect(screen.getAllByTestId("site-activity-row")).toHaveLength(10);
@@ -1511,7 +1567,9 @@ describe("site workspace timeline controls", () => {
 
   it("renders grouped day headers for visible timeline events", async () => {
     seedGroupedTimelineWorkspaceData();
+    const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByText("Showing 10 of 11 events");
     const dayHeaders = screen.getAllByTestId("site-activity-day-header").map((item) => item.textContent?.trim());
@@ -1524,6 +1582,7 @@ describe("site workspace timeline controls", () => {
     seedGroupedTimelineWorkspaceData();
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByRole("button", { name: "Show more" });
     await user.click(screen.getByRole("button", { name: "Show more" }));
@@ -1541,6 +1600,7 @@ describe("site workspace timeline controls", () => {
     seedRichWorkspaceData();
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByRole("checkbox", { name: "Snapshot Runs" });
     await user.click(screen.getByRole("checkbox", { name: "Snapshot Runs" }));
@@ -1556,6 +1616,7 @@ describe("site workspace timeline controls", () => {
     seedGroupedTimelineWorkspaceData();
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByRole("checkbox", { name: "Snapshot Runs" });
     await user.click(screen.getByRole("checkbox", { name: "Snapshot Runs" }));
@@ -1573,6 +1634,7 @@ describe("site workspace timeline controls", () => {
     seedRichWorkspaceData();
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByRole("checkbox", { name: "failed" });
     await user.click(screen.getByRole("checkbox", { name: "failed" }));
@@ -1592,6 +1654,7 @@ describe("site workspace timeline controls", () => {
     seedGroupedTimelineWorkspaceData();
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByRole("checkbox", { name: "completed" });
     await user.click(screen.getByRole("checkbox", { name: "completed" }));
@@ -1612,6 +1675,7 @@ describe("site workspace timeline controls", () => {
     seedRichWorkspaceData();
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByRole("checkbox", { name: "Audit Runs" });
     await user.click(screen.getByRole("checkbox", { name: "Audit Runs" }));
@@ -1634,6 +1698,7 @@ describe("site workspace timeline controls", () => {
     seedRichWorkspaceData();
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByRole("checkbox", { name: "Audit Runs" });
     await user.click(screen.getByRole("checkbox", { name: "Audit Runs" }));
@@ -1650,6 +1715,7 @@ describe("site workspace timeline controls", () => {
     seedRichWorkspaceData();
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByText("Showing 10 of 19 events");
     expect(screen.getAllByTestId("site-activity-row")).toHaveLength(10);
@@ -1664,6 +1730,7 @@ describe("site workspace timeline controls", () => {
     seedGroupedTimelineWorkspaceData();
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByText("Showing 10 of 11 events");
     expect(screen.getAllByTestId("site-activity-day-header").map((item) => item.textContent?.trim())).toEqual([
@@ -1694,7 +1761,9 @@ describe("site workspace timeline controls", () => {
 
   it("keeps reverse-chronological event ordering inside grouped sections", async () => {
     seedGroupedTimelineWorkspaceData();
+    const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByText("Showing 10 of 11 events");
     const rows = screen.getAllByTestId("site-activity-row");
@@ -3459,8 +3528,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Latest Completed Run" });
-    const eeatBadges = screen.getByTestId("recommendation-eeat-badges");
+    const eeatBadges = await screen.findByTestId("recommendation-eeat-badges");
     expect(within(eeatBadges).getByText("Trustworthiness")).toBeInTheDocument();
     expect(within(eeatBadges).getByText("Authoritativeness")).toBeInTheDocument();
     const priorityReasonBadges = screen.getByTestId("recommendation-priority-reasons");
@@ -3817,8 +3885,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Operator Focus" });
-    const trustSummary = screen.getByTestId("workspace-trust-summary");
+    const trustSummary = await screen.findByTestId("workspace-trust-summary");
     expect(within(trustSummary).getByText("Trust signals")).toBeInTheDocument();
     expect(within(trustSummary).getByText("Latest competitor status: Recovered")).toBeInTheDocument();
     expect(within(trustSummary).getByText("Nearby seed discovery used: yes.")).toBeInTheDocument();
@@ -3850,8 +3917,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Operator Focus" });
-    const trustSummary = screen.getByTestId("workspace-trust-summary");
+    const trustSummary = await screen.findByTestId("workspace-trust-summary");
     expect(within(trustSummary).getByText("Latest competitor status: Degraded")).toBeInTheDocument();
     expect(within(trustSummary).getByText("Synthetic fallback used: yes.")).toBeInTheDocument();
     expect(within(trustSummary).queryByText(/Latest applied recommendation:/)).not.toBeInTheDocument();
@@ -5756,7 +5822,9 @@ describe("site workspace timeline controls", () => {
     mockUseOperatorContext.mockReturnValue(baseContext());
     seedRichWorkspaceData();
     mockFetchCompetitorDomains.mockRejectedValueOnce(new Error("domain fetch failed"));
+    const user = userEvent.setup();
     rerender(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByRole("heading", { name: "Site Activity Timeline" });
     await screen.findByText("Some activity data could not be loaded. Available events are still shown.");
@@ -5780,7 +5848,9 @@ describe("site workspace timeline controls", () => {
     });
     mockFetchRecommendationRuns.mockResolvedValue({ items: [], total: 0 });
 
+    const user = userEvent.setup();
     render(<SiteWorkspacePage />);
+    await switchToActivityTab(user);
 
     await screen.findByRole("heading", { name: "Site Activity Timeline" });
     await screen.findByText("No recent site activity events are available for this site yet.");
@@ -6197,12 +6267,15 @@ describe("site workspace ai competitor profile drafts", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "AI Competitor Profiles" });
-    expect(screen.getByText(/Candidate telemetry \(3 runs\): raw 8 \| included 2 \| excluded 6/)).toBeInTheDocument();
-    expect(screen.getByText(/Preview accuracy \(last 5\): 80% directionally correct \| avg error margin 1.2/)).toBeInTheDocument();
-    expect(screen.getByText(/Exclusion reasons:/i)).toHaveTextContent(
-      "Exclusion reasons: big box mismatch=1, directory or aggregator=2, duplicate=1, low relevance=2",
-    );
+    await screen.findByText(/Candidate telemetry \(3 runs\): raw 8 \| included 2 \| excluded 6/);
+    expect(
+      screen.getByText(/Preview accuracy \(last 5\): 80% directionally correct \| avg error margin 1.2/),
+    ).toBeInTheDocument();
+    const exclusionChips = screen.getByTestId("competitor-exclusion-reason-chips");
+    expect(exclusionChips).toHaveTextContent("big box mismatch 1");
+    expect(exclusionChips).toHaveTextContent("directory or aggregator 2");
+    expect(exclusionChips).toHaveTextContent("duplicate 1");
+    expect(exclusionChips).toHaveTextContent("low relevance 2");
   });
 
   it("renders rejected competitor candidates debug details when run detail includes deterministic rejections", async () => {
@@ -6362,17 +6435,26 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(
       within(debugBlock).getByText("Showing 2 of 3 rejected candidates."),
     ).toBeInTheDocument();
+    const summaryStrip = screen.getByTestId("competitor-summary-strip");
+    expect(summaryStrip).toHaveTextContent("Total candidates 5");
+    expect(summaryStrip).toHaveTextContent("Eligible 2");
+    expect(summaryStrip).toHaveTextContent("Final returned 1");
+    expect(summaryStrip).toHaveTextContent("Excluded 4");
+    expect(summaryStrip).toHaveTextContent("Failure count 1");
+    expect(summaryStrip).toHaveTextContent("Retry count 1");
+
     const pipelineDebug = screen.getByTestId("competitor-candidate-pipeline-summary-debug");
-    expect(within(pipelineDebug).getByText(/Candidate pipeline \(debug\)/i)).toBeInTheDocument();
-    expect(within(pipelineDebug).getByText("Proposed: 5")).toBeInTheDocument();
-    expect(within(pipelineDebug).getByText("Rejected by eligibility: 3")).toBeInTheDocument();
-    expect(within(pipelineDebug).getByText("Eligible after filtering: 2")).toBeInTheDocument();
-    expect(within(pipelineDebug).getByText("Removed by tuning: 1")).toBeInTheDocument();
-    expect(within(pipelineDebug).getByText("Survived tuning: 1")).toBeInTheDocument();
-    expect(within(pipelineDebug).getByText("Removed by existing-domain match: 0")).toBeInTheDocument();
-    expect(within(pipelineDebug).getByText("Removed by deduplication: 0")).toBeInTheDocument();
-    expect(within(pipelineDebug).getByText("Removed by final limit: 0")).toBeInTheDocument();
-    expect(within(pipelineDebug).getByText("Final returned: 1")).toBeInTheDocument();
+    expect(within(pipelineDebug).getByText(/Candidate pipeline/i)).toBeInTheDocument();
+    const pipelineTable = within(pipelineDebug).getByTestId("competitor-candidate-pipeline-table");
+    expect(within(pipelineTable).getByText("Proposed")).toBeInTheDocument();
+    expect(within(pipelineTable).getByText("Rejected by eligibility")).toBeInTheDocument();
+    expect(within(pipelineTable).getByText("Eligible")).toBeInTheDocument();
+    expect(within(pipelineTable).getByText("Removed by tuning")).toBeInTheDocument();
+    expect(within(pipelineTable).getByText("Survived tuning")).toBeInTheDocument();
+    expect(within(pipelineTable).getByText("Removed by existing-domain match")).toBeInTheDocument();
+    expect(within(pipelineTable).getByText("Removed by deduplication")).toBeInTheDocument();
+    expect(within(pipelineTable).getByText("Removed by final limit")).toBeInTheDocument();
+    expect(within(pipelineTable).getByText("Final returned")).toBeInTheDocument();
     const draftRows = screen.getAllByTestId("competitor-profile-draft-row");
     expect(draftRows).toHaveLength(1);
     expect(within(draftRows[0]).getByText(/Nearby seed \+ AI enrichment/i)).toBeInTheDocument();

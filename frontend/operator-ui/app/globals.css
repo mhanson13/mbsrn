@@ -527,6 +527,31 @@ main {
   min-height: 2rem;
 }
 
+.workspace-content-tab-shell {
+  gap: var(--space-2);
+}
+
+.workspace-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.workspace-subtab-button {
+  min-width: 7.5rem;
+}
+
+.workspace-subtab-button-active {
+  background: var(--button-primary-bg);
+  border-color: var(--button-primary-border);
+  color: var(--button-primary-text);
+}
+
+.workspace-subtab-button-active:hover {
+  background: var(--button-primary-hover-bg);
+}
+
 .workspace-summary-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
@@ -1169,14 +1194,54 @@ code {
 
 .recommendation-decisiveness {
   display: grid;
-  gap: 0.28rem;
+  gap: 0.36rem;
   min-width: 220px;
+}
+
+.recommendation-decisiveness-badge-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.45rem;
 }
 
 .recommendation-decisiveness-badges {
   display: flex;
   flex-wrap: wrap;
   gap: 0.34rem;
+}
+
+.recommendation-decisiveness-badges-primary {
+  justify-content: flex-start;
+}
+
+.recommendation-decisiveness-badges-blocker {
+  justify-content: flex-end;
+}
+
+.recommendation-decisiveness-why-now {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recommendation-decisiveness-toggle {
+  justify-self: flex-start;
+  padding: 0.16rem 0.45rem;
+}
+
+.recommendation-decisiveness-details {
+  display: grid;
+  gap: 0.26rem;
+  padding: 0.48rem 0.56rem;
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.recommendation-decisiveness-details .hint {
+  margin: 0;
 }
 
 .recommendation-decisiveness .hint {

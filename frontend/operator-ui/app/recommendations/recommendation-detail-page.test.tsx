@@ -141,6 +141,8 @@ describe("recommendation detail optimistic single-item updates", () => {
     expect(screen.getByText("Evidence trust")).toBeInTheDocument();
     expect(screen.getByText("Lifecycle stage")).toBeInTheDocument();
     expect(screen.getByText("Revisit timing")).toBeInTheDocument();
+    expect(screen.getByText("Freshness posture")).toBeInTheDocument();
+    expect(screen.getByText("Refresh check")).toBeInTheDocument();
     expect(screen.getByText("Choice support")).toBeInTheDocument();
     expect(screen.getByText("Effort signal")).toBeInTheDocument();
     expect(
@@ -148,7 +150,9 @@ describe("recommendation detail optimistic single-item updates", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("High-value next step")).toBeInTheDocument();
     expect(screen.getAllByText("Needs review / pending").length).toBeGreaterThan(0);
+    expect(screen.getByText("Fresh enough to act")).toBeInTheDocument();
     expect(screen.getByText("Revisit now.")).toBeInTheDocument();
+    expect(screen.getByText("No refresh required before acting.")).toBeInTheDocument();
     expect(screen.getByText("Quick win")).toBeInTheDocument();
     expect(screen.getByText("Support cue: operator review required")).toBeInTheDocument();
     expect(
@@ -188,7 +192,11 @@ describe("recommendation detail optimistic single-item updates", () => {
     expect(screen.getByText("Apply is complete and now needs visibility confirmation.")).toBeInTheDocument();
     expect(screen.getByText("Waiting on visibility")).toBeInTheDocument();
     expect(screen.getAllByText("Applied / completed").length).toBeGreaterThan(0);
+    expect(screen.getByText("Pending refresh")).toBeInTheDocument();
     expect(screen.getByText("Revisit after visibility refresh.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Refresh not required before acting. Validate visibility after next refresh."),
+    ).toBeInTheDocument();
     expect(screen.getByText("No. Wait for refresh, then verify outcome.")).toBeInTheDocument();
     expect(mockUpdateRecommendationStatus).toHaveBeenCalledWith(
       "token-1",

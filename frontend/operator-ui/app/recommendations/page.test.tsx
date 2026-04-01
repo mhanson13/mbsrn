@@ -149,6 +149,9 @@ function baseOperatorContext(): OperatorContextMockValue {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockFetchRecommendations.mockReset();
+  mockUpdateRecommendationStatus.mockReset();
+  mockUseOperatorContext.mockReset();
   navigationState.pathname = "/recommendations";
   navigationState.searchParams = new URLSearchParams();
   mockUseOperatorContext.mockReturnValue(baseOperatorContext());
@@ -205,6 +208,8 @@ describe("recommendations queue optimistic workflows", () => {
     expect(screen.getByText("Current status")).toBeInTheDocument();
     expect(screen.getByText("Lifecycle stage")).toBeInTheDocument();
     expect(screen.getByText("Revisit timing")).toBeInTheDocument();
+    expect(screen.getByText("Freshness posture")).toBeInTheDocument();
+    expect(screen.getByText("Refresh check")).toBeInTheDocument();
     expect(screen.getByText("Choice support")).toBeInTheDocument();
     expect(screen.getByText("Effort signal")).toBeInTheDocument();
     expect(screen.getByText("Can I act now")).toBeInTheDocument();
@@ -216,24 +221,35 @@ describe("recommendations queue optimistic workflows", () => {
       screen.getByText("Yes. Ready-now recommendations still need an operator decision."),
     ).toBeInTheDocument();
     const decisivenessCellOne = screen.getByTestId("recommendation-decisiveness-rec-1");
-    expect(decisivenessCellOne).toHaveTextContent("High-value next step");
     expect(decisivenessCellOne).toHaveTextContent("Ready now");
-    expect(decisivenessCellOne).toHaveTextContent("Best immediate move");
     expect(decisivenessCellOne).toHaveTextContent("Quick win");
-    expect(decisivenessCellOne).toHaveTextContent("Needs review / pending");
-    expect(decisivenessCellOne).toHaveTextContent("Revisit now");
+    expect(decisivenessCellOne).toHaveTextContent("Blocked by operator review");
     expect(decisivenessCellOne).toHaveTextContent("Why now:");
-    expect(decisivenessCellOne).toHaveTextContent("Blocking:");
+    expect(decisivenessCellOne).not.toHaveTextContent("After action:");
+    const recOneExpandButton = within(decisivenessCellOne).getByRole("button", { name: "View details" });
+    expect(recOneExpandButton).toHaveAttribute("aria-expanded", "false");
+    await user.click(recOneExpandButton);
+    expect(within(decisivenessCellOne).getByRole("button", { name: "Hide details" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(decisivenessCellOne).toHaveTextContent("High-value next step");
+    expect(decisivenessCellOne).toHaveTextContent("Best immediate move");
+    expect(decisivenessCellOne).toHaveTextContent("Needs review / pending");
+    expect(decisivenessCellOne).toHaveTextContent("Fresh enough to act");
+    expect(decisivenessCellOne).toHaveTextContent("No refresh required before acting.");
     expect(decisivenessCellOne).toHaveTextContent("Blocked by operator review");
     expect(decisivenessCellOne).toHaveTextContent("After action:");
     expect(decisivenessCellOne).toHaveTextContent("Evidence:");
     expect(decisivenessCellOne).toHaveTextContent("Support cue:");
+    expect(decisivenessCellOne).toHaveTextContent("Revisit:");
     expect(decisivenessCellOne).toHaveTextContent("operator review required");
     const decisivenessCellTwo = screen.getByTestId("recommendation-decisiveness-rec-2");
-    expect(decisivenessCellTwo).toHaveTextContent("Review before applying");
     expect(decisivenessCellTwo).toHaveTextContent("Ready now");
-    expect(decisivenessCellTwo).toHaveTextContent("Quick win alternative");
-    expect(decisivenessCellTwo).toHaveTextContent("Needs review / pending");
+    expect(decisivenessCellTwo).toHaveTextContent("Quick win");
+    expect(decisivenessCellTwo).toHaveTextContent("Blocked by operator review");
+    expect(decisivenessCellTwo).not.toHaveTextContent("Needs review / pending");
+    expect(decisivenessCellTwo).not.toHaveTextContent("Fresh enough to act");
     expect(
       screen.getByText(/Queue controls and recommendation details below show action history/i),
     ).toBeInTheDocument();
@@ -289,20 +305,30 @@ describe("recommendations queue optimistic workflows", () => {
         2,
       ),
     );
+    const user = userEvent.setup();
 
     render(<RecommendationsPage />);
 
     await screen.findByText("Accepted Recommendation");
     const acceptedDecisiveness = screen.getByTestId("recommendation-decisiveness-rec-21");
-    expect(acceptedDecisiveness).toHaveTextContent("Waiting on visibility");
     expect(acceptedDecisiveness).toHaveTextContent("Manual follow-up required");
+    expect(acceptedDecisiveness).toHaveTextContent("Quick win");
+    expect(acceptedDecisiveness).not.toHaveTextContent("Applied / completed");
+    await user.click(within(acceptedDecisiveness).getByRole("button", { name: "View details" }));
+    expect(acceptedDecisiveness).toHaveTextContent("Waiting on visibility");
     expect(acceptedDecisiveness).toHaveTextContent("Applied / completed");
+    expect(acceptedDecisiveness).toHaveTextContent("Pending refresh");
     expect(acceptedDecisiveness).toHaveTextContent("Revisit after visibility refresh");
 
     const dismissedDecisiveness = screen.getByTestId("recommendation-decisiveness-rec-22");
+    expect(dismissedDecisiveness).toHaveTextContent("No immediate action");
+    expect(dismissedDecisiveness).toHaveTextContent("Quick win");
+    expect(dismissedDecisiveness).not.toHaveTextContent("No blocker");
+    expect(dismissedDecisiveness).not.toHaveTextContent("Background item / revisit later");
+    await user.click(within(dismissedDecisiveness).getByRole("button", { name: "View details" }));
     expect(dismissedDecisiveness).toHaveTextContent("Lower-immediacy background item");
-    expect(dismissedDecisiveness).toHaveTextContent("No blocker");
     expect(dismissedDecisiveness).toHaveTextContent("Background item / revisit later");
+    expect(dismissedDecisiveness).toHaveTextContent("Review soon");
     expect(dismissedDecisiveness).toHaveTextContent("Ignore for now unless context changes");
   });
 
@@ -429,8 +455,9 @@ describe("recommendations queue optimistic workflows", () => {
 
     await screen.findByText("Recommendation Five");
     const decisivenessCell = screen.getByTestId("recommendation-decisiveness-rec-5");
-    expect(decisivenessCell).toHaveTextContent("High-value next step");
     expect(decisivenessCell).toHaveTextContent("Ready now");
+    expect(decisivenessCell).toHaveTextContent("Quick win");
+    expect(decisivenessCell).toHaveTextContent("Blocked by operator review");
     await user.click(screen.getByLabelText("Select recommendation rec-5"));
     await user.click(screen.getByRole("button", { name: "Accept Selected" }));
 

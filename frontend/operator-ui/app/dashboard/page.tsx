@@ -139,6 +139,14 @@ export default function DashboardPage() {
           <span className="badge badge-muted">Background item / revisit later</span>{" "}
           keeps revisit timing explicit without opening detail pages.
         </p>
+        <p className="hint">
+          <span className="text-strong">Freshness posture:</span>{" "}
+          <span className="badge badge-success">Fresh enough to act</span>{" "}
+          <span className="badge badge-warn">Review soon</span>{" "}
+          <span className="badge badge-warn">Pending refresh</span>{" "}
+          <span className="badge badge-warn">Possibly outdated</span>{" "}
+          shows whether a refresh is likely needed before action.
+        </p>
       </SectionCard>
 
       <SectionCard variant="summary" className="role-surface-support">

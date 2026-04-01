@@ -164,6 +164,53 @@ function deriveRecommendationLifecycleSupport(item: Recommendation): {
   };
 }
 
+function deriveRecommendationFreshnessSupport(item: Recommendation): {
+  freshness: string;
+  freshnessTone: "neutral" | "success" | "warning";
+  refreshCheck: string;
+  refreshCheckTone: "neutral" | "success" | "warning";
+} {
+  const hasTimestamp = (item.updated_at || item.created_at || "").trim().length > 0;
+  if (!hasTimestamp) {
+    return {
+      freshness: "Possibly outdated",
+      freshnessTone: "warning",
+      refreshCheck: "Refresh likely needed before acting.",
+      refreshCheckTone: "warning",
+    };
+  }
+  if (item.status === "accepted") {
+    return {
+      freshness: "Pending refresh",
+      freshnessTone: "warning",
+      refreshCheck: "Refresh not required before acting. Validate visibility after next refresh.",
+      refreshCheckTone: "warning",
+    };
+  }
+  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
+    return {
+      freshness: "Review soon",
+      freshnessTone: "neutral",
+      refreshCheck: "No immediate refresh needed while deferred.",
+      refreshCheckTone: "neutral",
+    };
+  }
+  if (item.status === "open" || item.status === "in_progress") {
+    return {
+      freshness: "Fresh enough to act",
+      freshnessTone: "success",
+      refreshCheck: "No refresh required before acting.",
+      refreshCheckTone: "success",
+    };
+  }
+  return {
+    freshness: "Possibly outdated",
+    freshnessTone: "warning",
+    refreshCheck: "Refresh likely needed before acting.",
+    refreshCheckTone: "warning",
+  };
+}
+
 function safeRecommendationDetailErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 401) {
@@ -573,6 +620,7 @@ export default function RecommendationDetailPage() {
     const choiceSupportLabel = deriveRecommendationChoiceSupport(recommendation);
     const effortSignalLabel = deriveRecommendationEffortCue(recommendation);
     const lifecycleSupport = deriveRecommendationLifecycleSupport(recommendation);
+    const freshnessSupport = deriveRecommendationFreshnessSupport(recommendation);
     const evidencePreviewLabel = deriveRecommendationEvidencePreview(recommendation);
     const evidenceTrustLabel = deriveRecommendationEvidenceTrustCue(recommendation);
 
@@ -593,6 +641,11 @@ export default function RecommendationDetailPage() {
         tone: lifecycleSupport.stageTone,
       },
       {
+        label: "Freshness posture",
+        value: freshnessSupport.freshness,
+        tone: freshnessSupport.freshnessTone,
+      },
+      {
         label: "Can I act now",
         value: canActNowLabel,
         tone: pending ? "success" : "neutral",
@@ -606,6 +659,11 @@ export default function RecommendationDetailPage() {
         label: "Revisit timing",
         value: lifecycleSupport.revisit,
         tone: lifecycleSupport.revisitTone,
+      },
+      {
+        label: "Refresh check",
+        value: freshnessSupport.refreshCheck,
+        tone: freshnessSupport.refreshCheckTone,
       },
       {
         label: "After action",

@@ -165,6 +165,25 @@ Operator Focus always includes:
 - Google Business Profile state visibility is presentation-only in the workspace and reuses existing integration connection semantics (no OAuth/token behavior changes).
 - Recommendations now include a compact **Recently applied recommendation** outcome block that surfaces what changed, current apply visibility state (`Applied / completed` or `Needs review / pending`), and expected impact timing.
 
+## Workspace Content Tabs
+
+The site workspace now uses lightweight sub-tabs to keep the default page focused on decisions/actions:
+- `Summary` (default): operator focus + compact audit/competitor status signals.
+- `Recommendations`: recommendation queue and recommendation run/narrative decision surfaces.
+- `Activity`: full operational history surfaces including **Site Activity Timeline**, **Recent Audit Runs**, and detailed competitor readiness history tables.
+
+This is a placement/priority update only. Timeline data, filtering, and rendering semantics are unchanged.
+
+## AI Competitor Profiles Structured Review
+
+The AI Competitor Profiles workspace section now uses the same structured rhythm as recommendation surfaces:
+- compact summary strip (candidate totals/state counts)
+- primary candidate pipeline table (`Stage`, `Count`, `Description`)
+- competitor draft review table
+- secondary debug/details region for prompt inspection, provider attempts, and rejected candidate diagnostics
+
+This is a presentation/layout update only. Competitor generation behavior and trust semantics are unchanged.
+
 ## Recommendation Presentation v1
 
 Recommendation rows now include a compact presentation layer focused on operator action state clarity.
@@ -204,6 +223,16 @@ These fields are derived from existing deterministic recommendation metadata (`r
 - Applied/completed items remain visible but with lower-emphasis clarity styling than “ready to act” items.
 - When structured clarity metadata is absent, the UI falls back to existing grounded recommendation summaries.
 - The deterministic recommendation table/list remains intact for full detail access.
+
+## Recommendation Queue Scanability (Progressive Disclosure)
+
+Recommendation queue rows now prioritize quick operator decisions in the collapsed view:
+- actionability, effort, and blocker badges
+- one-line `Why now` summary
+
+Deeper rationale (full why-now, blocking detail, after-action timing, evidence/support cue, and revisit guidance) moves into per-row `View details` expansion.
+
+This is a presentation-only density reduction. Recommendation logic and API semantics are unchanged.
 
 ## Workspace Copy + Label Tuning v1
 
@@ -433,6 +462,8 @@ Queue rows and summary snapshots now also surface:
 - comparative choice support (`Best immediate move`, `Quick win`, `More involved`, `Lower-immediacy background item`)
 - lifecycle-stage visibility (`Needs review / pending`, `Applied / completed`, `Background item / revisit later`)
 - compact revisit guidance (`Revisit now`, `Revisit after visibility refresh`, or `Ignore for now unless context changes`)
+- freshness/review posture (`Fresh enough to act`, `Review soon`, `Pending refresh`, `Possibly outdated`)
+- refresh check guidance (`No refresh required before acting`, `Refresh likely needed before acting`, or deferred refresh guidance)
 - the next operator action
 - what happens after action / expected visibility timing
 - one compact evidence preview line with trust-safe support wording

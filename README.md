@@ -10,6 +10,7 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 - SEO site management, deterministic audit runs, and findings/reporting
 - Competitor intelligence runs and comparison reporting
 - AI-assisted competitor profile draft generation with strict review gating
+- Structured AI competitor profile review surface (compact summary strip, primary pipeline table, and secondary debug details)
 - Deterministic recommendation runs with AI narrative overlays and bounded tuning suggestions
 - Manual, confirmed tuning apply flow (no automatic settings mutation)
 - Operator Shell v4 workspace presentation (workflow emphasis for attention/recency/next-action cues on top of v3 visual-token and density standardization)
@@ -25,8 +26,9 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 - Workspace Copy + Label Tuning v1 (operator-facing wording refinement across recommendation/focus surfaces with unchanged behavior/semantics)
 - Recommendation apply outcome visibility v1 (compact workspace outcome card showing what changed, current apply visibility state, and expected refresh timing)
 - Recommendation outcome snapshot standardization across recommendation-facing routes (dashboard guidance + queue/detail/run summary-first status/change/follow-up/visibility cues)
-- Recommendation decisiveness + rationale/evidence compression pass for dashboard/queue/detail surfaces (why-now/actionable/blocking/after-action cues, compact choice-support tags, lifecycle-stage/revisit cues, and trust-safe evidence preview wording)
+- Recommendation decisiveness + rationale/evidence compression pass for dashboard/queue/detail surfaces (why-now/actionable/blocking/after-action cues, compact choice-support tags, lifecycle-stage/revisit cues, freshness/review posture + refresh-check cues, and trust-safe evidence preview wording)
 - Site workspace Google Business Profile integration visibility (connected/action-needed/not-connected/status-unavailable) with direct connect/reconnect navigation to `/business-profile`
+- Site workspace sub-tabs for content priority (`Summary` default, `Recommendations`, and `Activity`) with detailed operational history moved to `Activity`
 
 ## Trust Boundary
 AI features are advisory only:
