@@ -1042,6 +1042,46 @@ export interface RecommendationPriority {
   effort_hint?: "quick_win" | "moderate" | "larger_change" | null;
 }
 
+export interface ActionLineageDraft {
+  id: string;
+  source_action_id: string;
+  action_type: string;
+  title: string;
+  description: string;
+  draft_state: string;
+  activation_state: "pending" | "activated";
+  activated_action_id?: string | null;
+  automation_ready?: boolean;
+  automation_template_key?: string | null;
+  created_at?: string | null;
+}
+
+export interface ActionLineageActivatedAction {
+  id: string;
+  source_draft_id: string;
+  source_action_id: string;
+  action_type: string;
+  title: string;
+  description: string;
+  state: string;
+  automation_ready?: boolean;
+  automation_template_key?: string | null;
+  created_at?: string | null;
+}
+
+export interface ActionLineageCounts {
+  chained_draft_count: number;
+  activated_action_count: number;
+  automation_ready_count: number;
+}
+
+export interface ActionLineageResponse {
+  source_action_id: string;
+  chained_drafts: ActionLineageDraft[];
+  activated_actions: ActionLineageActivatedAction[];
+  counts: ActionLineageCounts;
+}
+
 export interface Recommendation {
   id: string;
   business_id: string;
@@ -1078,6 +1118,7 @@ export interface Recommendation {
   competitor_linkage_summary?: string | null;
   recommendation_action_delta?: RecommendationActionDelta | null;
   recommendation_priority?: RecommendationPriority | null;
+  action_lineage?: ActionLineageResponse | null;
   decision_reason: string | null;
   created_at: string;
   updated_at: string;
@@ -1168,6 +1209,7 @@ export interface ActionExecutionItem {
   linkedNarrativeId?: string | null;
   blockedReason?: string | null;
   triggerSource?: string | null;
+  actionLineage?: ActionLineageResponse | null;
   outputReview?: ActionOutputReview | null;
   decision?: ActionDecision | null;
 }

@@ -97,6 +97,29 @@ class SEOActionExecutionItemRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_for_business_site_source_action_ids(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        source_action_ids: list[str],
+    ) -> list[SEOActionExecutionItem]:
+        normalized_ids = [source_action_id for source_action_id in source_action_ids if source_action_id]
+        if not normalized_ids:
+            return []
+        stmt: Select[tuple[SEOActionExecutionItem]] = (
+            select(SEOActionExecutionItem)
+            .where(SEOActionExecutionItem.business_id == business_id)
+            .where(SEOActionExecutionItem.site_id == site_id)
+            .where(SEOActionExecutionItem.source_action_id.in_(normalized_ids))
+            .order_by(
+                SEOActionExecutionItem.source_action_id.asc(),
+                SEOActionExecutionItem.created_at.asc(),
+                SEOActionExecutionItem.id.asc(),
+            )
+        )
+        return list(self.session.scalars(stmt))
+
     def list_for_business_site_source_draft_ids(
         self,
         *,

@@ -3053,6 +3053,7 @@ function deriveWorkspaceRecommendationActionExecutionItem(params: {
     actionStateCode,
     priorityBand: recommendation.priority_band,
     trustTier: deriveRecommendationTrustTier(recommendation),
+    actionLineage: recommendation.action_lineage || null,
     linkedOutputId: linkedRecommendationRunId,
     linkedNarrativeId: linkedRecommendationRunId ? linkedRecommendationNarrativeOutputId : null,
     automationAvailable: automationContextAvailable,

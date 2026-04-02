@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas.action_chaining import ActionLineageResponse
 from app.schemas.ai_prompt import AIPromptPreviewRead
 
 SEORecommendationRunStatus = Literal["queued", "running", "completed", "failed"]
@@ -1946,6 +1947,7 @@ class SEORecommendationRead(BaseModel):
     )
     recommendation_action_delta: SEORecommendationActionDeltaRead | None = None
     recommendation_priority: SEORecommendationPriorityRead | None = None
+    action_lineage: ActionLineageResponse | None = None
     decision: SEORecommendationDecision | None = None
     decision_reason: str | None = None
     assigned_principal_id: str | None = None

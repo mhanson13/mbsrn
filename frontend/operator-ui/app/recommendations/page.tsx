@@ -250,6 +250,27 @@ function deriveRecommendationAutomationOriginCue(
   linkedRecommendationRunIds: Set<string>,
   automationLinkageReady: boolean,
 ): RecommendationAutomationOriginCue {
+  const lineage = item.action_lineage || null;
+  if (lineage) {
+    if ((lineage.counts?.activated_action_count || 0) > 0) {
+      return {
+        label: "Activated next step",
+        badgeClass: "badge-success",
+      };
+    }
+    if ((lineage.counts?.automation_ready_count || 0) > 0) {
+      return {
+        label: "Automation-ready next step",
+        badgeClass: "badge-muted",
+      };
+    }
+    if ((lineage.counts?.chained_draft_count || 0) > 0) {
+      return {
+        label: "Next step available",
+        badgeClass: "badge-muted",
+      };
+    }
+  }
   if (linkedRecommendationRunIds.has(item.recommendation_run_id)) {
     return {
       label: "Automation-triggered output",
@@ -305,6 +326,7 @@ function deriveRecommendationActionExecutionItem(params: {
     actionStateCode,
     priorityBand: item.priority_band,
     trustTier: deriveRecommendationTrustTier(item),
+    actionLineage: item.action_lineage || null,
     linkedOutputId: automationLinkedOutput ? item.recommendation_run_id : null,
     automationAvailable: automationContextAvailable,
     automationInFlight,

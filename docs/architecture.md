@@ -173,6 +173,7 @@ Unified lineage read model:
 - endpoint: `GET /api/businesses/{business_id}/seo/sites/{site_id}/actions/{action_id}/lineage`
 - canonical response includes source action, chained drafts, activated actions, and deterministic counts
 - read-only hydration path for workspace/recommendation/automation UI consistency
+- recommendation/workspace read payloads now attach additive `action_lineage` per recommendation so UI can consume next-step truth from the main operator read flow instead of multi-endpoint inference
 
 Observability:
 - structured service log event `action_chaining_generated` includes:

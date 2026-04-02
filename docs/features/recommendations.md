@@ -145,6 +145,19 @@ Response/read payloads for chained drafts now include:
 - `automation_ready`
 - `automation_template_key`
 
+### Canonical lineage in main recommendation/workspace reads
+
+Recommendation-facing read payloads now carry canonical lineage directly on each recommendation item via additive `action_lineage` data.
+
+This is now hydrated in:
+
+- recommendation queue/list reads
+- recommendation run report recommendations
+- workspace summary recommendation lists
+- individual recommendation reads and status-patch responses
+
+Operator UI surfaces should consume this canonical lineage first for next-step truth instead of stitching activation state from multiple ad hoc sources.
+
 ### Idempotency behavior
 
 Activating the same draft repeatedly returns the same `activated_action_id` and does not create duplicate actions.

@@ -90,6 +90,29 @@ class SEOActionChainDraftRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_for_business_site_source_action_ids(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        source_action_ids: list[str],
+    ) -> list[SEOActionChainDraft]:
+        normalized_ids = [source_action_id for source_action_id in source_action_ids if source_action_id]
+        if not normalized_ids:
+            return []
+        stmt: Select[tuple[SEOActionChainDraft]] = (
+            select(SEOActionChainDraft)
+            .where(SEOActionChainDraft.business_id == business_id)
+            .where(SEOActionChainDraft.site_id == site_id)
+            .where(SEOActionChainDraft.source_action_id.in_(normalized_ids))
+            .order_by(
+                SEOActionChainDraft.source_action_id.asc(),
+                SEOActionChainDraft.created_at.asc(),
+                SEOActionChainDraft.id.asc(),
+            )
+        )
+        return list(self.session.scalars(stmt))
+
     def get_for_business_site_source_action_draft(
         self,
         *,

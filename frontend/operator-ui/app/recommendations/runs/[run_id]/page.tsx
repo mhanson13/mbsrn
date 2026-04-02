@@ -695,6 +695,7 @@ export default function RecommendationRunDetailPage() {
       title: `Recommendation run ${run.id}`,
       actionStateCode: runActionState.code,
       trustTier: deriveRecommendationRunTrustTier(recommendations),
+      actionLineage: recommendations[0]?.action_lineage || null,
       linkedOutputId: run.total_recommendations > 0 ? (automationOrigin?.recommendationRunOutputId || run.id) : null,
       linkedNarrativeId: automationOrigin?.recommendationNarrativeOutputId || latestNarrative?.id || null,
       automationAvailable: true,

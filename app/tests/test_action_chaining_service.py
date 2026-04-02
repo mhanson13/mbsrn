@@ -452,3 +452,49 @@ def test_action_lineage_service_hydrates_multiple_drafts_deterministically(db_se
         "promote_content",
         "measure_performance",
     ]
+
+
+def test_action_lineage_service_lists_lineage_for_multiple_source_actions(db_session, seeded_business) -> None:
+    site = SEOSite(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        display_name="Lineage Site",
+        base_url="https://lineage-map.example/",
+        normalized_domain="lineage-map.example",
+        is_active=True,
+        is_primary=False,
+    )
+    db_session.add(site)
+    db_session.commit()
+
+    source_action_a = str(uuid4())
+    source_action_b = str(uuid4())
+    draft_repository = SEOActionChainDraftRepository(db_session)
+
+    draft_repository.create_if_missing(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        source_action_id=source_action_a,
+        draft=generate_next_actions(
+            ActionExecutionItem(
+                action_id=source_action_a,
+                action_type="publish_content",
+                state="completed",
+            )
+        )[0],
+    )
+    db_session.commit()
+
+    lineage_service = ActionLineageService(
+        seo_action_chain_draft_repository=draft_repository,
+        seo_action_execution_item_repository=SEOActionExecutionItemRepository(db_session),
+    )
+    lineage_map = lineage_service.list_action_lineage_for_source_actions(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        source_action_ids=[source_action_a, source_action_b],
+    )
+
+    assert set(lineage_map.keys()) == {source_action_a, source_action_b}
+    assert lineage_map[source_action_a].counts.chained_draft_count == 1
+    assert lineage_map[source_action_b].counts.chained_draft_count == 0

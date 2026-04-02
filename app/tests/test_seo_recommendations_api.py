@@ -992,6 +992,113 @@ def test_action_lineage_endpoint_hydrates_activated_action_consistently(db_sessi
     assert activated_payload["automation_template_key"] == "content_promotion_followup"
 
 
+def test_recommendation_list_hydrates_action_lineage_when_available(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="list-lineage.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+
+    create_run = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert create_run.status_code == 201
+    run_id = create_run.json()["id"]
+
+    list_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_response.status_code == 200
+    recommendation_id = list_response.json()["items"][0]["id"]
+
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.rule_key = "publish_content"
+    db_session.add(recommendation)
+    db_session.commit()
+
+    patch_resolve = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{recommendation_id}",
+        json={"status": "resolved"},
+    )
+    assert patch_resolve.status_code == 200
+
+    draft_list = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/next-actions"
+    )
+    assert draft_list.status_code == 200
+    draft_id = draft_list.json()[0]["id"]
+    assert draft_id is not None
+
+    activate = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"{recommendation_id}/next-actions/{draft_id}/activate"
+        )
+    )
+    assert activate.status_code == 200
+    activated_action_id = activate.json()["activated_action_id"]
+    assert activated_action_id is not None
+
+    recommendations_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations"
+    )
+    assert recommendations_response.status_code == 200
+    payload = recommendations_response.json()
+    target = next(item for item in payload["items"] if item["id"] == recommendation_id)
+    assert target["action_lineage"]["source_action_id"] == recommendation_id
+    assert target["action_lineage"]["counts"]["chained_draft_count"] == 1
+    assert target["action_lineage"]["counts"]["activated_action_count"] == 1
+    assert target["action_lineage"]["counts"]["automation_ready_count"] == 1
+    assert target["action_lineage"]["chained_drafts"][0]["id"] == draft_id
+    assert target["action_lineage"]["chained_drafts"][0]["activation_state"] == "activated"
+    assert target["action_lineage"]["chained_drafts"][0]["activated_action_id"] == activated_action_id
+    assert target["action_lineage"]["activated_actions"][0]["id"] == activated_action_id
+
+
+def test_workspace_summary_hydrates_action_lineage_when_available(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="workspace-lineage.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+
+    create_run = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert create_run.status_code == 201
+    run_id = create_run.json()["id"]
+
+    list_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_response.status_code == 200
+    recommendation_id = list_response.json()["items"][0]["id"]
+
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.rule_key = "seo_fix"
+    db_session.add(recommendation)
+    db_session.commit()
+
+    patch_accept = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{recommendation_id}",
+        json={"status": "accepted"},
+    )
+    assert patch_accept.status_code == 200
+
+    summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert summary.status_code == 200
+    payload = summary.json()
+    target = next(item for item in payload["recommendations"]["items"] if item["id"] == recommendation_id)
+    assert target["action_lineage"]["source_action_id"] == recommendation_id
+    assert target["action_lineage"]["counts"]["chained_draft_count"] == 1
+    assert target["action_lineage"]["counts"]["activated_action_count"] == 0
+    assert target["action_lineage"]["counts"]["automation_ready_count"] == 0
+    assert target["action_lineage"]["chained_drafts"][0]["activation_state"] == "pending"
+    assert target["action_lineage"]["chained_drafts"][0]["action_type"] == "verify_fix"
+
+
 def test_recommendation_workflow_rejects_invalid_transitions_and_assignments(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
     site_id = _create_site(client, seeded_business.id)

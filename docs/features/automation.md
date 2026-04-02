@@ -106,6 +106,8 @@ This endpoint surfaces:
 - activated first-class actions
 - automation readiness visibility in a single payload
 
+Recommendation/workspace reads also now expose additive canonical lineage per recommendation item (`action_lineage`), so automation-adjacent action status can be rendered without multi-endpoint client inference.
+
 It remains read-only and metadata-only:
 - no automation execution
 - no scheduling side effects

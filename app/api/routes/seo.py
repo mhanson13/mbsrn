@@ -345,6 +345,33 @@ def _summarize_recommendation_items(
     )
 
 
+def _attach_action_lineage_to_recommendations(
+    *,
+    recommendations: list[SEORecommendationRead],
+    business_id: str,
+    site_id: str,
+    action_lineage_service: ActionLineageService,
+) -> list[SEORecommendationRead]:
+    if not recommendations:
+        return recommendations
+    source_action_ids = [recommendation.id for recommendation in recommendations if recommendation.id]
+    if not source_action_ids:
+        return recommendations
+    lineage_by_source_action_id = action_lineage_service.list_action_lineage_for_source_actions(
+        business_id=business_id,
+        site_id=site_id,
+        source_action_ids=source_action_ids,
+    )
+    return [
+        recommendation.model_copy(
+            update={
+                "action_lineage": lineage_by_source_action_id.get(recommendation.id),
+            }
+        )
+        for recommendation in recommendations
+    ]
+
+
 def _extract_workspace_tuning_suggestions(
     *,
     sections_json: dict[str, object] | None,
@@ -2604,6 +2631,7 @@ def get_seo_recommendation_workspace_summary(
         get_seo_recommendation_narrative_service
     ),
     generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
+    action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationWorkspaceSummaryRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -2937,6 +2965,12 @@ def get_seo_recommendation_workspace_summary(
         )
         for recommendation in recommendations_payload.items
     ]
+    recommendations_payload.items = _attach_action_lineage_to_recommendations(
+        recommendations=recommendations_payload.items,
+        business_id=scoped_business_id,
+        site_id=site_id,
+        action_lineage_service=action_lineage_service,
+    )
     ordering_explanation = _build_workspace_ordering_explanation(
         recommendations=recommendations_payload.items,
         analysis_freshness=analysis_freshness,
@@ -3029,6 +3063,7 @@ def list_seo_recommendations_for_run(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationListResponse:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -3052,6 +3087,12 @@ def list_seo_recommendations_for_run(
         detail="SEO recommendation run not found",
     )
     serialized_items = [SEORecommendationRead.model_validate(item) for item in items]
+    serialized_items = _attach_action_lineage_to_recommendations(
+        recommendations=serialized_items,
+        business_id=scoped_business_id,
+        site_id=site_id,
+        action_lineage_service=action_lineage_service,
+    )
     by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
         serialized_items
     )
@@ -3075,6 +3116,7 @@ def list_seo_recommendations(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationListResponse:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -3093,6 +3135,12 @@ def list_seo_recommendations(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
     serialized_items = [SEORecommendationRead.model_validate(item) for item in page_result.items]
+    serialized_items = _attach_action_lineage_to_recommendations(
+        recommendations=serialized_items,
+        business_id=scoped_business_id,
+        site_id=site_id,
+        action_lineage_service=action_lineage_service,
+    )
     filtered_summary = SEORecommendationFilteredSummary(
         total=page_result.total,
         open=page_result.by_status.get("open", 0),
@@ -3122,6 +3170,7 @@ def patch_seo_recommendation(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -3140,7 +3189,14 @@ def patch_seo_recommendation(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEORecommendationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-    return SEORecommendationRead.model_validate(recommendation)
+    serialized_recommendation = SEORecommendationRead.model_validate(recommendation)
+    serialized_with_lineage = _attach_action_lineage_to_recommendations(
+        recommendations=[serialized_recommendation],
+        business_id=scoped_business_id,
+        site_id=site_id,
+        action_lineage_service=action_lineage_service,
+    )
+    return serialized_with_lineage[0]
 
 
 @router.get("/sites/{site_id}/actions/{action_id}/next-actions", response_model=list[NextActionDraft])
@@ -3324,6 +3380,7 @@ def get_seo_recommendation(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -3342,7 +3399,14 @@ def get_seo_recommendation(
         actual_site_id=recommendation.site_id,
         detail="SEO recommendation not found",
     )
-    return SEORecommendationRead.model_validate(recommendation)
+    serialized_recommendation = SEORecommendationRead.model_validate(recommendation)
+    serialized_with_lineage = _attach_action_lineage_to_recommendations(
+        recommendations=[serialized_recommendation],
+        business_id=scoped_business_id,
+        site_id=site_id,
+        action_lineage_service=action_lineage_service,
+    )
+    return serialized_with_lineage[0]
 
 
 @router.get(
@@ -3360,6 +3424,7 @@ def get_seo_recommendation_run_report(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationRunReportRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -3379,6 +3444,12 @@ def get_seo_recommendation_run_report(
         detail="SEO recommendation run not found",
     )
     serialized_items = [SEORecommendationRead.model_validate(item) for item in report.recommendations]
+    serialized_items = _attach_action_lineage_to_recommendations(
+        recommendations=serialized_items,
+        business_id=scoped_business_id,
+        site_id=site_id,
+        action_lineage_service=action_lineage_service,
+    )
     by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
         serialized_items
     )

@@ -854,6 +854,33 @@ main {
   gap: var(--space-2);
 }
 
+.output-review-lineage {
+  border-top: 1px solid var(--section-divider);
+  padding-top: 0.34rem;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.output-review-lineage-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.output-review-lineage-item {
+  margin: 0;
+  padding: 0;
+}
+
+.output-review-lineage-item-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.28rem;
+}
+
 .operational-item-expanded {
   border: 1px solid var(--section-divider);
   border-radius: var(--radius-sm);

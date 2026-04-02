@@ -90,6 +90,18 @@ This read model is hydration-only:
 
 UI surfaces should prefer lineage hydration for source-action views instead of inferring activation state from multiple independent calls.
 
+## Canonical Lineage in Operator Read Paths
+
+To reduce frontend stitching, canonical lineage is now also attached additively to recommendation/workspace read payloads as `action_lineage` where next-step context is operator-relevant.
+
+This allows workspace and recommendation surfaces to render:
+- pending next-step drafts
+- activated draft linkage
+- activated action state
+- automation readiness hints
+
+from one recommendation payload flow, while still supporting direct lineage endpoint reads when a source-action scoped lookup is needed.
+
 ## Activation
 Activation is a deterministic, additive API transition:
 

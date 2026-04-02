@@ -818,4 +818,73 @@ describe("recommendations queue optimistic workflows", () => {
     expect(screen.getByTestId("recommendation-quick-scan-item-rec-41")).toHaveTextContent("Blocked / unavailable");
     expect(screen.getByTestId("recommendation-quick-scan-item-rec-41")).toHaveTextContent("Automation output rejected.");
   });
+
+  it("renders canonical next-step lineage from recommendation payload", async () => {
+    const lineageRecommendation = createRecommendation("rec-51", "open", "high", "Lineage Recommendation");
+    lineageRecommendation.recommendation_action_clarity = "Review this recommendation output with chained lineage context.";
+    lineageRecommendation.action_lineage = {
+      source_action_id: "rec-51",
+      chained_drafts: [
+        {
+          id: "draft-51",
+          source_action_id: "rec-51",
+          action_type: "measure_performance",
+          title: "Measure performance after optimization",
+          description: "Validate post-change performance metrics.",
+          draft_state: "pending",
+          activation_state: "activated",
+          activated_action_id: "activated-51",
+          automation_ready: true,
+          automation_template_key: "performance_check_followup",
+          created_at: "2026-03-20T00:20:00Z",
+        },
+      ],
+      activated_actions: [
+        {
+          id: "activated-51",
+          source_draft_id: "draft-51",
+          source_action_id: "rec-51",
+          action_type: "measure_performance",
+          title: "Measure performance after optimization",
+          description: "Validate post-change performance metrics.",
+          state: "pending",
+          automation_ready: true,
+          automation_template_key: "performance_check_followup",
+          created_at: "2026-03-20T00:21:00Z",
+        },
+      ],
+      counts: {
+        chained_draft_count: 1,
+        activated_action_count: 1,
+        automation_ready_count: 1,
+      },
+    };
+
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [lineageRecommendation],
+        {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+    mockFetchAutomationRuns.mockResolvedValueOnce({ items: [], total: 0 });
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const quickScanItem = await screen.findByTestId("recommendation-quick-scan-item-rec-51");
+    await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
+
+    const outputReview = await screen.findByTestId("recommendation-output-review-rec-51");
+    expect(outputReview).toHaveTextContent("Next-step lineage:");
+    expect(outputReview).toHaveTextContent("Activated");
+    expect(outputReview).toHaveTextContent("Automation-ready");
+    expect(outputReview).toHaveTextContent("Linked action activated-51 is currently pending.");
+    expect(outputReview).toHaveTextContent("Uses template: performance_check_followup");
+  });
 });

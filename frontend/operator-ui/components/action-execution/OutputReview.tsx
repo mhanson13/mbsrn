@@ -68,6 +68,10 @@ function shouldRenderDecisionButtons(item: ActionExecutionItem, readOnly: boolea
   return Boolean(review?.outputId || review?.summary || review?.details);
 }
 
+function lineageActivationBadgeClass(activationState: "pending" | "activated"): string {
+  return activationState === "activated" ? "badge badge-success" : "badge badge-muted";
+}
+
 export function OutputReview({
   item,
   stateLabel,
@@ -95,6 +99,17 @@ export function OutputReview({
   const decisionCapturedLabel = decisionSummary(item.decision);
   const outputHref = outputId && resolveOutputHref ? resolveOutputHref(outputId) : undefined;
   const showDecisionButtons = shouldRenderDecisionButtons(item, readOnly) && Boolean(onDecision);
+  const actionLineage = item.actionLineage || null;
+  const chainedDrafts = actionLineage?.chained_drafts || [];
+  const activatedActions = actionLineage?.activated_actions || [];
+  const hasLineage = Boolean(actionLineage && (chainedDrafts.length > 0 || activatedActions.length > 0));
+  const visibleChainedDrafts = chainedDrafts.slice(0, 3);
+  const hiddenDraftCount = Math.max(chainedDrafts.length - visibleChainedDrafts.length, 0);
+  const activatedActionByDraftId = new Map(
+    activatedActions
+      .filter((action) => Boolean(action.source_draft_id))
+      .map((action) => [action.source_draft_id, action] as const),
+  );
   const wrapperClassName = ["output-review", className].filter(Boolean).join(" ");
 
   return (
@@ -120,6 +135,48 @@ export function OutputReview({
         </details>
       ) : null}
       {decisionCapturedLabel ? <p className="hint muted text-strong">{decisionCapturedLabel}</p> : null}
+      {hasLineage ? (
+        <div className="output-review-lineage" data-testid={dataTestId ? `${dataTestId}-lineage` : undefined}>
+          <p className="hint muted">
+            <span className="text-strong">Next-step lineage:</span>{" "}
+            {actionLineage?.counts.chained_draft_count || 0} draft
+            {(actionLineage?.counts.chained_draft_count || 0) === 1 ? "" : "s"}
+            {" | "}
+            {actionLineage?.counts.activated_action_count || 0} activated
+            {" | "}
+            {actionLineage?.counts.automation_ready_count || 0} automation-ready
+          </p>
+          {visibleChainedDrafts.length > 0 ? (
+            <ul className="output-review-lineage-list">
+              {visibleChainedDrafts.map((draft) => {
+                const activatedAction = activatedActionByDraftId.get(draft.id);
+                return (
+                  <li key={draft.id} className="output-review-lineage-item">
+                    <div className="output-review-lineage-item-header">
+                      <span className="hint">{draft.title}</span>
+                      <span className={lineageActivationBadgeClass(draft.activation_state)}>
+                        {draft.activation_state === "activated" ? "Activated" : "Next step available"}
+                      </span>
+                      {draft.automation_ready ? <span className="badge badge-muted">Automation-ready</span> : null}
+                    </div>
+                    {activatedAction ? (
+                      <p className="hint muted">
+                        Linked action <code>{activatedAction.id}</code> is currently {activatedAction.state}.
+                      </p>
+                    ) : null}
+                    {draft.automation_template_key ? (
+                      <p className="hint muted">Uses template: {draft.automation_template_key}</p>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+          {hiddenDraftCount > 0 ? (
+            <p className="hint muted">+{hiddenDraftCount} additional draft{hiddenDraftCount === 1 ? "" : "s"}</p>
+          ) : null}
+        </div>
+      ) : null}
       {showDecisionButtons ? (
         <div className="output-review-actions">
           {DECISION_BUTTONS.map((button) => (
