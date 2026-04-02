@@ -1069,6 +1069,14 @@ export interface ActionLineageActivatedAction {
   automation_binding_state?: "unbound" | "bound";
   bound_automation_id?: string | null;
   automation_bound_at?: string | null;
+  automation_execution_state?: "not_requested" | "requested" | "running" | "succeeded" | "failed";
+  automation_execution_requested_at?: string | null;
+  last_automation_run_id?: string | null;
+  automation_last_executed_at?: string | null;
+  automation_run_status?: string | null;
+  automation_run_started_at?: string | null;
+  automation_run_completed_at?: string | null;
+  automation_run_error_summary?: string | null;
   created_at?: string | null;
 }
 
@@ -1222,6 +1230,19 @@ export interface BindActionAutomationResponse {
   automation_binding_state: "unbound" | "bound";
   bound_automation_id?: string | null;
   automation_bound_at?: string | null;
+  automation_ready?: boolean;
+  automation_template_key?: string | null;
+}
+
+export interface RunActionAutomationResponse {
+  action_execution_item_id: string;
+  automation_binding_state: "unbound" | "bound";
+  bound_automation_id?: string | null;
+  automation_bound_at?: string | null;
+  automation_execution_state: "not_requested" | "requested" | "running" | "succeeded" | "failed";
+  automation_execution_requested_at?: string | null;
+  last_automation_run_id?: string | null;
+  automation_last_executed_at?: string | null;
   automation_ready?: boolean;
   automation_template_key?: string | null;
 }

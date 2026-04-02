@@ -52,6 +52,7 @@ import type {
   RecommendationListFilters,
   RecommendationListResponse,
   BindActionAutomationResponse,
+  RunActionAutomationResponse,
   AutomationRunListResponse,
   GoogleBusinessProfileAccountsResponse,
   GoogleBusinessProfileConnectionStatusResponse,
@@ -835,6 +836,21 @@ export async function bindActionExecutionItemAutomation(
       method: "POST",
       token,
       body: JSON.stringify({ automation_id: automationId }),
+    },
+  );
+}
+
+export async function runActionExecutionItemAutomation(
+  token: string,
+  businessId: string,
+  siteId: string,
+  executionItemId: string,
+): Promise<RunActionAutomationResponse> {
+  return apiRequest<RunActionAutomationResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/actions/execution-items/${executionItemId}/run-automation`,
+    {
+      method: "POST",
+      token,
     },
   );
 }

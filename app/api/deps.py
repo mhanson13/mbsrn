@@ -109,6 +109,7 @@ from app.services.seo_summary import SEOSummaryService
 from app.services.summary import LeadSummaryService
 from app.services.timeline import LeadTimelineService
 from app.services.action_automation_binding_service import ActionAutomationBindingService
+from app.services.action_automation_execution_service import ActionAutomationExecutionService
 
 logger = logging.getLogger(__name__)
 
@@ -838,10 +839,12 @@ def get_action_lineage_service(
     seo_action_execution_item_repository: SEOActionExecutionItemRepository = Depends(
         get_seo_action_execution_item_repository
     ),
+    seo_automation_repository: SEOAutomationRepository = Depends(get_seo_automation_repository),
 ) -> ActionLineageService:
     return ActionLineageService(
         seo_action_chain_draft_repository=seo_action_chain_draft_repository,
         seo_action_execution_item_repository=seo_action_execution_item_repository,
+        seo_automation_repository=seo_automation_repository,
     )
 
 
@@ -914,6 +917,28 @@ def get_seo_automation_service(
         seo_competitor_summary_service=seo_competitor_summary_service,
         seo_recommendation_service=seo_recommendation_service,
         seo_recommendation_narrative_service=seo_recommendation_narrative_service,
+    )
+
+
+def get_action_automation_execution_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
+    seo_action_chain_draft_repository: SEOActionChainDraftRepository = Depends(get_seo_action_chain_draft_repository),
+    seo_action_execution_item_repository: SEOActionExecutionItemRepository = Depends(
+        get_seo_action_execution_item_repository
+    ),
+    seo_automation_repository: SEOAutomationRepository = Depends(get_seo_automation_repository),
+    seo_automation_service: SEOAutomationService = Depends(get_seo_automation_service),
+) -> ActionAutomationExecutionService:
+    return ActionAutomationExecutionService(
+        session=db,
+        business_repository=business_repository,
+        seo_site_repository=seo_site_repository,
+        seo_action_chain_draft_repository=seo_action_chain_draft_repository,
+        seo_action_execution_item_repository=seo_action_execution_item_repository,
+        seo_automation_repository=seo_automation_repository,
+        seo_automation_service=seo_automation_service,
     )
 
 

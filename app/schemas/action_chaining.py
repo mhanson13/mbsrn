@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ActionChainActivationState = Literal["pending", "activated"]
 ActionAutomationBindingState = Literal["unbound", "bound"]
+ActionAutomationExecutionState = Literal["not_requested", "requested", "running", "succeeded", "failed"]
 
 
 class ActionExecutionItem(BaseModel):
@@ -75,6 +76,14 @@ class ActionLineageActivatedAction(BaseModel):
     automation_binding_state: ActionAutomationBindingState = "unbound"
     bound_automation_id: str | None = None
     automation_bound_at: datetime | None = None
+    automation_execution_state: ActionAutomationExecutionState = "not_requested"
+    automation_execution_requested_at: datetime | None = None
+    last_automation_run_id: str | None = None
+    automation_last_executed_at: datetime | None = None
+    automation_run_status: str | None = None
+    automation_run_started_at: datetime | None = None
+    automation_run_completed_at: datetime | None = None
+    automation_run_error_summary: str | None = None
     created_at: datetime | None = None
 
 
@@ -108,5 +117,20 @@ class BoundActionAutomationRead(BaseModel):
     automation_binding_state: ActionAutomationBindingState
     bound_automation_id: str | None = None
     automation_bound_at: datetime | None = None
+    automation_ready: bool = False
+    automation_template_key: str | None = None
+
+
+class RequestedActionAutomationExecutionRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_execution_item_id: str
+    automation_binding_state: ActionAutomationBindingState
+    bound_automation_id: str | None = None
+    automation_bound_at: datetime | None = None
+    automation_execution_state: ActionAutomationExecutionState
+    automation_execution_requested_at: datetime | None = None
+    last_automation_run_id: str | None = None
+    automation_last_executed_at: datetime | None = None
     automation_ready: bool = False
     automation_template_key: str | None = None

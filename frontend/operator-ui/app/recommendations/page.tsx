@@ -18,6 +18,7 @@ import {
   bindActionExecutionItemAutomation,
   fetchAutomationRuns,
   fetchRecommendations,
+  runActionExecutionItemAutomation,
   updateRecommendationStatus,
 } from "../../lib/api/client";
 import { runBoundedBulkActionQueue, type BulkActionQueueProgress } from "../../lib/bulkActionQueue";
@@ -360,6 +361,22 @@ function deriveRecommendationActionExecutionItem(params: {
         }
       : undefined,
   };
+}
+
+function hasInFlightLineageExecution(lineage: Recommendation["action_lineage"] | null | undefined): boolean {
+  if (!lineage) {
+    return false;
+  }
+  return lineage.activated_actions.some((activatedAction) => {
+    const runStatus = (activatedAction.automation_run_status || "").trim().toLowerCase();
+    const executionState = (activatedAction.automation_execution_state || "").trim().toLowerCase();
+    return (
+      runStatus === "queued"
+      || runStatus === "running"
+      || executionState === "requested"
+      || executionState === "running"
+    );
+  });
 }
 
 function parseSortOption(
@@ -1004,6 +1021,24 @@ function safeAutomationBindingErrorMessage(error: unknown): string {
   return "Unable to bind this action to automation right now.";
 }
 
+function safeAutomationExecutionErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 404) {
+      return "The activated action or bound automation record was not found.";
+    }
+    if (error.status === 409) {
+      return "An automation run is already in progress for this site.";
+    }
+    if (error.status === 422) {
+      return "Automation execution is not available for this action state.";
+    }
+    if (error.status === 401) {
+      return "Session expired while requesting automation execution.";
+    }
+  }
+  return "Unable to request automation execution right now.";
+}
+
 function RecommendationsPageContent() {
   const router = useRouter();
   const pathname = usePathname();
@@ -1034,6 +1069,8 @@ function RecommendationsPageContent() {
   const [automationBindingErrorByActionId, setAutomationBindingErrorByActionId] = useState<Record<string, string | null>>(
     {},
   );
+  const [automationRunPendingByActionId, setAutomationRunPendingByActionId] = useState<Record<string, boolean>>({});
+  const [automationRunErrorByActionId, setAutomationRunErrorByActionId] = useState<Record<string, string | null>>({});
 
   const filters = useMemo<FilterState>(() => {
     return {
@@ -1084,6 +1121,17 @@ function RecommendationsPageContent() {
   const allDisplayedSelected =
     displayedRecommendationIds.length > 0 &&
     displayedRecommendationIds.every((id) => selectedRecommendationIds.includes(id));
+  const hasInFlightActionExecution = useMemo(
+    () => items.some((item) => hasInFlightLineageExecution(item.action_lineage || null)),
+    [items],
+  );
+  const executionPollingActive = Boolean(
+    hasInFlightActionExecution
+    && !loadingItems
+    && !context.loading
+    && !context.error
+    && context.selectedSiteId,
+  );
   const toggleRecommendationDetails = useCallback((recommendationId: string) => {
     setExpandedRecommendationIds((previous) => {
       const next = new Set(previous);
@@ -1662,6 +1710,39 @@ function RecommendationsPageContent() {
     }
   }
 
+  async function handleRecommendationAutomationRun(
+    recommendation: Recommendation,
+    actionExecutionItemId: string,
+  ): Promise<void> {
+    setAutomationRunPendingByActionId((current) => ({
+      ...current,
+      [actionExecutionItemId]: true,
+    }));
+    setAutomationRunErrorByActionId((current) => ({
+      ...current,
+      [actionExecutionItemId]: null,
+    }));
+    try {
+      await runActionExecutionItemAutomation(
+        context.token,
+        context.businessId,
+        recommendation.site_id,
+        actionExecutionItemId,
+      );
+      setBulkRefreshNonce((current) => current + 1);
+    } catch (error) {
+      setAutomationRunErrorByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: safeAutomationExecutionErrorMessage(error),
+      }));
+    } finally {
+      setAutomationRunPendingByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: false,
+      }));
+    }
+  }
+
   function toggleRecommendationSelection(recommendationId: string) {
     setSelectedRecommendationIds((current) => {
       if (current.includes(recommendationId)) {
@@ -1796,6 +1877,18 @@ function RecommendationsPageContent() {
   }, [displayedRecommendationIdSet]);
 
   useEffect(() => {
+    if (!executionPollingActive) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      setBulkRefreshNonce((current) => current + 1);
+    }, 4000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [executionPollingActive]);
+
+  useEffect(() => {
     if (context.loading || context.error || !context.selectedSiteId) {
       setItems([]);
       setTotalRecommendations(null);
@@ -1809,6 +1902,8 @@ function RecommendationsPageContent() {
       setActionDecisionErrorByItemId({});
       setAutomationBindingPendingByActionId({});
       setAutomationBindingErrorByActionId({});
+      setAutomationRunPendingByActionId({});
+      setAutomationRunErrorByActionId({});
       setItemsError(null);
       setLoadingItems(false);
       setSelectedRecommendationIds([]);
@@ -1857,6 +1952,8 @@ function RecommendationsPageContent() {
             setActionDecisionErrorByItemId({});
             setAutomationBindingPendingByActionId({});
             setAutomationBindingErrorByActionId({});
+            setAutomationRunPendingByActionId({});
+            setAutomationRunErrorByActionId({});
           } else {
             throw recommendationsResult.reason;
           }
@@ -1892,6 +1989,8 @@ function RecommendationsPageContent() {
           setActionDecisionErrorByItemId({});
           setAutomationBindingPendingByActionId({});
           setAutomationBindingErrorByActionId({});
+          setAutomationRunPendingByActionId({});
+          setAutomationRunErrorByActionId({});
         }
       } finally {
         if (!cancelled) {
@@ -2268,9 +2367,14 @@ function RecommendationsPageContent() {
                           onBindAutomation={(actionExecutionItemId, automationId) =>
                             handleRecommendationAutomationBinding(item, actionExecutionItemId, automationId)
                           }
+                          onRunAutomation={(actionExecutionItemId) =>
+                            handleRecommendationAutomationRun(item, actionExecutionItemId)
+                          }
                           bindAutomationTargetId={automationBindingTargetId}
                           bindAutomationPendingByActionId={automationBindingPendingByActionId}
                           bindAutomationErrorByActionId={automationBindingErrorByActionId}
+                          runAutomationPendingByActionId={automationRunPendingByActionId}
+                          runAutomationErrorByActionId={automationRunErrorByActionId}
                           decisionPending={Boolean(actionDecisionSavingByItemId[item.id])}
                           decisionError={actionDecisionErrorByItemId[item.id]}
                           resolveOutputHref={(outputId) => resolveRecommendationOutputReviewHref(outputId, item)}
@@ -2349,6 +2453,11 @@ function RecommendationsPageContent() {
           <p className="hint muted" data-testid="bulk-action-progress">
             Processing {bulkActionProgress.processed}/{bulkActionProgress.total} • {bulkActionProgress.succeeded} succeeded •{" "}
             {bulkActionProgress.failed} failed
+          </p>
+        ) : null}
+        {executionPollingActive ? (
+          <p className="hint muted" data-testid="recommendation-execution-polling-status">
+            Automation execution is in progress. Status refreshes automatically every few seconds.
           </p>
         ) : null}
 
@@ -2544,9 +2653,14 @@ function RecommendationsPageContent() {
                               onBindAutomation={(actionExecutionItemId, automationId) =>
                                 handleRecommendationAutomationBinding(item, actionExecutionItemId, automationId)
                               }
+                              onRunAutomation={(actionExecutionItemId) =>
+                                handleRecommendationAutomationRun(item, actionExecutionItemId)
+                              }
                               bindAutomationTargetId={automationBindingTargetId}
                               bindAutomationPendingByActionId={automationBindingPendingByActionId}
                               bindAutomationErrorByActionId={automationBindingErrorByActionId}
+                              runAutomationPendingByActionId={automationRunPendingByActionId}
+                              runAutomationErrorByActionId={automationRunErrorByActionId}
                               decisionPending={Boolean(actionDecisionSavingByItemId[item.id])}
                               decisionError={actionDecisionErrorByItemId[item.id]}
                               resolveOutputHref={(outputId) => resolveRecommendationOutputReviewHref(outputId, item)}

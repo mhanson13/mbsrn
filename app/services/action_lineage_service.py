@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.repositories.seo_action_chain_draft_repository import SEOActionChainDraftRepository
 from app.repositories.seo_action_execution_item_repository import SEOActionExecutionItemRepository
+from app.repositories.seo_automation_repository import SEOAutomationRepository
 from app.schemas.action_chaining import (
     ActionLineageActivatedAction,
     ActionLineageCounts,
@@ -16,9 +17,11 @@ class ActionLineageService:
         *,
         seo_action_chain_draft_repository: SEOActionChainDraftRepository,
         seo_action_execution_item_repository: SEOActionExecutionItemRepository,
+        seo_automation_repository: SEOAutomationRepository,
     ) -> None:
         self.seo_action_chain_draft_repository = seo_action_chain_draft_repository
         self.seo_action_execution_item_repository = seo_action_execution_item_repository
+        self.seo_automation_repository = seo_automation_repository
 
     def get_action_lineage(
         self,
@@ -56,6 +59,21 @@ class ActionLineageService:
             site_id=site_id,
             source_action_ids=unique_ids,
         )
+        run_ids = list(
+            dict.fromkeys(
+                [
+                    record.last_automation_run_id
+                    for record in action_records
+                    if record.last_automation_run_id
+                ]
+            )
+        )
+        run_records = self.seo_automation_repository.list_runs_for_business_site_ids(
+            business_id=business_id,
+            site_id=site_id,
+            run_ids=run_ids,
+        )
+        run_by_id = {run.id: run for run in run_records}
 
         drafts_by_source_action_id: dict[str, list[ActionLineageDraft]] = {source_action_id: [] for source_action_id in unique_ids}
         for record in draft_records:
@@ -79,6 +97,25 @@ class ActionLineageService:
             source_action_id: [] for source_action_id in unique_ids
         }
         for record in action_records:
+            run_record = run_by_id.get(record.last_automation_run_id) if record.last_automation_run_id else None
+            effective_execution_state = record.automation_execution_state
+            run_status = None
+            run_started_at = None
+            run_completed_at = None
+            run_error_summary = None
+            if run_record is not None:
+                run_status = (run_record.status or "").strip().lower() or None
+                run_started_at = run_record.started_at
+                run_completed_at = run_record.finished_at
+                run_error_summary = (run_record.error_message or "").strip() or None
+                if run_status == "queued":
+                    effective_execution_state = "requested"
+                elif run_status == "running":
+                    effective_execution_state = "running"
+                elif run_status == "failed":
+                    effective_execution_state = "failed"
+                elif run_status in {"completed", "skipped"}:
+                    effective_execution_state = "succeeded"
             activated_actions_by_source_action_id.setdefault(record.source_action_id, []).append(
                 ActionLineageActivatedAction(
                     id=record.id,
@@ -93,6 +130,14 @@ class ActionLineageService:
                     automation_binding_state=record.automation_binding_state,
                     bound_automation_id=record.bound_automation_id,
                     automation_bound_at=record.automation_bound_at,
+                    automation_execution_state=effective_execution_state,
+                    automation_execution_requested_at=record.automation_execution_requested_at,
+                    last_automation_run_id=record.last_automation_run_id,
+                    automation_last_executed_at=record.automation_last_executed_at or run_completed_at,
+                    automation_run_status=run_status,
+                    automation_run_started_at=run_started_at,
+                    automation_run_completed_at=run_completed_at,
+                    automation_run_error_summary=run_error_summary,
                     created_at=record.created_at,
                 )
             )

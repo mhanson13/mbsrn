@@ -30,6 +30,10 @@ class SEOActionExecutionItem(Base):
             "automation_binding_state IN ('unbound', 'bound')",
             name="ck_seo_action_execution_items_automation_binding_state",
         ),
+        CheckConstraint(
+            "automation_execution_state IN ('not_requested', 'requested', 'running', 'succeeded', 'failed')",
+            name="ck_seo_action_execution_items_automation_execution_state",
+        ),
         Index(
             "ix_seo_action_execution_items_business_site_created_at",
             "business_id",
@@ -80,6 +84,21 @@ class SEOActionExecutionItem(Base):
     )
     automation_binding_state: Mapped[str] = mapped_column(String(16), nullable=False, default="unbound", index=True)
     automation_bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    automation_execution_state: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        default="not_requested",
+        index=True,
+    )
+    automation_execution_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    automation_execution_requested_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_automation_run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("seo_automation_runs.id"),
+        nullable=True,
+        index=True,
+    )
+    automation_last_executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     created_by_principal_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)

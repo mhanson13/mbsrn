@@ -28,6 +28,7 @@ from app.models.seo_competitor_tuning_preview_event import SEOCompetitorTuningPr
 from app.models.seo_action_chain_draft import SEOActionChainDraft
 from app.models.seo_action_execution_item import SEOActionExecutionItem
 from app.models.seo_automation_config import SEOAutomationConfig
+from app.models.seo_automation_run import SEOAutomationRun
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_narrative import SEORecommendationNarrative
 from app.models.seo_recommendation_run import SEORecommendationRun
@@ -1174,6 +1175,368 @@ def test_bind_automation_endpoint_rejects_unready_or_missing_resources(db_sessio
         json={"automation_id": automation_config.id},
     )
     assert unready_bind.status_code == 422
+
+
+def test_run_automation_endpoint_updates_execution_state_and_hydrates_lineage(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="action-lineage-run.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+
+    create_run = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert create_run.status_code == 201
+    run_id = create_run.json()["id"]
+
+    list_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_response.status_code == 200
+    recommendation_id = list_response.json()["items"][0]["id"]
+
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.rule_key = "publish_content"
+    db_session.add(recommendation)
+    db_session.commit()
+
+    patch_resolve = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{recommendation_id}",
+        json={"status": "resolved"},
+    )
+    assert patch_resolve.status_code == 200
+
+    list_next_actions = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/next-actions"
+    )
+    assert list_next_actions.status_code == 200
+    draft_id = list_next_actions.json()[0]["id"]
+    assert draft_id is not None
+
+    activate = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"{recommendation_id}/next-actions/{draft_id}/activate"
+        )
+    )
+    assert activate.status_code == 200
+    activated_action_id = activate.json()["activated_action_id"]
+    assert activated_action_id is not None
+
+    automation_config = SEOAutomationConfig(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        is_enabled=True,
+        cadence_type="manual",
+        cadence_minutes=None,
+    )
+    db_session.add(automation_config)
+    db_session.commit()
+
+    bind_response = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"execution-items/{activated_action_id}/bind-automation"
+        ),
+        json={"automation_id": automation_config.id},
+    )
+    assert bind_response.status_code == 200
+
+    active_run = SEOAutomationRun(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        automation_config_id=automation_config.id,
+        trigger_source="manual",
+        status="running",
+        started_at=utc_now(),
+        finished_at=None,
+        error_message=None,
+        steps_json=[],
+    )
+    db_session.add(active_run)
+    db_session.commit()
+
+    run_response = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"execution-items/{activated_action_id}/run-automation"
+        )
+    )
+    assert run_response.status_code == 200
+    run_payload = run_response.json()
+    assert run_payload["action_execution_item_id"] == activated_action_id
+    assert run_payload["automation_binding_state"] == "bound"
+    assert run_payload["bound_automation_id"] == automation_config.id
+    assert run_payload["automation_execution_state"] == "running"
+    assert run_payload["automation_execution_requested_at"] is not None
+    assert run_payload["last_automation_run_id"] == active_run.id
+    assert run_payload["automation_ready"] is True
+    assert run_payload["automation_template_key"] == "content_promotion_followup"
+
+    run_response_again = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"execution-items/{activated_action_id}/run-automation"
+        )
+    )
+    assert run_response_again.status_code == 200
+    run_payload_again = run_response_again.json()
+    assert run_payload_again["automation_execution_state"] == "running"
+    assert run_payload_again["last_automation_run_id"] == active_run.id
+    run_count = db_session.query(SEOAutomationRun).filter(SEOAutomationRun.site_id == site_id).count()
+    assert run_count == 1
+
+    lineage = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/lineage")
+    assert lineage.status_code == 200
+    activated_payload = lineage.json()["activated_actions"][0]
+    assert activated_payload["id"] == activated_action_id
+    assert activated_payload["automation_binding_state"] == "bound"
+    assert activated_payload["bound_automation_id"] == automation_config.id
+    assert activated_payload["automation_execution_state"] == "running"
+    assert activated_payload["automation_execution_requested_at"] is not None
+    assert activated_payload["last_automation_run_id"] == active_run.id
+    assert activated_payload["automation_last_executed_at"] is None
+    assert activated_payload["automation_run_status"] == "running"
+    assert activated_payload["automation_run_started_at"] is not None
+    assert activated_payload["automation_run_completed_at"] is None
+    assert activated_payload["automation_run_error_summary"] is None
+
+
+def test_run_automation_endpoint_rejects_unbound_and_unready_actions(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="action-lineage-run-validation.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+
+    create_run = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert create_run.status_code == 201
+    run_id = create_run.json()["id"]
+
+    list_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_response.status_code == 200
+    recommendation_id = list_response.json()["items"][0]["id"]
+
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.rule_key = "publish_content"
+    db_session.add(recommendation)
+    db_session.commit()
+
+    patch_resolve = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{recommendation_id}",
+        json={"status": "resolved"},
+    )
+    assert patch_resolve.status_code == 200
+
+    list_next_actions = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/next-actions"
+    )
+    assert list_next_actions.status_code == 200
+    draft_id = list_next_actions.json()[0]["id"]
+    assert draft_id is not None
+
+    activate = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"{recommendation_id}/next-actions/{draft_id}/activate"
+        )
+    )
+    assert activate.status_code == 200
+    unbound_action_id = activate.json()["activated_action_id"]
+    assert unbound_action_id is not None
+
+    run_unbound = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"execution-items/{unbound_action_id}/run-automation"
+        )
+    )
+    assert run_unbound.status_code == 422
+    assert "not bound" in run_unbound.json()["detail"].lower()
+
+    create_run_unready = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert create_run_unready.status_code == 201
+    unready_run_id = create_run_unready.json()["id"]
+
+    unready_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{unready_run_id}/recommendations"
+    )
+    assert unready_recommendations.status_code == 200
+    unready_recommendation_id = unready_recommendations.json()["items"][0]["id"]
+
+    unready_recommendation = db_session.get(SEORecommendation, unready_recommendation_id)
+    assert unready_recommendation is not None
+    unready_recommendation.rule_key = "seo_fix"
+    db_session.add(unready_recommendation)
+    db_session.commit()
+
+    patch_accept = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{unready_recommendation_id}",
+        json={"status": "accepted"},
+    )
+    assert patch_accept.status_code == 200
+
+    unready_drafts = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{unready_recommendation_id}/next-actions"
+    )
+    assert unready_drafts.status_code == 200
+    unready_draft = next(item for item in unready_drafts.json() if item["action_type"] == "verify_fix")
+    unready_draft_id = unready_draft["id"]
+    assert unready_draft_id is not None
+
+    activate_unready = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"{unready_recommendation_id}/next-actions/{unready_draft_id}/activate"
+        )
+    )
+    assert activate_unready.status_code == 200
+    unready_action_id = activate_unready.json()["activated_action_id"]
+    assert unready_action_id is not None
+
+    run_unready = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"execution-items/{unready_action_id}/run-automation"
+        )
+    )
+    assert run_unready.status_code == 422
+    assert "not automation-ready" in run_unready.json()["detail"].lower()
+
+
+def test_workspace_and_recommendation_reads_include_automation_execution_state(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="action-lineage-run-reads.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+
+    create_run = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert create_run.status_code == 201
+    run_id = create_run.json()["id"]
+
+    list_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_response.status_code == 200
+    recommendation_id = list_response.json()["items"][0]["id"]
+
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.rule_key = "publish_content"
+    db_session.add(recommendation)
+    db_session.commit()
+
+    patch_resolve = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{recommendation_id}",
+        json={"status": "resolved"},
+    )
+    assert patch_resolve.status_code == 200
+
+    draft_list = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/next-actions"
+    )
+    assert draft_list.status_code == 200
+    draft_id = draft_list.json()[0]["id"]
+    assert draft_id is not None
+
+    activate = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"{recommendation_id}/next-actions/{draft_id}/activate"
+        )
+    )
+    assert activate.status_code == 200
+    activated_action_id = activate.json()["activated_action_id"]
+    assert activated_action_id is not None
+
+    automation_config = SEOAutomationConfig(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        is_enabled=True,
+        cadence_type="manual",
+        cadence_minutes=None,
+    )
+    db_session.add(automation_config)
+    db_session.flush()
+
+    active_run = SEOAutomationRun(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        automation_config_id=automation_config.id,
+        trigger_source="manual",
+        status="running",
+        started_at=utc_now(),
+        finished_at=None,
+        error_message=None,
+        steps_json=[],
+    )
+    db_session.add(active_run)
+    db_session.commit()
+
+    bind = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"execution-items/{activated_action_id}/bind-automation"
+        ),
+        json={"automation_id": automation_config.id},
+    )
+    assert bind.status_code == 200
+
+    run_automation = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"execution-items/{activated_action_id}/run-automation"
+        )
+    )
+    assert run_automation.status_code == 200
+
+    recommendations_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations"
+    )
+    assert recommendations_response.status_code == 200
+    recommendation_payload = next(
+        item for item in recommendations_response.json()["items"] if item["id"] == recommendation_id
+    )
+    activated_payload = recommendation_payload["action_lineage"]["activated_actions"][0]
+    assert activated_payload["automation_execution_state"] == "running"
+    assert activated_payload["automation_execution_requested_at"] is not None
+    assert activated_payload["last_automation_run_id"] == active_run.id
+    assert activated_payload["automation_run_status"] == "running"
+    assert activated_payload["automation_run_started_at"] is not None
+    assert activated_payload["automation_run_completed_at"] is None
+    assert activated_payload["automation_run_error_summary"] is None
+
+    workspace_summary = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
+    )
+    assert workspace_summary.status_code == 200
+    workspace_payload = next(
+        item
+        for item in workspace_summary.json()["recommendations"]["items"]
+        if item["id"] == recommendation_id
+    )
+    workspace_activated_payload = workspace_payload["action_lineage"]["activated_actions"][0]
+    assert workspace_activated_payload["automation_execution_state"] == "running"
+    assert workspace_activated_payload["automation_execution_requested_at"] is not None
+    assert workspace_activated_payload["last_automation_run_id"] == active_run.id
+    assert workspace_activated_payload["automation_run_status"] == "running"
+    assert workspace_activated_payload["automation_run_started_at"] is not None
+    assert workspace_activated_payload["automation_run_completed_at"] is None
+    assert workspace_activated_payload["automation_run_error_summary"] is None
 
 
 def test_recommendation_list_hydrates_action_lineage_when_available(db_session, seeded_business) -> None:

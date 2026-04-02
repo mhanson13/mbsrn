@@ -92,6 +92,7 @@ const mockAcceptCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>
 const mockRejectCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>, unknown[]>();
 const mockEditCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>, unknown[]>();
 const mockBindActionExecutionItemAutomation = jest.fn<Promise<unknown>, unknown[]>();
+const mockRunActionExecutionItemAutomation = jest.fn<Promise<unknown>, unknown[]>();
 
 jest.mock("next/navigation", () => ({
   useParams: () => navigationState.params,
@@ -137,6 +138,8 @@ jest.mock("../../lib/api/client", () => {
     editCompetitorProfileDraft: (...args: unknown[]) => mockEditCompetitorProfileDraft(...args),
     bindActionExecutionItemAutomation: (...args: unknown[]) =>
       mockBindActionExecutionItemAutomation(...args),
+    runActionExecutionItemAutomation: (...args: unknown[]) =>
+      mockRunActionExecutionItemAutomation(...args),
   };
 });
 
@@ -430,11 +433,24 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockRejectCompetitorProfileDraft.mockReset();
   mockEditCompetitorProfileDraft.mockReset();
   mockBindActionExecutionItemAutomation.mockReset();
+  mockRunActionExecutionItemAutomation.mockReset();
   mockBindActionExecutionItemAutomation.mockResolvedValue({
     action_execution_item_id: "activated-lineage-1",
     automation_binding_state: "bound",
     bound_automation_id: "automation-config-1",
     automation_bound_at: "2026-03-21T02:00:00Z",
+    automation_ready: true,
+    automation_template_key: "performance_check_followup",
+  });
+  mockRunActionExecutionItemAutomation.mockResolvedValue({
+    action_execution_item_id: "activated-lineage-1",
+    automation_binding_state: "bound",
+    bound_automation_id: "automation-config-1",
+    automation_bound_at: "2026-03-21T02:00:00Z",
+    automation_execution_state: "requested",
+    automation_execution_requested_at: "2026-03-21T02:05:00Z",
+    last_automation_run_id: "automation-run-workspace-1",
+    automation_last_executed_at: null,
     automation_ready: true,
     automation_template_key: "performance_check_followup",
   });
@@ -7504,6 +7520,14 @@ describe("site workspace ai competitor profile drafts", () => {
             state: "pending",
             automation_ready: true,
             automation_template_key: "performance_check_followup",
+            automation_binding_state: "bound",
+            bound_automation_id: "automation-config-1",
+            automation_bound_at: "2026-03-21T01:22:00Z",
+            automation_execution_state: "requested",
+            automation_execution_requested_at: "2026-03-21T01:23:00Z",
+            last_automation_run_id: "automation-run-workspace-1",
+            automation_run_status: "running",
+            automation_run_started_at: "2026-03-21T01:23:00Z",
             created_at: "2026-03-21T01:21:00Z",
           },
         ],
@@ -7550,6 +7574,8 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(outputReview).toHaveTextContent("Automation-ready");
     expect(outputReview).toHaveTextContent("Linked action activated-lineage-1 is currently pending.");
     expect(outputReview).toHaveTextContent("Uses template: performance_check_followup");
+    expect(outputReview).toHaveTextContent("Execution requested");
+    expect(screen.getByTestId("workspace-recommendation-execution-polling-status")).toBeInTheDocument();
   });
 
   it("binds automation for an unbound automation-ready activated next step", async () => {
@@ -7643,4 +7669,5 @@ describe("site workspace ai competitor profile drafts", () => {
       ),
     );
   });
+
 });

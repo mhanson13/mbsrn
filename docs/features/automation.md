@@ -133,3 +133,61 @@ Operator-facing semantics:
 - **Bound** means the action has an explicit persisted automation linkage.
 - Binding is idempotent for the same automation id and conflict-protected for different automation ids.
 - Binding does **not** execute or schedule automation.
+
+## Manual Execution Request from Bound Activated Actions
+
+Bound activated actions can now explicitly request automation execution through a guarded API bridge.
+
+Execution request route:
+
+`POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/execution-items/{execution_item_id}/run-automation`
+
+Execution metadata persisted on activated action execution items:
+- `automation_execution_state`
+- `automation_execution_requested_at`
+- `automation_execution_requested_by`
+- `last_automation_run_id`
+- `automation_last_executed_at`
+
+Lifecycle interpretation:
+- `not_requested`: bound but no manual run request yet
+- `requested`: run request accepted/queued
+- `running`: active run in progress
+- `succeeded`: most recent run finished successfully
+- `failed`: most recent run finished with failure
+
+Idempotency and duplicate-click protections:
+- if an active run already exists for the bound automation, request reuses current run state
+- repeated clicks do not create duplicate concurrent runs for the same bound action
+
+Boundary reminder:
+- this is operator-initiated only
+- no scheduler/background behavior introduced
+- no automatic execution on activation or binding
+
+## Execution Observability and Operator Feedback
+
+After "Run automation" is clicked, operator-facing surfaces now show execution lifecycle feedback instead of an idle state.
+
+Lifecycle labels shown in UI:
+- `Execution requested`
+- `Running`
+- `Completed`
+- `Failed`
+
+Lineage-backed run overlay fields now surfaced on activated actions:
+- `automation_run_status`
+- `automation_run_started_at`
+- `automation_run_completed_at`
+- `automation_run_error_summary`
+
+Operator-visible feedback behavior:
+- displays last run id when available
+- shows run started/completed timestamps
+- shows a short failure signal when the run reports an error message
+- keeps status refresh lightweight while in-flight (requested/running) and stops when terminal (succeeded/failed)
+
+Scope reminder:
+- observability only
+- no changes to execution engine behavior
+- no scheduling/autonomous execution added

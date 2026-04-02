@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import RecommendationsPage from "./page";
 import { ApiRequestError } from "../../lib/api/client";
 import type {
+  ActionLineageResponse,
   AutomationRunListResponse,
   Recommendation,
   RecommendationActionStatus,
@@ -39,6 +40,7 @@ const mockFetchRecommendations = jest.fn<Promise<RecommendationListResponse>, un
 const mockFetchAutomationRuns = jest.fn<Promise<AutomationRunListResponse>, unknown[]>();
 const mockUpdateRecommendationStatus = jest.fn<Promise<Recommendation>, unknown[]>();
 const mockBindActionExecutionItemAutomation = jest.fn<Promise<unknown>, unknown[]>();
+const mockRunActionExecutionItemAutomation = jest.fn<Promise<unknown>, unknown[]>();
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -62,6 +64,8 @@ jest.mock("../../lib/api/client", () => {
     updateRecommendationStatus: (...args: unknown[]) => mockUpdateRecommendationStatus(...args),
     bindActionExecutionItemAutomation: (...args: unknown[]) =>
       mockBindActionExecutionItemAutomation(...args),
+    runActionExecutionItemAutomation: (...args: unknown[]) =>
+      mockRunActionExecutionItemAutomation(...args),
   };
 });
 
@@ -159,11 +163,24 @@ beforeEach(() => {
   mockFetchAutomationRuns.mockReset();
   mockUpdateRecommendationStatus.mockReset();
   mockBindActionExecutionItemAutomation.mockReset();
+  mockRunActionExecutionItemAutomation.mockReset();
   mockBindActionExecutionItemAutomation.mockResolvedValue({
     action_execution_item_id: "activated-51",
     automation_binding_state: "bound",
     bound_automation_id: "automation-config-51",
     automation_bound_at: "2026-03-20T00:22:00Z",
+    automation_ready: true,
+    automation_template_key: "performance_check_followup",
+  });
+  mockRunActionExecutionItemAutomation.mockResolvedValue({
+    action_execution_item_id: "activated-51",
+    automation_binding_state: "bound",
+    bound_automation_id: "automation-config-51",
+    automation_bound_at: "2026-03-20T00:22:00Z",
+    automation_execution_state: "requested",
+    automation_execution_requested_at: "2026-03-20T00:23:00Z",
+    last_automation_run_id: "automation-run-62",
+    automation_last_executed_at: null,
     automation_ready: true,
     automation_template_key: "performance_check_followup",
   });
@@ -834,7 +851,7 @@ describe("recommendations queue optimistic workflows", () => {
   it("renders canonical next-step lineage from recommendation payload", async () => {
     const lineageRecommendation = createRecommendation("rec-51", "open", "high", "Lineage Recommendation");
     lineageRecommendation.recommendation_action_clarity = "Review this recommendation output with chained lineage context.";
-    lineageRecommendation.action_lineage = {
+    const lineage: ActionLineageResponse = {
       source_action_id: "rec-51",
       chained_drafts: [
         {
@@ -871,6 +888,7 @@ describe("recommendations queue optimistic workflows", () => {
         automation_ready_count: 1,
       },
     };
+    lineageRecommendation.action_lineage = lineage;
 
     mockFetchRecommendations.mockResolvedValueOnce(
       createListResponse(
@@ -903,7 +921,7 @@ describe("recommendations queue optimistic workflows", () => {
   it("binds automation for an automation-ready activated lineage action", async () => {
     const lineageRecommendation = createRecommendation("rec-61", "open", "high", "Lineage Bind Recommendation");
     lineageRecommendation.recommendation_action_clarity = "Bind automation for the activated next step.";
-    lineageRecommendation.action_lineage = {
+    const lineage: ActionLineageResponse = {
       source_action_id: "rec-61",
       chained_drafts: [
         {
@@ -943,6 +961,7 @@ describe("recommendations queue optimistic workflows", () => {
         automation_ready_count: 1,
       },
     };
+    lineageRecommendation.action_lineage = lineage;
 
     mockFetchRecommendations.mockResolvedValueOnce(
       createListResponse(
@@ -994,5 +1013,227 @@ describe("recommendations queue optimistic workflows", () => {
         "automation-config-51",
       ),
     );
+  });
+
+  it("requests automation execution for a bound activated lineage action", async () => {
+    const lineageRecommendation = createRecommendation("rec-62", "open", "high", "Lineage Run Recommendation");
+    lineageRecommendation.recommendation_action_clarity = "Run automation for this activated next step.";
+    const initialLineage: ActionLineageResponse = {
+      source_action_id: "rec-62",
+      chained_drafts: [
+        {
+          id: "draft-62",
+          source_action_id: "rec-62",
+          action_type: "measure_performance",
+          title: "Measure performance after optimization",
+          description: "Validate post-change performance metrics.",
+          draft_state: "pending",
+          activation_state: "activated",
+          activated_action_id: "activated-62",
+          automation_ready: true,
+          automation_template_key: "performance_check_followup",
+          created_at: "2026-03-20T00:20:00Z",
+        },
+      ],
+      activated_actions: [
+        {
+          id: "activated-62",
+          source_draft_id: "draft-62",
+          source_action_id: "rec-62",
+          action_type: "measure_performance",
+          title: "Measure performance after optimization",
+          description: "Validate post-change performance metrics.",
+          state: "pending",
+          automation_ready: true,
+          automation_template_key: "performance_check_followup",
+          automation_binding_state: "bound",
+          bound_automation_id: "automation-config-62",
+          automation_bound_at: "2026-03-20T00:22:00Z",
+          automation_execution_state: "not_requested",
+          automation_execution_requested_at: null,
+          last_automation_run_id: null,
+          automation_last_executed_at: null,
+          created_at: "2026-03-20T00:21:00Z",
+        },
+      ],
+      counts: {
+        chained_draft_count: 1,
+        activated_action_count: 1,
+        automation_ready_count: 1,
+      },
+    };
+    const initialRecommendation = {
+      ...lineageRecommendation,
+      action_lineage: initialLineage,
+    } satisfies Recommendation;
+    const requestedRecommendation = {
+      ...initialRecommendation,
+      action_lineage: {
+        ...initialLineage,
+        activated_actions: [
+          {
+            ...initialLineage.activated_actions[0],
+            automation_execution_state: "requested" as const,
+            automation_execution_requested_at: "2026-03-20T00:23:00Z",
+            last_automation_run_id: "automation-run-62",
+          },
+        ],
+      },
+    } satisfies Recommendation;
+
+    mockFetchRecommendations
+      .mockResolvedValueOnce(
+        createListResponse(
+          [initialRecommendation],
+          {
+            total: 1,
+            open: 1,
+            accepted: 0,
+            dismissed: 0,
+            high_priority: 1,
+          },
+        ),
+      )
+      .mockResolvedValue(
+        createListResponse(
+          [requestedRecommendation],
+          {
+            total: 1,
+            open: 1,
+            accepted: 0,
+            dismissed: 0,
+            high_priority: 1,
+          },
+        ),
+      );
+    mockFetchAutomationRuns.mockResolvedValue({
+      items: [
+        {
+          id: "automation-run-62",
+          business_id: "biz-1",
+          site_id: "site-1",
+          automation_config_id: "automation-config-62",
+          status: "running",
+          trigger_source: "manual",
+          started_at: "2026-03-20T00:23:00Z",
+          finished_at: null,
+          error_message: null,
+          steps_json: [],
+          created_at: "2026-03-20T00:23:00Z",
+          updated_at: "2026-03-20T00:23:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockRunActionExecutionItemAutomation.mockResolvedValueOnce({
+      action_execution_item_id: "activated-62",
+      automation_binding_state: "bound",
+      bound_automation_id: "automation-config-62",
+      automation_bound_at: "2026-03-20T00:22:00Z",
+      automation_execution_state: "requested",
+      automation_execution_requested_at: "2026-03-20T00:23:00Z",
+      last_automation_run_id: "automation-run-62",
+      automation_last_executed_at: null,
+      automation_ready: true,
+      automation_template_key: "performance_check_followup",
+    });
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const quickScanItem = await screen.findByTestId("recommendation-quick-scan-item-rec-62");
+    await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
+
+    const outputReview = await screen.findByTestId("recommendation-output-review-rec-62");
+    await user.click(within(outputReview).getByRole("button", { name: "Run automation" }));
+
+    await waitFor(() =>
+      expect(mockRunActionExecutionItemAutomation).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "activated-62",
+      ),
+    );
+    expect(await screen.findByText("Execution requested")).toBeInTheDocument();
+    expect(screen.getByText(/Automation run request is already in progress/i)).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-execution-polling-status")).toBeInTheDocument();
+  });
+
+  it("renders failed execution status and failure signal from lineage payload", async () => {
+    const lineageRecommendation = createRecommendation("rec-63", "open", "high", "Lineage Failure Recommendation");
+    lineageRecommendation.recommendation_action_clarity = "Show failed automation output review feedback.";
+    lineageRecommendation.action_lineage = {
+      source_action_id: "rec-63",
+      chained_drafts: [
+        {
+          id: "draft-63",
+          source_action_id: "rec-63",
+          action_type: "measure_performance",
+          title: "Measure performance after optimization",
+          description: "Validate post-change performance metrics.",
+          draft_state: "pending",
+          activation_state: "activated",
+          activated_action_id: "activated-63",
+          automation_ready: true,
+          automation_template_key: "performance_check_followup",
+          created_at: "2026-03-20T00:30:00Z",
+        },
+      ],
+      activated_actions: [
+        {
+          id: "activated-63",
+          source_draft_id: "draft-63",
+          source_action_id: "rec-63",
+          action_type: "measure_performance",
+          title: "Measure performance after optimization",
+          description: "Validate post-change performance metrics.",
+          state: "pending",
+          automation_ready: true,
+          automation_template_key: "performance_check_followup",
+          automation_binding_state: "bound",
+          bound_automation_id: "automation-config-63",
+          automation_bound_at: "2026-03-20T00:32:00Z",
+          automation_execution_state: "failed",
+          automation_execution_requested_at: "2026-03-20T00:33:00Z",
+          last_automation_run_id: "automation-run-63",
+          automation_last_executed_at: "2026-03-20T00:36:00Z",
+          automation_run_status: "failed",
+          automation_run_started_at: "2026-03-20T00:34:00Z",
+          automation_run_completed_at: "2026-03-20T00:36:00Z",
+          automation_run_error_summary: "Execution pipeline timed out.",
+          created_at: "2026-03-20T00:31:00Z",
+        },
+      ],
+      counts: {
+        chained_draft_count: 1,
+        activated_action_count: 1,
+        automation_ready_count: 1,
+      },
+    };
+
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [lineageRecommendation],
+        {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+    mockFetchAutomationRuns.mockResolvedValue({ items: [], total: 0 });
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const quickScanItem = await screen.findByTestId("recommendation-quick-scan-item-rec-63");
+    await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
+
+    const outputReview = await screen.findByTestId("recommendation-output-review-rec-63");
+    expect(within(outputReview).getByText("Failed")).toBeInTheDocument();
+    expect(within(outputReview).getByText("Failure signal: Execution pipeline timed out.")).toBeInTheDocument();
   });
 });

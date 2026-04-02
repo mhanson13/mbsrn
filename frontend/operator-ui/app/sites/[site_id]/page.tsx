@@ -36,6 +36,7 @@ import {
   fetchSiteCompetitorComparisonRuns,
   rejectCompetitorProfileDraft,
   retryCompetitorProfileGenerationRun,
+  runActionExecutionItemAutomation,
   updateSite,
   updateBusinessSettings,
   updateRecommendationStatus,
@@ -310,6 +311,22 @@ function deriveAutomationBindingTargetId(runs: AutomationRun[]): string | null {
     }
   }
   return null;
+}
+
+function hasInFlightLineageExecution(lineage: Recommendation["action_lineage"] | null | undefined): boolean {
+  if (!lineage) {
+    return false;
+  }
+  return lineage.activated_actions.some((activatedAction) => {
+    const runStatus = (activatedAction.automation_run_status || "").trim().toLowerCase();
+    const executionState = (activatedAction.automation_execution_state || "").trim().toLowerCase();
+    return (
+      runStatus === "queued"
+      || runStatus === "running"
+      || executionState === "requested"
+      || executionState === "running"
+    );
+  });
 }
 
 function sortAutomationRunsNewestFirst(runs: AutomationRun[]): AutomationRun[] {
@@ -2940,6 +2957,24 @@ function safeAutomationBindingErrorMessage(error: unknown): string {
   return "Unable to bind this action to automation right now.";
 }
 
+function safeAutomationExecutionErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 404) {
+      return "Activated action or bound automation was not found.";
+    }
+    if (error.status === 409) {
+      return "An automation run is already in progress for this site.";
+    }
+    if (error.status === 422) {
+      return "Automation execution is not available for this action state.";
+    }
+    if (error.status === 401) {
+      return "Session expired while requesting automation execution.";
+    }
+  }
+  return "Unable to request automation execution right now.";
+}
+
 function isCompetitorProfileRunTerminalStatus(status: CompetitorProfileGenerationRun["status"]): boolean {
   return status === "completed" || status === "failed";
 }
@@ -3224,6 +3259,10 @@ export default function SiteWorkspacePage() {
   const [automationBindingPendingByActionId, setAutomationBindingPendingByActionId] =
     useState<Record<string, boolean>>({});
   const [automationBindingErrorByActionId, setAutomationBindingErrorByActionId] =
+    useState<Record<string, string | null>>({});
+  const [automationRunPendingByActionId, setAutomationRunPendingByActionId] =
+    useState<Record<string, boolean>>({});
+  const [automationRunErrorByActionId, setAutomationRunErrorByActionId] =
     useState<Record<string, string | null>>({});
   const [automationActionDecisionByItemId, setAutomationActionDecisionByItemId] =
     useState<Record<string, ActionDecision>>({});
@@ -5108,6 +5147,8 @@ export default function SiteWorkspacePage() {
       setRecommendationActionDecisionErrorByItemId({});
       setAutomationBindingPendingByActionId({});
       setAutomationBindingErrorByActionId({});
+      setAutomationRunPendingByActionId({});
+      setAutomationRunErrorByActionId({});
       setAutomationActionDecisionByItemId({});
       setRecommendationRuns([]);
       setRecommendationRunError(null);
@@ -5445,6 +5486,8 @@ export default function SiteWorkspacePage() {
         setRecommendationActionDecisionErrorByItemId({});
         setAutomationBindingPendingByActionId({});
         setAutomationBindingErrorByActionId({});
+        setAutomationRunPendingByActionId({});
+        setAutomationRunErrorByActionId({});
       } else {
         setQueueResponse(null);
         setRecommendationActionDecisionByItemId({});
@@ -5452,6 +5495,8 @@ export default function SiteWorkspacePage() {
         setRecommendationActionDecisionErrorByItemId({});
         setAutomationBindingPendingByActionId({});
         setAutomationBindingErrorByActionId({});
+        setAutomationRunPendingByActionId({});
+        setAutomationRunErrorByActionId({});
         setQueueError(safeSectionErrorMessage("recommendation queue", queueResult.reason));
       }
 
@@ -5847,6 +5892,29 @@ export default function SiteWorkspacePage() {
     siteId,
   ]);
 
+  useEffect(() => {
+    const hasInFlightExecution = (queueResponse?.items || []).some((item) =>
+      hasInFlightLineageExecution(item.action_lineage || null),
+    );
+    if (
+      !hasInFlightExecution
+      || loadingWorkspace
+      || context.loading
+      || context.error
+      || !siteId
+    ) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setWorkspaceRefreshNonce((current) => current + 1);
+    }, 4000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [context.error, context.loading, loadingWorkspace, queueResponse, siteId]);
+
   if (context.loading) {
     return (
       <PageContainer width="full" density="compact">
@@ -6003,6 +6071,24 @@ export default function SiteWorkspacePage() {
   const latestAutomationActionControls = effectiveLatestAutomationActionExecutionItem
     ? deriveActionControls(effectiveLatestAutomationActionExecutionItem)
     : [];
+  const workspaceHasInFlightActionExecution = (() => {
+    if (effectiveTopQueueRecommendationActionExecutionItem?.actionLineage
+      && hasInFlightLineageExecution(effectiveTopQueueRecommendationActionExecutionItem.actionLineage)) {
+      return true;
+    }
+    if (effectiveLatestAutomationActionExecutionItem?.actionLineage
+      && hasInFlightLineageExecution(effectiveLatestAutomationActionExecutionItem.actionLineage)) {
+      return true;
+    }
+    return (queueResponse?.items || []).some((item) => hasInFlightLineageExecution(item.action_lineage || null));
+  })();
+  const workspaceExecutionPollingActive = Boolean(
+    workspaceHasInFlightActionExecution
+    && !loadingWorkspace
+    && !context.loading
+    && !context.error
+    && siteId,
+  );
 
   async function handleWorkspaceRecommendationDecision(
     recommendation: Recommendation,
@@ -6107,6 +6193,46 @@ export default function SiteWorkspacePage() {
       }));
     } finally {
       setAutomationBindingPendingByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: false,
+      }));
+    }
+  }
+
+  async function handleWorkspaceRecommendationAutomationExecution(
+    actionExecutionItemId: string,
+  ): Promise<void> {
+    if (!selectedSite) {
+      setAutomationRunErrorByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: "Site context is unavailable for automation execution.",
+      }));
+      return;
+    }
+
+    setAutomationRunPendingByActionId((current) => ({
+      ...current,
+      [actionExecutionItemId]: true,
+    }));
+    setAutomationRunErrorByActionId((current) => ({
+      ...current,
+      [actionExecutionItemId]: null,
+    }));
+    try {
+      await runActionExecutionItemAutomation(
+        context.token,
+        context.businessId,
+        selectedSite.id,
+        actionExecutionItemId,
+      );
+      setWorkspaceRefreshNonce((current) => current + 1);
+    } catch (error) {
+      setAutomationRunErrorByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: safeAutomationExecutionErrorMessage(error),
+      }));
+    } finally {
+      setAutomationRunPendingByActionId((current) => ({
         ...current,
         [actionExecutionItemId]: false,
       }));
@@ -6561,6 +6687,11 @@ export default function SiteWorkspacePage() {
                 resolveOutputHref={(outputId) => buildRecommendationRunHref(outputId, selectedSite.id)}
                 data-testid="workspace-automation-output-review"
               />
+            ) : null}
+            {workspaceExecutionPollingActive ? (
+              <span className="hint muted" data-testid="workspace-automation-execution-polling-status">
+                Automation execution is in progress. Status refreshes automatically every few seconds.
+              </span>
             ) : null}
             {latestAutomationRun ? (
               <span className="hint muted">
@@ -7998,14 +8129,22 @@ export default function SiteWorkspacePage() {
                   void handleWorkspaceRecommendationDecision(topQueueRecommendation, decision);
                 }}
                 onBindAutomation={handleWorkspaceRecommendationAutomationBinding}
+                onRunAutomation={handleWorkspaceRecommendationAutomationExecution}
                 decisionPending={Boolean(recommendationActionDecisionSavingByItemId[topQueueRecommendation.id])}
                 decisionError={recommendationActionDecisionErrorByItemId[topQueueRecommendation.id]}
                 bindAutomationTargetId={workspaceAutomationBindingTargetId}
                 bindAutomationPendingByActionId={automationBindingPendingByActionId}
                 bindAutomationErrorByActionId={automationBindingErrorByActionId}
+                runAutomationPendingByActionId={automationRunPendingByActionId}
+                runAutomationErrorByActionId={automationRunErrorByActionId}
                 resolveOutputHref={(outputId) => buildRecommendationRunHref(outputId, selectedSite.id)}
                 data-testid="workspace-recommendation-output-review"
               />
+            ) : null}
+            {workspaceExecutionPollingActive ? (
+              <span className="hint muted" data-testid="workspace-recommendation-execution-polling-status">
+                Automation execution is in progress. Status refreshes automatically every few seconds.
+              </span>
             ) : null}
           </div>
         ) : null}

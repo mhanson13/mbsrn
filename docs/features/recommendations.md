@@ -181,3 +181,36 @@ Operator behavior:
 - unbound + automation-ready -> show bind control
 - bound -> show bound automation reference
 - no implied execution (binding does not run automation)
+
+## Manual "Run Automation" Execution Gating
+
+Recommendation surfaces now expose a guarded manual execution bridge for eligible activated actions.
+
+Eligibility shown in UI:
+- activated next-step action exists
+- `automation_ready=true`
+- `automation_binding_state=bound`
+- execution state is not currently in-flight
+
+Operator control:
+- **Run automation**
+
+Execution lifecycle cues now rendered from canonical lineage:
+- `not_requested`
+- `requested`
+- `running`
+- `succeeded`
+- `failed`
+
+Operator-facing behavior:
+- bound + not requested -> run control shown
+- requested/running -> in-progress cue shown, run control suppressed
+- succeeded/failed -> last run outcome cue shown with run reference when available
+
+Backend bridge:
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/execution-items/{execution_item_id}/run-automation`
+
+Safety boundary:
+- manual operator request only
+- no automatic execution on activation/bind
+- no recommendation generation behavior change

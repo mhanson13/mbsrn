@@ -20,6 +20,7 @@ import {
   fetchCompetitorComparisonReport,
   fetchLatestRecommendationRunNarrative,
   fetchRecommendationRunReport,
+  runActionExecutionItemAutomation,
 } from "../../../../lib/api/client";
 import { deriveRecommendationRunOperatorActionState } from "../../../../lib/operatorActionState";
 import {
@@ -383,6 +384,21 @@ function safeAutomationBindingErrorMessage(error: unknown): string {
   return "Unable to bind automation right now. Try again after refreshing the run detail.";
 }
 
+function safeAutomationExecutionErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 404) {
+      return "Activated action or bound automation was not found for this run.";
+    }
+    if (error.status === 409) {
+      return "An automation run is already in progress for this site.";
+    }
+    if (error.status === 422) {
+      return "Automation execution is not allowed for this action state.";
+    }
+  }
+  return "Unable to request automation execution right now. Try again after refreshing the run detail.";
+}
+
 function toSortedCountEntries(countMap: Record<string, number> | undefined): Array<[string, number]> {
   if (!countMap) {
     return [];
@@ -420,6 +436,22 @@ function deriveRecommendationRunTrustTier(recommendations: Recommendation[]): Ac
     return "informational_candidate";
   }
   return null;
+}
+
+function hasInFlightLineageExecution(lineage: Recommendation["action_lineage"] | null | undefined): boolean {
+  if (!lineage) {
+    return false;
+  }
+  return lineage.activated_actions.some((activatedAction) => {
+    const runStatus = (activatedAction.automation_run_status || "").trim().toLowerCase();
+    const executionState = (activatedAction.automation_execution_state || "").trim().toLowerCase();
+    return (
+      runStatus === "queued"
+      || runStatus === "running"
+      || executionState === "requested"
+      || executionState === "running"
+    );
+  });
 }
 
 function resolveRecommendationRunControlHref(params: {
@@ -570,6 +602,8 @@ export default function RecommendationRunDetailPage() {
   const [automationBindingPendingByActionId, setAutomationBindingPendingByActionId] = useState<Record<string, boolean>>({});
   const [automationBindingErrorByActionId, setAutomationBindingErrorByActionId] =
     useState<Record<string, string | null>>({});
+  const [automationRunPendingByActionId, setAutomationRunPendingByActionId] = useState<Record<string, boolean>>({});
+  const [automationRunErrorByActionId, setAutomationRunErrorByActionId] = useState<Record<string, string | null>>({});
   const [automationBindingRefreshNonce, setAutomationBindingRefreshNonce] = useState(0);
 
   const run: RecommendationRun | null = report?.recommendation_run || null;
@@ -777,6 +811,20 @@ export default function RecommendationRunDetailPage() {
     [recommendationRunActionExecutionItem],
   );
   const recommendationRunAutomationBindingTargetId = automationOrigin?.automationConfigId || null;
+  const hasInFlightActionExecution = useMemo(() => {
+    if (recommendationRunActionExecutionItem?.actionLineage && hasInFlightLineageExecution(recommendationRunActionExecutionItem.actionLineage)) {
+      return true;
+    }
+    return recommendations.some((recommendation) => hasInFlightLineageExecution(recommendation.action_lineage || null));
+  }, [recommendationRunActionExecutionItem?.actionLineage, recommendations]);
+  const executionPollingActive = Boolean(
+    hasInFlightActionExecution
+    && !loading
+    && !context.loading
+    && !context.error
+    && recommendationRunId
+    && resolvedSiteId,
+  );
 
   function handleRunLevelDecision(decision: ActionDecision): void {
     if (!recommendationRunActionExecutionItem) {
@@ -825,6 +873,45 @@ export default function RecommendationRunDetailPage() {
       }));
     } finally {
       setAutomationBindingPendingByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: false,
+      }));
+    }
+  }
+
+  async function handleRecommendationRunAutomationExecution(actionExecutionItemId: string): Promise<void> {
+    if (!resolvedSiteId) {
+      setAutomationRunErrorByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: "Resolved site context is unavailable for automation execution.",
+      }));
+      return;
+    }
+
+    setAutomationRunPendingByActionId((current) => ({
+      ...current,
+      [actionExecutionItemId]: true,
+    }));
+    setAutomationRunErrorByActionId((current) => ({
+      ...current,
+      [actionExecutionItemId]: null,
+    }));
+
+    try {
+      await runActionExecutionItemAutomation(
+        context.token,
+        context.businessId,
+        resolvedSiteId,
+        actionExecutionItemId,
+      );
+      setAutomationBindingRefreshNonce((current) => current + 1);
+    } catch (error) {
+      setAutomationRunErrorByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: safeAutomationExecutionErrorMessage(error),
+      }));
+    } finally {
+      setAutomationRunPendingByActionId((current) => ({
         ...current,
         [actionExecutionItemId]: false,
       }));
@@ -1129,6 +1216,8 @@ export default function RecommendationRunDetailPage() {
       setError(null);
       setRelatedError(null);
       setNotFound(false);
+      setAutomationRunPendingByActionId({});
+      setAutomationRunErrorByActionId({});
       return;
     }
 
@@ -1142,6 +1231,8 @@ export default function RecommendationRunDetailPage() {
       setError("No site context is available to resolve this recommendation run.");
       setRelatedError(null);
       setNotFound(false);
+      setAutomationRunPendingByActionId({});
+      setAutomationRunErrorByActionId({});
       return;
     }
 
@@ -1154,6 +1245,8 @@ export default function RecommendationRunDetailPage() {
       setNotFound(false);
       setAutomationBindingPendingByActionId({});
       setAutomationBindingErrorByActionId({});
+      setAutomationRunPendingByActionId({});
+      setAutomationRunErrorByActionId({});
       setReport(null);
       setLatestNarrative(null);
       setComparisonReport(null);
@@ -1274,6 +1367,18 @@ export default function RecommendationRunDetailPage() {
     context.token,
     recommendationRunId,
   ]);
+
+  useEffect(() => {
+    if (!executionPollingActive) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      setAutomationBindingRefreshNonce((current) => current + 1);
+    }, 4000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [executionPollingActive]);
 
   if (context.loading) {
     return (
@@ -1416,9 +1521,12 @@ export default function RecommendationRunDetailPage() {
               nextStep={recommendationRunActionPresentation?.nextStep || runActionState.nextStep}
               onDecision={handleRunLevelDecision}
               onBindAutomation={handleRecommendationRunAutomationBinding}
+              onRunAutomation={handleRecommendationRunAutomationExecution}
               bindAutomationTargetId={recommendationRunAutomationBindingTargetId}
               bindAutomationPendingByActionId={automationBindingPendingByActionId}
               bindAutomationErrorByActionId={automationBindingErrorByActionId}
+              runAutomationPendingByActionId={automationRunPendingByActionId}
+              runAutomationErrorByActionId={automationRunErrorByActionId}
               resolveOutputHref={(outputId) => {
                 if (outputId && outputId === run.id) {
                   return recommendationRunNarrativeHistoryHref;
@@ -1427,6 +1535,11 @@ export default function RecommendationRunDetailPage() {
               }}
               data-testid="recommendation-run-output-review"
             />
+          ) : null}
+          {executionPollingActive ? (
+            <p className="hint muted" data-testid="recommendation-run-execution-polling-status">
+              Automation execution is in progress. Status refreshes automatically every few seconds.
+            </p>
           ) : null}
           {resolvedSiteId ? (
             <p className="hint muted">

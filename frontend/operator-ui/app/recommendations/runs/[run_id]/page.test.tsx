@@ -1,10 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 
 import RecommendationRunDetailPage from "./page";
 import { ApiRequestError } from "../../../../lib/api/client";
 import type {
+  ActionLineageResponse,
   AutomationRunListResponse,
   Recommendation,
   RecommendationNarrative,
@@ -34,6 +35,7 @@ const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<Recommendation
 const mockFetchAutomationRuns = jest.fn<Promise<AutomationRunListResponse>, unknown[]>();
 const mockFetchCompetitorComparisonReport = jest.fn();
 const mockBindActionExecutionItemAutomation = jest.fn<Promise<unknown>, unknown[]>();
+const mockRunActionExecutionItemAutomation = jest.fn<Promise<unknown>, unknown[]>();
 
 jest.mock("next/link", () => {
   return function MockLink({
@@ -67,6 +69,8 @@ jest.mock("../../../../lib/api/client", () => {
     fetchCompetitorComparisonReport: (...args: unknown[]) => mockFetchCompetitorComparisonReport(...args),
     bindActionExecutionItemAutomation: (...args: unknown[]) =>
       mockBindActionExecutionItemAutomation(...args),
+    runActionExecutionItemAutomation: (...args: unknown[]) =>
+      mockRunActionExecutionItemAutomation(...args),
   };
 });
 
@@ -159,11 +163,24 @@ beforeEach(() => {
   mockUseOperatorContext.mockReturnValue(baseContext());
   mockFetchAutomationRuns.mockResolvedValue({ items: [], total: 0 });
   mockBindActionExecutionItemAutomation.mockReset();
+  mockRunActionExecutionItemAutomation.mockReset();
   mockBindActionExecutionItemAutomation.mockResolvedValue({
     action_execution_item_id: "run-1",
     automation_binding_state: "bound",
     bound_automation_id: "automation-config-1",
     automation_bound_at: "2026-03-21T10:06:00Z",
+    automation_ready: true,
+    automation_template_key: "performance_check_followup",
+  });
+  mockRunActionExecutionItemAutomation.mockResolvedValue({
+    action_execution_item_id: "run-1",
+    automation_binding_state: "bound",
+    bound_automation_id: "automation-config-1",
+    automation_bound_at: "2026-03-21T10:06:00Z",
+    automation_execution_state: "requested",
+    automation_execution_requested_at: "2026-03-21T10:07:00Z",
+    last_automation_run_id: "automation-run-4",
+    automation_last_executed_at: null,
     automation_ready: true,
     automation_template_key: "performance_check_followup",
   });
@@ -342,7 +359,7 @@ describe("recommendation run detail page presentation", () => {
 
   it("binds automation for an automation-ready activated run-level lineage action", async () => {
     const recommendationWithLineage = buildRecommendation("rec-lineage-1", "Lineage Recommendation");
-    recommendationWithLineage.action_lineage = {
+    const actionLineage: ActionLineageResponse = {
       source_action_id: "rec-lineage-1",
       chained_drafts: [
         {
@@ -382,6 +399,7 @@ describe("recommendation run detail page presentation", () => {
         automation_ready_count: 1,
       },
     };
+    recommendationWithLineage.action_lineage = actionLineage;
     const user = userEvent.setup();
     mockFetchRecommendationRunReport.mockResolvedValueOnce(buildRunReport([recommendationWithLineage]));
     mockFetchLatestRecommendationRunNarrative.mockRejectedValueOnce(
@@ -426,6 +444,125 @@ describe("recommendation run detail page presentation", () => {
       "activated-lineage-1",
       "automation-config-1",
     );
+  });
+
+  it("requests automation execution for a bound activated run-level lineage action", async () => {
+    const recommendationWithLineage = buildRecommendation("rec-lineage-2", "Lineage Run Recommendation");
+    const actionLineage: ActionLineageResponse = {
+      source_action_id: "rec-lineage-2",
+      chained_drafts: [
+        {
+          id: "draft-lineage-2",
+          source_action_id: "rec-lineage-2",
+          action_type: "measure_performance",
+          title: "Measure performance after rollout",
+          description: "Track outcome after applying the recommendation.",
+          draft_state: "pending",
+          activation_state: "activated",
+          activated_action_id: "activated-lineage-2",
+          automation_ready: true,
+          automation_template_key: "performance_check_followup",
+          created_at: "2026-03-21T10:01:00Z",
+        },
+      ],
+      activated_actions: [
+        {
+          id: "activated-lineage-2",
+          source_draft_id: "draft-lineage-2",
+          source_action_id: "rec-lineage-2",
+          action_type: "measure_performance",
+          title: "Measure performance after rollout",
+          description: "Track outcome after applying the recommendation.",
+          state: "pending",
+          automation_ready: true,
+          automation_template_key: "performance_check_followup",
+          automation_binding_state: "bound",
+          bound_automation_id: "automation-config-2",
+          automation_bound_at: "2026-03-21T10:06:00Z",
+          automation_execution_state: "not_requested",
+          automation_execution_requested_at: null,
+          last_automation_run_id: null,
+          automation_last_executed_at: null,
+          created_at: "2026-03-21T10:02:00Z",
+        },
+      ],
+      counts: {
+        chained_draft_count: 1,
+        activated_action_count: 1,
+        automation_ready_count: 1,
+      },
+    };
+    recommendationWithLineage.action_lineage = actionLineage;
+
+    const requestedRecommendation = {
+      ...recommendationWithLineage,
+      action_lineage: {
+        ...actionLineage,
+        activated_actions: [
+          {
+            ...actionLineage.activated_actions[0],
+            automation_execution_state: "requested" as const,
+            automation_execution_requested_at: "2026-03-21T10:07:00Z",
+            last_automation_run_id: "automation-run-4",
+          },
+        ],
+      },
+    } satisfies Recommendation;
+
+    const user = userEvent.setup();
+    mockFetchRecommendationRunReport
+      .mockResolvedValueOnce(buildRunReport([recommendationWithLineage]))
+      .mockResolvedValueOnce(buildRunReport([requestedRecommendation]));
+    mockFetchLatestRecommendationRunNarrative.mockRejectedValue(
+      new ApiRequestError("not found", { status: 404, detail: null }),
+    );
+    mockFetchAutomationRuns.mockResolvedValue({
+      items: [
+        {
+          id: "automation-run-4",
+          business_id: "biz-1",
+          site_id: "site-1",
+          automation_config_id: "automation-config-2",
+          status: "running",
+          trigger_source: "manual",
+          started_at: "2026-03-21T10:07:00Z",
+          finished_at: null,
+          error_message: null,
+          steps_json: [],
+          created_at: "2026-03-21T10:07:00Z",
+          updated_at: "2026-03-21T10:07:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockRunActionExecutionItemAutomation.mockResolvedValueOnce({
+      action_execution_item_id: "activated-lineage-2",
+      automation_binding_state: "bound",
+      bound_automation_id: "automation-config-2",
+      automation_bound_at: "2026-03-21T10:06:00Z",
+      automation_execution_state: "requested",
+      automation_execution_requested_at: "2026-03-21T10:07:00Z",
+      last_automation_run_id: "automation-run-4",
+      automation_last_executed_at: null,
+      automation_ready: true,
+      automation_template_key: "performance_check_followup",
+    });
+
+    render(<RecommendationRunDetailPage />);
+
+    const outputReview = await screen.findByTestId("recommendation-run-output-review");
+    await user.click(within(outputReview).getByRole("button", { name: "Run automation" }));
+
+    await waitFor(() =>
+      expect(mockRunActionExecutionItemAutomation).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "activated-lineage-2",
+      ),
+    );
+    expect(await screen.findByText("Execution requested")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-run-execution-polling-status")).toBeInTheDocument();
   });
 });
 

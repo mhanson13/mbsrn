@@ -163,6 +163,59 @@ Behavior:
 
 Canonical lineage now includes this metadata on activated actions so UI can render automation-ready vs automation-bound without inferring state.
 
+## Manual Execution Gating for Bound Actions
+
+Bound, activated actions can now request automation execution explicitly through an operator-initiated bridge:
+
+`POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/execution-items/{execution_item_id}/run-automation`
+
+Execution is gated by deterministic checks:
+- action execution item exists in business/site scope
+- source draft is activated and linked correctly
+- action is `automation_ready=true`
+- action is `automation_binding_state=bound`
+- bound automation record exists in scope
+
+Persisted execution fields on activated actions:
+- `automation_execution_state` (`not_requested`, `requested`, `running`, `succeeded`, `failed`)
+- `automation_execution_requested_at`
+- `automation_execution_requested_by`
+- `last_automation_run_id`
+- `automation_last_executed_at`
+
+Idempotency/duplicate-click behavior:
+- if a matching active run already exists for the bound automation, request reuses it
+- repeated clicks in in-flight states return current execution metadata without creating duplicate runs
+
+Important boundary:
+- this route **requests** execution only
+- it does not introduce autonomous scheduling
+- it does not auto-run on draft activation or automation bind
+
+Canonical lineage now exposes execution metadata on `activated_actions[]` so workspace/recommendation surfaces can render:
+- bound but not requested
+- execution requested/running
+- last run succeeded/failed
+
+## Execution Status Overlay in Canonical Lineage
+
+Canonical lineage now also hydrates live automation run overlay details for activated actions when `last_automation_run_id` is present:
+
+- `automation_run_status`
+- `automation_run_started_at`
+- `automation_run_completed_at`
+- `automation_run_error_summary`
+
+Read-path behavior:
+- read-only hydration (no writes)
+- deterministic mapping from run status to execution lifecycle display
+- no provider calls and no execution side effects
+
+UI implication:
+- operators can immediately see whether "Run automation" moved to requested/running
+- terminal outcomes (completed/failed) are surfaced with concise timestamps/error summary
+- lightweight in-flight refresh can poll lineage while requested/running, then stop at terminal state
+
 ## Example Flow
 `recommendation (seo_fix)` -> status patched to `accepted` -> chained draft `verify_fix` persisted as `pending` -> operator activates draft -> first-class action execution item created -> draft marked `activated`.
 

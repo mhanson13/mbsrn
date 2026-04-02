@@ -112,6 +112,25 @@ class SEOAutomationRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_runs_for_business_site_ids(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        run_ids: list[str],
+    ) -> list[SEOAutomationRun]:
+        normalized_ids = [run_id for run_id in run_ids if run_id]
+        if not normalized_ids:
+            return []
+        stmt: Select[tuple[SEOAutomationRun]] = (
+            select(SEOAutomationRun)
+            .where(SEOAutomationRun.business_id == business_id)
+            .where(SEOAutomationRun.site_id == site_id)
+            .where(SEOAutomationRun.id.in_(normalized_ids))
+            .order_by(SEOAutomationRun.created_at.desc(), SEOAutomationRun.id.desc())
+        )
+        return list(self.session.scalars(stmt))
+
     def get_active_run_for_business_site(self, business_id: str, site_id: str) -> SEOAutomationRun | None:
         stmt: Select[tuple[SEOAutomationRun]] = (
             select(SEOAutomationRun)

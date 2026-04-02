@@ -187,6 +187,26 @@ Explicit automation binding for activated actions:
   - different automation bind after bound -> conflict
 - binding is metadata linkage only and does not execute/schedule automation
 
+Manual execution request bridge for bound activated actions:
+- service: `app/services/action_automation_execution_service.py`
+- endpoint: `POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/execution-items/{execution_item_id}/run-automation`
+- persisted execution fields on `seo_action_execution_items`:
+  - `automation_execution_state` (`not_requested` | `requested` | `running` | `succeeded` | `failed`)
+  - `automation_execution_requested_at`
+  - `automation_execution_requested_by`
+  - `last_automation_run_id`
+  - `automation_last_executed_at`
+- request gating:
+  - requires activated action + automation-ready + bound automation
+  - validates same business/site scope for action and automation
+- dedupe semantics:
+  - in-flight active run reuse for matching bound automation
+  - no duplicate concurrent run creation from repeated clicks
+- boundary:
+  - manual operator request only
+  - no autonomous scheduling introduced
+  - no execution on bind/activate side effects
+
 Observability:
 - structured service log event `action_chaining_generated` includes:
   - `source_action_id`

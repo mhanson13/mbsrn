@@ -17,6 +17,9 @@ type OutputReviewProps = {
   bindAutomationTargetId?: string | null;
   bindAutomationPendingByActionId?: Record<string, boolean>;
   bindAutomationErrorByActionId?: Record<string, string | null>;
+  onRunAutomation?: (actionExecutionItemId: string) => Promise<void> | void;
+  runAutomationPendingByActionId?: Record<string, boolean>;
+  runAutomationErrorByActionId?: Record<string, string | null>;
   readOnly?: boolean;
   className?: string;
   "data-testid"?: string;
@@ -76,6 +79,40 @@ function lineageActivationBadgeClass(activationState: "pending" | "activated"): 
   return activationState === "activated" ? "badge badge-success" : "badge badge-muted";
 }
 
+function formatRunTimestamp(value: string | null | undefined): string | null {
+  const normalized = (value || "").trim();
+  if (!normalized) {
+    return null;
+  }
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return normalized;
+  }
+  return parsed.toLocaleString();
+}
+
+function automationExecutionBadge(action: {
+  automation_execution_state?: string | null;
+  automation_run_status?: string | null;
+}): { label: string; className: string } | null {
+  const runStatus = (action.automation_run_status || "").trim().toLowerCase();
+  const executionState = (action.automation_execution_state || "").trim().toLowerCase();
+
+  if (runStatus === "queued" || executionState === "requested") {
+    return { label: "Execution requested", className: "badge badge-warn" };
+  }
+  if (runStatus === "running" || executionState === "running") {
+    return { label: "Running", className: "badge badge-warn" };
+  }
+  if (runStatus === "completed" || runStatus === "skipped" || executionState === "succeeded") {
+    return { label: "Completed", className: "badge badge-success" };
+  }
+  if (runStatus === "failed" || executionState === "failed") {
+    return { label: "Failed", className: "badge badge-error" };
+  }
+  return null;
+}
+
 export function OutputReview({
   item,
   stateLabel,
@@ -90,6 +127,9 @@ export function OutputReview({
   bindAutomationTargetId = null,
   bindAutomationPendingByActionId = {},
   bindAutomationErrorByActionId = {},
+  onRunAutomation,
+  runAutomationPendingByActionId = {},
+  runAutomationErrorByActionId = {},
   readOnly = false,
   className = "",
   "data-testid": dataTestId,
@@ -164,6 +204,22 @@ export function OutputReview({
                 const bindActionId = activatedAction?.id || null;
                 const bindPending = bindActionId ? Boolean(bindAutomationPendingByActionId[bindActionId]) : false;
                 const bindError = bindActionId ? bindAutomationErrorByActionId[bindActionId] : null;
+                const executionState = activatedAction?.automation_execution_state || "not_requested";
+                const executionBadge = activatedAction ? automationExecutionBadge(activatedAction) : null;
+                const runPending = bindActionId ? Boolean(runAutomationPendingByActionId[bindActionId]) : false;
+                const runError = bindActionId ? runAutomationErrorByActionId[bindActionId] : null;
+                const runStartedAt = formatRunTimestamp(activatedAction?.automation_run_started_at);
+                const runCompletedAt = formatRunTimestamp(activatedAction?.automation_run_completed_at);
+                const runErrorSummary = (activatedAction?.automation_run_error_summary || "").trim() || null;
+                const canRunAutomation = Boolean(
+                  !readOnly
+                  && onRunAutomation
+                  && bindActionId
+                  && draft.automation_ready
+                  && automationBindingState === "bound"
+                  && executionState !== "requested"
+                  && executionState !== "running",
+                );
                 const canBindAutomation = Boolean(
                   !readOnly
                   && onBindAutomation
@@ -185,6 +241,9 @@ export function OutputReview({
                           {automationBindingState === "bound" ? "Bound to automation" : "Unbound"}
                         </span>
                       ) : null}
+                      {executionBadge ? (
+                        <span className={executionBadge.className}>{executionBadge.label}</span>
+                      ) : null}
                     </div>
                     {activatedAction ? (
                       <p className="hint muted">
@@ -195,6 +254,20 @@ export function OutputReview({
                       <p className="hint muted">
                         Bound automation: <code>{boundAutomationId}</code>
                       </p>
+                    ) : null}
+                    {activatedAction?.last_automation_run_id ? (
+                      <p className="hint muted">
+                        Last automation run: <code>{activatedAction.last_automation_run_id}</code>
+                      </p>
+                    ) : null}
+                    {runStartedAt ? (
+                      <p className="hint muted">Run started: {runStartedAt}</p>
+                    ) : null}
+                    {runCompletedAt ? (
+                      <p className="hint muted">Run completed: {runCompletedAt}</p>
+                    ) : null}
+                    {runErrorSummary ? (
+                      <p className="hint warning">Failure signal: {runErrorSummary}</p>
                     ) : null}
                     {draft.automation_template_key ? (
                       <p className="hint muted">Uses template: {draft.automation_template_key}</p>
@@ -216,7 +289,29 @@ export function OutputReview({
                         <p className="hint muted">Automation-ready but no automation record is available to bind.</p>
                       )
                     ) : null}
+                    {activatedAction && draft.automation_ready && automationBindingState === "bound" ? (
+                      canRunAutomation ? (
+                        <div className="link-row">
+                          <button
+                            type="button"
+                            className="button button-primary button-inline"
+                            onClick={() => onRunAutomation?.(activatedAction.id)}
+                            disabled={runPending}
+                            data-testid={dataTestId ? `${dataTestId}-run-${activatedAction.id}` : undefined}
+                          >
+                            {runPending ? "Requesting..." : "Run automation"}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="hint muted">
+                          {executionState === "requested" || executionState === "running"
+                            ? "Automation run request is already in progress."
+                            : "Automation run is already recorded for this action."}
+                        </p>
+                      )
+                    ) : null}
                     {bindError ? <p className="hint warning">{bindError}</p> : null}
+                    {runError ? <p className="hint warning">{runError}</p> : null}
                   </li>
                 );
               })}
