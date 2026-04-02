@@ -1600,10 +1600,16 @@ describe("site workspace timeline controls", () => {
     expect(screen.getByTestId("workspace-summary-automation")).toBeInTheDocument();
     expect(screen.getByTestId("workspace-automation-status-summary")).toBeInTheDocument();
     expect(screen.getByText("Automation status and outcomes")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-automation-non-publishing-banner")).toHaveTextContent(
+      "This automation analyzes your site and generates recommendations. It does not make changes to your website.",
+    );
     expect(screen.getByTestId("workspace-automation-status-summary")).toHaveTextContent("Next step:");
     const automationActionControls = await screen.findByTestId("workspace-automation-action-controls");
     expect(automationActionControls).toHaveTextContent("Review output");
     expect(automationActionControls).toHaveTextContent("Mark completed");
+    expect(screen.getByTestId("workspace-automation-output-review")).toHaveTextContent(
+      "This automation analyzes your site and generates recommendations. It does not make changes to your website.",
+    );
     expect(await screen.findByText("Review recommendation run output")).toBeInTheDocument();
   });
 

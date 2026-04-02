@@ -232,3 +232,16 @@ Operator interpretation:
 Copy/intent boundary:
 - "Run SEO automation" triggers SEO analysis/artifact generation
 - it does not imply live-site CMS publishing or direct website modification
+
+## Recommendation Badge Behavior
+
+Recommendation badges are compact operator signals derived from normalized state/count data.
+
+UI rules:
+- badges render as nowrap pills (single-line text by default)
+- chip groups are overflow-safe and wrap as groups without distorting individual badges
+- large count displays may be capped (for example `99+`) when a capped representation is configured
+
+Purpose:
+- provide a fast scan signal for triage and action ordering
+- do not replace detailed metric review in expanded/detail surfaces

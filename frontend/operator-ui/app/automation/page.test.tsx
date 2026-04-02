@@ -50,6 +50,7 @@ describe("automation page shared-shell framing", () => {
   });
 
   it("renders summary cards and run table for a configured site", async () => {
+    const user = userEvent.setup();
     mockUseOperatorContext.mockReturnValue(buildContext());
     mockFetchAutomationRuns.mockResolvedValueOnce({
       items: [
@@ -70,6 +71,9 @@ describe("automation page shared-shell framing", () => {
               finished_at: "2026-03-25T10:00:45Z",
               linked_output_id: "rec-run-99",
               error_message: null,
+              pages_analyzed_count: 42,
+              issues_found_count: 12,
+              recommendations_generated_count: 5,
             },
             {
               step_name: "recommendation_narrative",
@@ -100,7 +104,11 @@ describe("automation page shared-shell framing", () => {
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("Running")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByTestId("automation-non-publishing-banner")).toHaveTextContent(
+      "This automation analyzes your site and generates recommendations. It does not make changes to your website.",
+    );
     expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Latest automation outcome");
+    expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Complete");
     expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Next step:");
     expect(screen.getByText("Review recommendation run output")).toBeInTheDocument();
     expect(screen.getByText("Review latest narrative output")).toBeInTheDocument();
@@ -108,6 +116,14 @@ describe("automation page shared-shell framing", () => {
     expect(latestControls).toHaveTextContent("Review output");
     expect(latestControls).toHaveTextContent("Mark completed");
     expect(latestControls).toHaveTextContent("Mark as completed after confirming output and follow-up tasks.");
+    const outputReview = screen.getByTestId("automation-latest-run-output-review");
+    expect(outputReview).toHaveTextContent(
+      "This automation analyzes your site and generates recommendations. It does not make changes to your website.",
+    );
+    await user.click(within(outputReview).getAllByText("View details")[0]);
+    expect(outputReview).toHaveTextContent("Pages analyzed: 42");
+    expect(outputReview).toHaveTextContent("Issues found: 12");
+    expect(outputReview).toHaveTextContent("Recommendations generated: 5");
   });
 
   it("renders canonical terminal outcome summary and step reason signals", async () => {
@@ -169,6 +185,10 @@ describe("automation page shared-shell framing", () => {
     await screen.findByTestId("automation-latest-run-summary");
     const latestSummary = screen.getByTestId("automation-latest-run-summary");
     expect(latestSummary).toHaveTextContent("Completed with skips");
+    expect(latestSummary).toHaveTextContent("Partial");
+    expect(latestSummary).toHaveTextContent(
+      "Competitor data not available at run time; insights may be limited.",
+    );
     expect(latestSummary).toHaveTextContent("1 completed");
     expect(latestSummary).toHaveTextContent("2 skipped");
     expect(latestSummary).toHaveTextContent(

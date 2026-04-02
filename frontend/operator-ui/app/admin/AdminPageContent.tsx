@@ -68,17 +68,14 @@ interface SettingsHealthSummary {
 const GCP_LOGS_PAGE_SIZE_DEFAULT = 25;
 const GCP_LOGS_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 const GCP_LOGS_DEFAULT_TIME_WINDOW_LABEL = "last 24 hours";
+const GCP_LOGS_SAMPLE_FILTER =
+  'severity="ERROR" resource.labels.namespace_name="mbsrn" -textPayload =~ "INFO*"';
 
-const GCP_LOGS_SAMPLE_FILTERS = [
-  'jsonPayload.event="competitor_provider_request_start"',
-  'jsonPayload.event="competitor_provider_request_complete"',
-  'jsonPayload.event="competitor_provider_request_error"',
-  'jsonPayload.event="competitor_provider_request_error" AND jsonPayload.failure_kind="malformed_output"',
-  'jsonPayload.failure_kind="malformed_output" AND jsonPayload.malformed_output_reason:*',
-  'jsonPayload.event="competitor_provider_request_error" AND jsonPayload.endpoint_path="/responses"',
-  'jsonPayload.event="competitor_provider_request_start" AND jsonPayload.run_id="<run_id>"',
-  'jsonPayload.event="competitor_provider_request_complete" AND jsonPayload.run_id="<run_id>"',
-] as const;
+type AdminPageMode = "all" | "admin" | "userMgmt";
+
+interface AdminPageProps {
+  mode?: AdminPageMode;
+}
 
 function parseBoundedInteger(input: string, bounds: { min: number; max: number }): number | null {
   const normalized = input.trim();
@@ -542,7 +539,7 @@ function normalizeOptionalIsoTimeInput(value: string): string | undefined {
   return normalized;
 }
 
-export default function AdminPage() {
+export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const context = useOperatorContext();
   const { principal } = useAuth();
   const [users, setUsers] = useState<Principal[]>([]);
@@ -616,6 +613,8 @@ export default function AdminPage() {
   const [gcpLogsHasExecuted, setGcpLogsHasExecuted] = useState(false);
 
   const isAdmin = principal?.role === "admin";
+  const showUserManagement = mode !== "admin";
+  const showAdminSettings = mode !== "userMgmt";
 
   const loadUsersData = useCallback(async (): Promise<AdminPageLoadResult> => {
     const principalResponse = await fetchPrincipals(context.token, context.businessId);
@@ -694,7 +693,7 @@ export default function AdminPage() {
     existingIdentityForProviderSubject.principal_id !== identityPrincipalId;
 
   useEffect(() => {
-    if (context.loading || context.error || !isAdmin) {
+    if (context.loading || context.error || !isAdmin || !showUserManagement) {
       return;
     }
 
@@ -725,10 +724,10 @@ export default function AdminPage() {
     return () => {
       cancelled = true;
     };
-  }, [context.error, context.loading, isAdmin, loadUsersData]);
+  }, [context.error, context.loading, isAdmin, loadUsersData, showUserManagement]);
 
   useEffect(() => {
-    if (context.loading || context.error || !isAdmin) {
+    if (context.loading || context.error || !isAdmin || !showAdminSettings) {
       return;
     }
 
@@ -767,7 +766,7 @@ export default function AdminPage() {
     return () => {
       cancelled = true;
     };
-  }, [context.businessId, context.error, context.loading, context.token, isAdmin]);
+  }, [context.businessId, context.error, context.loading, context.token, isAdmin, showAdminSettings]);
 
   useEffect(() => {
     if (users.length === 0) {
@@ -1357,7 +1356,7 @@ export default function AdminPage() {
       <PageContainer width="wide" density="compact">
         <SectionCard variant="support">
           <SectionHeader
-            title="Admin"
+            title={mode === "userMgmt" ? "User Mgmt" : "Admin"}
             subtitle="Business administration is available to admin principals only."
             headingLevel={1}
             variant="support"
@@ -1369,11 +1368,23 @@ export default function AdminPage() {
 
   return (
     <PageContainer width="wide" density="compact">
-      <div className="role-dashboard-landing">
-        <SectionCard variant="primary" className="role-dashboard-hero">
+      <div className={mode === "admin" ? "stack" : "role-dashboard-landing"}>
+        <SectionCard
+          variant="primary"
+          className={[
+            "role-dashboard-hero",
+            mode === "admin" ? "admin-layout-shell-flat" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
           <SectionHeader
-            title="Admin Overview"
-            subtitle="Manage principals, settings, integrations, and platform diagnostics for this business."
+            title={mode === "userMgmt" ? "User Mgmt" : "Admin Overview"}
+            subtitle={
+              mode === "userMgmt"
+                ? "Create users, link identities, and manage principal access for this business."
+                : "Manage platform settings, diagnostics, and site controls for this business."
+            }
             headingLevel={1}
             variant="hero"
             meta={(
@@ -1384,198 +1395,212 @@ export default function AdminPage() {
             )}
           />
           <div className="workspace-summary-strip role-summary-strip">
-            <SummaryStatCard
-              label="Principals"
-              value={users.length}
-              detail={`${activeUsersCount} active`}
-              tone={activeUsersCount > 0 ? "success" : "warning"}
-              variant="elevated"
-            />
-            <SummaryStatCard
-              label="Sign-in identities"
-              value={identities.length}
-              detail={`${principalsWithoutIdentityCount} principals missing identity links`}
-              tone={principalsWithoutIdentityCount > 0 ? "warning" : "success"}
-              variant="elevated"
-            />
-            <SummaryStatCard
-              label="Managed sites"
-              value={context.sites.length}
-              detail={context.sites.length > 0 ? "Admin edit and delete controls available" : "No sites configured"}
-              tone={context.sites.length > 0 ? "neutral" : "warning"}
-              variant="elevated"
-            />
-            <SummaryStatCard
-              label="Settings health"
-              value={
-                settingsHealth.crawl.status === "invalid" ||
-                settingsHealth.competitorQuality.status === "invalid" ||
-                settingsHealth.competitorTimeouts.status === "invalid" ||
-                settingsHealth.notifications.status === "invalid"
-                  ? "Review needed"
-                  : "Stable"
-              }
-              detail="Crawl, competitor quality, timeouts, and notification channels"
-              tone={
-                settingsHealth.crawl.status === "invalid" ||
-                settingsHealth.competitorQuality.status === "invalid" ||
-                settingsHealth.competitorTimeouts.status === "invalid" ||
-                settingsHealth.notifications.status === "invalid"
-                  ? "warning"
-                  : "success"
-              }
-              variant="elevated"
-            />
+            {showUserManagement ? (
+              <>
+                <SummaryStatCard
+                  label="Principals"
+                  value={users.length}
+                  detail={`${activeUsersCount} active`}
+                  tone={activeUsersCount > 0 ? "success" : "warning"}
+                  variant="elevated"
+                />
+                <SummaryStatCard
+                  label="Sign-in identities"
+                  value={identities.length}
+                  detail={`${principalsWithoutIdentityCount} principals missing identity links`}
+                  tone={principalsWithoutIdentityCount > 0 ? "warning" : "success"}
+                  variant="elevated"
+                />
+              </>
+            ) : null}
+            {showAdminSettings ? (
+              <>
+                <SummaryStatCard
+                  label="Managed sites"
+                  value={context.sites.length}
+                  detail={context.sites.length > 0 ? "Admin edit and delete controls available" : "No sites configured"}
+                  tone={context.sites.length > 0 ? "neutral" : "warning"}
+                  variant="elevated"
+                />
+                <SummaryStatCard
+                  label="Settings health"
+                  value={
+                    settingsHealth.crawl.status === "invalid" ||
+                    settingsHealth.competitorQuality.status === "invalid" ||
+                    settingsHealth.competitorTimeouts.status === "invalid" ||
+                    settingsHealth.notifications.status === "invalid"
+                      ? "Review needed"
+                      : "Stable"
+                  }
+                  detail="Crawl, competitor quality, timeouts, and notification channels"
+                  tone={
+                    settingsHealth.crawl.status === "invalid" ||
+                    settingsHealth.competitorQuality.status === "invalid" ||
+                    settingsHealth.competitorTimeouts.status === "invalid" ||
+                    settingsHealth.notifications.status === "invalid"
+                      ? "warning"
+                      : "success"
+                  }
+                  variant="elevated"
+                />
+              </>
+            ) : null}
           </div>
-          <div className="link-row">
-            <span className="hint muted">Principals: {users.length}</span>
-            <span className="hint muted">Active principals: {activeUsersCount}</span>
-            <span className="hint muted">Sign-in identities: {identities.length}</span>
-            <span className="hint muted">Principals without identity: {principalsWithoutIdentityCount}</span>
-          </div>
-
-          <FormContainer onSubmit={(event) => void handleCreateUser(event)}>
-          <h2>Create User</h2>
-          <label htmlFor="principal-id">User ID</label>
-          <input
-            id="principal-id"
-            value={principalId}
-            onChange={(event) => setPrincipalId(event.target.value)}
-            placeholder="user@example.com"
-            required
-          />
-
-          <label htmlFor="display-name">Display Name (optional)</label>
-          <input
-            id="display-name"
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            placeholder="Operator Name"
-          />
-
-          <label htmlFor="user-role">Role</label>
-          <select
-            id="user-role"
-            className="operator-select"
-            value={role}
-            onChange={(event) => setRole(event.target.value as PrincipalRole)}
-          >
-            <option value="operator">operator</option>
-            <option value="admin">admin</option>
-          </select>
-
-          <div className="form-actions">
-            <button className="button button-primary" type="submit" disabled={submitting}>
-              {submitting ? "Creating..." : "Create User"}
-            </button>
-          </div>
-        </FormContainer>
-
-        <SectionCard variant="summary" className="role-surface-support">
-          <SectionHeader
-            title="Create and Link Identity"
-            subtitle="Create a sign-in identity and map it to a principal in this business."
-            headingLevel={2}
-            variant="support"
-          />
-          <FormContainer onSubmit={(event) => void handleCreateAndLinkIdentity(event)}>
-
-          <label htmlFor="identity-principal">Principal</label>
-          <select
-            id="identity-principal"
-            className="operator-select"
-            value={identityPrincipalId}
-            onChange={(event) => setIdentityPrincipalId(event.target.value)}
-            required
-            disabled={users.length === 0 || identitySubmitting}
-          >
-            {users.length === 0 ? <option value="">No principals available</option> : null}
-            {users.map((user) => (
-              <option key={user.id} value={user.id}>
-                {user.id} ({user.role})
-              </option>
-            ))}
-          </select>
-
-          <label htmlFor="identity-provider">Provider</label>
-          <input
-            id="identity-provider"
-            value={identityProvider}
-            onChange={(event) => setIdentityProvider(event.target.value)}
-            placeholder="google"
-            required
-            disabled={identitySubmitting}
-          />
-
-          <label htmlFor="identity-provider-subject">Provider Subject</label>
-          <input
-            id="identity-provider-subject"
-            value={identityProviderSubject}
-            onChange={(event) => setIdentityProviderSubject(event.target.value)}
-            placeholder="provider subject"
-            required
-            disabled={identitySubmitting}
-          />
-
-          <label htmlFor="identity-email">Email (optional)</label>
-          <input
-            id="identity-email"
-            value={identityEmail}
-            onChange={(event) => setIdentityEmail(event.target.value)}
-            placeholder="user@example.com"
-            disabled={identitySubmitting}
-          />
-
-          <label htmlFor="identity-email-verified" className="checkbox-chip">
-            <input
-              id="identity-email-verified"
-              type="checkbox"
-              checked={identityEmailVerified}
-              onChange={(event) => setIdentityEmailVerified(event.target.checked)}
-              disabled={identitySubmitting}
-            />
-            Email verified
-          </label>
-
-          <label htmlFor="identity-is-active" className="checkbox-chip">
-            <input
-              id="identity-is-active"
-              type="checkbox"
-              checked={identityIsActive}
-              onChange={(event) => setIdentityIsActive(event.target.checked)}
-              disabled={identitySubmitting}
-            />
-            Identity active
-          </label>
-
-          {identityAlreadyLinkedToSelectedPrincipal ? (
-            <p className="hint warning">This identity is already linked to the selected principal.</p>
-          ) : null}
-          {identityLinkedToDifferentPrincipal ? (
-            <p className="hint warning">
-              This identity is already linked to principal{" "}
-              <code>{existingIdentityForProviderSubject?.principal_id}</code>.
-            </p>
-          ) : null}
-
-            <div className="form-actions">
-              <button
-                className="button button-primary"
-                type="submit"
-                disabled={
-                  identitySubmitting ||
-                  users.length === 0 ||
-                  identityAlreadyLinkedToSelectedPrincipal ||
-                  identityLinkedToDifferentPrincipal
-                }
-              >
-                {identitySubmitting ? "Creating and Linking..." : "Create and Link Identity"}
-              </button>
+          {showUserManagement ? (
+            <div className="link-row">
+              <span className="hint muted">Principals: {users.length}</span>
+              <span className="hint muted">Active principals: {activeUsersCount}</span>
+              <span className="hint muted">Sign-in identities: {identities.length}</span>
+              <span className="hint muted">Principals without identity: {principalsWithoutIdentityCount}</span>
             </div>
-          </FormContainer>
-        </SectionCard>
+          ) : null}
 
-        <SectionCard variant="summary" className="role-surface-support">
+          {showUserManagement ? (
+            <>
+              <FormContainer onSubmit={(event) => void handleCreateUser(event)}>
+                <h2>Create User</h2>
+                <label htmlFor="principal-id">User ID</label>
+                <input
+                  id="principal-id"
+                  value={principalId}
+                  onChange={(event) => setPrincipalId(event.target.value)}
+                  placeholder="user@example.com"
+                  required
+                />
+
+                <label htmlFor="display-name">Display Name (optional)</label>
+                <input
+                  id="display-name"
+                  value={displayName}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  placeholder="Operator Name"
+                />
+
+                <label htmlFor="user-role">Role</label>
+                <select
+                  id="user-role"
+                  className="operator-select"
+                  value={role}
+                  onChange={(event) => setRole(event.target.value as PrincipalRole)}
+                >
+                  <option value="operator">operator</option>
+                  <option value="admin">admin</option>
+                </select>
+
+                <div className="form-actions">
+                  <button className="button button-primary" type="submit" disabled={submitting}>
+                    {submitting ? "Creating..." : "Create User"}
+                  </button>
+                </div>
+              </FormContainer>
+
+              <SectionCard variant="summary" className="role-surface-support">
+                <SectionHeader
+                  title="Create and Link Identity"
+                  subtitle="Create a sign-in identity and map it to a principal in this business."
+                  headingLevel={2}
+                  variant="support"
+                />
+                <FormContainer onSubmit={(event) => void handleCreateAndLinkIdentity(event)}>
+                  <label htmlFor="identity-principal">Principal</label>
+                  <select
+                    id="identity-principal"
+                    className="operator-select"
+                    value={identityPrincipalId}
+                    onChange={(event) => setIdentityPrincipalId(event.target.value)}
+                    required
+                    disabled={users.length === 0 || identitySubmitting}
+                  >
+                    {users.length === 0 ? <option value="">No principals available</option> : null}
+                    {users.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.id} ({user.role})
+                      </option>
+                    ))}
+                  </select>
+
+                  <label htmlFor="identity-provider">Provider</label>
+                  <input
+                    id="identity-provider"
+                    value={identityProvider}
+                    onChange={(event) => setIdentityProvider(event.target.value)}
+                    placeholder="google"
+                    required
+                    disabled={identitySubmitting}
+                  />
+
+                  <label htmlFor="identity-provider-subject">Provider Subject</label>
+                  <input
+                    id="identity-provider-subject"
+                    value={identityProviderSubject}
+                    onChange={(event) => setIdentityProviderSubject(event.target.value)}
+                    placeholder="provider subject"
+                    required
+                    disabled={identitySubmitting}
+                  />
+
+                  <label htmlFor="identity-email">Email (optional)</label>
+                  <input
+                    id="identity-email"
+                    value={identityEmail}
+                    onChange={(event) => setIdentityEmail(event.target.value)}
+                    placeholder="user@example.com"
+                    disabled={identitySubmitting}
+                  />
+
+                  <label htmlFor="identity-email-verified" className="checkbox-chip">
+                    <input
+                      id="identity-email-verified"
+                      type="checkbox"
+                      checked={identityEmailVerified}
+                      onChange={(event) => setIdentityEmailVerified(event.target.checked)}
+                      disabled={identitySubmitting}
+                    />
+                    Email verified
+                  </label>
+
+                  <label htmlFor="identity-is-active" className="checkbox-chip">
+                    <input
+                      id="identity-is-active"
+                      type="checkbox"
+                      checked={identityIsActive}
+                      onChange={(event) => setIdentityIsActive(event.target.checked)}
+                      disabled={identitySubmitting}
+                    />
+                    Identity active
+                  </label>
+
+                  {identityAlreadyLinkedToSelectedPrincipal ? (
+                    <p className="hint warning">This identity is already linked to the selected principal.</p>
+                  ) : null}
+                  {identityLinkedToDifferentPrincipal ? (
+                    <p className="hint warning">
+                      This identity is already linked to principal{" "}
+                      <code>{existingIdentityForProviderSubject?.principal_id}</code>.
+                    </p>
+                  ) : null}
+
+                  <div className="form-actions">
+                    <button
+                      className="button button-primary"
+                      type="submit"
+                      disabled={
+                        identitySubmitting ||
+                        users.length === 0 ||
+                        identityAlreadyLinkedToSelectedPrincipal ||
+                        identityLinkedToDifferentPrincipal
+                      }
+                    >
+                      {identitySubmitting ? "Creating and Linking..." : "Create and Link Identity"}
+                    </button>
+                  </div>
+                </FormContainer>
+              </SectionCard>
+            </>
+          ) : null}
+
+        {showAdminSettings ? (
+          <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="SEO Crawl Settings"
             subtitle="Configure crawl page limits used by SEO audits and automation for this business."
@@ -1617,8 +1642,10 @@ export default function AdminPage() {
             {crawlPageLimitMessage ? <p className="hint">{crawlPageLimitMessage}</p> : null}
             {crawlPageLimitError ? <p className="hint error">{crawlPageLimitError}</p> : null}
           </FormContainer>
-        </SectionCard>
+          </SectionCard>
+        ) : null}
 
+        {showAdminSettings ? (
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="AI Competitor Candidate Quality"
@@ -1726,7 +1753,9 @@ export default function AdminPage() {
             {candidateQualityError ? <p className="hint error">{candidateQualityError}</p> : null}
           </FormContainer>
         </SectionCard>
+        ) : null}
 
+        {showAdminSettings ? (
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="AI Competitor Generation Timeouts"
@@ -1789,7 +1818,9 @@ export default function AdminPage() {
             {competitorTimeoutError ? <p className="hint error">{competitorTimeoutError}</p> : null}
           </FormContainer>
         </SectionCard>
+        ) : null}
 
+        {showAdminSettings ? (
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="AI Prompt Overrides"
@@ -1854,26 +1885,27 @@ export default function AdminPage() {
             {promptOverrideError ? <p className="hint error">{promptOverrideError}</p> : null}
           </FormContainer>
         </SectionCard>
+        ) : null}
 
         <div className="message-stack">
-          {submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
-          {submitError ? <p className="hint error">{submitError}</p> : null}
-          {identitySubmitSuccess ? <p className="hint">{identitySubmitSuccess}</p> : null}
-          {identitySubmitError ? <p className="hint error">{identitySubmitError}</p> : null}
-          {actionSuccess ? <p className="hint">Principal action: {actionSuccess}</p> : null}
-          {actionError ? <p className="hint error">Principal action: {actionError}</p> : null}
-          {identityActionSuccess ? <p className="hint">Identity action: {identityActionSuccess}</p> : null}
-          {identityActionError ? <p className="hint error">Identity action: {identityActionError}</p> : null}
-          {businessSettingsLoadError ? <p className="hint error">{businessSettingsLoadError}</p> : null}
-          {settingsHealth.notifications.status === "invalid" ? (
+          {showUserManagement && submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
+          {showUserManagement && submitError ? <p className="hint error">{submitError}</p> : null}
+          {showUserManagement && identitySubmitSuccess ? <p className="hint">{identitySubmitSuccess}</p> : null}
+          {showUserManagement && identitySubmitError ? <p className="hint error">{identitySubmitError}</p> : null}
+          {showUserManagement && actionSuccess ? <p className="hint">Principal action: {actionSuccess}</p> : null}
+          {showUserManagement && actionError ? <p className="hint error">Principal action: {actionError}</p> : null}
+          {showUserManagement && identityActionSuccess ? <p className="hint">Identity action: {identityActionSuccess}</p> : null}
+          {showUserManagement && identityActionError ? <p className="hint error">Identity action: {identityActionError}</p> : null}
+          {showAdminSettings && businessSettingsLoadError ? <p className="hint error">{businessSettingsLoadError}</p> : null}
+          {showAdminSettings && settingsHealth.notifications.status === "invalid" ? (
             <p className="hint warning">
               Notification settings health: {settingsHealth.notifications.message}
             </p>
           ) : null}
-          {loadingUsers ? <p className="hint muted">Loading users...</p> : null}
-          {usersError ? <p className="hint error">{usersError}</p> : null}
-          {identityWarning ? <p className="hint warning">{identityWarning}</p> : null}
-          {!loadingUsers && users.length > 0 && principalsWithoutIdentityCount > 0 ? (
+          {showUserManagement && loadingUsers ? <p className="hint muted">Loading users...</p> : null}
+          {showUserManagement && usersError ? <p className="hint error">{usersError}</p> : null}
+          {showUserManagement && identityWarning ? <p className="hint warning">{identityWarning}</p> : null}
+          {showUserManagement && !loadingUsers && users.length > 0 && principalsWithoutIdentityCount > 0 ? (
             <p className="hint muted">
               Some principals have no mapped sign-in identity yet. They will not be able to authenticate until an identity is linked.
             </p>
@@ -1881,6 +1913,20 @@ export default function AdminPage() {
         </div>
       </SectionCard>
       </div>
+
+      {showAdminSettings ? (
+        <>
+      <SectionCard variant="support" className="role-surface-support">
+        <SectionHeader
+          title="Admin Console"
+          subtitle="Platform operations tools for diagnostics, site maintenance, and safe configuration updates."
+          headingLevel={2}
+          variant="support"
+        />
+        <p className="hint muted">
+          Use Site Management to maintain site records and GCP Logs Query to investigate incidents and runtime behavior.
+        </p>
+      </SectionCard>
 
       <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader
@@ -1970,7 +2016,7 @@ export default function AdminPage() {
           variant="support"
         />
 
-        <FormContainer onSubmit={(event) => void handleSubmitGcpLogsQuery(event)} noValidate>
+        <FormContainer className="form-container-full-width" onSubmit={(event) => void handleSubmitGcpLogsQuery(event)} noValidate>
           <label htmlFor="gcp-logs-filter">Logs Explorer Filter</label>
           <textarea
             id="gcp-logs-filter"
@@ -2054,22 +2100,17 @@ export default function AdminPage() {
           ) : null}
         </FormContainer>
 
-        <h3>Sample Filters</h3>
-        <ul className="compact-list">
-          {GCP_LOGS_SAMPLE_FILTERS.map((sample) => (
-            <li key={sample}>
-              <code>{sample}</code>{" "}
-              <button
-                type="button"
-                className="button button-tertiary button-inline"
-                onClick={() => setGcpLogsFilterInput(sample)}
-                disabled={gcpLogsLoading}
-              >
-                Use
-              </button>
-            </li>
-          ))}
-        </ul>
+        <p className="hint muted">
+          Example filter: <code>{GCP_LOGS_SAMPLE_FILTER}</code>{" "}
+          <button
+            type="button"
+            className="button button-tertiary button-inline"
+            onClick={() => setGcpLogsFilterInput(GCP_LOGS_SAMPLE_FILTER)}
+            disabled={gcpLogsLoading}
+          >
+            Use example
+          </button>
+        </p>
 
         <div className="table-container">
           <table className="table">
@@ -2111,22 +2152,13 @@ export default function AdminPage() {
           </table>
         </div>
       </SectionCard>
+      </>
+      ) : null}
 
+      {showUserManagement ? (
       <SectionCard variant="support" className="role-surface-support">
         <SectionHeader
-          title="Admin Console"
-          subtitle="Use the sections above to manage users, identities, settings, sites, and diagnostics."
-          headingLevel={2}
-          variant="support"
-        />
-        <p className="hint muted">
-          Save critical configuration changes before moving to principals and identity review.
-        </p>
-      </SectionCard>
-
-      <SectionCard variant="support" className="role-surface-support">
-        <SectionHeader
-          title="Principals and Identities"
+          title="User ID Management"
           subtitle="Manage business principals and linked sign-in identities."
           headingLevel={2}
           variant="support"
@@ -2233,6 +2265,7 @@ export default function AdminPage() {
           </table>
         </div>
       </SectionCard>
+      ) : null}
     </PageContainer>
   );
 }

@@ -94,8 +94,9 @@ export function deriveOutputReview(item: ActionExecutionItem): ActionOutputRevie
   const summary = review?.summary || null;
   const details = review?.details || null;
   const sourceLabel = review?.sourceLabel || null;
+  const stepDetails = review?.stepDetails || null;
 
-  if (!outputId && !summary && !details && !sourceLabel) {
+  if (!outputId && !summary && !details && !sourceLabel && !stepDetails) {
     return null;
   }
 
@@ -104,6 +105,7 @@ export function deriveOutputReview(item: ActionExecutionItem): ActionOutputRevie
     summary,
     details,
     sourceLabel,
+    stepDetails,
   };
 }
 
@@ -141,6 +143,7 @@ export function applyActionDecisionLocally(item: ActionExecutionItem, decision: 
     summary: currentOutputReview?.summary || decisionState.outcome,
     details: currentOutputReview?.details || null,
     sourceLabel: currentOutputReview?.sourceLabel || item.outputReview?.sourceLabel || "Automation output",
+    stepDetails: currentOutputReview?.stepDetails || null,
   };
 
   return {

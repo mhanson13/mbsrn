@@ -252,3 +252,75 @@ Operator-facing guidance:
 Truth boundary:
 - this workflow runs SEO analysis/artifact generation
 - it does **not** publish changes to live customer websites
+
+## Audit Runs Table (Operator View)
+
+The Audit Runs operator table is intentionally compact and outcome-focused.
+
+Visible columns:
+- `Status`
+- `Created`
+- `Duration`
+- `Result`
+
+Design intent:
+- remove low-value internal identifiers from the primary scan surface
+- emphasize operational outcome and timing
+
+Duration behavior:
+- completed run: `completed_at - started_at`
+- running run: elapsed since `started_at`
+- missing/invalid timestamps: `—`
+
+## Dashboard (Operator Overview)
+
+The dashboard uses an action-first layout:
+
+- top summary strip
+- **Do this now** panel
+- recent activity panel
+- quick navigation row
+
+Intent:
+- prioritize immediate operator decisions over passive status browsing
+- keep deterministic, compact signals visible without requiring deep navigation
+
+## Automation Completeness
+
+Automation surfaces now show a compact completeness signal derived from run outcome and step dependency context:
+
+- `Complete`
+- `Complete (limited)`
+- `Partial`
+
+Dependency-aware behavior:
+- if competitor-dependent steps are skipped/failed due unmet snapshot/comparison prerequisites, runs are labeled as limited/partial
+- operator hint is shown: `Competitor data not available at run time; insights may be limited`
+
+This signal is read-model only and does not alter execution behavior.
+
+## Diagnostic Detail Model
+
+Operator diagnostics are intentionally layered:
+
+- summary: terminal outcome + concise run summary
+- drill-down: per-step compact details (status, reason summary, key metrics)
+- logs: not exposed in operator UI
+
+Per-step drill-down is collapsed by default (`View details`) and includes only:
+- `reason_summary` (or safe fallback reason)
+- `pages analyzed`
+- `issues found`
+- `recommendations generated`
+
+Raw stack traces and internal logs are not rendered.
+
+## Non-Publishing Behavior
+
+Automation pages and output-review surfaces now include a persistent boundary reminder:
+
+`This automation analyzes your site and generates recommendations. It does not make changes to your website.`
+
+This reinforces current product behavior:
+- analysis + artifact generation only
+- no live-site publishing or CMS mutation

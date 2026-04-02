@@ -1194,11 +1194,21 @@ export type ActionControlEmphasis = "primary" | "secondary" | "muted";
 
 export type ActionDecision = "accepted" | "rejected" | "deferred";
 
+export interface ActionOutputReviewStep {
+  stepName: string;
+  status: string;
+  reasonSummary?: string | null;
+  pagesAnalyzedCount?: number | null;
+  issuesFoundCount?: number | null;
+  recommendationsGeneratedCount?: number | null;
+}
+
 export interface ActionOutputReview {
   outputId?: string | null;
   summary?: string | null;
   details?: string | null;
   sourceLabel?: string | null;
+  stepDetails?: ActionOutputReviewStep[] | null;
 }
 
 export interface ActionControl {

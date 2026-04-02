@@ -318,6 +318,13 @@ main {
   background: linear-gradient(180deg, var(--surface-subtle) 0%, var(--panel) 84%);
 }
 
+.admin-layout-shell-flat {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
 .role-summary-strip {
   margin-top: var(--space-2);
 }
@@ -667,6 +674,10 @@ main {
   min-width: 0;
   display: grid;
   gap: var(--space-3);
+}
+
+.form-container-full-width {
+  max-width: 100%;
 }
 
 .form-container > * {
@@ -1170,7 +1181,7 @@ button:disabled,
   opacity: 1;
 }
 
-input,
+input:not([type="checkbox"]):not([type="radio"]),
 select,
 textarea,
 .operator-select {
@@ -1196,14 +1207,14 @@ select,
   text-overflow: ellipsis;
 }
 
-input:hover,
+input:not([type="checkbox"]):not([type="radio"]):hover,
 select:hover,
 textarea:hover,
 .operator-select:hover {
   border-color: var(--button-secondary-border);
 }
 
-input:focus-visible,
+input:not([type="checkbox"]):not([type="radio"]):focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 .operator-select:focus-visible {
@@ -1223,6 +1234,17 @@ select:disabled,
 .operator-select:disabled {
   opacity: 0.85;
   cursor: not-allowed;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1rem;
+  height: 1rem;
+  min-height: 1rem;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
 }
 
 select option,
@@ -1747,7 +1769,7 @@ code {
   gap: 0.55rem;
   flex-wrap: wrap;
   align-items: center;
-  flex: 1 1 42rem;
+  flex: 1 1 auto;
   min-width: 0;
 }
 

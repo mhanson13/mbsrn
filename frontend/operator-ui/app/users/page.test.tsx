@@ -1211,7 +1211,7 @@ describe("admin page compatibility route", () => {
     promptSpy.mockRestore();
   });
 
-  it("renders the admin GCP logs query section with sample filters", async () => {
+  it("renders the admin GCP logs query section with one sample filter", async () => {
     mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
     mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
 
@@ -1221,10 +1221,10 @@ describe("admin page compatibility route", () => {
     expect(screen.getByRole("heading", { name: "GCP Logs Query" })).toBeInTheDocument();
     expect(screen.getByLabelText("Logs Explorer Filter")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run Query" })).toBeInTheDocument();
-    expect(screen.getByText('jsonPayload.event="competitor_provider_request_start"')).toBeInTheDocument();
     expect(
-      screen.getByText('jsonPayload.event="competitor_provider_request_error" AND jsonPayload.endpoint_path="/responses"'),
+      screen.getByText('severity="ERROR" resource.labels.namespace_name="mbsrn" -textPayload =~ "INFO*"'),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use example" })).toBeInTheDocument();
   });
 
   it("submits GCP logs query and paginates to next page", async () => {

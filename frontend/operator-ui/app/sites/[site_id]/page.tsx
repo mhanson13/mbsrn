@@ -57,6 +57,7 @@ import type {
   AIPromptPreview,
   AutomationRun,
   AutomationRunOutcomeSummary,
+  AutomationRunStep,
   BusinessSettings,
   CompetitorCandidatePipelineSummary,
   CompetitorContextHealth,
@@ -252,6 +253,122 @@ function formatDateTime(value: string | null): string {
 
 function normalizeAutomationRunStatus(status: string | null | undefined): string {
   return (status || "").trim().toLowerCase();
+}
+
+const COMPETITOR_DEPENDENCY_TERMS = [
+  "competitor snapshot",
+  "snapshot output",
+  "comparison step",
+  "comparison output",
+  "prerequisite",
+  "dependency",
+  "not completed",
+  "not ready",
+];
+
+type AutomationCompletenessSignal = {
+  label: "Complete" | "Complete (limited)" | "Partial";
+  badgeClass: "badge-success" | "badge-warn";
+  hint: string | null;
+};
+
+function normalizeAutomationRunSteps(run: AutomationRun | null): AutomationRunStep[] {
+  if (!run || !Array.isArray(run.steps_json)) {
+    return [];
+  }
+  return run.steps_json
+    .filter((step): step is AutomationRunStep => Boolean(step && typeof step === "object"))
+    .map((step) => ({
+      step_name: typeof step.step_name === "string" ? step.step_name : "unknown",
+      status: typeof step.status === "string" ? step.status : "queued",
+      started_at: typeof step.started_at === "string" ? step.started_at : null,
+      finished_at: typeof step.finished_at === "string" ? step.finished_at : null,
+      linked_output_id: typeof step.linked_output_id === "string" ? step.linked_output_id : null,
+      error_message: typeof step.error_message === "string" ? step.error_message : null,
+      reason_summary: typeof step.reason_summary === "string" ? step.reason_summary : null,
+      pages_analyzed_count:
+        typeof step.pages_analyzed_count === "number" ? step.pages_analyzed_count : null,
+      issues_found_count: typeof step.issues_found_count === "number" ? step.issues_found_count : null,
+      recommendations_generated_count:
+        typeof step.recommendations_generated_count === "number"
+          ? step.recommendations_generated_count
+          : null,
+    }));
+}
+
+function hasCompetitorDependencyReason(reason: string | null | undefined): boolean {
+  const normalizedReason = (reason || "").trim().toLowerCase();
+  if (!normalizedReason) {
+    return false;
+  }
+  return COMPETITOR_DEPENDENCY_TERMS.some((term) => normalizedReason.includes(term));
+}
+
+function deriveAutomationCompletenessSignal(
+  run: AutomationRun | null,
+  steps: AutomationRunStep[],
+  summary: AutomationRunOutcomeSummary | null,
+): AutomationCompletenessSignal | null {
+  const normalizedStatus = normalizeAutomationRunStatus(run?.status);
+  if (normalizedStatus !== "completed" && normalizedStatus !== "failed") {
+    return null;
+  }
+
+  const hasCompetitorDependencyGap = steps.some((step) => {
+    const status = normalizeAutomationRunStatus(step.status);
+    if (status !== "skipped" && status !== "failed") {
+      return false;
+    }
+    if (step.step_name === "comparison_run" || step.step_name === "competitor_summary") {
+      return true;
+    }
+    return hasCompetitorDependencyReason(step.reason_summary || step.error_message || null);
+  });
+
+  const hasMissingCompetitorMetrics = steps.some((step) => {
+    if (step.step_name !== "comparison_run" && step.step_name !== "competitor_summary") {
+      return false;
+    }
+    if (normalizeAutomationRunStatus(step.status) !== "completed") {
+      return false;
+    }
+    return (
+      step.pages_analyzed_count === null
+      && step.issues_found_count === null
+      && step.recommendations_generated_count === null
+      && !step.linked_output_id
+    );
+  });
+
+  if (hasCompetitorDependencyGap || summary?.terminal_outcome === "completed_with_skips" || summary?.terminal_outcome === "partial") {
+    return {
+      label: "Partial",
+      badgeClass: "badge-warn",
+      hint: "Competitor data not available at run time; insights may be limited.",
+    };
+  }
+
+  if (hasMissingCompetitorMetrics) {
+    return {
+      label: "Complete (limited)",
+      badgeClass: "badge-warn",
+      hint: "Competitor data not available at run time; insights may be limited.",
+    };
+  }
+
+  if (normalizedStatus === "completed") {
+    return {
+      label: "Complete",
+      badgeClass: "badge-success",
+      hint: null,
+    };
+  }
+
+  return {
+    label: "Partial",
+    badgeClass: "badge-warn",
+    hint: null,
+  };
 }
 
 function automationRunStatusBadgeClass(status: string | null | undefined): string {
@@ -3247,6 +3364,7 @@ function deriveWorkspaceAutomationActionExecutionItem(params: {
 }): ActionExecutionItem {
   const { run, actionStateCode, linkedRecommendationRunOutputId, linkedRecommendationNarrativeOutputId } = params;
   const normalizedStatus = normalizeAutomationRunStatus(run.status);
+  const steps = normalizeAutomationRunSteps(run);
   return {
     id: run.id,
     title: `Automation run ${run.id}`,
@@ -3272,6 +3390,14 @@ function deriveWorkspaceAutomationActionExecutionItem(params: {
               ? "Automation failed before all outputs were completed."
               : "Use linked recommendation outputs to confirm next operator steps.",
           sourceLabel: "Automation output",
+          stepDetails: steps.map((step) => ({
+            stepName: step.step_name.replace(/_/g, " "),
+            status: step.status,
+            reasonSummary: (step.reason_summary || step.error_message || null),
+            pagesAnalyzedCount: step.pages_analyzed_count ?? null,
+            issuesFoundCount: step.issues_found_count ?? null,
+            recommendationsGeneratedCount: step.recommendations_generated_count ?? null,
+          })),
         }
       : undefined,
   };
@@ -6065,7 +6191,13 @@ export default function SiteWorkspacePage() {
   const compactAuditPagesCrawled = latestAuditRun?.pages_crawled;
   const compactAuditErrors = latestAuditRun?.errors_encountered;
   const latestAutomationRun = automationRuns[0] || null;
+  const latestAutomationSteps = normalizeAutomationRunSteps(latestAutomationRun);
   const latestAutomationOutcomeSummary = normalizeAutomationRunOutcomeSummary(latestAutomationRun);
+  const latestAutomationCompleteness = deriveAutomationCompletenessSignal(
+    latestAutomationRun,
+    latestAutomationSteps,
+    latestAutomationOutcomeSummary,
+  );
   const workspaceAutomationBindingTargetId = deriveAutomationBindingTargetId(automationRuns);
   const latestAutomationRecommendationRunOutputId = extractAutomationRecommendationRunOutputId(latestAutomationRun);
   const latestAutomationRecommendationNarrativeOutputId =
@@ -6754,8 +6886,14 @@ export default function SiteWorkspacePage() {
           </div>
           <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="workspace-automation-status-summary">
             <span className="hint muted">Automation status and outcomes</span>
+            <span className="hint muted" data-testid="workspace-automation-non-publishing-banner">
+              This automation analyzes your site and generates recommendations. It does not make changes to your website.
+            </span>
             <div className="link-row">
               <span className={`badge ${latestAutomationStatusBadgeClass}`}>{latestAutomationStatus}</span>
+              {latestAutomationCompleteness ? (
+                <span className={`badge ${latestAutomationCompleteness.badgeClass}`}>{latestAutomationCompleteness.label}</span>
+              ) : null}
               <span className={latestAutomationActionPresentation?.badgeClass || latestAutomationActionState.badgeClass}>
                 {latestAutomationActionPresentation?.label || latestAutomationActionState.label}
               </span>
@@ -6763,6 +6901,9 @@ export default function SiteWorkspacePage() {
               {latestAutomationRun ? <span className="badge badge-muted">Run: {latestAutomationRun.id}</span> : null}
             </div>
             <span className="hint">{latestAutomationOutcomeCue}</span>
+            {latestAutomationCompleteness?.hint ? (
+              <span className="hint muted">{latestAutomationCompleteness.hint}</span>
+            ) : null}
             <span className="hint muted">{latestAutomationActionPresentation?.outcome || latestAutomationActionState.outcome}</span>
             <span className="hint muted">
               Next step: {latestAutomationOutcomeSummary ? deriveAutomationRunNextStep(latestAutomationRun) : latestAutomationActionPresentation?.nextStep || latestAutomationActionState.nextStep}

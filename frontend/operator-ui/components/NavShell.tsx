@@ -14,6 +14,7 @@ const links = [
   { href: "/automation", label: "Automation" },
   { href: "/business-profile", label: "Business Profile" },
   { href: "/admin", label: "Admin", adminOnly: true },
+  { href: "/user-mgmt", label: "User Mgmt", adminOnly: true },
 ];
 
 type ShellWidthMode = "default" | "wide" | "full";

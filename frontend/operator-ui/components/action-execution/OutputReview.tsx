@@ -113,6 +113,20 @@ function automationExecutionBadge(action: {
   return null;
 }
 
+function outputReviewStepStatusBadgeClass(status: string | null | undefined): string {
+  const normalized = (status || "").trim().toLowerCase();
+  if (normalized === "completed") {
+    return "badge badge-success";
+  }
+  if (normalized === "failed") {
+    return "badge badge-error";
+  }
+  if (normalized === "skipped" || normalized === "running" || normalized === "queued") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
+}
+
 export function OutputReview({
   item,
   stateLabel,
@@ -143,6 +157,7 @@ export function OutputReview({
   const summary = review?.summary || "Output is available for operator review.";
   const details = review?.details || null;
   const sourceLabel = review?.sourceLabel || "Automation output";
+  const stepDetails = review?.stepDetails || [];
   const trustBadge = trustBadgeConfig(item.trustTier);
   const decisionCapturedLabel = decisionSummary(item.decision);
   const outputHref = outputId && resolveOutputHref ? resolveOutputHref(outputId) : undefined;
@@ -168,6 +183,9 @@ export function OutputReview({
         {trustBadge ? <span className={trustBadge.className}>{trustBadge.label}</span> : null}
       </div>
       <p className="hint">{summary}</p>
+      <p className="hint muted" data-testid={dataTestId ? `${dataTestId}-non-publishing-banner` : undefined}>
+        This automation analyzes your site and generates recommendations. It does not make changes to your website.
+      </p>
       <p className="hint muted">{outcome}</p>
       <p className="hint muted">Next step: {nextStep}</p>
       {outputId ? (
@@ -181,6 +199,34 @@ export function OutputReview({
           <summary>View output details</summary>
           <p className="hint muted">{details}</p>
         </details>
+      ) : null}
+      {stepDetails.length > 0 ? (
+        <div className="stack-tight" data-testid={dataTestId ? `${dataTestId}-step-details` : undefined}>
+          <span className="hint muted text-strong">Step diagnostics</span>
+          {stepDetails.map((step, index) => (
+            <div key={`${step.stepName}-${index}`} className="stack-tight">
+              <div className="link-row">
+                <span className={outputReviewStepStatusBadgeClass(step.status)}>{step.status}</span>
+                <span className="hint">{step.stepName}</span>
+              </div>
+              <details className="output-review-details">
+                <summary>View details</summary>
+                <p className="hint muted">
+                  {step.reasonSummary || "No skip/failure reason was recorded for this step."}
+                </p>
+                {typeof step.pagesAnalyzedCount === "number" ? (
+                  <p className="hint muted">Pages analyzed: {step.pagesAnalyzedCount}</p>
+                ) : null}
+                {typeof step.issuesFoundCount === "number" ? (
+                  <p className="hint muted">Issues found: {step.issuesFoundCount}</p>
+                ) : null}
+                {typeof step.recommendationsGeneratedCount === "number" ? (
+                  <p className="hint muted">Recommendations generated: {step.recommendationsGeneratedCount}</p>
+                ) : null}
+              </details>
+            </div>
+          ))}
+        </div>
       ) : null}
       {decisionCapturedLabel ? <p className="hint muted text-strong">{decisionCapturedLabel}</p> : null}
       {hasLineage ? (

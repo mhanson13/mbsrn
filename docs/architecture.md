@@ -124,6 +124,19 @@ Local validation strategy:
 - mock-driven transform tests (`actionExecution.test.ts`)
 - route-level UI tests using mocked payloads only (no provider/runtime dependency)
 
+### Operator UI Principles
+
+- Action-oriented over status-oriented: primary surfaces should answer what to do next.
+- Deterministic summaries over verbose diagnostics: concise, repeatable operator cues are preferred.
+- Normalized data for safe rendering: UI components should consume stable read-model fields and avoid ad hoc inference when canonical fields are available.
+
+### Admin UI Information Architecture
+
+- Admin platform settings and diagnostics remain on `/admin`.
+- User administration now lives on `/user-mgmt` (admin-only nav and page access).
+- The operator-facing user section label is **User ID Management**.
+- Global form-control sizing is centrally normalized in `frontend/operator-ui/app/globals.css`, including checkbox/radio overrides to prevent oversized controls.
+
 ## Action Chaining Layer
 
 The backend includes a deterministic Action Chaining Layer that generates follow-on actions after qualifying workflow transitions.

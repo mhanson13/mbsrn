@@ -45,6 +45,9 @@ describe("NavShell", () => {
     const adminLink = screen.getByRole("link", { name: "Admin" });
     expect(adminLink).toBeInTheDocument();
     expect(adminLink).toHaveAttribute("href", "/admin");
+    const userMgmtLink = screen.getByRole("link", { name: "User Mgmt" });
+    expect(userMgmtLink).toBeInTheDocument();
+    expect(userMgmtLink).toHaveAttribute("href", "/user-mgmt");
     expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
     expect(document.querySelectorAll(".topnav-links")).toHaveLength(1);
     expect(document.querySelector(".topnav-inner")).toBeTruthy();
@@ -79,6 +82,7 @@ describe("NavShell", () => {
     expect(sitesLink).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveClass("is-active");
     expect(document.querySelector(".operator-shell-main-inner-full")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "User Mgmt" })).not.toBeInTheDocument();
   });
 
   it("applies wide shell width mode for dense workflow routes", () => {

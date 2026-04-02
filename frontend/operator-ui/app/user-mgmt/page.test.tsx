@@ -1,7 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 
-import AdminPage from "./page";
-import UsersCompatibilityPage from "../users/page";
+import UserManagementPage from "./page";
 
 type OperatorContextMockValue = {
   loading: boolean;
@@ -63,10 +62,43 @@ jest.mock("../../lib/api/client", () => ({
   fetchBusinessSettings: (...args: unknown[]) => mockFetchBusinessSettings(...args),
 }));
 
-describe("admin route", () => {
+describe("user management route", () => {
   beforeEach(() => {
-    mockFetchPrincipals.mockResolvedValue({ items: [], total: 0 });
-    mockFetchPrincipalIdentities.mockResolvedValue({ items: [], total: 0 });
+    mockFetchPrincipals.mockResolvedValue({
+      items: [
+        {
+          business_id: "biz-1",
+          id: "admin-1",
+          display_name: "Admin One",
+          created_by_principal_id: null,
+          updated_by_principal_id: null,
+          role: "admin",
+          is_active: true,
+          last_authenticated_at: "2026-03-20T00:00:00Z",
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchPrincipalIdentities.mockResolvedValue({
+      items: [
+        {
+          id: "identity-1",
+          provider: "google",
+          provider_subject: "sub-1",
+          business_id: "biz-1",
+          principal_id: "admin-1",
+          email: "admin@example.com",
+          email_verified: true,
+          is_active: true,
+          last_authenticated_at: "2026-03-20T00:00:00Z",
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
     mockFetchBusinessSettings.mockResolvedValue({
       id: "biz-1",
       name: "Biz",
@@ -102,81 +134,47 @@ describe("admin route", () => {
     mockUseAuth.mockReturnValue({
       principal: {
         business_id: "biz-1",
-        principal_id: "operator-1",
-        display_name: "Operator One",
-        role: "operator",
-        is_active: true,
-      },
-    });
-  });
-
-  it("renders the admin page shell at /admin for non-admin principals", () => {
-    render(<AdminPage />);
-
-    expect(screen.getByRole("heading", { name: "Admin" })).toBeInTheDocument();
-    expect(screen.getByText("Business administration is available to admin principals only.")).toBeInTheDocument();
-    expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
-  });
-
-  it("renders admin settings sections without user management blocks", async () => {
-    mockUseAuth.mockReturnValue({
-      principal: {
-        business_id: "biz-1",
         principal_id: "admin-1",
         display_name: "Admin One",
         role: "admin",
         is_active: true,
       },
     });
-
-    render(<AdminPage />);
-
-    await waitFor(() => {
-      expect(mockFetchPrincipals).not.toHaveBeenCalled();
-      expect(mockFetchPrincipalIdentities).not.toHaveBeenCalled();
-      expect(mockFetchBusinessSettings).toHaveBeenCalled();
-    });
-
-    const wrappedSectionHeadings = [
-      "SEO Crawl Settings",
-      "AI Competitor Candidate Quality",
-      "AI Competitor Generation Timeouts",
-      "AI Prompt Overrides",
-      "Site Management",
-      "GCP Logs Query",
-      "Admin Console",
-    ];
-    wrappedSectionHeadings.forEach((heading) => {
-      const headingNode = screen.getByRole("heading", { name: heading });
-      const section = headingNode.closest("section");
-      expect(section).not.toBeNull();
-      expect(section).toHaveClass("section-card");
-    });
-
-    expect(screen.queryByRole("heading", { name: "User ID Management" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create User" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create and Link Identity" })).not.toBeInTheDocument();
-    expect(screen.getByText("Platform operations tools for diagnostics, site maintenance, and safe configuration updates.")).toBeInTheDocument();
-    expect(
-      screen.getByText('severity="ERROR" resource.labels.namespace_name="mbsrn" -textPayload =~ "INFO*"'),
-    ).toBeInTheDocument();
   });
 
-  it("keeps /users as a compatibility route", async () => {
-    mockUseAuth.mockReturnValue({
-      principal: {
-        business_id: "biz-1",
-        principal_id: "admin-2",
-        display_name: "Admin Two",
-        role: "admin",
-        is_active: true,
-      },
-    });
-    render(<UsersCompatibilityPage />);
-    expect(screen.getByRole("heading", { name: "Admin Overview" })).toBeInTheDocument();
+  it("renders user id management and create controls for admins", async () => {
+    render(<UserManagementPage />);
+
     await waitFor(() => {
       expect(mockFetchPrincipals).toHaveBeenCalled();
       expect(mockFetchPrincipalIdentities).toHaveBeenCalled();
     });
+
+    expect(screen.getByRole("heading", { name: "User Mgmt" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "User ID Management" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Create and Link Identity" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create User" })).toBeInTheDocument();
+    const emailVerifiedToggle = screen.getByLabelText("Email verified");
+    expect(emailVerifiedToggle).toHaveAttribute("type", "checkbox");
+    expect(emailVerifiedToggle.closest("label")).toHaveClass("checkbox-chip");
+    expect(screen.queryByRole("heading", { name: "Site Management" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "GCP Logs Query" })).not.toBeInTheDocument();
+  });
+
+  it("keeps user management route admin-only", () => {
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-1",
+        display_name: "Operator One",
+        role: "operator",
+        is_active: true,
+      },
+    });
+
+    render(<UserManagementPage />);
+
+    expect(screen.getByRole("heading", { name: "User Mgmt" })).toBeInTheDocument();
+    expect(screen.getByText("Business administration is available to admin principals only.")).toBeInTheDocument();
   });
 });

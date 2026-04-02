@@ -1,1 +1,5 @@
-export { default } from "./AdminPageContent";
+import AdminPageContent from "./AdminPageContent";
+
+export default function AdminPage() {
+  return <AdminPageContent mode="admin" />;
+}

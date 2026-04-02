@@ -37,6 +37,23 @@ const AUTOMATION_STEP_LABELS: Record<string, string> = {
   recommendation_narrative: "Recommendation narrative",
 };
 
+type AutomationCompletenessSignal = {
+  label: "Complete" | "Complete (limited)" | "Partial";
+  badgeClass: "badge-success" | "badge-warn";
+  hint: string | null;
+};
+
+const COMPETITOR_DEPENDENCY_TERMS = [
+  "competitor snapshot",
+  "snapshot output",
+  "comparison step",
+  "comparison output",
+  "prerequisite",
+  "dependency",
+  "not completed",
+  "not ready",
+];
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return "-";
@@ -74,6 +91,81 @@ function normalizeAutomationRunSteps(run: AutomationRun): AutomationRunStep[] {
 
 function normalizeStatusValue(status: string | null | undefined): string {
   return (status || "").trim().toLowerCase();
+}
+
+function hasCompetitorDependencyReason(reason: string | null | undefined): boolean {
+  const normalizedReason = (reason || "").trim().toLowerCase();
+  if (!normalizedReason) {
+    return false;
+  }
+  return COMPETITOR_DEPENDENCY_TERMS.some((term) => normalizedReason.includes(term));
+}
+
+function deriveAutomationCompletenessSignal(
+  run: AutomationRun,
+  steps: AutomationRunStep[],
+  summary: AutomationRunOutcomeSummary | null,
+): AutomationCompletenessSignal | null {
+  const normalizedStatus = normalizeStatusValue(run.status);
+  if (normalizedStatus !== "completed" && normalizedStatus !== "failed") {
+    return null;
+  }
+
+  const hasCompetitorDependencyGap = steps.some((step) => {
+    const status = normalizeStatusValue(step.status);
+    if (status !== "skipped" && status !== "failed") {
+      return false;
+    }
+    if (step.step_name === "comparison_run" || step.step_name === "competitor_summary") {
+      return true;
+    }
+    return hasCompetitorDependencyReason(step.reason_summary || step.error_message || null);
+  });
+
+  const hasMissingCompetitorMetrics = steps.some((step) => {
+    if (step.step_name !== "comparison_run" && step.step_name !== "competitor_summary") {
+      return false;
+    }
+    if (normalizeStatusValue(step.status) !== "completed") {
+      return false;
+    }
+    return (
+      step.pages_analyzed_count === null
+      && step.issues_found_count === null
+      && step.recommendations_generated_count === null
+      && !step.linked_output_id
+    );
+  });
+
+  if (hasCompetitorDependencyGap || summary?.terminal_outcome === "completed_with_skips" || summary?.terminal_outcome === "partial") {
+    return {
+      label: "Partial",
+      badgeClass: "badge-warn",
+      hint: "Competitor data not available at run time; insights may be limited.",
+    };
+  }
+
+  if (hasMissingCompetitorMetrics) {
+    return {
+      label: "Complete (limited)",
+      badgeClass: "badge-warn",
+      hint: "Competitor data not available at run time; insights may be limited.",
+    };
+  }
+
+  if (normalizedStatus === "completed") {
+    return {
+      label: "Complete",
+      badgeClass: "badge-success",
+      hint: null,
+    };
+  }
+
+  return {
+    label: "Partial",
+    badgeClass: "badge-warn",
+    hint: null,
+  };
 }
 
 function automationStatusBadgeClass(status: string | null | undefined): string {
@@ -151,6 +243,7 @@ function deriveAutomationActionExecutionItem(params: {
 }): ActionExecutionItem {
   const { run, recommendationRunOutputId, recommendationNarrativeOutputId } = params;
   const normalizedStatus = normalizeStatusValue(run.status);
+  const steps = normalizeAutomationRunSteps(run);
   return {
     id: run.id,
     title: `Automation run ${run.id}`,
@@ -174,6 +267,14 @@ function deriveAutomationActionExecutionItem(params: {
           summary: summarizeAutomationRunOutcome(run),
           details: summarizeAutomationRunNextStep(run),
           sourceLabel: "Automation output",
+          stepDetails: steps.map((step) => ({
+            stepName: formatAutomationStepName(step.step_name),
+            status: step.status,
+            reasonSummary: summarizeAutomationStepReason(step),
+            pagesAnalyzedCount: step.pages_analyzed_count ?? null,
+            issuesFoundCount: step.issues_found_count ?? null,
+            recommendationsGeneratedCount: step.recommendations_generated_count ?? null,
+          })),
         }
       : undefined,
   };
@@ -403,6 +504,9 @@ export default function AutomationPage() {
   const latestRun = deriveLatestAutomationRun(items);
   const latestRunOutcomeSummary = latestRun ? normalizeAutomationRunOutcomeSummary(latestRun) : null;
   const latestRunSteps = latestRun ? normalizeAutomationRunSteps(latestRun) : [];
+  const latestRunCompleteness = latestRun
+    ? deriveAutomationCompletenessSignal(latestRun, latestRunSteps, latestRunOutcomeSummary)
+    : null;
   const latestRecommendationRunOutputId = latestRun ? findAutomationRecommendationRunOutputId(latestRunSteps) : null;
   const latestRecommendationNarrativeOutputId = latestRun
     ? findAutomationRecommendationNarrativeOutputId(latestRunSteps)
@@ -610,6 +714,9 @@ export default function AutomationPage() {
 
         {loadingItems ? <p className="hint muted">Loading automation runs...</p> : null}
         {itemsError ? <p className="hint error">{itemsError}</p> : null}
+        <p className="hint muted" data-testid="automation-non-publishing-banner">
+          This automation analyzes your site and generates recommendations. It does not make changes to your website.
+        </p>
         {automationPollingActive ? (
           <p className="hint muted" data-testid="automation-polling-status">
             Automation execution is in progress. Status refreshes automatically every few seconds.
@@ -635,6 +742,11 @@ export default function AutomationPage() {
                       {formatAutomationTerminalOutcomeLabel(latestRunOutcomeSummary.terminal_outcome)}
                     </span>
                   ) : null}
+                  {latestRunCompleteness ? (
+                    <span className={`badge ${latestRunCompleteness.badgeClass}`}>
+                      {latestRunCompleteness.label}
+                    </span>
+                  ) : null}
                   <span className={latestRunActionPresentation?.badgeClass || latestRunActionState.badgeClass}>
                     {latestRunActionPresentation?.label || latestRunActionState.label}
                   </span>
@@ -655,6 +767,9 @@ export default function AutomationPage() {
                   </div>
                 ) : null}
                 <span className="hint">{summarizeAutomationRunOutcome(latestRun)}</span>
+                {latestRunCompleteness?.hint ? (
+                  <span className="hint muted">{latestRunCompleteness.hint}</span>
+                ) : null}
                 <span className="hint muted">{latestRunActionPresentation?.outcome || latestRunActionState.outcome}</span>
                 <span className="hint muted">Next step: {latestRunActionPresentation?.nextStep || latestRunActionState.nextStep}</span>
                 <span className="hint muted">{summarizeAutomationRunNextStep(latestRun)}</span>
@@ -724,6 +839,8 @@ export default function AutomationPage() {
                 const steps = normalizeAutomationRunSteps(item);
                 const completedStepCount = steps.filter((step) => normalizeStatusValue(step.status) === "completed").length;
                 const failedStepCount = steps.filter((step) => normalizeStatusValue(step.status) === "failed").length;
+                const runOutcomeSummary = normalizeAutomationRunOutcomeSummary(item);
+                const completenessSignal = deriveAutomationCompletenessSignal(item, steps, runOutcomeSummary);
                 const recommendationRunOutputId = findAutomationRecommendationRunOutputId(steps);
                 const recommendationNarrativeOutputId = findAutomationRecommendationNarrativeOutputId(steps);
                 const actionStateCue = deriveAutomationRunOperatorActionState({
@@ -779,6 +896,9 @@ export default function AutomationPage() {
                           <span className="badge badge-muted">{completedStepCount}/{steps.length} steps completed</span>
                         ) : null}
                         {failedStepCount > 0 ? <span className="badge badge-warn">{failedStepCount} failed</span> : null}
+                        {completenessSignal ? (
+                          <span className={`badge ${completenessSignal.badgeClass}`}>{completenessSignal.label}</span>
+                        ) : null}
                         <span className={`badge ${blockerClass}`}>{blockerLabel}</span>
                       </>
                     )}
@@ -800,6 +920,9 @@ export default function AutomationPage() {
                     }
                     secondaryMeta={
                       <>
+                        {completenessSignal?.hint ? (
+                          <span className="hint muted">{completenessSignal.hint}</span>
+                        ) : null}
                         <span className="hint muted">Next step: {actionPresentation.nextStep}</span>
                         <span className="hint muted">
                           Started: {formatDateTime(item.started_at)} | Finished: {formatDateTime(item.finished_at)}
