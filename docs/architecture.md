@@ -140,6 +140,7 @@ Local validation strategy:
 ### Workflow UI Consistency Rules
 
 - Site selection is centralized in the global workspace header context row for workflow routes (dashboard, sites list, audits, competitors, recommendations, automation, business profile).
+- Header site selection is canonical context navigation: changing it updates route/query context and refreshes page content for the newly selected site.
 - Debug prompt panels are manual-expand only; they default collapsed and must not auto-open during polling or run creation.
 - Checkbox and dropdown rendering behavior is governed globally in `frontend/operator-ui/app/globals.css` to keep control sizing and selected-value shading consistent across pages.
 - Admin and User Mgmt responsibilities remain separated:

@@ -1,13 +1,18 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { NavShell } from "./NavShell";
 
 const mockUsePathname = jest.fn<string, []>();
+const mockReplace = jest.fn();
+const mockUseRouter = jest.fn(() => ({ replace: mockReplace }));
+const mockUseSearchParams = jest.fn<URLSearchParams, []>(() => new URLSearchParams());
 const mockUseAuth = jest.fn();
 const mockUseOperatorContext = jest.fn();
 
 jest.mock("next/navigation", () => ({
   usePathname: () => mockUsePathname(),
+  useRouter: () => mockUseRouter(),
+  useSearchParams: () => mockUseSearchParams(),
 }));
 
 jest.mock("./AuthProvider", () => ({
@@ -25,6 +30,8 @@ jest.mock("../lib/api/client", () => ({
 describe("NavShell", () => {
   beforeEach(() => {
     mockUsePathname.mockReturnValue("/dashboard");
+    mockReplace.mockReset();
+    mockUseSearchParams.mockReturnValue(new URLSearchParams());
     mockUseOperatorContext.mockReturnValue({
       loading: false,
       error: null,
@@ -171,5 +178,134 @@ describe("NavShell", () => {
     );
     expect(document.querySelector(".operator-shell-main-inner-wide")).toBeTruthy();
     expect(screen.queryByTestId("topnav-site-selector-row")).not.toBeInTheDocument();
+  });
+
+  it("updates site context and route query when site selector changes on filtered routes", () => {
+    const setSelectedSiteId = jest.fn();
+    mockUsePathname.mockReturnValue("/recommendations");
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("status=open"));
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-1",
+        display_name: "Operator One",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          business_id: "biz-1",
+          display_name: "Main Site",
+          base_url: "https://example.com/",
+          normalized_domain: "example.com",
+          is_active: true,
+          is_primary: true,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+        {
+          id: "site-2",
+          business_id: "biz-1",
+          display_name: "Secondary Site",
+          base_url: "https://example.org/",
+          normalized_domain: "example.org",
+          is_active: true,
+          is_primary: false,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId,
+      refreshSites: jest.fn(),
+    });
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    const selector = screen.getByLabelText("Site");
+    fireEvent.change(selector, { target: { value: "site-2" } });
+
+    expect(setSelectedSiteId).toHaveBeenCalledWith("site-2");
+    expect(mockReplace).toHaveBeenCalledWith("/recommendations?status=open&site_id=site-2");
+  });
+
+  it("replaces /sites/[site_id] route when switching site from header selector", () => {
+    const setSelectedSiteId = jest.fn();
+    mockUsePathname.mockReturnValue("/sites/site-1");
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-1",
+        display_name: "Operator One",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          business_id: "biz-1",
+          display_name: "Main Site",
+          base_url: "https://example.com/",
+          normalized_domain: "example.com",
+          is_active: true,
+          is_primary: true,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+        {
+          id: "site-2",
+          business_id: "biz-1",
+          display_name: "Secondary Site",
+          base_url: "https://example.org/",
+          normalized_domain: "example.org",
+          is_active: true,
+          is_primary: false,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId,
+      refreshSites: jest.fn(),
+    });
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    const selector = screen.getByLabelText("Site");
+    fireEvent.change(selector, { target: { value: "site-2" } });
+
+    expect(setSelectedSiteId).toHaveBeenCalledWith("site-2");
+    expect(mockReplace).toHaveBeenCalledWith("/sites/site-2");
   });
 });

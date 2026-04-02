@@ -262,6 +262,7 @@ Additional cleanup:
 - recommendation runs/workspace detail now renders as card/list surfaces only
 - legacy table/grid shells and metadata column scaffolding are removed from the site workspace recommendation body
 - recommendation queue items on the site workspace use compact cards rather than mixed card+table composition
+- global header site switching is now canonical, so workspace recommendation content follows the selected site context without manual page refresh
 
 ### AI Prompt debug panel behavior
 

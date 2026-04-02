@@ -333,5 +333,6 @@ Operator intent:
 - site context is set once in header chrome
 - duplicate lower-page selectors are removed
 - labels such as `Selected Site` are no longer repeated in section bodies
+- changing the header selector updates route/query context and reloads automation content for the selected site
 
 This keeps action surfaces focused while preserving the same business/site-scoped data flow.

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "./AuthProvider";
 import { WorkflowSiteSelector } from "./layout/WorkflowSiteSelector";
 import { useOperatorContext } from "./useOperatorContext";
@@ -49,6 +49,8 @@ function shouldShowWorkflowSiteSelector(pathname: string): boolean {
 
 function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
   const context = useOperatorContext();
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   if (
     !shouldShowWorkflowSiteSelector(pathname)
@@ -59,6 +61,34 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
     return null;
   }
 
+  function handleSiteChange(siteId: string) {
+    if (!siteId) {
+      return;
+    }
+    context.setSelectedSiteId(siteId);
+
+    if (pathname.startsWith("/sites/")) {
+      const nextPath = `/sites/${encodeURIComponent(siteId)}`;
+      if (typeof window === "undefined" || window.location.pathname !== nextPath) {
+        router.replace(nextPath);
+      }
+      return;
+    }
+
+    const currentParams = new URLSearchParams(searchParams?.toString() || "");
+    currentParams.set("site_id", siteId);
+    const query = currentParams.toString();
+    const nextPath = query ? `${pathname}?${query}` : pathname;
+    if (typeof window === "undefined") {
+      router.replace(nextPath);
+      return;
+    }
+    const currentPathWithQuery = `${window.location.pathname}${window.location.search}`;
+    if (currentPathWithQuery !== nextPath) {
+      router.replace(nextPath);
+    }
+  }
+
   return (
     <div className="topnav-context-row" data-testid="topnav-site-selector-row">
       <div className="topnav-context-inner">
@@ -66,7 +96,7 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
           id="global-workflow-site-selector"
           sites={context.sites}
           selectedSiteId={context.selectedSiteId}
-          onChange={context.setSelectedSiteId}
+          onChange={handleSiteChange}
           className="topnav-site-selector"
         />
       </div>

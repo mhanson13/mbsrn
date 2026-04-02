@@ -9,6 +9,7 @@ import type { SEOSite } from "../lib/api/types";
 
 const STORAGE_SELECTED_SITE_PREFIX = "mbsrn.operator.selected_site_id";
 const LEGACY_STORAGE_SELECTED_SITE_PREFIX = "workboots.operator.selected_site_id";
+const OPERATOR_SITE_SELECTION_EVENT = "mbsrn:operator-site-selection";
 
 interface OperatorContextResult {
   loading: boolean;
@@ -47,6 +48,11 @@ function writeStoredSelectedSiteId(businessId: string, siteId: string | null): v
     window.sessionStorage.removeItem(key);
     window.sessionStorage.removeItem(`${LEGACY_STORAGE_SELECTED_SITE_PREFIX}.${businessId}`);
   }
+  window.dispatchEvent(
+    new CustomEvent(OPERATOR_SITE_SELECTION_EVENT, {
+      detail: { businessId, siteId },
+    }),
+  );
 }
 
 export function useOperatorContext(): OperatorContextResult {
@@ -127,6 +133,39 @@ export function useOperatorContext(): OperatorContextResult {
     }
     writeStoredSelectedSiteId(businessId, selectedSiteId);
   }, [principal?.business_id, selectedSiteId]);
+
+  useEffect(() => {
+    const businessId = principal?.business_id;
+    if (!businessId || typeof window === "undefined") {
+      return;
+    }
+
+    function handleSiteSelectionEvent(event: Event) {
+      const customEvent = event as CustomEvent<{ businessId?: string; siteId?: string | null }>;
+      const detail = customEvent.detail;
+      if (!detail || detail.businessId !== businessId) {
+        return;
+      }
+      const nextSiteId = detail.siteId || null;
+      setSelectedSiteIdState((current) => {
+        if (current === nextSiteId) {
+          return current;
+        }
+        if (nextSiteId && sites.some((site) => site.id === nextSiteId)) {
+          return nextSiteId;
+        }
+        if (!nextSiteId) {
+          return null;
+        }
+        return current;
+      });
+    }
+
+    window.addEventListener(OPERATOR_SITE_SELECTION_EVENT, handleSiteSelectionEvent as EventListener);
+    return () => {
+      window.removeEventListener(OPERATOR_SITE_SELECTION_EVENT, handleSiteSelectionEvent as EventListener);
+    };
+  }, [principal?.business_id, sites]);
 
   return {
     loading,
