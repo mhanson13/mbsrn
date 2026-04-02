@@ -175,6 +175,18 @@ Unified lineage read model:
 - read-only hydration path for workspace/recommendation/automation UI consistency
 - recommendation/workspace read payloads now attach additive `action_lineage` per recommendation so UI can consume next-step truth from the main operator read flow instead of multi-endpoint inference
 
+Explicit automation binding for activated actions:
+- service: `app/services/action_automation_binding_service.py`
+- endpoint: `POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/execution-items/{execution_item_id}/bind-automation`
+- persisted fields on `seo_action_execution_items`:
+  - `automation_binding_state` (`unbound` | `bound`)
+  - `bound_automation_id`
+  - `automation_bound_at`
+- idempotency:
+  - same automation bind repeated -> no-op success
+  - different automation bind after bound -> conflict
+- binding is metadata linkage only and does not execute/schedule automation
+
 Observability:
 - structured service log event `action_chaining_generated` includes:
   - `source_action_id`

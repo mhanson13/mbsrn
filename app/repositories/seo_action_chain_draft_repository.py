@@ -130,6 +130,21 @@ class SEOActionChainDraftRepository:
         )
         return self.session.scalar(stmt)
 
+    def get_for_business_site_id(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        draft_id: str,
+    ) -> SEOActionChainDraft | None:
+        stmt: Select[tuple[SEOActionChainDraft]] = (
+            select(SEOActionChainDraft)
+            .where(SEOActionChainDraft.business_id == business_id)
+            .where(SEOActionChainDraft.site_id == site_id)
+            .where(SEOActionChainDraft.id == draft_id)
+        )
+        return self.session.scalar(stmt)
+
     def save(self, record: SEOActionChainDraft) -> SEOActionChainDraft:
         self.session.add(record)
         self.session.flush()

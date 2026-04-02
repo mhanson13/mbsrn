@@ -33,6 +33,7 @@ const mockFetchRecommendationRunReport = jest.fn<Promise<RecommendationRunReport
 const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<RecommendationNarrative>, unknown[]>();
 const mockFetchAutomationRuns = jest.fn<Promise<AutomationRunListResponse>, unknown[]>();
 const mockFetchCompetitorComparisonReport = jest.fn();
+const mockBindActionExecutionItemAutomation = jest.fn<Promise<unknown>, unknown[]>();
 
 jest.mock("next/link", () => {
   return function MockLink({
@@ -64,6 +65,8 @@ jest.mock("../../../../lib/api/client", () => {
       mockFetchLatestRecommendationRunNarrative(...args),
     fetchAutomationRuns: (...args: unknown[]) => mockFetchAutomationRuns(...args),
     fetchCompetitorComparisonReport: (...args: unknown[]) => mockFetchCompetitorComparisonReport(...args),
+    bindActionExecutionItemAutomation: (...args: unknown[]) =>
+      mockBindActionExecutionItemAutomation(...args),
   };
 });
 
@@ -155,6 +158,15 @@ beforeEach(() => {
   navigationState.searchParams = new URLSearchParams("site_id=site-1");
   mockUseOperatorContext.mockReturnValue(baseContext());
   mockFetchAutomationRuns.mockResolvedValue({ items: [], total: 0 });
+  mockBindActionExecutionItemAutomation.mockReset();
+  mockBindActionExecutionItemAutomation.mockResolvedValue({
+    action_execution_item_id: "run-1",
+    automation_binding_state: "bound",
+    bound_automation_id: "automation-config-1",
+    automation_bound_at: "2026-03-21T10:06:00Z",
+    automation_ready: true,
+    automation_template_key: "performance_check_followup",
+  });
 });
 
 describe("recommendation run detail page presentation", () => {
@@ -325,6 +337,94 @@ describe("recommendation run detail page presentation", () => {
     );
     expect(screen.getByTestId("recommendation-run-output-review")).toHaveTextContent(
       "Automation output review deferred.",
+    );
+  });
+
+  it("binds automation for an automation-ready activated run-level lineage action", async () => {
+    const recommendationWithLineage = buildRecommendation("rec-lineage-1", "Lineage Recommendation");
+    recommendationWithLineage.action_lineage = {
+      source_action_id: "rec-lineage-1",
+      chained_drafts: [
+        {
+          id: "draft-lineage-1",
+          source_action_id: "rec-lineage-1",
+          action_type: "measure_performance",
+          title: "Measure performance after rollout",
+          description: "Track outcome after applying the recommendation.",
+          draft_state: "pending",
+          activation_state: "activated",
+          activated_action_id: "activated-lineage-1",
+          automation_ready: true,
+          automation_template_key: "performance_check_followup",
+          created_at: "2026-03-21T10:01:00Z",
+        },
+      ],
+      activated_actions: [
+        {
+          id: "activated-lineage-1",
+          source_draft_id: "draft-lineage-1",
+          source_action_id: "rec-lineage-1",
+          action_type: "measure_performance",
+          title: "Measure performance after rollout",
+          description: "Track outcome after applying the recommendation.",
+          state: "pending",
+          automation_ready: true,
+          automation_template_key: "performance_check_followup",
+          automation_binding_state: "unbound",
+          bound_automation_id: null,
+          automation_bound_at: null,
+          created_at: "2026-03-21T10:02:00Z",
+        },
+      ],
+      counts: {
+        chained_draft_count: 1,
+        activated_action_count: 1,
+        automation_ready_count: 1,
+      },
+    };
+    const user = userEvent.setup();
+    mockFetchRecommendationRunReport.mockResolvedValueOnce(buildRunReport([recommendationWithLineage]));
+    mockFetchLatestRecommendationRunNarrative.mockRejectedValueOnce(
+      new ApiRequestError("not found", { status: 404, detail: null }),
+    );
+    mockFetchAutomationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "automation-run-3",
+          business_id: "biz-1",
+          site_id: "site-1",
+          automation_config_id: "automation-config-1",
+          status: "completed",
+          trigger_source: "scheduled",
+          started_at: "2026-03-21T09:58:00Z",
+          finished_at: "2026-03-21T10:00:00Z",
+          error_message: null,
+          steps_json: [
+            {
+              step_name: "recommendation_run",
+              status: "completed",
+              started_at: "2026-03-21T09:58:30Z",
+              finished_at: "2026-03-21T09:59:10Z",
+              linked_output_id: "run-1",
+              error_message: null,
+            },
+          ],
+        },
+      ],
+      total: 1,
+    });
+
+    render(<RecommendationRunDetailPage />);
+
+    const outputReview = await screen.findByTestId("recommendation-run-output-review");
+    await user.click(within(outputReview).getByRole("button", { name: "Bind automation" }));
+
+    expect(mockBindActionExecutionItemAutomation).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      "activated-lineage-1",
+      "automation-config-1",
     );
   });
 });

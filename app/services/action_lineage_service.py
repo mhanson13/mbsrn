@@ -90,6 +90,9 @@ class ActionLineageService:
                     state=record.state,
                     automation_ready=bool(record.automation_ready),
                     automation_template_key=record.automation_template_key,
+                    automation_binding_state=record.automation_binding_state,
+                    bound_automation_id=record.bound_automation_id,
+                    automation_bound_at=record.automation_bound_at,
                     created_at=record.created_at,
                 )
             )

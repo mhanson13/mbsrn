@@ -140,6 +140,29 @@ These fields are hints for future automation orchestration and do **not** execut
 Activation does not schedule or execute automation.
 It only promotes chained drafts into first-class action execution items while preserving deterministic linkage metadata.
 
+## Explicit Automation Binding
+Activated actions now support explicit, persisted automation binding.
+
+Binding route:
+
+`POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/execution-items/{execution_item_id}/bind-automation`
+
+Request:
+- `automation_id`
+
+Persisted activated-action fields:
+- `automation_binding_state` (`unbound` | `bound`)
+- `bound_automation_id`
+- `automation_bound_at`
+
+Behavior:
+- binding is explicit and operator-driven
+- rebinding to the same automation is idempotent success
+- attempting to bind to a different automation after bound returns conflict
+- binding does not execute or schedule automation
+
+Canonical lineage now includes this metadata on activated actions so UI can render automation-ready vs automation-bound without inferring state.
+
 ## Example Flow
 `recommendation (seo_fix)` -> status patched to `accepted` -> chained draft `verify_fix` persisted as `pending` -> operator activates draft -> first-class action execution item created -> draft marked `activated`.
 

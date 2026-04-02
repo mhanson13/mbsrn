@@ -26,6 +26,10 @@ class SEOActionExecutionItem(Base):
             "source IN ('chained')",
             name="ck_seo_action_execution_items_source",
         ),
+        CheckConstraint(
+            "automation_binding_state IN ('unbound', 'bound')",
+            name="ck_seo_action_execution_items_automation_binding_state",
+        ),
         Index(
             "ix_seo_action_execution_items_business_site_created_at",
             "business_id",
@@ -68,6 +72,14 @@ class SEOActionExecutionItem(Base):
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
     automation_ready: Mapped[bool] = mapped_column(default=False, nullable=False)
     automation_template_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    bound_automation_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("seo_automation_configs.id"),
+        nullable=True,
+        index=True,
+    )
+    automation_binding_state: Mapped[str] = mapped_column(String(16), nullable=False, default="unbound", index=True)
+    automation_bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     created_by_principal_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -77,4 +89,3 @@ class SEOActionExecutionItem(Base):
         onupdate=utc_now,
         nullable=False,
     )
-

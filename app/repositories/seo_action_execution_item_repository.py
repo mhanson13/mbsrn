@@ -138,3 +138,8 @@ class SEOActionExecutionItemRepository:
             .order_by(SEOActionExecutionItem.created_at.asc(), SEOActionExecutionItem.id.asc())
         )
         return list(self.session.scalars(stmt))
+
+    def save(self, record: SEOActionExecutionItem) -> SEOActionExecutionItem:
+        self.session.add(record)
+        self.session.flush()
+        return record

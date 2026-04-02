@@ -13,6 +13,10 @@ type OutputReviewProps = {
   decisionPending?: boolean;
   decisionError?: string | null;
   resolveOutputHref?: (outputId: string) => string | undefined;
+  onBindAutomation?: (actionExecutionItemId: string, automationId: string) => Promise<void> | void;
+  bindAutomationTargetId?: string | null;
+  bindAutomationPendingByActionId?: Record<string, boolean>;
+  bindAutomationErrorByActionId?: Record<string, string | null>;
   readOnly?: boolean;
   className?: string;
   "data-testid"?: string;
@@ -82,6 +86,10 @@ export function OutputReview({
   decisionPending = false,
   decisionError = null,
   resolveOutputHref,
+  onBindAutomation,
+  bindAutomationTargetId = null,
+  bindAutomationPendingByActionId = {},
+  bindAutomationErrorByActionId = {},
   readOnly = false,
   className = "",
   "data-testid": dataTestId,
@@ -150,6 +158,20 @@ export function OutputReview({
             <ul className="output-review-lineage-list">
               {visibleChainedDrafts.map((draft) => {
                 const activatedAction = activatedActionByDraftId.get(draft.id);
+                const automationBindingState =
+                  activatedAction?.automation_binding_state === "bound" ? "bound" : "unbound";
+                const boundAutomationId = activatedAction?.bound_automation_id || null;
+                const bindActionId = activatedAction?.id || null;
+                const bindPending = bindActionId ? Boolean(bindAutomationPendingByActionId[bindActionId]) : false;
+                const bindError = bindActionId ? bindAutomationErrorByActionId[bindActionId] : null;
+                const canBindAutomation = Boolean(
+                  !readOnly
+                  && onBindAutomation
+                  && bindActionId
+                  && bindAutomationTargetId
+                  && draft.automation_ready
+                  && automationBindingState !== "bound",
+                );
                 return (
                   <li key={draft.id} className="output-review-lineage-item">
                     <div className="output-review-lineage-item-header">
@@ -158,15 +180,43 @@ export function OutputReview({
                         {draft.activation_state === "activated" ? "Activated" : "Next step available"}
                       </span>
                       {draft.automation_ready ? <span className="badge badge-muted">Automation-ready</span> : null}
+                      {activatedAction && draft.automation_ready ? (
+                        <span className={automationBindingState === "bound" ? "badge badge-success" : "badge badge-warn"}>
+                          {automationBindingState === "bound" ? "Bound to automation" : "Unbound"}
+                        </span>
+                      ) : null}
                     </div>
                     {activatedAction ? (
                       <p className="hint muted">
                         Linked action <code>{activatedAction.id}</code> is currently {activatedAction.state}.
                       </p>
                     ) : null}
+                    {boundAutomationId ? (
+                      <p className="hint muted">
+                        Bound automation: <code>{boundAutomationId}</code>
+                      </p>
+                    ) : null}
                     {draft.automation_template_key ? (
                       <p className="hint muted">Uses template: {draft.automation_template_key}</p>
                     ) : null}
+                    {activatedAction && draft.automation_ready && automationBindingState !== "bound" ? (
+                      canBindAutomation ? (
+                        <div className="link-row">
+                          <button
+                            type="button"
+                            className="button button-tertiary button-inline"
+                            onClick={() => onBindAutomation?.(activatedAction.id, bindAutomationTargetId as string)}
+                            disabled={bindPending}
+                            data-testid={dataTestId ? `${dataTestId}-bind-${activatedAction.id}` : undefined}
+                          >
+                            {bindPending ? "Binding..." : "Bind automation"}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="hint muted">Automation-ready but no automation record is available to bind.</p>
+                      )
+                    ) : null}
+                    {bindError ? <p className="hint warning">{bindError}</p> : null}
                   </li>
                 );
               })}

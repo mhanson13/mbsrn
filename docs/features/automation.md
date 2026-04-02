@@ -111,3 +111,25 @@ Recommendation/workspace reads also now expose additive canonical lineage per re
 It remains read-only and metadata-only:
 - no automation execution
 - no scheduling side effects
+
+## Explicit Action-to-Automation Binding
+
+Activated action execution items now support explicit binding to an existing automation record.
+
+Binding endpoint:
+
+`POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/execution-items/{execution_item_id}/bind-automation`
+
+Request:
+- `automation_id`
+
+Persisted binding fields on activated actions:
+- `automation_binding_state` (`unbound` | `bound`)
+- `bound_automation_id`
+- `automation_bound_at`
+
+Operator-facing semantics:
+- **Automation-ready** means a deterministic template hint exists and binding is allowed.
+- **Bound** means the action has an explicit persisted automation linkage.
+- Binding is idempotent for the same automation id and conflict-protected for different automation ids.
+- Binding does **not** execute or schedule automation.

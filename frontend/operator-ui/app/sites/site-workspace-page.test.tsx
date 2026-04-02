@@ -91,6 +91,7 @@ const mockRetryCompetitorProfileGenerationRun = jest.fn<
 const mockAcceptCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>, unknown[]>();
 const mockRejectCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>, unknown[]>();
 const mockEditCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>, unknown[]>();
+const mockBindActionExecutionItemAutomation = jest.fn<Promise<unknown>, unknown[]>();
 
 jest.mock("next/navigation", () => ({
   useParams: () => navigationState.params,
@@ -134,6 +135,8 @@ jest.mock("../../lib/api/client", () => {
     acceptCompetitorProfileDraft: (...args: unknown[]) => mockAcceptCompetitorProfileDraft(...args),
     rejectCompetitorProfileDraft: (...args: unknown[]) => mockRejectCompetitorProfileDraft(...args),
     editCompetitorProfileDraft: (...args: unknown[]) => mockEditCompetitorProfileDraft(...args),
+    bindActionExecutionItemAutomation: (...args: unknown[]) =>
+      mockBindActionExecutionItemAutomation(...args),
   };
 });
 
@@ -426,6 +429,15 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockAcceptCompetitorProfileDraft.mockReset();
   mockRejectCompetitorProfileDraft.mockReset();
   mockEditCompetitorProfileDraft.mockReset();
+  mockBindActionExecutionItemAutomation.mockReset();
+  mockBindActionExecutionItemAutomation.mockResolvedValue({
+    action_execution_item_id: "activated-lineage-1",
+    automation_binding_state: "bound",
+    bound_automation_id: "automation-config-1",
+    automation_bound_at: "2026-03-21T02:00:00Z",
+    automation_ready: true,
+    automation_template_key: "performance_check_followup",
+  });
 }
 
 function seedRichWorkspaceData(): void {
@@ -7538,5 +7550,97 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(outputReview).toHaveTextContent("Automation-ready");
     expect(outputReview).toHaveTextContent("Linked action activated-lineage-1 is currently pending.");
     expect(outputReview).toHaveTextContent("Uses template: performance_check_followup");
+  });
+
+  it("binds automation for an unbound automation-ready activated next step", async () => {
+    seedRichWorkspaceData();
+    const recommendationWithLineage = buildRecommendation({
+      id: "rec-lineage-bind-1",
+      title: "Lineage binding recommendation",
+      action_lineage: {
+        source_action_id: "rec-lineage-bind-1",
+        chained_drafts: [
+          {
+            id: "draft-lineage-bind-1",
+            source_action_id: "rec-lineage-bind-1",
+            action_type: "measure_performance",
+            title: "Measure performance after rollout",
+            description: "Track outcome after applying the recommendation.",
+            draft_state: "pending",
+            activation_state: "activated",
+            activated_action_id: "activated-lineage-1",
+            automation_ready: true,
+            automation_template_key: "performance_check_followup",
+            created_at: "2026-03-21T01:20:00Z",
+          },
+        ],
+        activated_actions: [
+          {
+            id: "activated-lineage-1",
+            source_draft_id: "draft-lineage-bind-1",
+            source_action_id: "rec-lineage-bind-1",
+            action_type: "measure_performance",
+            title: "Measure performance after rollout",
+            description: "Track outcome after applying the recommendation.",
+            state: "pending",
+            automation_ready: true,
+            automation_template_key: "performance_check_followup",
+            automation_binding_state: "unbound",
+            bound_automation_id: null,
+            automation_bound_at: null,
+            created_at: "2026-03-21T01:21:00Z",
+          },
+        ],
+        counts: {
+          chained_draft_count: 1,
+          activated_action_count: 1,
+          automation_ready_count: 1,
+        },
+      },
+    });
+    const workspaceSummary = buildRecommendationWorkspaceSummary({
+      recommendations: {
+        items: [recommendationWithLineage],
+        total: 1,
+      },
+      grouped_recommendations: [
+        {
+          theme: "trust_and_legitimacy",
+          label: "Trust and legitimacy",
+          count: 1,
+          recommendation_ids: ["rec-lineage-bind-1"],
+        },
+      ],
+      start_here: {
+        recommendation_id: "rec-lineage-bind-1",
+        title: recommendationWithLineage.title,
+        reason: "Start with this recommendation for the clearest workflow impact.",
+        context_flags: ["competitor_backed"],
+        theme: "trust_and_legitimacy",
+        theme_label: "Trust and legitimacy",
+      },
+    });
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(workspaceSummary);
+    mockFetchRecommendations.mockResolvedValue({
+      items: [recommendationWithLineage],
+      total: 1,
+    });
+
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    const outputReview = await screen.findByTestId("workspace-recommendation-output-review");
+    const bindButton = within(outputReview).getByRole("button", { name: "Bind automation" });
+    await user.click(bindButton);
+
+    await waitFor(() =>
+      expect(mockBindActionExecutionItemAutomation).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "activated-lineage-1",
+        "automation-config-1",
+      ),
+    );
   });
 });

@@ -7,13 +7,21 @@ from uuid import uuid4
 import pytest
 
 from app.models.seo_action_execution_item import SEOActionExecutionItem
+from app.models.seo_automation_config import SEOAutomationConfig
 from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_action_chain_draft_repository import SEOActionChainDraftRepository
 from app.repositories.seo_action_execution_item_repository import SEOActionExecutionItemRepository
+from app.repositories.seo_automation_repository import SEOAutomationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.models.seo_recommendation import SEORecommendation
 from app.schemas.action_chaining import ActionExecutionItem
+from app.services.action_automation_binding_service import (
+    ActionAutomationBindingService,
+    SEOActionAutomationBindingConflictError,
+    SEOActionAutomationBindingNotFoundError,
+    SEOActionAutomationBindingValidationError,
+)
 from app.services.action_chain_activation_service import (
     ActionChainActivationService,
     SEOActionChainDraftNotFoundError,
@@ -244,6 +252,266 @@ def test_activate_chained_action_draft_missing_draft_raises_not_found(db_session
         )
 
 
+def test_bind_activated_action_to_automation_is_idempotent(db_session, seeded_business) -> None:
+    site = SEOSite(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        display_name="Binding Site",
+        base_url="https://binding.example/",
+        normalized_domain="binding.example",
+        is_active=True,
+        is_primary=False,
+    )
+    db_session.add(site)
+    db_session.flush()
+
+    automation_config = SEOAutomationConfig(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site.id,
+        is_enabled=True,
+        cadence_type="manual",
+        cadence_minutes=None,
+    )
+    db_session.add(automation_config)
+    db_session.flush()
+
+    source_action_id = str(uuid4())
+    draft_repository = SEOActionChainDraftRepository(db_session)
+    draft_record, _ = draft_repository.create_if_missing(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        source_action_id=source_action_id,
+        draft=generate_next_actions(
+            ActionExecutionItem(
+                action_id=source_action_id,
+                action_type="publish_content",
+                state="completed",
+            )
+        )[0],
+    )
+    db_session.commit()
+
+    activation_service = ActionChainActivationService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_site_repository=SEOSiteRepository(db_session),
+        seo_action_chain_draft_repository=draft_repository,
+        seo_action_execution_item_repository=SEOActionExecutionItemRepository(db_session),
+    )
+    activated = activation_service.activate_chained_action_draft(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        source_action_id=source_action_id,
+        draft_id=draft_record.id,
+        actor_principal_id="principal-1",
+    )
+    assert activated.draft.activated_action_id is not None
+
+    binding_service = ActionAutomationBindingService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_site_repository=SEOSiteRepository(db_session),
+        seo_action_chain_draft_repository=draft_repository,
+        seo_action_execution_item_repository=SEOActionExecutionItemRepository(db_session),
+        seo_automation_repository=SEOAutomationRepository(db_session),
+    )
+
+    first = binding_service.bind_activated_action_to_automation(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        action_execution_item_id=activated.draft.activated_action_id,
+        automation_id=automation_config.id,
+        actor_principal_id="principal-1",
+    )
+    assert first.binding.automation_binding_state == "bound"
+    assert first.binding.bound_automation_id == automation_config.id
+    assert first.binding.automation_bound_at is not None
+
+    second = binding_service.bind_activated_action_to_automation(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        action_execution_item_id=activated.draft.activated_action_id,
+        automation_id=automation_config.id,
+        actor_principal_id="principal-2",
+    )
+    assert second.binding.automation_binding_state == "bound"
+    assert second.binding.bound_automation_id == automation_config.id
+
+    stored_item = db_session.get(SEOActionExecutionItem, activated.draft.activated_action_id)
+    assert stored_item is not None
+    assert stored_item.automation_binding_state == "bound"
+    assert stored_item.bound_automation_id == automation_config.id
+    assert stored_item.automation_bound_at is not None
+
+
+def test_bind_activated_action_to_different_automation_conflicts(db_session, seeded_business) -> None:
+    site = SEOSite(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        display_name="Binding Site",
+        base_url="https://binding-conflict.example/",
+        normalized_domain="binding-conflict.example",
+        is_active=True,
+        is_primary=False,
+    )
+    db_session.add(site)
+    db_session.flush()
+
+    first_automation = SEOAutomationConfig(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site.id,
+        is_enabled=True,
+        cadence_type="manual",
+        cadence_minutes=None,
+    )
+    db_session.add(first_automation)
+    db_session.flush()
+
+    source_action_id = str(uuid4())
+    draft_repository = SEOActionChainDraftRepository(db_session)
+    draft_record, _ = draft_repository.create_if_missing(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        source_action_id=source_action_id,
+        draft=generate_next_actions(
+            ActionExecutionItem(
+                action_id=source_action_id,
+                action_type="publish_content",
+                state="completed",
+            )
+        )[0],
+    )
+    db_session.commit()
+
+    activation_service = ActionChainActivationService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_site_repository=SEOSiteRepository(db_session),
+        seo_action_chain_draft_repository=draft_repository,
+        seo_action_execution_item_repository=SEOActionExecutionItemRepository(db_session),
+    )
+    activated = activation_service.activate_chained_action_draft(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        source_action_id=source_action_id,
+        draft_id=draft_record.id,
+        actor_principal_id="principal-1",
+    )
+    assert activated.draft.activated_action_id is not None
+
+    binding_service = ActionAutomationBindingService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_site_repository=SEOSiteRepository(db_session),
+        seo_action_chain_draft_repository=draft_repository,
+        seo_action_execution_item_repository=SEOActionExecutionItemRepository(db_session),
+        seo_automation_repository=SEOAutomationRepository(db_session),
+    )
+    binding_service.bind_activated_action_to_automation(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        action_execution_item_id=activated.draft.activated_action_id,
+        automation_id=first_automation.id,
+        actor_principal_id="principal-1",
+    )
+
+    with pytest.raises(SEOActionAutomationBindingConflictError):
+        binding_service.bind_activated_action_to_automation(
+            business_id=seeded_business.id,
+            site_id=site.id,
+            action_execution_item_id=activated.draft.activated_action_id,
+            automation_id=str(uuid4()),
+            actor_principal_id="principal-2",
+        )
+
+
+def test_bind_activated_action_to_automation_requires_automation_ready_item(db_session, seeded_business) -> None:
+    site = SEOSite(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        display_name="Binding Site",
+        base_url="https://binding-validation.example/",
+        normalized_domain="binding-validation.example",
+        is_active=True,
+        is_primary=False,
+    )
+    db_session.add(site)
+    db_session.flush()
+
+    automation_config = SEOAutomationConfig(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site.id,
+        is_enabled=True,
+        cadence_type="manual",
+        cadence_minutes=None,
+    )
+    db_session.add(automation_config)
+    db_session.flush()
+
+    source_action_id = str(uuid4())
+    draft_repository = SEOActionChainDraftRepository(db_session)
+    draft_record, _ = draft_repository.create_if_missing(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        source_action_id=source_action_id,
+        draft=generate_next_actions(
+            ActionExecutionItem(
+                action_id=source_action_id,
+                action_type="seo_fix",
+                state="accepted",
+            )
+        )[0],
+    )
+    db_session.commit()
+
+    activation_service = ActionChainActivationService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_site_repository=SEOSiteRepository(db_session),
+        seo_action_chain_draft_repository=draft_repository,
+        seo_action_execution_item_repository=SEOActionExecutionItemRepository(db_session),
+    )
+    activated = activation_service.activate_chained_action_draft(
+        business_id=seeded_business.id,
+        site_id=site.id,
+        source_action_id=source_action_id,
+        draft_id=draft_record.id,
+        actor_principal_id="principal-1",
+    )
+    assert activated.draft.automation_ready is False
+    assert activated.draft.activated_action_id is not None
+
+    binding_service = ActionAutomationBindingService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_site_repository=SEOSiteRepository(db_session),
+        seo_action_chain_draft_repository=draft_repository,
+        seo_action_execution_item_repository=SEOActionExecutionItemRepository(db_session),
+        seo_automation_repository=SEOAutomationRepository(db_session),
+    )
+
+    with pytest.raises(SEOActionAutomationBindingValidationError):
+        binding_service.bind_activated_action_to_automation(
+            business_id=seeded_business.id,
+            site_id=site.id,
+            action_execution_item_id=activated.draft.activated_action_id,
+            automation_id=automation_config.id,
+            actor_principal_id="principal-1",
+        )
+
+    with pytest.raises(SEOActionAutomationBindingValidationError):
+        binding_service.bind_activated_action_to_automation(
+            business_id=seeded_business.id,
+            site_id=site.id,
+            action_execution_item_id=activated.draft.activated_action_id,
+            automation_id=str(uuid4()),
+            actor_principal_id="principal-1",
+        )
+
+
 def test_action_lineage_service_returns_empty_when_no_chained_records(db_session, seeded_business) -> None:
     site = SEOSite(
         id=str(uuid4()),
@@ -385,6 +653,9 @@ def test_action_lineage_service_returns_drafts_and_activated_actions(db_session,
     assert lineage.chained_drafts[0].activation_state == "activated"
     assert lineage.chained_drafts[0].activated_action_id == lineage.activated_actions[0].id
     assert lineage.activated_actions[0].source_draft_id == draft_record.id
+    assert lineage.activated_actions[0].automation_binding_state == "unbound"
+    assert lineage.activated_actions[0].bound_automation_id is None
+    assert lineage.activated_actions[0].automation_bound_at is None
 
     lineage_again = lineage_service.get_action_lineage(
         business_id=seeded_business.id,

@@ -14,6 +14,7 @@ import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
   acceptCompetitorProfileDraft,
   ApiRequestError,
+  bindActionExecutionItemAutomation,
   createCompetitorProfileGenerationRun,
   createRecommendationRun,
   editCompetitorProfileDraft,
@@ -296,6 +297,16 @@ function extractAutomationRecommendationNarrativeOutputId(run: AutomationRun | n
     const linkedOutputId = typeof step.linked_output_id === "string" ? step.linked_output_id.trim() : "";
     if (stepName === "recommendation_narrative" && stepStatus === "completed" && linkedOutputId.length > 0) {
       return linkedOutputId;
+    }
+  }
+  return null;
+}
+
+function deriveAutomationBindingTargetId(runs: AutomationRun[]): string | null {
+  for (const run of runs) {
+    const automationConfigId = typeof run.automation_config_id === "string" ? run.automation_config_id.trim() : "";
+    if (automationConfigId.length > 0) {
+      return automationConfigId;
     }
   }
   return null;
@@ -2911,6 +2922,24 @@ function safeActionErrorMessage(actionLabel: string, error: unknown): string {
   return `Unable to ${actionLabel} right now. Please try again.`;
 }
 
+function safeAutomationBindingErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired while binding automation.";
+    }
+    if (error.status === 404) {
+      return "Automation binding target was not found.";
+    }
+    if (error.status === 409) {
+      return "This action is already bound to a different automation.";
+    }
+    if (error.status === 422) {
+      return "Automation binding is not allowed for this action state.";
+    }
+  }
+  return "Unable to bind this action to automation right now.";
+}
+
 function isCompetitorProfileRunTerminalStatus(status: CompetitorProfileGenerationRun["status"]): boolean {
   return status === "completed" || status === "failed";
 }
@@ -3191,6 +3220,10 @@ export default function SiteWorkspacePage() {
   const [recommendationActionDecisionSavingByItemId, setRecommendationActionDecisionSavingByItemId] =
     useState<Record<string, boolean>>({});
   const [recommendationActionDecisionErrorByItemId, setRecommendationActionDecisionErrorByItemId] =
+    useState<Record<string, string | null>>({});
+  const [automationBindingPendingByActionId, setAutomationBindingPendingByActionId] =
+    useState<Record<string, boolean>>({});
+  const [automationBindingErrorByActionId, setAutomationBindingErrorByActionId] =
     useState<Record<string, string | null>>({});
   const [automationActionDecisionByItemId, setAutomationActionDecisionByItemId] =
     useState<Record<string, ActionDecision>>({});
@@ -5073,6 +5106,8 @@ export default function SiteWorkspacePage() {
       setRecommendationActionDecisionByItemId({});
       setRecommendationActionDecisionSavingByItemId({});
       setRecommendationActionDecisionErrorByItemId({});
+      setAutomationBindingPendingByActionId({});
+      setAutomationBindingErrorByActionId({});
       setAutomationActionDecisionByItemId({});
       setRecommendationRuns([]);
       setRecommendationRunError(null);
@@ -5408,11 +5443,15 @@ export default function SiteWorkspacePage() {
         setRecommendationActionDecisionByItemId({});
         setRecommendationActionDecisionSavingByItemId({});
         setRecommendationActionDecisionErrorByItemId({});
+        setAutomationBindingPendingByActionId({});
+        setAutomationBindingErrorByActionId({});
       } else {
         setQueueResponse(null);
         setRecommendationActionDecisionByItemId({});
         setRecommendationActionDecisionSavingByItemId({});
         setRecommendationActionDecisionErrorByItemId({});
+        setAutomationBindingPendingByActionId({});
+        setAutomationBindingErrorByActionId({});
         setQueueError(safeSectionErrorMessage("recommendation queue", queueResult.reason));
       }
 
@@ -5859,6 +5898,7 @@ export default function SiteWorkspacePage() {
   const compactAuditPagesCrawled = latestAuditRun?.pages_crawled;
   const compactAuditErrors = latestAuditRun?.errors_encountered;
   const latestAutomationRun = automationRuns[0] || null;
+  const workspaceAutomationBindingTargetId = deriveAutomationBindingTargetId(automationRuns);
   const latestAutomationRecommendationRunOutputId = extractAutomationRecommendationRunOutputId(latestAutomationRun);
   const latestAutomationRecommendationNarrativeOutputId =
     extractAutomationRecommendationNarrativeOutputId(latestAutomationRun);
@@ -6029,6 +6069,48 @@ export default function SiteWorkspacePage() {
       ...current,
       [actionId]: decision,
     }));
+  }
+
+  async function handleWorkspaceRecommendationAutomationBinding(
+    actionExecutionItemId: string,
+    automationId: string,
+  ): Promise<void> {
+    if (!selectedSite) {
+      setAutomationBindingErrorByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: "Site context is unavailable for automation binding.",
+      }));
+      return;
+    }
+
+    setAutomationBindingPendingByActionId((current) => ({
+      ...current,
+      [actionExecutionItemId]: true,
+    }));
+    setAutomationBindingErrorByActionId((current) => ({
+      ...current,
+      [actionExecutionItemId]: null,
+    }));
+    try {
+      await bindActionExecutionItemAutomation(
+        context.token,
+        context.businessId,
+        selectedSite.id,
+        actionExecutionItemId,
+        automationId,
+      );
+      setWorkspaceRefreshNonce((current) => current + 1);
+    } catch (error) {
+      setAutomationBindingErrorByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: safeAutomationBindingErrorMessage(error),
+      }));
+    } finally {
+      setAutomationBindingPendingByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: false,
+      }));
+    }
   }
 
   return (
@@ -7915,8 +7997,12 @@ export default function SiteWorkspacePage() {
                 onDecision={(decision) => {
                   void handleWorkspaceRecommendationDecision(topQueueRecommendation, decision);
                 }}
+                onBindAutomation={handleWorkspaceRecommendationAutomationBinding}
                 decisionPending={Boolean(recommendationActionDecisionSavingByItemId[topQueueRecommendation.id])}
                 decisionError={recommendationActionDecisionErrorByItemId[topQueueRecommendation.id]}
+                bindAutomationTargetId={workspaceAutomationBindingTargetId}
+                bindAutomationPendingByActionId={automationBindingPendingByActionId}
+                bindAutomationErrorByActionId={automationBindingErrorByActionId}
                 resolveOutputHref={(outputId) => buildRecommendationRunHref(outputId, selectedSite.id)}
                 data-testid="workspace-recommendation-output-review"
               />

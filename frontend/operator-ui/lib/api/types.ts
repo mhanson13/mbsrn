@@ -1066,6 +1066,9 @@ export interface ActionLineageActivatedAction {
   state: string;
   automation_ready?: boolean;
   automation_template_key?: string | null;
+  automation_binding_state?: "unbound" | "bound";
+  bound_automation_id?: string | null;
+  automation_bound_at?: string | null;
   created_at?: string | null;
 }
 
@@ -1212,6 +1215,15 @@ export interface ActionExecutionItem {
   actionLineage?: ActionLineageResponse | null;
   outputReview?: ActionOutputReview | null;
   decision?: ActionDecision | null;
+}
+
+export interface BindActionAutomationResponse {
+  action_execution_item_id: string;
+  automation_binding_state: "unbound" | "bound";
+  bound_automation_id?: string | null;
+  automation_bound_at?: string | null;
+  automation_ready?: boolean;
+  automation_template_key?: string | null;
 }
 
 export interface AutomationRun {

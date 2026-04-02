@@ -7,6 +7,7 @@ import re
 from urllib.parse import urlparse
 
 from app.api.deps import (
+    get_action_automation_binding_service,
     get_action_chain_activation_service,
     get_action_lineage_service,
     TenantContext,
@@ -89,8 +90,12 @@ from app.schemas.seo_competitor import (
     SEOCompetitorSnapshotRunRead,
 )
 from app.schemas.ai_prompt import build_ai_prompt_preview_read
-from app.schemas.action_chaining import NextActionDraft
-from app.schemas.action_chaining import ActionLineageResponse
+from app.schemas.action_chaining import (
+    ActionLineageResponse,
+    BindActionAutomationRequest,
+    BoundActionAutomationRead,
+    NextActionDraft,
+)
 from app.schemas.seo_recommendation import (
     SEOCompetitorContextHealthCheckRead,
     SEOCompetitorContextHealthRead,
@@ -171,6 +176,12 @@ from app.services.action_chain_activation_service import (
     ActionChainActivationService,
     SEOActionChainActivationValidationError,
     SEOActionChainDraftNotFoundError,
+)
+from app.services.action_automation_binding_service import (
+    ActionAutomationBindingService,
+    SEOActionAutomationBindingConflictError,
+    SEOActionAutomationBindingNotFoundError,
+    SEOActionAutomationBindingValidationError,
 )
 from app.services.action_lineage_service import ActionLineageService
 from app.services.seo_recommendation_narratives import (
@@ -3286,6 +3297,45 @@ def activate_chained_next_action(
     except SEOActionChainActivationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return result.draft
+
+
+@router.post(
+    "/sites/{site_id}/actions/execution-items/{execution_item_id}/bind-automation",
+    response_model=BoundActionAutomationRead,
+)
+@router_v1.post(
+    "/sites/{site_id}/actions/execution-items/{execution_item_id}/bind-automation",
+    response_model=BoundActionAutomationRead,
+)
+def bind_action_execution_item_automation(
+    business_id: str,
+    site_id: str,
+    execution_item_id: str,
+    payload: BindActionAutomationRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    action_automation_binding_service: ActionAutomationBindingService = Depends(get_action_automation_binding_service),
+) -> BoundActionAutomationRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        result = action_automation_binding_service.bind_activated_action_to_automation(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            action_execution_item_id=execution_item_id,
+            automation_id=payload.automation_id,
+            actor_principal_id=tenant_context.principal_id,
+        )
+    except (SEOSiteNotFoundError, SEOActionAutomationBindingNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOActionAutomationBindingValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    except SEOActionAutomationBindingConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return result.binding
 
 
 @router.get("/sites/{site_id}/recommendations/backlog", response_model=SEORecommendationBacklogRead)

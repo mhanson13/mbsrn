@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 ActionChainActivationState = Literal["pending", "activated"]
+ActionAutomationBindingState = Literal["unbound", "bound"]
 
 
 class ActionExecutionItem(BaseModel):
@@ -71,6 +72,9 @@ class ActionLineageActivatedAction(BaseModel):
     state: str
     automation_ready: bool = False
     automation_template_key: str | None = None
+    automation_binding_state: ActionAutomationBindingState = "unbound"
+    bound_automation_id: str | None = None
+    automation_bound_at: datetime | None = None
     created_at: datetime | None = None
 
 
@@ -89,3 +93,20 @@ class ActionLineageResponse(BaseModel):
     chained_drafts: list[ActionLineageDraft] = Field(default_factory=list)
     activated_actions: list[ActionLineageActivatedAction] = Field(default_factory=list)
     counts: ActionLineageCounts
+
+
+class BindActionAutomationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    automation_id: str
+
+
+class BoundActionAutomationRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_execution_item_id: str
+    automation_binding_state: ActionAutomationBindingState
+    bound_automation_id: str | None = None
+    automation_bound_at: datetime | None = None
+    automation_ready: bool = False
+    automation_template_key: str | None = None

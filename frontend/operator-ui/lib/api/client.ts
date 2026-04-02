@@ -51,6 +51,7 @@ import type {
   RecommendationWorkflowUpdatePayload,
   RecommendationListFilters,
   RecommendationListResponse,
+  BindActionAutomationResponse,
   AutomationRunListResponse,
   GoogleBusinessProfileAccountsResponse,
   GoogleBusinessProfileConnectionStatusResponse,
@@ -817,6 +818,23 @@ export async function updateRecommendationStatus(
       method: "PATCH",
       token,
       body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function bindActionExecutionItemAutomation(
+  token: string,
+  businessId: string,
+  siteId: string,
+  executionItemId: string,
+  automationId: string,
+): Promise<BindActionAutomationResponse> {
+  return apiRequest<BindActionAutomationResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/actions/execution-items/${executionItemId}/bind-automation`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ automation_id: automationId }),
     },
   );
 }

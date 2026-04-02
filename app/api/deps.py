@@ -108,6 +108,7 @@ from app.services.seo_sites import SEOSiteService
 from app.services.seo_summary import SEOSummaryService
 from app.services.summary import LeadSummaryService
 from app.services.timeline import LeadTimelineService
+from app.services.action_automation_binding_service import ActionAutomationBindingService
 
 logger = logging.getLogger(__name__)
 
@@ -841,6 +842,26 @@ def get_action_lineage_service(
     return ActionLineageService(
         seo_action_chain_draft_repository=seo_action_chain_draft_repository,
         seo_action_execution_item_repository=seo_action_execution_item_repository,
+    )
+
+
+def get_action_automation_binding_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
+    seo_action_chain_draft_repository: SEOActionChainDraftRepository = Depends(get_seo_action_chain_draft_repository),
+    seo_action_execution_item_repository: SEOActionExecutionItemRepository = Depends(
+        get_seo_action_execution_item_repository
+    ),
+    seo_automation_repository: SEOAutomationRepository = Depends(get_seo_automation_repository),
+) -> ActionAutomationBindingService:
+    return ActionAutomationBindingService(
+        session=db,
+        business_repository=business_repository,
+        seo_site_repository=seo_site_repository,
+        seo_action_chain_draft_repository=seo_action_chain_draft_repository,
+        seo_action_execution_item_repository=seo_action_execution_item_repository,
+        seo_automation_repository=seo_automation_repository,
     )
 
 

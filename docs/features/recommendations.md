@@ -161,3 +161,23 @@ Operator UI surfaces should consume this canonical lineage first for next-step t
 ### Idempotency behavior
 
 Activating the same draft repeatedly returns the same `activated_action_id` and does not create duplicate actions.
+
+## Automation Binding Visibility for Activated Next Steps
+
+Recommendation lineage surfaces now distinguish:
+- automation-ready (activation metadata says the next step can bind)
+- automation-bound (explicit persisted binding to an automation record)
+
+Activated lineage rows include additive fields:
+- `automation_binding_state`
+- `bound_automation_id`
+- `automation_bound_at`
+
+Binding is explicit and operator-driven via:
+
+`POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/execution-items/{execution_item_id}/bind-automation`
+
+Operator behavior:
+- unbound + automation-ready -> show bind control
+- bound -> show bound automation reference
+- no implied execution (binding does not run automation)

@@ -37,6 +37,21 @@ class SEOAutomationRepository:
         )
         return self.session.scalar(stmt)
 
+    def get_config_for_business_site_id(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        automation_config_id: str,
+    ) -> SEOAutomationConfig | None:
+        stmt: Select[tuple[SEOAutomationConfig]] = (
+            select(SEOAutomationConfig)
+            .where(SEOAutomationConfig.business_id == business_id)
+            .where(SEOAutomationConfig.site_id == site_id)
+            .where(SEOAutomationConfig.id == automation_config_id)
+        )
+        return self.session.scalar(stmt)
+
     def list_due_configs(
         self,
         *,

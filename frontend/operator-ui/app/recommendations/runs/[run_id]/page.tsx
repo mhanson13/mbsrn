@@ -15,6 +15,7 @@ import { WorkflowContextPanel } from "../../../../components/layout/WorkflowCont
 import { useOperatorContext } from "../../../../components/useOperatorContext";
 import {
   ApiRequestError,
+  bindActionExecutionItemAutomation,
   fetchAutomationRuns,
   fetchCompetitorComparisonReport,
   fetchLatestRecommendationRunNarrative,
@@ -281,6 +282,7 @@ function safeRecommendationRunRelatedErrorMessage(error: unknown): string {
 
 type RecommendationRunAutomationOrigin = {
   automationRunId: string;
+  automationConfigId: string | null;
   triggerSource: string;
   runStatus: string;
   recommendationRunOutputId: string;
@@ -331,6 +333,7 @@ function deriveRecommendationRunAutomationOrigin(
 
     return {
       automationRunId: run.id,
+      automationConfigId: typeof run.automation_config_id === "string" ? run.automation_config_id : null,
       triggerSource: run.trigger_source,
       runStatus: run.status,
       recommendationRunOutputId: recommendationRunId,
@@ -357,6 +360,27 @@ function deriveRecommendationSourceType(item: Recommendation): string {
     return "comparison";
   }
   return "unknown";
+}
+
+function safeAutomationBindingErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 409) {
+      return "This action is already bound to a different automation.";
+    }
+    if (error.status === 404) {
+      return "Automation binding target was not found for this run.";
+    }
+    if (error.status === 422) {
+      return "Automation binding is not available for this action.";
+    }
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "You are not authorized to bind this automation action.";
+    }
+  }
+  return "Unable to bind automation right now. Try again after refreshing the run detail.";
 }
 
 function toSortedCountEntries(countMap: Record<string, number> | undefined): Array<[string, number]> {
@@ -543,6 +567,10 @@ export default function RecommendationRunDetailPage() {
   const [relatedError, setRelatedError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [actionDecisionByItemId, setActionDecisionByItemId] = useState<Record<string, ActionDecision>>({});
+  const [automationBindingPendingByActionId, setAutomationBindingPendingByActionId] = useState<Record<string, boolean>>({});
+  const [automationBindingErrorByActionId, setAutomationBindingErrorByActionId] =
+    useState<Record<string, string | null>>({});
+  const [automationBindingRefreshNonce, setAutomationBindingRefreshNonce] = useState(0);
 
   const run: RecommendationRun | null = report?.recommendation_run || null;
   const runOriginLabel = automationOrigin ? "Automation-triggered" : run ? "Manual / direct" : "Loading";
@@ -748,6 +776,7 @@ export default function RecommendationRunDetailPage() {
     () => (recommendationRunActionExecutionItem ? deriveActionControls(recommendationRunActionExecutionItem) : []),
     [recommendationRunActionExecutionItem],
   );
+  const recommendationRunAutomationBindingTargetId = automationOrigin?.automationConfigId || null;
 
   function handleRunLevelDecision(decision: ActionDecision): void {
     if (!recommendationRunActionExecutionItem) {
@@ -757,6 +786,49 @@ export default function RecommendationRunDetailPage() {
       ...current,
       [recommendationRunActionExecutionItem.id]: decision,
     }));
+  }
+
+  async function handleRecommendationRunAutomationBinding(
+    actionExecutionItemId: string,
+    automationId: string,
+  ): Promise<void> {
+    if (!resolvedSiteId) {
+      setAutomationBindingErrorByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: "Resolved site context is unavailable for automation binding.",
+      }));
+      return;
+    }
+
+    setAutomationBindingPendingByActionId((current) => ({
+      ...current,
+      [actionExecutionItemId]: true,
+    }));
+    setAutomationBindingErrorByActionId((current) => ({
+      ...current,
+      [actionExecutionItemId]: null,
+    }));
+
+    try {
+      await bindActionExecutionItemAutomation(
+        context.token,
+        context.businessId,
+        resolvedSiteId,
+        actionExecutionItemId,
+        automationId,
+      );
+      setAutomationBindingRefreshNonce((current) => current + 1);
+    } catch (error) {
+      setAutomationBindingErrorByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: safeAutomationBindingErrorMessage(error),
+      }));
+    } finally {
+      setAutomationBindingPendingByActionId((current) => ({
+        ...current,
+        [actionExecutionItemId]: false,
+      }));
+    }
   }
 
   const comparisonRun = comparisonReport?.run || null;
@@ -1080,6 +1152,8 @@ export default function RecommendationRunDetailPage() {
       setError(null);
       setRelatedError(null);
       setNotFound(false);
+      setAutomationBindingPendingByActionId({});
+      setAutomationBindingErrorByActionId({});
       setReport(null);
       setLatestNarrative(null);
       setComparisonReport(null);
@@ -1192,6 +1266,7 @@ export default function RecommendationRunDetailPage() {
       cancelled = true;
     };
   }, [
+    automationBindingRefreshNonce,
     candidateSiteIds,
     context.businessId,
     context.error,
@@ -1340,6 +1415,10 @@ export default function RecommendationRunDetailPage() {
               outcome={recommendationRunActionPresentation?.outcome || runActionState.outcome}
               nextStep={recommendationRunActionPresentation?.nextStep || runActionState.nextStep}
               onDecision={handleRunLevelDecision}
+              onBindAutomation={handleRecommendationRunAutomationBinding}
+              bindAutomationTargetId={recommendationRunAutomationBindingTargetId}
+              bindAutomationPendingByActionId={automationBindingPendingByActionId}
+              bindAutomationErrorByActionId={automationBindingErrorByActionId}
               resolveOutputHref={(outputId) => {
                 if (outputId && outputId === run.id) {
                   return recommendationRunNarrativeHistoryHref;
