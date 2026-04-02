@@ -324,3 +324,14 @@ Automation pages and output-review surfaces now include a persistent boundary re
 This reinforces current product behavior:
 - analysis + artifact generation only
 - no live-site publishing or CMS mutation
+
+## Workflow Site Selector Placement
+
+Workflow pages now use a shared top-of-page site selector pattern, including Automation.
+
+Operator intent:
+- site context is set once at the top of the page
+- duplicate lower-page selectors are removed
+- labels such as `Selected Site` are no longer repeated in section bodies
+
+This keeps action surfaces focused while preserving the same business/site-scoped data flow.

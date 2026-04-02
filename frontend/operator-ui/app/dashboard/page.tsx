@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { useAuth } from "../../components/AuthProvider";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   fetchAutomationRuns,
@@ -139,16 +139,16 @@ function buildPriorityCue(params: {
 
 export default function DashboardPage() {
   const context = useOperatorContext();
-  const { principal } = useAuth();
   const [workspaceSummary, setWorkspaceSummary] = useState<RecommendationWorkspaceSummaryResponse | null>(null);
   const [automationRuns, setAutomationRuns] = useState<AutomationRun[]>([]);
   const [signalError, setSignalError] = useState<string | null>(null);
   const [signalLoading, setSignalLoading] = useState(false);
+  const businessContextAvailable = Boolean(context.businessId);
 
   const selectedSite = context.sites.find((site) => site.id === context.selectedSiteId) || null;
 
   useEffect(() => {
-    if (context.loading || context.error || !context.selectedSiteId) {
+    if (context.loading || context.error || !businessContextAvailable || !context.selectedSiteId) {
       setWorkspaceSummary(null);
       setAutomationRuns([]);
       setSignalError(null);
@@ -191,6 +191,7 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, [
+    businessContextAvailable,
     context.businessId,
     context.error,
     context.loading,
@@ -219,6 +220,20 @@ export default function DashboardPage() {
           <SectionHeader
             title="Dashboard"
             subtitle={`Error: ${context.error}`}
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
+      </PageContainer>
+    );
+  }
+  if (!businessContextAvailable) {
+    return (
+      <PageContainer width="wide" density="compact">
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Dashboard"
+            subtitle="Business context is unavailable for this session."
             headingLevel={1}
             variant="support"
           />
@@ -273,6 +288,14 @@ export default function DashboardPage() {
 
   return (
     <PageContainer width="wide" density="compact">
+      <SectionCard variant="support" className="role-surface-support">
+        <WorkflowSiteSelector
+          id="site-picker-dashboard"
+          sites={context.sites}
+          selectedSiteId={context.selectedSiteId}
+          onChange={context.setSelectedSiteId}
+        />
+      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -280,12 +303,6 @@ export default function DashboardPage() {
             subtitle="Operator-first summary for what to review next across audit, recommendations, and automation."
             headingLevel={1}
             variant="hero"
-            meta={(
-              <>
-                <span className="hint muted">Business scope: <code>{context.businessId}</code></span>
-                {principal ? <span className="hint muted">Role: {principal.role}</span> : null}
-              </>
-            )}
           />
           <div className="workspace-summary-strip role-summary-strip" data-testid="dashboard-summary-strip">
             <SummaryStatCard

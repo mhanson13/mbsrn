@@ -9,6 +9,7 @@ import { OperationalItemCard } from "../../components/layout/OperationalItemCard
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -452,6 +453,14 @@ function CompetitorsPageContent() {
 
   return (
     <PageContainer width="wide" density="compact">
+      <SectionCard variant="support" className="role-surface-support">
+        <WorkflowSiteSelector
+          id="site-picker-competitors"
+          sites={sites}
+          selectedSiteId={selectedSiteId}
+          onChange={setSelectedSiteId}
+        />
+      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -459,11 +468,6 @@ function CompetitorsPageContent() {
             subtitle="Track competitor set readiness, run status, and domain coverage for the selected site."
             headingLevel={1}
             variant="hero"
-            meta={(
-              <span className="hint muted">
-                Selected site: <code>{selectedSite?.display_name || selectedSiteId || "none"}</code>
-              </span>
-            )}
           />
           <div className="workspace-summary-strip role-summary-strip">
             <SummaryStatCard
@@ -517,32 +521,9 @@ function CompetitorsPageContent() {
           headingLevel={2}
           variant="support"
         />
-        <label htmlFor="site-picker-competitors">Site</label>
-        <select
-          id="site-picker-competitors"
-          className="operator-select"
-          value={selectedSiteId || ""}
-          onChange={(event) => setSelectedSiteId(event.target.value)}
-        >
-          {sites.map((site) => (
-            <option key={site.id} value={site.id}>
-              {site.display_name}
-            </option>
-          ))}
-        </select>
 
         <div className="panel stack section-card-variant-support">
           <h2 className="heading-reset">Readiness</h2>
-          <p className="hint muted">
-            Selected Site:{" "}
-            <strong>{selectedSite?.display_name || selectedSiteId || "No site selected"}</strong>
-            {selectedSiteId ? (
-              <>
-                {" "}
-                (<code>{selectedSiteId}</code>)
-              </>
-            ) : null}
-          </p>
           <div className="row-wrap">
             <span className="hint muted">Active Sets: {activeSetCount}/{competitorSetCount}</span>
             <span className="hint muted">Competitor Domains: {totalDomainCount}</span>

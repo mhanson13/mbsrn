@@ -3033,6 +3033,7 @@ function PromptPreviewPanel({
   onDownload,
   testId,
 }: PromptPreviewPanelProps) {
+  const [promptExpanded, setPromptExpanded] = useState(false);
   const promptIdentityLabel = preview.promptLabel || "resolved prompt";
   const promptVersionLabel = preview.promptVersion || null;
   const promptTotalChars =
@@ -3043,6 +3044,18 @@ function PromptPreviewPanel({
     preview.promptMetrics && typeof preview.promptMetrics.context_json_chars === "number"
       ? preview.promptMetrics.context_json_chars
       : null;
+
+  useEffect(() => {
+    setPromptExpanded(false);
+  }, [
+    preview.promptType,
+    preview.source,
+    preview.model,
+    preview.promptVersion,
+    preview.promptLabel,
+    preview.systemPrompt,
+    preview.userPrompt,
+  ]);
 
   return (
     <div className="panel panel-compact stack-tight" data-testid={testId}>
@@ -3059,7 +3072,12 @@ function PromptPreviewPanel({
         {typeof promptContextChars === "number" ? ` | Context: ${promptContextChars} chars` : ""}
         {preview.truncated ? " | Preview is truncated for safety." : ""}
       </span>
-      <details>
+      <details
+        open={promptExpanded}
+        onToggle={(event) => {
+          setPromptExpanded(event.currentTarget.open);
+        }}
+      >
         <summary className="hint text-strong">View AI prompt</summary>
         <div className="stack-tight">
           <span className="hint muted">System prompt</span>
@@ -8691,16 +8709,6 @@ export default function SiteWorkspacePage() {
               recommendationThemeSections.length <= 1 ? (
                 <div className="table-container">
                   <table className="table table-dense">
-                    <thead>
-                      <tr>
-                        <th>Recommendation</th>
-                        <th>Category</th>
-                        <th>Severity</th>
-                        <th>Priority</th>
-                        <th>Status</th>
-                        <th>Why this was suggested</th>
-                      </tr>
-                    </thead>
                     <tbody>
                       {(recommendationThemeSections[0]?.items || latestCompletedRecommendations).map((item, index) => {
                         const recommendationRank = recommendationRankById.get(item.id) ?? index;
@@ -8922,16 +8930,6 @@ export default function SiteWorkspacePage() {
                       </span>
                       <div className="table-container">
                         <table className="table table-dense">
-                          <thead>
-                            <tr>
-                              <th>Recommendation</th>
-                              <th>Category</th>
-                              <th>Severity</th>
-                              <th>Priority</th>
-                              <th>Status</th>
-                              <th>Why this was suggested</th>
-                            </tr>
-                          </thead>
                           <tbody>
                             {section.items.map((item, index) => {
                               const recommendationRank = recommendationRankById.get(item.id) ?? index;

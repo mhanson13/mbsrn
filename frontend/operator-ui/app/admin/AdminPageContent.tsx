@@ -1454,45 +1454,53 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               <span className="hint muted">Principals without identity: {principalsWithoutIdentityCount}</span>
             </div>
           ) : null}
+        </SectionCard>
 
           {showUserManagement ? (
             <>
-              <FormContainer onSubmit={(event) => void handleCreateUser(event)}>
-                <h2>Create User</h2>
-                <label htmlFor="principal-id">User ID</label>
-                <input
-                  id="principal-id"
-                  value={principalId}
-                  onChange={(event) => setPrincipalId(event.target.value)}
-                  placeholder="user@example.com"
-                  required
+              <SectionCard variant="summary" className="role-surface-support">
+                <SectionHeader
+                  title="Create User"
+                  subtitle="Add a principal to this business and assign an initial role."
+                  headingLevel={2}
+                  variant="support"
                 />
+                <FormContainer onSubmit={(event) => void handleCreateUser(event)}>
+                  <label htmlFor="principal-id">User ID</label>
+                  <input
+                    id="principal-id"
+                    value={principalId}
+                    onChange={(event) => setPrincipalId(event.target.value)}
+                    placeholder="user@example.com"
+                    required
+                  />
 
-                <label htmlFor="display-name">Display Name (optional)</label>
-                <input
-                  id="display-name"
-                  value={displayName}
-                  onChange={(event) => setDisplayName(event.target.value)}
-                  placeholder="Operator Name"
-                />
+                  <label htmlFor="display-name">Display Name (optional)</label>
+                  <input
+                    id="display-name"
+                    value={displayName}
+                    onChange={(event) => setDisplayName(event.target.value)}
+                    placeholder="Operator Name"
+                  />
 
-                <label htmlFor="user-role">Role</label>
-                <select
-                  id="user-role"
-                  className="operator-select"
-                  value={role}
-                  onChange={(event) => setRole(event.target.value as PrincipalRole)}
-                >
-                  <option value="operator">operator</option>
-                  <option value="admin">admin</option>
-                </select>
+                  <label htmlFor="user-role">Role</label>
+                  <select
+                    id="user-role"
+                    className="operator-select"
+                    value={role}
+                    onChange={(event) => setRole(event.target.value as PrincipalRole)}
+                  >
+                    <option value="operator">operator</option>
+                    <option value="admin">admin</option>
+                  </select>
 
-                <div className="form-actions">
-                  <button className="button button-primary" type="submit" disabled={submitting}>
-                    {submitting ? "Creating..." : "Create User"}
-                  </button>
-                </div>
-              </FormContainer>
+                  <div className="form-actions">
+                    <button className="button button-primary" type="submit" disabled={submitting}>
+                      {submitting ? "Creating..." : "Create User"}
+                    </button>
+                  </div>
+                </FormContainer>
+              </SectionCard>
 
               <SectionCard variant="summary" className="role-surface-support">
                 <SectionHeader
@@ -1911,7 +1919,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             </p>
           ) : null}
         </div>
-      </SectionCard>
       </div>
 
       {showAdminSettings ? (

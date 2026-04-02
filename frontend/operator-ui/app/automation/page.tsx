@@ -10,6 +10,7 @@ import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import { fetchAutomationRuns } from "../../lib/api/client";
 import { deriveAutomationRunOperatorActionState } from "../../lib/operatorActionState";
@@ -497,7 +498,6 @@ export default function AutomationPage() {
   const [actionDecisions, setActionDecisions] = useState<Record<string, ActionDecision>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
 
-  const selectedSite = context.sites.find((site) => site.id === context.selectedSiteId) || null;
   const completedRuns = items.filter((run) => run.status.toLowerCase() === "completed").length;
   const runningRuns = items.filter((run) => run.status.toLowerCase() === "running").length;
   const failedRuns = items.filter((run) => run.status.toLowerCase() === "failed").length;
@@ -645,6 +645,14 @@ export default function AutomationPage() {
 
   return (
     <PageContainer width="wide" density="compact">
+      <SectionCard variant="support" className="role-surface-support">
+        <WorkflowSiteSelector
+          id="site-picker-automation"
+          sites={context.sites}
+          selectedSiteId={context.selectedSiteId}
+          onChange={context.setSelectedSiteId}
+        />
+      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -652,11 +660,6 @@ export default function AutomationPage() {
             subtitle="Monitor automated recommendation and workflow run outcomes."
             headingLevel={1}
             variant="hero"
-            meta={(
-              <span className="hint muted">
-                Selected site: <code>{selectedSite?.display_name || context.selectedSiteId || "none"}</code>
-              </span>
-            )}
           />
           <div className="workspace-summary-strip role-summary-strip">
             <SummaryStatCard
@@ -698,19 +701,6 @@ export default function AutomationPage() {
           headingLevel={2}
           variant="support"
         />
-        <label htmlFor="site-picker-automation">Site</label>
-        <select
-          id="site-picker-automation"
-          className="operator-select"
-          value={context.selectedSiteId || ""}
-          onChange={(event) => context.setSelectedSiteId(event.target.value)}
-        >
-          {context.sites.map((site) => (
-            <option key={site.id} value={site.id}>
-              {site.display_name}
-            </option>
-          ))}
-        </select>
 
         {loadingItems ? <p className="hint muted">Loading automation runs...</p> : null}
         {itemsError ? <p className="hint error">{itemsError}</p> : null}

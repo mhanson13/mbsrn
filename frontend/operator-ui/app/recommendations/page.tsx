@@ -12,6 +12,7 @@ import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -1092,11 +1093,6 @@ function RecommendationsPageContent() {
     const matchedPreset = QUEUE_PRESETS.find((preset) => matchesPresetState(filters, sort, preset));
     return matchedPreset ? matchedPreset.key : "__custom__";
   }, [filters, sort]);
-  const selectedSite = useMemo(
-    () => context.sites.find((site) => site.id === context.selectedSiteId) || null,
-    [context.selectedSiteId, context.sites],
-  );
-
   const resolvedTotalRecommendations = totalRecommendations ?? 0;
   const totalPages = useMemo<number>(() => {
     if (totalRecommendations === null) {
@@ -2062,6 +2058,14 @@ function RecommendationsPageContent() {
 
   return (
     <PageContainer width="full" density="compact">
+      <SectionCard variant="support" className="role-surface-support">
+        <WorkflowSiteSelector
+          id="site-picker-recommendations"
+          sites={context.sites}
+          selectedSiteId={context.selectedSiteId}
+          onChange={context.setSelectedSiteId}
+        />
+      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -2069,11 +2073,6 @@ function RecommendationsPageContent() {
             subtitle="Review priorities, update recommendation status, and keep action flow moving."
             headingLevel={1}
             variant="hero"
-            meta={(
-              <span className="hint muted">
-                Selected site: <code>{selectedSite?.display_name || context.selectedSiteId || "none"}</code>
-              </span>
-            )}
           />
           <div className="workspace-summary-strip role-summary-strip">
             <SummaryStatCard
@@ -2124,20 +2123,6 @@ function RecommendationsPageContent() {
           headingLevel={2}
           variant="support"
         />
-        <label htmlFor="site-picker-recommendations">Site</label>
-        <select
-          id="site-picker-recommendations"
-          className="operator-select"
-          value={context.selectedSiteId || ""}
-          onChange={(event) => context.setSelectedSiteId(event.target.value)}
-        >
-          {context.sites.map((site) => (
-            <option key={site.id} value={site.id}>
-              {site.display_name}
-            </option>
-          ))}
-        </select>
-
         <div className="grid-fit-180">
           <div className="stack-tight">
           <label htmlFor="recommendation-preset">Preset</label>

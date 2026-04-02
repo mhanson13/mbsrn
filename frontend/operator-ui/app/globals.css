@@ -684,6 +684,21 @@ main {
   min-width: 0;
 }
 
+.workflow-site-selector {
+  width: 100%;
+  max-width: 28rem;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.workflow-site-selector label {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .form-container input,
 .form-container select,
 .form-container textarea {
@@ -1199,6 +1214,11 @@ textarea,
 select,
 .operator-select {
   appearance: none;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  background-color: var(--panel);
+  background-clip: padding-box;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2364748b' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 8 5 5 5-5'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.58rem center;
@@ -1238,17 +1258,26 @@ select:disabled,
 
 input[type="checkbox"],
 input[type="radio"] {
+  inline-size: 1rem;
+  block-size: 1rem;
   width: 1rem;
   height: 1rem;
   min-height: 1rem;
+  max-width: 1rem;
+  max-height: 1rem;
   margin: 0;
   padding: 0;
   flex: 0 0 auto;
   accent-color: var(--accent);
+  vertical-align: middle;
+  transform: none;
 }
 
 select option,
 .operator-select option {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
   background: var(--panel);
   color: var(--text);
   padding: 0.48rem 0.62rem;
@@ -1259,15 +1288,15 @@ select option,
 
 select option:checked,
 .operator-select option:checked {
-  background: var(--surface-subtle);
+  background: color-mix(in srgb, var(--surface-subtle) 85%, var(--panel) 15%);
   color: var(--text-strong);
-  box-shadow: inset 0 0 0 9999px rgba(15, 118, 110, 0.12);
+  box-shadow: none;
 }
 
 select option:hover,
 .operator-select option:hover {
   background: color-mix(in srgb, var(--surface-subtle) 78%, var(--panel) 22%);
-  box-shadow: inset 0 0 0 9999px color-mix(in srgb, var(--surface-subtle) 78%, var(--panel) 22%);
+  box-shadow: none;
 }
 
 code {

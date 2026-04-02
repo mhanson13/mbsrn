@@ -137,6 +137,15 @@ Local validation strategy:
 - The operator-facing user section label is **User ID Management**.
 - Global form-control sizing is centrally normalized in `frontend/operator-ui/app/globals.css`, including checkbox/radio overrides to prevent oversized controls.
 
+### Workflow UI Consistency Rules
+
+- Site selector is standardized at the top of workflow pages (dashboard, sites list, audits, competitors, recommendations, automation, business profile).
+- Debug prompt panels are manual-expand only; they default collapsed and must not auto-open during polling or run creation.
+- Checkbox and dropdown rendering behavior is governed globally in `frontend/operator-ui/app/globals.css` to keep control sizing and selected-value shading consistent across pages.
+- Admin and User Mgmt responsibilities remain separated:
+  - `/admin`: platform settings + diagnostics
+  - `/user-mgmt`: user/identity administration (admin-only)
+
 ## Action Chaining Layer
 
 The backend includes a deterministic Action Chaining Layer that generates follow-on actions after qualifying workflow transitions.

@@ -6,6 +6,7 @@ import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -55,7 +56,7 @@ export default function BusinessProfilePage() {
   const [verificationCode, setVerificationCode] = useState("");
 
   const loadData = useCallback(async () => {
-    if (!context.token) {
+    if (!context.token || !context.businessId) {
       return;
     }
     setLoading(true);
@@ -74,7 +75,7 @@ export default function BusinessProfilePage() {
     } finally {
       setLoading(false);
     }
-  }, [context.token]);
+  }, [context.token, context.businessId]);
 
   const loadVerificationStatus = useCallback(
     async (locationId: string) => {
@@ -111,11 +112,11 @@ export default function BusinessProfilePage() {
   }, [context.token, loadVerificationStatus, selectedLocationId]);
 
   useEffect(() => {
-    if (context.loading || !context.token) {
+    if (context.loading || !context.token || !context.businessId) {
       return;
     }
     void loadData();
-  }, [context.loading, context.token, loadData]);
+  }, [context.businessId, context.loading, context.token, loadData]);
 
   const connectionUiState = useMemo<ConnectionUiState>(() => {
     if (!connection?.connected) {
@@ -163,7 +164,7 @@ export default function BusinessProfilePage() {
   );
 
   async function handleConnect() {
-    if (!context.token) {
+    if (!context.token || !context.businessId) {
       return;
     }
     setActionLoading(true);
@@ -178,7 +179,7 @@ export default function BusinessProfilePage() {
   }
 
   async function handleDisconnect() {
-    if (!context.token) {
+    if (!context.token || !context.businessId) {
       return;
     }
     setActionLoading(true);
@@ -199,7 +200,7 @@ export default function BusinessProfilePage() {
   }
 
   async function handleStartVerification() {
-    if (!context.token || !selectedLocationId) {
+    if (!context.token || !context.businessId || !selectedLocationId) {
       return;
     }
     if (!selectedOptionId) {
@@ -226,7 +227,7 @@ export default function BusinessProfilePage() {
   }
 
   async function handleCompleteVerification() {
-    if (!context.token || !selectedLocationId) {
+    if (!context.token || !context.businessId || !selectedLocationId) {
       return;
     }
     const normalizedCode = verificationCode.trim();
@@ -256,7 +257,7 @@ export default function BusinessProfilePage() {
   }
 
   async function handleRetryVerification() {
-    if (!context.token || !selectedLocationId) {
+    if (!context.token || !context.businessId || !selectedLocationId) {
       return;
     }
     setVerificationActionLoading(true);
@@ -305,9 +306,31 @@ export default function BusinessProfilePage() {
       </PageContainer>
     );
   }
+  if (!context.businessId) {
+    return (
+      <PageContainer width="wide" density="compact">
+        <SectionCard as="div" variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Google Business Profile"
+            subtitle="Business context is unavailable for this session."
+            headingLevel={1}
+            variant="support"
+          />
+        </SectionCard>
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer width="wide" density="compact">
+      <SectionCard variant="support" className="role-surface-support">
+        <WorkflowSiteSelector
+          id="site-picker-business-profile"
+          sites={context.sites}
+          selectedSiteId={context.selectedSiteId}
+          onChange={context.setSelectedSiteId}
+        />
+      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -315,9 +338,6 @@ export default function BusinessProfilePage() {
             subtitle="Connect, verify, and monitor Google Business Profile readiness for this business."
             headingLevel={1}
             variant="hero"
-            meta={(
-              <span className="hint muted">Business scope: <code>{context.businessId}</code></span>
-            )}
           />
           <div className="workspace-summary-strip role-summary-strip">
             <SummaryStatCard
@@ -367,7 +387,7 @@ export default function BusinessProfilePage() {
             </p>
           ) : null}
           {connectionUiState === "not_connected" ? (
-            <p className="hint muted">No Google Business Profile connection exists for this business.</p>
+            <p className="hint muted">No Google Business Profile connection exists.</p>
           ) : null}
           {callbackNotice ? <p className={callbackNotice.className}>{callbackNotice.message}</p> : null}
           {error ? <p className="hint error">{error}</p> : null}

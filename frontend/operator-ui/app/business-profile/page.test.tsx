@@ -8,7 +8,7 @@ type OperatorContextMockValue = {
   error: string | null;
   token: string;
   businessId: string;
-  sites: Array<{ id: string }>;
+  sites: Array<{ id: string; display_name: string }>;
   selectedSiteId: string | null;
   setSelectedSiteId: jest.Mock;
   refreshSites: jest.Mock;
@@ -84,6 +84,7 @@ describe("business profile callback notice UX", () => {
       expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1"),
     );
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
+    expect(screen.getByLabelText("Site")).toHaveClass("operator-select");
     expect(
       await screen.findByText("Google Business Profile connected successfully."),
     ).toBeInTheDocument();

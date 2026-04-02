@@ -245,3 +245,24 @@ UI rules:
 Purpose:
 - provide a fast scan signal for triage and action ordering
 - do not replace detailed metric review in expanded/detail surfaces
+
+## Sites Workspace Recommendation Surface Cleanup
+
+The site workspace recommendation table no longer renders the legacy metadata header row:
+
+- `Category`
+- `Severity`
+- `Priority`
+- `Status`
+- `Why this was suggested`
+
+Recommendation content is still preserved in the card/row body and support rail.
+
+### AI Prompt debug panel behavior
+
+`View AI prompt` is now explicitly user-driven:
+
+- collapsed by default
+- does not auto-expand during recommendation generation
+- does not auto-expand on polling refresh
+- does not auto-expand when a new run is created

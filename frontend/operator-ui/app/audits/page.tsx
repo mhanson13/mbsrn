@@ -8,6 +8,7 @@ import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import { ApiRequestError, fetchAuditRuns } from "../../lib/api/client";
 import type { SEOAuditRun } from "../../lib/api/types";
@@ -175,6 +176,14 @@ export default function AuditsPage() {
 
   return (
     <PageContainer width="wide" density="compact">
+      <SectionCard variant="support" className="role-surface-support">
+        <WorkflowSiteSelector
+          id="site-picker-audit"
+          sites={context.sites}
+          selectedSiteId={context.selectedSiteId}
+          onChange={context.setSelectedSiteId}
+        />
+      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -182,11 +191,6 @@ export default function AuditsPage() {
             subtitle="Track crawl coverage, run outcomes, and retry needs across your selected site."
             headingLevel={1}
             variant="hero"
-            meta={(
-              <span className="hint muted">
-                Selected site: <code>{selectedSite?.display_name || context.selectedSiteId || "none"}</code>
-              </span>
-            )}
           />
           <div className="workspace-summary-strip role-summary-strip">
             <SummaryStatCard
@@ -228,19 +232,6 @@ export default function AuditsPage() {
           headingLevel={2}
           variant="support"
         />
-        <label htmlFor="site-picker-audit">Site</label>
-        <select
-          id="site-picker-audit"
-          className="operator-select"
-          value={context.selectedSiteId || ""}
-          onChange={(event) => context.setSelectedSiteId(event.target.value)}
-        >
-          {context.sites.map((site) => (
-            <option key={site.id} value={site.id}>
-              {site.display_name}
-            </option>
-          ))}
-        </select>
 
         {loadingRuns ? <p className="hint muted">Loading audit runs...</p> : null}
         {runsError ? <p className="hint error">{runsError}</p> : null}

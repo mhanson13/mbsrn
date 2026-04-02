@@ -156,6 +156,7 @@ describe("dashboard operator-focused layout", () => {
 
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Site")).toHaveClass("operator-select");
     expect(screen.getByTestId("dashboard-summary-strip")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Do this now" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Recent activity" })).toBeInTheDocument();

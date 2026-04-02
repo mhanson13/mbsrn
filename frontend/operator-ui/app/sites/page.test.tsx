@@ -89,7 +89,7 @@ describe("sites admin deactivate controls", () => {
     const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(false);
 
     render(<SitesPage />);
-    expect(screen.getByLabelText("Selected Site")).toHaveClass("operator-select");
+    expect(screen.getByLabelText("Site")).toHaveClass("operator-select");
 
     fireEvent.click(screen.getByRole("button", { name: "Deactivate Site" }));
     expect(confirmSpy).toHaveBeenCalled();

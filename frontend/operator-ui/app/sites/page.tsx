@@ -9,6 +9,7 @@ import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   activateSite,
@@ -385,6 +386,15 @@ export default function SitesPage() {
 
   return (
     <PageContainer>
+      <SectionCard variant="support" className="role-surface-support">
+        <WorkflowSiteSelector
+          id="site-picker-sites-page"
+          sites={context.sites}
+          selectedSiteId={context.selectedSiteId}
+          onChange={context.setSelectedSiteId}
+          label="Site"
+        />
+      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -392,12 +402,6 @@ export default function SitesPage() {
             subtitle="Manage tracked properties, trigger audits, and monitor site intelligence."
             headingLevel={1}
             variant="hero"
-            meta={(
-              <>
-                <span className="hint muted">Business: <code>{context.businessId}</code></span>
-                {principal ? <span className="hint muted">Role: {principal.role}</span> : null}
-              </>
-            )}
           />
           <div className="workspace-summary-strip role-summary-strip">
             <SummaryStatCard
@@ -567,23 +571,6 @@ export default function SitesPage() {
           headingLevel={2}
           variant="support"
         />
-
-        <div className="form-container">
-          <label htmlFor="site-picker-intelligence">Selected Site</label>
-          <select
-            id="site-picker-intelligence"
-            className="operator-select"
-            value={context.selectedSiteId || ""}
-            onChange={(event) => context.setSelectedSiteId(event.target.value)}
-            disabled={context.sites.length === 0}
-          >
-            {context.sites.map((site) => (
-              <option key={site.id} value={site.id}>
-                {site.display_name}
-              </option>
-            ))}
-          </select>
-        </div>
 
         {!selectedSite ? <p className="hint muted">No site selected.</p> : null}
         {loadingIntelligence ? <p className="hint muted">Loading site intelligence...</p> : null}

@@ -3810,7 +3810,7 @@ describe("site workspace timeline controls", () => {
       ),
     ).toBeInTheDocument();
     expect(within(trustGroup).getAllByText("Likely pages: /about, /contact").length).toBeGreaterThanOrEqual(1);
-    expect(within(trustGroup).getAllByRole("row")).toHaveLength(2);
+    expect(within(trustGroup).getAllByRole("row")).toHaveLength(1);
 
     const experienceGroup = screen.getByTestId("recommendation-theme-group-experience_and_proof");
     expect(within(experienceGroup).getByText("Experience & proof")).toBeInTheDocument();
@@ -3820,7 +3820,7 @@ describe("site workspace timeline controls", () => {
         "Show proof of real work with testimonials, project examples, and outcome evidence.",
       ),
     ).toBeInTheDocument();
-    expect(within(experienceGroup).getAllByRole("row")).toHaveLength(2);
+    expect(within(experienceGroup).getAllByRole("row")).toHaveLength(1);
 
     const authorityGroup = screen.getByTestId("recommendation-theme-group-authority_and_visibility");
     expect(within(authorityGroup).getByText("Authority & visibility")).toBeInTheDocument();
@@ -3830,7 +3830,7 @@ describe("site workspace timeline controls", () => {
         "Strengthen external credibility through citations, listings, and recognized signals.",
       ),
     ).toBeInTheDocument();
-    expect(within(authorityGroup).getAllByRole("row")).toHaveLength(2);
+    expect(within(authorityGroup).getAllByRole("row")).toHaveLength(1);
 
     const expertiseGroup = screen.getByTestId("recommendation-theme-group-expertise_and_process");
     expect(within(expertiseGroup).getByText("Expertise & process")).toBeInTheDocument();
@@ -3842,7 +3842,7 @@ describe("site workspace timeline controls", () => {
         "Clarify how you work and what makes your process credible and capable.",
       ),
     ).toBeInTheDocument();
-    expect(within(expertiseGroup).getAllByRole("row")).toHaveLength(2);
+    expect(within(expertiseGroup).getAllByRole("row")).toHaveLength(1);
 
     const generalGroup = screen.getByTestId("recommendation-theme-group-general_site_improvement");
     expect(within(generalGroup).getByText("General site improvement")).toBeInTheDocument();
@@ -3852,7 +3852,7 @@ describe("site workspace timeline controls", () => {
         "Improve core site clarity and fundamentals that support overall performance.",
       ),
     ).toBeInTheDocument();
-    expect(within(generalGroup).getAllByRole("row")).toHaveLength(2);
+    expect(within(generalGroup).getAllByRole("row")).toHaveLength(1);
   });
 
   it("keeps grouped wrapper hidden when grouped metadata is absent or trivial", async () => {
@@ -4878,7 +4878,12 @@ describe("site workspace timeline controls", () => {
     expect(
       within(recommendationPanel).queryByText(/Prompt:\s*seo-recommendation-narrative-v2/),
     ).not.toBeInTheDocument();
-    await user.click(within(recommendationPanel).getByText("View AI prompt"));
+    const recommendationPromptToggle = within(recommendationPanel).getByText("View AI prompt");
+    const recommendationPromptDetails = recommendationPromptToggle.closest("details");
+    expect(recommendationPromptDetails).toBeTruthy();
+    expect(recommendationPromptDetails).not.toHaveAttribute("open");
+    await user.click(recommendationPromptToggle);
+    expect(recommendationPromptDetails).toHaveAttribute("open");
     expect(within(recommendationPanel).getByText("System prompt")).toBeInTheDocument();
     expect(within(recommendationPanel).getByText("NARRATIVE_SYSTEM")).toBeInTheDocument();
     expect(within(recommendationPanel).getByText("NARRATIVE_USER")).toBeInTheDocument();
