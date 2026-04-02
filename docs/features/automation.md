@@ -1,5 +1,31 @@
 # Automation Feature Notes
 
+## What "Run automation" Actually Executes
+
+`Run automation` is an internal SEO workflow trigger. It does **not** publish or modify external websites.
+
+Current manual execution path:
+
+1. `POST /.../actions/execution-items/{id}/run-automation` requests execution for a bound activated action.
+2. Backend calls `SEOAutomationService.trigger_manual_run(...)`.
+3. The service creates an internal `seo_automation_runs` record and executes configured steps.
+
+Current step behavior:
+
+- `audit_run`: crawls the configured site `base_url` over public HTTP(S) and stores audit artifacts internally.
+- `audit_summary`: generates/stores an internal summary record.
+- `competitor_snapshot_run`: creates a competitor snapshot run record (queued metadata record).
+- `comparison_run`: runs only when a completed snapshot output is available; otherwise skipped by dependency guard.
+- `competitor_summary`: summarizes completed comparison output when available.
+- `recommendation_run`: generates/stores internal recommendation records.
+- `recommendation_narrative`: generates/stores a narrative artifact from recommendation output.
+
+Boundary clarification:
+
+- No CMS publisher bridge is executed in this path.
+- No GoDaddy/WordPress/Webflow/Squarespace site-content update path is executed here.
+- Automation currently orchestrates internal analysis/state and generated artifacts; external site mutation is out of scope.
+
 ## Action Control Layer Integration
 
 Automation UI now participates in the shared frontend Action Control Layer so operators can quickly distinguish:

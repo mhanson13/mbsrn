@@ -207,6 +207,11 @@ Manual execution request bridge for bound activated actions:
   - no autonomous scheduling introduced
   - no execution on bind/activate side effects
 
+Current execution boundary:
+- `run-automation` triggers the internal `SEOAutomationService` step pipeline (audit/comparison/recommendation artifact generation and persistence).
+- It does not call a live-site publishing bridge and does not mutate external CMS-hosted page content.
+- Site records are URL/domain references (`seo_sites.base_url`, `seo_sites.normalized_domain`) used for crawl/analysis context.
+
 Observability:
 - structured service log event `action_chaining_generated` includes:
   - `source_action_id`
