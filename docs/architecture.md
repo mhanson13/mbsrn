@@ -124,6 +124,62 @@ Local validation strategy:
 - mock-driven transform tests (`actionExecution.test.ts`)
 - route-level UI tests using mocked payloads only (no provider/runtime dependency)
 
+## Action Chaining Layer
+
+The backend includes a deterministic Action Chaining Layer that generates follow-on actions after qualifying workflow transitions.
+
+Implementation points:
+- chain rules: `app/services/action_chaining_service.py`
+- chain schema: `app/schemas/action_chaining.py`
+- persistence model: `app/models/seo_action_chain_draft.py`
+- activation service: `app/services/action_chain_activation_service.py`
+- persistence repository: `app/repositories/seo_action_chain_draft_repository.py`
+- activated action repository: `app/repositories/seo_action_execution_item_repository.py`
+- transition hook: `app/services/seo_recommendations.py`
+- activation route: `POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/{action_id}/next-actions/{draft_id}/activate`
+
+Behavior:
+- no AI/provider calls
+- no asynchronous worker dependency
+- deterministic `action_type + state` rules only
+- additive persistence of `pending` chained drafts
+- additive activation from draft -> first-class action execution item
+
+Current transition mapping:
+- recommendation transition to `accepted` -> chained evaluation state `accepted`
+- recommendation transition to `resolved` -> chained evaluation state `completed`
+
+Current rule examples:
+- `seo_fix` + `accepted` -> `verify_fix`
+- `publish_content` + `completed` -> `promote_content`
+- `optimize_page` + `completed` -> `measure_performance`
+
+Persistence and idempotency:
+- chained outputs are stored in `seo_action_chain_drafts`
+- deduped per `(business_id, site_id, source_action_id, action_type)`
+- activated outputs are stored in `seo_action_execution_items`
+- activation is idempotent per draft (`source_draft_id` uniqueness) and returns the existing action id on repeat activation
+
+Chained draft lifecycle:
+- `pending` -> generated but not promoted
+- `activated` -> promoted to a first-class action execution item (`activated_action_id` persisted)
+
+Deterministic automation linkage metadata:
+- `automation_ready`: indicates whether a chained action type is suitable for later automation binding
+- `automation_template_key`: internal hint key used for future automation bindings (metadata-only; non-executing)
+
+Unified lineage read model:
+- service: `app/services/action_lineage_service.py`
+- endpoint: `GET /api/businesses/{business_id}/seo/sites/{site_id}/actions/{action_id}/lineage`
+- canonical response includes source action, chained drafts, activated actions, and deterministic counts
+- read-only hydration path for workspace/recommendation/automation UI consistency
+
+Observability:
+- structured service log event `action_chaining_generated` includes:
+  - `source_action_id`
+  - `generated_count`
+  - `action_types`
+
 ## Automation Output Review + Decision Capture
 
 The Action Control Layer now includes a thin Output Review + Decision Capture step to close the operator loop for output-ready items.

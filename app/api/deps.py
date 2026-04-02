@@ -58,6 +58,8 @@ from app.repositories.provider_oauth_state_repository import ProviderOAuthStateR
 from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.repositories.seo_audit_summary_repository import SEOAuditSummaryRepository
 from app.repositories.seo_automation_repository import SEOAutomationRepository
+from app.repositories.seo_action_chain_draft_repository import SEOActionChainDraftRepository
+from app.repositories.seo_action_execution_item_repository import SEOActionExecutionItemRepository
 from app.repositories.seo_competitor_repository import SEOCompetitorRepository
 from app.repositories.seo_competitor_profile_generation_repository import SEOCompetitorProfileGenerationRepository
 from app.repositories.seo_competitor_summary_repository import SEOCompetitorSummaryRepository
@@ -99,6 +101,8 @@ from app.services.seo_extractor import SEOExtractor
 from app.services.seo_finding_rules import SEOFindingRules
 from app.services.seo_recommendation_narratives import SEORecommendationNarrativeService
 from app.services.seo_recommendations import SEORecommendationService
+from app.services.action_chain_activation_service import ActionChainActivationService
+from app.services.action_lineage_service import ActionLineageService
 from app.services.seo_recommendation_narrative_prompt import SEO_RECOMMENDATION_NARRATIVE_PROMPT_VERSION
 from app.services.seo_sites import SEOSiteService
 from app.services.seo_summary import SEOSummaryService
@@ -173,6 +177,14 @@ def get_seo_audit_summary_repository(db: Session = Depends(get_db)) -> SEOAuditS
 
 def get_seo_automation_repository(db: Session = Depends(get_db)) -> SEOAutomationRepository:
     return SEOAutomationRepository(db)
+
+
+def get_seo_action_chain_draft_repository(db: Session = Depends(get_db)) -> SEOActionChainDraftRepository:
+    return SEOActionChainDraftRepository(db)
+
+
+def get_seo_action_execution_item_repository(db: Session = Depends(get_db)) -> SEOActionExecutionItemRepository:
+    return SEOActionExecutionItemRepository(db)
 
 
 def get_seo_competitor_repository(db: Session = Depends(get_db)) -> SEOCompetitorRepository:
@@ -787,8 +799,9 @@ def get_seo_recommendation_service(
     seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
     seo_audit_repository: SEOAuditRepository = Depends(get_seo_audit_repository),
     seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
+    seo_action_chain_draft_repository: SEOActionChainDraftRepository = Depends(get_seo_action_chain_draft_repository),
     seo_recommendation_repository: SEORecommendationRepository = Depends(get_seo_recommendation_repository),
-) -> SEORecommendationService:
+    ) -> SEORecommendationService:
     return SEORecommendationService(
         session=db,
         business_repository=business_repository,
@@ -796,7 +809,38 @@ def get_seo_recommendation_service(
         seo_site_repository=seo_site_repository,
         seo_audit_repository=seo_audit_repository,
         seo_competitor_repository=seo_competitor_repository,
+        seo_action_chain_draft_repository=seo_action_chain_draft_repository,
         seo_recommendation_repository=seo_recommendation_repository,
+    )
+
+
+def get_action_chain_activation_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
+    seo_action_chain_draft_repository: SEOActionChainDraftRepository = Depends(get_seo_action_chain_draft_repository),
+    seo_action_execution_item_repository: SEOActionExecutionItemRepository = Depends(
+        get_seo_action_execution_item_repository
+    ),
+) -> ActionChainActivationService:
+    return ActionChainActivationService(
+        session=db,
+        business_repository=business_repository,
+        seo_site_repository=seo_site_repository,
+        seo_action_chain_draft_repository=seo_action_chain_draft_repository,
+        seo_action_execution_item_repository=seo_action_execution_item_repository,
+    )
+
+
+def get_action_lineage_service(
+    seo_action_chain_draft_repository: SEOActionChainDraftRepository = Depends(get_seo_action_chain_draft_repository),
+    seo_action_execution_item_repository: SEOActionExecutionItemRepository = Depends(
+        get_seo_action_execution_item_repository
+    ),
+) -> ActionLineageService:
+    return ActionLineageService(
+        seo_action_chain_draft_repository=seo_action_chain_draft_repository,
+        seo_action_execution_item_repository=seo_action_execution_item_repository,
     )
 
 

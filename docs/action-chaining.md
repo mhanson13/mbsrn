@@ -1,0 +1,141 @@
+# Action Chaining
+
+## Purpose
+Action chaining generates deterministic follow-on actions after an operator-driven action reaches a qualifying state (accepted or completed).  
+This layer is additive and non-breaking:
+
+- no AI/provider calls
+- no background jobs
+- no workflow-engine redesign
+- deterministic, hardcoded rules only
+
+## Deterministic Rule System
+Rule execution lives in `app/services/action_chaining_service.py`.
+
+Input:
+- `ActionExecutionItem` (`action_id`, `action_type`, `state`, metadata)
+
+Output:
+- `NextActionDraft[]`
+
+Current rules:
+- `seo_fix` + `accepted` -> `verify_fix`
+- `publish_content` + `completed` -> `promote_content`
+- `optimize_page` + `completed` -> `measure_performance`
+
+Unknown action types or non-matching states return an empty list.
+
+## Persistence Model
+Generated follow-on actions are persisted in `seo_action_chain_drafts`.
+
+Storage fields include:
+- source action linkage (`source_action_id`)
+- deterministic chained `action_type`
+- title/description
+- optional priority
+- metadata json
+- state (`pending` by default)
+- timestamps
+
+This persistence is idempotent per `(business_id, site_id, source_action_id, action_type)` to prevent duplicate drafts on repeated updates.
+
+## Trigger Path
+Trigger point:
+- `SEORecommendationService.update_recommendation_workflow(...)`
+
+After a successful recommendation transition:
+- transition to `accepted` maps to chained state `accepted`
+- transition to `resolved` maps to chained state `completed`
+- deterministic chaining rules are evaluated
+- generated drafts are persisted additively
+
+Structured observability event:
+- `event=action_chaining_generated`
+- `source_action_id`
+- `generated_count`
+- `action_types`
+
+## Chained Draft Lifecycle
+Chained drafts now carry an explicit lifecycle:
+
+- `pending`: generated and persisted, not yet promoted to a first-class action
+- `activated`: promoted to a first-class action execution item
+
+Persisted fields on each chained draft:
+- `activation_state`
+- `activated_action_id`
+- `automation_ready`
+- `automation_template_key`
+
+## Unified Action Lineage Read Model
+
+To avoid stitching state from multiple endpoints, the API now provides one canonical lineage read payload:
+
+`GET /api/businesses/{business_id}/seo/sites/{site_id}/actions/{action_id}/lineage`
+
+Payload shape:
+
+- `source_action_id`
+- `chained_drafts[]`
+- `activated_actions[]`
+- `counts`
+  - `chained_draft_count`
+  - `activated_action_count`
+  - `automation_ready_count`
+
+This read model is hydration-only:
+- no writes
+- no provider calls
+- no workflow side effects
+
+UI surfaces should prefer lineage hydration for source-action views instead of inferring activation state from multiple independent calls.
+
+## Activation
+Activation is a deterministic, additive API transition:
+
+`POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/{action_id}/next-actions/{draft_id}/activate`
+
+Behavior:
+- validates business/site/source-action scope
+- promotes the target draft to one first-class action execution item
+- sets draft `activation_state=activated`
+- sets draft `activated_action_id` to the created action id
+- returns the updated draft payload
+
+### Idempotency guarantee
+Activation is idempotent per draft:
+- first activation creates one action execution item
+- repeated activation returns the same `activated_action_id`
+- no duplicate first-class actions are created for the same draft
+
+## Automation Linkage Metadata
+Automation linkage is metadata-only and deterministic.
+
+Current rule outputs:
+- `verify_fix`
+  - `automation_ready=false`
+  - `automation_template_key=null`
+- `promote_content`
+  - `automation_ready=true`
+  - `automation_template_key="content_promotion_followup"`
+- `measure_performance`
+  - `automation_ready=true`
+  - `automation_template_key="performance_check_followup"`
+
+These fields are hints for future automation orchestration and do **not** execute automation.
+
+## Current Limitation
+Activation does not schedule or execute automation.
+It only promotes chained drafts into first-class action execution items while preserving deterministic linkage metadata.
+
+## Example Flow
+`recommendation (seo_fix)` -> status patched to `accepted` -> chained draft `verify_fix` persisted as `pending` -> operator activates draft -> first-class action execution item created -> draft marked `activated`.
+
+## Extending Rules Safely
+To add new chaining behavior:
+1. Add a new deterministic branch in `generate_next_actions`.
+2. Keep conditions explicit (`action_type` + `state`).
+3. Add unit tests for:
+   - matching rule path
+   - non-matching safety path
+4. Keep outputs deterministic and provider-free.

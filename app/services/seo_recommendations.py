@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 import re
 import time
 from uuid import uuid4
@@ -17,18 +18,21 @@ from app.models.seo_recommendation_run import SEORecommendationRun
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.principal_repository import PrincipalRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
+from app.repositories.seo_action_chain_draft_repository import SEOActionChainDraftRepository
 from app.repositories.seo_competitor_repository import SEOCompetitorRepository
 from app.repositories.seo_recommendation_repository import (
     SEORecommendationListPageResult,
     SEORecommendationRepository,
 )
 from app.repositories.seo_site_repository import SEOSiteRepository
+from app.schemas.action_chaining import ActionExecutionItem, NextActionDraft
 from app.schemas.seo_recommendation import (
     SEORecommendationCompetitorEvidenceTrustTier,
     SEORecommendationListQuery,
     SEORecommendationRunCreateRequest,
     SEORecommendationWorkflowUpdateRequest,
 )
+from app.services.action_chaining_service import generate_next_actions
 
 
 SEVERITY_RANK: dict[str, int] = {"INFO": 1, "WARNING": 2, "CRITICAL": 3}
@@ -55,6 +59,11 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "snoozed": {"open", "in_progress", "accepted", "resolved", "dismissed"},
     "resolved": {"open"},
 }
+CHAINABLE_ACCEPTED_STATUS = "accepted"
+CHAINABLE_COMPLETED_STATUS = "resolved"
+CHAINED_ACTION_SOURCE = "action_chaining"
+CHAINABLE_ACTION_TYPES: set[str] = {"seo_fix", "publish_content", "optimize_page"}
+logger = logging.getLogger(__name__)
 
 
 def classify_competitor_evidence_link(
@@ -158,6 +167,7 @@ class SEORecommendationService:
         seo_site_repository: SEOSiteRepository,
         seo_audit_repository: SEOAuditRepository,
         seo_competitor_repository: SEOCompetitorRepository,
+        seo_action_chain_draft_repository: SEOActionChainDraftRepository,
         seo_recommendation_repository: SEORecommendationRepository,
     ) -> None:
         self.session = session
@@ -166,6 +176,7 @@ class SEORecommendationService:
         self.seo_site_repository = seo_site_repository
         self.seo_audit_repository = seo_audit_repository
         self.seo_competitor_repository = seo_competitor_repository
+        self.seo_action_chain_draft_repository = seo_action_chain_draft_repository
         self.seo_recommendation_repository = seo_recommendation_repository
 
     def run_recommendations(
@@ -350,6 +361,7 @@ class SEORecommendationService:
             updates["decision_reason"] = note_value
 
         now = utc_now()
+        previous_status_normalized = self._normalize_status(recommendation.status)
         status, decision = self._resolve_status_and_decision(
             current_status=recommendation.status,
             current_decision=recommendation.decision,
@@ -386,6 +398,12 @@ class SEORecommendationService:
         self.seo_recommendation_repository.save_recommendation(recommendation)
         self.session.commit()
         self.session.refresh(recommendation)
+
+        self._trigger_action_chaining_if_needed(
+            recommendation=recommendation,
+            previous_status=previous_status_normalized,
+            updated_by_principal_id=updated_by_principal_id,
+        )
         return recommendation
 
     def get_backlog(
@@ -406,6 +424,130 @@ class SEORecommendationService:
             site_id=site_id,
             items=items,
         )
+
+    def list_chained_action_drafts(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        source_action_id: str,
+    ) -> list[NextActionDraft]:
+        self._require_business(business_id)
+        self._require_site(business_id=business_id, site_id=site_id)
+        records = self.seo_action_chain_draft_repository.list_for_business_site_source_action(
+            business_id=business_id,
+            site_id=site_id,
+            source_action_id=source_action_id,
+        )
+        return [
+            NextActionDraft(
+                id=record.id,
+                action_type=record.action_type,
+                title=record.title,
+                description=record.description,
+                source_action_id=record.source_action_id,
+                priority=record.priority,
+                activation_state=record.activation_state,
+                activated_action_id=record.activated_action_id,
+                automation_template_key=record.automation_template_key,
+                automation_ready=bool(record.automation_ready),
+                metadata=record.metadata_json or {},
+            )
+            for record in records
+        ]
+
+    def _trigger_action_chaining_if_needed(
+        self,
+        *,
+        recommendation: SEORecommendation,
+        previous_status: str,
+        updated_by_principal_id: str | None,
+    ) -> None:
+        chained_state = self._derive_chained_state_for_transition(
+            previous_status=previous_status,
+            next_status=self._normalize_status(recommendation.status),
+        )
+        if chained_state is None:
+            return
+
+        action_type = self._derive_chainable_action_type(recommendation)
+        if action_type is None:
+            return
+
+        source_action = ActionExecutionItem(
+            action_id=recommendation.id,
+            action_type=action_type,
+            state=chained_state,
+            title=recommendation.title,
+            metadata={
+                "business_id": recommendation.business_id,
+                "site_id": recommendation.site_id,
+                "recommendation_run_id": recommendation.recommendation_run_id,
+                "source_rule_key": recommendation.rule_key,
+                "source_status": recommendation.status,
+            },
+        )
+        next_action_drafts = generate_next_actions(source_action)
+        if not next_action_drafts:
+            return
+
+        generated_action_types: list[str] = []
+        try:
+            for draft in next_action_drafts:
+                normalized_metadata = dict(draft.metadata or {})
+                normalized_metadata.update(
+                    {
+                        "source": CHAINED_ACTION_SOURCE,
+                        "source_rule_key": recommendation.rule_key,
+                        "source_status": recommendation.status,
+                        "updated_by_principal_id": updated_by_principal_id,
+                    }
+                )
+                draft_for_persistence: NextActionDraft = draft.model_copy(
+                    update={
+                        "source_action_id": recommendation.id,
+                        "metadata": normalized_metadata,
+                    }
+                )
+                _, created = self.seo_action_chain_draft_repository.create_if_missing(
+                    business_id=recommendation.business_id,
+                    site_id=recommendation.site_id,
+                    source_action_id=recommendation.id,
+                    draft=draft_for_persistence,
+                )
+                if created:
+                    generated_action_types.append(draft_for_persistence.action_type)
+            if not generated_action_types:
+                return
+            self.session.commit()
+        except Exception:  # noqa: BLE001
+            self.session.rollback()
+            logger.exception(
+                "event=action_chaining_generate_failed source_action_id=%s action_type=%s",
+                recommendation.id,
+                action_type,
+            )
+            return
+
+        logger.info(
+            "event=action_chaining_generated source_action_id=%s generated_count=%s action_types=%s",
+            recommendation.id,
+            len(generated_action_types),
+            generated_action_types,
+        )
+
+    def _derive_chained_state_for_transition(self, *, previous_status: str, next_status: str) -> str | None:
+        if next_status == CHAINABLE_ACCEPTED_STATUS and previous_status != CHAINABLE_ACCEPTED_STATUS:
+            return "accepted"
+        if next_status == CHAINABLE_COMPLETED_STATUS and previous_status != CHAINABLE_COMPLETED_STATUS:
+            return "completed"
+        return None
+
+    def _derive_chainable_action_type(self, recommendation: SEORecommendation) -> str | None:
+        candidate = (recommendation.rule_key or "").strip().lower()
+        if candidate in CHAINABLE_ACTION_TYPES:
+            return candidate
+        return None
 
     def get_prioritized_report(
         self,

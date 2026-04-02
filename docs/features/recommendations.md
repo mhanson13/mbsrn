@@ -113,3 +113,38 @@ The recommendations queue now applies a bounded client-side mutation queue for b
 
 - Production incidents showed large bulk actions (for example, 50+ recommendation updates) could overwhelm API/database connection pools when requests were fired in parallel.
 - The bounded queue reduces pool pressure while preserving current recommendation workflow semantics.
+
+## Chained Next-Action Activation
+
+Recommendation workflow chaining now exposes deterministic next-action drafts with activation state and linkage metadata.
+
+### Draft lifecycle
+
+- `pending`: generated from deterministic chain rules but not yet promoted
+- `activated`: promoted to a first-class action execution item
+
+### Activation API
+
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/actions/{action_id}/next-actions/{draft_id}/activate`
+
+### Canonical lineage API
+
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/actions/{action_id}/lineage`
+
+This response provides one read model for:
+- chained drafts
+- activated actions
+- automation readiness counts
+
+Recommendation/workspace surfaces can use this endpoint to hydrate action progression without stitching multiple endpoints.
+
+Response/read payloads for chained drafts now include:
+
+- `activation_state`
+- `activated_action_id`
+- `automation_ready`
+- `automation_template_key`
+
+### Idempotency behavior
+
+Activating the same draft repeatedly returns the same `activated_action_id` and does not create duplicate actions.

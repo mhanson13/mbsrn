@@ -14,6 +14,8 @@ from app.models.seo_audit_summary import SEOAuditSummary
 from app.models.seo_automation_config import SEOAutomationConfig
 from app.models.seo_automation_run import SEOAutomationRun
 from app.models.seo_action_decision import SEOActionDecision
+from app.models.seo_action_chain_draft import SEOActionChainDraft
+from app.models.seo_action_execution_item import SEOActionExecutionItem
 from app.models.seo_competitor_comparison_finding import SEOCompetitorComparisonFinding
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_comparison_summary import SEOCompetitorComparisonSummary
@@ -53,6 +55,8 @@ __all__ = [
     "SEOAutomationConfig",
     "SEOAutomationRun",
     "SEOActionDecision",
+    "SEOActionChainDraft",
+    "SEOActionExecutionItem",
     "SEOCompetitorComparisonFinding",
     "SEOCompetitorComparisonRun",
     "SEOCompetitorComparisonSummary",

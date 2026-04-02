@@ -25,6 +25,8 @@ from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfil
 from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
 from app.models.seo_competitor_tuning_preview_event import SEOCompetitorTuningPreviewEvent
+from app.models.seo_action_chain_draft import SEOActionChainDraft
+from app.models.seo_action_execution_item import SEOActionExecutionItem
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_narrative import SEORecommendationNarrative
 from app.models.seo_recommendation_run import SEORecommendationRun
@@ -715,6 +717,279 @@ def test_recommendation_workflow_patch_accepts_note_alias(db_session, seeded_bus
         },
     )
     assert patch_mismatch.status_code == 422
+
+
+def test_recommendation_workflow_patch_generates_chained_action_draft(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="action-chain.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+
+    create_run = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert create_run.status_code == 201
+    run_id = create_run.json()["id"]
+
+    list_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_response.status_code == 200
+    recommendation_id = list_response.json()["items"][0]["id"]
+
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.rule_key = "seo_fix"
+    db_session.add(recommendation)
+    db_session.commit()
+
+    patch_accept = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{recommendation_id}",
+        json={"status": "accepted"},
+    )
+    assert patch_accept.status_code == 200
+
+    drafts = (
+        db_session.query(SEOActionChainDraft)
+        .filter(SEOActionChainDraft.business_id == seeded_business.id)
+        .filter(SEOActionChainDraft.site_id == site_id)
+        .filter(SEOActionChainDraft.source_action_id == recommendation_id)
+        .order_by(SEOActionChainDraft.created_at.asc(), SEOActionChainDraft.id.asc())
+        .all()
+    )
+    assert len(drafts) == 1
+    assert drafts[0].action_type == "verify_fix"
+    assert drafts[0].state == "pending"
+    assert drafts[0].title == "Verify SEO fix impact"
+
+    read_back = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/next-actions"
+    )
+    assert read_back.status_code == 200
+    read_back_payload = read_back.json()
+    assert len(read_back_payload) == 1
+    assert read_back_payload[0]["id"] == drafts[0].id
+    assert read_back_payload[0]["action_type"] == "verify_fix"
+    assert read_back_payload[0]["source_action_id"] == recommendation_id
+    assert read_back_payload[0]["activation_state"] == "pending"
+    assert read_back_payload[0]["activated_action_id"] is None
+    assert read_back_payload[0]["automation_ready"] is False
+    assert read_back_payload[0]["automation_template_key"] is None
+
+    activate = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"{recommendation_id}/next-actions/{drafts[0].id}/activate"
+        )
+    )
+    assert activate.status_code == 200
+    activate_payload = activate.json()
+    assert activate_payload["id"] == drafts[0].id
+    assert activate_payload["activation_state"] == "activated"
+    assert activate_payload["activated_action_id"] is not None
+    assert activate_payload["action_type"] == "verify_fix"
+    assert activate_payload["source_action_id"] == recommendation_id
+    assert activate_payload["automation_ready"] is False
+    assert activate_payload["automation_template_key"] is None
+    first_activated_action_id = activate_payload["activated_action_id"]
+
+    activate_again = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"{recommendation_id}/next-actions/{drafts[0].id}/activate"
+        )
+    )
+    assert activate_again.status_code == 200
+    activate_again_payload = activate_again.json()
+    assert activate_again_payload["activation_state"] == "activated"
+    assert activate_again_payload["activated_action_id"] == first_activated_action_id
+
+    execution_items = (
+        db_session.query(SEOActionExecutionItem)
+        .filter(SEOActionExecutionItem.business_id == seeded_business.id)
+        .filter(SEOActionExecutionItem.site_id == site_id)
+        .filter(SEOActionExecutionItem.source_draft_id == drafts[0].id)
+        .all()
+    )
+    assert len(execution_items) == 1
+    assert execution_items[0].id == first_activated_action_id
+
+    # Repeated updates on the same accepted recommendation should not duplicate chained drafts.
+    patch_note_only = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{recommendation_id}",
+        json={"note": "Already accepted, confirm no duplicate chains"},
+    )
+    assert patch_note_only.status_code == 200
+
+    draft_count = (
+        db_session.query(SEOActionChainDraft)
+        .filter(SEOActionChainDraft.business_id == seeded_business.id)
+        .filter(SEOActionChainDraft.site_id == site_id)
+        .filter(SEOActionChainDraft.source_action_id == recommendation_id)
+        .count()
+    )
+    assert draft_count == 1
+
+    read_back_after_activation = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/next-actions"
+    )
+    assert read_back_after_activation.status_code == 200
+    read_back_after_activation_payload = read_back_after_activation.json()
+    assert len(read_back_after_activation_payload) == 1
+    assert read_back_after_activation_payload[0]["activation_state"] == "activated"
+    assert read_back_after_activation_payload[0]["activated_action_id"] == first_activated_action_id
+
+
+def test_activate_chained_action_draft_returns_not_found_for_missing_draft(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="action-chain-missing.example")
+
+    response = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{uuid4()}/"
+            f"next-actions/{uuid4()}/activate"
+        )
+    )
+    assert response.status_code == 404
+
+
+def test_chained_next_actions_expose_automation_linkage_metadata(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="action-chain-automation.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+
+    create_run = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert create_run.status_code == 201
+    run_id = create_run.json()["id"]
+
+    list_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_response.status_code == 200
+    recommendation_id = list_response.json()["items"][0]["id"]
+
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.rule_key = "publish_content"
+    db_session.add(recommendation)
+    db_session.commit()
+
+    patch_resolve = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{recommendation_id}",
+        json={"status": "resolved"},
+    )
+    assert patch_resolve.status_code == 200
+
+    read_back = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/next-actions"
+    )
+    assert read_back.status_code == 200
+    payload = read_back.json()
+    assert len(payload) == 1
+    assert payload[0]["action_type"] == "promote_content"
+    assert payload[0]["activation_state"] == "pending"
+    assert payload[0]["automation_ready"] is True
+    assert payload[0]["automation_template_key"] == "content_promotion_followup"
+
+
+def test_action_lineage_endpoint_returns_empty_lineage_when_no_chained_drafts(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="action-lineage-empty.example")
+
+    source_action_id = str(uuid4())
+    response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{source_action_id}/lineage"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source_action_id"] == source_action_id
+    assert payload["chained_drafts"] == []
+    assert payload["activated_actions"] == []
+    assert payload["counts"]["chained_draft_count"] == 0
+    assert payload["counts"]["activated_action_count"] == 0
+    assert payload["counts"]["automation_ready_count"] == 0
+
+
+def test_action_lineage_endpoint_hydrates_activated_action_consistently(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="action-lineage-activated.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+
+    create_run = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert create_run.status_code == 201
+    run_id = create_run.json()["id"]
+
+    list_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_response.status_code == 200
+    recommendation_id = list_response.json()["items"][0]["id"]
+
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.rule_key = "publish_content"
+    db_session.add(recommendation)
+    db_session.commit()
+
+    patch_resolve = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{recommendation_id}",
+        json={"status": "resolved"},
+    )
+    assert patch_resolve.status_code == 200
+
+    list_next_actions = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/next-actions"
+    )
+    assert list_next_actions.status_code == 200
+    next_actions = list_next_actions.json()
+    assert len(next_actions) == 1
+    draft_id = next_actions[0]["id"]
+    assert draft_id is not None
+
+    activate = client.post(
+        (
+            f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/"
+            f"{recommendation_id}/next-actions/{draft_id}/activate"
+        )
+    )
+    assert activate.status_code == 200
+    activated_action_id = activate.json()["activated_action_id"]
+    assert activated_action_id is not None
+
+    lineage = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/lineage")
+    assert lineage.status_code == 200
+    payload = lineage.json()
+    assert payload["source_action_id"] == recommendation_id
+    assert payload["counts"]["chained_draft_count"] == 1
+    assert payload["counts"]["activated_action_count"] == 1
+    assert payload["counts"]["automation_ready_count"] == 1
+
+    assert len(payload["chained_drafts"]) == 1
+    draft_payload = payload["chained_drafts"][0]
+    assert draft_payload["id"] == draft_id
+    assert draft_payload["source_action_id"] == recommendation_id
+    assert draft_payload["action_type"] == "promote_content"
+    assert draft_payload["activation_state"] == "activated"
+    assert draft_payload["activated_action_id"] == activated_action_id
+    assert draft_payload["automation_ready"] is True
+    assert draft_payload["automation_template_key"] == "content_promotion_followup"
+    assert draft_payload["draft_state"] == "pending"
+
+    assert len(payload["activated_actions"]) == 1
+    activated_payload = payload["activated_actions"][0]
+    assert activated_payload["id"] == activated_action_id
+    assert activated_payload["source_action_id"] == recommendation_id
+    assert activated_payload["source_draft_id"] == draft_id
+    assert activated_payload["action_type"] == "promote_content"
+    assert activated_payload["state"] == "pending"
+    assert activated_payload["automation_ready"] is True
+    assert activated_payload["automation_template_key"] == "content_promotion_followup"
 
 
 def test_recommendation_workflow_rejects_invalid_transitions_and_assignments(db_session, seeded_business) -> None:

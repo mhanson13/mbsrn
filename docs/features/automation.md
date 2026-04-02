@@ -79,3 +79,33 @@ This layer closes the operator loop by making output-ready automation states exp
 - what state the item is currently in
 - what decision was captured
 - what follow-up should happen next
+
+## Chained Draft Automation Linkage Metadata
+
+Deterministic chained drafts now carry explicit automation linkage metadata used for future automation integration planning:
+
+- `automation_ready` (boolean suitability hint)
+- `automation_template_key` (internal deterministic template key)
+
+Current deterministic mapping examples:
+
+- `verify_fix`: `automation_ready=false`, `automation_template_key=null`
+- `promote_content`: `automation_ready=true`, `automation_template_key="content_promotion_followup"`
+- `measure_performance`: `automation_ready=true`, `automation_template_key="performance_check_followup"`
+
+This metadata is informational for activation/read models only and does not execute or schedule automation.
+
+## Canonical Action Lineage Visibility
+
+Automation-adjacent UI can now consume canonical action lineage from:
+
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/actions/{action_id}/lineage`
+
+This endpoint surfaces:
+- chained drafts and activation state
+- activated first-class actions
+- automation readiness visibility in a single payload
+
+It remains read-only and metadata-only:
+- no automation execution
+- no scheduling side effects

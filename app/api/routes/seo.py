@@ -7,6 +7,8 @@ import re
 from urllib.parse import urlparse
 
 from app.api.deps import (
+    get_action_chain_activation_service,
+    get_action_lineage_service,
     TenantContext,
     SEOCompetitorProfileGenerationRunExecutor,
     get_seo_audit_repository,
@@ -87,6 +89,8 @@ from app.schemas.seo_competitor import (
     SEOCompetitorSnapshotRunRead,
 )
 from app.schemas.ai_prompt import build_ai_prompt_preview_read
+from app.schemas.action_chaining import NextActionDraft
+from app.schemas.action_chaining import ActionLineageResponse
 from app.schemas.seo_recommendation import (
     SEOCompetitorContextHealthCheckRead,
     SEOCompetitorContextHealthRead,
@@ -163,6 +167,12 @@ from app.services.seo_recommendations import (
     SEORecommendationValidationError,
     classify_competitor_evidence_link,
 )
+from app.services.action_chain_activation_service import (
+    ActionChainActivationService,
+    SEOActionChainActivationValidationError,
+    SEOActionChainDraftNotFoundError,
+)
+from app.services.action_lineage_service import ActionLineageService
 from app.services.seo_recommendation_narratives import (
     SEORecommendationNarrativeNotFoundError,
     SEORecommendationNarrativeService,
@@ -3131,6 +3141,95 @@ def patch_seo_recommendation(
     except SEORecommendationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return SEORecommendationRead.model_validate(recommendation)
+
+
+@router.get("/sites/{site_id}/actions/{action_id}/next-actions", response_model=list[NextActionDraft])
+@router_v1.get("/sites/{site_id}/actions/{action_id}/next-actions", response_model=list[NextActionDraft])
+def list_chained_next_actions(
+    business_id: str,
+    site_id: str,
+    action_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+) -> list[NextActionDraft]:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        return recommendation_service.list_chained_action_drafts(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            source_action_id=action_id,
+        )
+    except (SEOSiteNotFoundError, SEORecommendationNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEORecommendationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+@router.get("/sites/{site_id}/actions/{action_id}/lineage", response_model=ActionLineageResponse)
+@router_v1.get("/sites/{site_id}/actions/{action_id}/lineage", response_model=ActionLineageResponse)
+def get_action_lineage(
+    business_id: str,
+    site_id: str,
+    action_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
+) -> ActionLineageResponse:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        return action_lineage_service.get_action_lineage(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            source_action_id=action_id,
+        )
+    except SEOSiteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post(
+    "/sites/{site_id}/actions/{action_id}/next-actions/{draft_id}/activate",
+    response_model=NextActionDraft,
+)
+@router_v1.post(
+    "/sites/{site_id}/actions/{action_id}/next-actions/{draft_id}/activate",
+    response_model=NextActionDraft,
+)
+def activate_chained_next_action(
+    business_id: str,
+    site_id: str,
+    action_id: str,
+    draft_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    action_chain_activation_service: ActionChainActivationService = Depends(get_action_chain_activation_service),
+) -> NextActionDraft:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        result = action_chain_activation_service.activate_chained_action_draft(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            source_action_id=action_id,
+            draft_id=draft_id,
+            actor_principal_id=tenant_context.principal_id,
+        )
+    except (SEOSiteNotFoundError, SEOActionChainDraftNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOActionChainActivationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return result.draft
 
 
 @router.get("/sites/{site_id}/recommendations/backlog", response_model=SEORecommendationBacklogRead)
