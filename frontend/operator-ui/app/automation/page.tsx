@@ -18,7 +18,14 @@ import {
   deriveActionControls,
   deriveActionStatePresentation,
 } from "../../lib/transforms/actionExecution";
-import type { ActionControl, ActionDecision, ActionExecutionItem, AutomationRun, AutomationRunStep } from "../../lib/api/types";
+import type {
+  ActionControl,
+  ActionDecision,
+  ActionExecutionItem,
+  AutomationRun,
+  AutomationRunOutcomeSummary,
+  AutomationRunStep,
+} from "../../lib/api/types";
 
 const AUTOMATION_STEP_LABELS: Record<string, string> = {
   audit_run: "Audit run",
@@ -54,6 +61,14 @@ function normalizeAutomationRunSteps(run: AutomationRun): AutomationRunStep[] {
       finished_at: typeof step.finished_at === "string" ? step.finished_at : null,
       linked_output_id: typeof step.linked_output_id === "string" ? step.linked_output_id : null,
       error_message: typeof step.error_message === "string" ? step.error_message : null,
+      reason_summary: typeof step.reason_summary === "string" ? step.reason_summary : null,
+      pages_analyzed_count:
+        typeof step.pages_analyzed_count === "number" ? step.pages_analyzed_count : null,
+      issues_found_count: typeof step.issues_found_count === "number" ? step.issues_found_count : null,
+      recommendations_generated_count:
+        typeof step.recommendations_generated_count === "number"
+          ? step.recommendations_generated_count
+          : null,
     }));
 }
 
@@ -194,6 +209,9 @@ function automationStepOutcomeLabel(step: AutomationRunStep): string {
   if (normalizedStatus === "completed") {
     return step.linked_output_id ? "Completed with linked output" : "Completed";
   }
+  if (normalizedStatus === "skipped") {
+    return "Skipped";
+  }
   if (normalizedStatus === "failed") {
     return "Failed before output";
   }
@@ -206,7 +224,92 @@ function automationStepOutcomeLabel(step: AutomationRunStep): string {
   return step.status;
 }
 
+function normalizeAutomationRunOutcomeSummary(run: AutomationRun): AutomationRunOutcomeSummary | null {
+  const raw = run.outcome_summary;
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  if (typeof raw.summary_text !== "string" || typeof raw.summary_title !== "string") {
+    return null;
+  }
+  if (
+    typeof raw.steps_completed_count !== "number"
+    || typeof raw.steps_skipped_count !== "number"
+    || typeof raw.steps_failed_count !== "number"
+  ) {
+    return null;
+  }
+  return {
+    summary_title: raw.summary_title,
+    summary_text: raw.summary_text,
+    pages_analyzed_count: typeof raw.pages_analyzed_count === "number" ? raw.pages_analyzed_count : null,
+    issues_found_count: typeof raw.issues_found_count === "number" ? raw.issues_found_count : null,
+    recommendations_generated_count:
+      typeof raw.recommendations_generated_count === "number"
+        ? raw.recommendations_generated_count
+        : null,
+    steps_completed_count: raw.steps_completed_count,
+    steps_skipped_count: raw.steps_skipped_count,
+    steps_failed_count: raw.steps_failed_count,
+    terminal_outcome:
+      raw.terminal_outcome === "completed"
+      || raw.terminal_outcome === "completed_with_skips"
+      || raw.terminal_outcome === "failed"
+      || raw.terminal_outcome === "partial"
+        ? raw.terminal_outcome
+        : "partial",
+  };
+}
+
+function formatAutomationTerminalOutcomeLabel(
+  outcome: AutomationRunOutcomeSummary["terminal_outcome"] | null,
+): string | null {
+  if (!outcome) {
+    return null;
+  }
+  if (outcome === "completed") {
+    return "Completed";
+  }
+  if (outcome === "completed_with_skips") {
+    return "Completed with skips";
+  }
+  if (outcome === "failed") {
+    return "Failed";
+  }
+  return "Partial";
+}
+
+function automationTerminalOutcomeBadgeClass(
+  outcome: AutomationRunOutcomeSummary["terminal_outcome"] | null,
+): string {
+  if (outcome === "completed") {
+    return "badge-success";
+  }
+  if (outcome === "completed_with_skips" || outcome === "partial") {
+    return "badge-warn";
+  }
+  if (outcome === "failed") {
+    return "badge-error";
+  }
+  return "badge-muted";
+}
+
+function summarizeAutomationStepReason(step: AutomationRunStep): string | null {
+  if (step.reason_summary && step.reason_summary.trim().length > 0) {
+    return step.reason_summary.trim();
+  }
+  if (step.error_message && step.error_message.trim().length > 0) {
+    return step.error_message.trim();
+  }
+  return null;
+}
+
 function summarizeAutomationRunOutcome(run: AutomationRun): string {
+  const canonicalSummary = normalizeAutomationRunOutcomeSummary(run);
+  if (canonicalSummary?.summary_text) {
+    return canonicalSummary.summary_text;
+  }
+
   const steps = normalizeAutomationRunSteps(run);
   const completedStepCount = steps.filter((step) => normalizeStatusValue(step.status) === "completed").length;
   const failedStepCount = steps.filter((step) => normalizeStatusValue(step.status) === "failed").length;
@@ -241,6 +344,22 @@ function summarizeAutomationRunOutcome(run: AutomationRun): string {
 }
 
 function summarizeAutomationRunNextStep(run: AutomationRun): string {
+  const canonicalSummary = normalizeAutomationRunOutcomeSummary(run);
+  if (canonicalSummary?.terminal_outcome === "completed") {
+    return canonicalSummary.recommendations_generated_count && canonicalSummary.recommendations_generated_count > 0
+      ? "Review newly generated recommendations."
+      : "Review completed SEO artifacts and proceed with the next operator action.";
+  }
+  if (canonicalSummary?.terminal_outcome === "completed_with_skips") {
+    return "Review skipped steps and rerun after prerequisites are available.";
+  }
+  if (canonicalSummary?.terminal_outcome === "failed") {
+    return "Review failed step details before rerunning SEO automation.";
+  }
+  if (canonicalSummary?.terminal_outcome === "partial") {
+    return "Review partial outputs and rerun remaining steps once prerequisites are ready.";
+  }
+
   const status = normalizeStatusValue(run.status);
   if (status === "completed") {
     return "Review linked recommendation artifacts and decide next operator action.";
@@ -275,12 +394,14 @@ export default function AutomationPage() {
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [actionDecisions, setActionDecisions] = useState<Record<string, ActionDecision>>({});
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   const selectedSite = context.sites.find((site) => site.id === context.selectedSiteId) || null;
   const completedRuns = items.filter((run) => run.status.toLowerCase() === "completed").length;
   const runningRuns = items.filter((run) => run.status.toLowerCase() === "running").length;
   const failedRuns = items.filter((run) => run.status.toLowerCase() === "failed").length;
   const latestRun = deriveLatestAutomationRun(items);
+  const latestRunOutcomeSummary = latestRun ? normalizeAutomationRunOutcomeSummary(latestRun) : null;
   const latestRunSteps = latestRun ? normalizeAutomationRunSteps(latestRun) : [];
   const latestRecommendationRunOutputId = latestRun ? findAutomationRecommendationRunOutputId(latestRunSteps) : null;
   const latestRecommendationNarrativeOutputId = latestRun
@@ -315,6 +436,17 @@ export default function AutomationPage() {
   const latestRunActionControls = latestRunEffectiveActionExecutionItem
     ? deriveActionControls(latestRunEffectiveActionExecutionItem)
     : [];
+  const hasInFlightAutomationRun = items.some((run) => {
+    const normalized = normalizeStatusValue(run.status);
+    return normalized === "queued" || normalized === "running";
+  });
+  const automationPollingActive = Boolean(
+    hasInFlightAutomationRun
+    && !context.loading
+    && !context.error
+    && !loadingItems
+    && context.selectedSiteId,
+  );
 
   function handleLocalDecision(actionItemId: string, decision: ActionDecision): void {
     setActionDecisions((current) => ({
@@ -350,7 +482,19 @@ export default function AutomationPage() {
     return () => {
       cancelled = true;
     };
-  }, [context.businessId, context.error, context.loading, context.selectedSiteId, context.token]);
+  }, [context.businessId, context.error, context.loading, context.selectedSiteId, context.token, refreshNonce]);
+
+  useEffect(() => {
+    if (!automationPollingActive) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      setRefreshNonce((current) => current + 1);
+    }, 4000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [automationPollingActive]);
 
   if (context.loading) {
     return (
@@ -466,6 +610,11 @@ export default function AutomationPage() {
 
         {loadingItems ? <p className="hint muted">Loading automation runs...</p> : null}
         {itemsError ? <p className="hint error">{itemsError}</p> : null}
+        {automationPollingActive ? (
+          <p className="hint muted" data-testid="automation-polling-status">
+            Automation execution is in progress. Status refreshes automatically every few seconds.
+          </p>
+        ) : null}
 
         <div className="stack" data-testid="automation-quick-scan">
           {latestRun ? (
@@ -481,12 +630,30 @@ export default function AutomationPage() {
                   <span className={`badge ${automationStatusBadgeClass(latestRun.status)}`}>
                     {latestRun.status}
                   </span>
+                  {latestRunOutcomeSummary ? (
+                    <span className={`badge ${automationTerminalOutcomeBadgeClass(latestRunOutcomeSummary.terminal_outcome)}`}>
+                      {formatAutomationTerminalOutcomeLabel(latestRunOutcomeSummary.terminal_outcome)}
+                    </span>
+                  ) : null}
                   <span className={latestRunActionPresentation?.badgeClass || latestRunActionState.badgeClass}>
                     {latestRunActionPresentation?.label || latestRunActionState.label}
                   </span>
                   <span className="badge badge-muted">Trigger: {latestRun.trigger_source}</span>
                   <span className="badge badge-muted">Run: {latestRun.id}</span>
                 </div>
+                {latestRunOutcomeSummary ? (
+                  <div className="link-row">
+                    <span className="badge badge-muted">
+                      {latestRunOutcomeSummary.steps_completed_count} completed
+                    </span>
+                    <span className="badge badge-muted">
+                      {latestRunOutcomeSummary.steps_skipped_count} skipped
+                    </span>
+                    <span className="badge badge-muted">
+                      {latestRunOutcomeSummary.steps_failed_count} failed
+                    </span>
+                  </div>
+                ) : null}
                 <span className="hint">{summarizeAutomationRunOutcome(latestRun)}</span>
                 <span className="hint muted">{latestRunActionPresentation?.outcome || latestRunActionState.outcome}</span>
                 <span className="hint muted">Next step: {latestRunActionPresentation?.nextStep || latestRunActionState.nextStep}</span>
@@ -674,6 +841,7 @@ export default function AutomationPage() {
                                 const stepRecommendationNarrativeOutputId = step.step_name === "recommendation_narrative"
                                   ? step.linked_output_id
                                   : null;
+                                const stepReason = summarizeAutomationStepReason(step);
                                 return (
                                   <li key={`automation-step-${item.id}-${step.step_name}-${index}`} className="hint muted">
                                     <span className={`badge ${automationStatusBadgeClass(step.status)}`}>{step.status}</span>{" "}
@@ -681,7 +849,17 @@ export default function AutomationPage() {
                                     {automationStepOutcomeLabel(step)}
                                     {step.started_at ? ` · started ${formatDateTime(step.started_at)}` : ""}
                                     {step.finished_at ? ` · finished ${formatDateTime(step.finished_at)}` : ""}
-                                    {step.error_message ? ` · error: ${step.error_message}` : ""}
+                                    {stepReason ? ` · reason: ${stepReason}` : ""}
+                                    {step.pages_analyzed_count !== null && step.pages_analyzed_count !== undefined
+                                      ? ` · pages analyzed: ${step.pages_analyzed_count}`
+                                      : ""}
+                                    {step.issues_found_count !== null && step.issues_found_count !== undefined
+                                      ? ` · issues found: ${step.issues_found_count}`
+                                      : ""}
+                                    {step.recommendations_generated_count !== null
+                                      && step.recommendations_generated_count !== undefined
+                                      ? ` · recommendations generated: ${step.recommendations_generated_count}`
+                                      : ""}
                                     {stepRecommendationRunOutputId ? (
                                       <>
                                         {" "}

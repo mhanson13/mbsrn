@@ -46,6 +46,8 @@ describe("NavShell", () => {
     expect(adminLink).toBeInTheDocument();
     expect(adminLink).toHaveAttribute("href", "/admin");
     expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".topnav-links")).toHaveLength(1);
+    expect(document.querySelector(".topnav-inner")).toBeTruthy();
     expect(document.querySelector(".operator-shell-main-inner")).toBeTruthy();
     expect(document.querySelector(".operator-shell-main-inner-wide")).toBeNull();
     expect(document.querySelector(".operator-shell-main-inner-full")).toBeNull();

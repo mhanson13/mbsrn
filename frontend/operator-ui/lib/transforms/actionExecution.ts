@@ -200,9 +200,9 @@ export function deriveActionControls(item: ActionExecutionItem): ActionControl[]
       if (item.automationAvailable) {
         controls.push({
           type: "run_automation",
-          label: "Run automation",
+          label: "Run SEO automation",
           enabled: true,
-          reason: "Run automation to generate refreshed output linkage for operator review.",
+          reason: "Run SEO automation to generate refreshed output linkage for operator review.",
           emphasis: "secondary",
         });
       } else {

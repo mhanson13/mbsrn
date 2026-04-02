@@ -253,7 +253,7 @@ describe("recommendations queue optimistic workflows", () => {
     expect(quickScanItem).toHaveTextContent("No automation linkage detected");
     const quickScanControls = screen.getByTestId("recommendation-action-controls-rec-1");
     expect(quickScanControls).toHaveTextContent("Review recommendation");
-    expect(quickScanControls).toHaveTextContent("Run automation");
+    expect(quickScanControls).toHaveTextContent("Run SEO automation");
     const quickScanToggle = within(quickScanItem).getByRole("button", { name: "Show details" });
     expect(quickScanToggle).toHaveAttribute("aria-expanded", "false");
     await user.click(quickScanToggle);
@@ -281,6 +281,11 @@ describe("recommendations queue optimistic workflows", () => {
       screen.getByText("Yes. Ready-now recommendations still need an operator decision."),
     ).toBeInTheDocument();
     const decisivenessCellOne = screen.getByTestId("recommendation-decisiveness-rec-1");
+    const decisivenessBadges = decisivenessCellOne.querySelectorAll(".badge");
+    expect(decisivenessBadges.length).toBeGreaterThanOrEqual(3);
+    decisivenessBadges.forEach((badge) => {
+      expect(badge.textContent).toBeTruthy();
+    });
     expect(decisivenessCellOne).toHaveTextContent("Ready now");
     expect(decisivenessCellOne).toHaveTextContent("Quick win");
     expect(decisivenessCellOne).toHaveTextContent("Blocked by operator review");
@@ -297,7 +302,7 @@ describe("recommendations queue optimistic workflows", () => {
     const recOneDetailPanel = screen.getByTestId("recommendation-decisiveness-detail-panel-rec-1");
     const recOneExpandedControls = screen.getByTestId("recommendation-expanded-action-controls-rec-1");
     expect(recOneExpandedControls).toHaveTextContent("Review recommendation");
-    expect(recOneExpandedControls).toHaveTextContent("Run automation");
+    expect(recOneExpandedControls).toHaveTextContent("Run SEO automation");
     expect(recOneDetailRow).toBeInTheDocument();
     expect(recOneDetailPanel.closest("td")).toHaveAttribute("colspan", "11");
     expect(recOneDetailPanel).toHaveTextContent("High-value next step");
@@ -1145,7 +1150,7 @@ describe("recommendations queue optimistic workflows", () => {
     await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
 
     const outputReview = await screen.findByTestId("recommendation-output-review-rec-62");
-    await user.click(within(outputReview).getByRole("button", { name: "Run automation" }));
+    await user.click(within(outputReview).getByRole("button", { name: "Run SEO automation" }));
 
     await waitFor(() =>
       expect(mockRunActionExecutionItemAutomation).toHaveBeenCalledWith(

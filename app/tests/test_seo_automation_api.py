@@ -152,6 +152,11 @@ def test_phase4_manual_automation_run_sequencing_and_history(db_session, seeded_
     run_payload = triggered.json()
     assert run_payload["status"] == "completed"
     assert run_payload["trigger_source"] == "manual"
+    assert run_payload["outcome_summary"] is not None
+    assert run_payload["outcome_summary"]["terminal_outcome"] == "completed_with_skips"
+    assert run_payload["outcome_summary"]["steps_completed_count"] >= 1
+    assert run_payload["outcome_summary"]["steps_skipped_count"] >= 1
+    assert run_payload["outcome_summary"]["steps_failed_count"] == 0
 
     steps = _steps_by_name(run_payload)
     assert steps["audit_run"]["status"] == "completed"
@@ -161,6 +166,13 @@ def test_phase4_manual_automation_run_sequencing_and_history(db_session, seeded_
     assert steps["comparison_run"]["status"] == "skipped"
     assert steps["competitor_summary"]["status"] == "skipped"
     assert steps["recommendation_narrative"]["status"] == "skipped"
+    assert steps["audit_run"]["pages_analyzed_count"] is not None
+    assert steps["audit_run"]["issues_found_count"] is not None
+    assert steps["recommendation_run"]["recommendations_generated_count"] is not None
+    assert (
+        steps["comparison_run"]["reason_summary"]
+        == "Skipped because this step is disabled in automation configuration."
+    )
 
     listed = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-runs")
     assert listed.status_code == 200
@@ -230,11 +242,16 @@ def test_phase4_automation_summary_failure_isolation(db_session, seeded_business
     assert triggered.status_code == 201
     payload = triggered.json()
     assert payload["status"] == "failed"
+    assert payload["outcome_summary"] is not None
+    assert payload["outcome_summary"]["terminal_outcome"] == "failed"
+    assert payload["outcome_summary"]["steps_failed_count"] >= 1
+    assert "Failure signal" in payload["outcome_summary"]["summary_text"]
 
     steps = _steps_by_name(payload)
     assert steps["audit_run"]["status"] == "completed"
     assert steps["audit_summary"]["status"] == "failed"
     assert steps["recommendation_run"]["status"] == "completed"
+    assert steps["audit_summary"]["reason_summary"] is not None
 
     status = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-status")
     assert status.status_code == 200
@@ -321,3 +338,57 @@ def test_phase4_automation_audit_step_uses_business_crawl_page_limit(db_session,
     assert audit_run_detail.status_code == 200
     assert audit_run_detail.json()["max_pages"] == 55
     assert audit_run_detail.json()["crawl_max_pages_used"] == 55
+
+
+def test_phase4_automation_comparison_skip_reason_is_explicit_when_snapshot_not_completed(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="snapshot-skip-reason.example")
+    create_set = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-sets",
+        json={"name": "Snapshot Skip Set", "city": "Denver", "state": "CO"},
+    )
+    assert create_set.status_code == 201
+    competitor_set_id = create_set.json()["id"]
+    add_domain = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{competitor_set_id}/domains",
+        json={"base_url": "https://queued-snapshot.example/", "display_name": "Queued Snapshot"},
+    )
+    assert add_domain.status_code == 201
+
+    _create_config(
+        client,
+        seeded_business.id,
+        site_id,
+        trigger_audit=False,
+        trigger_competitor_snapshot=True,
+        trigger_comparison=True,
+        trigger_competitor_summary=True,
+        trigger_recommendations=False,
+        trigger_audit_summary=False,
+        trigger_recommendation_narrative=False,
+    )
+
+    triggered = client.post(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-runs")
+    assert triggered.status_code == 201
+    payload = triggered.json()
+    assert payload["status"] == "completed"
+    assert payload["outcome_summary"] is not None
+    assert payload["outcome_summary"]["terminal_outcome"] == "completed_with_skips"
+    assert payload["outcome_summary"]["steps_skipped_count"] >= 1
+    assert "Skipped step signal" in payload["outcome_summary"]["summary_text"]
+
+    steps = _steps_by_name(payload)
+    assert steps["competitor_snapshot_run"]["status"] == "completed"
+    assert steps["comparison_run"]["status"] == "skipped"
+    assert steps["competitor_summary"]["status"] == "skipped"
+    assert (
+        steps["comparison_run"]["reason_summary"]
+        == "Skipped because competitor snapshot output was not completed."
+    )
+    assert (
+        steps["competitor_summary"]["reason_summary"]
+        == "Skipped because competitor comparison output was not completed."
+    )

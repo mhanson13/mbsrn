@@ -5,9 +5,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.seo_automation_outcome_summary import (
+    build_automation_run_outcome_summary,
+    summarize_automation_step_reason,
+)
+
 SEOAutomationCadenceType = Literal["manual", "interval_minutes"]
 SEOAutomationTriggerSource = Literal["manual", "scheduled"]
 SEOAutomationStatus = Literal["queued", "running", "completed", "failed", "skipped"]
+SEOAutomationTerminalOutcome = Literal["completed", "completed_with_skips", "failed", "partial"]
 SEOAutomationStepName = Literal[
     "audit_run",
     "audit_summary",
@@ -111,6 +117,42 @@ class SEOAutomationStepRead(BaseModel):
     finished_at: datetime | None = None
     linked_output_id: str | None = None
     error_message: str | None = None
+    reason_summary: str | None = None
+    pages_analyzed_count: int | None = None
+    issues_found_count: int | None = None
+    recommendations_generated_count: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_step_payload(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            payload = dict(data)
+            metrics = payload.get("metrics")
+            if isinstance(metrics, dict):
+                payload["pages_analyzed_count"] = metrics.get("pages_analyzed_count")
+                payload["issues_found_count"] = metrics.get("issues_found_count")
+                payload["recommendations_generated_count"] = metrics.get(
+                    "recommendations_generated_count"
+                )
+            payload["reason_summary"] = summarize_automation_step_reason(
+                step_name=str(payload.get("step_name") or ""),
+                status=str(payload.get("status") or ""),
+                error_message=payload.get("error_message"),
+            )
+            return payload
+        return data
+
+
+class SEOAutomationRunOutcomeSummaryRead(BaseModel):
+    summary_title: str
+    summary_text: str
+    pages_analyzed_count: int | None = None
+    issues_found_count: int | None = None
+    recommendations_generated_count: int | None = None
+    steps_completed_count: int
+    steps_skipped_count: int
+    steps_failed_count: int
+    terminal_outcome: SEOAutomationTerminalOutcome
 
 
 class SEOAutomationRunRead(BaseModel):
@@ -126,6 +168,7 @@ class SEOAutomationRunRead(BaseModel):
     finished_at: datetime | None
     error_message: str | None
     steps_json: list[SEOAutomationStepRead] = Field(default_factory=list)
+    outcome_summary: SEOAutomationRunOutcomeSummaryRead | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -139,6 +182,20 @@ class SEOAutomationRunRead(BaseModel):
                 payload["steps_json"] = []
             return payload
         return data
+
+    @model_validator(mode="after")
+    def derive_outcome_summary(self) -> "SEOAutomationRunRead":
+        if self.outcome_summary is not None:
+            return self
+        normalized_steps = [step.model_dump(exclude_none=False) for step in self.steps_json]
+        summary_payload = build_automation_run_outcome_summary(
+            run_status=self.status,
+            steps=normalized_steps,
+            run_error_message=self.error_message,
+        )
+        if summary_payload is not None:
+            self.outcome_summary = SEOAutomationRunOutcomeSummaryRead.model_validate(summary_payload)
+        return self
 
 
 class SEOAutomationRunListResponse(BaseModel):

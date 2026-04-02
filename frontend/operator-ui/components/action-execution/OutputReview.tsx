@@ -211,6 +211,12 @@ export function OutputReview({
                 const runStartedAt = formatRunTimestamp(activatedAction?.automation_run_started_at);
                 const runCompletedAt = formatRunTimestamp(activatedAction?.automation_run_completed_at);
                 const runErrorSummary = (activatedAction?.automation_run_error_summary || "").trim() || null;
+                const runTerminalOutcome = (activatedAction?.automation_run_terminal_outcome || "").trim() || null;
+                const runSummaryTitle = (activatedAction?.automation_run_summary_title || "").trim() || null;
+                const runSummaryText = (activatedAction?.automation_run_summary_text || "").trim() || null;
+                const runStepsCompletedCount = activatedAction?.automation_run_steps_completed_count;
+                const runStepsSkippedCount = activatedAction?.automation_run_steps_skipped_count;
+                const runStepsFailedCount = activatedAction?.automation_run_steps_failed_count;
                 const canRunAutomation = Boolean(
                   !readOnly
                   && onRunAutomation
@@ -260,6 +266,34 @@ export function OutputReview({
                         Last automation run: <code>{activatedAction.last_automation_run_id}</code>
                       </p>
                     ) : null}
+                    {runTerminalOutcome ? (
+                      <p className="hint muted">
+                        Run outcome: <span className="text-strong">{runTerminalOutcome.replaceAll("_", " ")}</span>
+                      </p>
+                    ) : null}
+                    {runSummaryTitle ? (
+                      <p className="hint muted">
+                        <span className="text-strong">{runSummaryTitle}</span>
+                      </p>
+                    ) : null}
+                    {runSummaryText ? (
+                      <p className="hint muted">{runSummaryText}</p>
+                    ) : null}
+                    {typeof runStepsCompletedCount === "number"
+                      || typeof runStepsSkippedCount === "number"
+                      || typeof runStepsFailedCount === "number" ? (
+                        <div className="link-row">
+                          {typeof runStepsCompletedCount === "number" ? (
+                            <span className="badge badge-muted">{runStepsCompletedCount} completed</span>
+                          ) : null}
+                          {typeof runStepsSkippedCount === "number" ? (
+                            <span className="badge badge-muted">{runStepsSkippedCount} skipped</span>
+                          ) : null}
+                          {typeof runStepsFailedCount === "number" ? (
+                            <span className="badge badge-muted">{runStepsFailedCount} failed</span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     {runStartedAt ? (
                       <p className="hint muted">Run started: {runStartedAt}</p>
                     ) : null}
@@ -299,7 +333,7 @@ export function OutputReview({
                             disabled={runPending}
                             data-testid={dataTestId ? `${dataTestId}-run-${activatedAction.id}` : undefined}
                           >
-                            {runPending ? "Requesting..." : "Run automation"}
+                            {runPending ? "Requesting..." : "Run SEO automation"}
                           </button>
                         </div>
                       ) : (

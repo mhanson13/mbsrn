@@ -204,8 +204,14 @@ Manual execution request bridge for bound activated actions:
   - no duplicate concurrent run creation from repeated clicks
 - boundary:
   - manual operator request only
-  - no autonomous scheduling introduced
-  - no execution on bind/activate side effects
+- no autonomous scheduling introduced
+- no execution on bind/activate side effects
+
+Automation run observability/read-model finalization:
+- automation run responses now include deterministic `outcome_summary` for terminal runs
+- step payloads now expose concise `reason_summary` for skipped/failed steps
+- lineage activated-action overlays include terminal run summary fields so workspace/recommendation surfaces can show "what happened" + "what's next" without multi-endpoint inference
+- this remains analysis/artifact workflow visibility only (no external live-site publishing)
 
 Current execution boundary:
 - `run-automation` triggers the internal `SEOAutomationService` step pipeline (audit/comparison/recommendation artifact generation and persistence).

@@ -110,6 +110,77 @@ describe("automation page shared-shell framing", () => {
     expect(latestControls).toHaveTextContent("Mark as completed after confirming output and follow-up tasks.");
   });
 
+  it("renders canonical terminal outcome summary and step reason signals", async () => {
+    const user = userEvent.setup();
+    mockUseOperatorContext.mockReturnValue(buildContext());
+    mockFetchAutomationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "run-with-skips-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "completed",
+          trigger_source: "manual",
+          started_at: "2026-03-25T10:00:00Z",
+          finished_at: "2026-03-25T10:02:00Z",
+          error_message: null,
+          outcome_summary: {
+            summary_title: "Automation completed with skips",
+            summary_text:
+              "Automation completed with skips. 1 completed, 2 skipped, 0 failed. Skipped step signal: Skipped because competitor snapshot output was not completed.",
+            pages_analyzed_count: 42,
+            issues_found_count: 12,
+            recommendations_generated_count: 4,
+            steps_completed_count: 1,
+            steps_skipped_count: 2,
+            steps_failed_count: 0,
+            terminal_outcome: "completed_with_skips",
+          },
+          steps_json: [
+            {
+              step_name: "audit_run",
+              status: "completed",
+              started_at: "2026-03-25T10:00:01Z",
+              finished_at: "2026-03-25T10:00:40Z",
+              linked_output_id: "audit-run-1",
+              error_message: null,
+              pages_analyzed_count: 42,
+              issues_found_count: 12,
+            },
+            {
+              step_name: "comparison_run",
+              status: "skipped",
+              started_at: null,
+              finished_at: "2026-03-25T10:01:00Z",
+              linked_output_id: null,
+              error_message: "Snapshot run is not completed; comparison step skipped",
+              reason_summary: "Skipped because competitor snapshot output was not completed.",
+            },
+          ],
+          created_at: "2026-03-25T10:00:00Z",
+          updated_at: "2026-03-25T10:02:00Z",
+        },
+      ],
+      total: 1,
+    });
+
+    render(<AutomationPage />);
+
+    await screen.findByTestId("automation-latest-run-summary");
+    const latestSummary = screen.getByTestId("automation-latest-run-summary");
+    expect(latestSummary).toHaveTextContent("Completed with skips");
+    expect(latestSummary).toHaveTextContent("1 completed");
+    expect(latestSummary).toHaveTextContent("2 skipped");
+    expect(latestSummary).toHaveTextContent(
+      "Review skipped steps and rerun after prerequisites are available.",
+    );
+    expect(latestSummary).toHaveTextContent("Skipped because competitor snapshot output was not completed.");
+
+    const quickScanItem = screen.getByTestId("automation-quick-scan-item-run-with-skips-1");
+    await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
+    expect(quickScanItem).toHaveTextContent("reason: Skipped because competitor snapshot output was not completed.");
+  });
+
   it("renders disabled waiting controls with explicit reason while automation is in progress", async () => {
     mockUseOperatorContext.mockReturnValue(buildContext());
     mockFetchAutomationRuns.mockResolvedValueOnce({
@@ -148,6 +219,9 @@ describe("automation page shared-shell framing", () => {
     expect(statusButton).toBeDisabled();
     expect(latestControls).toHaveTextContent(
       "Automation is currently in progress. Review status while waiting for completion.",
+    );
+    expect(screen.getByTestId("automation-polling-status")).toHaveTextContent(
+      "Status refreshes automatically every few seconds.",
     );
   });
 

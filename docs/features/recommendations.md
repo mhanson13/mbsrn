@@ -214,3 +214,21 @@ Safety boundary:
 - manual operator request only
 - no automatic execution on activation/bind
 - no recommendation generation behavior change
+
+## Automation Outcome Context in Recommendation Surfaces
+
+Recommendation/workspace output-review surfaces now consume canonical lineage run outcome overlays to keep follow-up decisions clear:
+
+- run terminal outcome (`completed`, `completed_with_skips`, `failed`, `partial`)
+- concise run summary title/text
+- completed/skipped/failed step counts
+- optional SEO metrics when available
+
+Operator interpretation:
+- **completed**: review generated recommendation artifacts
+- **completed with skips**: review skipped-step reasons and rerun after prerequisites are available
+- **failed**: inspect failed-step reason before rerun
+
+Copy/intent boundary:
+- "Run SEO automation" triggers SEO analysis/artifact generation
+- it does not imply live-site CMS publishing or direct website modification

@@ -197,6 +197,23 @@ Canonical lineage now exposes execution metadata on `activated_actions[]` so wor
 - execution requested/running
 - last run succeeded/failed
 
+## Canonical Run Outcome Overlay on Lineage
+
+Activated lineage actions now include additive terminal run summary fields when a linked automation run is available:
+
+- `automation_run_terminal_outcome`
+- `automation_run_summary_title`
+- `automation_run_summary_text`
+- `automation_run_steps_completed_count`
+- `automation_run_steps_skipped_count`
+- `automation_run_steps_failed_count`
+- optional metrics (`automation_run_pages_analyzed_count`, `automation_run_issues_found_count`, `automation_run_recommendations_generated_count`)
+
+This keeps operator-facing next-step context deterministic without changing execution behavior:
+- read-only hydration
+- no automation scheduling side effects
+- no provider calls
+
 ## Execution Status Overlay in Canonical Lineage
 
 Canonical lineage now also hydrates live automation run overlay details for activated actions when `last_automation_run_id` is present:

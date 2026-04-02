@@ -682,6 +682,11 @@ class SEOAutomationService:
         try:
             result = action()
             linked_output_id = result[0] if isinstance(result, tuple) else result
+            step_metrics = self._derive_step_metrics(
+                business_id=run.business_id,
+                step_name=step_name,
+                linked_output_id=str(linked_output_id) if linked_output_id is not None else None,
+            )
             self._set_step_status(
                 run=run,
                 step_name=step_name,
@@ -690,6 +695,7 @@ class SEOAutomationService:
                 finished_at=utc_now(),
                 linked_output_id=str(linked_output_id) if linked_output_id is not None else None,
                 error_message=None,
+                metrics=step_metrics,
             )
             return result
         except (
@@ -739,6 +745,7 @@ class SEOAutomationService:
         finished_at=None,
         linked_output_id: str | None = None,
         error_message: str | None = None,
+        metrics: dict[str, int | None] | None = None,
     ) -> None:
         steps = [dict(step) for step in (run.steps_json or self._initial_steps())]
         for step in steps:
@@ -762,6 +769,11 @@ class SEOAutomationService:
                 step["linked_output_id"] = linked_output_id
             elif status in {FAILED_STEP_STATUS, SKIPPED_STEP_STATUS}:
                 step["linked_output_id"] = None
+
+            if metrics is not None:
+                step["metrics"] = metrics
+            elif status in {FAILED_STEP_STATUS, SKIPPED_STEP_STATUS}:
+                step["metrics"] = None
 
             step["error_message"] = error_message
             break
@@ -789,6 +801,7 @@ class SEOAutomationService:
             "finished_at": None,
             "linked_output_id": None,
             "error_message": None,
+            "metrics": None,
         }
 
     def _resolve_run_status(self, steps: list[dict[str, object]]) -> str:
@@ -853,3 +866,40 @@ class SEOAutomationService:
         site = self.seo_site_repository.get_for_business(business_id, site_id)
         if site is None:
             raise SEOAutomationNotFoundError("SEO site not found")
+
+    def _derive_step_metrics(
+        self,
+        *,
+        business_id: str,
+        step_name: str,
+        linked_output_id: str | None,
+    ) -> dict[str, int | None] | None:
+        if not linked_output_id:
+            return None
+        try:
+            if step_name == STEP_AUDIT_RUN:
+                audit_summary = self.seo_audit_service.get_run_summary(
+                    business_id=business_id,
+                    run_id=linked_output_id,
+                )
+                return {
+                    "pages_analyzed_count": audit_summary.total_pages,
+                    "issues_found_count": audit_summary.total_findings,
+                }
+            if step_name == STEP_RECOMMENDATION_RUN:
+                recommendation_run = self.seo_recommendation_service.get_run(
+                    business_id=business_id,
+                    recommendation_run_id=linked_output_id,
+                )
+                return {
+                    "recommendations_generated_count": recommendation_run.total_recommendations,
+                }
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "SEO automation step metrics unavailable business_id=%s step_name=%s linked_output_id=%s",
+                business_id,
+                step_name,
+                linked_output_id,
+                exc_info=True,
+            )
+        return None

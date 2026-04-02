@@ -217,3 +217,38 @@ Scope reminder:
 - observability only
 - no changes to execution engine behavior
 - no scheduling/autonomous execution added
+
+## Canonical Run Outcome Summary and Step Signals
+
+Automation run reads now expose a deterministic terminal summary and normalized step reasons for operator review.
+
+Run-level fields:
+- `outcome_summary.summary_title`
+- `outcome_summary.summary_text`
+- `outcome_summary.terminal_outcome` (`completed`, `completed_with_skips`, `failed`, `partial`)
+- `outcome_summary.steps_completed_count`
+- `outcome_summary.steps_skipped_count`
+- `outcome_summary.steps_failed_count`
+- optional metrics:
+  - `pages_analyzed_count`
+  - `issues_found_count`
+  - `recommendations_generated_count`
+
+Step-level fields:
+- `step.status` (`pending`, `running`, `completed`, `skipped`, `failed`)
+- `step.reason_summary` (concise skip/failure reason for operators)
+- optional metrics where available on completed steps
+
+Known dependency-driven skip clarity:
+- competitor comparison can be skipped when competitor snapshot output is queued/not completed
+- downstream competitor summary can be skipped when comparison output is not completed
+- these conditions are surfaced explicitly in `reason_summary` and reflected in run terminal summary text
+
+Operator-facing guidance:
+- completed: review generated recommendation artifacts
+- completed with skips: review skipped reasons and rerun once prerequisites are available
+- failed: review failed step reason before rerun
+
+Truth boundary:
+- this workflow runs SEO analysis/artifact generation
+- it does **not** publish changes to live customer websites

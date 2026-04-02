@@ -1077,6 +1077,15 @@ export interface ActionLineageActivatedAction {
   automation_run_started_at?: string | null;
   automation_run_completed_at?: string | null;
   automation_run_error_summary?: string | null;
+  automation_run_terminal_outcome?: "completed" | "completed_with_skips" | "failed" | "partial" | null;
+  automation_run_summary_title?: string | null;
+  automation_run_summary_text?: string | null;
+  automation_run_steps_completed_count?: number | null;
+  automation_run_steps_skipped_count?: number | null;
+  automation_run_steps_failed_count?: number | null;
+  automation_run_pages_analyzed_count?: number | null;
+  automation_run_issues_found_count?: number | null;
+  automation_run_recommendations_generated_count?: number | null;
   created_at?: string | null;
 }
 
@@ -1257,9 +1266,22 @@ export interface AutomationRun {
   started_at: string | null;
   finished_at: string | null;
   error_message: string | null;
+  outcome_summary?: AutomationRunOutcomeSummary | null;
   steps_json?: AutomationRunStep[] | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface AutomationRunOutcomeSummary {
+  summary_title: string;
+  summary_text: string;
+  pages_analyzed_count?: number | null;
+  issues_found_count?: number | null;
+  recommendations_generated_count?: number | null;
+  steps_completed_count: number;
+  steps_skipped_count: number;
+  steps_failed_count: number;
+  terminal_outcome: "completed" | "completed_with_skips" | "failed" | "partial";
 }
 
 export type AutomationStepName =
@@ -1278,6 +1300,10 @@ export interface AutomationRunStep {
   finished_at: string | null;
   linked_output_id: string | null;
   error_message: string | null;
+  reason_summary?: string | null;
+  pages_analyzed_count?: number | null;
+  issues_found_count?: number | null;
+  recommendations_generated_count?: number | null;
 }
 
 export interface AutomationRunListResponse {

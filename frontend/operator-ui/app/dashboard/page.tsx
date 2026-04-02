@@ -1,16 +1,202 @@
 "use client";
 
 import Link from "next/link";
-import { useOperatorContext } from "../../components/useOperatorContext";
+import { useEffect, useState } from "react";
+
 import { useAuth } from "../../components/AuthProvider";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { useOperatorContext } from "../../components/useOperatorContext";
+import {
+  fetchAutomationRuns,
+  fetchRecommendationWorkspaceSummary,
+} from "../../lib/api/client";
+import type {
+  AutomationRun,
+  RecommendationWorkspaceSummaryResponse,
+  SEOSite,
+} from "../../lib/api/types";
+
+type DashboardPriorityCue = {
+  title: string;
+  reason: string;
+  actionLabel: string;
+  href: string;
+  badgeClass: "badge-success" | "badge-warn" | "badge-muted" | "badge-error";
+};
+
+function formatDateTime(value: string | null): string {
+  if (!value) {
+    return "—";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
+function normalizeStatus(status: string | null | undefined): string {
+  return (status || "").trim().toLowerCase();
+}
+
+function latestAutomationRun(runs: AutomationRun[]): AutomationRun | null {
+  if (runs.length === 0) {
+    return null;
+  }
+  const sortedRuns = [...runs].sort((left, right) => {
+    const leftTime = Date.parse(left.updated_at || left.finished_at || left.started_at || "");
+    const rightTime = Date.parse(right.updated_at || right.finished_at || right.started_at || "");
+    if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) {
+      return right.id.localeCompare(left.id);
+    }
+    return rightTime - leftTime;
+  });
+  return sortedRuns[0] || null;
+}
+
+function buildPriorityCue(params: {
+  selectedSite: SEOSite | null;
+  latestAutomation: AutomationRun | null;
+  workspaceSummary: RecommendationWorkspaceSummaryResponse | null;
+  openRecommendations: number;
+}): DashboardPriorityCue {
+  const { selectedSite, latestAutomation, workspaceSummary, openRecommendations } = params;
+  const selectedSiteId = selectedSite?.id || "";
+  const latestAutomationStatus = normalizeStatus(latestAutomation?.status);
+
+  if (!selectedSite) {
+    return {
+      title: "Select a site first",
+      reason: "Operator signals are scoped by site. Choose a site to continue.",
+      actionLabel: "Open Sites",
+      href: "/sites",
+      badgeClass: "badge-warn",
+    };
+  }
+
+  if (!selectedSite.last_audit_run_id) {
+    return {
+      title: "Run the first audit",
+      reason: "This site has no audit baseline yet, so recommendation quality is limited.",
+      actionLabel: "Open Workspace",
+      href: `/sites/${selectedSite.id}`,
+      badgeClass: "badge-warn",
+    };
+  }
+
+  if (latestAutomationStatus === "failed") {
+    return {
+      title: "Review failed automation run",
+      reason: "The latest SEO automation run failed and needs operator follow-up before rerun.",
+      actionLabel: "Open Automation",
+      href: selectedSiteId ? `/automation?site_id=${selectedSiteId}` : "/automation",
+      badgeClass: "badge-error",
+    };
+  }
+
+  if (openRecommendations > 0) {
+    return {
+      title: "Review open recommendations",
+      reason: `${openRecommendations} recommendation${openRecommendations === 1 ? "" : "s"} currently need review.`,
+      actionLabel: "Open Recommendations",
+      href: selectedSiteId ? `/recommendations?site_id=${selectedSiteId}` : "/recommendations",
+      badgeClass: "badge-success",
+    };
+  }
+
+  if (latestAutomationStatus === "queued" || latestAutomationStatus === "running") {
+    return {
+      title: "Track automation progress",
+      reason: "Automation is currently in progress. Review the run outcome after completion.",
+      actionLabel: "View Automation Status",
+      href: selectedSiteId ? `/automation?site_id=${selectedSiteId}` : "/automation",
+      badgeClass: "badge-warn",
+    };
+  }
+
+  const analysisFreshnessStatus = workspaceSummary?.analysis_freshness?.status;
+  if (analysisFreshnessStatus === "pending_refresh" || analysisFreshnessStatus === "unknown") {
+    return {
+      title: "Refresh recommendation context",
+      reason: "Recommendation context is stale and should be refreshed before actioning changes.",
+      actionLabel: "Open Workspace",
+      href: `/sites/${selectedSite.id}`,
+      badgeClass: "badge-warn",
+    };
+  }
+
+  return {
+    title: "No immediate action needed",
+    reason: "Signals look stable. Continue with routine review of recommendations and automation outcomes.",
+    actionLabel: "Open Workspace",
+    href: `/sites/${selectedSite.id}`,
+    badgeClass: "badge-muted",
+  };
+}
 
 export default function DashboardPage() {
   const context = useOperatorContext();
   const { principal } = useAuth();
+  const [workspaceSummary, setWorkspaceSummary] = useState<RecommendationWorkspaceSummaryResponse | null>(null);
+  const [automationRuns, setAutomationRuns] = useState<AutomationRun[]>([]);
+  const [signalError, setSignalError] = useState<string | null>(null);
+  const [signalLoading, setSignalLoading] = useState(false);
+
+  const selectedSite = context.sites.find((site) => site.id === context.selectedSiteId) || null;
+
+  useEffect(() => {
+    if (context.loading || context.error || !context.selectedSiteId) {
+      setWorkspaceSummary(null);
+      setAutomationRuns([]);
+      setSignalError(null);
+      setSignalLoading(false);
+      return;
+    }
+    let cancelled = false;
+
+    async function loadSignals() {
+      setSignalLoading(true);
+      setSignalError(null);
+      const [workspaceResult, automationResult] = await Promise.allSettled([
+        fetchRecommendationWorkspaceSummary(context.token, context.businessId, context.selectedSiteId as string),
+        fetchAutomationRuns(context.token, context.businessId, context.selectedSiteId as string),
+      ]);
+      if (cancelled) {
+        return;
+      }
+
+      if (workspaceResult.status === "fulfilled") {
+        setWorkspaceSummary(workspaceResult.value);
+      } else {
+        setWorkspaceSummary(null);
+      }
+
+      if (automationResult.status === "fulfilled") {
+        setAutomationRuns(automationResult.value.items);
+      } else {
+        setAutomationRuns([]);
+      }
+
+      if (workspaceResult.status === "rejected" || automationResult.status === "rejected") {
+        setSignalError("Some dashboard signals are temporarily unavailable.");
+      }
+      setSignalLoading(false);
+    }
+
+    void loadSignals();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    context.businessId,
+    context.error,
+    context.loading,
+    context.selectedSiteId,
+    context.token,
+  ]);
 
   if (context.loading) {
     return (
@@ -41,19 +227,57 @@ export default function DashboardPage() {
     );
   }
 
-  const hasSites = context.sites.length > 0;
-  const hasUnauditedSite = context.sites.some((site) => !site.last_audit_run_id);
-  const hasCompletedAudit = context.sites.some(
-    (site) => (site.last_audit_status || "").trim().toLowerCase() === "completed",
-  );
+  const latestAutomation = latestAutomationRun(automationRuns);
+  const latestAutomationStatus = normalizeStatus(latestAutomation?.status);
+  const openRecommendations =
+    workspaceSummary?.recommendations?.filtered_summary?.open
+    ?? workspaceSummary?.recommendations?.items?.filter((item) => {
+      const status = normalizeStatus(item.status);
+      return status === "open" || status === "in_progress";
+    }).length
+    ?? 0;
+  const needsReviewCount = openRecommendations;
+  const priorityCue = buildPriorityCue({
+    selectedSite,
+    latestAutomation,
+    workspaceSummary,
+    openRecommendations,
+  });
+
+  const latestAuditStatus = selectedSite ? normalizeStatus(selectedSite.last_audit_status) : "";
+  const auditFreshnessValue = selectedSite?.last_audit_completed_at
+    ? formatDateTime(selectedSite.last_audit_completed_at)
+    : "Missing";
+  const recommendationRunStatus = normalizeStatus(workspaceSummary?.latest_run?.status);
+
+  const recentActivityItems: Array<{ label: string; value: string }> = [
+    {
+      label: "Latest audit",
+      value: selectedSite
+        ? `${selectedSite.last_audit_status || "unknown"} · ${formatDateTime(selectedSite.last_audit_completed_at)}`
+        : "No site selected",
+    },
+    {
+      label: "Latest automation",
+      value: latestAutomation
+        ? `${latestAutomation.status} · ${formatDateTime(latestAutomation.finished_at || latestAutomation.started_at)}`
+        : "No automation run recorded",
+    },
+    {
+      label: "Latest recommendation run",
+      value: workspaceSummary?.latest_run
+        ? `${workspaceSummary.latest_run.status} · ${formatDateTime(workspaceSummary.latest_run.completed_at)}`
+        : "No recommendation run recorded",
+    },
+  ];
 
   return (
-    <PageContainer>
+    <PageContainer width="wide" density="compact">
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
             title="Dashboard"
-            subtitle="Role-aware workspace status and next-step navigation."
+            subtitle="Operator-first summary for what to review next across audit, recommendations, and automation."
             headingLevel={1}
             variant="hero"
             meta={(
@@ -63,118 +287,105 @@ export default function DashboardPage() {
               </>
             )}
           />
-          <div className="workspace-summary-strip role-summary-strip">
+          <div className="workspace-summary-strip role-summary-strip" data-testid="dashboard-summary-strip">
             <SummaryStatCard
               label="Tracked sites"
               value={context.sites.length}
-              detail={hasSites ? "Configured and available" : "No sites configured yet"}
-              tone={hasSites ? "success" : "warning"}
+              detail={context.sites.length > 0 ? "Configured and available" : "No sites configured"}
+              tone={context.sites.length > 0 ? "success" : "warning"}
               variant="elevated"
             />
             <SummaryStatCard
-              label="Audit coverage"
-              value={hasCompletedAudit ? "Available" : "Missing"}
-              detail={hasCompletedAudit ? "Completed audit data found" : "Run first audit from Sites"}
-              tone={hasCompletedAudit ? "success" : "warning"}
+              label="Audit freshness"
+              value={latestAuditStatus ? latestAuditStatus : "missing"}
+              detail={auditFreshnessValue}
+              tone={latestAuditStatus === "completed" ? "success" : "warning"}
               variant="elevated"
             />
             <SummaryStatCard
-              label="Action state"
-              value={hasUnauditedSite ? "Review needed" : "Stable"}
-              detail={hasUnauditedSite ? "At least one site has no audit run" : "All tracked sites have audit history"}
-              tone={hasUnauditedSite ? "warning" : "neutral"}
+              label="Needs review"
+              value={needsReviewCount}
+              detail={needsReviewCount > 0 ? "Open recommendations" : "No open recommendation backlog"}
+              tone={needsReviewCount > 0 ? "warning" : "success"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Automation activity"
+              value={latestAutomation ? latestAutomation.status : "none"}
+              detail={
+                latestAutomation
+                  ? `Last update: ${formatDateTime(latestAutomation.finished_at || latestAutomation.started_at)}`
+                  : "No automation run yet"
+              }
+              tone={
+                latestAutomationStatus === "failed"
+                  ? "danger"
+                  : latestAutomationStatus === "running" || latestAutomationStatus === "queued"
+                    ? "warning"
+                    : "neutral"
+              }
               variant="elevated"
             />
           </div>
-          {!hasSites ? <p className="hint warning">No sites configured yet. Start by adding your first site.</p> : null}
-          {hasSites && hasUnauditedSite ? (
-            <p className="hint warning">At least one site has not been audited yet. Run your first audit from Sites.</p>
-          ) : null}
-          {hasCompletedAudit ? (
-            <p className="hint muted">Audit data is available. Next step: review recommendations.</p>
-          ) : null}
+          {signalLoading ? <p className="hint muted">Refreshing dashboard signals…</p> : null}
+          {signalError ? <p className="hint warning">{signalError}</p> : null}
         </SectionCard>
       </div>
 
-      <SectionCard variant="summary" className="role-surface-support recommendation-outcome-surface">
+      <SectionCard variant="emphasis" className="role-surface-support" data-testid="dashboard-priority-panel">
         <SectionHeader
-          title="Recommendation decisiveness cues"
-          subtitle="Use this short scan order: why now, blocker, then after-action visibility."
+          title="Do this now"
+          subtitle="Highest-priority deterministic next step from current workspace signals."
           headingLevel={2}
           variant="support"
-          actions={<Link href="/recommendations">Open Recommendations</Link>}
         />
-        <p className="hint">
-          <span className="text-strong">Why now:</span>{" "}
-          <span className="badge badge-warn">High-value next step</span>{" "}
-          <span className="badge badge-success">Ready now</span>{" "}
-          indicates the top item to review first.
-        </p>
-        <p className="hint">
-          <span className="text-strong">Blocking:</span>{" "}
-          <span className="badge badge-warn">Waiting on visibility</span>{" "}
-          or{" "}
-          <span className="badge badge-warn">Manual follow-up required</span>{" "}
-          means action is recorded but confirmation is still pending.
-        </p>
-        <p className="hint">
-          <span className="text-strong">After action:</span>{" "}
-          <span className="badge badge-muted">Review before applying</span>{" "}
-          for undecided items; after apply, verify visibility on the next refresh.
-        </p>
-        <p className="hint">
-          <span className="text-strong">Evidence preview:</span> queue/detail views show one compact proof line plus a trust-safe support cue.
-        </p>
-        <p className="hint">
-          <span className="text-strong">Choice support:</span>{" "}
-          <span className="badge badge-warn">Best immediate move</span>{" "}
-          <span className="badge badge-success">Quick win</span>{" "}
-          <span className="badge badge-muted">Lower-immediacy background item</span>{" "}
-          clarify what to do first versus what can be deferred.
-        </p>
-        <p className="hint">
-          <span className="text-strong">Lifecycle stage:</span>{" "}
-          <span className="badge badge-warn">Needs review / pending</span>{" "}
-          <span className="badge badge-success">Applied / completed</span>{" "}
-          <span className="badge badge-muted">Background item / revisit later</span>{" "}
-          keeps revisit timing explicit without opening detail pages.
-        </p>
-        <p className="hint">
-          <span className="text-strong">Freshness posture:</span>{" "}
-          <span className="badge badge-success">Fresh enough to act</span>{" "}
-          <span className="badge badge-warn">Review soon</span>{" "}
-          <span className="badge badge-warn">Pending refresh</span>{" "}
-          <span className="badge badge-warn">Possibly outdated</span>{" "}
-          shows whether a refresh is likely needed before action.
-        </p>
+        <div className="stack-tight">
+          <div className="link-row">
+            <span className={`badge ${priorityCue.badgeClass}`}>{priorityCue.title}</span>
+            {recommendationRunStatus ? (
+              <span className="badge badge-muted">Recommendation run: {recommendationRunStatus}</span>
+            ) : null}
+          </div>
+          <p className="hint muted">{priorityCue.reason}</p>
+          <div>
+            <Link href={priorityCue.href} className="button button-primary button-inline">
+              {priorityCue.actionLabel}
+            </Link>
+          </div>
+        </div>
       </SectionCard>
 
-      <SectionCard variant="summary" className="role-surface-support">
+      <SectionCard variant="summary" className="role-surface-support" data-testid="dashboard-recent-activity">
         <SectionHeader
-          title="Operator Navigation"
-          subtitle="Open the primary workflow surfaces for this role."
+          title="Recent activity"
+          subtitle="Latest terminal outcomes across audit, automation, and recommendation generation."
+          headingLevel={2}
+          variant="support"
+        />
+        <div className="stack-tight">
+          {recentActivityItems.map((item) => (
+            <p key={item.label} className="hint muted">
+              <span className="text-strong">{item.label}:</span> {item.value}
+            </p>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard variant="support" className="role-surface-support" data-testid="dashboard-quick-navigation">
+        <SectionHeader
+          title="Quick navigation"
+          subtitle="Direct links to operator workflows."
           headingLevel={2}
           variant="support"
         />
         <div className="link-row">
           <Link href="/sites">Sites</Link>
           <Link href="/audits">Audit Runs</Link>
-          <Link href="/competitors">Competitor Intelligence</Link>
           <Link href="/recommendations">Recommendations</Link>
-          <Link href="/automation">Automation Runs</Link>
-          <Link href="/business-profile">Google Business Profile</Link>
+          <Link href="/automation">Automation</Link>
+          <Link href="/competitors">Competitors</Link>
+          <Link href="/business-profile">Business Profile</Link>
         </div>
-      </SectionCard>
-
-      <SectionCard variant="support" className="role-surface-support">
-        <SectionHeader title="Admin" headingLevel={2} variant="support" />
-        {principal?.role === "admin" ? (
-          <p className="hint muted">
-            Business administration is available. Open <Link href="/admin">Admin</Link> to manage principals and settings.
-          </p>
-        ) : (
-          <p className="hint muted">Business administration is restricted to admin principals.</p>
-        )}
       </SectionCard>
     </PageContainer>
   );

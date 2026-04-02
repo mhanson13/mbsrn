@@ -9,6 +9,7 @@ from app.schemas.action_chaining import (
     ActionLineageDraft,
     ActionLineageResponse,
 )
+from app.core.seo_automation_outcome_summary import build_automation_run_outcome_summary
 
 
 class ActionLineageService:
@@ -103,11 +104,17 @@ class ActionLineageService:
             run_started_at = None
             run_completed_at = None
             run_error_summary = None
+            run_outcome_summary = None
             if run_record is not None:
                 run_status = (run_record.status or "").strip().lower() or None
                 run_started_at = run_record.started_at
                 run_completed_at = run_record.finished_at
                 run_error_summary = (run_record.error_message or "").strip() or None
+                run_outcome_summary = build_automation_run_outcome_summary(
+                    run_status=run_record.status,
+                    steps=run_record.steps_json or [],
+                    run_error_message=run_record.error_message,
+                )
                 if run_status == "queued":
                     effective_execution_state = "requested"
                 elif run_status == "running":
@@ -138,6 +145,35 @@ class ActionLineageService:
                     automation_run_started_at=run_started_at,
                     automation_run_completed_at=run_completed_at,
                     automation_run_error_summary=run_error_summary,
+                    automation_run_terminal_outcome=(
+                        run_outcome_summary.get("terminal_outcome") if run_outcome_summary else None
+                    ),
+                    automation_run_summary_title=(
+                        run_outcome_summary.get("summary_title") if run_outcome_summary else None
+                    ),
+                    automation_run_summary_text=(
+                        run_outcome_summary.get("summary_text") if run_outcome_summary else None
+                    ),
+                    automation_run_steps_completed_count=(
+                        run_outcome_summary.get("steps_completed_count") if run_outcome_summary else None
+                    ),
+                    automation_run_steps_skipped_count=(
+                        run_outcome_summary.get("steps_skipped_count") if run_outcome_summary else None
+                    ),
+                    automation_run_steps_failed_count=(
+                        run_outcome_summary.get("steps_failed_count") if run_outcome_summary else None
+                    ),
+                    automation_run_pages_analyzed_count=(
+                        run_outcome_summary.get("pages_analyzed_count") if run_outcome_summary else None
+                    ),
+                    automation_run_issues_found_count=(
+                        run_outcome_summary.get("issues_found_count") if run_outcome_summary else None
+                    ),
+                    automation_run_recommendations_generated_count=(
+                        run_outcome_summary.get("recommendations_generated_count")
+                        if run_outcome_summary
+                        else None
+                    ),
                     created_at=record.created_at,
                 )
             )

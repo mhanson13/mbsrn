@@ -551,7 +551,7 @@ describe("recommendation run detail page presentation", () => {
     render(<RecommendationRunDetailPage />);
 
     const outputReview = await screen.findByTestId("recommendation-run-output-review");
-    await user.click(within(outputReview).getByRole("button", { name: "Run automation" }));
+    await user.click(within(outputReview).getByRole("button", { name: "Run SEO automation" }));
 
     await waitFor(() =>
       expect(mockRunActionExecutionItemAutomation).toHaveBeenCalledWith(

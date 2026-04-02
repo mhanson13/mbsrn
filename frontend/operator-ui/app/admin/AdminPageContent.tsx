@@ -1372,7 +1372,7 @@ export default function AdminPage() {
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
-            title="Admin Console"
+            title="Admin Overview"
             subtitle="Manage principals, settings, integrations, and platform diagnostics for this business."
             headingLevel={1}
             variant="hero"
@@ -1471,11 +1471,14 @@ export default function AdminPage() {
           </div>
         </FormContainer>
 
-        <FormContainer onSubmit={(event) => void handleCreateAndLinkIdentity(event)}>
-          <h2>Create and Link Identity</h2>
-          <p className="hint muted">
-            Each sign-in identity maps to exactly one principal in this business.
-          </p>
+        <SectionCard variant="summary" className="role-surface-support">
+          <SectionHeader
+            title="Create and Link Identity"
+            subtitle="Create a sign-in identity and map it to a principal in this business."
+            headingLevel={2}
+            variant="support"
+          />
+          <FormContainer onSubmit={(event) => void handleCreateAndLinkIdentity(event)}>
 
           <label htmlFor="identity-principal">Principal</label>
           <select
@@ -1555,27 +1558,31 @@ export default function AdminPage() {
             </p>
           ) : null}
 
-          <div className="form-actions">
-            <button
-              className="button button-primary"
-              type="submit"
-              disabled={
-                identitySubmitting ||
-                users.length === 0 ||
-                identityAlreadyLinkedToSelectedPrincipal ||
-                identityLinkedToDifferentPrincipal
-              }
-            >
-              {identitySubmitting ? "Creating and Linking..." : "Create and Link Identity"}
-            </button>
-          </div>
-        </FormContainer>
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={
+                  identitySubmitting ||
+                  users.length === 0 ||
+                  identityAlreadyLinkedToSelectedPrincipal ||
+                  identityLinkedToDifferentPrincipal
+                }
+              >
+                {identitySubmitting ? "Creating and Linking..." : "Create and Link Identity"}
+              </button>
+            </div>
+          </FormContainer>
+        </SectionCard>
 
-        <FormContainer onSubmit={(event) => void handleUpdateCrawlPageLimit(event)} noValidate>
-          <h2>SEO Crawl Settings</h2>
-          <p className="hint muted">
-            Admin-controlled crawl page limit used by SEO audits and automation for this business.
-          </p>
+        <SectionCard variant="summary" className="role-surface-support">
+          <SectionHeader
+            title="SEO Crawl Settings"
+            subtitle="Configure crawl page limits used by SEO audits and automation for this business."
+            headingLevel={2}
+            variant="support"
+          />
+          <FormContainer onSubmit={(event) => void handleUpdateCrawlPageLimit(event)} noValidate>
           {settingsHealth.crawl.status === "invalid" ? (
             <p className="hint warning">
               Settings health: {settingsHealth.crawl.message}
@@ -1606,16 +1613,20 @@ export default function AdminPage() {
               {crawlPageLimitSubmitting ? "Saving..." : "Save Crawl Limit"}
             </button>
           </div>
-          {businessSettingsLoading ? <p className="hint muted">Loading business settings...</p> : null}
-          {crawlPageLimitMessage ? <p className="hint">{crawlPageLimitMessage}</p> : null}
-          {crawlPageLimitError ? <p className="hint error">{crawlPageLimitError}</p> : null}
-        </FormContainer>
+            {businessSettingsLoading ? <p className="hint muted">Loading business settings...</p> : null}
+            {crawlPageLimitMessage ? <p className="hint">{crawlPageLimitMessage}</p> : null}
+            {crawlPageLimitError ? <p className="hint error">{crawlPageLimitError}</p> : null}
+          </FormContainer>
+        </SectionCard>
 
-        <FormContainer onSubmit={(event) => void handleUpdateCompetitorCandidateQuality(event)} noValidate>
-          <h2>AI Competitor Candidate Quality</h2>
-          <p className="hint muted">
-            Admin-controlled deterministic tuning for competitor candidate scoring and exclusion at the business scope.
-          </p>
+        <SectionCard variant="summary" className="role-surface-support">
+          <SectionHeader
+            title="AI Competitor Candidate Quality"
+            subtitle="Tune deterministic competitor candidate quality and exclusion thresholds."
+            headingLevel={2}
+            variant="support"
+          />
+          <FormContainer onSubmit={(event) => void handleUpdateCompetitorCandidateQuality(event)} noValidate>
           {settingsHealth.competitorQuality.status === "invalid" ? (
             <p className="hint warning">
               Settings health: {settingsHealth.competitorQuality.message}
@@ -1702,24 +1713,28 @@ export default function AdminPage() {
             penalty: {COMPETITOR_DIRECTORY_PENALTY_MIN}-{COMPETITOR_DIRECTORY_PENALTY_MAX}, local alignment bonus:{" "}
             {COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN}-{COMPETITOR_LOCAL_ALIGNMENT_BONUS_MAX}.
           </p>
-          <div className="form-actions">
-            <button
-              className="button button-primary"
-              type="submit"
-              disabled={businessSettingsLoading || candidateQualitySubmitting}
-            >
-              {candidateQualitySubmitting ? "Saving..." : "Save Candidate Quality Settings"}
-            </button>
-          </div>
-          {candidateQualityMessage ? <p className="hint">{candidateQualityMessage}</p> : null}
-          {candidateQualityError ? <p className="hint error">{candidateQualityError}</p> : null}
-        </FormContainer>
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={businessSettingsLoading || candidateQualitySubmitting}
+              >
+                {candidateQualitySubmitting ? "Saving..." : "Save Candidate Quality Settings"}
+              </button>
+            </div>
+            {candidateQualityMessage ? <p className="hint">{candidateQualityMessage}</p> : null}
+            {candidateQualityError ? <p className="hint error">{candidateQualityError}</p> : null}
+          </FormContainer>
+        </SectionCard>
 
-        <FormContainer onSubmit={(event) => void handleUpdateCompetitorTimeoutSettings(event)} noValidate>
-          <h2>AI Competitor Generation Timeouts</h2>
-          <p className="hint muted">
-            Admin-controlled timeouts for competitor generation attempts at the business scope.
-          </p>
+        <SectionCard variant="summary" className="role-surface-support">
+          <SectionHeader
+            title="AI Competitor Generation Timeouts"
+            subtitle="Set primary and degraded retry timeout windows for competitor generation."
+            headingLevel={2}
+            variant="support"
+          />
+          <FormContainer onSubmit={(event) => void handleUpdateCompetitorTimeoutSettings(event)} noValidate>
           {settingsHealth.competitorTimeouts.status === "invalid" ? (
             <p className="hint warning">
               Settings health: {settingsHealth.competitorTimeouts.message}
@@ -1758,31 +1773,31 @@ export default function AdminPage() {
             Reduced-context degraded retry timeout. Leave blank to use the deployment default.
           </p>
 
-          <p className="hint muted">
-            Allowed range: {COMPETITOR_TIMEOUT_SECONDS_MIN}-{COMPETITOR_TIMEOUT_SECONDS_MAX} seconds.
-          </p>
-          <div className="form-actions">
-            <button
-              className="button button-primary"
-              type="submit"
-              disabled={businessSettingsLoading || competitorTimeoutSubmitting}
-            >
-              {competitorTimeoutSubmitting ? "Saving..." : "Save Competitor Timeouts"}
-            </button>
-          </div>
-          {competitorTimeoutMessage ? <p className="hint">{competitorTimeoutMessage}</p> : null}
-          {competitorTimeoutError ? <p className="hint error">{competitorTimeoutError}</p> : null}
-        </FormContainer>
+            <p className="hint muted">
+              Allowed range: {COMPETITOR_TIMEOUT_SECONDS_MIN}-{COMPETITOR_TIMEOUT_SECONDS_MAX} seconds.
+            </p>
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={businessSettingsLoading || competitorTimeoutSubmitting}
+              >
+                {competitorTimeoutSubmitting ? "Saving..." : "Save Competitor Timeouts"}
+              </button>
+            </div>
+            {competitorTimeoutMessage ? <p className="hint">{competitorTimeoutMessage}</p> : null}
+            {competitorTimeoutError ? <p className="hint error">{competitorTimeoutError}</p> : null}
+          </FormContainer>
+        </SectionCard>
 
-        <FormContainer onSubmit={(event) => void handleSavePromptOverrides(event)} noValidate>
-          <h2>AI Prompt Overrides</h2>
-          <p className="hint muted">
-            Business-level admin prompt overrides for competitor and recommendation generation.
-          </p>
-          <p className="hint muted">
-            Saved values override deployment defaults for this business. Leave blank or clear overrides to use
-            deployment fallback/default.
-          </p>
+        <SectionCard variant="summary" className="role-surface-support">
+          <SectionHeader
+            title="AI Prompt Overrides"
+            subtitle="Override competitor and recommendation prompts for this business scope."
+            headingLevel={2}
+            variant="support"
+          />
+          <FormContainer onSubmit={(event) => void handleSavePromptOverrides(event)} noValidate>
 
           <label htmlFor="ai-prompt-text-competitor">Competitor Prompt</label>
           <textarea
@@ -1818,26 +1833,27 @@ export default function AdminPage() {
             </strong>
           </p>
 
-          <div className="form-actions">
-            <button
-              className="button button-primary"
-              type="submit"
-              disabled={businessSettingsLoading || promptOverrideSubmitting}
-            >
-              {promptOverrideSubmitting ? "Saving..." : "Save Prompt Overrides"}
-            </button>
-            <button
-              className="button button-tertiary"
-              type="button"
-              onClick={() => void handleClearPromptOverrides()}
-              disabled={businessSettingsLoading || promptOverrideSubmitting}
-            >
-              Use Deployment Fallbacks
-            </button>
-          </div>
-          {promptOverrideMessage ? <p className="hint">{promptOverrideMessage}</p> : null}
-          {promptOverrideError ? <p className="hint error">{promptOverrideError}</p> : null}
-        </FormContainer>
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={businessSettingsLoading || promptOverrideSubmitting}
+              >
+                {promptOverrideSubmitting ? "Saving..." : "Save Prompt Overrides"}
+              </button>
+              <button
+                className="button button-tertiary"
+                type="button"
+                onClick={() => void handleClearPromptOverrides()}
+                disabled={businessSettingsLoading || promptOverrideSubmitting}
+              >
+                Use Deployment Fallbacks
+              </button>
+            </div>
+            {promptOverrideMessage ? <p className="hint">{promptOverrideMessage}</p> : null}
+            {promptOverrideError ? <p className="hint error">{promptOverrideError}</p> : null}
+          </FormContainer>
+        </SectionCard>
 
         <div className="message-stack">
           {submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
@@ -2094,6 +2110,18 @@ export default function AdminPage() {
             </tbody>
           </table>
         </div>
+      </SectionCard>
+
+      <SectionCard variant="support" className="role-surface-support">
+        <SectionHeader
+          title="Admin Console"
+          subtitle="Use the sections above to manage users, identities, settings, sites, and diagnostics."
+          headingLevel={2}
+          variant="support"
+        />
+        <p className="hint muted">
+          Save critical configuration changes before moving to principals and identity review.
+        </p>
       </SectionCard>
 
       <SectionCard variant="support" className="role-surface-support">

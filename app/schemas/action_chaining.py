@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 ActionChainActivationState = Literal["pending", "activated"]
 ActionAutomationBindingState = Literal["unbound", "bound"]
 ActionAutomationExecutionState = Literal["not_requested", "requested", "running", "succeeded", "failed"]
+AutomationRunTerminalOutcome = Literal["completed", "completed_with_skips", "failed", "partial"]
 
 
 class ActionExecutionItem(BaseModel):
@@ -84,6 +85,15 @@ class ActionLineageActivatedAction(BaseModel):
     automation_run_started_at: datetime | None = None
     automation_run_completed_at: datetime | None = None
     automation_run_error_summary: str | None = None
+    automation_run_terminal_outcome: AutomationRunTerminalOutcome | None = None
+    automation_run_summary_title: str | None = None
+    automation_run_summary_text: str | None = None
+    automation_run_steps_completed_count: int | None = None
+    automation_run_steps_skipped_count: int | None = None
+    automation_run_steps_failed_count: int | None = None
+    automation_run_pages_analyzed_count: int | None = None
+    automation_run_issues_found_count: int | None = None
+    automation_run_recommendations_generated_count: int | None = None
     created_at: datetime | None = None
 
 

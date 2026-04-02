@@ -56,6 +56,7 @@ import type {
   ActionExecutionItem,
   AIPromptPreview,
   AutomationRun,
+  AutomationRunOutcomeSummary,
   BusinessSettings,
   CompetitorCandidatePipelineSummary,
   CompetitorContextHealth,
@@ -265,6 +266,100 @@ function automationRunStatusBadgeClass(status: string | null | undefined): strin
     return "badge-warn";
   }
   return "badge-muted";
+}
+
+function normalizeAutomationRunOutcomeSummary(run: AutomationRun | null): AutomationRunOutcomeSummary | null {
+  const summary = run?.outcome_summary;
+  if (!summary || typeof summary !== "object") {
+    return null;
+  }
+  if (
+    typeof summary.summary_title !== "string"
+    || typeof summary.summary_text !== "string"
+    || typeof summary.steps_completed_count !== "number"
+    || typeof summary.steps_skipped_count !== "number"
+    || typeof summary.steps_failed_count !== "number"
+  ) {
+    return null;
+  }
+  return {
+    summary_title: summary.summary_title,
+    summary_text: summary.summary_text,
+    pages_analyzed_count:
+      typeof summary.pages_analyzed_count === "number" ? summary.pages_analyzed_count : null,
+    issues_found_count:
+      typeof summary.issues_found_count === "number" ? summary.issues_found_count : null,
+    recommendations_generated_count:
+      typeof summary.recommendations_generated_count === "number"
+        ? summary.recommendations_generated_count
+        : null,
+    steps_completed_count: summary.steps_completed_count,
+    steps_skipped_count: summary.steps_skipped_count,
+    steps_failed_count: summary.steps_failed_count,
+    terminal_outcome:
+      summary.terminal_outcome === "completed"
+      || summary.terminal_outcome === "completed_with_skips"
+      || summary.terminal_outcome === "failed"
+      || summary.terminal_outcome === "partial"
+        ? summary.terminal_outcome
+        : "partial",
+  };
+}
+
+function formatAutomationTerminalOutcomeLabel(
+  terminalOutcome: AutomationRunOutcomeSummary["terminal_outcome"] | null,
+): string | null {
+  if (!terminalOutcome) {
+    return null;
+  }
+  if (terminalOutcome === "completed") {
+    return "Completed";
+  }
+  if (terminalOutcome === "completed_with_skips") {
+    return "Completed with skips";
+  }
+  if (terminalOutcome === "failed") {
+    return "Failed";
+  }
+  return "Partial";
+}
+
+function automationTerminalOutcomeBadgeClass(
+  terminalOutcome: AutomationRunOutcomeSummary["terminal_outcome"] | null,
+): string {
+  if (terminalOutcome === "completed") {
+    return "badge-success";
+  }
+  if (terminalOutcome === "completed_with_skips" || terminalOutcome === "partial") {
+    return "badge-warn";
+  }
+  if (terminalOutcome === "failed") {
+    return "badge-error";
+  }
+  return "badge-muted";
+}
+
+function deriveAutomationRunNextStep(run: AutomationRun | null): string {
+  const summary = normalizeAutomationRunOutcomeSummary(run);
+  if (summary?.terminal_outcome === "completed") {
+    return summary.recommendations_generated_count && summary.recommendations_generated_count > 0
+      ? "Review newly generated recommendations."
+      : "Review completed SEO artifacts and proceed with the next operator action.";
+  }
+  if (summary?.terminal_outcome === "completed_with_skips") {
+    return "Review skipped steps and rerun after prerequisites are available.";
+  }
+  if (summary?.terminal_outcome === "failed") {
+    return "Review failed step details before rerunning SEO automation.";
+  }
+  if (summary?.terminal_outcome === "partial") {
+    return "Review partial outputs and rerun remaining steps once prerequisites are ready.";
+  }
+  const normalizedStatus = normalizeAutomationRunStatus(run?.status);
+  if (normalizedStatus === "running" || normalizedStatus === "queued") {
+    return "Wait for completion before taking downstream recommendation actions.";
+  }
+  return "Review automation run detail to confirm lifecycle and output state.";
 }
 
 function extractAutomationRecommendationRunOutputId(run: AutomationRun | null): string | null {
@@ -5893,11 +5988,15 @@ export default function SiteWorkspacePage() {
   ]);
 
   useEffect(() => {
-    const hasInFlightExecution = (queueResponse?.items || []).some((item) =>
+    const hasInFlightLineage = (queueResponse?.items || []).some((item) =>
       hasInFlightLineageExecution(item.action_lineage || null),
     );
+    const hasInFlightAutomationRun = automationRuns.some((run) => {
+      const normalizedStatus = normalizeAutomationRunStatus(run.status);
+      return normalizedStatus === "queued" || normalizedStatus === "running";
+    });
     if (
-      !hasInFlightExecution
+      (!hasInFlightLineage && !hasInFlightAutomationRun)
       || loadingWorkspace
       || context.loading
       || context.error
@@ -5913,7 +6012,7 @@ export default function SiteWorkspacePage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [context.error, context.loading, loadingWorkspace, queueResponse, siteId]);
+  }, [automationRuns, context.error, context.loading, loadingWorkspace, queueResponse, siteId]);
 
   if (context.loading) {
     return (
@@ -5966,6 +6065,7 @@ export default function SiteWorkspacePage() {
   const compactAuditPagesCrawled = latestAuditRun?.pages_crawled;
   const compactAuditErrors = latestAuditRun?.errors_encountered;
   const latestAutomationRun = automationRuns[0] || null;
+  const latestAutomationOutcomeSummary = normalizeAutomationRunOutcomeSummary(latestAutomationRun);
   const workspaceAutomationBindingTargetId = deriveAutomationBindingTargetId(automationRuns);
   const latestAutomationRecommendationRunOutputId = extractAutomationRecommendationRunOutputId(latestAutomationRun);
   const latestAutomationRecommendationNarrativeOutputId =
@@ -5974,26 +6074,27 @@ export default function SiteWorkspacePage() {
   const latestAutomationTriggerSource = latestAutomationRun?.trigger_source || "none";
   const latestAutomationStatusBadgeClass = automationRunStatusBadgeClass(latestAutomationStatus);
   const latestAutomationOutcomeCue = latestAutomationRun
-    ? (() => {
-      const normalizedStatus = normalizeAutomationRunStatus(latestAutomationRun.status);
-      if (normalizedStatus === "completed") {
-        return latestAutomationRecommendationNarrativeOutputId
-          ? "Completed with recommendation narrative output."
-          : latestAutomationRecommendationRunOutputId
-            ? "Completed with recommendation output."
-            : "Completed without linked recommendation output.";
-      }
-      if (normalizedStatus === "failed") {
-        return "Failed before linked recommendation output completed.";
-      }
-      if (normalizedStatus === "running") {
-        return "Automation is running; output may still change.";
-      }
-      if (normalizedStatus === "queued") {
-        return "Automation is queued and waiting to run.";
-      }
-      return `Automation status is ${latestAutomationRun.status}.`;
-    })()
+    ? latestAutomationOutcomeSummary?.summary_text
+      || (() => {
+        const normalizedStatus = normalizeAutomationRunStatus(latestAutomationRun.status);
+        if (normalizedStatus === "completed") {
+          return latestAutomationRecommendationNarrativeOutputId
+            ? "Completed with recommendation narrative output."
+            : latestAutomationRecommendationRunOutputId
+              ? "Completed with recommendation output."
+              : "Completed without linked recommendation output.";
+        }
+        if (normalizedStatus === "failed") {
+          return "Failed before linked recommendation output completed.";
+        }
+        if (normalizedStatus === "running") {
+          return "Automation is running; output may still change.";
+        }
+        if (normalizedStatus === "queued") {
+          return "Automation is queued and waiting to run.";
+        }
+        return `Automation status is ${latestAutomationRun.status}.`;
+      })()
     : "No automation lifecycle signal is available for this site yet.";
   const latestAutomationActionState = deriveAutomationRunOperatorActionState({
     runStatus: latestAutomationRun?.status || null,
@@ -6663,7 +6764,25 @@ export default function SiteWorkspacePage() {
             </div>
             <span className="hint">{latestAutomationOutcomeCue}</span>
             <span className="hint muted">{latestAutomationActionPresentation?.outcome || latestAutomationActionState.outcome}</span>
-            <span className="hint muted">Next step: {latestAutomationActionPresentation?.nextStep || latestAutomationActionState.nextStep}</span>
+            <span className="hint muted">
+              Next step: {latestAutomationOutcomeSummary ? deriveAutomationRunNextStep(latestAutomationRun) : latestAutomationActionPresentation?.nextStep || latestAutomationActionState.nextStep}
+            </span>
+            {latestAutomationOutcomeSummary ? (
+              <div className="link-row">
+                <span className={`badge ${automationTerminalOutcomeBadgeClass(latestAutomationOutcomeSummary.terminal_outcome)}`}>
+                  {formatAutomationTerminalOutcomeLabel(latestAutomationOutcomeSummary.terminal_outcome)}
+                </span>
+                <span className="badge badge-muted">
+                  {latestAutomationOutcomeSummary.steps_completed_count} completed
+                </span>
+                <span className="badge badge-muted">
+                  {latestAutomationOutcomeSummary.steps_skipped_count} skipped
+                </span>
+                <span className="badge badge-muted">
+                  {latestAutomationOutcomeSummary.steps_failed_count} failed
+                </span>
+              </div>
+            ) : null}
             {latestAutomationActionControls.length > 0 ? (
               <ActionControls
                 controls={latestAutomationActionControls}

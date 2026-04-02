@@ -86,7 +86,7 @@ describe("audits page shared-shell framing", () => {
 
     render(<AuditsPage />);
 
-    await screen.findByText("run-1");
+    await screen.findByTestId("audit-quick-scan-item-run-1");
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
     expect(screen.getByTestId("audit-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("audit-quick-scan-item-run-1");
@@ -96,5 +96,14 @@ describe("audits page shared-shell framing", () => {
     expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getByText("In progress")).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Run ID" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Business" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Site" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Started" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Completed" })).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Created" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Duration" })).toBeInTheDocument();
+    expect(screen.getByText("1m 00s")).toBeInTheDocument();
   });
 });

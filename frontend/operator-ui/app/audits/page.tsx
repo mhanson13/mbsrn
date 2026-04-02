@@ -23,6 +23,32 @@ function formatDateTime(value: string | null): string {
   return parsed.toLocaleString();
 }
 
+function formatDuration(startedAt: string | null, completedAt: string | null): string {
+  if (!startedAt) {
+    return "—";
+  }
+  const startedAtMs = Date.parse(startedAt);
+  if (!Number.isFinite(startedAtMs)) {
+    return "—";
+  }
+  const completedAtMs = completedAt ? Date.parse(completedAt) : Date.now();
+  if (!Number.isFinite(completedAtMs)) {
+    return "—";
+  }
+  const durationSeconds = Math.max(0, Math.floor((completedAtMs - startedAtMs) / 1000));
+  if (durationSeconds < 60) {
+    return `${durationSeconds}s`;
+  }
+  const minutes = Math.floor(durationSeconds / 60);
+  const seconds = durationSeconds % 60;
+  if (minutes < 60) {
+    return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes.toString().padStart(2, "0")}m`;
+}
+
 function deriveResultIndicator(run: SEOAuditRun): string {
   const status = (run.status || "").trim().toLowerCase();
   if (status === "completed") {
@@ -297,13 +323,9 @@ export default function AuditsPage() {
           <table className="table table-dense">
             <thead>
               <tr>
-                <th>Run ID</th>
-                <th>Business</th>
-                <th>Site</th>
                 <th>Status</th>
                 <th>Created</th>
-                <th>Started</th>
-                <th>Completed</th>
+                <th>Duration</th>
                 <th>Result</th>
               </tr>
             </thead>
@@ -322,19 +344,15 @@ export default function AuditsPage() {
                     }
                   }}
                 >
-                  <td>{run.id}</td>
-                  <td>{run.business_id}</td>
-                  <td>{run.site_id}</td>
                   <td>{run.status}</td>
                   <td>{formatDateTime(run.created_at)}</td>
-                  <td>{formatDateTime(run.started_at)}</td>
-                  <td>{formatDateTime(run.completed_at)}</td>
+                  <td>{formatDuration(run.started_at, run.completed_at)}</td>
                   <td>{deriveResultIndicator(run)}</td>
                 </tr>
               ))}
               {runs.length === 0 && !loadingRuns ? (
                 <tr>
-                  <td colSpan={8}>No audit runs found for the selected site.</td>
+                  <td colSpan={4}>No audit runs found for the selected site.</td>
                 </tr>
               ) : null}
             </tbody>

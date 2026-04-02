@@ -1303,6 +1303,15 @@ def test_run_automation_endpoint_updates_execution_state_and_hydrates_lineage(db
     assert activated_payload["automation_run_started_at"] is not None
     assert activated_payload["automation_run_completed_at"] is None
     assert activated_payload["automation_run_error_summary"] is None
+    assert activated_payload["automation_run_terminal_outcome"] is None
+    assert activated_payload["automation_run_summary_title"] is None
+    assert activated_payload["automation_run_summary_text"] is None
+    assert activated_payload["automation_run_steps_completed_count"] is None
+    assert activated_payload["automation_run_steps_skipped_count"] is None
+    assert activated_payload["automation_run_steps_failed_count"] is None
+    assert activated_payload["automation_run_pages_analyzed_count"] is None
+    assert activated_payload["automation_run_issues_found_count"] is None
+    assert activated_payload["automation_run_recommendations_generated_count"] is None
 
 
 def test_run_automation_endpoint_rejects_unbound_and_unready_actions(db_session, seeded_business) -> None:
@@ -1519,6 +1528,9 @@ def test_workspace_and_recommendation_reads_include_automation_execution_state(d
     assert activated_payload["automation_run_started_at"] is not None
     assert activated_payload["automation_run_completed_at"] is None
     assert activated_payload["automation_run_error_summary"] is None
+    assert activated_payload["automation_run_terminal_outcome"] is None
+    assert activated_payload["automation_run_summary_title"] is None
+    assert activated_payload["automation_run_summary_text"] is None
 
     workspace_summary = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
@@ -1537,6 +1549,9 @@ def test_workspace_and_recommendation_reads_include_automation_execution_state(d
     assert workspace_activated_payload["automation_run_started_at"] is not None
     assert workspace_activated_payload["automation_run_completed_at"] is None
     assert workspace_activated_payload["automation_run_error_summary"] is None
+    assert workspace_activated_payload["automation_run_terminal_outcome"] is None
+    assert workspace_activated_payload["automation_run_summary_title"] is None
+    assert workspace_activated_payload["automation_run_summary_text"] is None
 
 
 def test_recommendation_list_hydrates_action_lineage_when_available(db_session, seeded_business) -> None:
