@@ -9,7 +9,6 @@ import { OperationalItemCard } from "../../components/layout/OperationalItemCard
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
-import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -453,14 +452,6 @@ function CompetitorsPageContent() {
 
   return (
     <PageContainer width="wide" density="compact">
-      <SectionCard variant="support" className="role-surface-support">
-        <WorkflowSiteSelector
-          id="site-picker-competitors"
-          sites={sites}
-          selectedSiteId={selectedSiteId}
-          onChange={setSelectedSiteId}
-        />
-      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader

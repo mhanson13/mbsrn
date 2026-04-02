@@ -1473,6 +1473,18 @@ code {
   gap: var(--space-1);
 }
 
+.recommendation-workspace-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.workspace-recommendation-row-card {
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  padding: 0.52rem;
+}
+
 .workspace-recommendation-row-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1855,6 +1867,35 @@ code {
 
 .topnav-session button:hover {
   background: var(--shell-link-hover-bg);
+}
+
+.topnav-context-row {
+  border-top: 1px solid rgba(148, 163, 184, 0.24);
+  padding: 0.52rem 1rem 0.68rem;
+}
+
+.topnav-context-inner {
+  max-width: 1480px;
+  margin: 0 auto;
+}
+
+.topnav-site-selector {
+  max-width: 21rem;
+}
+
+.topnav-site-selector label {
+  color: color-mix(in srgb, var(--shell-header-text) 75%, transparent);
+}
+
+.topnav-site-selector .operator-select {
+  border-color: var(--shell-link-border);
+  background-color: var(--shell-link-bg);
+  color: var(--shell-header-text);
+}
+
+.topnav-site-selector .operator-select:hover {
+  border-color: var(--shell-link-active-border);
+  background-color: var(--shell-link-hover-bg);
 }
 
 .workspace-modal-backdrop {

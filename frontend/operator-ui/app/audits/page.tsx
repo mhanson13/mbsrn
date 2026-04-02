@@ -8,7 +8,6 @@ import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
-import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import { ApiRequestError, fetchAuditRuns } from "../../lib/api/client";
 import type { SEOAuditRun } from "../../lib/api/types";
@@ -176,14 +175,6 @@ export default function AuditsPage() {
 
   return (
     <PageContainer width="wide" density="compact">
-      <SectionCard variant="support" className="role-surface-support">
-        <WorkflowSiteSelector
-          id="site-picker-audit"
-          sites={context.sites}
-          selectedSiteId={context.selectedSiteId}
-          onChange={context.setSelectedSiteId}
-        />
-      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader

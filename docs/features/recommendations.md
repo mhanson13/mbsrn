@@ -258,6 +258,11 @@ The site workspace recommendation table no longer renders the legacy metadata he
 
 Recommendation content is still preserved in the card/row body and support rail.
 
+Additional cleanup:
+- recommendation runs/workspace detail now renders as card/list surfaces only
+- legacy table/grid shells and metadata column scaffolding are removed from the site workspace recommendation body
+- recommendation queue items on the site workspace use compact cards rather than mixed card+table composition
+
 ### AI Prompt debug panel behavior
 
 `View AI prompt` is now explicitly user-driven:

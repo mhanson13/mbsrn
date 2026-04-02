@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "./AuthProvider";
+import { WorkflowSiteSelector } from "./layout/WorkflowSiteSelector";
+import { useOperatorContext } from "./useOperatorContext";
 import { logoutSession } from "../lib/api/client";
 
 const links = [
@@ -19,6 +21,16 @@ const links = [
 
 type ShellWidthMode = "default" | "wide" | "full";
 
+const WORKFLOW_SITE_SELECTOR_PATH_PREFIXES = [
+  "/dashboard",
+  "/sites",
+  "/audits",
+  "/competitors",
+  "/recommendations",
+  "/automation",
+  "/business-profile",
+] as const;
+
 function resolveShellWidthMode(pathname: string): ShellWidthMode {
   if (pathname.startsWith("/sites/")) {
     return "full";
@@ -29,9 +41,45 @@ function resolveShellWidthMode(pathname: string): ShellWidthMode {
   return "wide";
 }
 
+function shouldShowWorkflowSiteSelector(pathname: string): boolean {
+  return WORKFLOW_SITE_SELECTOR_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
+  const context = useOperatorContext();
+
+  if (
+    !shouldShowWorkflowSiteSelector(pathname)
+    || context.loading
+    || !!context.error
+    || !context.businessId
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="topnav-context-row" data-testid="topnav-site-selector-row">
+      <div className="topnav-context-inner">
+        <WorkflowSiteSelector
+          id="global-workflow-site-selector"
+          sites={context.sites}
+          selectedSiteId={context.selectedSiteId}
+          onChange={context.setSelectedSiteId}
+          className="topnav-site-selector"
+        />
+      </div>
+    </div>
+  );
+}
+
 export function NavShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { token, refreshToken, principal, clearSession } = useAuth();
+  const showWorkflowSiteSelector = Boolean(
+    principal?.business_id && token && shouldShowWorkflowSiteSelector(pathname),
+  );
   const shellWidthMode = resolveShellWidthMode(pathname);
   const shellMainInnerClassName = [
     "operator-shell-main-inner",
@@ -93,6 +141,7 @@ export function NavShell({ children }: { children: React.ReactNode }) {
             )}
           </div>
         </div>
+        {showWorkflowSiteSelector ? <WorkflowHeaderSiteSelector pathname={pathname} /> : null}
       </header>
       <main className="operator-shell-main">
         <div className={shellMainInnerClassName}>{children}</div>

@@ -9,7 +9,6 @@ import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
-import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   activateSite,
@@ -386,15 +385,6 @@ export default function SitesPage() {
 
   return (
     <PageContainer>
-      <SectionCard variant="support" className="role-surface-support">
-        <WorkflowSiteSelector
-          id="site-picker-sites-page"
-          sites={context.sites}
-          selectedSiteId={context.selectedSiteId}
-          onChange={context.setSelectedSiteId}
-          label="Site"
-        />
-      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -475,7 +465,6 @@ export default function SitesPage() {
           subtitle="Current site inventory with audit status and direct workspace actions."
           headingLevel={2}
           variant="support"
-          meta={selectedSite ? <span className="hint muted">Selected site: <code>{selectedSite.id}</code></span> : null}
         />
         <div className="table-container">
           <table className="table">

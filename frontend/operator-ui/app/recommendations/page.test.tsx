@@ -236,7 +236,7 @@ describe("recommendations queue optimistic workflows", () => {
 
     await screen.findByText("Recommendation One");
     await screen.findByText("Recommendation Two");
-    expect(screen.getByLabelText("Site")).toHaveClass("operator-select");
+    expect(screen.queryByLabelText("Site")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Preset")).toHaveClass("operator-select");
     expect(screen.getByLabelText("Status")).toHaveClass("operator-select");
     expect(screen.getByLabelText("Priority")).toHaveClass("operator-select");

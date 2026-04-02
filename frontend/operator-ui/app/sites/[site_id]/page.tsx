@@ -8433,37 +8433,24 @@ export default function SiteWorkspacePage() {
           <p className="hint muted">No recommendations yet. Generate recommendations to see next best actions for this site.</p>
         ) : null}
         {queueResponse && queueResponse.items.length > 0 ? (
-          <div className="table-container">
-            <table className="table table-dense">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Priority</th>
-                  <th>Status</th>
-                  <th>Category</th>
-                  <th>Source</th>
-                  <th>Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {queueResponse.items.map((item) => (
-                  <tr key={item.id}>
-                    <td className="table-cell-wrap">
-                      <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
-                      <br />
-                      <span className="hint muted"><code>{item.id}</code></span>
-                    </td>
-                    <td>
-                      {item.priority_score} ({item.priority_band})
-                    </td>
-                    <td>{item.status}</td>
-                    <td>{item.category}</td>
-                    <td>{recommendationSourceType(item)}</td>
-                    <td>{formatDateTime(item.updated_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="stack-tight recommendation-workspace-list" data-testid="workspace-recommendation-queue-list">
+            {queueResponse.items.map((item) => (
+              <article key={item.id} className="workspace-recommendation-row-card">
+                <div className="workspace-recommendation-row-main workspace-recommendation-row-main-bounded">
+                  <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
+                  <span className="hint muted"><code>{item.id}</code></span>
+                </div>
+                <div className="link-row">
+                  <span className="badge badge-muted">
+                    {item.priority_score} ({item.priority_band})
+                  </span>
+                  <span className="badge badge-muted">{item.status}</span>
+                  <span className="badge badge-muted">{item.category}</span>
+                  <span className="badge badge-muted">{recommendationSourceType(item)}</span>
+                  <span className="badge badge-muted">Updated {formatDateTime(item.updated_at)}</span>
+                </div>
+              </article>
+            ))}
           </div>
         ) : null}
       </SectionCard>
@@ -8698,7 +8685,7 @@ export default function SiteWorkspacePage() {
                     </div>
                     {bucket.items.length > 4 ? (
                       <span className="hint muted">
-                        +{bucket.items.length - 4} more recommendation(s) shown in the detailed table below.
+                        +{bucket.items.length - 4} more recommendation(s) shown in the detailed list below.
                       </span>
                     ) : null}
                   </div>
@@ -8707,10 +8694,8 @@ export default function SiteWorkspacePage() {
             ) : null}
             {latestCompletedRecommendations.length > 0 ? (
               recommendationThemeSections.length <= 1 ? (
-                <div className="table-container">
-                  <table className="table table-dense">
-                    <tbody>
-                      {(recommendationThemeSections[0]?.items || latestCompletedRecommendations).map((item, index) => {
+                <div className="stack-tight recommendation-workspace-list">
+                  {(recommendationThemeSections[0]?.items || latestCompletedRecommendations).map((item, index) => {
                         const recommendationRank = recommendationRankById.get(item.id) ?? index;
                         const impactLabel = recommendationImpactLabel(item, recommendationRank);
                         const eeatCategories = normalizeEEATCategories(item.eeat_categories);
@@ -8746,13 +8731,16 @@ export default function SiteWorkspacePage() {
                         });
                         const rowId = recommendationRowId(item.id);
                         return (
-                          <tr
+                          <article
                             key={item.id}
                             id={rowId}
-                            className={startHereFocusedTargetId === rowId ? "start-here-target-active" : undefined}
+                            data-testid={`recommendation-workspace-item-${item.id}`}
+                            className={[
+                              "workspace-recommendation-row-card",
+                              startHereFocusedTargetId === rowId ? "start-here-target-active" : "",
+                            ].filter(Boolean).join(" ")}
                           >
-                            <td className="table-cell-wrap">
-                              <div className="workspace-recommendation-row-layout">
+                            <div className="workspace-recommendation-row-layout">
                                 <div
                                   className="workspace-recommendation-row-main workspace-recommendation-row-main-bounded"
                                   data-testid={`recommendation-row-main-${item.id}`}
@@ -8894,21 +8882,21 @@ export default function SiteWorkspacePage() {
                                       </div>
                                     </div>
                                   ) : null}
+                                  <div className="workspace-recommendation-row-support-group">
+                                    <span className="workspace-recommendation-row-support-label">Details</span>
+                                    <div className="link-row">
+                                      <span className="badge badge-muted">{item.category}</span>
+                                      <span className="badge badge-muted">{item.severity}</span>
+                                      <span className="badge badge-muted">
+                                        {item.priority_score} ({item.priority_band})
+                                      </span>
+                                    </div>
+                                  </div>
                                 </aside>
                               </div>
-                            </td>
-                            <td>{item.category}</td>
-                            <td>{item.severity}</td>
-                            <td>
-                              {item.priority_score} ({item.priority_band})
-                            </td>
-                            <td>{item.status}</td>
-                            <td className="table-cell-wrap">{truncateText(item.rationale, 180)}</td>
-                          </tr>
+                          </article>
                         );
                       })}
-                    </tbody>
-                  </table>
                 </div>
               ) : (
                 <div className="stack" data-testid="recommendation-theme-groups">
@@ -8928,10 +8916,8 @@ export default function SiteWorkspacePage() {
                       >
                         {formatRecommendationThemeSummary(section.theme)}
                       </span>
-                      <div className="table-container">
-                        <table className="table table-dense">
-                          <tbody>
-                            {section.items.map((item, index) => {
+                      <div className="stack-tight recommendation-workspace-list">
+                        {section.items.map((item, index) => {
                               const recommendationRank = recommendationRankById.get(item.id) ?? index;
                               const impactLabel = recommendationImpactLabel(item, recommendationRank);
                               const eeatCategories = normalizeEEATCategories(item.eeat_categories);
@@ -8967,13 +8953,16 @@ export default function SiteWorkspacePage() {
                               });
                               const rowId = recommendationRowId(item.id);
                               return (
-                                <tr
+                                <article
                                   key={item.id}
                                   id={rowId}
-                                  className={startHereFocusedTargetId === rowId ? "start-here-target-active" : undefined}
+                                  data-testid={`recommendation-workspace-item-${item.id}`}
+                                  className={[
+                                    "workspace-recommendation-row-card",
+                                    startHereFocusedTargetId === rowId ? "start-here-target-active" : "",
+                                  ].filter(Boolean).join(" ")}
                                 >
-                                  <td className="table-cell-wrap">
-                                    <div className="workspace-recommendation-row-layout">
+                                  <div className="workspace-recommendation-row-layout">
                                       <div
                                         className="workspace-recommendation-row-main workspace-recommendation-row-main-bounded"
                                         data-testid={`recommendation-row-main-${item.id}`}
@@ -9122,21 +9111,21 @@ export default function SiteWorkspacePage() {
                                             </div>
                                           </div>
                                         ) : null}
+                                        <div className="workspace-recommendation-row-support-group">
+                                          <span className="workspace-recommendation-row-support-label">Details</span>
+                                          <div className="link-row">
+                                            <span className="badge badge-muted">{item.category}</span>
+                                            <span className="badge badge-muted">{item.severity}</span>
+                                            <span className="badge badge-muted">
+                                              {item.priority_score} ({item.priority_band})
+                                            </span>
+                                          </div>
+                                        </div>
                                       </aside>
                                     </div>
-                                  </td>
-                                  <td>{item.category}</td>
-                                  <td>{item.severity}</td>
-                                  <td>
-                                    {item.priority_score} ({item.priority_band})
-                                  </td>
-                                  <td>{item.status}</td>
-                                  <td className="table-cell-wrap">{truncateText(item.rationale, 180)}</td>
-                                </tr>
+                                </article>
                               );
                             })}
-                          </tbody>
-                        </table>
                       </div>
                     </div>
                   ))}

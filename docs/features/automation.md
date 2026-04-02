@@ -279,7 +279,7 @@ The dashboard uses an action-first layout:
 - top summary strip
 - **Do this now** panel
 - recent activity panel
-- quick navigation row
+- global header navigation (no separate quick-navigation card)
 
 Intent:
 - prioritize immediate operator decisions over passive status browsing
@@ -327,10 +327,10 @@ This reinforces current product behavior:
 
 ## Workflow Site Selector Placement
 
-Workflow pages now use a shared top-of-page site selector pattern, including Automation.
+Workflow pages now use the shared global-header site selector pattern, including Automation.
 
 Operator intent:
-- site context is set once at the top of the page
+- site context is set once in header chrome
 - duplicate lower-page selectors are removed
 - labels such as `Selected Site` are no longer repeated in section bodies
 

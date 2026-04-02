@@ -7,7 +7,6 @@ import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
-import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   fetchAutomationRuns,
@@ -288,14 +287,6 @@ export default function DashboardPage() {
 
   return (
     <PageContainer width="wide" density="compact">
-      <SectionCard variant="support" className="role-surface-support">
-        <WorkflowSiteSelector
-          id="site-picker-dashboard"
-          sites={context.sites}
-          selectedSiteId={context.selectedSiteId}
-          onChange={context.setSelectedSiteId}
-        />
-      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
@@ -388,22 +379,6 @@ export default function DashboardPage() {
         </div>
       </SectionCard>
 
-      <SectionCard variant="support" className="role-surface-support" data-testid="dashboard-quick-navigation">
-        <SectionHeader
-          title="Quick navigation"
-          subtitle="Direct links to operator workflows."
-          headingLevel={2}
-          variant="support"
-        />
-        <div className="link-row">
-          <Link href="/sites">Sites</Link>
-          <Link href="/audits">Audit Runs</Link>
-          <Link href="/recommendations">Recommendations</Link>
-          <Link href="/automation">Automation</Link>
-          <Link href="/competitors">Competitors</Link>
-          <Link href="/business-profile">Business Profile</Link>
-        </div>
-      </SectionCard>
     </PageContainer>
   );
 }

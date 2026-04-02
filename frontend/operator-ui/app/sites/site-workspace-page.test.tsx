@@ -3810,7 +3810,7 @@ describe("site workspace timeline controls", () => {
       ),
     ).toBeInTheDocument();
     expect(within(trustGroup).getAllByText("Likely pages: /about, /contact").length).toBeGreaterThanOrEqual(1);
-    expect(within(trustGroup).getAllByRole("row")).toHaveLength(1);
+    expect(within(trustGroup).getByTestId("recommendation-workspace-item-rec-theme-1")).toBeInTheDocument();
 
     const experienceGroup = screen.getByTestId("recommendation-theme-group-experience_and_proof");
     expect(within(experienceGroup).getByText("Experience & proof")).toBeInTheDocument();
@@ -3820,7 +3820,7 @@ describe("site workspace timeline controls", () => {
         "Show proof of real work with testimonials, project examples, and outcome evidence.",
       ),
     ).toBeInTheDocument();
-    expect(within(experienceGroup).getAllByRole("row")).toHaveLength(1);
+    expect(within(experienceGroup).getByTestId("recommendation-workspace-item-rec-theme-2")).toBeInTheDocument();
 
     const authorityGroup = screen.getByTestId("recommendation-theme-group-authority_and_visibility");
     expect(within(authorityGroup).getByText("Authority & visibility")).toBeInTheDocument();
@@ -3830,7 +3830,7 @@ describe("site workspace timeline controls", () => {
         "Strengthen external credibility through citations, listings, and recognized signals.",
       ),
     ).toBeInTheDocument();
-    expect(within(authorityGroup).getAllByRole("row")).toHaveLength(1);
+    expect(within(authorityGroup).getByTestId("recommendation-workspace-item-rec-theme-3")).toBeInTheDocument();
 
     const expertiseGroup = screen.getByTestId("recommendation-theme-group-expertise_and_process");
     expect(within(expertiseGroup).getByText("Expertise & process")).toBeInTheDocument();
@@ -3842,7 +3842,7 @@ describe("site workspace timeline controls", () => {
         "Clarify how you work and what makes your process credible and capable.",
       ),
     ).toBeInTheDocument();
-    expect(within(expertiseGroup).getAllByRole("row")).toHaveLength(1);
+    expect(within(expertiseGroup).getByTestId("recommendation-workspace-item-rec-theme-4")).toBeInTheDocument();
 
     const generalGroup = screen.getByTestId("recommendation-theme-group-general_site_improvement");
     expect(within(generalGroup).getByText("General site improvement")).toBeInTheDocument();
@@ -3852,7 +3852,7 @@ describe("site workspace timeline controls", () => {
         "Improve core site clarity and fundamentals that support overall performance.",
       ),
     ).toBeInTheDocument();
-    expect(within(generalGroup).getAllByRole("row")).toHaveLength(1);
+    expect(within(generalGroup).getByTestId("recommendation-workspace-item-rec-theme-5")).toBeInTheDocument();
   });
 
   it("keeps grouped wrapper hidden when grouped metadata is absent or trivial", async () => {
@@ -7174,6 +7174,29 @@ describe("site workspace ai competitor profile drafts", () => {
     await user.click(enabledRejectButton as HTMLButtonElement);
     await screen.findByText("Draft rejected. No competitor record was created.");
     expect(mockRejectCompetitorProfileDraft).toHaveBeenCalled();
+  });
+
+  it("removes legacy recommendation metadata table headers from the workspace recommendation surface", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+
+    render(<SiteWorkspacePage />);
+
+    const recommendationsTab = await screen.findByRole("tab", { name: "Recommendations" });
+    await user.click(recommendationsTab);
+
+    const runsHeading = await screen.findByRole("heading", { name: "Recommendation Runs and Narratives" });
+    const runsSection = runsHeading.closest("section");
+    expect(runsSection).toBeTruthy();
+    const runsScope = within(runsSection as HTMLElement);
+    expect(runsScope.queryByRole("columnheader", { name: "Category" })).not.toBeInTheDocument();
+    expect(runsScope.queryByRole("columnheader", { name: "Severity" })).not.toBeInTheDocument();
+    expect(runsScope.queryByRole("columnheader", { name: "Priority" })).not.toBeInTheDocument();
+    const workspaceItemCount = (runsSection as HTMLElement).querySelectorAll(
+      '[data-testid^="recommendation-workspace-item-"]',
+    ).length;
+    expect(workspaceItemCount).toBeGreaterThan(0);
+    expect(screen.queryByText(/^Why this was suggested$/i)).not.toBeInTheDocument();
   });
 
   it("requires explicit synthetic scaffold confirmation and verified domain before acceptance", async () => {

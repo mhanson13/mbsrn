@@ -150,22 +150,17 @@ describe("dashboard operator-focused layout", () => {
     expect(screen.getByText("Error: context failed")).toBeInTheDocument();
   });
 
-  it("renders summary, priority, recent activity, and quick navigation", async () => {
+  it("renders summary, priority, and recent activity without the legacy quick navigation card", async () => {
     mockUseOperatorContext.mockReturnValue(baseContext());
     render(<DashboardPage />);
 
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Site")).toHaveClass("operator-select");
+    expect(screen.queryByLabelText("Site")).not.toBeInTheDocument();
     expect(screen.getByTestId("dashboard-summary-strip")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Do this now" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Recent activity" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Quick navigation" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sites" })).toHaveAttribute("href", "/sites");
-    expect(screen.getByRole("link", { name: "Business Profile" })).toHaveAttribute(
-      "href",
-      "/business-profile",
-    );
+    expect(screen.queryByRole("heading", { name: "Quick navigation" })).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(mockFetchRecommendationWorkspaceSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1");

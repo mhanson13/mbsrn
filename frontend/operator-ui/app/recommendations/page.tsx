@@ -12,7 +12,6 @@ import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
-import { WorkflowSiteSelector } from "../../components/layout/WorkflowSiteSelector";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -2058,14 +2057,6 @@ function RecommendationsPageContent() {
 
   return (
     <PageContainer width="full" density="compact">
-      <SectionCard variant="support" className="role-surface-support">
-        <WorkflowSiteSelector
-          id="site-picker-recommendations"
-          sites={context.sites}
-          selectedSiteId={context.selectedSiteId}
-          onChange={context.setSelectedSiteId}
-        />
-      </SectionCard>
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader

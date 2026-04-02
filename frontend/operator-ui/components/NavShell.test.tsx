@@ -4,6 +4,7 @@ import { NavShell } from "./NavShell";
 
 const mockUsePathname = jest.fn<string, []>();
 const mockUseAuth = jest.fn();
+const mockUseOperatorContext = jest.fn();
 
 jest.mock("next/navigation", () => ({
   usePathname: () => mockUsePathname(),
@@ -13,6 +14,10 @@ jest.mock("./AuthProvider", () => ({
   useAuth: () => mockUseAuth(),
 }));
 
+jest.mock("./useOperatorContext", () => ({
+  useOperatorContext: () => mockUseOperatorContext(),
+}));
+
 jest.mock("../lib/api/client", () => ({
   logoutSession: jest.fn(),
 }));
@@ -20,6 +25,29 @@ jest.mock("../lib/api/client", () => ({
 describe("NavShell", () => {
   beforeEach(() => {
     mockUsePathname.mockReturnValue("/dashboard");
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          business_id: "biz-1",
+          display_name: "Main Site",
+          base_url: "https://example.com/",
+          normalized_domain: "example.com",
+          is_active: true,
+          is_primary: true,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId: jest.fn(),
+      refreshSites: jest.fn(),
+    });
   });
 
   it("shows Admin navigation label for admin principals", () => {
@@ -54,6 +82,8 @@ describe("NavShell", () => {
     expect(document.querySelector(".operator-shell-main-inner")).toBeTruthy();
     expect(document.querySelector(".operator-shell-main-inner-wide")).toBeNull();
     expect(document.querySelector(".operator-shell-main-inner-full")).toBeNull();
+    expect(screen.getByTestId("topnav-site-selector-row")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-site-selector-global-workflow-site-selector")).toBeInTheDocument();
   });
 
   it("marks the matching top navigation link as active for nested routes", () => {
@@ -83,6 +113,7 @@ describe("NavShell", () => {
     expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveClass("is-active");
     expect(document.querySelector(".operator-shell-main-inner-full")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "User Mgmt" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("topnav-site-selector-row")).toBeInTheDocument();
   });
 
   it("applies wide shell width mode for dense workflow routes", () => {
@@ -107,6 +138,7 @@ describe("NavShell", () => {
     );
 
     expect(document.querySelector(".operator-shell-main-inner-wide")).toBeTruthy();
+    expect(screen.getByTestId("topnav-site-selector-row")).toBeInTheDocument();
   });
 
   it("applies wide shell width mode for business profile and admin routes", () => {
@@ -138,5 +170,6 @@ describe("NavShell", () => {
       </NavShell>,
     );
     expect(document.querySelector(".operator-shell-main-inner-wide")).toBeTruthy();
+    expect(screen.queryByTestId("topnav-site-selector-row")).not.toBeInTheDocument();
   });
 });

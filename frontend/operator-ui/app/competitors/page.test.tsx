@@ -196,7 +196,7 @@ describe("competitors page site-scoped loading", () => {
 
     const frontRangeRows = await screen.findAllByText("Front Range");
     expect(frontRangeRows.length).toBeGreaterThan(0);
-    expect(screen.getByLabelText("Site")).toHaveClass("operator-select");
+    expect(screen.queryByLabelText("Site")).not.toBeInTheDocument();
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
     expect(screen.getByTestId("competitor-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("competitor-quick-scan-item-set-1");
