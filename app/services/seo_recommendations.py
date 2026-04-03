@@ -100,6 +100,56 @@ AUDIT_TEMPLATES: dict[str, tuple[str, str, str]] = {
     "broken_internal_links": ("repair_broken_internal_links", "Repair broken internal links", "MEDIUM"),
 }
 
+_CONTENT_TARGET_TYPE_LABELS: dict[str, str] = {
+    "heading_h1": "Main heading",
+    "heading_h2": "Supporting headings",
+    "intro_paragraph": "Intro paragraph",
+    "service_description": "Service description",
+    "internal_links": "Internal links",
+    "meta_title": "Meta title",
+    "meta_description": "Meta description",
+    "faq_block": "FAQ section",
+    "image_alt_text": "Image alt text",
+    "canonical_tag": "Canonical tag",
+    "page_title_block": "Page title block",
+    "call_to_action": "Call to action",
+    "location_copy": "Location/service-area copy",
+}
+
+_AUDIT_FINDING_CONTENT_TARGETS: dict[str, tuple[str, ...]] = {
+    "missing_title": ("meta_title",),
+    "duplicate_title": ("meta_title",),
+    "title_too_short": ("meta_title",),
+    "title_too_long": ("meta_title",),
+    "missing_meta_description": ("meta_description",),
+    "duplicate_meta_description": ("meta_description",),
+    "meta_description_too_short": ("meta_description",),
+    "meta_description_too_long": ("meta_description",),
+    "missing_h1": ("heading_h1", "page_title_block"),
+    "multiple_h1": ("heading_h1", "heading_h2"),
+    "missing_h2": ("heading_h2",),
+    "thin_content": ("intro_paragraph", "service_description", "faq_block"),
+    "extremely_thin_content": ("intro_paragraph", "service_description", "faq_block", "call_to_action"),
+    "missing_canonical": ("canonical_tag",),
+    "missing_internal_links": ("internal_links",),
+    "broken_internal_links": ("internal_links",),
+}
+
+_COMPARISON_METRIC_CONTENT_TARGETS: dict[str, tuple[str, ...]] = {
+    "missing_title_count": ("meta_title",),
+    "title_coverage_percent": ("meta_title",),
+    "missing_meta_description_count": ("meta_description",),
+    "meta_description_coverage_percent": ("meta_description",),
+    "missing_h1_count": ("heading_h1", "page_title_block"),
+    "h1_coverage_percent": ("heading_h1", "page_title_block"),
+    "thin_content_count": ("intro_paragraph", "service_description", "faq_block"),
+    "missing_canonical_count": ("canonical_tag",),
+    "canonical_coverage_percent": ("canonical_tag",),
+    "missing_internal_links_count": ("internal_links",),
+    "internal_links_coverage_percent": ("internal_links",),
+    "page_count": ("service_description", "location_copy"),
+}
+
 
 class SEORecommendationNotFoundError(ValueError):
     pass
@@ -632,7 +682,13 @@ class SEORecommendationService:
                 count=count,
                 source="audit",
             )
-            rationale = f"{count} page-level SEO audit finding(s) for '{finding_type}' detected in the baseline audit."
+            content_targets = self._derive_audit_content_targets(finding_type)
+            target_content_summary = self._format_target_content_summary(content_targets)
+            rationale = self._build_audit_recommendation_rationale(
+                finding_type=finding_type,
+                finding_count=count,
+                target_content_summary=target_content_summary,
+            )
             self._upsert_draft(
                 drafts=drafts,
                 draft=_RecommendationDraft(
@@ -647,6 +703,8 @@ class SEORecommendationService:
                         "sources": ["audit"],
                         "finding_types": [finding_type],
                         "counts": {finding_type: count},
+                        "target_content_types": content_targets,
+                        "target_content_summary": target_content_summary,
                     },
                 ),
             )
@@ -675,7 +733,14 @@ class SEORecommendationService:
                 count=max(count, trails_count),
                 source="comparison",
             )
-            rationale = grouped["rationale"]
+            metric_key = re.sub(r"_gap$", "", finding_type)
+            content_targets = self._derive_comparison_content_targets(finding_type=finding_type, metric_key=metric_key)
+            target_content_summary = self._format_target_content_summary(content_targets)
+            rationale = self._build_comparison_recommendation_rationale(
+                finding_type=finding_type,
+                fallback_rationale=str(grouped["rationale"]),
+                target_content_summary=target_content_summary,
+            )
             self._upsert_draft(
                 drafts=drafts,
                 draft=_RecommendationDraft(
@@ -691,6 +756,8 @@ class SEORecommendationService:
                         "finding_types": [finding_type],
                         "counts": {finding_type: count},
                         "client_trails_count": trails_count,
+                        "target_content_types": content_targets,
+                        "target_content_summary": target_content_summary,
                     },
                 ),
             )
@@ -796,6 +863,11 @@ class SEORecommendationService:
             existing.evidence.get("counts"),
             draft.evidence.get("counts"),
         )
+        merged_target_content_types = self._merge_target_content_types(
+            existing.evidence.get("target_content_types"),
+            draft.evidence.get("target_content_types"),
+        )
+        merged_target_content_summary = self._format_target_content_summary(merged_target_content_types)
 
         drafts[draft.rule_key] = _RecommendationDraft(
             rule_key=draft.rule_key,
@@ -809,8 +881,161 @@ class SEORecommendationService:
                 "sources": merged_sources,
                 "finding_types": merged_types,
                 "counts": merged_counts,
+                "target_content_types": merged_target_content_types,
+                "target_content_summary": merged_target_content_summary,
             },
         )
+
+    def _derive_audit_content_targets(self, finding_type: str) -> list[dict[str, str]]:
+        type_keys = _AUDIT_FINDING_CONTENT_TARGETS.get(finding_type, ())
+        return self._build_target_content_entries(
+            type_keys=type_keys,
+            source_type="audit_signal",
+            targeting_strength="high",
+        )
+
+    def _derive_comparison_content_targets(
+        self,
+        *,
+        finding_type: str,
+        metric_key: str,
+    ) -> list[dict[str, str]]:
+        type_keys = _COMPARISON_METRIC_CONTENT_TARGETS.get(metric_key, ())
+        if not type_keys and finding_type in {"missing_client_baseline", "empty_competitor_snapshot"}:
+            return []
+        return self._build_target_content_entries(
+            type_keys=type_keys,
+            source_type="evidence_mapping",
+            targeting_strength="medium",
+        )
+
+    def _build_target_content_entries(
+        self,
+        *,
+        type_keys: tuple[str, ...],
+        source_type: str,
+        targeting_strength: str,
+    ) -> list[dict[str, str]]:
+        entries: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for type_key in type_keys:
+            normalized_type_key = str(type_key or "").strip().lower()
+            if not normalized_type_key or normalized_type_key in seen:
+                continue
+            label = _CONTENT_TARGET_TYPE_LABELS.get(normalized_type_key)
+            if label is None:
+                continue
+            seen.add(normalized_type_key)
+            entries.append(
+                {
+                    "type_key": normalized_type_key,
+                    "label": label,
+                    "source_type": source_type,
+                    "targeting_strength": targeting_strength,
+                }
+            )
+            if len(entries) >= 4:
+                break
+        return entries
+
+    def _merge_target_content_types(self, left_raw: object, right_raw: object) -> list[dict[str, str]]:
+        merged: list[dict[str, str]] = []
+        seen: set[str] = set()
+        source_priority = {"audit_signal": 3, "evidence_mapping": 2, "deterministic_rule": 1}
+        entries_by_type_key: dict[str, dict[str, str]] = {}
+        for raw_item in self._to_dict_list(left_raw) + self._to_dict_list(right_raw):
+            type_key = str(raw_item.get("type_key") or "").strip().lower()
+            if not type_key:
+                continue
+            label = _CONTENT_TARGET_TYPE_LABELS.get(type_key) or str(raw_item.get("label") or "").strip()
+            if not label:
+                continue
+            source_type = str(raw_item.get("source_type") or "").strip().lower() or "deterministic_rule"
+            if source_type not in source_priority:
+                source_type = "deterministic_rule"
+            targeting_strength = str(raw_item.get("targeting_strength") or "").strip().lower()
+            if targeting_strength not in {"high", "medium", "low"}:
+                targeting_strength = "medium"
+            current = entries_by_type_key.get(type_key)
+            candidate = {
+                "type_key": type_key,
+                "label": label,
+                "source_type": source_type,
+                "targeting_strength": targeting_strength,
+            }
+            if current is None:
+                entries_by_type_key[type_key] = candidate
+                continue
+            current_priority = source_priority.get(current["source_type"], 1)
+            candidate_priority = source_priority.get(candidate["source_type"], 1)
+            if candidate_priority > current_priority:
+                entries_by_type_key[type_key] = candidate
+
+        for raw_item in self._to_dict_list(left_raw) + self._to_dict_list(right_raw):
+            type_key = str(raw_item.get("type_key") or "").strip().lower()
+            if not type_key or type_key in seen:
+                continue
+            selected = entries_by_type_key.get(type_key)
+            if selected is None:
+                continue
+            seen.add(type_key)
+            merged.append(selected)
+            if len(merged) >= 4:
+                break
+        return merged
+
+    def _format_target_content_summary(self, target_content_types: list[dict[str, str]]) -> str | None:
+        labels: list[str] = []
+        seen: set[str] = set()
+        for raw in target_content_types:
+            label = str(raw.get("label") or "").strip()
+            if not label:
+                continue
+            normalized = label.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            labels.append(label)
+            if len(labels) >= 4:
+                break
+        if not labels:
+            return None
+        if len(labels) == 1:
+            return labels[0]
+        if len(labels) == 2:
+            return f"{labels[0]} and {labels[1]}"
+        return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+    def _build_audit_recommendation_rationale(
+        self,
+        *,
+        finding_type: str,
+        finding_count: int,
+        target_content_summary: str | None,
+    ) -> str:
+        normalized_finding_label = finding_type.replace("_", " ").strip()
+        count_text = f"{max(1, finding_count)} page finding{'s' if finding_count != 1 else ''}"
+        if target_content_summary:
+            return (
+                f"{count_text} indicate a {normalized_finding_label} issue. "
+                f"Update {target_content_summary.lower()} on the affected pages."
+            )
+        return f"{count_text} indicate a {normalized_finding_label} issue in the latest site analysis."
+
+    def _build_comparison_recommendation_rationale(
+        self,
+        *,
+        finding_type: str,
+        fallback_rationale: str,
+        target_content_summary: str | None,
+    ) -> str:
+        if target_content_summary:
+            normalized_finding_label = finding_type.replace("_", " ").strip()
+            return (
+                f"Comparison signals indicate a {normalized_finding_label} gap. "
+                f"Update {target_content_summary.lower()} to close the gap."
+            )
+        return fallback_rationale
 
     def _priority_score(self, *, severity: str, count: int, source: str) -> int:
         normalized = self._normalize_severity(severity)
@@ -1057,6 +1282,11 @@ class SEORecommendationService:
         if not isinstance(raw, list):
             return []
         return [str(item) for item in raw]
+
+    def _to_dict_list(self, raw: object) -> list[dict[str, object]]:
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
 
     def _merge_count_maps(self, left: object, right: object) -> dict[str, int]:
         merged: Counter[str] = Counter()

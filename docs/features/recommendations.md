@@ -258,6 +258,40 @@ The site workspace recommendation table no longer renders the legacy metadata he
 
 Recommendation content is still preserved in the card/row body and support rail.
 
+## Content to Update Targeting
+
+Recommendations now include additive structured content targeting metadata so operators can see *what type of content to change*, not only what issue exists.
+
+Read-model fields:
+
+- `recommendation_target_content_types`
+  - each entry includes:
+    - `type_key`
+    - `label`
+    - `source_type` (`deterministic_rule`, `audit_signal`, `evidence_mapping`)
+    - optional `targeting_strength`
+- `recommendation_target_content_summary`
+
+Deterministic derivation order:
+
+1. explicit grounded evidence (`evidence_json.target_content_types`)
+2. explicit finding/count signals from audit/comparison evidence
+3. deterministic keyword/rule mapping fallback
+4. safe empty result when no grounded target is available
+
+UI behavior:
+
+- recommendation surfaces now show **Content to update** when available
+- labels are operator-readable (for example: *Main heading*, *Intro paragraph*, *Meta title*)
+- internal keys are not rendered directly
+- when targets are unavailable, recommendation behavior stays generic and unchanged
+
+Operator intent:
+
+- pair **Pages to update** with **Content to update** so operators can quickly decide:
+  - where to make the change
+  - what part of content to edit
+
 Additional cleanup:
 - recommendation runs/workspace detail now renders as card/list surfaces only
 - legacy table/grid shells and metadata column scaffolding are removed from the site workspace recommendation body

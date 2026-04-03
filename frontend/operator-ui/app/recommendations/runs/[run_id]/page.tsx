@@ -363,6 +363,50 @@ function deriveRecommendationSourceType(item: Recommendation): string {
   return "unknown";
 }
 
+function normalizeRecommendationTargetContentLabels(item: Recommendation): string[] {
+  if (!Array.isArray(item.recommendation_target_content_types)) {
+    return [];
+  }
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const target of item.recommendation_target_content_types) {
+    const rawLabel = typeof target?.label === "string" ? target.label.trim() : "";
+    if (!rawLabel) {
+      continue;
+    }
+    const normalized = rawLabel.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    labels.push(rawLabel);
+    if (labels.length >= 4) {
+      break;
+    }
+  }
+  return labels;
+}
+
+function deriveRecommendationTargetContentSummary(item: Recommendation): string | null {
+  const directSummary = typeof item.recommendation_target_content_summary === "string"
+    ? item.recommendation_target_content_summary.trim()
+    : "";
+  if (directSummary.length > 0) {
+    return directSummary;
+  }
+  const labels = normalizeRecommendationTargetContentLabels(item);
+  if (labels.length === 0) {
+    return null;
+  }
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
 function safeAutomationBindingErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 409) {
@@ -1801,6 +1845,7 @@ export default function RecommendationRunDetailPage() {
                         <th>Status</th>
                         <th>Category</th>
                         <th>Source</th>
+                        <th>Content to update</th>
                         <th>Rationale</th>
                         <th>Created</th>
                       </tr>
@@ -1809,6 +1854,7 @@ export default function RecommendationRunDetailPage() {
                       {recommendations.map((item) => {
                         const lifecycleSupport = deriveRecommendationLifecycleSupport(item);
                         const freshnessSupport = deriveRecommendationFreshnessSupport(item);
+                        const targetContentSummary = deriveRecommendationTargetContentSummary(item);
                         return (
                         <tr key={item.id}>
                           <td className="table-cell-wrap">
@@ -1855,6 +1901,9 @@ export default function RecommendationRunDetailPage() {
                           <td>{item.status}</td>
                           <td>{item.category}</td>
                           <td>{deriveRecommendationSourceType(item)}</td>
+                          <td className="table-cell-wrap">
+                            {targetContentSummary || "-"}
+                          </td>
                           <td>{truncateText(item.rationale, RECOMMENDATION_RATIONALE_PREVIEW_LIMIT)}</td>
                           <td>{formatDateTime(item.created_at)}</td>
                         </tr>

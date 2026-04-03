@@ -64,6 +64,22 @@ SEORecommendationTargetContext = Literal[
     "sitewide",
     "general",
 ]
+SEORecommendationTargetContentTypeKey = Literal[
+    "heading_h1",
+    "heading_h2",
+    "intro_paragraph",
+    "service_description",
+    "internal_links",
+    "meta_title",
+    "meta_description",
+    "faq_block",
+    "image_alt_text",
+    "canonical_tag",
+    "page_title_block",
+    "call_to_action",
+    "location_copy",
+]
+SEORecommendationTargetContentSourceType = Literal["deterministic_rule", "audit_signal", "evidence_mapping"]
 SEOCompetitorContextHealthStatus = Literal["strong", "mixed", "weak"]
 SEOCompetitorContextHealthCheckKey = Literal[
     "location_context",
@@ -143,6 +159,8 @@ _RECOMMENDATION_EVIDENCE_TRACE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_ITEMS = 5
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_ITEMS = 3
+_RECOMMENDATION_TARGET_CONTENT_SUMMARY_MAX_CHARS = 220
+_RECOMMENDATION_TARGET_CONTENT_MAX_ITEMS = 4
 _RECOMMENDATION_COMPETITOR_LINK_MAX_ITEMS = 3
 _RECOMMENDATION_COMPETITOR_LINK_NAME_MAX_CHARS = 180
 _RECOMMENDATION_COMPETITOR_LINK_DOMAIN_MAX_CHARS = 255
@@ -230,6 +248,36 @@ _RECOMMENDATION_TARGET_CONTEXT_ORDER: tuple[SEORecommendationTargetContext, ...]
     "sitewide",
     "general",
 )
+_RECOMMENDATION_TARGET_CONTENT_TYPE_ORDER: tuple[SEORecommendationTargetContentTypeKey, ...] = (
+    "heading_h1",
+    "heading_h2",
+    "intro_paragraph",
+    "service_description",
+    "internal_links",
+    "meta_title",
+    "meta_description",
+    "faq_block",
+    "image_alt_text",
+    "canonical_tag",
+    "page_title_block",
+    "call_to_action",
+    "location_copy",
+)
+_RECOMMENDATION_TARGET_CONTENT_LABELS: dict[SEORecommendationTargetContentTypeKey, str] = {
+    "heading_h1": "Main heading",
+    "heading_h2": "Supporting headings",
+    "intro_paragraph": "Intro paragraph",
+    "service_description": "Service description",
+    "internal_links": "Internal links",
+    "meta_title": "Meta title",
+    "meta_description": "Meta description",
+    "faq_block": "FAQ section",
+    "image_alt_text": "Image alt text",
+    "canonical_tag": "Canonical tag",
+    "page_title_block": "Page title block",
+    "call_to_action": "Call to action",
+    "location_copy": "Location/service-area copy",
+}
 _HIGH_CLARITY_ACTION_VERBS = {
     "add",
     "build",
@@ -496,6 +544,20 @@ def _normalize_recommendation_target_context(value: Any) -> SEORecommendationTar
     return normalized  # type: ignore[return-value]
 
 
+def _normalize_recommendation_target_content_type_key(value: Any) -> SEORecommendationTargetContentTypeKey | None:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _RECOMMENDATION_TARGET_CONTENT_TYPE_ORDER:
+        return None
+    return normalized  # type: ignore[return-value]
+
+
+def _normalize_recommendation_target_content_source_type(value: Any) -> SEORecommendationTargetContentSourceType | None:
+    normalized = str(value or "").strip().lower()
+    if normalized not in {"deterministic_rule", "audit_signal", "evidence_mapping"}:
+        return None
+    return normalized  # type: ignore[return-value]
+
+
 def format_recommendation_theme_label(theme: SEORecommendationTheme) -> str:
     return _THEME_LABELS.get(theme, theme.replace("_", " ").title())
 
@@ -631,6 +693,153 @@ def _derive_recommendation_evidence_summary(
     return None
 
 
+def _extract_recommendation_target_content_types_from_evidence(
+    evidence_json: dict[str, object] | None,
+) -> list[dict[str, object]]:
+    if not isinstance(evidence_json, dict):
+        return []
+    raw_targets = evidence_json.get("target_content_types")
+    if not isinstance(raw_targets, list):
+        return []
+    return [item for item in raw_targets if isinstance(item, dict)]
+
+
+def _build_recommendation_target_content_entries(
+    *,
+    type_keys: list[SEORecommendationTargetContentTypeKey],
+    source_type: SEORecommendationTargetContentSourceType,
+    targeting_strength: SEORecommendationSignalSupportLevel,
+) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    seen: set[SEORecommendationTargetContentTypeKey] = set()
+    for type_key in type_keys:
+        if type_key in seen:
+            continue
+        label = _RECOMMENDATION_TARGET_CONTENT_LABELS.get(type_key)
+        if not label:
+            continue
+        seen.add(type_key)
+        entries.append(
+            {
+                "type_key": type_key,
+                "label": label,
+                "source_type": source_type,
+                "targeting_strength": targeting_strength,
+            }
+        )
+        if len(entries) >= _RECOMMENDATION_TARGET_CONTENT_MAX_ITEMS:
+            break
+    return entries
+
+
+def _derive_recommendation_target_content_types(
+    *,
+    rule_key: str | None,
+    title: str | None,
+    rationale: str | None,
+    evidence_json: dict[str, object] | None,
+) -> list[dict[str, object]]:
+    evidence_targets = _extract_recommendation_target_content_types_from_evidence(evidence_json)
+    if evidence_targets:
+        return evidence_targets[:_RECOMMENDATION_TARGET_CONTENT_MAX_ITEMS]
+
+    finding_types: list[str] = []
+    if isinstance(evidence_json, dict):
+        raw_finding_types = evidence_json.get("finding_types")
+        if isinstance(raw_finding_types, list):
+            for raw_finding_type in raw_finding_types:
+                finding_type = _normalize_signal_text(raw_finding_type, max_length=140)
+                if finding_type:
+                    finding_types.append(finding_type)
+        raw_counts = evidence_json.get("counts")
+        if isinstance(raw_counts, dict):
+            for raw_count_key in raw_counts.keys():
+                count_key = _normalize_signal_text(raw_count_key, max_length=140)
+                if count_key:
+                    finding_types.append(count_key)
+
+    signal = " ".join(
+        filter(
+            None,
+            [
+                _normalize_signal_text(rule_key, max_length=140),
+                _normalize_signal_text(title, max_length=180),
+                _normalize_signal_text(rationale, max_length=220),
+                " ".join(finding_types),
+            ],
+        )
+    )
+
+    derived_type_keys: list[SEORecommendationTargetContentTypeKey] = []
+
+    def add_type_keys(*type_keys: SEORecommendationTargetContentTypeKey) -> None:
+        for type_key in type_keys:
+            if type_key not in derived_type_keys:
+                derived_type_keys.append(type_key)
+            if len(derived_type_keys) >= _RECOMMENDATION_TARGET_CONTENT_MAX_ITEMS:
+                return
+
+    if any(token in signal for token in ("missing_title", "title tag", "meta title", "page title")):
+        add_type_keys("meta_title", "page_title_block")
+    if any(token in signal for token in ("missing_meta_description", "meta description")):
+        add_type_keys("meta_description")
+    if any(token in signal for token in ("missing_h1", "multiple_h1", "h1 heading")):
+        add_type_keys("heading_h1", "page_title_block")
+    if any(token in signal for token in ("missing_h2", "h2 heading", "supporting heading")):
+        add_type_keys("heading_h2")
+    if any(token in signal for token in ("thin_content", "content depth", "thin content", "extremely_thin_content")):
+        add_type_keys("intro_paragraph", "service_description", "faq_block")
+    if any(token in signal for token in ("internal link", "internal_links", "linking")):
+        add_type_keys("internal_links")
+    if any(token in signal for token in ("canonical", "missing_canonical")):
+        add_type_keys("canonical_tag")
+    if any(token in signal for token in ("image alt", "alt text", "image_alt")):
+        add_type_keys("image_alt_text")
+    if any(token in signal for token in ("faq", "frequently asked")):
+        add_type_keys("faq_block")
+    if any(token in signal for token in ("call to action", "cta", "conversion")):
+        add_type_keys("call_to_action")
+    if any(token in signal for token in ("location", "service area", "local intent", "cities we serve", "zip")):
+        add_type_keys("location_copy")
+    if any(token in signal for token in ("service page", "services", "service clarity", "service detail")):
+        add_type_keys("service_description")
+
+    if not derived_type_keys:
+        return []
+
+    return _build_recommendation_target_content_entries(
+        type_keys=derived_type_keys[:_RECOMMENDATION_TARGET_CONTENT_MAX_ITEMS],
+        source_type="deterministic_rule",
+        targeting_strength="medium",
+    )
+
+
+def _derive_recommendation_target_content_summary(
+    target_content_types: list[dict[str, object]],
+) -> str | None:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw_target in target_content_types:
+        label = _compact_text(raw_target.get("label"), max_length=80)
+        if label is None:
+            continue
+        normalized = label.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        labels.append(label)
+        if len(labels) >= _RECOMMENDATION_TARGET_CONTENT_MAX_ITEMS:
+            break
+
+    if not labels:
+        return None
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+
 def _derive_recommendation_action_scope(
     *,
     theme: SEORecommendationTheme | None,
@@ -684,25 +893,53 @@ def _derive_recommendation_action_clarity(
     rule_key: str | None,
     theme: SEORecommendationTheme | None,
     recommendation_evidence_summary: str | None,
+    recommendation_target_content_summary: str | None,
 ) -> str | None:
     base_action = _compact_text(title, max_length=_ACTION_SUMMARY_PRIMARY_ACTION_MAX_CHARS)
+    scope = _derive_recommendation_action_scope(
+        theme=theme,
+        rule_key=rule_key,
+        title=title,
+        rationale=rationale,
+    )
+    plain_language_target_action = (
+        _compact_sentence(
+            f"Update {recommendation_target_content_summary.lower()} on {scope}",
+            max_length=_RECOMMENDATION_ACTION_CLARITY_MAX_CHARS,
+        )
+        if recommendation_target_content_summary
+        else None
+    )
     if base_action:
         lowered = base_action.lower()
         has_scope_phrase = any(token in lowered for token in (" on ", " across ", " within ", " in "))
         if not has_scope_phrase and (" page" in lowered or "pages" in lowered):
             has_scope_phrase = True
+        if plain_language_target_action and any(
+            token in lowered
+            for token in (
+                "missing",
+                "duplicate",
+                "canonical",
+                "meta",
+                "h1",
+                "h2",
+                "thin-content",
+                "thin content",
+                "internal linking",
+            )
+        ):
+            return plain_language_target_action
         if has_scope_phrase:
             return _compact_sentence(base_action, max_length=_RECOMMENDATION_ACTION_CLARITY_MAX_CHARS)
-        scope = _derive_recommendation_action_scope(
-            theme=theme,
-            rule_key=rule_key,
-            title=title,
-            rationale=rationale,
-        )
-        return _compact_sentence(
+        fallback_action = _compact_sentence(
             f"{base_action.rstrip('.')} on {scope}",
             max_length=_RECOMMENDATION_ACTION_CLARITY_MAX_CHARS,
         )
+        return fallback_action
+
+    if plain_language_target_action:
+        return plain_language_target_action
 
     if recommendation_evidence_summary and "trust" in recommendation_evidence_summary.lower():
         return "Add stronger trust and legitimacy proof to key customer-facing pages."
@@ -1893,6 +2130,58 @@ class SEORecommendationPriorityRead(BaseModel):
         return normalized  # type: ignore[return-value]
 
 
+class SEORecommendationTargetContentTypeRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type_key: SEORecommendationTargetContentTypeKey
+    label: str = Field(min_length=1, max_length=80)
+    source_type: SEORecommendationTargetContentSourceType
+    targeting_strength: SEORecommendationSignalSupportLevel | None = None
+
+    @field_validator("type_key", mode="before")
+    @classmethod
+    def normalize_type_key(
+        cls,
+        value: Any,
+    ) -> SEORecommendationTargetContentTypeKey:
+        normalized = _normalize_recommendation_target_content_type_key(value)
+        if normalized is None:
+            raise ValueError("Invalid recommendation content target type key")
+        return normalized
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def normalize_label(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=80)
+        if cleaned is None:
+            raise ValueError("Content target label is required")
+        return cleaned
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(
+        cls,
+        value: Any,
+    ) -> SEORecommendationTargetContentSourceType:
+        normalized = _normalize_recommendation_target_content_source_type(value)
+        if normalized is None:
+            raise ValueError("Invalid recommendation content target source type")
+        return normalized
+
+    @field_validator("targeting_strength", mode="before")
+    @classmethod
+    def normalize_targeting_strength(
+        cls,
+        value: Any,
+    ) -> SEORecommendationSignalSupportLevel | None:
+        if value is None:
+            return None
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"low", "medium", "high"}:
+            return None
+        return normalized  # type: ignore[return-value]
+
+
 class SEORecommendationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -1940,6 +2229,11 @@ class SEORecommendationRead(BaseModel):
     )
     recommendation_target_context: SEORecommendationTargetContext | None = None
     recommendation_target_page_hints: list[str] = Field(default_factory=list)
+    recommendation_target_content_types: list[SEORecommendationTargetContentTypeRead] = Field(default_factory=list)
+    recommendation_target_content_summary: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_TARGET_CONTENT_SUMMARY_MAX_CHARS,
+    )
     competitor_evidence_links: list[SEORecommendationCompetitorEvidenceLinkRead] = Field(default_factory=list)
     competitor_linkage_summary: str | None = Field(
         default=None,
@@ -2074,6 +2368,43 @@ class SEORecommendationRead(BaseModel):
             limit=_RECOMMENDATION_TARGET_PAGE_HINT_MAX_ITEMS,
             max_length=_RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS,
         )
+
+    @field_validator("recommendation_target_content_types", mode="before")
+    @classmethod
+    def normalize_recommendation_target_content_types(
+        cls,
+        value: Any,
+    ) -> list[SEORecommendationTargetContentTypeRead]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        normalized: list[SEORecommendationTargetContentTypeRead] = []
+        seen: set[SEORecommendationTargetContentTypeKey] = set()
+        for raw_item in value:
+            try:
+                parsed = (
+                    raw_item
+                    if isinstance(raw_item, SEORecommendationTargetContentTypeRead)
+                    else SEORecommendationTargetContentTypeRead.model_validate(raw_item)
+                )
+            except Exception:  # noqa: BLE001
+                continue
+            if parsed.type_key in seen:
+                continue
+            seen.add(parsed.type_key)
+            normalized.append(parsed)
+            if len(normalized) >= _RECOMMENDATION_TARGET_CONTENT_MAX_ITEMS:
+                break
+        return normalized
+
+    @field_validator("recommendation_target_content_summary", mode="before")
+    @classmethod
+    def normalize_recommendation_target_content_summary(
+        cls,
+        value: Any,
+    ) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_TARGET_CONTENT_SUMMARY_MAX_CHARS)
 
     @field_validator("competitor_evidence_links", mode="before")
     @classmethod
@@ -2300,6 +2631,42 @@ class SEORecommendationRead(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def derive_recommendation_target_content_types(self) -> "SEORecommendationRead":
+        if self.recommendation_target_content_types:
+            return self
+        derived = _derive_recommendation_target_content_types(
+            rule_key=self.rule_key,
+            title=self.title,
+            rationale=self.rationale,
+            evidence_json=self.evidence_json if isinstance(self.evidence_json, dict) else None,
+        )
+        if not derived:
+            return self
+        normalized: list[SEORecommendationTargetContentTypeRead] = []
+        for raw_item in derived:
+            try:
+                normalized.append(SEORecommendationTargetContentTypeRead.model_validate(raw_item))
+            except Exception:  # noqa: BLE001
+                continue
+        self.recommendation_target_content_types = normalized[:_RECOMMENDATION_TARGET_CONTENT_MAX_ITEMS]
+        return self
+
+    @model_validator(mode="after")
+    def derive_recommendation_target_content_summary(self) -> "SEORecommendationRead":
+        if self.recommendation_target_content_summary is not None:
+            return self
+        if not self.recommendation_target_content_types:
+            return self
+        derived = _derive_recommendation_target_content_summary(
+            [item.model_dump() for item in self.recommendation_target_content_types]
+        )
+        self.recommendation_target_content_summary = _compact_text(
+            derived,
+            max_length=_RECOMMENDATION_TARGET_CONTENT_SUMMARY_MAX_CHARS,
+        )
+        return self
+
+    @model_validator(mode="after")
     def derive_recommendation_action_clarity(self) -> "SEORecommendationRead":
         if self.recommendation_action_clarity is not None:
             return self
@@ -2309,6 +2676,7 @@ class SEORecommendationRead(BaseModel):
             rule_key=self.rule_key,
             theme=self.theme,
             recommendation_evidence_summary=self.recommendation_evidence_summary,
+            recommendation_target_content_summary=self.recommendation_target_content_summary,
         )
         return self
 

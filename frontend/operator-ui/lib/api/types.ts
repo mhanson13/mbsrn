@@ -778,6 +778,31 @@ export type RecommendationTargetContext =
   | "location_pages"
   | "sitewide"
   | "general";
+export type RecommendationTargetContentTypeKey =
+  | "heading_h1"
+  | "heading_h2"
+  | "intro_paragraph"
+  | "service_description"
+  | "internal_links"
+  | "meta_title"
+  | "meta_description"
+  | "faq_block"
+  | "image_alt_text"
+  | "canonical_tag"
+  | "page_title_block"
+  | "call_to_action"
+  | "location_copy";
+export type RecommendationTargetContentSourceType =
+  | "deterministic_rule"
+  | "audit_signal"
+  | "evidence_mapping";
+
+export interface RecommendationTargetContentType {
+  type_key: RecommendationTargetContentTypeKey;
+  label: string;
+  source_type: RecommendationTargetContentSourceType;
+  targeting_strength?: "high" | "medium" | "low" | null;
+}
 
 export interface RecommendationApplyOutcome {
   applied: boolean;
@@ -1134,6 +1159,8 @@ export interface Recommendation {
   recommendation_expected_outcome?: string | null;
   recommendation_target_context?: RecommendationTargetContext | null;
   recommendation_target_page_hints?: string[];
+  recommendation_target_content_types?: RecommendationTargetContentType[];
+  recommendation_target_content_summary?: string | null;
   competitor_evidence_links?: RecommendationCompetitorEvidenceLink[];
   competitor_linkage_summary?: string | null;
   recommendation_action_delta?: RecommendationActionDelta | null;

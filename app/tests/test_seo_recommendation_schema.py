@@ -340,6 +340,7 @@ def test_recommendation_read_derives_action_clarity_and_expected_outcome_for_tru
 def test_recommendation_read_derives_action_clarity_and_expected_outcome_for_service_clarity() -> None:
     recommendation = SEORecommendationRead.model_validate(
         _recommendation_payload(
+            rule_key="improve_service_page_clarity",
             title="Clarify flooring services",
             rationale="Service detail and local intent clarity are weak on primary pages.",
             eeat_categories=["expertise"],
@@ -372,7 +373,9 @@ def test_recommendation_read_derives_safe_expected_outcome_fallback_for_sparse_m
             primary_priority_reason=None,
         )
     )
-    assert recommendation.recommendation_action_clarity == "Site metadata cleanup on high-visibility service pages."
+    assert recommendation.recommendation_action_clarity == (
+        "Update meta title and page title block on high-visibility service pages."
+    )
     assert recommendation.recommendation_expected_outcome == "Improves core site clarity for prospective customers."
 
 
@@ -389,6 +392,79 @@ def test_recommendation_read_normalizes_target_page_hints_with_bounds() -> None:
         )
     )
     assert recommendation.recommendation_target_page_hints == ["Homepage", "/services", "/about"]
+
+
+def test_recommendation_read_derives_target_content_types_from_evidence() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            evidence_json={
+                "sources": ["audit"],
+                "target_content_types": [
+                    {
+                        "type_key": "meta_title",
+                        "label": "Meta title",
+                        "source_type": "audit_signal",
+                        "targeting_strength": "high",
+                    },
+                    {
+                        "type_key": "meta_description",
+                        "label": "Meta description",
+                        "source_type": "audit_signal",
+                        "targeting_strength": "high",
+                    },
+                ],
+            }
+        )
+    )
+    assert [item.type_key for item in recommendation.recommendation_target_content_types] == [
+        "meta_title",
+        "meta_description",
+    ]
+    assert recommendation.recommendation_target_content_summary == "Meta title and Meta description"
+
+
+def test_recommendation_read_derives_target_content_types_deterministically_from_signals() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="fix_missing_h1",
+            title="Fix missing H1 heading coverage",
+            rationale="Missing_h1 issues were detected on key service pages.",
+            evidence_json={"sources": ["audit"], "finding_types": ["missing_h1"]},
+        )
+    )
+    derived_keys = [item.type_key for item in recommendation.recommendation_target_content_types]
+    assert "heading_h1" in derived_keys
+    assert "page_title_block" in derived_keys
+    assert recommendation.recommendation_target_content_summary is not None
+
+
+def test_recommendation_read_keeps_target_content_empty_when_not_grounded() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="generic_housekeeping",
+            title="General cleanup",
+            rationale="Perform manual review of this recommendation.",
+            evidence_json={"sources": ["audit"]},
+        )
+    )
+    assert recommendation.recommendation_target_content_types == []
+    assert recommendation.recommendation_target_content_summary is None
+
+
+def test_recommendation_read_uses_plain_language_action_when_content_target_summary_is_present() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="fix_missing_h1",
+            title="Fix missing H1 headings on service pages",
+            rationale="Missing_h1 issues were detected on key service pages.",
+            recommendation_target_context="service_pages",
+            recommendation_target_content_summary="Main heading and Intro paragraph",
+            evidence_json={"sources": ["audit"], "finding_types": ["missing_h1"]},
+        )
+    )
+    assert recommendation.recommendation_action_clarity is not None
+    assert recommendation.recommendation_action_clarity.startswith("Update main heading and intro paragraph on")
+    assert recommendation.recommendation_action_clarity.endswith("service pages.")
 
 
 def test_recommendation_read_derives_contact_about_target_context_for_trust_signals() -> None:

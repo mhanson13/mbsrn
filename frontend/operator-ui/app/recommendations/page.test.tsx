@@ -412,6 +412,59 @@ describe("recommendations queue optimistic workflows", () => {
     expect(dismissedDetailPanel).toHaveTextContent("Ignore for now unless context changes");
   });
 
+  it("renders content-to-update cues when recommendation content targets are present", async () => {
+    const recommendation = {
+      ...createRecommendation("rec-content-1", "open", "high", "Content Target Recommendation"),
+      recommendation_target_content_types: [
+        {
+          type_key: "heading_h1",
+          label: "Main heading",
+          source_type: "audit_signal",
+          targeting_strength: "high",
+        },
+        {
+          type_key: "intro_paragraph",
+          label: "Intro paragraph",
+          source_type: "audit_signal",
+          targeting_strength: "medium",
+        },
+      ],
+      recommendation_target_content_summary: "Main heading and Intro paragraph",
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [recommendation],
+        {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Content Target Recommendation");
+    expect(screen.getByTestId("recommendation-summary-content-target-rec-content-1")).toHaveTextContent(
+      "Content to update: Main heading and Intro paragraph",
+    );
+
+    const decisivenessCell = screen.getByTestId("recommendation-decisiveness-rec-content-1");
+    await user.click(within(decisivenessCell).getByRole("button", { name: "View details" }));
+    expect(screen.getByTestId("recommendation-expanded-content-target-rec-content-1")).toHaveTextContent(
+      "Content to update: Main heading and Intro paragraph",
+    );
+
+    const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-content-1");
+    await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
+    expect(screen.getByTestId("recommendation-content-target-rec-content-1")).toHaveTextContent(
+      "Content to update: Main heading and Intro paragraph",
+    );
+  });
+
   it("removes rows excluded by status filter and reconciles summary to backend truth after refresh", async () => {
     navigationState.searchParams = new URLSearchParams("status=open&page=1&page_size=25");
     const recOne = createRecommendation("rec-11", "open", "high", "Recommendation Eleven");

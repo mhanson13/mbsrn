@@ -2264,6 +2264,48 @@ function normalizeRecommendationTargetPageHints(item: Recommendation): string[] 
   return normalizeBoundedStringList(item.recommendation_target_page_hints, 3, 120);
 }
 
+function normalizeRecommendationTargetContentLabels(item: Recommendation): string[] {
+  if (!Array.isArray(item.recommendation_target_content_types)) {
+    return [];
+  }
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const target of item.recommendation_target_content_types) {
+    const label = truncateOptionalText(target?.label, 80);
+    if (!label) {
+      continue;
+    }
+    const key = label.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    labels.push(label);
+    if (labels.length >= 4) {
+      break;
+    }
+  }
+  return labels;
+}
+
+function normalizeRecommendationTargetContentSummary(item: Recommendation): string | null {
+  const summary = truncateOptionalText(item.recommendation_target_content_summary, 220);
+  if (summary) {
+    return summary;
+  }
+  const labels = normalizeRecommendationTargetContentLabels(item);
+  if (labels.length === 0) {
+    return null;
+  }
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
 function normalizeRecommendationCompetitorLinkageSummary(item: Recommendation): string | null {
   return truncateOptionalText(item.competitor_linkage_summary, 240);
 }
@@ -2685,6 +2727,7 @@ function buildRecommendationDetailClarityView(params: {
   evidenceTrace: string[];
   targetContext: RecommendationTargetContext | null;
   targetPageHints: string[];
+  targetContentSummary: string | null;
 }): RecommendationDetailClarityView {
   const observedPattern =
     params.actionDelta?.observedCompetitorPattern
@@ -2714,6 +2757,9 @@ function buildRecommendationDetailClarityView(params: {
   }
   if (params.targetPageHints.length > 0) {
     evidenceContextLines.push(`Likely pages: ${params.targetPageHints.join(", ")}`);
+  }
+  if (params.targetContentSummary) {
+    evidenceContextLines.push(`Content to update: ${params.targetContentSummary}`);
   }
   if (params.expectedOutcome && params.expectedOutcome !== recommendedAction) {
     evidenceContextLines.push(`Expected outcome: ${params.expectedOutcome}`);
@@ -2746,6 +2792,7 @@ function buildRecommendationDetailClarityFromItem(item: Recommendation): Recomme
     evidenceTrace: normalizeRecommendationEvidenceTrace(item),
     targetContext: normalizeRecommendationTargetContext(item),
     targetPageHints: normalizeRecommendationTargetPageHints(item),
+    targetContentSummary: normalizeRecommendationTargetContentSummary(item),
   });
 }
 
@@ -8711,6 +8758,8 @@ export default function SiteWorkspacePage() {
                         const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
                         const recommendationTargetContext = normalizeRecommendationTargetContext(item);
                         const recommendationTargetPageHints = normalizeRecommendationTargetPageHints(item);
+                        const recommendationTargetContentSummary =
+                          normalizeRecommendationTargetContentSummary(item);
                         const recommendationCompetitorLinkageSummary =
                           normalizeRecommendationCompetitorLinkageSummary(item);
                         const recommendationCompetitorEvidenceLinks =
@@ -8728,6 +8777,7 @@ export default function SiteWorkspacePage() {
                           evidenceTrace: recommendationEvidenceTrace,
                           targetContext: recommendationTargetContext,
                           targetPageHints: recommendationTargetPageHints,
+                          targetContentSummary: recommendationTargetContentSummary,
                         });
                         const rowId = recommendationRowId(item.id);
                         return (
@@ -8784,6 +8834,11 @@ export default function SiteWorkspacePage() {
                                   {recommendationTargetPageHints.length > 0 ? (
                                     <span className="hint muted" data-testid="recommendation-target-page-hints">
                                       Likely pages: {recommendationTargetPageHints.join(", ")}
+                                    </span>
+                                  ) : null}
+                                  {recommendationTargetContentSummary ? (
+                                    <span className="hint muted" data-testid="recommendation-target-content-summary">
+                                      Content to update: {recommendationTargetContentSummary}
                                     </span>
                                   ) : null}
                                   {recommendationCompetitorLinkageSummary ? (
@@ -8933,6 +8988,8 @@ export default function SiteWorkspacePage() {
                               const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
                               const recommendationTargetContext = normalizeRecommendationTargetContext(item);
                               const recommendationTargetPageHints = normalizeRecommendationTargetPageHints(item);
+                              const recommendationTargetContentSummary =
+                                normalizeRecommendationTargetContentSummary(item);
                               const recommendationCompetitorLinkageSummary =
                                 normalizeRecommendationCompetitorLinkageSummary(item);
                               const recommendationCompetitorEvidenceLinks =
@@ -8950,6 +9007,7 @@ export default function SiteWorkspacePage() {
                                 evidenceTrace: recommendationEvidenceTrace,
                                 targetContext: recommendationTargetContext,
                                 targetPageHints: recommendationTargetPageHints,
+                                targetContentSummary: recommendationTargetContentSummary,
                               });
                               const rowId = recommendationRowId(item.id);
                               return (
@@ -9006,6 +9064,11 @@ export default function SiteWorkspacePage() {
                                         {recommendationTargetPageHints.length > 0 ? (
                                           <span className="hint muted" data-testid="recommendation-target-page-hints">
                                             Likely pages: {recommendationTargetPageHints.join(", ")}
+                                          </span>
+                                        ) : null}
+                                        {recommendationTargetContentSummary ? (
+                                          <span className="hint muted" data-testid="recommendation-target-content-summary">
+                                            Content to update: {recommendationTargetContentSummary}
                                           </span>
                                         ) : null}
                                         {recommendationCompetitorLinkageSummary ? (

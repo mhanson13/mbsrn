@@ -253,6 +253,17 @@ Truth boundary:
 - this workflow runs SEO analysis/artifact generation
 - it does **not** publish changes to live customer websites
 
+## Recommendation Content Targets and Automation Readiness
+
+Recommendation read models can now carry deterministic **content target** metadata (for example: `meta_title`, `heading_h1`, `internal_links`).
+
+Automation notes:
+
+- content targets are evidence-derived and additive
+- they are safe to consume as structured hints in operator workflows
+- they do not trigger execution by themselves
+- they do not change the current non-publishing automation boundary
+
 ## Audit Runs Table (Operator View)
 
 The Audit Runs operator table is intentionally compact and outcome-focused.

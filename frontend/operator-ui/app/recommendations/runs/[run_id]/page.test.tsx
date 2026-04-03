@@ -308,6 +308,38 @@ describe("recommendation run detail page presentation", () => {
     expect(screen.getByRole("heading", { name: "Run Context" })).toBeInTheDocument();
   });
 
+  it("renders content-to-update values in produced recommendations table", async () => {
+    const recommendation = {
+      ...buildRecommendation("rec-content-run-1", "Recommendation Content Target"),
+      recommendation_target_content_types: [
+        {
+          type_key: "meta_title",
+          label: "Meta title",
+          source_type: "audit_signal",
+          targeting_strength: "high",
+        },
+        {
+          type_key: "meta_description",
+          label: "Meta description",
+          source_type: "audit_signal",
+          targeting_strength: "high",
+        },
+      ],
+      recommendation_target_content_summary: "Meta title and Meta description",
+    } satisfies Recommendation;
+
+    mockFetchRecommendationRunReport.mockResolvedValueOnce(buildRunReport([recommendation]));
+    mockFetchLatestRecommendationRunNarrative.mockRejectedValueOnce(
+      new ApiRequestError("not found", { status: 404, detail: null }),
+    );
+    mockFetchAutomationRuns.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<RecommendationRunDetailPage />);
+
+    await screen.findByRole("columnheader", { name: "Content to update" });
+    expect(screen.getByText("Meta title and Meta description")).toBeInTheDocument();
+  });
+
   it("captures local output-review decisions for run-level action control", async () => {
     const user = userEvent.setup();
     mockFetchRecommendationRunReport.mockResolvedValueOnce(buildRunReport());

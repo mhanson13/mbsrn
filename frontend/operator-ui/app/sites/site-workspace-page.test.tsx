@@ -3192,6 +3192,21 @@ describe("site workspace timeline controls", () => {
               recommendation_expected_outcome: "Helps visitors trust the business faster.",
               recommendation_target_context: "service_pages",
               recommendation_target_page_hints: ["Homepage", "/services/flooring"],
+              recommendation_target_content_types: [
+                {
+                  type_key: "heading_h1",
+                  label: "Main heading",
+                  source_type: "audit_signal",
+                  targeting_strength: "high",
+                },
+                {
+                  type_key: "service_description",
+                  label: "Service description",
+                  source_type: "audit_signal",
+                  targeting_strength: "high",
+                },
+              ],
+              recommendation_target_content_summary: "Main heading and Service description",
             }),
             buildRecommendation({
               id: "rec-action-2",
@@ -3225,6 +3240,11 @@ describe("site workspace timeline controls", () => {
     const targetPageHintLines = screen.getAllByTestId("recommendation-target-page-hints");
     expect(targetPageHintLines).toHaveLength(1);
     expect(targetPageHintLines[0]).toHaveTextContent("Likely pages: Homepage, /services/flooring");
+    const targetContentLines = screen.getAllByTestId("recommendation-target-content-summary");
+    expect(targetContentLines).toHaveLength(1);
+    expect(targetContentLines[0]).toHaveTextContent(
+      "Content to update: Main heading and Service description",
+    );
 
     const observedGapLines = screen.getAllByTestId("recommendation-observed-gap-summary");
     expect(observedGapLines).toHaveLength(1);
@@ -3246,6 +3266,7 @@ describe("site workspace timeline controls", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Where: Recommendation without action metadata")).not.toBeInTheDocument();
     expect(screen.queryByText("Evidence trace: Recommendation without action metadata")).not.toBeInTheDocument();
+    expect(screen.queryByText("Content to update: Recommendation without action metadata")).not.toBeInTheDocument();
   });
 
   it("labels unverified competitor linkage entries explicitly when present", async () => {

@@ -147,6 +147,16 @@ Local validation strategy:
   - `/admin`: platform settings + diagnostics
   - `/user-mgmt`: user/identity administration (admin-only)
 
+### Recommendation Content Target Metadata
+
+- Recommendation read models may include additive structured content-target metadata:
+  - `recommendation_target_content_types`
+  - `recommendation_target_content_summary`
+- These targets are derived deterministically from grounded recommendation/audit/comparison evidence.
+- Frontend surfaces this as **Content to update** for operator clarity.
+- Empty-target cases are valid and intentionally preserve generic recommendation behavior.
+- This metadata is designed to remain machine-usable for future automation targeting without changing current execution semantics.
+
 ## Action Chaining Layer
 
 The backend includes a deterministic Action Chaining Layer that generates follow-on actions after qualifying workflow transitions.

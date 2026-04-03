@@ -502,6 +502,48 @@ function deriveRecommendationEvidencePreview(item: Recommendation): string {
   return truncateRecommendationEvidence(candidates[0], 118);
 }
 
+function normalizeRecommendationTargetContentLabels(item: Recommendation): string[] {
+  if (!Array.isArray(item.recommendation_target_content_types)) {
+    return [];
+  }
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const target of item.recommendation_target_content_types) {
+    const rawLabel = typeof target?.label === "string" ? target.label.trim() : "";
+    if (!rawLabel) {
+      continue;
+    }
+    const normalized = rawLabel.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    labels.push(rawLabel);
+    if (labels.length >= 4) {
+      break;
+    }
+  }
+  return labels;
+}
+
+function deriveRecommendationTargetContentSummary(item: Recommendation): string | null {
+  const directSummary = (item.recommendation_target_content_summary || "").trim();
+  if (directSummary.length > 0) {
+    return directSummary;
+  }
+  const labels = normalizeRecommendationTargetContentLabels(item);
+  if (labels.length === 0) {
+    return null;
+  }
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
 function deriveRecommendationEvidenceTrust(item: Recommendation): {
   cue: string;
   tone: "badge-success" | "badge-warn" | "badge-muted";
@@ -2257,6 +2299,7 @@ function RecommendationsPageContent() {
             <div className="operational-item-list">
               {recommendationQuickScanItems.map((item) => {
                 const decisiveness = deriveRecommendationDecisiveness(item, topReadyRecommendation?.id || null);
+                const targetContentSummary = deriveRecommendationTargetContentSummary(item);
                 const automationOriginCue = deriveRecommendationAutomationOriginCue(
                   item,
                   automationLinkedRecommendationRunIds,
@@ -2362,6 +2405,11 @@ function RecommendationsPageContent() {
                         <p className="hint muted">
                           <span className="text-strong">After action:</span> {decisiveness.afterAction}
                         </p>
+                        {targetContentSummary ? (
+                          <p className="hint muted" data-testid={`recommendation-content-target-${item.id}`}>
+                            <span className="text-strong">Content to update:</span> {targetContentSummary}
+                          </p>
+                        ) : null}
                         <p className="hint muted">
                           <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
                         </p>
@@ -2489,6 +2537,7 @@ function RecommendationsPageContent() {
             <tbody>
               {items.map((item) => {
                 const decisiveness = deriveRecommendationDecisiveness(item, topReadyRecommendation?.id || null);
+                const targetContentSummary = deriveRecommendationTargetContentSummary(item);
                 const automationOriginCue = deriveRecommendationAutomationOriginCue(
                   item,
                   automationLinkedRecommendationRunIds,
@@ -2544,7 +2593,14 @@ function RecommendationsPageContent() {
                         />
                       </td>
                       <td>{item.title}</td>
-                      <td>{item.rationale}</td>
+                      <td>
+                        {item.rationale}
+                        {targetContentSummary ? (
+                          <p className="hint muted" data-testid={`recommendation-summary-content-target-${item.id}`}>
+                            Content to update: {targetContentSummary}
+                          </p>
+                        ) : null}
+                      </td>
                       <td>{item.status}</td>
                       <td data-testid={`recommendation-decisiveness-${item.id}`}>
                         <div className="recommendation-decisiveness">
@@ -2668,6 +2724,11 @@ function RecommendationsPageContent() {
                             <p className="hint muted">
                               <span className="text-strong">After action:</span> {decisiveness.afterAction}
                             </p>
+                            {targetContentSummary ? (
+                              <p className="hint muted" data-testid={`recommendation-expanded-content-target-${item.id}`}>
+                                <span className="text-strong">Content to update:</span> {targetContentSummary}
+                              </p>
+                            ) : null}
                             <p className="hint muted">
                               <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
                             </p>
