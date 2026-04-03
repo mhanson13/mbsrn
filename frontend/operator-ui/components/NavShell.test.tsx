@@ -55,6 +55,8 @@ describe("NavShell", () => {
       setSelectedSiteId: jest.fn(),
       refreshSites: jest.fn(),
     });
+    delete document.documentElement.dataset.theme;
+    window.localStorage.clear();
   });
 
   it("shows Admin navigation label for admin principals", () => {
@@ -249,6 +251,36 @@ describe("NavShell", () => {
 
     expect(setSelectedSiteId).toHaveBeenCalledWith("site-2");
     expect(mockReplace).toHaveBeenCalledWith("/recommendations?status=open&site_id=site-2");
+  });
+
+  it("toggles theme mode and persists the selection locally", () => {
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-1",
+        display_name: "Operator One",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    const themeToggle = screen.getByTestId("topnav-theme-toggle");
+    fireEvent.click(themeToggle);
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(window.localStorage.getItem("operator-ui-theme")).toBe("dark");
+
+    fireEvent.click(themeToggle);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(window.localStorage.getItem("operator-ui-theme")).toBe("light");
   });
 
   it("replaces /sites/[site_id] route when switching site from header selector", () => {

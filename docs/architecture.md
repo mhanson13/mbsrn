@@ -130,6 +130,7 @@ Local validation strategy:
 - Deterministic summaries over verbose diagnostics: concise, repeatable operator cues are preferred.
 - Normalized data for safe rendering: UI components should consume stable read-model fields and avoid ad hoc inference when canonical fields are available.
 - Recommendation queue layout prioritizes decision/execution signals over row-level identity fields; site/business IDs live in global header context instead of per-row columns.
+- Theme preference is client-side only (`operator-ui-theme` in browser storage) and intentionally has no backend/API side effects.
 
 ### Admin UI Information Architecture
 
@@ -147,6 +148,13 @@ Local validation strategy:
 - Admin and User Mgmt responsibilities remain separated:
   - `/admin`: platform settings + diagnostics
   - `/user-mgmt`: user/identity administration (admin-only)
+
+### Local Development Stability
+
+- Operator UI local startup uses a deterministic preflight wrapper: `frontend/operator-ui/scripts/ensure-port-free.js`.
+- `npm run dev` now checks local port `3201`, attempts graceful termination of the process currently listening, and force-stops only if needed.
+- This behavior is dev-only and exists to avoid repeat `EADDRINUSE` failures during rapid local restart loops (including Codex-driven iterations).
+- Production runtime and deployment behavior are unchanged.
 
 ### Recommendation Content Target Metadata
 

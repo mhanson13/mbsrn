@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "./AuthProvider";
 import { WorkflowSiteSelector } from "./layout/WorkflowSiteSelector";
@@ -20,6 +21,9 @@ const links = [
 ];
 
 type ShellWidthMode = "default" | "wide" | "full";
+type ThemeMode = "light" | "dark";
+
+const OPERATOR_UI_THEME_STORAGE_KEY = "operator-ui-theme";
 
 const WORKFLOW_SITE_SELECTOR_PATH_PREFIXES = [
   "/dashboard",
@@ -45,6 +49,10 @@ function shouldShowWorkflowSiteSelector(pathname: string): boolean {
   return WORKFLOW_SITE_SELECTOR_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
+}
+
+function isThemeMode(value: string | null): value is ThemeMode {
+  return value === "light" || value === "dark";
 }
 
 function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
@@ -116,6 +124,7 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
 export function NavShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { token, refreshToken, principal, clearSession } = useAuth();
+  const [themeMode, setThemeMode] = useState<ThemeMode | null>(null);
   const showWorkflowSiteSelector = Boolean(
     principal?.business_id && token && shouldShowWorkflowSiteSelector(pathname),
   );
@@ -138,6 +147,39 @@ export function NavShell({ children }: { children: React.ReactNode }) {
       clearSession();
     }
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      const storedTheme = window.localStorage.getItem(OPERATOR_UI_THEME_STORAGE_KEY);
+      if (!isThemeMode(storedTheme)) {
+        return;
+      }
+      document.documentElement.dataset.theme = storedTheme;
+      setThemeMode(storedTheme);
+    } catch {
+      // Keep default appearance when local storage is unavailable.
+    }
+  }, []);
+
+  const handleThemeToggle = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const currentTheme =
+      themeMode
+      || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const nextTheme: ThemeMode = currentTheme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = nextTheme;
+    setThemeMode(nextTheme);
+    try {
+      window.localStorage.setItem(OPERATOR_UI_THEME_STORAGE_KEY, nextTheme);
+    } catch {
+      // Keep toggled theme in memory when local storage is unavailable.
+    }
+  }, [themeMode]);
 
   return (
     <>
@@ -169,14 +211,32 @@ export function NavShell({ children }: { children: React.ReactNode }) {
                 <small className="topnav-principal">
                   {principal.display_name} ({principal.role})
                 </small>
+                <button
+                  type="button"
+                  className="topnav-theme-toggle"
+                  onClick={handleThemeToggle}
+                  data-testid="topnav-theme-toggle"
+                >
+                  Light / Dark
+                </button>
                 <button type="button" onClick={() => void handleSignOut()}>
                   Sign out
                 </button>
               </>
             ) : (
-              <Link href="/" className="topnav-link">
-                Sign in
-              </Link>
+              <>
+                <button
+                  type="button"
+                  className="topnav-theme-toggle"
+                  onClick={handleThemeToggle}
+                  data-testid="topnav-theme-toggle"
+                >
+                  Light / Dark
+                </button>
+                <Link href="/" className="topnav-link">
+                  Sign in
+                </Link>
+              </>
             )}
           </div>
         </div>

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/ensure-port-free.js && next dev --hostname 127.0.0.1 --port 3201",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

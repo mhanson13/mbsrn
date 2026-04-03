@@ -259,6 +259,29 @@ Rationale:
 - site/business context is already visible in the global workspace header
 - queue scanning should foreground execution signals (`priority`, `summary`, `status`, `decisiveness`) before IDs
 
+## Final UI Ergonomics
+
+Recent recommendations/workspace polish adds four operator-facing ergonomics protections:
+
+- **Viewport-anchored bulk error toast**
+  - bulk action failures now render in a fixed bottom-right toast (`role="alert"`)
+  - the toast is capped in width and layered above content but below modal overlays
+  - page bottom padding is added while visible so actionable controls are not obscured
+- **Tighter header context grouping**
+  - site selector context IDs (site + business) are grouped inline with the selector row
+  - header vertical spacing is reduced to keep the recommendations surface visible sooner
+- **Summary-first table balance**
+  - title width is constrained
+  - summary width is expanded so the actionable rationale is easier to scan at common desktop widths
+- **Theme-safe presentation**
+  - recommendation surfaces inherit global light/dark theme tokens without changing data or workflows
+
+### Theme Toggle
+
+- A global `Light / Dark` toggle is available in the top navigation shell.
+- Preference is persisted locally in browser storage (`operator-ui-theme`).
+- Theme choice is client-side presentation only and does not alter recommendation logic, API behavior, or execution flow.
+
 ## Sites Workspace Recommendation Surface Cleanup
 
 The site workspace recommendation table no longer renders the legacy metadata header row:

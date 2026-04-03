@@ -382,6 +382,13 @@ describe("recommendations queue optimistic workflows", () => {
         "One or more recommendation updates are not allowed in the current state. 1 update failed.",
       ),
     ).toBeInTheDocument();
+    const errorToast = screen.getByTestId("recommendation-error-toast");
+    expect(errorToast).toHaveTextContent("Bulk update issue");
+    expect(errorToast).toHaveTextContent(
+      "One or more recommendation updates are not allowed in the current state. 1 update failed.",
+    );
+    await user.click(within(errorToast).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByTestId("recommendation-error-toast")).not.toBeInTheDocument();
   });
 
   it("shows waiting/manual/deferred choice cues for accepted and dismissed recommendations", async () => {
