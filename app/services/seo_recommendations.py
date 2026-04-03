@@ -33,6 +33,7 @@ from app.schemas.seo_recommendation import (
     SEORecommendationWorkflowUpdateRequest,
 )
 from app.services.action_chaining_service import generate_next_actions
+from app.services.recommendation_action_plan_builder import build_action_plan
 
 
 SEVERITY_RANK: dict[str, int] = {"INFO": 1, "WARNING": 2, "CRITICAL": 3}
@@ -775,6 +776,16 @@ class SEORecommendationService:
     ) -> list[SEORecommendation]:
         recommendations: list[SEORecommendation] = []
         for draft in drafts:
+            evidence_json = dict(draft.evidence)
+            evidence_json["action_plan"] = build_action_plan(
+                {
+                    "title": draft.title,
+                    "rationale": draft.rationale,
+                    "recommendation_target_content_types": evidence_json.get("target_content_types"),
+                    "recommendation_target_content_summary": evidence_json.get("target_content_summary"),
+                    "evidence_json": evidence_json,
+                }
+            )
             recommendation = SEORecommendation(
                 id=str(uuid4()),
                 business_id=run.business_id,
@@ -791,7 +802,7 @@ class SEORecommendationService:
                 priority_band=self._priority_band_for_score(draft.priority_score),
                 effort_bucket=draft.effort_bucket,
                 status="open",
-                evidence_json=draft.evidence,
+                evidence_json=evidence_json,
             )
             self.seo_recommendation_repository.add_recommendation(recommendation)
             recommendations.append(recommendation)

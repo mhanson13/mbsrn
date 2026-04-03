@@ -264,6 +264,12 @@ Automation notes:
 - they do not trigger execution by themselves
 - they do not change the current non-publishing automation boundary
 
+Recommendation payloads may also include deterministic `action_plan.action_steps` built from those grounded targets.
+
+- action plan steps are operator implementation guidance only
+- they are safe metadata inputs for future automation binding
+- they do not auto-run or publish changes
+
 ## Audit Runs Table (Operator View)
 
 The Audit Runs operator table is intentionally compact and outcome-focused.

@@ -306,3 +306,50 @@ Additional cleanup:
 - does not auto-expand during recommendation generation
 - does not auto-expand on polling refresh
 - does not auto-expand when a new run is created
+
+## Action Plans
+
+Recommendations now include a deterministic `action_plan` payload that converts grounded recommendation metadata into operator-executable steps.
+
+Purpose:
+- make "what to do next" concrete without adding new AI calls
+- keep steps machine-readable for future automation targeting
+- preserve safe fallback behavior when grounded targets are unavailable
+
+Structure:
+- `action_plan.action_steps[]`
+  - `step_number`
+  - `title`
+  - `instruction`
+  - `target_type` (`page` or `content`)
+  - `target_identifier`
+  - `field`
+  - `before_example`
+  - `after_example`
+  - `confidence`
+
+Example:
+
+```json
+{
+  "action_plan": {
+    "action_steps": [
+      {
+        "step_number": 1,
+        "title": "Rewrite meta description",
+        "instruction": "On Service pages, rewrite the meta description with service, location, and a direct call to action.",
+        "target_type": "page",
+        "target_identifier": "Service pages",
+        "field": "meta_description",
+        "before_example": null,
+        "after_example": "Plumbing repair in your area. Call today for a quote.",
+        "confidence": 0.92
+      }
+    ]
+  }
+}
+```
+
+Boundary note:
+- action plans prepare operators for implementation and future automation targeting
+- this layer does **not** execute site changes

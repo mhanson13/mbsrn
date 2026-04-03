@@ -80,6 +80,7 @@ SEORecommendationTargetContentTypeKey = Literal[
     "location_copy",
 ]
 SEORecommendationTargetContentSourceType = Literal["deterministic_rule", "audit_signal", "evidence_mapping"]
+SEORecommendationActionPlanTargetType = Literal["page", "content"]
 SEOCompetitorContextHealthStatus = Literal["strong", "mixed", "weak"]
 SEOCompetitorContextHealthCheckKey = Literal[
     "location_context",
@@ -161,6 +162,11 @@ _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_ITEMS = 3
 _RECOMMENDATION_TARGET_CONTENT_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_TARGET_CONTENT_MAX_ITEMS = 4
+_RECOMMENDATION_ACTION_PLAN_MAX_ITEMS = 4
+_RECOMMENDATION_ACTION_PLAN_STEP_TITLE_MAX_CHARS = 120
+_RECOMMENDATION_ACTION_PLAN_STEP_INSTRUCTION_MAX_CHARS = 280
+_RECOMMENDATION_ACTION_PLAN_TARGET_IDENTIFIER_MAX_CHARS = 140
+_RECOMMENDATION_ACTION_PLAN_EXAMPLE_MAX_CHARS = 220
 _RECOMMENDATION_COMPETITOR_LINK_MAX_ITEMS = 3
 _RECOMMENDATION_COMPETITOR_LINK_NAME_MAX_CHARS = 180
 _RECOMMENDATION_COMPETITOR_LINK_DOMAIN_MAX_CHARS = 255
@@ -2182,6 +2188,114 @@ class SEORecommendationTargetContentTypeRead(BaseModel):
         return normalized  # type: ignore[return-value]
 
 
+class SEORecommendationActionPlanStepRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_number: int = Field(ge=1, le=_RECOMMENDATION_ACTION_PLAN_MAX_ITEMS)
+    title: str = Field(min_length=1, max_length=_RECOMMENDATION_ACTION_PLAN_STEP_TITLE_MAX_CHARS)
+    instruction: str = Field(min_length=1, max_length=_RECOMMENDATION_ACTION_PLAN_STEP_INSTRUCTION_MAX_CHARS)
+    target_type: SEORecommendationActionPlanTargetType
+    target_identifier: str = Field(min_length=1, max_length=_RECOMMENDATION_ACTION_PLAN_TARGET_IDENTIFIER_MAX_CHARS)
+    field: str | None = Field(default=None, max_length=80)
+    before_example: str | None = Field(default=None, max_length=_RECOMMENDATION_ACTION_PLAN_EXAMPLE_MAX_CHARS)
+    after_example: str | None = Field(default=None, max_length=_RECOMMENDATION_ACTION_PLAN_EXAMPLE_MAX_CHARS)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_title(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_RECOMMENDATION_ACTION_PLAN_STEP_TITLE_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Action step title is required")
+        return cleaned
+
+    @field_validator("instruction", mode="before")
+    @classmethod
+    def normalize_instruction(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_RECOMMENDATION_ACTION_PLAN_STEP_INSTRUCTION_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Action step instruction is required")
+        return cleaned
+
+    @field_validator("target_type", mode="before")
+    @classmethod
+    def normalize_target_type(cls, value: Any) -> SEORecommendationActionPlanTargetType:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"page", "content"}:
+            raise ValueError("Invalid action step target_type")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("target_identifier", mode="before")
+    @classmethod
+    def normalize_target_identifier(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_RECOMMENDATION_ACTION_PLAN_TARGET_IDENTIFIER_MAX_CHARS)
+        if cleaned is None:
+            raise ValueError("Action step target_identifier is required")
+        return cleaned
+
+    @field_validator("field", mode="before")
+    @classmethod
+    def normalize_field_hint(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=80)
+
+    @field_validator("before_example", "after_example", mode="before")
+    @classmethod
+    def normalize_examples(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_ACTION_PLAN_EXAMPLE_MAX_CHARS)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value: Any) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            raise ValueError("Action step confidence must be numeric") from None
+        if parsed < 0.0:
+            parsed = 0.0
+        if parsed > 1.0:
+            parsed = 1.0
+        return round(parsed, 2)
+
+
+class SEORecommendationActionPlanRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_steps: list[SEORecommendationActionPlanStepRead] = Field(default_factory=list)
+
+    @field_validator("action_steps", mode="before")
+    @classmethod
+    def normalize_action_steps(
+        cls,
+        value: Any,
+    ) -> list[SEORecommendationActionPlanStepRead]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise TypeError("action_steps must be a list")
+        normalized: list[SEORecommendationActionPlanStepRead] = []
+        seen_numbers: set[int] = set()
+        for raw_item in value:
+            try:
+                parsed = (
+                    raw_item
+                    if isinstance(raw_item, SEORecommendationActionPlanStepRead)
+                    else SEORecommendationActionPlanStepRead.model_validate(raw_item)
+                )
+            except Exception:  # noqa: BLE001
+                continue
+            if parsed.step_number in seen_numbers:
+                continue
+            seen_numbers.add(parsed.step_number)
+            normalized.append(parsed)
+            if len(normalized) >= _RECOMMENDATION_ACTION_PLAN_MAX_ITEMS:
+                break
+        normalized.sort(key=lambda item: item.step_number)
+        for index, step in enumerate(normalized, start=1):
+            if step.step_number != index:
+                normalized[index - 1] = step.model_copy(update={"step_number": index})
+        return normalized
+
+
 class SEORecommendationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -2234,6 +2348,7 @@ class SEORecommendationRead(BaseModel):
         default=None,
         max_length=_RECOMMENDATION_TARGET_CONTENT_SUMMARY_MAX_CHARS,
     )
+    action_plan: SEORecommendationActionPlanRead | None = None
     competitor_evidence_links: list[SEORecommendationCompetitorEvidenceLinkRead] = Field(default_factory=list)
     competitor_linkage_summary: str | None = Field(
         default=None,
@@ -2405,6 +2520,21 @@ class SEORecommendationRead(BaseModel):
         value: Any,
     ) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_TARGET_CONTENT_SUMMARY_MAX_CHARS)
+
+    @field_validator("action_plan", mode="before")
+    @classmethod
+    def normalize_action_plan(
+        cls,
+        value: Any,
+    ) -> SEORecommendationActionPlanRead | None:
+        if value is None:
+            return None
+        if isinstance(value, SEORecommendationActionPlanRead):
+            return value
+        try:
+            return SEORecommendationActionPlanRead.model_validate(value)
+        except Exception:  # noqa: BLE001
+            return None
 
     @field_validator("competitor_evidence_links", mode="before")
     @classmethod
@@ -2664,6 +2794,40 @@ class SEORecommendationRead(BaseModel):
             derived,
             max_length=_RECOMMENDATION_TARGET_CONTENT_SUMMARY_MAX_CHARS,
         )
+        return self
+
+    @model_validator(mode="after")
+    def derive_action_plan(self) -> "SEORecommendationRead":
+        if self.action_plan is not None:
+            return self
+
+        candidate_payload: object | None = None
+        if isinstance(self.evidence_json, dict):
+            candidate_payload = self.evidence_json.get("action_plan")
+
+        if candidate_payload is None:
+            from app.services.recommendation_action_plan_builder import build_action_plan
+
+            candidate_payload = build_action_plan(
+                {
+                    "title": self.title,
+                    "rationale": self.rationale,
+                    "recommendation_target_context": self.recommendation_target_context,
+                    "recommendation_target_page_hints": self.recommendation_target_page_hints,
+                    "recommendation_target_content_types": [
+                        item.model_dump() for item in self.recommendation_target_content_types
+                    ],
+                    "recommendation_target_content_summary": self.recommendation_target_content_summary,
+                    "evidence_json": self.evidence_json if isinstance(self.evidence_json, dict) else None,
+                }
+            )
+
+        try:
+            parsed = SEORecommendationActionPlanRead.model_validate(candidate_payload)
+        except Exception:  # noqa: BLE001
+            parsed = SEORecommendationActionPlanRead(action_steps=[])
+
+        self.action_plan = parsed
         return self
 
     @model_validator(mode="after")

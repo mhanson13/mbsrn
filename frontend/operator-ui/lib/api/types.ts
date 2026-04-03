@@ -804,6 +804,24 @@ export interface RecommendationTargetContentType {
   targeting_strength?: "high" | "medium" | "low" | null;
 }
 
+export type RecommendationActionPlanTargetType = "page" | "content";
+
+export interface RecommendationActionPlanStep {
+  step_number: number;
+  title: string;
+  instruction: string;
+  target_type: RecommendationActionPlanTargetType;
+  target_identifier: string;
+  field?: string | null;
+  before_example?: string | null;
+  after_example?: string | null;
+  confidence: number;
+}
+
+export interface RecommendationActionPlan {
+  action_steps: RecommendationActionPlanStep[];
+}
+
 export interface RecommendationApplyOutcome {
   applied: boolean;
   applied_at: string | null;
@@ -1161,6 +1179,7 @@ export interface Recommendation {
   recommendation_target_page_hints?: string[];
   recommendation_target_content_types?: RecommendationTargetContentType[];
   recommendation_target_content_summary?: string | null;
+  action_plan?: RecommendationActionPlan | null;
   competitor_evidence_links?: RecommendationCompetitorEvidenceLink[];
   competitor_linkage_summary?: string | null;
   recommendation_action_delta?: RecommendationActionDelta | null;

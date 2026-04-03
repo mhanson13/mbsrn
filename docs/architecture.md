@@ -157,6 +157,18 @@ Local validation strategy:
 - Empty-target cases are valid and intentionally preserve generic recommendation behavior.
 - This metadata is designed to remain machine-usable for future automation targeting without changing current execution semantics.
 
+### Recommendation Action Plan Builder
+
+- Recommendation read models now include additive deterministic `action_plan` data.
+- Action plans are generated from grounded recommendation evidence/targets (no extra AI calls).
+- Each plan exposes bounded `action_steps` with:
+  - concrete instruction text
+  - target scope (`page`/`content`)
+  - optional before/after examples
+  - deterministic confidence hint
+- Empty/partial metadata safely yields an empty plan instead of inferred or hallucinated steps.
+- This is a read-model/operator-guidance layer only; it does not execute changes.
+
 ## Action Chaining Layer
 
 The backend includes a deterministic Action Chaining Layer that generates follow-on actions after qualifying workflow transitions.

@@ -81,6 +81,7 @@ import type {
   RecommendationProgressStatus,
   RecommendationPriorityReason,
   RecommendationStartHere,
+  RecommendationActionPlanStep,
   RecommendationTargetContext,
   RecommendationTheme,
   RecommendationThemeGroup,
@@ -2304,6 +2305,54 @@ function normalizeRecommendationTargetContentSummary(item: Recommendation): stri
     return `${labels[0]} and ${labels[1]}`;
   }
   return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
+function normalizeRecommendationActionPlanSteps(item: Recommendation): RecommendationActionPlanStep[] {
+  const rawSteps = item.action_plan?.action_steps;
+  if (!Array.isArray(rawSteps)) {
+    return [];
+  }
+  const normalized: RecommendationActionPlanStep[] = [];
+  const seenStepNumbers = new Set<number>();
+  for (const rawStep of rawSteps) {
+    if (!rawStep || typeof rawStep !== "object") {
+      continue;
+    }
+    const stepNumber = Number.isFinite(rawStep.step_number) ? Math.max(1, Math.trunc(rawStep.step_number)) : null;
+    const title = truncateOptionalText(rawStep.title, 120);
+    const instruction = truncateOptionalText(rawStep.instruction, 280);
+    const targetType = rawStep.target_type === "page" || rawStep.target_type === "content" ? rawStep.target_type : null;
+    const targetIdentifier = truncateOptionalText(rawStep.target_identifier, 140);
+    if (
+      stepNumber === null
+      || seenStepNumbers.has(stepNumber)
+      || !title
+      || !instruction
+      || !targetType
+      || !targetIdentifier
+    ) {
+      continue;
+    }
+    seenStepNumbers.add(stepNumber);
+    normalized.push({
+      step_number: stepNumber,
+      title,
+      instruction,
+      target_type: targetType,
+      target_identifier: targetIdentifier,
+      field: truncateOptionalText(rawStep.field, 80),
+      before_example: truncateOptionalText(rawStep.before_example, 220),
+      after_example: truncateOptionalText(rawStep.after_example, 220),
+      confidence: Number.isFinite(rawStep.confidence)
+        ? Math.max(0, Math.min(1, Number(rawStep.confidence)))
+        : 0.7,
+    });
+    if (normalized.length >= 4) {
+      break;
+    }
+  }
+  normalized.sort((left, right) => left.step_number - right.step_number);
+  return normalized;
 }
 
 function normalizeRecommendationCompetitorLinkageSummary(item: Recommendation): string | null {
@@ -8760,6 +8809,7 @@ export default function SiteWorkspacePage() {
                         const recommendationTargetPageHints = normalizeRecommendationTargetPageHints(item);
                         const recommendationTargetContentSummary =
                           normalizeRecommendationTargetContentSummary(item);
+                        const recommendationActionPlanSteps = normalizeRecommendationActionPlanSteps(item);
                         const recommendationCompetitorLinkageSummary =
                           normalizeRecommendationCompetitorLinkageSummary(item);
                         const recommendationCompetitorEvidenceLinks =
@@ -8840,6 +8890,36 @@ export default function SiteWorkspacePage() {
                                     <span className="hint muted" data-testid="recommendation-target-content-summary">
                                       Content to update: {recommendationTargetContentSummary}
                                     </span>
+                                  ) : null}
+                                  {recommendationActionPlanSteps.length > 0 ? (
+                                    <div className="stack-tight" data-testid={`recommendation-action-plan-${item.id}`}>
+                                      <span className="hint muted">
+                                        <span className="text-strong">How to implement:</span>
+                                      </span>
+                                      <ol className="compact-list">
+                                        {recommendationActionPlanSteps.map((step) => (
+                                          <li key={`${item.id}-workspace-plan-${step.step_number}`}>
+                                            <span className="hint muted">
+                                              <span className="text-strong">Step {step.step_number}:</span> {step.title}
+                                            </span>
+                                            <br />
+                                            <span className="hint muted">{step.instruction}</span>
+                                            {step.before_example ? (
+                                              <>
+                                                <br />
+                                                <span className="hint muted">Before: {step.before_example}</span>
+                                              </>
+                                            ) : null}
+                                            {step.after_example ? (
+                                              <>
+                                                <br />
+                                                <span className="hint muted">After: {step.after_example}</span>
+                                              </>
+                                            ) : null}
+                                          </li>
+                                        ))}
+                                      </ol>
+                                    </div>
                                   ) : null}
                                   {recommendationCompetitorLinkageSummary ? (
                                     <span className="hint muted" data-testid="recommendation-competitor-linkage-summary">
@@ -8990,6 +9070,7 @@ export default function SiteWorkspacePage() {
                               const recommendationTargetPageHints = normalizeRecommendationTargetPageHints(item);
                               const recommendationTargetContentSummary =
                                 normalizeRecommendationTargetContentSummary(item);
+                              const recommendationActionPlanSteps = normalizeRecommendationActionPlanSteps(item);
                               const recommendationCompetitorLinkageSummary =
                                 normalizeRecommendationCompetitorLinkageSummary(item);
                               const recommendationCompetitorEvidenceLinks =
@@ -9070,6 +9151,36 @@ export default function SiteWorkspacePage() {
                                           <span className="hint muted" data-testid="recommendation-target-content-summary">
                                             Content to update: {recommendationTargetContentSummary}
                                           </span>
+                                        ) : null}
+                                        {recommendationActionPlanSteps.length > 0 ? (
+                                          <div className="stack-tight" data-testid={`recommendation-action-plan-${item.id}`}>
+                                            <span className="hint muted">
+                                              <span className="text-strong">How to implement:</span>
+                                            </span>
+                                            <ol className="compact-list">
+                                              {recommendationActionPlanSteps.map((step) => (
+                                                <li key={`${section.theme}-${item.id}-workspace-plan-${step.step_number}`}>
+                                                  <span className="hint muted">
+                                                    <span className="text-strong">Step {step.step_number}:</span> {step.title}
+                                                  </span>
+                                                  <br />
+                                                  <span className="hint muted">{step.instruction}</span>
+                                                  {step.before_example ? (
+                                                    <>
+                                                      <br />
+                                                      <span className="hint muted">Before: {step.before_example}</span>
+                                                    </>
+                                                  ) : null}
+                                                  {step.after_example ? (
+                                                    <>
+                                                      <br />
+                                                      <span className="hint muted">After: {step.after_example}</span>
+                                                    </>
+                                                  ) : null}
+                                                </li>
+                                              ))}
+                                            </ol>
+                                          </div>
                                         ) : null}
                                         {recommendationCompetitorLinkageSummary ? (
                                           <span className="hint muted" data-testid="recommendation-competitor-linkage-summary">

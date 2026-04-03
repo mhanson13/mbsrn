@@ -33,6 +33,7 @@ import type {
   ActionDecision,
   ActionExecutionItem,
   AutomationRun,
+  RecommendationActionPlanStep,
   RecommendationFilteredSummary,
   Recommendation,
   RecommendationActionStatus,
@@ -542,6 +543,53 @@ function deriveRecommendationTargetContentSummary(item: Recommendation): string 
     return `${labels[0]} and ${labels[1]}`;
   }
   return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
+function normalizeRecommendationActionPlanSteps(item: Recommendation): RecommendationActionPlanStep[] {
+  const rawSteps = item.action_plan?.action_steps;
+  if (!Array.isArray(rawSteps)) {
+    return [];
+  }
+  const normalized: RecommendationActionPlanStep[] = [];
+  const seenStepNumbers = new Set<number>();
+  for (const rawStep of rawSteps) {
+    if (!rawStep || typeof rawStep !== "object") {
+      continue;
+    }
+    const stepNumber = Number.isFinite(rawStep.step_number) ? Math.max(1, Math.trunc(rawStep.step_number)) : null;
+    if (stepNumber === null || seenStepNumbers.has(stepNumber)) {
+      continue;
+    }
+    const title = typeof rawStep.title === "string" ? rawStep.title.trim() : "";
+    const instruction = typeof rawStep.instruction === "string" ? rawStep.instruction.trim() : "";
+    const targetType = rawStep.target_type === "page" || rawStep.target_type === "content" ? rawStep.target_type : null;
+    const targetIdentifier =
+      typeof rawStep.target_identifier === "string" ? rawStep.target_identifier.trim() : "";
+    const confidence = Number.isFinite(rawStep.confidence)
+      ? Math.max(0, Math.min(1, Number(rawStep.confidence)))
+      : 0.7;
+    if (!title || !instruction || !targetType || !targetIdentifier) {
+      continue;
+    }
+    seenStepNumbers.add(stepNumber);
+    normalized.push({
+      step_number: stepNumber,
+      title,
+      instruction,
+      target_type: targetType,
+      target_identifier: targetIdentifier,
+      field: typeof rawStep.field === "string" ? rawStep.field.trim() || null : null,
+      before_example:
+        typeof rawStep.before_example === "string" ? rawStep.before_example.trim() || null : null,
+      after_example: typeof rawStep.after_example === "string" ? rawStep.after_example.trim() || null : null,
+      confidence,
+    });
+    if (normalized.length >= 4) {
+      break;
+    }
+  }
+  normalized.sort((left, right) => left.step_number - right.step_number);
+  return normalized;
 }
 
 function deriveRecommendationEvidenceTrust(item: Recommendation): {
@@ -2300,6 +2348,7 @@ function RecommendationsPageContent() {
               {recommendationQuickScanItems.map((item) => {
                 const decisiveness = deriveRecommendationDecisiveness(item, topReadyRecommendation?.id || null);
                 const targetContentSummary = deriveRecommendationTargetContentSummary(item);
+                const actionPlanSteps = normalizeRecommendationActionPlanSteps(item);
                 const automationOriginCue = deriveRecommendationAutomationOriginCue(
                   item,
                   automationLinkedRecommendationRunIds,
@@ -2409,6 +2458,31 @@ function RecommendationsPageContent() {
                           <p className="hint muted" data-testid={`recommendation-content-target-${item.id}`}>
                             <span className="text-strong">Content to update:</span> {targetContentSummary}
                           </p>
+                        ) : null}
+                        {actionPlanSteps.length > 0 ? (
+                          <div className="stack-tight" data-testid={`recommendation-action-plan-${item.id}`}>
+                            <p className="hint muted">
+                              <span className="text-strong">How to implement:</span>
+                            </p>
+                            <ol className="compact-list">
+                              {actionPlanSteps.map((step) => (
+                                <li key={`${item.id}-quick-plan-${step.step_number}`}>
+                                  <p className="hint muted">
+                                    <span className="text-strong">
+                                      Step {step.step_number}: {step.title}
+                                    </span>{" "}
+                                    {step.instruction}
+                                  </p>
+                                  {step.before_example ? (
+                                    <p className="hint muted">Before: {step.before_example}</p>
+                                  ) : null}
+                                  {step.after_example ? (
+                                    <p className="hint muted">After: {step.after_example}</p>
+                                  ) : null}
+                                </li>
+                              ))}
+                            </ol>
+                          </div>
                         ) : null}
                         <p className="hint muted">
                           <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
@@ -2538,6 +2612,7 @@ function RecommendationsPageContent() {
               {items.map((item) => {
                 const decisiveness = deriveRecommendationDecisiveness(item, topReadyRecommendation?.id || null);
                 const targetContentSummary = deriveRecommendationTargetContentSummary(item);
+                const actionPlanSteps = normalizeRecommendationActionPlanSteps(item);
                 const automationOriginCue = deriveRecommendationAutomationOriginCue(
                   item,
                   automationLinkedRecommendationRunIds,
@@ -2728,6 +2803,31 @@ function RecommendationsPageContent() {
                               <p className="hint muted" data-testid={`recommendation-expanded-content-target-${item.id}`}>
                                 <span className="text-strong">Content to update:</span> {targetContentSummary}
                               </p>
+                            ) : null}
+                            {actionPlanSteps.length > 0 ? (
+                              <div className="stack-tight" data-testid={`recommendation-expanded-action-plan-${item.id}`}>
+                                <p className="hint muted">
+                                  <span className="text-strong">How to implement:</span>
+                                </p>
+                                <ol className="compact-list">
+                                  {actionPlanSteps.map((step) => (
+                                    <li key={`${item.id}-expanded-plan-${step.step_number}`}>
+                                      <p className="hint muted">
+                                        <span className="text-strong">
+                                          Step {step.step_number}: {step.title}
+                                        </span>{" "}
+                                        {step.instruction}
+                                      </p>
+                                      {step.before_example ? (
+                                        <p className="hint muted">Before: {step.before_example}</p>
+                                      ) : null}
+                                      {step.after_example ? (
+                                        <p className="hint muted">After: {step.after_example}</p>
+                                      ) : null}
+                                    </li>
+                                  ))}
+                                </ol>
+                              </div>
                             ) : null}
                             <p className="hint muted">
                               <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}

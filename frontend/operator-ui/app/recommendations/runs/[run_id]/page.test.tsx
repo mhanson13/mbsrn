@@ -326,6 +326,21 @@ describe("recommendation run detail page presentation", () => {
         },
       ],
       recommendation_target_content_summary: "Meta title and Meta description",
+      action_plan: {
+        action_steps: [
+          {
+            step_number: 1,
+            title: "Update page title",
+            instruction: "On /services, replace the page title with a clear service + location title.",
+            target_type: "page",
+            target_identifier: "/services",
+            field: "title",
+            before_example: "Home",
+            after_example: "Flooring Services in Your Area | Trusted local support",
+            confidence: 0.92,
+          },
+        ],
+      },
     } satisfies Recommendation;
 
     mockFetchRecommendationRunReport.mockResolvedValueOnce(buildRunReport([recommendation]));
@@ -337,7 +352,14 @@ describe("recommendation run detail page presentation", () => {
     render(<RecommendationRunDetailPage />);
 
     await screen.findByRole("columnheader", { name: "Content to update" });
+    expect(screen.getByRole("columnheader", { name: "How to implement" })).toBeInTheDocument();
     expect(screen.getByText("Meta title and Meta description")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-run-action-plan-rec-content-run-1")).toHaveTextContent(
+      "Step 1:",
+    );
+    expect(screen.getByTestId("recommendation-run-action-plan-rec-content-run-1")).toHaveTextContent(
+      "Update page title",
+    );
   });
 
   it("captures local output-review decisions for run-level action control", async () => {

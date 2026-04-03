@@ -34,6 +34,7 @@ import type {
   ActionExecutionItem,
   AutomationRun,
   CompetitorComparisonReport,
+  RecommendationActionPlanStep,
   Recommendation,
   RecommendationNarrative,
   RecommendationRun,
@@ -405,6 +406,48 @@ function deriveRecommendationTargetContentSummary(item: Recommendation): string 
     return `${labels[0]} and ${labels[1]}`;
   }
   return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
+function normalizeRecommendationActionPlanSteps(item: Recommendation): RecommendationActionPlanStep[] {
+  const rawSteps = item.action_plan?.action_steps;
+  if (!Array.isArray(rawSteps)) {
+    return [];
+  }
+  const normalized: RecommendationActionPlanStep[] = [];
+  const seenNumbers = new Set<number>();
+  for (const rawStep of rawSteps) {
+    if (!rawStep || typeof rawStep !== "object") {
+      continue;
+    }
+    const stepNumber = Number.isFinite(rawStep.step_number) ? Math.max(1, Math.trunc(rawStep.step_number)) : null;
+    const title = typeof rawStep.title === "string" ? rawStep.title.trim() : "";
+    const instruction = typeof rawStep.instruction === "string" ? rawStep.instruction.trim() : "";
+    const targetType = rawStep.target_type === "page" || rawStep.target_type === "content" ? rawStep.target_type : null;
+    const targetIdentifier =
+      typeof rawStep.target_identifier === "string" ? rawStep.target_identifier.trim() : "";
+    if (stepNumber === null || seenNumbers.has(stepNumber) || !title || !instruction || !targetType || !targetIdentifier) {
+      continue;
+    }
+    seenNumbers.add(stepNumber);
+    normalized.push({
+      step_number: stepNumber,
+      title,
+      instruction,
+      target_type: targetType,
+      target_identifier: targetIdentifier,
+      field: typeof rawStep.field === "string" ? rawStep.field.trim() || null : null,
+      before_example: typeof rawStep.before_example === "string" ? rawStep.before_example.trim() || null : null,
+      after_example: typeof rawStep.after_example === "string" ? rawStep.after_example.trim() || null : null,
+      confidence: Number.isFinite(rawStep.confidence)
+        ? Math.max(0, Math.min(1, Number(rawStep.confidence)))
+        : 0.7,
+    });
+    if (normalized.length >= 4) {
+      break;
+    }
+  }
+  normalized.sort((left, right) => left.step_number - right.step_number);
+  return normalized;
 }
 
 function safeAutomationBindingErrorMessage(error: unknown): string {
@@ -1846,6 +1889,7 @@ export default function RecommendationRunDetailPage() {
                         <th>Category</th>
                         <th>Source</th>
                         <th>Content to update</th>
+                        <th>How to implement</th>
                         <th>Rationale</th>
                         <th>Created</th>
                       </tr>
@@ -1855,6 +1899,7 @@ export default function RecommendationRunDetailPage() {
                         const lifecycleSupport = deriveRecommendationLifecycleSupport(item);
                         const freshnessSupport = deriveRecommendationFreshnessSupport(item);
                         const targetContentSummary = deriveRecommendationTargetContentSummary(item);
+                        const actionPlanSteps = normalizeRecommendationActionPlanSteps(item);
                         return (
                         <tr key={item.id}>
                           <td className="table-cell-wrap">
@@ -1903,6 +1948,38 @@ export default function RecommendationRunDetailPage() {
                           <td>{deriveRecommendationSourceType(item)}</td>
                           <td className="table-cell-wrap">
                             {targetContentSummary || "-"}
+                          </td>
+                          <td className="table-cell-wrap">
+                            {actionPlanSteps.length > 0 ? (
+                              <ol
+                                className="compact-list"
+                                data-testid={`recommendation-run-action-plan-${item.id}`}
+                              >
+                                {actionPlanSteps.map((step) => (
+                                  <li key={`${item.id}-run-plan-${step.step_number}`}>
+                                    <span className="hint muted">
+                                      <span className="text-strong">Step {step.step_number}:</span> {step.title}
+                                    </span>
+                                    <br />
+                                    <span className="hint muted">{step.instruction}</span>
+                                    {step.before_example ? (
+                                      <>
+                                        <br />
+                                        <span className="hint muted">Before: {step.before_example}</span>
+                                      </>
+                                    ) : null}
+                                    {step.after_example ? (
+                                      <>
+                                        <br />
+                                        <span className="hint muted">After: {step.after_example}</span>
+                                      </>
+                                    ) : null}
+                                  </li>
+                                ))}
+                              </ol>
+                            ) : (
+                              "-"
+                            )}
                           </td>
                           <td>{truncateText(item.rationale, RECOMMENDATION_RATIONALE_PREVIEW_LIMIT)}</td>
                           <td>{formatDateTime(item.created_at)}</td>

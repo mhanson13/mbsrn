@@ -3207,6 +3207,22 @@ describe("site workspace timeline controls", () => {
                 },
               ],
               recommendation_target_content_summary: "Main heading and Service description",
+              action_plan: {
+                action_steps: [
+                  {
+                    step_number: 1,
+                    title: "Improve main heading clarity",
+                    instruction:
+                      "On Homepage, add one clear top heading that states the service and location.",
+                    target_type: "content",
+                    target_identifier: "Homepage",
+                    field: "h1",
+                    before_example: "Welcome",
+                    after_example: "Flooring Installation in Your Area | Trusted local support",
+                    confidence: 0.92,
+                  },
+                ],
+              },
             }),
             buildRecommendation({
               id: "rec-action-2",
@@ -3244,6 +3260,14 @@ describe("site workspace timeline controls", () => {
     expect(targetContentLines).toHaveLength(1);
     expect(targetContentLines[0]).toHaveTextContent(
       "Content to update: Main heading and Service description",
+    );
+    const actionPlanLines = screen.getAllByTestId("recommendation-action-plan-rec-action-1");
+    expect(actionPlanLines).toHaveLength(1);
+    expect(actionPlanLines[0]).toHaveTextContent("How to implement:");
+    expect(actionPlanLines[0]).toHaveTextContent("Step 1: Improve main heading clarity");
+    expect(actionPlanLines[0]).toHaveTextContent("Before: Welcome");
+    expect(actionPlanLines[0]).toHaveTextContent(
+      "After: Flooring Installation in Your Area | Trusted local support",
     );
 
     const observedGapLines = screen.getAllByTestId("recommendation-observed-gap-summary");

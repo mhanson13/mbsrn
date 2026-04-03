@@ -1982,6 +1982,9 @@ def test_recommendation_workspace_summary_returns_latest_completed_run(db_sessio
         assert target.get("source_type") in {"deterministic_rule", "audit_signal", "evidence_mapping"}
     summary_value = payload["recommendations"]["items"][0]["recommendation_target_content_summary"]
     assert summary_value is None or isinstance(summary_value, str)
+    assert "action_plan" in payload["recommendations"]["items"][0]
+    assert isinstance(payload["recommendations"]["items"][0]["action_plan"], dict)
+    assert isinstance(payload["recommendations"]["items"][0]["action_plan"].get("action_steps"), list)
     assert payload["latest_narrative"] is None
     assert payload["tuning_suggestions"] == []
     assert payload["apply_outcome"] is None
@@ -3232,6 +3235,11 @@ def test_recommendation_workspace_summary_derives_target_page_hints_from_audit_i
     ]
     assert "Service description" in service_target_labels
     assert by_rule_key["workspace_hint_service_pages"]["recommendation_target_content_summary"]
+    assert isinstance(by_rule_key["workspace_hint_service_pages"]["action_plan"], dict)
+    assert by_rule_key["workspace_hint_service_pages"]["action_plan"]["action_steps"]
+    first_step = by_rule_key["workspace_hint_service_pages"]["action_plan"]["action_steps"][0]
+    assert isinstance(first_step.get("title"), str)
+    assert isinstance(first_step.get("instruction"), str)
     assert "service" in by_rule_key["workspace_hint_service_pages"]["recommendation_observed_gap_summary"].lower()
     assert "Service pages" in by_rule_key["workspace_hint_service_pages"]["recommendation_evidence_trace"]
     assert by_rule_key["workspace_hint_service_pages"]["recommendation_priority"]["priority_level"] == "low"

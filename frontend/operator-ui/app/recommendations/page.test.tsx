@@ -430,6 +430,32 @@ describe("recommendations queue optimistic workflows", () => {
         },
       ],
       recommendation_target_content_summary: "Main heading and Intro paragraph",
+      action_plan: {
+        action_steps: [
+          {
+            step_number: 1,
+            title: "Improve main heading clarity",
+            instruction: "On Homepage, add one clear top heading that states the service and location.",
+            target_type: "content",
+            target_identifier: "Homepage",
+            field: "h1",
+            before_example: "Welcome",
+            after_example: "Flooring Installation in Your Area | Trusted local support",
+            confidence: 0.92,
+          },
+          {
+            step_number: 2,
+            title: "Expand intro paragraph",
+            instruction: "On Homepage, add a short opening paragraph that explains the service and who it helps.",
+            target_type: "content",
+            target_identifier: "Homepage",
+            field: "intro_paragraph",
+            before_example: null,
+            after_example: "We provide flooring in your area with clear scope, timeline, and next steps.",
+            confidence: 0.8,
+          },
+        ],
+      },
     } satisfies Recommendation;
     mockFetchRecommendations.mockResolvedValueOnce(
       createListResponse(
@@ -457,11 +483,26 @@ describe("recommendations queue optimistic workflows", () => {
     expect(screen.getByTestId("recommendation-expanded-content-target-rec-content-1")).toHaveTextContent(
       "Content to update: Main heading and Intro paragraph",
     );
+    expect(screen.getByTestId("recommendation-expanded-action-plan-rec-content-1")).toHaveTextContent(
+      "How to implement:",
+    );
+    expect(screen.getByTestId("recommendation-expanded-action-plan-rec-content-1")).toHaveTextContent(
+      "Step 1: Improve main heading clarity",
+    );
+    expect(screen.getByTestId("recommendation-expanded-action-plan-rec-content-1")).toHaveTextContent(
+      "Before: Welcome",
+    );
+    expect(screen.getByTestId("recommendation-expanded-action-plan-rec-content-1")).toHaveTextContent(
+      "After: Flooring Installation in Your Area | Trusted local support",
+    );
 
     const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-content-1");
     await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
     expect(screen.getByTestId("recommendation-content-target-rec-content-1")).toHaveTextContent(
       "Content to update: Main heading and Intro paragraph",
+    );
+    expect(screen.getByTestId("recommendation-action-plan-rec-content-1")).toHaveTextContent(
+      "How to implement:",
     );
   });
 

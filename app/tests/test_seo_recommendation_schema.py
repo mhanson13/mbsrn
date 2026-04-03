@@ -421,6 +421,10 @@ def test_recommendation_read_derives_target_content_types_from_evidence() -> Non
         "meta_description",
     ]
     assert recommendation.recommendation_target_content_summary == "Meta title and Meta description"
+    assert recommendation.action_plan is not None
+    assert recommendation.action_plan.action_steps
+    assert recommendation.action_plan.action_steps[0].title == "Update page title"
+    assert recommendation.action_plan.action_steps[0].field == "title"
 
 
 def test_recommendation_read_derives_target_content_types_deterministically_from_signals() -> None:
@@ -449,6 +453,43 @@ def test_recommendation_read_keeps_target_content_empty_when_not_grounded() -> N
     )
     assert recommendation.recommendation_target_content_types == []
     assert recommendation.recommendation_target_content_summary is None
+    assert recommendation.action_plan is not None
+    assert recommendation.action_plan.action_steps == []
+
+
+def test_recommendation_read_derives_action_plan_from_evidence_when_present() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            title="Fix service page heading coverage",
+            rationale="Missing_h1 issues were detected on key service pages.",
+            evidence_json={
+                "sources": ["audit"],
+                "action_plan": {
+                    "action_steps": [
+                        {
+                            "step_number": 1,
+                            "title": "Improve main heading clarity",
+                            "instruction": "On Homepage, add one clear top heading that states the service and location.",
+                            "target_type": "content",
+                            "target_identifier": "Homepage",
+                            "field": "h1",
+                            "before_example": "Welcome",
+                            "after_example": "Flooring Installation in Your Area | Trusted local support",
+                            "confidence": 0.92,
+                        }
+                    ]
+                },
+            },
+        )
+    )
+
+    assert recommendation.action_plan is not None
+    assert len(recommendation.action_plan.action_steps) == 1
+    step = recommendation.action_plan.action_steps[0]
+    assert step.step_number == 1
+    assert step.title == "Improve main heading clarity"
+    assert step.target_identifier == "Homepage"
+    assert step.before_example == "Welcome"
 
 
 def test_recommendation_read_uses_plain_language_action_when_content_target_summary_is_present() -> None:
