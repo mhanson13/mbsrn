@@ -91,6 +91,11 @@ describe("NavShell", () => {
     expect(document.querySelector(".operator-shell-main-inner-full")).toBeNull();
     expect(screen.getByTestId("topnav-site-selector-row")).toBeInTheDocument();
     expect(screen.getByTestId("workflow-site-selector-global-workflow-site-selector")).toBeInTheDocument();
+    const identifierContext = screen.getByTestId("topnav-context-identifiers");
+    expect(identifierContext).toHaveTextContent("Site ID:");
+    expect(identifierContext).toHaveTextContent("site-1");
+    expect(identifierContext).toHaveTextContent("Business ID:");
+    expect(identifierContext).toHaveTextContent("biz-1");
   });
 
   it("marks the matching top navigation link as active for nested routes", () => {
@@ -121,6 +126,7 @@ describe("NavShell", () => {
     expect(document.querySelector(".operator-shell-main-inner-full")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "User Mgmt" })).not.toBeInTheDocument();
     expect(screen.getByTestId("topnav-site-selector-row")).toBeInTheDocument();
+    expect(screen.getByTestId("topnav-context-identifiers")).toHaveTextContent("site-1");
   });
 
   it("applies wide shell width mode for dense workflow routes", () => {

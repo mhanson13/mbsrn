@@ -243,6 +243,23 @@ describe("recommendations queue optimistic workflows", () => {
     expect(screen.getByLabelText("Category")).toHaveClass("operator-select");
     expect(screen.getByLabelText("Sort")).toHaveClass("operator-select");
     expect(screen.getByLabelText("Results per page")).toHaveClass("operator-select");
+    const recommendationTable = screen.getByRole("table");
+    const headerCells = within(recommendationTable)
+      .getAllByRole("columnheader")
+      .map((headerCell) => headerCell.textContent?.trim() || "");
+    expect(headerCells).toEqual([
+      "",
+      "Priority",
+      "Title",
+      "Summary",
+      "Status",
+      "Decisiveness",
+      "Category",
+      "Source",
+      "Recommendation Run",
+    ]);
+    expect(headerCells).not.toContain("Business");
+    expect(headerCells).not.toContain("Site");
     expect(document.querySelector(".page-container-width-full")).toBeTruthy();
     expect(screen.getByTestId("recommendation-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-1");
@@ -304,7 +321,7 @@ describe("recommendations queue optimistic workflows", () => {
     expect(recOneExpandedControls).toHaveTextContent("Review recommendation");
     expect(recOneExpandedControls).toHaveTextContent("Run SEO automation");
     expect(recOneDetailRow).toBeInTheDocument();
-    expect(recOneDetailPanel.closest("td")).toHaveAttribute("colspan", "11");
+    expect(recOneDetailPanel.closest("td")).toHaveAttribute("colspan", "9");
     expect(recOneDetailPanel).toHaveTextContent("High-value next step");
     expect(recOneDetailPanel).toHaveTextContent("Best immediate move");
     expect(recOneDetailPanel).toHaveTextContent("Needs review / pending");

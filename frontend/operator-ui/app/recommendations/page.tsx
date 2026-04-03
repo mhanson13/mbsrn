@@ -2584,7 +2584,7 @@ function RecommendationsPageContent() {
         </div>
 
         <div className="table-container">
-          <table className="table table-dense">
+          <table className="table table-dense recommendations-table">
             <thead>
               <tr>
                 <th>
@@ -2596,16 +2596,14 @@ function RecommendationsPageContent() {
                     disabled={items.length === 0 || bulkActionInFlight !== null}
                   />
                 </th>
+                <th>Priority</th>
                 <th>Title</th>
                 <th>Summary</th>
                 <th>Status</th>
                 <th>Decisiveness</th>
                 <th>Category</th>
-                <th>Priority</th>
                 <th>Source</th>
                 <th>Recommendation Run</th>
-                <th>Business</th>
-                <th>Site</th>
               </tr>
             </thead>
             <tbody>
@@ -2667,8 +2665,11 @@ function RecommendationsPageContent() {
                           onChange={() => toggleRecommendationSelection(item.id)}
                         />
                       </td>
-                      <td>{item.title}</td>
                       <td>
+                        {item.priority_score} ({item.priority_band})
+                      </td>
+                      <td>{item.title}</td>
+                      <td className="table-cell-wrap recommendation-summary-cell">
                         {item.rationale}
                         {targetContentSummary ? (
                           <p className="hint muted" data-testid={`recommendation-summary-content-target-${item.id}`}>
@@ -2710,9 +2711,6 @@ function RecommendationsPageContent() {
                         </div>
                       </td>
                       <td>{item.category}</td>
-                      <td>
-                        {item.priority_score} ({item.priority_band})
-                      </td>
                       <td>{deriveSourceType(item)}</td>
                       <td>
                         <Link
@@ -2726,12 +2724,10 @@ function RecommendationsPageContent() {
                           {automationOriginCue.label}
                         </p>
                       </td>
-                      <td>{item.business_id}</td>
-                      <td>{item.site_id}</td>
                     </tr>
                     {isExpanded ? (
                       <tr className="table-expanded-row" data-testid={`recommendation-decisiveness-detail-row-${item.id}`}>
-                        <td colSpan={11}>
+                        <td colSpan={9}>
                           <div
                             id={detailsId}
                             className="table-expanded-panel recommendation-decisiveness-details"
@@ -2848,7 +2844,7 @@ function RecommendationsPageContent() {
               })}
               {items.length === 0 && !loadingItems ? (
                 <tr>
-                  <td colSpan={11}>
+                  <td colSpan={9}>
                     {hasActiveFilters
                       ? "No recommendations match the current filters."
                       : "No recommendations found for this site."}

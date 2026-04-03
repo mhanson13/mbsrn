@@ -246,6 +246,19 @@ Purpose:
 - provide a fast scan signal for triage and action ordering
 - do not replace detailed metric review in expanded/detail surfaces
 
+## Recommendation Table Layout
+
+The recommendations queue table now prioritizes action scanning over record identity metadata.
+
+Changes:
+- removed row-level `Site` and `Business` columns
+- moved `Priority` immediately after row selection (checkbox) for faster triage
+- expanded `Summary` to use reclaimed horizontal space for clearer operator context
+
+Rationale:
+- site/business context is already visible in the global workspace header
+- queue scanning should foreground execution signals (`priority`, `summary`, `status`, `decisiveness`) before IDs
+
 ## Sites Workspace Recommendation Surface Cleanup
 
 The site workspace recommendation table no longer renders the legacy metadata header row:

@@ -129,6 +129,7 @@ Local validation strategy:
 - Action-oriented over status-oriented: primary surfaces should answer what to do next.
 - Deterministic summaries over verbose diagnostics: concise, repeatable operator cues are preferred.
 - Normalized data for safe rendering: UI components should consume stable read-model fields and avoid ad hoc inference when canonical fields are available.
+- Recommendation queue layout prioritizes decision/execution signals over row-level identity fields; site/business IDs live in global header context instead of per-row columns.
 
 ### Admin UI Information Architecture
 
