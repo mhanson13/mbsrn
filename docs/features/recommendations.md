@@ -265,6 +265,7 @@ Recommendation payloads now include additive deterministic explanation fields wi
 
 - `priority_rationale`
 - `evidence_strength` (`strong` | `moderate` | `limited`)
+- `competitor_influence_level` (`none` | `supporting` | `meaningful`)
 - `why_now`
 - `next_action`
 - `competitor_insight` (optional)
@@ -285,7 +286,47 @@ Fallback behavior is conservative:
 - `next_action` falls back to deterministic review guidance when no step metadata exists
 - `competitor_insight` is suppressed when evidence is `limited` or competitor differentiation is not directionally clear
 
+Competitor influence calibration:
+
+- `competitor_influence_level` indicates how much competitor context materially shaped recommendation urgency/explanation.
+- It is derived from deterministic competitor linkage/action-delta/priority signals and is intentionally separate from `evidence_strength`.
+- `evidence_strength` remains overall recommendation support quality.
+- `competitor_influence_level` is suppressed to `none` for limited evidence and deferred/closed states.
+- UI renders this in expanded/detail contexts only to avoid badge clutter in collapsed queue views.
+
 Operator UI surfaces these fields compactly in recommendation queue and site workspace detail views to improve trust and execution readiness without adding badge noise.
+
+## Deterministic Execution Readiness Layer
+
+Recommendation payloads now also include additive deterministic execution-readiness fields (advisory only):
+
+- `execution_type`
+  - `content_update` | `page_update` | `metadata_update` | `internal_linking` | `local_seo` | `technical_fix` | `mixed`
+- `execution_scope`
+  - short statement of the affected page/content surface
+- `execution_inputs`
+  - bounded list of practical operator inputs needed before implementation
+- `execution_readiness`
+  - `ready` | `needs_review` | `needs_more_input`
+- `blocking_reason` (optional)
+  - concise reason when readiness is not `ready`
+
+Derivation rules:
+
+- use existing recommendation metadata only (`target_context`, page hints, content targets, action clarity, action plan, status/progress, evidence strength)
+- no additional AI/provider calls
+- conservative fallback when specificity is weak
+
+Operator interpretation:
+
+- `ready`: recommendation has enough target/action specificity to implement now
+- `needs_review`: recommendation is partially specified or currently in a status that requires validation/review first
+- `needs_more_input`: recommendation lacks concrete page/content targets for safe implementation
+
+UI behavior:
+
+- execution-readiness fields are rendered in expanded/detail recommendation views only
+- this layer is structural guidance only and does not execute mutations automatically
 
 ### Competitor Insight
 

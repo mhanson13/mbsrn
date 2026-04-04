@@ -192,8 +192,14 @@ Recommendation read models now expose additive deterministic trust/actionability
 
 - `priority_rationale`
 - `evidence_strength`
+- `competitor_influence_level`
 - `why_now`
 - `next_action`
+- `execution_type`
+- `execution_scope`
+- `execution_inputs`
+- `execution_readiness`
+- `blocking_reason`
 
 Design constraints:
 
@@ -202,7 +208,20 @@ Design constraints:
 - compact operator-readable output with conservative fallbacks for thin evidence
 - competitor/context signals are incorporated selectively when they materially sharpen recommendation clarity
 
+Competitor influence calibration:
+
+- `competitor_influence_level` is derived from deterministic competitor gap/action-delta/linkage signals.
+- It represents influence materiality (`none`, `supporting`, `meaningful`) and is intentionally not a second confidence score.
+- `evidence_strength` remains the overall support classifier; competitor influence is a scoped differentiation signal.
+- Suppression remains conservative for weak/limited competitor context and deferred/closed recommendation states.
+
 This layer improves operator trust and execution readiness while keeping recommendation ordering and generation behavior unchanged.
+
+Execution-readiness layer notes:
+
+- deterministic + advisory only (no mutation execution in this layer)
+- derived from existing recommendation target metadata, action-plan/action-clarity signals, status/progress, and evidence strength
+- intended to structure future safe action workflows without changing current recommendation generation or ranking behavior
 
 ### Competitor-Informed Differentiation Layer
 

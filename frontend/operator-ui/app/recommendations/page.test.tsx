@@ -345,6 +345,7 @@ describe("recommendations queue optimistic workflows", () => {
     );
     expect(recOneDetailPanel).toHaveTextContent("Priority rationale for Recommendation One.");
     expect(recOneDetailPanel).toHaveTextContent("Strong evidence");
+    expect(screen.queryByTestId("recommendation-competitor-influence-rec-1")).not.toBeInTheDocument();
     expect(recOneDetailPanel).toHaveTextContent("After action:");
     expect(recOneDetailPanel).toHaveTextContent("Evidence:");
     expect(recOneDetailPanel).toHaveTextContent("Support cue:");
@@ -543,6 +544,7 @@ describe("recommendations queue optimistic workflows", () => {
   it("renders competitor insight only in expanded recommendation details", async () => {
     const recommendation = {
       ...createRecommendation("rec-insight-1", "open", "high", "Strengthen location-targeted service copy"),
+      competitor_influence_level: "meaningful",
       competitor_insight:
         "Competing sites include clearer location-targeted content for this topic. Closing this gap can improve parity when customers compare local options.",
     } satisfies Recommendation;
@@ -571,6 +573,61 @@ describe("recommendations queue optimistic workflows", () => {
     const insightLine = await screen.findByTestId("recommendation-competitor-insight-rec-insight-1");
     expect(insightLine).toHaveTextContent("Competitor insight:");
     expect(insightLine).toHaveTextContent("location-targeted content");
+    const influenceLine = await screen.findByTestId("recommendation-competitor-influence-rec-insight-1");
+    expect(influenceLine).toHaveTextContent("Competitor influence:");
+    expect(influenceLine).toHaveTextContent("Meaningful influence");
+  });
+
+  it("renders execution-readiness guidance only in expanded recommendation details", async () => {
+    const recommendation = {
+      ...createRecommendation("rec-execution-1", "open", "high", "Clarify metadata for service pages"),
+      execution_type: "metadata_update",
+      execution_scope: "Update meta title and meta description on Homepage and /services.",
+      execution_inputs: [
+        "Target page list (for example: Homepage, /services)",
+        "Current title/meta values on the target pages",
+      ],
+      execution_readiness: "needs_review",
+      blocking_reason: "Target scope is partially specified. Confirm final page/content details before implementing.",
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [recommendation],
+        {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Clarify metadata for service pages");
+    expect(screen.queryByTestId("recommendation-expanded-execution-readiness-rec-execution-1")).not.toBeInTheDocument();
+    expect(screen.queryByText("Execution readiness:")).not.toBeInTheDocument();
+
+    const decisivenessCell = screen.getByTestId("recommendation-decisiveness-rec-execution-1");
+    await user.click(within(decisivenessCell).getByRole("button", { name: "View details" }));
+
+    expect(screen.getByTestId("recommendation-expanded-execution-readiness-rec-execution-1")).toHaveTextContent(
+      "Execution readiness: Needs review",
+    );
+    expect(screen.getByTestId("recommendation-expanded-execution-type-rec-execution-1")).toHaveTextContent(
+      "Execution type: Metadata update",
+    );
+    expect(screen.getByTestId("recommendation-expanded-execution-scope-rec-execution-1")).toHaveTextContent(
+      "Execution scope: Update meta title and meta description",
+    );
+    expect(screen.getByTestId("recommendation-expanded-execution-inputs-rec-execution-1")).toHaveTextContent(
+      "Execution inputs:",
+    );
+    expect(screen.getByTestId("recommendation-expanded-execution-blocking-rec-execution-1")).toHaveTextContent(
+      "Execution blocker: Target scope is partially specified.",
+    );
   });
 
   it("removes rows excluded by status filter and reconciles summary to backend truth after refresh", async () => {

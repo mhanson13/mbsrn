@@ -28,6 +28,17 @@ SortOrder = Literal["asc", "desc"]
 SEORecommendationTuningSuggestionConfidence = Literal["low", "medium", "high"]
 SEORecommendationSignalSupportLevel = Literal["low", "medium", "high"]
 SEORecommendationEvidenceStrength = Literal["strong", "moderate", "limited"]
+SEORecommendationCompetitorInfluenceLevel = Literal["none", "supporting", "meaningful"]
+SEORecommendationExecutionType = Literal[
+    "content_update",
+    "page_update",
+    "metadata_update",
+    "internal_linking",
+    "local_seo",
+    "technical_fix",
+    "mixed",
+]
+SEORecommendationExecutionReadiness = Literal["ready", "needs_review", "needs_more_input"]
 SEORecommendationPriorityLevel = Literal["high", "medium", "low"]
 SEORecommendationEffortHint = Literal["quick_win", "moderate", "larger_change"]
 SEORecommendationCompetitorEvidenceTrustTier = Literal[
@@ -161,6 +172,10 @@ _RECOMMENDATION_PRIORITY_RATIONALE_MAX_CHARS = 260
 _RECOMMENDATION_WHY_NOW_MAX_CHARS = 240
 _RECOMMENDATION_NEXT_ACTION_MAX_CHARS = 220
 _RECOMMENDATION_COMPETITOR_INSIGHT_MAX_CHARS = 220
+_RECOMMENDATION_EXECUTION_SCOPE_MAX_CHARS = 220
+_RECOMMENDATION_EXECUTION_INPUT_MAX_ITEMS = 4
+_RECOMMENDATION_EXECUTION_INPUT_MAX_CHARS = 140
+_RECOMMENDATION_BLOCKING_REASON_MAX_CHARS = 220
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_ITEMS = 5
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
@@ -1310,6 +1325,84 @@ def _derive_recommendation_evidence_strength(
     return "limited"
 
 
+def _derive_recommendation_competitor_influence_level(
+    *,
+    status: SEORecommendationStatus,
+    evidence_strength: SEORecommendationEvidenceStrength,
+    priority_reasons: list[SEORecommendationPriorityReason],
+    recommendation_action_delta: SEORecommendationActionDeltaRead | None,
+    competitor_evidence_links: list[SEORecommendationCompetitorEvidenceLinkRead],
+    competitor_linkage_summary: str | None,
+    recommendation_observed_gap_summary: str | None,
+    recommendation_target_context: SEORecommendationTargetContext | None,
+    recommendation_target_content_summary: str | None,
+) -> SEORecommendationCompetitorInfluenceLevel:
+    if status in {"dismissed", "snoozed", "resolved"}:
+        return "none"
+    if evidence_strength == "limited":
+        return "none"
+
+    has_competitor_signal = bool(
+        recommendation_action_delta is not None
+        or competitor_evidence_links
+        or (competitor_linkage_summary or "").strip()
+        or "competitor_gap" in priority_reasons
+    )
+    if not has_competitor_signal:
+        return "none"
+
+    directional_text = " ".join(
+        value
+        for value in (
+            recommendation_action_delta.observed_competitor_pattern if recommendation_action_delta is not None else None,
+            recommendation_action_delta.observed_site_gap if recommendation_action_delta is not None else None,
+            recommendation_observed_gap_summary,
+            competitor_linkage_summary,
+            recommendation_target_content_summary,
+            recommendation_target_context,
+        )
+        if value
+    ).lower()
+    directional_tokens = (
+        "stronger",
+        "clearer",
+        "more complete",
+        "better",
+        "gap",
+        "missing",
+        "weaker",
+        "limited",
+        "coverage",
+        "local",
+        "service",
+        "targeted",
+    )
+    has_directional_difference = any(token in directional_text for token in directional_tokens) or (
+        recommendation_action_delta is not None
+    )
+    if not has_directional_difference:
+        return "none"
+
+    trusted_link_count = sum(
+        1 for link in competitor_evidence_links if link.trust_tier == "trusted_verified"
+    )
+    has_meaningful_action_delta = bool(
+        recommendation_action_delta is not None
+        and recommendation_action_delta.evidence_strength in {"high", "medium"}
+    )
+    if (
+        "competitor_gap" in priority_reasons
+        and (
+            trusted_link_count > 0
+            or has_meaningful_action_delta
+            or (competitor_linkage_summary or "").strip()
+        )
+    ):
+        return "meaningful"
+
+    return "supporting"
+
+
 def _derive_recommendation_priority_rationale(
     *,
     priority_band: SEORecommendationPriorityBand,
@@ -1319,6 +1412,7 @@ def _derive_recommendation_priority_rationale(
     recommendation_action_delta: SEORecommendationActionDeltaRead | None,
     recommendation_target_content_summary: str | None,
     evidence_strength: SEORecommendationEvidenceStrength,
+    competitor_influence_level: SEORecommendationCompetitorInfluenceLevel,
 ) -> str:
     drivers: list[str] = []
     if recommendation_priority is not None:
@@ -1341,6 +1435,10 @@ def _derive_recommendation_priority_rationale(
 
     if recommendation_target_content_summary:
         drivers.append(f"explicit content target ({recommendation_target_content_summary})")
+    if competitor_influence_level == "meaningful":
+        drivers.append("meaningful competitor differentiation context")
+    elif competitor_influence_level == "supporting":
+        drivers.append("supporting competitor context")
 
     compact_drivers = _dedupe_compact_lines(
         drivers,
@@ -1385,6 +1483,7 @@ def _derive_recommendation_why_now(
     priority_band: SEORecommendationPriorityBand,
     priority_reasons: list[SEORecommendationPriorityReason],
     evidence_strength: SEORecommendationEvidenceStrength,
+    competitor_influence_level: SEORecommendationCompetitorInfluenceLevel,
 ) -> str:
     if status in {"dismissed", "snoozed", "resolved"}:
         return "No immediate action is required unless this recommendation is reopened."
@@ -1396,8 +1495,10 @@ def _derive_recommendation_why_now(
         return "Latest analysis still reflects this gap, so follow-through is still needed."
 
     has_competitor_priority = "competitor_gap" in priority_reasons
-    if has_competitor_priority and evidence_strength in {"strong", "moderate"}:
-        return "Competitor-backed evidence still shows a gap that is ready for operator review now."
+    if has_competitor_priority and competitor_influence_level == "meaningful":
+        return "Competitor-backed gaps remain materially stronger than the current page, so this should be reviewed now."
+    if has_competitor_priority and competitor_influence_level == "supporting":
+        return "Competitor context supports acting now while this gap is still visible."
     if priority_band in {"critical", "high"}:
         if evidence_strength == "limited":
             return "This is high priority but evidence is limited, so confirm context before applying."
@@ -1483,10 +1584,266 @@ def _derive_recommendation_next_action(
     return "Review this recommendation and choose the next operator action."
 
 
+def _derive_recommendation_execution_type(
+    *,
+    rule_key: str | None,
+    title: str | None,
+    rationale: str | None,
+    recommendation_target_context: SEORecommendationTargetContext | None,
+    recommendation_target_content_types: list[SEORecommendationTargetContentTypeRead],
+    recommendation_target_content_summary: str | None,
+    recommendation_action_clarity: str | None,
+) -> SEORecommendationExecutionType:
+    metadata_keys: set[SEORecommendationTargetContentTypeKey] = {
+        "meta_title",
+        "meta_description",
+        "canonical_tag",
+        "page_title_block",
+    }
+    content_keys: set[SEORecommendationTargetContentTypeKey] = {
+        "heading_h1",
+        "heading_h2",
+        "intro_paragraph",
+        "service_description",
+        "faq_block",
+        "image_alt_text",
+        "call_to_action",
+    }
+    target_keys = {item.type_key for item in recommendation_target_content_types}
+    signal = " ".join(
+        value
+        for value in (
+            _normalize_signal_text(rule_key, max_length=140),
+            _normalize_signal_text(title, max_length=180),
+            _normalize_signal_text(rationale, max_length=220),
+            _normalize_signal_text(recommendation_target_content_summary, max_length=220),
+            _normalize_signal_text(recommendation_action_clarity, max_length=220),
+        )
+        if value
+    ).lower()
+
+    execution_types: set[SEORecommendationExecutionType] = set()
+    if target_keys & metadata_keys:
+        execution_types.add("metadata_update")
+    if "internal_links" in target_keys or any(
+        keyword in signal
+        for keyword in ("internal link", "interlink", "cross-link", "link this page")
+    ):
+        execution_types.add("internal_linking")
+    if "location_copy" in target_keys or recommendation_target_context == "location_pages" or any(
+        keyword in signal
+        for keyword in ("location", "local", "service area", "city", "zip", "nearby", "gbp")
+    ):
+        execution_types.add("local_seo")
+    if target_keys & content_keys:
+        execution_types.add("content_update")
+    if any(
+        keyword in signal
+        for keyword in (
+            "canonical",
+            "schema",
+            "structured data",
+            "robots",
+            "sitemap",
+            "indexing",
+            "crawl",
+            "redirect",
+            "technical",
+        )
+    ):
+        execution_types.add("technical_fix")
+    if any(
+        keyword in signal
+        for keyword in ("page template", "page layout", "page structure", "new page", "page-level update")
+    ):
+        execution_types.add("page_update")
+
+    if not execution_types:
+        if recommendation_target_context in {"homepage", "service_pages", "contact_about", "location_pages", "sitewide"}:
+            execution_types.add("page_update")
+        elif recommendation_target_content_summary or recommendation_action_clarity:
+            execution_types.add("content_update")
+
+    if len(execution_types) == 1:
+        return next(iter(execution_types))
+    if not execution_types:
+        return "mixed"
+    return "mixed"
+
+
+def _derive_recommendation_execution_scope(
+    *,
+    recommendation_target_context: SEORecommendationTargetContext | None,
+    recommendation_target_page_hints: list[str],
+    recommendation_target_content_summary: str | None,
+) -> str | None:
+    context_label = (
+        _RECOMMENDATION_TARGET_CONTEXT_LABELS.get(recommendation_target_context, "target pages")
+        if recommendation_target_context is not None
+        else None
+    )
+    page_hints = recommendation_target_page_hints[:3]
+    page_hint_label: str | None = None
+    if page_hints:
+        if len(page_hints) == 1:
+            page_hint_label = page_hints[0]
+        elif len(page_hints) == 2:
+            page_hint_label = f"{page_hints[0]} and {page_hints[1]}"
+        else:
+            page_hint_label = f"{page_hints[0]}, {page_hints[1]}, and {len(page_hints) - 2} more"
+
+    target_content = _compact_text(recommendation_target_content_summary, max_length=120)
+
+    if target_content and page_hint_label:
+        return _compact_sentence(
+            f"Update {target_content.lower()} on {page_hint_label}.",
+            max_length=_RECOMMENDATION_EXECUTION_SCOPE_MAX_CHARS,
+        )
+    if target_content and context_label:
+        return _compact_sentence(
+            f"Update {target_content.lower()} on {context_label.lower()}.",
+            max_length=_RECOMMENDATION_EXECUTION_SCOPE_MAX_CHARS,
+        )
+    if page_hint_label:
+        return _compact_sentence(
+            f"Review and update {page_hint_label}.",
+            max_length=_RECOMMENDATION_EXECUTION_SCOPE_MAX_CHARS,
+        )
+    if context_label:
+        return _compact_sentence(
+            f"Review and update {context_label.lower()}.",
+            max_length=_RECOMMENDATION_EXECUTION_SCOPE_MAX_CHARS,
+        )
+    if target_content:
+        return _compact_sentence(
+            f"Update {target_content.lower()} on targeted pages.",
+            max_length=_RECOMMENDATION_EXECUTION_SCOPE_MAX_CHARS,
+        )
+    return None
+
+
+def _derive_recommendation_execution_inputs(
+    *,
+    execution_type: SEORecommendationExecutionType,
+    recommendation_target_page_hints: list[str],
+    recommendation_target_content_summary: str | None,
+    recommendation_action_clarity: str | None,
+) -> list[str]:
+    inputs: list[str] = []
+
+    def add_input(value: str | None) -> None:
+        cleaned = _compact_text(value, max_length=_RECOMMENDATION_EXECUTION_INPUT_MAX_CHARS)
+        if cleaned is None:
+            return
+        if any(existing.lower() == cleaned.lower() for existing in inputs):
+            return
+        inputs.append(cleaned)
+
+    if recommendation_target_page_hints:
+        sample = ", ".join(recommendation_target_page_hints[:2])
+        add_input(f"Target page list (for example: {sample})")
+
+    if recommendation_target_content_summary:
+        add_input(f"Current content for {recommendation_target_content_summary.lower()}")
+
+    if execution_type == "metadata_update":
+        add_input("Current title/meta values on the target pages")
+        add_input("Approved service + location phrasing for metadata updates")
+    elif execution_type == "internal_linking":
+        add_input("List of related service/location pages to cross-link")
+    elif execution_type == "local_seo":
+        add_input("Confirmed primary location and service-area wording")
+    elif execution_type == "technical_fix":
+        add_input("Current technical settings for affected pages (canonical/indexing/structure)")
+    elif execution_type in {"content_update", "page_update", "mixed"} and recommendation_action_clarity:
+        add_input("Approved wording and proof points for updated page content")
+
+    return inputs[:_RECOMMENDATION_EXECUTION_INPUT_MAX_ITEMS]
+
+
+def _derive_recommendation_execution_readiness(
+    *,
+    status: SEORecommendationStatus,
+    recommendation_progress_status: SEORecommendationProgressStatus,
+    evidence_strength: SEORecommendationEvidenceStrength,
+    recommendation_target_context: SEORecommendationTargetContext | None,
+    recommendation_target_page_hints: list[str],
+    recommendation_target_content_types: list[SEORecommendationTargetContentTypeRead],
+    recommendation_target_content_summary: str | None,
+    recommendation_action_clarity: str | None,
+    action_plan: SEORecommendationActionPlanRead | None,
+) -> tuple[SEORecommendationExecutionReadiness, str | None]:
+    if status in {"dismissed", "snoozed", "resolved"}:
+        return (
+            "needs_review",
+            "Recommendation is not active. Reopen it before implementing additional changes.",
+        )
+    if status == "accepted" or recommendation_progress_status in {
+        "applied_pending_refresh",
+        "reflected_in_latest_analysis",
+    }:
+        return (
+            "needs_review",
+            "This recommendation is already applied. Validate impact before making additional changes.",
+        )
+
+    has_page_specificity = bool(recommendation_target_page_hints) or (
+        recommendation_target_context is not None and recommendation_target_context != "general"
+    )
+    has_content_specificity = bool(recommendation_target_content_types) or bool(
+        _compact_text(recommendation_target_content_summary, max_length=120)
+    )
+    has_action_specificity = bool(action_plan is not None and action_plan.action_steps) or (
+        bool(_compact_text(recommendation_action_clarity, max_length=180))
+        and (has_page_specificity or has_content_specificity)
+    )
+
+    if has_action_specificity and has_page_specificity and has_content_specificity:
+        if evidence_strength == "limited":
+            return (
+                "needs_review",
+                "Signals are limited. Confirm target scope before implementing.",
+            )
+        return ("ready", None)
+
+    if has_action_specificity and (has_page_specificity or has_content_specificity):
+        if evidence_strength == "limited":
+            return (
+                "needs_review",
+                "Signals are limited. Confirm page and content details before implementing.",
+            )
+        return (
+            "needs_review",
+            "Target scope is partially specified. Confirm final page/content details before implementing.",
+        )
+
+    if has_page_specificity or has_content_specificity:
+        if not has_page_specificity:
+            return (
+                "needs_review",
+                "Exact pages are not specified yet. Confirm target pages before implementing.",
+            )
+        if not has_content_specificity:
+            return (
+                "needs_review",
+                "Content area is not specific yet. Confirm what to update before implementing.",
+            )
+        return (
+            "needs_review",
+            "Recommendation needs operator interpretation before implementation.",
+        )
+
+    return (
+        "needs_more_input",
+        "Recommendation lacks concrete page/content targets needed for safe implementation.",
+    )
+
+
 def _derive_recommendation_competitor_insight(
     *,
     status: SEORecommendationStatus,
     evidence_strength: SEORecommendationEvidenceStrength,
+    competitor_influence_level: SEORecommendationCompetitorInfluenceLevel,
     priority_reasons: list[SEORecommendationPriorityReason],
     recommendation_action_delta: SEORecommendationActionDeltaRead | None,
     competitor_evidence_links: list[SEORecommendationCompetitorEvidenceLinkRead],
@@ -1497,7 +1854,7 @@ def _derive_recommendation_competitor_insight(
 ) -> str | None:
     if status in {"dismissed", "snoozed", "resolved"}:
         return None
-    if evidence_strength == "limited":
+    if evidence_strength == "limited" or competitor_influence_level == "none":
         return None
 
     has_competitor_signal = bool(
@@ -1534,7 +1891,7 @@ def _derive_recommendation_competitor_insight(
     has_directional_difference = any(token in directional_text for token in directional_tokens) or (
         recommendation_action_delta is not None
     )
-    if not has_directional_difference:
+    if not has_directional_difference and competitor_influence_level != "meaningful":
         return None
 
     location_tokens = (
@@ -2741,6 +3098,7 @@ class SEORecommendationRead(BaseModel):
         max_length=_RECOMMENDATION_PRIORITY_RATIONALE_MAX_CHARS,
     )
     evidence_strength: SEORecommendationEvidenceStrength = "limited"
+    competitor_influence_level: SEORecommendationCompetitorInfluenceLevel = "none"
     why_now: str | None = Field(
         default=None,
         max_length=_RECOMMENDATION_WHY_NOW_MAX_CHARS,
@@ -2752,6 +3110,17 @@ class SEORecommendationRead(BaseModel):
     competitor_insight: str | None = Field(
         default=None,
         max_length=_RECOMMENDATION_COMPETITOR_INSIGHT_MAX_CHARS,
+    )
+    execution_type: SEORecommendationExecutionType = "mixed"
+    execution_scope: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_EXECUTION_SCOPE_MAX_CHARS,
+    )
+    execution_inputs: list[str] = Field(default_factory=list)
+    execution_readiness: SEORecommendationExecutionReadiness = "needs_review"
+    blocking_reason: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_BLOCKING_REASON_MAX_CHARS,
     )
     recommendation_target_context: SEORecommendationTargetContext | None = None
     recommendation_target_page_hints: list[str] = Field(default_factory=list)
@@ -2893,6 +3262,17 @@ class SEORecommendationRead(BaseModel):
             return "limited"
         return normalized  # type: ignore[return-value]
 
+    @field_validator("competitor_influence_level", mode="before")
+    @classmethod
+    def normalize_competitor_influence_level(
+        cls,
+        value: Any,
+    ) -> SEORecommendationCompetitorInfluenceLevel:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"none", "supporting", "meaningful"}:
+            return "none"
+        return normalized  # type: ignore[return-value]
+
     @field_validator("why_now", mode="before")
     @classmethod
     def normalize_why_now(cls, value: Any) -> str | None:
@@ -2907,6 +3287,55 @@ class SEORecommendationRead(BaseModel):
     @classmethod
     def normalize_competitor_insight(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_COMPETITOR_INSIGHT_MAX_CHARS)
+
+    @field_validator("execution_type", mode="before")
+    @classmethod
+    def normalize_execution_type(
+        cls,
+        value: Any,
+    ) -> SEORecommendationExecutionType:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {
+            "content_update",
+            "page_update",
+            "metadata_update",
+            "internal_linking",
+            "local_seo",
+            "technical_fix",
+            "mixed",
+        }:
+            return "mixed"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("execution_scope", mode="before")
+    @classmethod
+    def normalize_execution_scope(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_EXECUTION_SCOPE_MAX_CHARS)
+
+    @field_validator("execution_inputs", mode="before")
+    @classmethod
+    def normalize_execution_inputs(cls, value: Any) -> list[str]:
+        return _compact_text_list(
+            value,
+            limit=_RECOMMENDATION_EXECUTION_INPUT_MAX_ITEMS,
+            max_length=_RECOMMENDATION_EXECUTION_INPUT_MAX_CHARS,
+        )
+
+    @field_validator("execution_readiness", mode="before")
+    @classmethod
+    def normalize_execution_readiness(
+        cls,
+        value: Any,
+    ) -> SEORecommendationExecutionReadiness:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"ready", "needs_review", "needs_more_input"}:
+            return "needs_review"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("blocking_reason", mode="before")
+    @classmethod
+    def normalize_blocking_reason(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_BLOCKING_REASON_MAX_CHARS)
 
     @field_validator("recommendation_target_context", mode="before")
     @classmethod
@@ -3361,6 +3790,21 @@ class SEORecommendationRead(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def derive_competitor_influence_level(self) -> "SEORecommendationRead":
+        self.competitor_influence_level = _derive_recommendation_competitor_influence_level(
+            status=self.status,
+            evidence_strength=self.evidence_strength,
+            priority_reasons=self.priority_reasons,
+            recommendation_action_delta=self.recommendation_action_delta,
+            competitor_evidence_links=self.competitor_evidence_links,
+            competitor_linkage_summary=self.competitor_linkage_summary,
+            recommendation_observed_gap_summary=self.recommendation_observed_gap_summary,
+            recommendation_target_context=self.recommendation_target_context,
+            recommendation_target_content_summary=self.recommendation_target_content_summary,
+        )
+        return self
+
+    @model_validator(mode="after")
     def derive_priority_rationale(self) -> "SEORecommendationRead":
         if self.priority_rationale is not None:
             return self
@@ -3372,6 +3816,7 @@ class SEORecommendationRead(BaseModel):
             recommendation_action_delta=self.recommendation_action_delta,
             recommendation_target_content_summary=self.recommendation_target_content_summary,
             evidence_strength=self.evidence_strength,
+            competitor_influence_level=self.competitor_influence_level,
         )
         return self
 
@@ -3385,6 +3830,7 @@ class SEORecommendationRead(BaseModel):
             priority_band=self.priority_band,
             priority_reasons=self.priority_reasons,
             evidence_strength=self.evidence_strength,
+            competitor_influence_level=self.competitor_influence_level,
         )
         return self
 
@@ -3404,12 +3850,53 @@ class SEORecommendationRead(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def derive_execution_readiness(self) -> "SEORecommendationRead":
+        self.execution_type = _derive_recommendation_execution_type(
+            rule_key=self.rule_key,
+            title=self.title,
+            rationale=self.rationale,
+            recommendation_target_context=self.recommendation_target_context,
+            recommendation_target_content_types=self.recommendation_target_content_types,
+            recommendation_target_content_summary=self.recommendation_target_content_summary,
+            recommendation_action_clarity=self.recommendation_action_clarity,
+        )
+        self.execution_scope = _derive_recommendation_execution_scope(
+            recommendation_target_context=self.recommendation_target_context,
+            recommendation_target_page_hints=self.recommendation_target_page_hints,
+            recommendation_target_content_summary=self.recommendation_target_content_summary,
+        )
+        self.execution_inputs = _derive_recommendation_execution_inputs(
+            execution_type=self.execution_type,
+            recommendation_target_page_hints=self.recommendation_target_page_hints,
+            recommendation_target_content_summary=self.recommendation_target_content_summary,
+            recommendation_action_clarity=self.recommendation_action_clarity,
+        )
+        readiness, blocking_reason = _derive_recommendation_execution_readiness(
+            status=self.status,
+            recommendation_progress_status=self.recommendation_progress_status,
+            evidence_strength=self.evidence_strength,
+            recommendation_target_context=self.recommendation_target_context,
+            recommendation_target_page_hints=self.recommendation_target_page_hints,
+            recommendation_target_content_types=self.recommendation_target_content_types,
+            recommendation_target_content_summary=self.recommendation_target_content_summary,
+            recommendation_action_clarity=self.recommendation_action_clarity,
+            action_plan=self.action_plan,
+        )
+        self.execution_readiness = readiness
+        self.blocking_reason = _compact_text(
+            blocking_reason,
+            max_length=_RECOMMENDATION_BLOCKING_REASON_MAX_CHARS,
+        )
+        return self
+
+    @model_validator(mode="after")
     def derive_competitor_insight(self) -> "SEORecommendationRead":
         if self.competitor_insight is not None:
             return self
         self.competitor_insight = _derive_recommendation_competitor_insight(
             status=self.status,
             evidence_strength=self.evidence_strength,
+            competitor_influence_level=self.competitor_influence_level,
             priority_reasons=self.priority_reasons,
             recommendation_action_delta=self.recommendation_action_delta,
             competitor_evidence_links=self.competitor_evidence_links,

@@ -651,6 +651,40 @@ function recommendationEvidenceStrengthBadgeClass(
   return "badge-muted";
 }
 
+function normalizeRecommendationCompetitorInfluenceLevel(
+  item: Recommendation,
+): "none" | "supporting" | "meaningful" | null {
+  const raw = (item.competitor_influence_level || "").trim().toLowerCase();
+  if (raw === "none" || raw === "supporting" || raw === "meaningful") {
+    return raw;
+  }
+  return null;
+}
+
+function formatRecommendationCompetitorInfluenceLabel(
+  value: "none" | "supporting" | "meaningful",
+): string {
+  if (value === "meaningful") {
+    return "Meaningful influence";
+  }
+  if (value === "supporting") {
+    return "Supporting influence";
+  }
+  return "No material influence";
+}
+
+function recommendationCompetitorInfluenceBadgeClass(
+  value: "none" | "supporting" | "meaningful",
+): "badge-success" | "badge-warn" | "badge-muted" {
+  if (value === "meaningful") {
+    return "badge-success";
+  }
+  if (value === "supporting") {
+    return "badge-warn";
+  }
+  return "badge-muted";
+}
+
 function deriveRecommendationPriorityRationale(item: Recommendation): string | null {
   const value = (item.priority_rationale || "").trim();
   if (!value) {
@@ -677,6 +711,135 @@ function deriveRecommendationNextAction(item: Recommendation, fallback: string):
 
 function deriveRecommendationCompetitorInsight(item: Recommendation): string | null {
   const value = (item.competitor_insight || "").trim();
+  if (!value) {
+    return null;
+  }
+  return truncateRecommendationEvidence(value, 220);
+}
+
+function normalizeRecommendationExecutionType(
+  item: Recommendation,
+):
+  | "content_update"
+  | "page_update"
+  | "metadata_update"
+  | "internal_linking"
+  | "local_seo"
+  | "technical_fix"
+  | "mixed"
+  | null {
+  const value = (item.execution_type || "").trim().toLowerCase();
+  if (
+    value === "content_update"
+    || value === "page_update"
+    || value === "metadata_update"
+    || value === "internal_linking"
+    || value === "local_seo"
+    || value === "technical_fix"
+    || value === "mixed"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function formatRecommendationExecutionType(
+  value:
+    | "content_update"
+    | "page_update"
+    | "metadata_update"
+    | "internal_linking"
+    | "local_seo"
+    | "technical_fix"
+    | "mixed",
+): string {
+  if (value === "content_update") {
+    return "Content update";
+  }
+  if (value === "page_update") {
+    return "Page update";
+  }
+  if (value === "metadata_update") {
+    return "Metadata update";
+  }
+  if (value === "internal_linking") {
+    return "Internal linking";
+  }
+  if (value === "local_seo") {
+    return "Local SEO";
+  }
+  if (value === "technical_fix") {
+    return "Technical fix";
+  }
+  return "Mixed work";
+}
+
+function normalizeRecommendationExecutionReadiness(
+  item: Recommendation,
+): "ready" | "needs_review" | "needs_more_input" | null {
+  const value = (item.execution_readiness || "").trim().toLowerCase();
+  if (value === "ready" || value === "needs_review" || value === "needs_more_input") {
+    return value;
+  }
+  return null;
+}
+
+function formatRecommendationExecutionReadiness(value: "ready" | "needs_review" | "needs_more_input"): string {
+  if (value === "ready") {
+    return "Ready to act";
+  }
+  if (value === "needs_review") {
+    return "Needs review";
+  }
+  return "Needs more input";
+}
+
+function recommendationExecutionReadinessBadgeClass(
+  value: "ready" | "needs_review" | "needs_more_input",
+): "badge-success" | "badge-warn" | "badge-muted" {
+  if (value === "ready") {
+    return "badge-success";
+  }
+  if (value === "needs_review") {
+    return "badge-warn";
+  }
+  return "badge-muted";
+}
+
+function deriveRecommendationExecutionScope(item: Recommendation): string | null {
+  const value = (item.execution_scope || "").trim();
+  if (!value) {
+    return null;
+  }
+  return truncateRecommendationEvidence(value, 220);
+}
+
+function deriveRecommendationExecutionInputs(item: Recommendation): string[] {
+  if (!Array.isArray(item.execution_inputs)) {
+    return [];
+  }
+  const normalized: string[] = [];
+  for (const rawInput of item.execution_inputs) {
+    if (typeof rawInput !== "string") {
+      continue;
+    }
+    const cleaned = truncateRecommendationEvidence(rawInput, 140).trim();
+    if (!cleaned) {
+      continue;
+    }
+    if (normalized.some((existing) => existing.toLowerCase() === cleaned.toLowerCase())) {
+      continue;
+    }
+    normalized.push(cleaned);
+    if (normalized.length >= 4) {
+      break;
+    }
+  }
+  return normalized;
+}
+
+function deriveRecommendationBlockingReason(item: Recommendation): string | null {
+  const value = (item.blocking_reason || "").trim();
   if (!value) {
     return null;
   }
@@ -2449,6 +2612,11 @@ function RecommendationsPageContent() {
                 const recommendationCompetitorInsight = deriveRecommendationCompetitorInsight(item);
                 const recommendationPriorityRationale = deriveRecommendationPriorityRationale(item);
                 const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
+                const recommendationExecutionType = normalizeRecommendationExecutionType(item);
+                const recommendationExecutionReadiness = normalizeRecommendationExecutionReadiness(item);
+                const recommendationExecutionScope = deriveRecommendationExecutionScope(item);
+                const recommendationExecutionInputs = deriveRecommendationExecutionInputs(item);
+                const recommendationBlockingReason = deriveRecommendationBlockingReason(item);
                 const actionControls = deriveActionControls(effectiveActionExecutionItem);
                 const showBlockerBadge =
                   decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
@@ -2498,6 +2666,37 @@ function RecommendationsPageContent() {
                         <p className="hint muted">
                           <span className="text-strong">Next step:</span> {recommendationNextAction}
                         </p>
+                        {recommendationExecutionReadiness ? (
+                          <p
+                            className="hint muted"
+                            data-testid={`recommendation-quick-execution-readiness-${item.id}`}
+                          >
+                            <span className="text-strong">Execution readiness:</span>{" "}
+                            <span className={`badge ${recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}`}>
+                              {formatRecommendationExecutionReadiness(recommendationExecutionReadiness)}
+                            </span>
+                          </p>
+                        ) : null}
+                        {recommendationExecutionType ? (
+                          <p className="hint muted" data-testid={`recommendation-quick-execution-type-${item.id}`}>
+                            <span className="text-strong">Execution type:</span> {formatRecommendationExecutionType(recommendationExecutionType)}
+                          </p>
+                        ) : null}
+                        {recommendationExecutionScope ? (
+                          <p className="hint muted" data-testid={`recommendation-quick-execution-scope-${item.id}`}>
+                            <span className="text-strong">Execution scope:</span> {recommendationExecutionScope}
+                          </p>
+                        ) : null}
+                        {recommendationExecutionInputs.length > 0 ? (
+                          <p className="hint muted" data-testid={`recommendation-quick-execution-inputs-${item.id}`}>
+                            <span className="text-strong">Execution inputs:</span> {recommendationExecutionInputs.join(" · ")}
+                          </p>
+                        ) : null}
+                        {recommendationExecutionReadiness !== "ready" && recommendationBlockingReason ? (
+                          <p className="hint muted" data-testid={`recommendation-quick-execution-blocking-${item.id}`}>
+                            <span className="text-strong">Execution blocker:</span> {recommendationBlockingReason}
+                          </p>
+                        ) : null}
                         {recommendationPriorityRationale ? (
                           <p className="hint muted">
                             <span className="text-strong">Priority rationale:</span> {recommendationPriorityRationale}
@@ -2729,6 +2928,12 @@ function RecommendationsPageContent() {
                 const recommendationCompetitorInsight = deriveRecommendationCompetitorInsight(item);
                 const recommendationPriorityRationale = deriveRecommendationPriorityRationale(item);
                 const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
+                const recommendationCompetitorInfluence = normalizeRecommendationCompetitorInfluenceLevel(item);
+                const recommendationExecutionType = normalizeRecommendationExecutionType(item);
+                const recommendationExecutionReadiness = normalizeRecommendationExecutionReadiness(item);
+                const recommendationExecutionScope = deriveRecommendationExecutionScope(item);
+                const recommendationExecutionInputs = deriveRecommendationExecutionInputs(item);
+                const recommendationBlockingReason = deriveRecommendationBlockingReason(item);
                 const actionControls = deriveActionControls(effectiveActionExecutionItem);
                 const isExpanded = expandedRecommendationIds.has(item.id);
                 const detailsId = `recommendation-details-${item.id}`;
@@ -2832,6 +3037,42 @@ function RecommendationsPageContent() {
                             <p className="hint muted">
                               <span className="text-strong">Next step:</span> {recommendationNextAction}
                             </p>
+                            {recommendationExecutionReadiness ? (
+                              <p
+                                className="hint muted"
+                                data-testid={`recommendation-expanded-execution-readiness-${item.id}`}
+                              >
+                                <span className="text-strong">Execution readiness:</span>{" "}
+                                <span className={`badge ${recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}`}>
+                                  {formatRecommendationExecutionReadiness(recommendationExecutionReadiness)}
+                                </span>
+                              </p>
+                            ) : null}
+                            {recommendationExecutionType ? (
+                              <p className="hint muted" data-testid={`recommendation-expanded-execution-type-${item.id}`}>
+                                <span className="text-strong">Execution type:</span>{" "}
+                                {formatRecommendationExecutionType(recommendationExecutionType)}
+                              </p>
+                            ) : null}
+                            {recommendationExecutionScope ? (
+                              <p className="hint muted" data-testid={`recommendation-expanded-execution-scope-${item.id}`}>
+                                <span className="text-strong">Execution scope:</span> {recommendationExecutionScope}
+                              </p>
+                            ) : null}
+                            {recommendationExecutionInputs.length > 0 ? (
+                              <p className="hint muted" data-testid={`recommendation-expanded-execution-inputs-${item.id}`}>
+                                <span className="text-strong">Execution inputs:</span>{" "}
+                                {recommendationExecutionInputs.join(" · ")}
+                              </p>
+                            ) : null}
+                            {recommendationExecutionReadiness !== "ready" && recommendationBlockingReason ? (
+                              <p
+                                className="hint muted"
+                                data-testid={`recommendation-expanded-execution-blocking-${item.id}`}
+                              >
+                                <span className="text-strong">Execution blocker:</span> {recommendationBlockingReason}
+                              </p>
+                            ) : null}
                             <ActionControls
                               controls={actionControls}
                               resolveHref={(control) => resolveRecommendationControlHref(control, item)}
@@ -2876,6 +3117,17 @@ function RecommendationsPageContent() {
                                 <span className="text-strong">Evidence strength:</span>{" "}
                                 <span className={`badge ${recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}`}>
                                   {formatRecommendationEvidenceStrength(recommendationEvidenceStrength)}
+                                </span>
+                              </p>
+                            ) : null}
+                            {recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none" ? (
+                              <p
+                                className="hint muted"
+                                data-testid={`recommendation-competitor-influence-${item.id}`}
+                              >
+                                <span className="text-strong">Competitor influence:</span>{" "}
+                                <span className={`badge ${recommendationCompetitorInfluenceBadgeClass(recommendationCompetitorInfluence)}`}>
+                                  {formatRecommendationCompetitorInfluenceLabel(recommendationCompetitorInfluence)}
                                 </span>
                               </p>
                             ) : null}

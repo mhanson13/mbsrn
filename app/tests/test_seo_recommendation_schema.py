@@ -861,8 +861,10 @@ def test_recommendation_read_derives_deterministic_trust_and_actionability_field
     assert recommendation.priority_rationale is not None
     assert "score 92" in recommendation.priority_rationale
     assert "evidence strong" in recommendation.priority_rationale
+    assert "competitor-backed gap" in recommendation.priority_rationale
+    assert recommendation.competitor_influence_level == "meaningful"
     assert recommendation.why_now is not None
-    assert "Competitor-backed evidence" in recommendation.why_now
+    assert "Competitor-backed gaps remain materially stronger" in recommendation.why_now
     assert recommendation.next_action is not None
     assert recommendation.next_action.startswith("Open Homepage and update the main heading")
     assert recommendation.competitor_insight is not None
@@ -899,6 +901,7 @@ def test_recommendation_read_derives_conservative_fields_for_limited_evidence() 
     assert recommendation.next_action is not None
     assert "General metadata note on high-visibility service pages." in recommendation.next_action
     assert recommendation.competitor_insight is None
+    assert recommendation.competitor_influence_level == "none"
 
 
 def test_recommendation_read_keeps_why_now_non_competitor_when_competitor_signals_are_absent() -> None:
@@ -927,6 +930,7 @@ def test_recommendation_read_keeps_why_now_non_competitor_when_competitor_signal
     assert recommendation.why_now is not None
     assert "Competitor-backed evidence" not in recommendation.why_now
     assert recommendation.competitor_insight is None
+    assert recommendation.competitor_influence_level == "none"
 
 
 def test_recommendation_read_derives_location_competitor_insight_when_directional_gap_is_local() -> None:
@@ -964,3 +968,166 @@ def test_recommendation_read_derives_location_competitor_insight_when_directiona
     assert recommendation.evidence_strength in {"strong", "moderate"}
     assert recommendation.competitor_insight is not None
     assert "location-targeted content" in recommendation.competitor_insight
+    assert recommendation.competitor_influence_level == "meaningful"
+
+
+def test_recommendation_read_derives_supporting_competitor_influence_with_moderate_signals() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            comparison_run_id=str(uuid4()),
+            priority_band="medium",
+            title="Improve service detail depth",
+            rationale="Service pages need clearer coverage to match peer providers.",
+            evidence_json={
+                "sources": ["comparison"],
+                "finding_types": ["thin_content"],
+                "counts": {"thin_content": 1},
+            },
+            recommendation_action_delta={
+                "observed_competitor_pattern": "Nearby peers include fuller service detail.",
+                "observed_site_gap": "Service copy remains thin on key pages.",
+                "recommended_operator_action": "Expand service detail with practical scope and outcomes.",
+                "evidence_strength": "low",
+            },
+            competitor_evidence_links=[
+                {
+                    "competitor_draft_id": str(uuid4()),
+                    "competitor_name": "Regional Service Competitor",
+                    "trust_tier": "informational_unverified",
+                    "evidence_summary": "Competitor draft includes fuller service detail in key sections.",
+                }
+            ],
+        )
+    )
+
+    assert recommendation.evidence_strength in {"strong", "moderate"}
+    assert recommendation.competitor_influence_level == "supporting"
+    assert recommendation.why_now is not None
+    assert "Competitor context supports acting now" in recommendation.why_now
+
+
+def test_recommendation_read_derives_ready_execution_readiness_for_specific_targets() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="fix_missing_meta_description",
+            title="Improve metadata clarity on homepage",
+            rationale="Meta title and description are weak for the core service intent.",
+            evidence_json={"sources": ["audit"], "finding_types": ["missing_meta_description"]},
+            recommendation_target_page_hints=["Homepage"],
+            recommendation_target_content_types=[
+                {
+                    "type_key": "meta_title",
+                    "label": "Meta title",
+                    "source_type": "audit_signal",
+                    "targeting_strength": "high",
+                },
+                {
+                    "type_key": "meta_description",
+                    "label": "Meta description",
+                    "source_type": "audit_signal",
+                    "targeting_strength": "high",
+                },
+            ],
+            recommendation_target_content_summary="Meta title and Meta description",
+            action_plan={
+                "action_steps": [
+                    {
+                        "step_number": 1,
+                        "title": "Rewrite metadata",
+                        "instruction": "Update homepage metadata to describe service + location clearly.",
+                        "target_type": "page",
+                        "target_identifier": "Homepage",
+                        "field": "meta_description",
+                        "before_example": "We offer great service.",
+                        "after_example": "Emergency plumbing in Denver with licensed local technicians.",
+                        "confidence": 0.86,
+                    }
+                ]
+            },
+        )
+    )
+
+    assert recommendation.execution_type == "metadata_update"
+    assert recommendation.execution_scope is not None
+    assert "meta title and meta description" in recommendation.execution_scope.lower()
+    assert recommendation.execution_scope.lower().endswith("homepage.")
+    assert recommendation.execution_readiness == "ready"
+    assert recommendation.blocking_reason is None
+    assert recommendation.execution_inputs
+    assert "Current title/meta values on the target pages" in recommendation.execution_inputs
+
+
+def test_recommendation_read_derives_needs_review_when_scope_is_partial() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="improve_thin_service_copy",
+            title="Strengthen service copy clarity",
+            rationale="Current service copy is thin and lacks decision-making detail.",
+            evidence_json={"sources": ["audit"], "finding_types": ["thin_content"]},
+            recommendation_target_context="general",
+            recommendation_target_content_summary="Service description",
+            recommendation_action_clarity="Add clearer service details and proof points.",
+            recommendation_target_content_types=[
+                {
+                    "type_key": "service_description",
+                    "label": "Service description",
+                    "source_type": "audit_signal",
+                    "targeting_strength": "medium",
+                }
+            ],
+        )
+    )
+
+    assert recommendation.execution_type == "content_update"
+    assert recommendation.execution_readiness == "needs_review"
+    assert recommendation.blocking_reason is not None
+    assert "partially specified" in recommendation.blocking_reason.lower()
+
+
+def test_recommendation_read_derives_needs_more_input_for_sparse_execution_context() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="generic_housekeeping",
+            title="General recommendation",
+            rationale="Review this item before applying changes.",
+            evidence_json=None,
+            recommendation_target_context="general",
+            recommendation_target_page_hints=[],
+            recommendation_target_content_types=[],
+            recommendation_target_content_summary=None,
+            recommendation_action_clarity=None,
+            action_plan={"action_steps": []},
+        )
+    )
+
+    assert recommendation.execution_readiness == "needs_more_input"
+    assert recommendation.blocking_reason is not None
+    assert "lacks concrete page/content targets" in recommendation.blocking_reason.lower()
+    assert len(recommendation.execution_inputs) <= 4
+
+
+def test_recommendation_read_derives_internal_linking_execution_type_and_bounded_inputs() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="improve_internal_linking",
+            title="Strengthen internal links between service pages",
+            rationale="Related service pages are not linked clearly.",
+            evidence_json={"sources": ["audit"], "finding_types": ["missing_internal_links"]},
+            recommendation_target_page_hints=["/services", "/services/plumbing", "/services/drain", "/services/install"],
+            recommendation_target_content_types=[
+                {
+                    "type_key": "internal_links",
+                    "label": "Internal links",
+                    "source_type": "audit_signal",
+                    "targeting_strength": "high",
+                }
+            ],
+            recommendation_target_content_summary="Internal links",
+            recommendation_action_clarity="Add links to related service pages from each core page.",
+        )
+    )
+
+    assert recommendation.execution_type == "internal_linking"
+    assert recommendation.execution_inputs
+    assert len(recommendation.execution_inputs) <= 4
+    assert any("cross-link" in entry.lower() for entry in recommendation.execution_inputs)

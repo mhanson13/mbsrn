@@ -3199,8 +3199,17 @@ describe("site workspace timeline controls", () => {
               evidence_strength: "strong",
               why_now: "Trust gap is still visible on key service pages and is ready for action.",
               next_action: "Open Homepage and add stronger trust proof in the main service section.",
+              competitor_influence_level: "meaningful",
               competitor_insight:
                 "Competitors appear to have stronger service-specific coverage for this topic. Closing this gap should improve parity when customers compare local options.",
+              execution_type: "content_update",
+              execution_scope: "Update main heading and service description on Homepage and /services/flooring.",
+              execution_inputs: [
+                "Target page list (for example: Homepage, /services/flooring)",
+                "Current content for main heading and service description",
+              ],
+              execution_readiness: "ready",
+              blocking_reason: null,
               recommendation_target_context: "service_pages",
               recommendation_target_page_hints: ["Homepage", "/services/flooring"],
               recommendation_target_content_types: [
@@ -3274,11 +3283,33 @@ describe("site workspace timeline controls", () => {
     expect(nextActionLines[0]).toHaveTextContent(
       "Next action: Open Homepage and add stronger trust proof in the main service section.",
     );
+    const executionReadinessLines = screen.getAllByTestId("recommendation-execution-readiness");
+    expect(executionReadinessLines).toHaveLength(1);
+    expect(executionReadinessLines[0]).toHaveTextContent("Execution readiness:");
+    expect(executionReadinessLines[0]).toHaveTextContent("Ready to act");
+    const executionTypeLines = screen.getAllByTestId("recommendation-execution-type");
+    expect(executionTypeLines).toHaveLength(1);
+    expect(executionTypeLines[0]).toHaveTextContent("Execution type: Content update");
+    const executionScopeLines = screen.getAllByTestId("recommendation-execution-scope");
+    expect(executionScopeLines).toHaveLength(1);
+    expect(executionScopeLines[0]).toHaveTextContent(
+      "Execution scope: Update main heading and service description on Homepage and /services/flooring.",
+    );
+    const executionInputLines = screen.getAllByTestId("recommendation-execution-inputs");
+    expect(executionInputLines).toHaveLength(1);
+    expect(executionInputLines[0]).toHaveTextContent("Execution inputs:");
+    expect(executionInputLines[0]).toHaveTextContent("Target page list");
+    expect(executionInputLines[0]).toHaveTextContent("Current content for main heading and service description");
+    expect(screen.queryByTestId("recommendation-execution-blocking")).not.toBeInTheDocument();
     const competitorInsightLines = screen.getAllByTestId("recommendation-competitor-insight");
     expect(competitorInsightLines).toHaveLength(1);
     expect(competitorInsightLines[0]).toHaveTextContent(
       "Competitor insight: Competitors appear to have stronger service-specific coverage for this topic.",
     );
+    const competitorInfluenceLines = screen.getAllByTestId("recommendation-competitor-influence");
+    expect(competitorInfluenceLines).toHaveLength(1);
+    expect(competitorInfluenceLines[0]).toHaveTextContent("Competitor influence:");
+    expect(competitorInfluenceLines[0]).toHaveTextContent("Meaningful influence");
 
     const targetContextLines = screen.getAllByTestId("recommendation-target-context");
     expect(targetContextLines).toHaveLength(1);

@@ -1177,9 +1177,22 @@ export interface Recommendation {
   recommendation_expected_outcome?: string | null;
   priority_rationale?: string | null;
   evidence_strength?: "strong" | "moderate" | "limited";
+  competitor_influence_level?: "none" | "supporting" | "meaningful";
   why_now?: string | null;
   next_action?: string | null;
   competitor_insight?: string | null;
+  execution_type?:
+    | "content_update"
+    | "page_update"
+    | "metadata_update"
+    | "internal_linking"
+    | "local_seo"
+    | "technical_fix"
+    | "mixed";
+  execution_scope?: string | null;
+  execution_inputs?: string[];
+  execution_readiness?: "ready" | "needs_review" | "needs_more_input";
+  blocking_reason?: string | null;
   recommendation_target_context?: RecommendationTargetContext | null;
   recommendation_target_page_hints?: string[];
   recommendation_target_content_types?: RecommendationTargetContentType[];

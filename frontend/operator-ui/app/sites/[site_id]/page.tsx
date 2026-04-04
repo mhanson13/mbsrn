@@ -2581,11 +2581,144 @@ function normalizeRecommendationCompetitorInsight(item: Recommendation): string 
   return truncateOptionalText(item.competitor_insight, 220);
 }
 
+function normalizeRecommendationExecutionType(
+  item: Recommendation,
+):
+  | "content_update"
+  | "page_update"
+  | "metadata_update"
+  | "internal_linking"
+  | "local_seo"
+  | "technical_fix"
+  | "mixed"
+  | null {
+  const normalized = (item.execution_type || "").trim().toLowerCase();
+  if (
+    normalized === "content_update"
+    || normalized === "page_update"
+    || normalized === "metadata_update"
+    || normalized === "internal_linking"
+    || normalized === "local_seo"
+    || normalized === "technical_fix"
+    || normalized === "mixed"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function formatRecommendationExecutionTypeLabel(
+  value:
+    | "content_update"
+    | "page_update"
+    | "metadata_update"
+    | "internal_linking"
+    | "local_seo"
+    | "technical_fix"
+    | "mixed",
+): string {
+  if (value === "content_update") {
+    return "Content update";
+  }
+  if (value === "page_update") {
+    return "Page update";
+  }
+  if (value === "metadata_update") {
+    return "Metadata update";
+  }
+  if (value === "internal_linking") {
+    return "Internal linking";
+  }
+  if (value === "local_seo") {
+    return "Local SEO";
+  }
+  if (value === "technical_fix") {
+    return "Technical fix";
+  }
+  return "Mixed work";
+}
+
+function normalizeRecommendationExecutionScope(item: Recommendation): string | null {
+  return truncateOptionalText(item.execution_scope, 220);
+}
+
+function normalizeRecommendationExecutionInputs(item: Recommendation): string[] {
+  if (!Array.isArray(item.execution_inputs)) {
+    return [];
+  }
+  const normalized: string[] = [];
+  for (const rawInput of item.execution_inputs) {
+    if (typeof rawInput !== "string") {
+      continue;
+    }
+    const cleaned = truncateOptionalText(rawInput, 140);
+    if (!cleaned) {
+      continue;
+    }
+    if (normalized.some((existing) => existing.toLowerCase() === cleaned.toLowerCase())) {
+      continue;
+    }
+    normalized.push(cleaned);
+    if (normalized.length >= 4) {
+      break;
+    }
+  }
+  return normalized;
+}
+
+function normalizeRecommendationExecutionReadiness(
+  item: Recommendation,
+): "ready" | "needs_review" | "needs_more_input" | null {
+  const normalized = (item.execution_readiness || "").trim().toLowerCase();
+  if (normalized === "ready" || normalized === "needs_review" || normalized === "needs_more_input") {
+    return normalized;
+  }
+  return null;
+}
+
+function formatRecommendationExecutionReadinessLabel(
+  value: "ready" | "needs_review" | "needs_more_input",
+): string {
+  if (value === "ready") {
+    return "Ready to act";
+  }
+  if (value === "needs_review") {
+    return "Needs review";
+  }
+  return "Needs more input";
+}
+
+function recommendationExecutionReadinessBadgeClass(
+  value: "ready" | "needs_review" | "needs_more_input",
+): string {
+  if (value === "ready") {
+    return "badge badge-success";
+  }
+  if (value === "needs_review") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
+}
+
+function normalizeRecommendationBlockingReason(item: Recommendation): string | null {
+  return truncateOptionalText(item.blocking_reason, 220);
+}
+
 function normalizeRecommendationEvidenceStrength(
   item: Recommendation,
 ): "strong" | "moderate" | "limited" | null {
   const normalized = (item.evidence_strength || "").trim().toLowerCase();
   if (normalized === "strong" || normalized === "moderate" || normalized === "limited") {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeRecommendationCompetitorInfluenceLevel(
+  item: Recommendation,
+): "none" | "supporting" | "meaningful" | null {
+  const normalized = (item.competitor_influence_level || "").trim().toLowerCase();
+  if (normalized === "none" || normalized === "supporting" || normalized === "meaningful") {
     return normalized;
   }
   return null;
@@ -2610,6 +2743,30 @@ function recommendationEvidenceStrengthBadgeClass(
     return "badge badge-success";
   }
   if (value === "moderate") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
+}
+
+function formatRecommendationCompetitorInfluenceLabel(
+  value: "none" | "supporting" | "meaningful",
+): string {
+  if (value === "meaningful") {
+    return "Meaningful influence";
+  }
+  if (value === "supporting") {
+    return "Supporting influence";
+  }
+  return "No material influence";
+}
+
+function recommendationCompetitorInfluenceBadgeClass(
+  value: "none" | "supporting" | "meaningful",
+): string {
+  if (value === "meaningful") {
+    return "badge badge-success";
+  }
+  if (value === "supporting") {
     return "badge badge-warn";
   }
   return "badge badge-muted";
@@ -8868,9 +9025,15 @@ export default function SiteWorkspacePage() {
                         const recommendationPriority = normalizeRecommendationPriority(item);
                         const recommendationPriorityRationale = normalizeRecommendationPriorityRationale(item);
                         const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
+                        const recommendationCompetitorInfluence = normalizeRecommendationCompetitorInfluenceLevel(item);
                         const recommendationWhyNow = normalizeRecommendationWhyNow(item);
                         const recommendationNextAction = normalizeRecommendationNextAction(item);
                         const recommendationCompetitorInsight = normalizeRecommendationCompetitorInsight(item);
+                        const recommendationExecutionType = normalizeRecommendationExecutionType(item);
+                        const recommendationExecutionScope = normalizeRecommendationExecutionScope(item);
+                        const recommendationExecutionInputs = normalizeRecommendationExecutionInputs(item);
+                        const recommendationExecutionReadiness = normalizeRecommendationExecutionReadiness(item);
+                        const recommendationBlockingReason = normalizeRecommendationBlockingReason(item);
                         const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
                         const recommendationDetailClarity = buildRecommendationDetailClarityView({
                           actionDelta: recommendationActionDelta,
@@ -8941,9 +9104,45 @@ export default function SiteWorkspacePage() {
                                       Competitor insight: {recommendationCompetitorInsight}
                                     </span>
                                   ) : null}
+                                  {recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none" ? (
+                                    <span className="hint muted" data-testid="recommendation-competitor-influence">
+                                      Competitor influence:{" "}
+                                      <span className={recommendationCompetitorInfluenceBadgeClass(recommendationCompetitorInfluence)}>
+                                        {formatRecommendationCompetitorInfluenceLabel(recommendationCompetitorInfluence)}
+                                      </span>
+                                    </span>
+                                  ) : null}
                                   {recommendationNextAction ? (
                                     <span className="hint muted" data-testid="recommendation-next-action">
                                       Next action: {recommendationNextAction}
+                                    </span>
+                                  ) : null}
+                                  {recommendationExecutionReadiness ? (
+                                    <span className="hint muted" data-testid="recommendation-execution-readiness">
+                                      Execution readiness:{" "}
+                                      <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
+                                        {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
+                                      </span>
+                                    </span>
+                                  ) : null}
+                                  {recommendationExecutionType ? (
+                                    <span className="hint muted" data-testid="recommendation-execution-type">
+                                      Execution type: {formatRecommendationExecutionTypeLabel(recommendationExecutionType)}
+                                    </span>
+                                  ) : null}
+                                  {recommendationExecutionScope ? (
+                                    <span className="hint muted" data-testid="recommendation-execution-scope">
+                                      Execution scope: {recommendationExecutionScope}
+                                    </span>
+                                  ) : null}
+                                  {recommendationExecutionInputs.length > 0 ? (
+                                    <span className="hint muted" data-testid="recommendation-execution-inputs">
+                                      Execution inputs: {recommendationExecutionInputs.join(" · ")}
+                                    </span>
+                                  ) : null}
+                                  {recommendationExecutionReadiness !== "ready" && recommendationBlockingReason ? (
+                                    <span className="hint muted" data-testid="recommendation-execution-blocking">
+                                      Execution blocker: {recommendationBlockingReason}
                                     </span>
                                   ) : null}
                                   {recommendationTargetContext ? (
@@ -9167,9 +9366,15 @@ export default function SiteWorkspacePage() {
                               const recommendationPriority = normalizeRecommendationPriority(item);
                               const recommendationPriorityRationale = normalizeRecommendationPriorityRationale(item);
                               const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
+                              const recommendationCompetitorInfluence = normalizeRecommendationCompetitorInfluenceLevel(item);
                               const recommendationWhyNow = normalizeRecommendationWhyNow(item);
                               const recommendationNextAction = normalizeRecommendationNextAction(item);
                               const recommendationCompetitorInsight = normalizeRecommendationCompetitorInsight(item);
+                              const recommendationExecutionType = normalizeRecommendationExecutionType(item);
+                              const recommendationExecutionScope = normalizeRecommendationExecutionScope(item);
+                              const recommendationExecutionInputs = normalizeRecommendationExecutionInputs(item);
+                              const recommendationExecutionReadiness = normalizeRecommendationExecutionReadiness(item);
+                              const recommendationBlockingReason = normalizeRecommendationBlockingReason(item);
                               const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
                               const recommendationDetailClarity = buildRecommendationDetailClarityView({
                                 actionDelta: recommendationActionDelta,
@@ -9240,9 +9445,45 @@ export default function SiteWorkspacePage() {
                                             Competitor insight: {recommendationCompetitorInsight}
                                           </span>
                                         ) : null}
+                                        {recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none" ? (
+                                          <span className="hint muted" data-testid="recommendation-competitor-influence">
+                                            Competitor influence:{" "}
+                                            <span className={recommendationCompetitorInfluenceBadgeClass(recommendationCompetitorInfluence)}>
+                                              {formatRecommendationCompetitorInfluenceLabel(recommendationCompetitorInfluence)}
+                                            </span>
+                                          </span>
+                                        ) : null}
                                         {recommendationNextAction ? (
                                           <span className="hint muted" data-testid="recommendation-next-action">
                                             Next action: {recommendationNextAction}
+                                          </span>
+                                        ) : null}
+                                        {recommendationExecutionReadiness ? (
+                                          <span className="hint muted" data-testid="recommendation-execution-readiness">
+                                            Execution readiness:{" "}
+                                            <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
+                                              {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
+                                            </span>
+                                          </span>
+                                        ) : null}
+                                        {recommendationExecutionType ? (
+                                          <span className="hint muted" data-testid="recommendation-execution-type">
+                                            Execution type: {formatRecommendationExecutionTypeLabel(recommendationExecutionType)}
+                                          </span>
+                                        ) : null}
+                                        {recommendationExecutionScope ? (
+                                          <span className="hint muted" data-testid="recommendation-execution-scope">
+                                            Execution scope: {recommendationExecutionScope}
+                                          </span>
+                                        ) : null}
+                                        {recommendationExecutionInputs.length > 0 ? (
+                                          <span className="hint muted" data-testid="recommendation-execution-inputs">
+                                            Execution inputs: {recommendationExecutionInputs.join(" · ")}
+                                          </span>
+                                        ) : null}
+                                        {recommendationExecutionReadiness !== "ready" && recommendationBlockingReason ? (
+                                          <span className="hint muted" data-testid="recommendation-execution-blocking">
+                                            Execution blocker: {recommendationBlockingReason}
                                           </span>
                                         ) : null}
                                         {recommendationTargetContext ? (

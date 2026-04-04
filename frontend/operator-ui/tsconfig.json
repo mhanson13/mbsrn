@@ -30,6 +30,8 @@
     ".next/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    // Keep standalone `npm run typecheck` deterministic; Next validates generated `.next` artifacts during `next build`.
+    ".next"
   ]
 }
