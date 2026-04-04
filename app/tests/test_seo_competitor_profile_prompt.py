@@ -72,6 +72,14 @@ def test_prompt_builder_uses_expected_trusted_inputs() -> None:
         "site_industry_context": "Home Services",
         "site_industry_context_strength": "strong",
         "service_focus_terms": ["Home Services"],
+        "site_context_mode": "normal",
+        "weak_site_mode": False,
+        "weak_site_structured_override_used": False,
+        "weak_site_fallback_sources": [],
+        "service_focus_inference_source": "structured_metadata",
+        "industry_context_source": "explicit_industry",
+        "site_content_signal_strength": "weak",
+        "site_content_signal_count": 0,
         "target_customer_context": (
             "Customers in Denver, CO and nearby service areas: Aurora, Denver seeking Home Services and evaluating "
             "comparable local providers."
@@ -525,7 +533,35 @@ def test_prompt_builder_thin_site_keeps_conservative_fallback() -> None:
     )
     assert prompt.trusted_site_context["site_industry_context_strength"] == "weak"
     assert prompt.trusted_site_context["service_focus_terms"] == []
+    assert prompt.trusted_site_context["weak_site_mode"] is True
+    assert prompt.trusted_site_context["site_context_mode"] == "weak_site_fallback"
+    assert prompt.trusted_site_context["weak_site_structured_override_used"] is False
+    assert prompt.trusted_site_context["service_focus_inference_source"] == "fallback"
     assert "- Service Focus Terms: Unspecified" in prompt.user_prompt
+
+
+def test_prompt_builder_weak_site_with_sparse_metadata_and_weak_location_stays_conservative() -> None:
+    site = _build_site(display_name="Acme Holdings")
+    site.industry = None
+    site.primary_location = None
+    site.service_areas_json = None
+    site.normalized_domain = "acmeholdings.com"
+    _with_site_content_signals(site, "home", "services", "contact")
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[],
+        candidate_count=2,
+    )
+
+    assert prompt.trusted_site_context["weak_site_mode"] is True
+    assert prompt.trusted_site_context["site_context_mode"] == "weak_site_fallback"
+    assert prompt.trusted_site_context["site_location_context_strength"] == "weak"
+    assert prompt.trusted_site_context["site_location_context_source"] == "fallback"
+    assert prompt.trusted_site_context["service_focus_terms"] == []
+    assert prompt.trusted_site_context["competitor_search_hints"] == []
+    assert "business_identity" in prompt.trusted_site_context["weak_site_fallback_sources"]
+    assert prompt.prompt_telemetry["weak_site_mode_triggered"] == 1
 
 
 def test_prompt_builder_ignores_mismatched_domain_in_display_name_for_structured_industry_inference() -> None:
@@ -546,6 +582,63 @@ def test_prompt_builder_ignores_mismatched_domain_in_display_name_for_structured
     assert prompt.trusted_site_context["site_industry_context_strength"] == "weak"
     assert "roofing" not in str(prompt.trusted_site_context["site_industry_context"]).lower()
     assert all("roofing" not in term.lower() for term in prompt.trusted_site_context["service_focus_terms"])
+
+
+def test_prompt_builder_weak_site_uses_structured_override_when_site_copy_is_sparse() -> None:
+    site = _build_site(display_name="Acme Roofing")
+    site.industry = "Roofing Services"
+    site.normalized_domain = "acmeroofing.com"
+    _with_site_content_signals(
+        site,
+        "Home",
+        "Contact",
+        "Learn more",
+    )
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[],
+        candidate_count=2,
+    )
+
+    assert prompt.trusted_site_context["weak_site_mode"] is True
+    assert prompt.trusted_site_context["site_context_mode"] == "weak_site_fallback"
+    assert prompt.trusted_site_context["weak_site_structured_override_used"] is True
+    assert prompt.trusted_site_context["service_focus_inference_source"] in {
+        "structured_metadata",
+        "explicit_industry",
+    }
+    assert prompt.trusted_site_context["industry_context_source"] == "explicit_industry"
+    assert "explicit_location" in prompt.trusted_site_context["weak_site_fallback_sources"]
+    assert "business_identity" in prompt.trusted_site_context["weak_site_fallback_sources"]
+    assert prompt.prompt_telemetry["weak_site_mode_triggered"] == 1
+    assert prompt.prompt_telemetry["weak_site_structured_override_used"] == 1
+
+
+def test_prompt_builder_mature_site_keeps_normal_context_mode() -> None:
+    site = _build_site(display_name="VMS Data")
+    site.industry = "Roofing services"
+    site.normalized_domain = "vmsdata.com"
+    _with_site_content_signals(
+        site,
+        "Managed IT services and cloud hosting for SMB teams",
+        "SEO and digital marketing execution for local businesses",
+        "Web design and website development support with conversion-focused copy",
+    )
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[],
+        candidate_count=2,
+    )
+
+    assert prompt.trusted_site_context["weak_site_mode"] is False
+    assert prompt.trusted_site_context["site_context_mode"] == "normal"
+    assert prompt.trusted_site_context["weak_site_structured_override_used"] is False
+    assert prompt.prompt_telemetry["weak_site_mode_triggered"] == 0
+    terms = [term.lower() for term in prompt.trusted_site_context["service_focus_terms"]]
+    assert "roofing services" not in terms
+    assert "roofing" not in terms
 
 
 def test_prompt_builder_filters_navigation_noise_from_site_content_signals() -> None:

@@ -27,6 +27,7 @@ SEORecommendationSortBy = Literal["priority_score", "priority_band", "severity",
 SortOrder = Literal["asc", "desc"]
 SEORecommendationTuningSuggestionConfidence = Literal["low", "medium", "high"]
 SEORecommendationSignalSupportLevel = Literal["low", "medium", "high"]
+SEORecommendationEvidenceStrength = Literal["strong", "moderate", "limited"]
 SEORecommendationPriorityLevel = Literal["high", "medium", "low"]
 SEORecommendationEffortHint = Literal["quick_win", "moderate", "larger_change"]
 SEORecommendationCompetitorEvidenceTrustTier = Literal[
@@ -156,6 +157,9 @@ _RECOMMENDATION_EVIDENCE_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_OBSERVED_GAP_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_ACTION_CLARITY_MAX_CHARS = 220
 _RECOMMENDATION_EXPECTED_OUTCOME_MAX_CHARS = 220
+_RECOMMENDATION_PRIORITY_RATIONALE_MAX_CHARS = 260
+_RECOMMENDATION_WHY_NOW_MAX_CHARS = 240
+_RECOMMENDATION_NEXT_ACTION_MAX_CHARS = 220
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_ITEMS = 5
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
@@ -283,6 +287,24 @@ _RECOMMENDATION_TARGET_CONTENT_LABELS: dict[SEORecommendationTargetContentTypeKe
     "page_title_block": "Page title block",
     "call_to_action": "Call to action",
     "location_copy": "Location/service-area copy",
+}
+_PRIORITY_REASON_LABELS: dict[SEORecommendationPriorityReason, str] = {
+    "competitor_gap": "competitor-backed gap",
+    "trust_gap": "trust signal gap",
+    "authority_gap": "authority visibility gap",
+    "experience_gap": "experience/proof gap",
+    "expertise_gap": "service expertise/process gap",
+    "high_clarity_action": "clear implementation step",
+    "pending_refresh_context": "waiting for refreshed analysis context",
+    "general": "general site opportunity",
+}
+_RECOMMENDATION_TARGET_CONTEXT_LABELS: dict[SEORecommendationTargetContext, str] = {
+    "homepage": "Homepage",
+    "service_pages": "service pages",
+    "contact_about": "contact/about pages",
+    "location_pages": "location pages",
+    "sitewide": "sitewide pages",
+    "general": "core pages",
 }
 _HIGH_CLARITY_ACTION_VERBS = {
     "add",
@@ -1184,6 +1206,280 @@ def _derive_recommendation_evidence_trace(
         add_token("Sitewide")
 
     return trace_tokens[:_RECOMMENDATION_EVIDENCE_TRACE_MAX_ITEMS]
+
+
+def _dedupe_compact_lines(values: list[str], *, limit: int, max_length: int) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = _compact_text(value, max_length=max_length)
+        if cleaned is None:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+        if len(normalized) >= limit:
+            break
+    return normalized
+
+
+def _derive_recommendation_evidence_strength(
+    *,
+    evidence_json: dict[str, object] | None,
+    priority_reasons: list[SEORecommendationPriorityReason],
+    recommendation_evidence_summary: str | None,
+    recommendation_observed_gap_summary: str | None,
+    recommendation_evidence_trace: list[str],
+    recommendation_target_content_types: list[SEORecommendationTargetContentTypeRead],
+    recommendation_target_page_hints: list[str],
+    recommendation_action_delta: SEORecommendationActionDeltaRead | None,
+    competitor_evidence_links: list[SEORecommendationCompetitorEvidenceLinkRead],
+) -> SEORecommendationEvidenceStrength:
+    points = 0
+    evidence_sources = _extract_recommendation_evidence_sources(evidence_json)
+    meaningful_priority_reasons = [
+        reason for reason in priority_reasons if reason not in {"general", "pending_refresh_context"}
+    ]
+    meaningful_trace_tokens = [
+        token
+        for token in recommendation_evidence_trace
+        if token.lower() not in {"audit-backed", "general site signals"}
+    ]
+    observed_gap = (recommendation_observed_gap_summary or "").strip().lower()
+    has_meaningful_observed_gap = bool(
+        observed_gap
+        and observed_gap != "current site signals in this recommendation area appear limited or inconsistent."
+    )
+
+    if "audit" in evidence_sources:
+        points += 1
+    if "comparison" in evidence_sources or "mixed" in evidence_sources:
+        points += 2
+    if meaningful_priority_reasons:
+        points += 1
+    if recommendation_evidence_summary:
+        points += 1
+    if has_meaningful_observed_gap:
+        points += 1
+    if recommendation_target_content_types:
+        points += 1
+    if recommendation_target_page_hints:
+        points += 1
+    if len(meaningful_trace_tokens) >= 2:
+        points += 1
+
+    if recommendation_action_delta is not None:
+        if recommendation_action_delta.evidence_strength == "high":
+            points += 3
+        elif recommendation_action_delta.evidence_strength == "medium":
+            points += 2
+        else:
+            points += 1
+
+    trusted_link_count = sum(
+        1 for link in competitor_evidence_links if link.trust_tier == "trusted_verified"
+    )
+    if trusted_link_count > 0:
+        points += 2
+    elif competitor_evidence_links:
+        points += 1
+
+    has_any_signal = any(
+        [
+            bool(evidence_sources),
+            bool(meaningful_priority_reasons),
+            bool(recommendation_evidence_summary),
+            has_meaningful_observed_gap,
+            bool(recommendation_target_content_types),
+            bool(recommendation_target_page_hints),
+            bool(meaningful_trace_tokens),
+            recommendation_action_delta is not None,
+            bool(competitor_evidence_links),
+        ]
+    )
+    if not has_any_signal:
+        return "limited"
+
+    if points >= 7:
+        return "strong"
+    if points >= 4:
+        return "moderate"
+    return "limited"
+
+
+def _derive_recommendation_priority_rationale(
+    *,
+    priority_band: SEORecommendationPriorityBand,
+    priority_score: int,
+    priority_reasons: list[SEORecommendationPriorityReason],
+    recommendation_priority: SEORecommendationPriorityRead | None,
+    recommendation_action_delta: SEORecommendationActionDeltaRead | None,
+    recommendation_target_content_summary: str | None,
+    evidence_strength: SEORecommendationEvidenceStrength,
+) -> str:
+    drivers: list[str] = []
+    if recommendation_priority is not None:
+        drivers.append(recommendation_priority.priority_reason)
+
+    for reason in priority_reasons:
+        if reason in {"general", "pending_refresh_context"}:
+            continue
+        mapped = _PRIORITY_REASON_LABELS.get(reason)
+        if mapped:
+            drivers.append(mapped)
+
+    if recommendation_action_delta is not None:
+        if recommendation_action_delta.evidence_strength == "high":
+            drivers.append("high-confidence competitor evidence")
+        elif recommendation_action_delta.evidence_strength == "medium":
+            drivers.append("moderate competitor evidence")
+        else:
+            drivers.append("limited competitor evidence")
+
+    if recommendation_target_content_summary:
+        drivers.append(f"explicit content target ({recommendation_target_content_summary})")
+
+    compact_drivers = _dedupe_compact_lines(
+        drivers,
+        limit=3,
+        max_length=120,
+    )
+    if not compact_drivers:
+        if priority_band in {"critical", "high"}:
+            compact_drivers = ["high deterministic priority score and open impact gap"]
+        elif priority_band == "medium":
+            compact_drivers = ["multiple moderate signals from the latest analysis"]
+        else:
+            compact_drivers = ["limited support compared with higher-priority work"]
+
+    if priority_band in {"critical", "high"}:
+        lead = "Prioritized first because"
+    elif priority_band == "medium":
+        lead = "Prioritized next because"
+    else:
+        lead = "Lower priority because"
+
+    if len(compact_drivers) == 1:
+        detail = compact_drivers[0]
+    elif len(compact_drivers) == 2:
+        detail = f"{compact_drivers[0]} and {compact_drivers[1]}"
+    else:
+        detail = f"{', '.join(compact_drivers[:-1])}, and {compact_drivers[-1]}"
+
+    rationale = _compact_sentence(
+        f"{lead} {detail} (score {priority_score}, evidence {evidence_strength})",
+        max_length=_RECOMMENDATION_PRIORITY_RATIONALE_MAX_CHARS,
+    )
+    if rationale is None:
+        return f"{lead} current deterministic recommendation signals."
+    return rationale
+
+
+def _derive_recommendation_why_now(
+    *,
+    status: SEORecommendationStatus,
+    recommendation_progress_status: SEORecommendationProgressStatus,
+    priority_band: SEORecommendationPriorityBand,
+    priority_reasons: list[SEORecommendationPriorityReason],
+    evidence_strength: SEORecommendationEvidenceStrength,
+) -> str:
+    if status in {"dismissed", "snoozed", "resolved"}:
+        return "No immediate action is required unless this recommendation is reopened."
+    if status == "accepted":
+        return "This recommendation is applied and should be validated after the next completed analysis refresh."
+    if recommendation_progress_status == "applied_pending_refresh":
+        return "Applied changes are waiting for refreshed analysis before you can confirm impact."
+    if recommendation_progress_status == "reflected_in_latest_analysis":
+        return "Latest analysis still reflects this gap, so follow-through is still needed."
+
+    has_competitor_priority = "competitor_gap" in priority_reasons
+    if has_competitor_priority and evidence_strength in {"strong", "moderate"}:
+        return "Competitor-backed evidence still shows a gap that is ready for operator review now."
+    if priority_band in {"critical", "high"}:
+        if evidence_strength == "limited":
+            return "This is high priority but evidence is limited, so confirm context before applying."
+        return "This high-priority recommendation is still open and ready for immediate action."
+    if evidence_strength == "strong":
+        return "Supporting evidence is strong and the recommendation remains open."
+    if evidence_strength == "moderate":
+        return "Supporting evidence is moderate and the recommendation remains actionable."
+    return "This recommendation remains open but needs operator verification because support is limited."
+
+
+def _derive_recommendation_next_action(
+    *,
+    status: SEORecommendationStatus,
+    recommendation_action_clarity: str | None,
+    recommendation_target_context: SEORecommendationTargetContext | None,
+    recommendation_target_page_hints: list[str],
+    recommendation_target_content_summary: str | None,
+    action_plan: SEORecommendationActionPlanRead | None,
+    title: str,
+) -> str:
+    if status in {"dismissed", "snoozed", "resolved"}:
+        return "No immediate step. Revisit only if context changes."
+    if status == "accepted":
+        return "After the next analysis refresh, confirm whether the applied change is visible."
+
+    if action_plan is not None and action_plan.action_steps:
+        first_step = action_plan.action_steps[0]
+        step_instruction = _compact_text(first_step.instruction, max_length=160)
+        if step_instruction:
+            sentence = _compact_sentence(step_instruction, max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS)
+            if sentence:
+                return sentence
+        step_title = _compact_text(first_step.title, max_length=120)
+        if step_title:
+            sentence = _compact_sentence(
+                f"Start with step 1: {step_title}",
+                max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS,
+            )
+            if sentence:
+                return sentence
+
+    clarity = _compact_text(recommendation_action_clarity, max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS)
+    if clarity:
+        sentence = _compact_sentence(clarity, max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS)
+        if sentence:
+            return sentence
+
+    if recommendation_target_content_summary:
+        first_page_hint = recommendation_target_page_hints[0] if recommendation_target_page_hints else None
+        if first_page_hint:
+            sentence = _compact_sentence(
+                f"Open {first_page_hint} and update {recommendation_target_content_summary.lower()}",
+                max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS,
+            )
+            if sentence:
+                return sentence
+        sentence = _compact_sentence(
+            f"Update {recommendation_target_content_summary.lower()} on the targeted pages",
+            max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS,
+        )
+        if sentence:
+            return sentence
+
+    if recommendation_target_context:
+        context_label = _RECOMMENDATION_TARGET_CONTEXT_LABELS.get(
+            recommendation_target_context,
+            "target pages",
+        )
+        sentence = _compact_sentence(
+            f"Review {context_label} and apply this recommendation",
+            max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS,
+        )
+        if sentence:
+            return sentence
+
+    sentence = _compact_sentence(
+        f"Review \"{title}\" and decide whether to apply now",
+        max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS,
+    )
+    if sentence:
+        return sentence
+    return "Review this recommendation and choose the next operator action."
 
 
 def _derive_recommendation_target_context(
@@ -2341,6 +2637,19 @@ class SEORecommendationRead(BaseModel):
         default=None,
         max_length=_RECOMMENDATION_EXPECTED_OUTCOME_MAX_CHARS,
     )
+    priority_rationale: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_PRIORITY_RATIONALE_MAX_CHARS,
+    )
+    evidence_strength: SEORecommendationEvidenceStrength = "limited"
+    why_now: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_WHY_NOW_MAX_CHARS,
+    )
+    next_action: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS,
+    )
     recommendation_target_context: SEORecommendationTargetContext | None = None
     recommendation_target_page_hints: list[str] = Field(default_factory=list)
     recommendation_target_content_types: list[SEORecommendationTargetContentTypeRead] = Field(default_factory=list)
@@ -2464,6 +2773,32 @@ class SEORecommendationRead(BaseModel):
     @classmethod
     def normalize_recommendation_expected_outcome(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_EXPECTED_OUTCOME_MAX_CHARS)
+
+    @field_validator("priority_rationale", mode="before")
+    @classmethod
+    def normalize_priority_rationale(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_PRIORITY_RATIONALE_MAX_CHARS)
+
+    @field_validator("evidence_strength", mode="before")
+    @classmethod
+    def normalize_evidence_strength(
+        cls,
+        value: Any,
+    ) -> SEORecommendationEvidenceStrength:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"strong", "moderate", "limited"}:
+            return "limited"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("why_now", mode="before")
+    @classmethod
+    def normalize_why_now(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_WHY_NOW_MAX_CHARS)
+
+    @field_validator("next_action", mode="before")
+    @classmethod
+    def normalize_next_action(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS)
 
     @field_validator("recommendation_target_context", mode="before")
     @classmethod
@@ -2898,6 +3233,65 @@ class SEORecommendationRead(BaseModel):
             recommendation_observed_gap_summary=self.recommendation_observed_gap_summary,
             evidence_json=self.evidence_json if isinstance(self.evidence_json, dict) else None,
             theme=self.theme,
+        )
+        return self
+
+    @model_validator(mode="after")
+    def derive_recommendation_evidence_strength(self) -> "SEORecommendationRead":
+        evidence_strength = _derive_recommendation_evidence_strength(
+            evidence_json=self.evidence_json if isinstance(self.evidence_json, dict) else None,
+            priority_reasons=self.priority_reasons,
+            recommendation_evidence_summary=self.recommendation_evidence_summary,
+            recommendation_observed_gap_summary=self.recommendation_observed_gap_summary,
+            recommendation_evidence_trace=self.recommendation_evidence_trace,
+            recommendation_target_content_types=self.recommendation_target_content_types,
+            recommendation_target_page_hints=self.recommendation_target_page_hints,
+            recommendation_action_delta=self.recommendation_action_delta,
+            competitor_evidence_links=self.competitor_evidence_links,
+        )
+        self.evidence_strength = evidence_strength
+        return self
+
+    @model_validator(mode="after")
+    def derive_priority_rationale(self) -> "SEORecommendationRead":
+        if self.priority_rationale is not None:
+            return self
+        self.priority_rationale = _derive_recommendation_priority_rationale(
+            priority_band=self.priority_band,
+            priority_score=self.priority_score,
+            priority_reasons=self.priority_reasons,
+            recommendation_priority=self.recommendation_priority,
+            recommendation_action_delta=self.recommendation_action_delta,
+            recommendation_target_content_summary=self.recommendation_target_content_summary,
+            evidence_strength=self.evidence_strength,
+        )
+        return self
+
+    @model_validator(mode="after")
+    def derive_why_now(self) -> "SEORecommendationRead":
+        if self.why_now is not None:
+            return self
+        self.why_now = _derive_recommendation_why_now(
+            status=self.status,
+            recommendation_progress_status=self.recommendation_progress_status,
+            priority_band=self.priority_band,
+            priority_reasons=self.priority_reasons,
+            evidence_strength=self.evidence_strength,
+        )
+        return self
+
+    @model_validator(mode="after")
+    def derive_next_action(self) -> "SEORecommendationRead":
+        if self.next_action is not None:
+            return self
+        self.next_action = _derive_recommendation_next_action(
+            status=self.status,
+            recommendation_action_clarity=self.recommendation_action_clarity,
+            recommendation_target_context=self.recommendation_target_context,
+            recommendation_target_page_hints=self.recommendation_target_page_hints,
+            recommendation_target_content_summary=self.recommendation_target_content_summary,
+            action_plan=self.action_plan,
+            title=self.title,
         )
         return self
 

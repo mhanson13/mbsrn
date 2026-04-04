@@ -259,6 +259,32 @@ Rationale:
 - site/business context is already visible in the global workspace header
 - queue scanning should foreground execution signals (`priority`, `summary`, `status`, `decisiveness`) before IDs
 
+## Deterministic Trust + Actionability Fields
+
+Recommendation payloads now include additive deterministic explanation fields with no additional AI/provider calls:
+
+- `priority_rationale`
+- `evidence_strength` (`strong` | `moderate` | `limited`)
+- `why_now`
+- `next_action`
+
+Derivation inputs are existing grounded signals only:
+
+- priority score/band/reasons
+- recommendation priority/action-delta metadata
+- recommendation evidence summaries/traces
+- page/content targeting metadata
+- existing competitor linkage metadata when materially relevant
+- action-plan first step when available
+
+Fallback behavior is conservative:
+
+- thin-signal recommendations remain `limited` evidence
+- `why_now` explicitly calls out limited support when applicable
+- `next_action` falls back to deterministic review guidance when no step metadata exists
+
+Operator UI surfaces these fields compactly in recommendation queue and site workspace detail views to improve trust and execution readiness without adding badge noise.
+
 ## Workspace Context Authority
 
 Recommendation surfaces now follow the same authority-bounded workspace context model as the global header selector:
@@ -270,6 +296,25 @@ Recommendation surfaces now follow the same authority-bounded workspace context 
 Current limitation:
 - cross-business site switching is not supported end-to-end in recommendation workflows today
 - UI intentionally avoids showing an active site/business context that backend authorization will reject
+
+## Weak-Site Competitor Context Signals
+
+Workspace competitor prompt previews now include deterministic weak-site diagnostics so operators can see when competitor discovery relied on structured fallback context instead of thin site copy.
+
+Key additive fields:
+- `site_context_mode` (`normal` | `weak_site_fallback`)
+- `weak_site_mode`
+- `weak_site_structured_override_used`
+- `weak_site_fallback_sources`
+- `service_focus_inference_source`
+- `industry_context_source`
+- `site_content_signal_strength`
+- `site_content_signal_count`
+
+Interpretation:
+- `weak_site_fallback` indicates immature or low-signal site content.
+- `weak_site_structured_override_used=true` means structured business/location metadata was preferred.
+- Candidate filtering/safety guardrails remain unchanged; fallback improves context assembly, not acceptance rules.
 
 ## Final UI Ergonomics
 

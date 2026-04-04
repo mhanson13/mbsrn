@@ -100,6 +100,15 @@ function createRecommendation(
     effort_bucket: "small",
     title,
     rationale: `Rationale for ${title}`,
+    priority_rationale: `Priority rationale for ${title}.`,
+    evidence_strength:
+      priorityBand === "critical" || priorityBand === "high"
+        ? "strong"
+        : priorityBand === "medium"
+          ? "moderate"
+          : "limited",
+    why_now: `Why now for ${title}.`,
+    next_action: `Open the target page and apply the first change for ${title}.`,
     eeat_categories: [],
     primary_eeat_category: null,
     decision_reason: null,
@@ -307,6 +316,7 @@ describe("recommendations queue optimistic workflows", () => {
     expect(decisivenessCellOne).toHaveTextContent("Quick win");
     expect(decisivenessCellOne).toHaveTextContent("Blocked by operator review");
     expect(decisivenessCellOne).toHaveTextContent("Why now:");
+    expect(decisivenessCellOne).toHaveTextContent("Why now for Recommendation One.");
     expect(decisivenessCellOne).not.toHaveTextContent("After action:");
     const recOneExpandButton = within(decisivenessCellOne).getByRole("button", { name: "View details" });
     expect(recOneExpandButton).toHaveAttribute("aria-expanded", "false");
@@ -330,6 +340,11 @@ describe("recommendations queue optimistic workflows", () => {
     expect(recOneDetailPanel).toHaveTextContent("No blocker detected.");
     expect(recOneDetailPanel).toHaveTextContent("Action state:");
     expect(recOneDetailPanel).toHaveTextContent("Next step:");
+    expect(recOneDetailPanel).toHaveTextContent(
+      "Open the target page and apply the first change for Recommendation One.",
+    );
+    expect(recOneDetailPanel).toHaveTextContent("Priority rationale for Recommendation One.");
+    expect(recOneDetailPanel).toHaveTextContent("Strong evidence");
     expect(recOneDetailPanel).toHaveTextContent("After action:");
     expect(recOneDetailPanel).toHaveTextContent("Evidence:");
     expect(recOneDetailPanel).toHaveTextContent("Support cue:");

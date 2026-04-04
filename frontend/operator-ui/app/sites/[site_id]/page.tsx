@@ -2565,6 +2565,52 @@ function normalizeRecommendationPriority(
   };
 }
 
+function normalizeRecommendationPriorityRationale(item: Recommendation): string | null {
+  return truncateOptionalText(item.priority_rationale, 260);
+}
+
+function normalizeRecommendationWhyNow(item: Recommendation): string | null {
+  return truncateOptionalText(item.why_now, 240);
+}
+
+function normalizeRecommendationNextAction(item: Recommendation): string | null {
+  return truncateOptionalText(item.next_action, 220);
+}
+
+function normalizeRecommendationEvidenceStrength(
+  item: Recommendation,
+): "strong" | "moderate" | "limited" | null {
+  const normalized = (item.evidence_strength || "").trim().toLowerCase();
+  if (normalized === "strong" || normalized === "moderate" || normalized === "limited") {
+    return normalized;
+  }
+  return null;
+}
+
+function formatRecommendationEvidenceStrengthLabel(
+  value: "strong" | "moderate" | "limited",
+): string {
+  if (value === "strong") {
+    return "Strong evidence";
+  }
+  if (value === "moderate") {
+    return "Moderate evidence";
+  }
+  return "Limited evidence";
+}
+
+function recommendationEvidenceStrengthBadgeClass(
+  value: "strong" | "moderate" | "limited",
+): string {
+  if (value === "strong") {
+    return "badge badge-success";
+  }
+  if (value === "moderate") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
+}
+
 function sortRecommendationsByDeterministicPriority(recommendations: Recommendation[]): Recommendation[] {
   if (recommendations.length <= 1) {
     return recommendations;
@@ -8816,6 +8862,10 @@ export default function SiteWorkspacePage() {
                           normalizeRecommendationCompetitorEvidenceLinks(item);
                         const recommendationActionDelta = normalizeRecommendationActionDelta(item);
                         const recommendationPriority = normalizeRecommendationPriority(item);
+                        const recommendationPriorityRationale = normalizeRecommendationPriorityRationale(item);
+                        const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
+                        const recommendationWhyNow = normalizeRecommendationWhyNow(item);
+                        const recommendationNextAction = normalizeRecommendationNextAction(item);
                         const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
                         const recommendationDetailClarity = buildRecommendationDetailClarityView({
                           actionDelta: recommendationActionDelta,
@@ -8874,6 +8924,16 @@ export default function SiteWorkspacePage() {
                                   {recommendationExpectedOutcome ? (
                                     <span className="hint muted" data-testid="recommendation-expected-outcome">
                                       Expected outcome: {recommendationExpectedOutcome}
+                                    </span>
+                                  ) : null}
+                                  {recommendationWhyNow ? (
+                                    <span className="hint muted" data-testid="recommendation-why-now">
+                                      Why now: {recommendationWhyNow}
+                                    </span>
+                                  ) : null}
+                                  {recommendationNextAction ? (
+                                    <span className="hint muted" data-testid="recommendation-next-action">
+                                      Next action: {recommendationNextAction}
                                     </span>
                                   ) : null}
                                   {recommendationTargetContext ? (
@@ -9017,6 +9077,24 @@ export default function SiteWorkspacePage() {
                                       </div>
                                     </div>
                                   ) : null}
+                                  {recommendationPriorityRationale ? (
+                                    <div className="workspace-recommendation-row-support-group">
+                                      <span className="workspace-recommendation-row-support-label">Priority rationale</span>
+                                      <span className="hint muted" data-testid="recommendation-priority-rationale">
+                                        {recommendationPriorityRationale}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                  {recommendationEvidenceStrength ? (
+                                    <div className="workspace-recommendation-row-support-group">
+                                      <span className="workspace-recommendation-row-support-label">Evidence strength</span>
+                                      <div className="link-row" data-testid="recommendation-evidence-strength">
+                                        <span className={recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}>
+                                          {formatRecommendationEvidenceStrengthLabel(recommendationEvidenceStrength)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ) : null}
                                   <div className="workspace-recommendation-row-support-group">
                                     <span className="workspace-recommendation-row-support-label">Details</span>
                                     <div className="link-row">
@@ -9077,6 +9155,10 @@ export default function SiteWorkspacePage() {
                                 normalizeRecommendationCompetitorEvidenceLinks(item);
                               const recommendationActionDelta = normalizeRecommendationActionDelta(item);
                               const recommendationPriority = normalizeRecommendationPriority(item);
+                              const recommendationPriorityRationale = normalizeRecommendationPriorityRationale(item);
+                              const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
+                              const recommendationWhyNow = normalizeRecommendationWhyNow(item);
+                              const recommendationNextAction = normalizeRecommendationNextAction(item);
                               const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
                               const recommendationDetailClarity = buildRecommendationDetailClarityView({
                                 actionDelta: recommendationActionDelta,
@@ -9135,6 +9217,16 @@ export default function SiteWorkspacePage() {
                                         {recommendationExpectedOutcome ? (
                                           <span className="hint muted" data-testid="recommendation-expected-outcome">
                                             Expected outcome: {recommendationExpectedOutcome}
+                                          </span>
+                                        ) : null}
+                                        {recommendationWhyNow ? (
+                                          <span className="hint muted" data-testid="recommendation-why-now">
+                                            Why now: {recommendationWhyNow}
+                                          </span>
+                                        ) : null}
+                                        {recommendationNextAction ? (
+                                          <span className="hint muted" data-testid="recommendation-next-action">
+                                            Next action: {recommendationNextAction}
                                           </span>
                                         ) : null}
                                         {recommendationTargetContext ? (
@@ -9282,6 +9374,24 @@ export default function SiteWorkspacePage() {
                                                   Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}
                                                 </span>
                                               ) : null}
+                                            </div>
+                                          </div>
+                                        ) : null}
+                                        {recommendationPriorityRationale ? (
+                                          <div className="workspace-recommendation-row-support-group">
+                                            <span className="workspace-recommendation-row-support-label">Priority rationale</span>
+                                            <span className="hint muted" data-testid="recommendation-priority-rationale">
+                                              {recommendationPriorityRationale}
+                                            </span>
+                                          </div>
+                                        ) : null}
+                                        {recommendationEvidenceStrength ? (
+                                          <div className="workspace-recommendation-row-support-group">
+                                            <span className="workspace-recommendation-row-support-label">Evidence strength</span>
+                                            <div className="link-row" data-testid="recommendation-evidence-strength">
+                                              <span className={recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}>
+                                                {formatRecommendationEvidenceStrengthLabel(recommendationEvidenceStrength)}
+                                              </span>
                                             </div>
                                           </div>
                                         ) : null}

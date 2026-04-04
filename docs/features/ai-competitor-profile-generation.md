@@ -80,8 +80,23 @@ Bounded exclusion telemetry is persisted at run level for tuning:
    - `target_customer_context`
    - `excluded_domains`
    - `non_competitor_domain_hints`
+   - weak-site fallback diagnostics:
+     - `site_context_mode`
+     - `weak_site_mode`
+     - `weak_site_structured_override_used`
+     - `weak_site_fallback_sources`
+     - `service_focus_inference_source`
+     - `industry_context_source`
+     - `site_content_signal_strength`
+     - `site_content_signal_count`
 6. `AI_PROMPT_TEXT_COMPETITOR` is appended as supplementary competitor preference data only and cannot override schema/rules.
 7. `AI_PROMPT_TEXT_RECOMMENDATION` is a deprecated legacy fallback used only when `AI_PROMPT_TEXT_COMPETITOR` is unset or blank.
+
+### Weak-site fallback behavior
+- When site copy is immature/thin, the pipeline can enter deterministic `weak_site_fallback` context mode.
+- In this mode, prompt assembly de-emphasizes low-signal site copy and prioritizes structured business/location inputs.
+- Fallback does not loosen candidate safety filters; directory/aggregator/no-live-site and exclusion-domain guardrails remain active.
+- When both site content and structured metadata are weak, behavior is intentionally conservative and may return limited candidates.
 
 ### Prompt Separation Architecture
 - Competitor discovery uses the competitor-only supplemental prompt contract: `AI_PROMPT_TEXT_COMPETITOR`.

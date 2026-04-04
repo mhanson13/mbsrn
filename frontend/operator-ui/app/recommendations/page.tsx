@@ -617,6 +617,64 @@ function deriveRecommendationEvidenceTrust(item: Recommendation): {
   return { cue: "Support cue: operator review required", tone: "badge-warn" };
 }
 
+function normalizeRecommendationEvidenceStrength(
+  item: Recommendation,
+): "strong" | "moderate" | "limited" | null {
+  const raw = (item.evidence_strength || "").trim().toLowerCase();
+  if (raw === "strong" || raw === "moderate" || raw === "limited") {
+    return raw;
+  }
+  return null;
+}
+
+function formatRecommendationEvidenceStrength(
+  value: "strong" | "moderate" | "limited",
+): string {
+  if (value === "strong") {
+    return "Strong evidence";
+  }
+  if (value === "moderate") {
+    return "Moderate evidence";
+  }
+  return "Limited evidence";
+}
+
+function recommendationEvidenceStrengthBadgeClass(
+  value: "strong" | "moderate" | "limited",
+): "badge-success" | "badge-warn" | "badge-muted" {
+  if (value === "strong") {
+    return "badge-success";
+  }
+  if (value === "moderate") {
+    return "badge-warn";
+  }
+  return "badge-muted";
+}
+
+function deriveRecommendationPriorityRationale(item: Recommendation): string | null {
+  const value = (item.priority_rationale || "").trim();
+  if (!value) {
+    return null;
+  }
+  return truncateRecommendationEvidence(value, 220);
+}
+
+function deriveRecommendationWhyNow(item: Recommendation, fallback: string): string {
+  const value = (item.why_now || "").trim();
+  if (!value) {
+    return fallback;
+  }
+  return truncateRecommendationEvidence(value, 220);
+}
+
+function deriveRecommendationNextAction(item: Recommendation, fallback: string): string {
+  const value = (item.next_action || "").trim();
+  if (!value) {
+    return fallback;
+  }
+  return truncateRecommendationEvidence(value, 220);
+}
+
 function recommendationIsReadyNow(item: Recommendation): boolean {
   return item.status === "open" || item.status === "in_progress";
 }
@@ -2378,6 +2436,10 @@ function RecommendationsPageContent() {
                   fallbackOutcome: actionStateCue.outcome,
                   fallbackNextStep: actionStateCue.nextStep,
                 });
+                const recommendationWhyNow = deriveRecommendationWhyNow(item, decisiveness.whyNow);
+                const recommendationNextAction = deriveRecommendationNextAction(item, actionPresentation.nextStep);
+                const recommendationPriorityRationale = deriveRecommendationPriorityRationale(item);
+                const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
                 const actionControls = deriveActionControls(effectiveActionExecutionItem);
                 const showBlockerBadge =
                   decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
@@ -2401,7 +2463,7 @@ function RecommendationsPageContent() {
                     )}
                     summary={
                       <span>
-                        <span className="text-strong">Why now:</span> {truncateRecommendationWhyNow(decisiveness.whyNow)}
+                        <span className="text-strong">Why now:</span> {truncateRecommendationWhyNow(recommendationWhyNow)}
                       </span>
                     }
                     primaryAction={
@@ -2425,8 +2487,21 @@ function RecommendationsPageContent() {
                           <span className="text-strong">Action state:</span> {actionPresentation.outcome}
                         </p>
                         <p className="hint muted">
-                          <span className="text-strong">Next step:</span> {actionPresentation.nextStep}
+                          <span className="text-strong">Next step:</span> {recommendationNextAction}
                         </p>
+                        {recommendationPriorityRationale ? (
+                          <p className="hint muted">
+                            <span className="text-strong">Priority rationale:</span> {recommendationPriorityRationale}
+                          </p>
+                        ) : null}
+                        {recommendationEvidenceStrength ? (
+                          <p className="hint muted">
+                            <span className="text-strong">Evidence strength:</span>{" "}
+                            <span className={`badge ${recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}`}>
+                              {formatRecommendationEvidenceStrength(recommendationEvidenceStrength)}
+                            </span>
+                          </p>
+                        ) : null}
                         <OutputReview
                           item={effectiveActionExecutionItem}
                           stateLabel={actionPresentation.label}
@@ -2640,6 +2715,10 @@ function RecommendationsPageContent() {
                   fallbackOutcome: actionStateCue.outcome,
                   fallbackNextStep: actionStateCue.nextStep,
                 });
+                const recommendationWhyNow = deriveRecommendationWhyNow(item, decisiveness.whyNow);
+                const recommendationNextAction = deriveRecommendationNextAction(item, actionPresentation.nextStep);
+                const recommendationPriorityRationale = deriveRecommendationPriorityRationale(item);
+                const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
                 const actionControls = deriveActionControls(effectiveActionExecutionItem);
                 const isExpanded = expandedRecommendationIds.has(item.id);
                 const detailsId = `recommendation-details-${item.id}`;
@@ -2697,7 +2776,7 @@ function RecommendationsPageContent() {
                             ) : null}
                           </div>
                           <p className="hint muted recommendation-decisiveness-why-now">
-                            <span className="text-strong">Why now:</span> {truncateRecommendationWhyNow(decisiveness.whyNow)}
+                            <span className="text-strong">Why now:</span> {truncateRecommendationWhyNow(recommendationWhyNow)}
                           </p>
                           <button
                             type="button"
@@ -2741,7 +2820,7 @@ function RecommendationsPageContent() {
                               <span className="text-strong">Action state:</span> {actionPresentation.outcome}
                             </p>
                             <p className="hint muted">
-                              <span className="text-strong">Next step:</span> {actionPresentation.nextStep}
+                              <span className="text-strong">Next step:</span> {recommendationNextAction}
                             </p>
                             <ActionControls
                               controls={actionControls}
@@ -2777,6 +2856,19 @@ function RecommendationsPageContent() {
                               <span className="text-strong">Priority:</span>{" "}
                               <span className={`badge ${decisiveness.priorityCueTone}`}>{decisiveness.priorityCue}</span>
                             </p>
+                            {recommendationPriorityRationale ? (
+                              <p className="hint muted">
+                                <span className="text-strong">Priority rationale:</span> {recommendationPriorityRationale}
+                              </p>
+                            ) : null}
+                            {recommendationEvidenceStrength ? (
+                              <p className="hint muted">
+                                <span className="text-strong">Evidence strength:</span>{" "}
+                                <span className={`badge ${recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}`}>
+                                  {formatRecommendationEvidenceStrength(recommendationEvidenceStrength)}
+                                </span>
+                              </p>
+                            ) : null}
                             <p className="hint muted">
                               <span className="text-strong">Choice support:</span>{" "}
                               <span className={`badge ${decisiveness.choiceCueTone}`}>{decisiveness.choiceCue}</span>
@@ -2791,7 +2883,7 @@ function RecommendationsPageContent() {
                               {decisiveness.refreshCheck}
                             </p>
                             <p className="hint muted">
-                              <span className="text-strong">Why now:</span> {decisiveness.whyNow}
+                              <span className="text-strong">Why now:</span> {recommendationWhyNow}
                             </p>
                             <p className="hint muted">
                               <span className="text-strong">Blocking:</span> {decisiveness.blockingState}

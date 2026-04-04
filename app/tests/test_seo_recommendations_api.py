@@ -2646,6 +2646,10 @@ def test_recommendation_workspace_summary_does_not_bleed_stale_roofing_context_a
     assert context_json["site_industry"] is None
     assert "roofing" not in str(context_json["site_industry_context"]).lower()
     assert all("roofing" not in str(item).lower() for item in context_json.get("service_focus_terms", []))
+    assert context_json["site_context_mode"] == "weak_site_fallback"
+    assert context_json["weak_site_mode"] is True
+    assert context_json["site_content_signal_strength"] == "weak"
+    assert context_json["service_focus_inference_source"] in {"fallback", "structured_metadata", "domain_hints"}
 
     context_health = payload["competitor_context_health"]
     assert context_health is not None
@@ -2737,6 +2741,9 @@ def test_recommendation_workspace_summary_uses_new_domain_audit_signals_for_fres
     context_json = _extract_site_context_json(prompt_preview["user_prompt"])
     industry_context = str(context_json.get("site_industry_context") or "").lower()
     service_focus_terms = ",".join(str(item).lower() for item in context_json.get("service_focus_terms", []))
+    assert context_json["site_context_mode"] == "normal"
+    assert context_json["weak_site_mode"] is False
+    assert context_json["site_content_signal_strength"] in {"moderate", "strong"}
     assert "roofing" not in industry_context
     assert "roofing" not in service_focus_terms
     assert any(token in industry_context for token in ("seo", "hosting", "digital", "managed it"))
@@ -3334,6 +3341,10 @@ def test_recommendation_workspace_summary_derives_medium_priority_from_moderate_
     assert recommendation_payload["recommendation_priority"]["priority_level"] == "medium"
     assert recommendation_payload["recommendation_priority"]["priority_reason"]
     assert recommendation_payload["recommendation_priority"]["effort_hint"] == "moderate"
+    assert recommendation_payload["priority_rationale"]
+    assert recommendation_payload["evidence_strength"] in {"strong", "moderate", "limited"}
+    assert recommendation_payload["why_now"]
+    assert recommendation_payload["next_action"]
 
 
 def test_recommendation_workspace_summary_omits_eeat_gap_summary_when_competitor_signals_are_insufficient(

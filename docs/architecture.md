@@ -186,6 +186,24 @@ Local validation strategy:
 - Empty/partial metadata safely yields an empty plan instead of inferred or hallucinated steps.
 - This is a read-model/operator-guidance layer only; it does not execute changes.
 
+### Deterministic Recommendation Explanation Layer
+
+Recommendation read models now expose additive deterministic trust/actionability fields:
+
+- `priority_rationale`
+- `evidence_strength`
+- `why_now`
+- `next_action`
+
+Design constraints:
+
+- built from existing recommendation/audit/comparison/action-delta signals only
+- no additional AI/provider calls
+- compact operator-readable output with conservative fallbacks for thin evidence
+- competitor/context signals are incorporated selectively when they materially sharpen recommendation clarity
+
+This layer improves operator trust and execution readiness while keeping recommendation ordering and generation behavior unchanged.
+
 ## Action Chaining Layer
 
 The backend includes a deterministic Action Chaining Layer that generates follow-on actions after qualifying workflow transitions.
@@ -439,6 +457,30 @@ Competitor prompt execution and preview use the same resolved prompt assembly pi
 - These hints are guidance-only strings to improve competitor discovery reliability for low-context sites.
 - Hints are not authoritative data and never treated as confirmed competitors.
 - No external lookups are used to generate hints; they are derived from existing site/business context only.
+
+## Weak-Site Competitor Fallback
+- Competitor prompt/context assembly now supports a deterministic `weak_site_fallback` mode for immature sites.
+- Triggering is conservative and based on existing context quality only (no extra model calls), including:
+  - thin/noisy site content signals
+  - weak service-focus derivation
+  - weak location + weak content combinations
+- In fallback mode, structured context is prioritized over sparse site copy:
+  - business identity
+  - explicit industry/category
+  - primary location/service area context
+  - deterministic domain/business hints already in the system
+- Existing candidate guardrails stay active (directory/aggregator/no-live-site/exclusion filtering is unchanged).
+- Additive debug-safe prompt context fields expose mode and source selection:
+  - `site_context_mode`
+  - `weak_site_mode`
+  - `weak_site_structured_override_used`
+  - `weak_site_fallback_sources`
+  - `service_focus_inference_source`
+  - `industry_context_source`
+  - `site_content_signal_strength`
+  - `site_content_signal_count`
+- Limitation:
+  - when both site content and structured business metadata are sparse, competitor discovery remains conservative and may return fewer candidates.
 
 ## Relaxed Competitor Eligibility
 - Unsupported competitor type labels are treated as a soft classification mismatch signal instead of an automatic hard reject.

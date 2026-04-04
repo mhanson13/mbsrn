@@ -796,3 +796,130 @@ def test_competitor_context_health_read_normalizes_and_orders_checks() -> None:
         "industry_context",
         "service_focus",
     ]
+
+
+def test_recommendation_read_derives_deterministic_trust_and_actionability_fields_for_strong_evidence() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            comparison_run_id=str(uuid4()),
+            priority_score=92,
+            priority_band="critical",
+            title="Clarify homepage heading for primary service",
+            rationale="Service intent is not obvious above the fold.",
+            evidence_json={
+                "sources": ["comparison"],
+                "finding_types": ["missing_h1"],
+                "counts": {"missing_h1": 2},
+            },
+            recommendation_target_page_hints=["Homepage"],
+            recommendation_target_content_types=[
+                {
+                    "type_key": "heading_h1",
+                    "label": "Main heading",
+                    "source_type": "audit_signal",
+                    "targeting_strength": "high",
+                }
+            ],
+            recommendation_action_delta={
+                "observed_competitor_pattern": "Competitors lead with clear service-first headings.",
+                "observed_site_gap": "Homepage heading does not state the service and location clearly.",
+                "recommended_operator_action": "Update homepage heading copy to state service and location.",
+                "evidence_strength": "high",
+            },
+            recommendation_priority={
+                "priority_level": "high",
+                "priority_reason": "Clear trust and conversion impact on the homepage.",
+                "effort_hint": "quick_win",
+            },
+            competitor_evidence_links=[
+                {
+                    "competitor_draft_id": str(uuid4()),
+                    "competitor_name": "Trusted Local Competitor",
+                    "trust_tier": "trusted_verified",
+                    "evidence_summary": "Verified competitor uses clear service + location heading copy.",
+                }
+            ],
+            action_plan={
+                "action_steps": [
+                    {
+                        "step_number": 1,
+                        "title": "Update homepage heading",
+                        "instruction": "Open Homepage and update the main heading to describe your service clearly.",
+                        "target_type": "page",
+                        "target_identifier": "Homepage",
+                        "field": "h1",
+                        "before_example": "Welcome to our company",
+                        "after_example": "Emergency Plumbing in Denver",
+                        "confidence": 0.9,
+                    }
+                ]
+            },
+        )
+    )
+
+    assert recommendation.evidence_strength == "strong"
+    assert recommendation.priority_rationale is not None
+    assert "score 92" in recommendation.priority_rationale
+    assert "evidence strong" in recommendation.priority_rationale
+    assert recommendation.why_now is not None
+    assert "Competitor-backed evidence" in recommendation.why_now
+    assert recommendation.next_action is not None
+    assert recommendation.next_action.startswith("Open Homepage and update the main heading")
+
+
+def test_recommendation_read_derives_conservative_fields_for_limited_evidence() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            rule_key="generic_cleanup",
+            title="General metadata note",
+            rationale="General cleanup note.",
+            priority_band="low",
+            priority_score=20,
+            evidence_json=None,
+            eeat_categories=[],
+            primary_eeat_category=None,
+            priority_reasons=[],
+            primary_priority_reason=None,
+            recommendation_target_page_hints=[],
+            recommendation_target_content_types=[],
+            recommendation_evidence_trace=[],
+            recommendation_evidence_summary=None,
+            recommendation_observed_gap_summary=None,
+            recommendation_action_delta=None,
+        )
+    )
+
+    assert recommendation.evidence_strength == "limited"
+    assert recommendation.priority_rationale is not None
+    assert "evidence limited" in recommendation.priority_rationale
+    assert recommendation.why_now is not None
+    assert "support is limited" in recommendation.why_now
+    assert recommendation.next_action is not None
+    assert "General metadata note on high-visibility service pages." in recommendation.next_action
+
+
+def test_recommendation_read_keeps_why_now_non_competitor_when_competitor_signals_are_absent() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            comparison_run_id=None,
+            priority_band="high",
+            title="Improve service page subheadings",
+            rationale="Service page hierarchy is unclear for operators and visitors.",
+            evidence_json={
+                "sources": ["audit"],
+                "finding_types": ["missing_h2"],
+                "counts": {"missing_h2": 3},
+            },
+            recommendation_target_content_types=[
+                {
+                    "type_key": "heading_h2",
+                    "label": "Section headings",
+                    "source_type": "audit_signal",
+                    "targeting_strength": "medium",
+                }
+            ],
+        )
+    )
+
+    assert recommendation.why_now is not None
+    assert "Competitor-backed evidence" not in recommendation.why_now

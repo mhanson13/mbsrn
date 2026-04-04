@@ -228,6 +228,10 @@ function buildRecommendation(
     effort_bucket: "small",
     title: "Fix title tags",
     rationale: "Title tags are missing core keywords.",
+    priority_rationale: "Priority rationale default for operator triage.",
+    evidence_strength: "moderate",
+    why_now: "Why now default guidance for operator review.",
+    next_action: "Open the target page and apply the first deterministic change.",
     eeat_categories: [],
     primary_eeat_category: null,
     decision_reason: null,
@@ -3190,6 +3194,11 @@ describe("site workspace timeline controls", () => {
               recommendation_evidence_trace: ["Competitor-backed", "Trust/verification gap", "Service pages"],
               recommendation_action_clarity: "Add stronger review and trust proof to key service pages.",
               recommendation_expected_outcome: "Helps visitors trust the business faster.",
+              priority_rationale:
+                "Prioritized first because trust signals are weak on high-visibility service pages.",
+              evidence_strength: "strong",
+              why_now: "Trust gap is still visible on key service pages and is ready for action.",
+              next_action: "Open Homepage and add stronger trust proof in the main service section.",
               recommendation_target_context: "service_pages",
               recommendation_target_page_hints: ["Homepage", "/services/flooring"],
               recommendation_target_content_types: [
@@ -3227,6 +3236,10 @@ describe("site workspace timeline controls", () => {
             buildRecommendation({
               id: "rec-action-2",
               title: "Recommendation without action metadata",
+              priority_rationale: null,
+              evidence_strength: undefined,
+              why_now: null,
+              next_action: null,
             }),
           ],
           total: 2,
@@ -3248,10 +3261,28 @@ describe("site workspace timeline controls", () => {
     expect(outcomeLines[0]).toHaveTextContent(
       "Expected outcome: Helps visitors trust the business faster.",
     );
+    const whyNowLines = screen.getAllByTestId("recommendation-why-now");
+    expect(whyNowLines).toHaveLength(1);
+    expect(whyNowLines[0]).toHaveTextContent(
+      "Why now: Trust gap is still visible on key service pages and is ready for action.",
+    );
+    const nextActionLines = screen.getAllByTestId("recommendation-next-action");
+    expect(nextActionLines).toHaveLength(1);
+    expect(nextActionLines[0]).toHaveTextContent(
+      "Next action: Open Homepage and add stronger trust proof in the main service section.",
+    );
 
     const targetContextLines = screen.getAllByTestId("recommendation-target-context");
     expect(targetContextLines).toHaveLength(1);
     expect(targetContextLines[0]).toHaveTextContent("Where: Service pages");
+    const priorityRationaleLines = screen.getAllByTestId("recommendation-priority-rationale");
+    expect(priorityRationaleLines).toHaveLength(1);
+    expect(priorityRationaleLines[0]).toHaveTextContent(
+      "Prioritized first because trust signals are weak on high-visibility service pages.",
+    );
+    const evidenceStrengthLines = screen.getAllByTestId("recommendation-evidence-strength");
+    expect(evidenceStrengthLines).toHaveLength(1);
+    expect(evidenceStrengthLines[0]).toHaveTextContent("Strong evidence");
 
     const targetPageHintLines = screen.getAllByTestId("recommendation-target-page-hints");
     expect(targetPageHintLines).toHaveLength(1);
