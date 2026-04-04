@@ -3345,6 +3345,7 @@ def test_recommendation_workspace_summary_derives_medium_priority_from_moderate_
     assert recommendation_payload["evidence_strength"] in {"strong", "moderate", "limited"}
     assert recommendation_payload["why_now"]
     assert recommendation_payload["next_action"]
+    assert "competitor_insight" in recommendation_payload
 
 
 def test_recommendation_workspace_summary_omits_eeat_gap_summary_when_competitor_signals_are_insufficient(

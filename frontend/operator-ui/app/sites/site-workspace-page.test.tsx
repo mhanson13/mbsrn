@@ -3199,6 +3199,8 @@ describe("site workspace timeline controls", () => {
               evidence_strength: "strong",
               why_now: "Trust gap is still visible on key service pages and is ready for action.",
               next_action: "Open Homepage and add stronger trust proof in the main service section.",
+              competitor_insight:
+                "Competitors appear to have stronger service-specific coverage for this topic. Closing this gap should improve parity when customers compare local options.",
               recommendation_target_context: "service_pages",
               recommendation_target_page_hints: ["Homepage", "/services/flooring"],
               recommendation_target_content_types: [
@@ -3240,6 +3242,7 @@ describe("site workspace timeline controls", () => {
               evidence_strength: undefined,
               why_now: null,
               next_action: null,
+              competitor_insight: null,
             }),
           ],
           total: 2,
@@ -3270,6 +3273,11 @@ describe("site workspace timeline controls", () => {
     expect(nextActionLines).toHaveLength(1);
     expect(nextActionLines[0]).toHaveTextContent(
       "Next action: Open Homepage and add stronger trust proof in the main service section.",
+    );
+    const competitorInsightLines = screen.getAllByTestId("recommendation-competitor-insight");
+    expect(competitorInsightLines).toHaveLength(1);
+    expect(competitorInsightLines[0]).toHaveTextContent(
+      "Competitor insight: Competitors appear to have stronger service-specific coverage for this topic.",
     );
 
     const targetContextLines = screen.getAllByTestId("recommendation-target-context");
@@ -3322,6 +3330,7 @@ describe("site workspace timeline controls", () => {
     expect(screen.queryByText("Where: Recommendation without action metadata")).not.toBeInTheDocument();
     expect(screen.queryByText("Evidence trace: Recommendation without action metadata")).not.toBeInTheDocument();
     expect(screen.queryByText("Content to update: Recommendation without action metadata")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Competitor insight: Recommendation without action metadata/i)).not.toBeInTheDocument();
   });
 
   it("labels unverified competitor linkage entries explicitly when present", async () => {

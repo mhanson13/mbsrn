@@ -177,6 +177,11 @@ _SYNTHETIC_DRAFT_SOURCES = {_FORCED_DRAFT_SOURCE, "synthetic_fallback"}
 _LEGACY_SYNTHETIC_PLACEHOLDER_DOMAIN_SUFFIX = ".mbsrn-fallback.local"
 _COMPETITOR_VERIFICATION_STATUS_VERIFIED = "verified"
 _COMPETITOR_VERIFICATION_STATUS_UNVERIFIED = "unverified"
+_WEAK_INDUSTRY_CONTEXT_FALLBACK_TOKENS = (
+    "not yet confidently classified",
+    "inferred from structured metadata",
+    "inferred from site identity hints",
+)
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
 _UNKNOWN_NAME_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 _UNKNOWN_PLACEHOLDER_NAME_TOKENS = {
@@ -3556,11 +3561,20 @@ class SEOCompetitorProfileGenerationService:
                     break
 
         if not service_terms:
+            raw_industry_strength = self._clean_optional(
+                str(context.get("site_industry_context_strength"))
+                if context.get("site_industry_context_strength") is not None
+                else None
+            )
             industry_context = self._clean_optional(
                 str(context.get("site_industry_context")) if context.get("site_industry_context") is not None else None
             )
-            if industry_context:
-                service_terms.append(industry_context)
+            if industry_context and raw_industry_strength == "strong":
+                lowered_industry = industry_context.lower()
+                if not any(token in lowered_industry for token in _WEAK_INDUSTRY_CONTEXT_FALLBACK_TOKENS):
+                    normalized_industry = industry_context.split("(", 1)[0].strip().removesuffix(" services").strip()
+                    if normalized_industry:
+                        service_terms.append(normalized_industry)
 
         expanded_service_terms: list[str] = []
         expanded_seen: set[str] = set()

@@ -76,6 +76,14 @@ def test_prompt_builder_uses_expected_trusted_inputs() -> None:
         "weak_site_mode": False,
         "weak_site_structured_override_used": False,
         "weak_site_fallback_sources": [],
+        "context_source_classification": "structured",
+        "structured_context_fields_used": [
+            "business_identity",
+            "industry",
+            "primary_location",
+            "service_areas",
+            "structured_service_terms",
+        ],
         "service_focus_inference_source": "structured_metadata",
         "industry_context_source": "explicit_industry",
         "site_content_signal_strength": "weak",
@@ -560,6 +568,7 @@ def test_prompt_builder_weak_site_with_sparse_metadata_and_weak_location_stays_c
     assert prompt.trusted_site_context["site_location_context_source"] == "fallback"
     assert prompt.trusted_site_context["service_focus_terms"] == []
     assert prompt.trusted_site_context["competitor_search_hints"] == []
+    assert prompt.trusted_site_context["context_source_classification"] == "site_heavy"
     assert "business_identity" in prompt.trusted_site_context["weak_site_fallback_sources"]
     assert prompt.prompt_telemetry["weak_site_mode_triggered"] == 1
 
@@ -609,10 +618,41 @@ def test_prompt_builder_weak_site_uses_structured_override_when_site_copy_is_spa
         "explicit_industry",
     }
     assert prompt.trusted_site_context["industry_context_source"] == "explicit_industry"
+    assert prompt.trusted_site_context["context_source_classification"] == "structured"
+    assert "industry" in prompt.trusted_site_context["structured_context_fields_used"]
+    assert prompt.trusted_site_context["competitor_search_hints"]
+    assert any("roofing" in hint.lower() for hint in prompt.trusted_site_context["competitor_search_hints"])
     assert "explicit_location" in prompt.trusted_site_context["weak_site_fallback_sources"]
     assert "business_identity" in prompt.trusted_site_context["weak_site_fallback_sources"]
     assert prompt.prompt_telemetry["weak_site_mode_triggered"] == 1
     assert prompt.prompt_telemetry["weak_site_structured_override_used"] == 1
+    assert prompt.prompt_telemetry["context_source_classification_structured"] == 1
+
+
+def test_prompt_builder_weak_site_with_location_and_structured_service_identity_preserves_local_search_hints() -> None:
+    site = _build_site(display_name="Acme Plumbing")
+    site.industry = None
+    site.normalized_domain = "acme.example"
+    _with_site_content_signals(site, "home", "contact", "learn more", "our services")
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[],
+        candidate_count=2,
+    )
+
+    assert prompt.trusted_site_context["weak_site_mode"] is True
+    assert prompt.trusted_site_context["weak_site_structured_override_used"] is True
+    assert prompt.trusted_site_context["service_focus_inference_source"] in {
+        "structured_metadata",
+        "domain_hints",
+        "explicit_industry",
+    }
+    hints = prompt.trusted_site_context["competitor_search_hints"]
+    assert isinstance(hints, list)
+    assert hints
+    assert any("plumbing" in hint.lower() for hint in hints)
+    assert any("denver" in hint.lower() or "colorado" in hint.lower() for hint in hints)
 
 
 def test_prompt_builder_mature_site_keeps_normal_context_mode() -> None:

@@ -865,6 +865,8 @@ def test_recommendation_read_derives_deterministic_trust_and_actionability_field
     assert "Competitor-backed evidence" in recommendation.why_now
     assert recommendation.next_action is not None
     assert recommendation.next_action.startswith("Open Homepage and update the main heading")
+    assert recommendation.competitor_insight is not None
+    assert "Competing sites are using clearer page structure and metadata" in recommendation.competitor_insight
 
 
 def test_recommendation_read_derives_conservative_fields_for_limited_evidence() -> None:
@@ -896,6 +898,7 @@ def test_recommendation_read_derives_conservative_fields_for_limited_evidence() 
     assert "support is limited" in recommendation.why_now
     assert recommendation.next_action is not None
     assert "General metadata note on high-visibility service pages." in recommendation.next_action
+    assert recommendation.competitor_insight is None
 
 
 def test_recommendation_read_keeps_why_now_non_competitor_when_competitor_signals_are_absent() -> None:
@@ -923,3 +926,41 @@ def test_recommendation_read_keeps_why_now_non_competitor_when_competitor_signal
 
     assert recommendation.why_now is not None
     assert "Competitor-backed evidence" not in recommendation.why_now
+    assert recommendation.competitor_insight is None
+
+
+def test_recommendation_read_derives_location_competitor_insight_when_directional_gap_is_local() -> None:
+    recommendation = SEORecommendationRead.model_validate(
+        _recommendation_payload(
+            comparison_run_id=str(uuid4()),
+            priority_band="high",
+            priority_reasons=["competitor_gap", "trust_gap"],
+            title="Strengthen service-area location signals",
+            rationale="Location alignment remains weaker than nearby competitors.",
+            evidence_json={
+                "sources": ["comparison"],
+                "finding_types": ["weak_local_intent"],
+                "counts": {"weak_local_intent": 2},
+            },
+            recommendation_target_context="location_pages",
+            recommendation_target_content_summary="Location copy and internal links",
+            recommendation_action_delta={
+                "observed_competitor_pattern": "Competing pages include city/service-area content in key sections.",
+                "observed_site_gap": "Location pages do not clearly mention service areas or city-level intent.",
+                "recommended_operator_action": "Add explicit service-area location copy to the location pages.",
+                "evidence_strength": "medium",
+            },
+            competitor_evidence_links=[
+                {
+                    "competitor_draft_id": str(uuid4()),
+                    "competitor_name": "Regional Service Competitor",
+                    "trust_tier": "trusted_verified",
+                    "evidence_summary": "Verified location pages include stronger city and service-area context.",
+                }
+            ],
+        )
+    )
+
+    assert recommendation.evidence_strength in {"strong", "moderate"}
+    assert recommendation.competitor_insight is not None
+    assert "location-targeted content" in recommendation.competitor_insight

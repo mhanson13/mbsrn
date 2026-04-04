@@ -204,6 +204,21 @@ Design constraints:
 
 This layer improves operator trust and execution readiness while keeping recommendation ordering and generation behavior unchanged.
 
+### Competitor-Informed Differentiation Layer
+
+Recommendation read models also expose an additive optional `competitor_insight` field.
+
+- derived deterministically from existing competitor-linked recommendation signals
+- shown only when evidence is at least moderate and a directional competitor gap is clear
+- suppressed for limited evidence or ambiguous competitor context
+- rendered as a short supporting line for operator differentiation context
+
+Design constraints:
+
+- no additional AI/provider calls
+- no competitor naming or sensitive leakage
+- no ranking/priority model changes; this is explanation-only
+
 ## Action Chaining Layer
 
 The backend includes a deterministic Action Chaining Layer that generates follow-on actions after qualifying workflow transitions.
@@ -463,6 +478,8 @@ Competitor prompt execution and preview use the same resolved prompt assembly pi
 - Triggering is conservative and based on existing context quality only (no extra model calls), including:
   - thin/noisy site content signals
   - weak service-focus derivation
+  - thin service-focus terms inferred from site copy
+  - moderate-content cases where structured metadata is materially stronger than site-copy inference
   - weak location + weak content combinations
 - In fallback mode, structured context is prioritized over sparse site copy:
   - business identity
@@ -475,10 +492,15 @@ Competitor prompt execution and preview use the same resolved prompt assembly pi
   - `weak_site_mode`
   - `weak_site_structured_override_used`
   - `weak_site_fallback_sources`
+  - `context_source_classification` (`structured` | `mixed` | `site_heavy`)
+  - `structured_context_fields_used`
   - `service_focus_inference_source`
   - `industry_context_source`
   - `site_content_signal_strength`
   - `site_content_signal_count`
+- Weak-site seed-query hardening:
+  - Google Places seed query fallback now ignores weak/placeholder industry text and only falls back to industry context when industry strength is strong.
+  - This prevents low-value query expansion from sparse generic site context while preserving mature-site behavior.
 - Limitation:
   - when both site content and structured business metadata are sparse, competitor discovery remains conservative and may return fewer candidates.
 

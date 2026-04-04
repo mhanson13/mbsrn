@@ -85,6 +85,8 @@ Bounded exclusion telemetry is persisted at run level for tuning:
      - `weak_site_mode`
      - `weak_site_structured_override_used`
      - `weak_site_fallback_sources`
+     - `context_source_classification` (`structured` | `mixed` | `site_heavy`)
+     - `structured_context_fields_used`
      - `service_focus_inference_source`
      - `industry_context_source`
      - `site_content_signal_strength`
@@ -95,7 +97,9 @@ Bounded exclusion telemetry is persisted at run level for tuning:
 ### Weak-site fallback behavior
 - When site copy is immature/thin, the pipeline can enter deterministic `weak_site_fallback` context mode.
 - In this mode, prompt assembly de-emphasizes low-signal site copy and prioritizes structured business/location inputs.
+- Weak-site mode can also trigger for moderate-content pages when site-copy service inference is thin but structured metadata is materially stronger.
 - Fallback does not loosen candidate safety filters; directory/aggregator/no-live-site and exclusion-domain guardrails remain active.
+- Google Places seed-query fallback is hardened to avoid placeholder industry text; industry fallback only applies when industry context is strong.
 - When both site content and structured metadata are weak, behavior is intentionally conservative and may return limited candidates.
 
 ### Prompt Separation Architecture

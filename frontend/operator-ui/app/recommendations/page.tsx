@@ -675,6 +675,14 @@ function deriveRecommendationNextAction(item: Recommendation, fallback: string):
   return truncateRecommendationEvidence(value, 220);
 }
 
+function deriveRecommendationCompetitorInsight(item: Recommendation): string | null {
+  const value = (item.competitor_insight || "").trim();
+  if (!value) {
+    return null;
+  }
+  return truncateRecommendationEvidence(value, 220);
+}
+
 function recommendationIsReadyNow(item: Recommendation): boolean {
   return item.status === "open" || item.status === "in_progress";
 }
@@ -2438,6 +2446,7 @@ function RecommendationsPageContent() {
                 });
                 const recommendationWhyNow = deriveRecommendationWhyNow(item, decisiveness.whyNow);
                 const recommendationNextAction = deriveRecommendationNextAction(item, actionPresentation.nextStep);
+                const recommendationCompetitorInsight = deriveRecommendationCompetitorInsight(item);
                 const recommendationPriorityRationale = deriveRecommendationPriorityRationale(item);
                 const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
                 const actionControls = deriveActionControls(effectiveActionExecutionItem);
@@ -2717,6 +2726,7 @@ function RecommendationsPageContent() {
                 });
                 const recommendationWhyNow = deriveRecommendationWhyNow(item, decisiveness.whyNow);
                 const recommendationNextAction = deriveRecommendationNextAction(item, actionPresentation.nextStep);
+                const recommendationCompetitorInsight = deriveRecommendationCompetitorInsight(item);
                 const recommendationPriorityRationale = deriveRecommendationPriorityRationale(item);
                 const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
                 const actionControls = deriveActionControls(effectiveActionExecutionItem);
@@ -2885,6 +2895,11 @@ function RecommendationsPageContent() {
                             <p className="hint muted">
                               <span className="text-strong">Why now:</span> {recommendationWhyNow}
                             </p>
+                            {recommendationCompetitorInsight ? (
+                              <p className="hint muted" data-testid={`recommendation-competitor-insight-${item.id}`}>
+                                <span className="text-strong">Competitor insight:</span> {recommendationCompetitorInsight}
+                              </p>
+                            ) : null}
                             <p className="hint muted">
                               <span className="text-strong">Blocking:</span> {decisiveness.blockingState}
                             </p>

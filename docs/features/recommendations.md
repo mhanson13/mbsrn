@@ -267,6 +267,7 @@ Recommendation payloads now include additive deterministic explanation fields wi
 - `evidence_strength` (`strong` | `moderate` | `limited`)
 - `why_now`
 - `next_action`
+- `competitor_insight` (optional)
 
 Derivation inputs are existing grounded signals only:
 
@@ -282,8 +283,23 @@ Fallback behavior is conservative:
 - thin-signal recommendations remain `limited` evidence
 - `why_now` explicitly calls out limited support when applicable
 - `next_action` falls back to deterministic review guidance when no step metadata exists
+- `competitor_insight` is suppressed when evidence is `limited` or competitor differentiation is not directionally clear
 
 Operator UI surfaces these fields compactly in recommendation queue and site workspace detail views to improve trust and execution readiness without adding badge noise.
+
+### Competitor Insight
+
+`competitor_insight` is a deterministic short-form differentiation cue derived from existing competitor-linked recommendation signals (for example action-delta gap text, linkage summaries, target context, and trust-tier evidence links).
+
+It appears only when:
+- evidence is at least `moderate`
+- competitor signals are present
+- a directional gap can be inferred safely
+
+It remains generic and operator-safe:
+- no competitor names are exposed
+- no inferred details beyond grounded signals
+- no additional AI/provider calls are used
 
 ## Workspace Context Authority
 
@@ -306,6 +322,8 @@ Key additive fields:
 - `weak_site_mode`
 - `weak_site_structured_override_used`
 - `weak_site_fallback_sources`
+- `context_source_classification` (`structured` | `mixed` | `site_heavy`)
+- `structured_context_fields_used`
 - `service_focus_inference_source`
 - `industry_context_source`
 - `site_content_signal_strength`
@@ -314,7 +332,10 @@ Key additive fields:
 Interpretation:
 - `weak_site_fallback` indicates immature or low-signal site content.
 - `weak_site_structured_override_used=true` means structured business/location metadata was preferred.
+- `context_source_classification=structured` means recommendation/competitor context is primarily metadata-led rather than site-copy-led.
+- `structured_context_fields_used` lists the dominant metadata sources used for fallback context assembly.
 - Candidate filtering/safety guardrails remain unchanged; fallback improves context assembly, not acceptance rules.
+- When both site content and structured metadata are sparse, outputs stay conservative and competitor-derived recommendation support may remain limited.
 
 ## Final UI Ergonomics
 

@@ -79,7 +79,9 @@ _WEAK_SITE_CONTEXT_MODE_FALLBACK = "weak_site_fallback"
 _ALLOWED_SITE_CONTEXT_MODES = {_WEAK_SITE_CONTEXT_MODE_NORMAL, _WEAK_SITE_CONTEXT_MODE_FALLBACK}
 _ALLOWED_SITE_CONTENT_SIGNAL_STRENGTH = {"strong", "moderate", "weak"}
 _ALLOWED_CONTEXT_INFERENCE_SOURCES = {"site_content", "structured_metadata", "domain_hints", "explicit_industry", "fallback"}
+_ALLOWED_CONTEXT_SOURCE_CLASSIFICATION = {"structured", "mixed", "site_heavy"}
 _MAX_WEAK_SITE_FALLBACK_SOURCES = 6
+_MAX_STRUCTURED_CONTEXT_FIELDS_USED = 6
 _WEAK_SITE_MIN_MEANINGFUL_SIGNAL_COUNT = 3
 _WEAK_SITE_MIN_MEANINGFUL_SIGNAL_CHARS = 100
 _WEAK_SITE_STRONG_MEANINGFUL_SIGNAL_COUNT = 6
@@ -193,6 +195,8 @@ class _WeakSiteContextDecision:
     fallback_sources: list[str]
     service_focus_inference_source: str
     industry_context_source: str
+    context_source_classification: str
+    structured_context_fields_used: list[str]
 
 
 def build_seo_competitor_profile_prompt(
@@ -326,6 +330,9 @@ def build_seo_competitor_profile_prompt(
         primary_location=primary_location,
         location_context=location_context,
         service_focus_terms=service_focus_terms,
+        industry_context=industry_context,
+        industry_context_strength=effective_site_context.industry_context_strength,
+        weak_site_mode=weak_site_decision.weak_site_mode,
     )
     google_places_seed_candidates = _sanitize_google_places_seed_candidates(seed_candidates)
 
@@ -348,6 +355,8 @@ def build_seo_competitor_profile_prompt(
         "weak_site_mode": weak_site_decision.weak_site_mode,
         "weak_site_structured_override_used": weak_site_decision.structured_override_used,
         "weak_site_fallback_sources": weak_site_decision.fallback_sources,
+        "context_source_classification": weak_site_decision.context_source_classification,
+        "structured_context_fields_used": weak_site_decision.structured_context_fields_used,
         "service_focus_inference_source": service_focus_inference_source,
         "industry_context_source": industry_context_source,
         "site_content_signal_strength": weak_site_decision.site_content_signal_strength,
@@ -455,6 +464,16 @@ def build_seo_competitor_profile_prompt(
         "service_focus_terms_dropped_count": len(service_focus_terms_dropped),
         "weak_site_mode_triggered": 1 if weak_site_decision.weak_site_mode else 0,
         "weak_site_structured_override_used": 1 if weak_site_decision.structured_override_used else 0,
+        "context_source_classification_structured": (
+            1 if weak_site_decision.context_source_classification == "structured" else 0
+        ),
+        "context_source_classification_mixed": (
+            1 if weak_site_decision.context_source_classification == "mixed" else 0
+        ),
+        "context_source_classification_site_heavy": (
+            1 if weak_site_decision.context_source_classification == "site_heavy" else 0
+        ),
+        "structured_context_fields_used_count": len(weak_site_decision.structured_context_fields_used),
         "industry_source_site_content": 1 if industry_context_source == "site_content" else 0,
         "industry_source_structured_metadata": (
             1 if industry_context_source in {"explicit_industry", "structured_metadata", "domain_hints"} else 0
@@ -685,8 +704,24 @@ def _build_competitor_search_hints(
     primary_location: str | None,
     location_context: str,
     service_focus_terms: list[str],
+    industry_context: str,
+    industry_context_strength: str,
+    weak_site_mode: bool,
 ) -> list[str]:
     normalized_terms = _normalize_service_terms_for_hints(service_focus_terms)
+    if weak_site_mode:
+        normalized_terms = [term for term in normalized_terms if not _is_thin_service_focus_term(term)]
+    if not normalized_terms:
+        fallback_industry_term = _sanitize_optional(industry_context, max_length=_MAX_INDUSTRY_LENGTH)
+        if (
+            fallback_industry_term
+            and industry_context_strength == "strong"
+            and fallback_industry_term != _INDUSTRY_FALLBACK_TEXT
+        ):
+            cleaned_industry = fallback_industry_term.split("(", 1)[0].strip()
+            cleaned_industry = cleaned_industry.removesuffix(" services").strip()
+            if cleaned_industry:
+                normalized_terms = [cleaned_industry]
     if not normalized_terms:
         return []
 
@@ -884,6 +919,16 @@ def _apply_context_budget(
             "site_business_name": budgeted.get("site_business_name"),
             "site_base_url": budgeted.get("site_base_url"),
             "site_normalized_domain": budgeted.get("site_normalized_domain"),
+            "site_context_mode": budgeted.get("site_context_mode"),
+            "weak_site_mode": budgeted.get("weak_site_mode"),
+            "weak_site_structured_override_used": budgeted.get("weak_site_structured_override_used"),
+            "weak_site_fallback_sources": budgeted.get("weak_site_fallback_sources"),
+            "context_source_classification": budgeted.get("context_source_classification"),
+            "structured_context_fields_used": budgeted.get("structured_context_fields_used"),
+            "service_focus_inference_source": budgeted.get("service_focus_inference_source"),
+            "industry_context_source": budgeted.get("industry_context_source"),
+            "site_content_signal_strength": budgeted.get("site_content_signal_strength"),
+            "site_content_signal_count": budgeted.get("site_content_signal_count"),
             "site_location_context": budgeted.get("site_location_context"),
             "site_location_context_strength": budgeted.get("site_location_context_strength"),
             "site_location_context_source": budgeted.get("site_location_context_source"),
@@ -1064,6 +1109,19 @@ def _sanitize_structured_context_data(
         sanitized.get("weak_site_fallback_sources"),
         max_length=32,
         max_items=_MAX_WEAK_SITE_FALLBACK_SOURCES,
+    )
+    raw_context_source_classification = _sanitize_text_if_data_only(
+        sanitized.get("context_source_classification"),
+        max_length=16,
+    )
+    if raw_context_source_classification not in _ALLOWED_CONTEXT_SOURCE_CLASSIFICATION:
+        sanitized["context_source_classification"] = "mixed"
+    else:
+        sanitized["context_source_classification"] = raw_context_source_classification
+    sanitized["structured_context_fields_used"] = _sanitize_data_string_list(
+        sanitized.get("structured_context_fields_used"),
+        max_length=32,
+        max_items=_MAX_STRUCTURED_CONTEXT_FIELDS_USED,
     )
     raw_service_focus_source = _sanitize_text_if_data_only(
         sanitized.get("service_focus_inference_source"),
@@ -1375,22 +1433,40 @@ def _derive_weak_site_context_decision(
     location_is_weak = location_context_details.location_context_strength != "strong"
     baseline_service_missing = not baseline_context.service_focus_terms
     baseline_industry_weak = baseline_context.industry_context_strength != "strong"
+    baseline_service_terms_thin = not _has_non_thin_service_focus_terms(baseline_context.service_focus_terms)
     content_is_weak = signal_strength == "weak"
     content_is_moderate = signal_strength == "moderate"
     has_site_content_signals = bool(site_content_signals)
     baseline_relies_on_site_content = baseline_service_source == "site_content" or baseline_industry_source == "site_content"
+    structured_has_service_signal = bool(structured_context.service_focus_terms)
+    structured_has_industry_signal = bool(
+        structured_context.industry_context and structured_context.industry_context != _INDUSTRY_FALLBACK_TEXT
+    )
+    structured_context_is_stronger = (
+        structured_has_service_signal
+        and baseline_service_terms_thin
+        and baseline_service_source == "site_content"
+    ) or (
+        structured_has_industry_signal
+        and baseline_industry_weak
+        and baseline_industry_source == "site_content"
+    )
+    weak_site_moderate_metadata_rescue = bool(
+        content_is_moderate
+        and baseline_relies_on_site_content
+        and baseline_service_terms_thin
+        and (structured_has_service_signal or structured_has_industry_signal)
+    )
 
     weak_site_mode = bool(
         (content_is_weak and has_site_content_signals and meaningful_signal_count == 0)
         or
         (content_is_weak and (baseline_service_missing or baseline_industry_weak or baseline_relies_on_site_content))
+        or weak_site_moderate_metadata_rescue
+        or (content_is_weak and structured_context_is_stronger)
         or (location_is_weak and (content_is_weak or (content_is_moderate and baseline_service_missing)))
     )
 
-    structured_has_service_signal = bool(structured_context.service_focus_terms)
-    structured_has_industry_signal = bool(
-        structured_context.industry_context and structured_context.industry_context != _INDUSTRY_FALLBACK_TEXT
-    )
     structured_override_used = weak_site_mode and bool(structured_has_service_signal or structured_has_industry_signal)
 
     effective_context = structured_context if structured_override_used else baseline_context
@@ -1408,6 +1484,18 @@ def _derive_weak_site_context_decision(
             effective_context=effective_context,
             structured_override_used=structured_override_used,
         )
+    context_source_classification = _classify_context_source_classification(
+        service_focus_inference_source=service_focus_inference_source,
+        industry_context_source=industry_context_source,
+        weak_site_mode=weak_site_mode,
+        structured_override_used=structured_override_used,
+    )
+    structured_context_fields_used = _collect_structured_context_fields_used(
+        site=site,
+        business_name=business_name,
+        location_context_details=location_context_details,
+        effective_context=effective_context,
+    )
 
     return _WeakSiteContextDecision(
         weak_site_mode=weak_site_mode,
@@ -1418,6 +1506,8 @@ def _derive_weak_site_context_decision(
         fallback_sources=fallback_sources,
         service_focus_inference_source=service_focus_inference_source,
         industry_context_source=industry_context_source,
+        context_source_classification=context_source_classification,
+        structured_context_fields_used=structured_context_fields_used,
     )
 
 
@@ -1452,6 +1542,20 @@ def _is_meaningful_site_content_signal(value: str) -> bool:
         return False
     word_count = len([word for word in lowered.split(" ") if word])
     return word_count >= 3
+
+
+def _is_thin_service_focus_term(value: str) -> bool:
+    normalized = " ".join(value.lower().split())
+    if not normalized:
+        return True
+    if normalized in _WEAK_SITE_THIN_SERVICE_FOCUS_TERMS:
+        return True
+    alpha_chars = sum(1 for char in normalized if char.isalpha())
+    return alpha_chars < 5
+
+
+def _has_non_thin_service_focus_terms(terms: list[str]) -> bool:
+    return any(not _is_thin_service_focus_term(term) for term in terms)
 
 
 def _normalize_inference_source(sources: list[str]) -> str:
@@ -1509,6 +1613,64 @@ def _collect_weak_site_fallback_sources(
         seen.add(cleaned)
         deduped.append(cleaned)
         if len(deduped) >= _MAX_WEAK_SITE_FALLBACK_SOURCES:
+            break
+    return deduped
+
+
+def _classify_context_source_classification(
+    *,
+    service_focus_inference_source: str,
+    industry_context_source: str,
+    weak_site_mode: bool,
+    structured_override_used: bool,
+) -> str:
+    structured_like_sources = {"structured_metadata", "domain_hints", "explicit_industry"}
+    service_is_structured = service_focus_inference_source in structured_like_sources
+    industry_is_structured = industry_context_source in structured_like_sources
+    service_is_site = service_focus_inference_source == "site_content"
+    industry_is_site = industry_context_source == "site_content"
+
+    if weak_site_mode and structured_override_used and (service_is_structured or industry_is_structured):
+        return "structured"
+    if service_is_structured and industry_is_structured:
+        return "structured"
+    if service_is_site and industry_is_site:
+        return "site_heavy"
+    return "mixed"
+
+
+def _collect_structured_context_fields_used(
+    *,
+    site: SEOSite,
+    business_name: str | None,
+    location_context_details: SEOSiteLocationContext,
+    effective_context: SEOSiteBusinessContext,
+) -> list[str]:
+    fields: list[str] = []
+    if business_name or _sanitize_optional(site.display_name, max_length=_MAX_DISPLAY_NAME_LENGTH):
+        fields.append("business_identity")
+    if _sanitize_optional(site.industry, max_length=_MAX_INDUSTRY_LENGTH):
+        fields.append("industry")
+    if location_context_details.primary_location:
+        fields.append("primary_location")
+    if location_context_details.primary_business_zip:
+        fields.append("primary_business_zip")
+    if location_context_details.service_areas:
+        fields.append("service_areas")
+    if effective_context.service_focus_terms and any(
+        source in {"structured_metadata", "domain_hints", "explicit_industry"}
+        for source in effective_context.service_focus_terms_sources
+    ):
+        fields.append("structured_service_terms")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for field_name in fields:
+        if field_name in seen:
+            continue
+        seen.add(field_name)
+        deduped.append(field_name)
+        if len(deduped) >= _MAX_STRUCTURED_CONTEXT_FIELDS_USED:
             break
     return deduped
 

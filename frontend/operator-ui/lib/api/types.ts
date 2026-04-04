@@ -1179,6 +1179,7 @@ export interface Recommendation {
   evidence_strength?: "strong" | "moderate" | "limited";
   why_now?: string | null;
   next_action?: string | null;
+  competitor_insight?: string | null;
   recommendation_target_context?: RecommendationTargetContext | null;
   recommendation_target_page_hints?: string[];
   recommendation_target_content_types?: RecommendationTargetContentType[];

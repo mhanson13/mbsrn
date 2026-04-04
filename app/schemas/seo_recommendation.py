@@ -160,6 +160,7 @@ _RECOMMENDATION_EXPECTED_OUTCOME_MAX_CHARS = 220
 _RECOMMENDATION_PRIORITY_RATIONALE_MAX_CHARS = 260
 _RECOMMENDATION_WHY_NOW_MAX_CHARS = 240
 _RECOMMENDATION_NEXT_ACTION_MAX_CHARS = 220
+_RECOMMENDATION_COMPETITOR_INSIGHT_MAX_CHARS = 220
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_ITEMS = 5
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
@@ -1482,6 +1483,104 @@ def _derive_recommendation_next_action(
     return "Review this recommendation and choose the next operator action."
 
 
+def _derive_recommendation_competitor_insight(
+    *,
+    status: SEORecommendationStatus,
+    evidence_strength: SEORecommendationEvidenceStrength,
+    priority_reasons: list[SEORecommendationPriorityReason],
+    recommendation_action_delta: SEORecommendationActionDeltaRead | None,
+    competitor_evidence_links: list[SEORecommendationCompetitorEvidenceLinkRead],
+    competitor_linkage_summary: str | None,
+    recommendation_observed_gap_summary: str | None,
+    recommendation_target_context: SEORecommendationTargetContext | None,
+    recommendation_target_content_summary: str | None,
+) -> str | None:
+    if status in {"dismissed", "snoozed", "resolved"}:
+        return None
+    if evidence_strength == "limited":
+        return None
+
+    has_competitor_signal = bool(
+        recommendation_action_delta is not None
+        or competitor_evidence_links
+        or (competitor_linkage_summary or "").strip()
+        or "competitor_gap" in priority_reasons
+    )
+    if not has_competitor_signal:
+        return None
+
+    directional_text = " ".join(
+        value
+        for value in (
+            recommendation_action_delta.observed_competitor_pattern if recommendation_action_delta is not None else None,
+            recommendation_action_delta.observed_site_gap if recommendation_action_delta is not None else None,
+            recommendation_observed_gap_summary,
+            competitor_linkage_summary,
+            recommendation_target_content_summary,
+        )
+        if value
+    ).lower()
+    directional_tokens = (
+        "stronger",
+        "clearer",
+        "more complete",
+        "more completely",
+        "better",
+        "gap",
+        "missing",
+        "weaker",
+        "limited",
+    )
+    has_directional_difference = any(token in directional_text for token in directional_tokens) or (
+        recommendation_action_delta is not None
+    )
+    if not has_directional_difference:
+        return None
+
+    location_tokens = (
+        "location",
+        "local",
+        "service area",
+        "city",
+        "nearby",
+        "zip",
+    )
+    link_tokens = ("internal link", "interlink", "cross-link", "linked")
+    metadata_tokens = ("title", "meta", "h1", "h2", "heading", "schema", "canonical")
+    depth_tokens = ("thin", "depth", "comprehensive", "detail", "proof", "testimonial", "experience", "faq")
+    service_tokens = ("service", "offering", "coverage", "topic", "specific")
+
+    if recommendation_target_context == "location_pages":
+        primary = "Competing sites include clearer location-targeted content for this topic."
+    elif any(token in directional_text for token in metadata_tokens):
+        primary = "Competing sites are using clearer page structure and metadata for this topic."
+    elif any(token in directional_text for token in location_tokens):
+        primary = "Competing sites include clearer location-targeted content for this topic."
+    elif any(token in directional_text for token in link_tokens):
+        primary = "Competing sites are using stronger internal linking around this topic."
+    elif (
+        any(token in directional_text for token in service_tokens)
+        or recommendation_target_context == "service_pages"
+    ):
+        primary = "Competitors appear to have stronger service-specific coverage for this topic."
+    elif any(token in directional_text for token in depth_tokens):
+        primary = "Similar local businesses are covering this topic more completely."
+    elif recommendation_target_context in {"homepage", "sitewide"}:
+        primary = "Competing sites appear to present this topic more clearly on high-visibility pages."
+    else:
+        primary = "Competing sites appear to present this topic more clearly than the current pages."
+
+    if evidence_strength == "strong":
+        followup = "Closing this gap should improve parity when customers compare local options."
+    else:
+        followup = "Closing this gap can improve parity when customers compare local options."
+
+    return _compact_sentence(
+        f"{primary} {followup}",
+        max_length=_RECOMMENDATION_COMPETITOR_INSIGHT_MAX_CHARS,
+    )
+
+
 def _derive_recommendation_target_context(
     *,
     rule_key: str | None,
@@ -2650,6 +2749,10 @@ class SEORecommendationRead(BaseModel):
         default=None,
         max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS,
     )
+    competitor_insight: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_COMPETITOR_INSIGHT_MAX_CHARS,
+    )
     recommendation_target_context: SEORecommendationTargetContext | None = None
     recommendation_target_page_hints: list[str] = Field(default_factory=list)
     recommendation_target_content_types: list[SEORecommendationTargetContentTypeRead] = Field(default_factory=list)
@@ -2799,6 +2902,11 @@ class SEORecommendationRead(BaseModel):
     @classmethod
     def normalize_next_action(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS)
+
+    @field_validator("competitor_insight", mode="before")
+    @classmethod
+    def normalize_competitor_insight(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_COMPETITOR_INSIGHT_MAX_CHARS)
 
     @field_validator("recommendation_target_context", mode="before")
     @classmethod
@@ -3292,6 +3400,23 @@ class SEORecommendationRead(BaseModel):
             recommendation_target_content_summary=self.recommendation_target_content_summary,
             action_plan=self.action_plan,
             title=self.title,
+        )
+        return self
+
+    @model_validator(mode="after")
+    def derive_competitor_insight(self) -> "SEORecommendationRead":
+        if self.competitor_insight is not None:
+            return self
+        self.competitor_insight = _derive_recommendation_competitor_insight(
+            status=self.status,
+            evidence_strength=self.evidence_strength,
+            priority_reasons=self.priority_reasons,
+            recommendation_action_delta=self.recommendation_action_delta,
+            competitor_evidence_links=self.competitor_evidence_links,
+            competitor_linkage_summary=self.competitor_linkage_summary,
+            recommendation_observed_gap_summary=self.recommendation_observed_gap_summary,
+            recommendation_target_context=self.recommendation_target_context,
+            recommendation_target_content_summary=self.recommendation_target_content_summary,
         )
         return self
 

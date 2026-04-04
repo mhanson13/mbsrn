@@ -540,6 +540,39 @@ describe("recommendations queue optimistic workflows", () => {
     );
   });
 
+  it("renders competitor insight only in expanded recommendation details", async () => {
+    const recommendation = {
+      ...createRecommendation("rec-insight-1", "open", "high", "Strengthen location-targeted service copy"),
+      competitor_insight:
+        "Competing sites include clearer location-targeted content for this topic. Closing this gap can improve parity when customers compare local options.",
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [recommendation],
+        {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Strengthen location-targeted service copy");
+    expect(screen.queryByTestId("recommendation-competitor-insight-rec-insight-1")).not.toBeInTheDocument();
+
+    const decisivenessCell = screen.getByTestId("recommendation-decisiveness-rec-insight-1");
+    await user.click(within(decisivenessCell).getByRole("button", { name: "View details" }));
+
+    const insightLine = await screen.findByTestId("recommendation-competitor-insight-rec-insight-1");
+    expect(insightLine).toHaveTextContent("Competitor insight:");
+    expect(insightLine).toHaveTextContent("location-targeted content");
+  });
+
   it("removes rows excluded by status filter and reconciles summary to backend truth after refresh", async () => {
     navigationState.searchParams = new URLSearchParams("status=open&page=1&page_size=25");
     const recOne = createRecommendation("rec-11", "open", "high", "Recommendation Eleven");

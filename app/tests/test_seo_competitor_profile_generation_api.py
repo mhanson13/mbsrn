@@ -1584,6 +1584,58 @@ def test_google_places_seed_queries_are_generated_from_service_and_location_cont
     assert seed_client.max_results == 3
 
 
+def test_google_places_seed_queries_skip_weak_industry_fallback_without_service_focus(
+    db_session, seeded_business
+) -> None:
+    provider = _SeedAwareCompetitorProfileProvider()
+    deferred_executor = _DeferredRunExecutor()
+    seed_client = _StubGooglePlacesSeedClient(
+        candidates=[
+            GooglePlacesSeedCandidate(
+                source="google_places",
+                place_id="place-ignore",
+                name="Should Not Be Queried",
+                formatted_address="101 Example St, Denver, CO 80202",
+                locality="Denver",
+                primary_type="point_of_interest",
+                types=("point_of_interest",),
+                website_domain="should-not-run.example",
+            )
+        ]
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="acmeholdings.example")
+    site = db_session.get(SEOSite, site_id)
+    assert site is not None
+    site.display_name = "Acme Holdings"
+    site.industry = None
+    site.primary_location = "Denver, CO"
+    site.service_areas_json = None
+    db_session.add(site)
+    db_session.commit()
+
+    run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    detail = _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+        google_places_seed_client=seed_client,
+    )
+
+    assert detail is not None
+    assert detail.run.status == "completed"
+    assert detail.outcome_summary is not None
+    assert detail.outcome_summary.used_google_places_seeds is False
+    assert seed_client.queries == []
+
+
 def test_google_places_seeds_are_passed_to_ai_enrichment_with_minimal_fields(db_session, seeded_business) -> None:
     provider = _SeedAwareCompetitorProfileProvider()
     deferred_executor = _DeferredRunExecutor()
@@ -1680,6 +1732,12 @@ def test_google_places_seed_nullable_optional_fields_do_not_crash_generation(db_
         run_executor=deferred_executor,
     )
     site_id = _create_site(client, seeded_business.id, domain="null-optional-seed.example")
+    site = db_session.get(SEOSite, site_id)
+    assert site is not None
+    site.industry = "Fire alarm services"
+    site.primary_location = "Denver, CO"
+    db_session.add(site)
+    db_session.commit()
     run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
 
     detail = _execute_generation_run(
@@ -4102,6 +4160,72 @@ def test_generation_applies_eligibility_filter_before_admin_tuning(db_session, s
     assert rejected_by_domain["parked-candidate.com"]["summary"] == "Unclear overlap."
     assert "no_live_site" in rejected_by_domain["offline-candidate.com"]["reasons"]
     assert rejected_by_domain["offline-candidate.com"]["summary"] == "Unknown overlap."
+
+
+def test_weak_site_mode_still_applies_domain_quality_filters(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _EligibilityGateCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="acmeholdings.example")
+    site = (
+        db_session.query(SEOSite).filter(SEOSite.business_id == seeded_business.id).filter(SEOSite.id == site_id).one()
+    )
+    site.display_name = "Acme Holdings"
+    site.industry = None
+    site.primary_location = "Denver, CO"
+    site.service_areas_json = None
+    db_session.add(site)
+    db_session.commit()
+
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=3)["run"]["id"]
+
+    def domain_probe(domain: str) -> CompetitorCandidateDomainProbeResult | None:
+        if domain == "parked-candidate.com":
+            return CompetitorCandidateDomainProbeResult(
+                status_code=200,
+                body_text="This domain is for sale. Buy this domain on Sedo.",
+            )
+        if domain == "offline-candidate.com":
+            return CompetitorCandidateDomainProbeResult(
+                status_code=None,
+                body_text=None,
+                fetch_error="Request failed after retries",
+            )
+        if domain == "valid-local-contractor.com":
+            return CompetitorCandidateDomainProbeResult(
+                status_code=200,
+                body_text=(
+                    "Denver construction and remodeling services. About our team. "
+                    "Contact us for licensed residential and commercial projects."
+                ),
+            )
+        return None
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+        candidate_domain_probe=domain_probe,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["included_candidate_count"] == 1
+    assert payload["run"]["excluded_candidate_count"] == 2
+    rejected_by_domain = {item["domain"]: item for item in payload["rejected_candidates"]}
+    assert "parked_domain" in rejected_by_domain["parked-candidate.com"]["reasons"]
+    assert "no_live_site" in rejected_by_domain["offline-candidate.com"]["reasons"]
 
 
 def test_generation_allows_missing_domain_with_strong_local_reasoning_and_caps_confidence(

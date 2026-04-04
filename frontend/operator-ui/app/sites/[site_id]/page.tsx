@@ -2577,6 +2577,10 @@ function normalizeRecommendationNextAction(item: Recommendation): string | null 
   return truncateOptionalText(item.next_action, 220);
 }
 
+function normalizeRecommendationCompetitorInsight(item: Recommendation): string | null {
+  return truncateOptionalText(item.competitor_insight, 220);
+}
+
 function normalizeRecommendationEvidenceStrength(
   item: Recommendation,
 ): "strong" | "moderate" | "limited" | null {
@@ -8866,6 +8870,7 @@ export default function SiteWorkspacePage() {
                         const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
                         const recommendationWhyNow = normalizeRecommendationWhyNow(item);
                         const recommendationNextAction = normalizeRecommendationNextAction(item);
+                        const recommendationCompetitorInsight = normalizeRecommendationCompetitorInsight(item);
                         const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
                         const recommendationDetailClarity = buildRecommendationDetailClarityView({
                           actionDelta: recommendationActionDelta,
@@ -8929,6 +8934,11 @@ export default function SiteWorkspacePage() {
                                   {recommendationWhyNow ? (
                                     <span className="hint muted" data-testid="recommendation-why-now">
                                       Why now: {recommendationWhyNow}
+                                    </span>
+                                  ) : null}
+                                  {recommendationCompetitorInsight ? (
+                                    <span className="hint muted" data-testid="recommendation-competitor-insight">
+                                      Competitor insight: {recommendationCompetitorInsight}
                                     </span>
                                   ) : null}
                                   {recommendationNextAction ? (
@@ -9159,6 +9169,7 @@ export default function SiteWorkspacePage() {
                               const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
                               const recommendationWhyNow = normalizeRecommendationWhyNow(item);
                               const recommendationNextAction = normalizeRecommendationNextAction(item);
+                              const recommendationCompetitorInsight = normalizeRecommendationCompetitorInsight(item);
                               const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
                               const recommendationDetailClarity = buildRecommendationDetailClarityView({
                                 actionDelta: recommendationActionDelta,
@@ -9222,6 +9233,11 @@ export default function SiteWorkspacePage() {
                                         {recommendationWhyNow ? (
                                           <span className="hint muted" data-testid="recommendation-why-now">
                                             Why now: {recommendationWhyNow}
+                                          </span>
+                                        ) : null}
+                                        {recommendationCompetitorInsight ? (
+                                          <span className="hint muted" data-testid="recommendation-competitor-insight">
+                                            Competitor insight: {recommendationCompetitorInsight}
                                           </span>
                                         ) : null}
                                         {recommendationNextAction ? (
