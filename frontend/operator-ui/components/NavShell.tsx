@@ -124,9 +124,11 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
 export function NavShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { token, refreshToken, principal, clearSession } = useAuth();
+  const [isMounted, setIsMounted] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode | null>(null);
+  const resolvedPrincipal = isMounted ? principal : null;
   const showWorkflowSiteSelector = Boolean(
-    principal?.business_id && token && shouldShowWorkflowSiteSelector(pathname),
+    resolvedPrincipal?.business_id && token && shouldShowWorkflowSiteSelector(pathname),
   );
   const shellWidthMode = resolveShellWidthMode(pathname);
   const shellMainInnerClassName = [
@@ -147,6 +149,10 @@ export function NavShell({ children }: { children: React.ReactNode }) {
       clearSession();
     }
   }
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -190,7 +196,7 @@ export function NavShell({ children }: { children: React.ReactNode }) {
           </div>
           <nav className="topnav-links">
             {links
-              .filter((link) => !link.adminOnly || principal?.role === "admin")
+              .filter((link) => !link.adminOnly || resolvedPrincipal?.role === "admin")
               .map((link) => {
                 const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
                 return (
@@ -206,37 +212,27 @@ export function NavShell({ children }: { children: React.ReactNode }) {
               })}
           </nav>
           <div className="topnav-session">
-            {principal ? (
+            <small className="topnav-principal">
+              {resolvedPrincipal ? `${resolvedPrincipal.display_name} (${resolvedPrincipal.role})` : "Account"}
+            </small>
+            <button
+              type="button"
+              className="topnav-theme-toggle"
+              onClick={handleThemeToggle}
+              data-testid="topnav-theme-toggle"
+            >
+              Light / Dark
+            </button>
+            {resolvedPrincipal ? (
               <>
-                <small className="topnav-principal">
-                  {principal.display_name} ({principal.role})
-                </small>
-                <button
-                  type="button"
-                  className="topnav-theme-toggle"
-                  onClick={handleThemeToggle}
-                  data-testid="topnav-theme-toggle"
-                >
-                  Light / Dark
-                </button>
                 <button type="button" onClick={() => void handleSignOut()}>
                   Sign out
                 </button>
               </>
             ) : (
-              <>
-                <button
-                  type="button"
-                  className="topnav-theme-toggle"
-                  onClick={handleThemeToggle}
-                  data-testid="topnav-theme-toggle"
-                >
-                  Light / Dark
-                </button>
-                <Link href="/" className="topnav-link">
-                  Sign in
-                </Link>
-              </>
+              <Link href="/" className="topnav-link">
+                Sign in
+              </Link>
             )}
           </div>
         </div>

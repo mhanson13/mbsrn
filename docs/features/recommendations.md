@@ -261,12 +261,17 @@ Rationale:
 
 ## Final UI Ergonomics
 
+### UI Stability and Error Signaling
+
 Recent recommendations/workspace polish adds four operator-facing ergonomics protections:
 
-- **Viewport-anchored bulk error toast**
-  - bulk action failures now render in a fixed bottom-right toast (`role="alert"`)
-  - the toast is capped in width and layered above content but below modal overlays
-  - page bottom padding is added while visible so actionable controls are not obscured
+- **Inline-first bulk error signaling**
+  - bulk action failures render inline within recommendation controls, keeping feedback in reading flow
+  - inline errors take precedence over global toast surfaces for the same bulk event to avoid duplicate/conflicting signals
+  - fixed global toasts remain available for non-inline/system notifications
+- **Hydration-safe operator header shell**
+  - auth/session context now hydrates after mount so server and first client render keep the same header/nav structure
+  - this prevents recommendations/dashboard hydration mismatch overlays and related visual flash in local dev
 - **Tighter header context grouping**
   - site selector context IDs (site + business) are grouped inline with the selector row
   - header vertical spacing is reduced to keep the recommendations surface visible sooner

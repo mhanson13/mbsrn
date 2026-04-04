@@ -51,13 +51,17 @@ function readStoredSession(): { token: string | null; principal: AuthPrincipal |
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => readStoredSession().token);
+  const [token, setToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
-  const [principal, setPrincipal] = useState<AuthPrincipal | null>(() => readStoredSession().principal);
+  const [principal, setPrincipal] = useState<AuthPrincipal | null>(null);
 
   useEffect(() => {
     // Remove legacy persistent storage key from prior client versions.
     window.localStorage.removeItem(LEGACY_STORAGE_TOKEN);
+    // Hydrate session state only after mount so SSR and first client render share the same shell markup.
+    const storedSession = readStoredSession();
+    setToken(storedSession.token);
+    setPrincipal(storedSession.principal);
   }, []);
 
   const value = useMemo<AuthState>(() => {

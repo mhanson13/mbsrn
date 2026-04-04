@@ -1149,7 +1149,6 @@ function RecommendationsPageContent() {
   const [bulkActionInFlight, setBulkActionInFlight] = useState<RecommendationActionStatus | null>(null);
   const [bulkActionSuccess, setBulkActionSuccess] = useState<string | null>(null);
   const [bulkActionError, setBulkActionError] = useState<string | null>(null);
-  const [bulkActionErrorDismissed, setBulkActionErrorDismissed] = useState(false);
   const [bulkActionProgress, setBulkActionProgress] = useState<BulkActionQueueProgress | null>(null);
   const [bulkRefreshNonce, setBulkRefreshNonce] = useState(0);
   const [expandedRecommendationIds, setExpandedRecommendationIds] = useState<Set<string>>(() => new Set());
@@ -1218,7 +1217,7 @@ function RecommendationsPageContent() {
     && !context.error
     && context.selectedSiteId,
   );
-  const showBulkActionErrorToast = Boolean(bulkActionError && !bulkActionErrorDismissed);
+  const showInlineBulkActionError = Boolean(bulkActionError);
   const toggleRecommendationDetails = useCallback((recommendationId: string) => {
     setExpandedRecommendationIds((previous) => {
       const next = new Set(previous);
@@ -1941,13 +1940,6 @@ function RecommendationsPageContent() {
   }
 
   useEffect(() => {
-    if (!bulkActionError) {
-      return;
-    }
-    setBulkActionErrorDismissed(false);
-  }, [bulkActionError]);
-
-  useEffect(() => {
     if (totalRecommendations === null || currentPage === activePage) {
       return;
     }
@@ -2004,7 +1996,6 @@ function RecommendationsPageContent() {
       setBulkActionInFlight(null);
       setBulkActionSuccess(null);
       setBulkActionError(null);
-      setBulkActionErrorDismissed(false);
       setBulkActionProgress(null);
       return;
     }
@@ -2159,7 +2150,6 @@ function RecommendationsPageContent() {
     <PageContainer
       width="full"
       density="compact"
-      className={showBulkActionErrorToast ? "page-container-has-toast" : undefined}
     >
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
@@ -2560,7 +2550,7 @@ function RecommendationsPageContent() {
         {loadingItems ? <p className="hint muted">Loading recommendations...</p> : null}
         {itemsError ? <p className="hint error">{itemsError}</p> : null}
         {bulkActionSuccess ? <p className="hint">{bulkActionSuccess}</p> : null}
-        {bulkActionError && !showBulkActionErrorToast ? <p className="hint error">{bulkActionError}</p> : null}
+        {showInlineBulkActionError ? <p className="hint error">{bulkActionError}</p> : null}
         {bulkActionProgress ? (
           <p className="hint muted" data-testid="bulk-action-progress">
             Processing {bulkActionProgress.processed}/{bulkActionProgress.total} • {bulkActionProgress.succeeded} succeeded •{" "}
@@ -2869,19 +2859,6 @@ function RecommendationsPageContent() {
           </table>
         </div>
       </SectionCard>
-      {showBulkActionErrorToast ? (
-        <div className="workspace-error-toast" role="alert" data-testid="recommendation-error-toast">
-          <p className="workspace-error-toast-title">Bulk update issue</p>
-          <p className="workspace-error-toast-message">{bulkActionError}</p>
-          <button
-            type="button"
-            className="button button-tertiary button-inline workspace-error-toast-dismiss"
-            onClick={() => setBulkActionErrorDismissed(true)}
-          >
-            Dismiss
-          </button>
-        </div>
-      ) : null}
     </PageContainer>
   );
 }

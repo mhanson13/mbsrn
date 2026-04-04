@@ -131,6 +131,9 @@ Local validation strategy:
 - Normalized data for safe rendering: UI components should consume stable read-model fields and avoid ad hoc inference when canonical fields are available.
 - Recommendation queue layout prioritizes decision/execution signals over row-level identity fields; site/business IDs live in global header context instead of per-row columns.
 - Theme preference is client-side only (`operator-ui-theme` in browser storage) and intentionally has no backend/API side effects.
+- Global nav/header chrome must consume shared shell theme variables (not hardcoded dark colors) so header background, controls, and context metadata switch cleanly between light and dark modes.
+- Header/session hydration is client-bootstrapped from storage after mount to keep SSR and first client render structurally stable and avoid hydration-mismatch overlays.
+- Recommendations bulk-action errors now use inline-first signaling; when inline error context exists, page-local toasts for the same event are suppressed to avoid duplicate/conflicting operator feedback.
 
 ### Admin UI Information Architecture
 

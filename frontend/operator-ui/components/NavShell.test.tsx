@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { NavShell } from "./NavShell";
 
@@ -98,6 +98,26 @@ describe("NavShell", () => {
     expect(identifierContext).toHaveTextContent("site-1");
     expect(identifierContext).toHaveTextContent("Business ID:");
     expect(identifierContext).toHaveTextContent("biz-1");
+  });
+
+  it("renders a stable account placeholder when principal context is not yet hydrated", () => {
+    mockUseAuth.mockReturnValue({
+      token: null,
+      refreshToken: null,
+      principal: null,
+      clearSession: jest.fn(),
+    });
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    expect(screen.getByText("Account")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/");
+    expect(screen.getByTestId("topnav-theme-toggle")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
   });
 
   it("marks the matching top navigation link as active for nested routes", () => {
@@ -281,6 +301,60 @@ describe("NavShell", () => {
     fireEvent.click(themeToggle);
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(window.localStorage.getItem("operator-ui-theme")).toBe("light");
+  });
+
+  it("applies stored light theme preference on mount", async () => {
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-1",
+        display_name: "Operator One",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+    document.documentElement.dataset.theme = "dark";
+    window.localStorage.setItem("operator-ui-theme", "light");
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    await waitFor(() => {
+      expect(document.documentElement.dataset.theme).toBe("light");
+    });
+  });
+
+  it("applies stored dark theme preference on mount", async () => {
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-1",
+        display_name: "Operator One",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+    document.documentElement.dataset.theme = "light";
+    window.localStorage.setItem("operator-ui-theme", "dark");
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    await waitFor(() => {
+      expect(document.documentElement.dataset.theme).toBe("dark");
+    });
   });
 
   it("replaces /sites/[site_id] route when switching site from header selector", () => {
