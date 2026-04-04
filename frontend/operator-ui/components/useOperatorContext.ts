@@ -14,6 +14,7 @@ const OPERATOR_SITE_SELECTION_EVENT = "mbsrn:operator-site-selection";
 interface OperatorContextResult {
   loading: boolean;
   error: string | null;
+  scopeWarning?: string | null;
   token: string;
   businessId: string;
   sites: SEOSite[];
@@ -37,10 +38,15 @@ function readStoredSelectedSiteId(businessId: string): string | null {
   return value && value.trim() ? value : null;
 }
 
-function writeStoredSelectedSiteId(businessId: string, siteId: string | null): void {
+function writeStoredSelectedSiteId(
+  businessId: string,
+  siteId: string | null,
+  options?: { broadcast?: boolean },
+): void {
   if (typeof window === "undefined") {
     return;
   }
+  const shouldBroadcast = options?.broadcast ?? true;
   const key = selectedSiteStorageKey(businessId);
   if (siteId && siteId.trim()) {
     window.localStorage.setItem(key, siteId);
@@ -51,11 +57,13 @@ function writeStoredSelectedSiteId(businessId: string, siteId: string | null): v
     window.sessionStorage.removeItem(key);
     window.sessionStorage.removeItem(`${LEGACY_STORAGE_SELECTED_SITE_PREFIX}.${businessId}`);
   }
-  window.dispatchEvent(
-    new CustomEvent(OPERATOR_SITE_SELECTION_EVENT, {
-      detail: { businessId, siteId },
-    }),
-  );
+  if (shouldBroadcast) {
+    window.dispatchEvent(
+      new CustomEvent(OPERATOR_SITE_SELECTION_EVENT, {
+        detail: { businessId, siteId },
+      }),
+    );
+  }
 }
 
 export function useOperatorContext(): OperatorContextResult {
@@ -63,6 +71,7 @@ export function useOperatorContext(): OperatorContextResult {
   const { token, principal, clearSession } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [scopeWarning, setScopeWarning] = useState<string | null>(null);
   const [sites, setSites] = useState<SEOSite[]>([]);
   const [selectedSiteId, setSelectedSiteIdState] = useState<string | null>(null);
   const selectedSiteIdRef = useRef<string | null>(null);
@@ -73,21 +82,33 @@ export function useOperatorContext(): OperatorContextResult {
       setError(null);
       try {
         const response = await fetchSites(accessToken, businessId);
+        const authorizedSites = response.items.filter((site) => site.business_id === businessId);
+        const removedOutOfScopeCount = response.items.length - authorizedSites.length;
         const storedSiteId = readStoredSelectedSiteId(businessId);
         const currentSelectedSiteId = selectedSiteIdRef.current;
         let resolvedSelectedSiteId: string | null = null;
-        if (storedSiteId && response.items.some((site) => site.id === storedSiteId)) {
-          resolvedSelectedSiteId = storedSiteId;
-        } else if (currentSelectedSiteId && response.items.some((site) => site.id === currentSelectedSiteId)) {
-          resolvedSelectedSiteId = currentSelectedSiteId;
-        } else {
-          resolvedSelectedSiteId = response.items.length > 0 ? response.items[0].id : null;
+        let nextScopeWarning: string | null = null;
+        if (removedOutOfScopeCount > 0) {
+          nextScopeWarning = "Some sites were hidden because they are outside your authorized business scope.";
         }
-        setSites(response.items);
+        if (storedSiteId && authorizedSites.some((site) => site.id === storedSiteId)) {
+          resolvedSelectedSiteId = storedSiteId;
+        } else if (storedSiteId) {
+          nextScopeWarning = "Saved workspace site is no longer available in your authorized scope.";
+        } else if (currentSelectedSiteId && authorizedSites.some((site) => site.id === currentSelectedSiteId)) {
+          resolvedSelectedSiteId = currentSelectedSiteId;
+        } else if (currentSelectedSiteId) {
+          nextScopeWarning = "Current workspace site is no longer available in your authorized scope.";
+        }
+        if (!resolvedSelectedSiteId) {
+          resolvedSelectedSiteId = authorizedSites.length > 0 ? authorizedSites[0].id : null;
+        }
+        setSites(authorizedSites);
         setSelectedSiteIdState(resolvedSelectedSiteId);
         selectedSiteIdRef.current = resolvedSelectedSiteId;
-        writeStoredSelectedSiteId(businessId, resolvedSelectedSiteId);
-        return response.items;
+        setScopeWarning((current) => nextScopeWarning || current);
+        writeStoredSelectedSiteId(businessId, resolvedSelectedSiteId, { broadcast: false });
+        return authorizedSites;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to load SEO sites.";
         if (message.includes("Unauthorized") || message.includes("HTTP 401")) {
@@ -162,6 +183,7 @@ export function useOperatorContext(): OperatorContextResult {
           selectedSiteIdRef.current = null;
           return null;
         }
+        setScopeWarning("Requested workspace site is unavailable in your authorized scope.");
         return current;
       });
     }
@@ -174,20 +196,27 @@ export function useOperatorContext(): OperatorContextResult {
 
   const setSelectedSiteId = useCallback(
     (siteId: string) => {
-      setSelectedSiteIdState(siteId);
-      selectedSiteIdRef.current = siteId;
       const businessId = principal?.business_id;
       if (!businessId) {
         return;
       }
+      const authorizedSite = sites.find((site) => site.id === siteId && site.business_id === businessId);
+      if (!authorizedSite) {
+        setScopeWarning("Selected workspace site is unavailable in your authorized scope.");
+        return;
+      }
+      setScopeWarning(null);
+      setSelectedSiteIdState(siteId);
+      selectedSiteIdRef.current = siteId;
       writeStoredSelectedSiteId(businessId, siteId);
     },
-    [principal?.business_id],
+    [principal?.business_id, sites],
   );
 
   return {
     loading,
     error,
+    scopeWarning,
     token: token || "",
     businessId: principal?.business_id || "",
     sites,

@@ -353,3 +353,12 @@ Operator intent:
 - changing the header selector updates route/query context and reloads automation content for the selected site
 
 This keeps action surfaces focused while preserving the same business/site-scoped data flow.
+
+### Workspace authority guardrail
+
+- active selector context is constrained to sites inside the authenticated principal business scope
+- persisted or requested out-of-scope site ids are reset to an authorized site with inline context warning
+- automation pages do not keep a cosmetic cross-business context that backend authorization will reject
+
+Current limitation:
+- cross-business workspace switching is not supported end-to-end in automation flows today

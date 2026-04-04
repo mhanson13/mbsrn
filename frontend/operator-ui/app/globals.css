@@ -2083,6 +2083,14 @@ code {
   align-items: center;
 }
 
+.topnav-context-warning {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: var(--type-xs);
+  color: var(--shell-context-pill-text);
+  line-height: 1.35;
+}
+
 .topnav-context-meta-item {
   font-size: var(--type-xs);
   color: var(--shell-context-pill-text);

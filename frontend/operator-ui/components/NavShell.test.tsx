@@ -35,6 +35,7 @@ describe("NavShell", () => {
     mockUseOperatorContext.mockReturnValue({
       loading: false,
       error: null,
+      scopeWarning: null,
       token: "token-1",
       businessId: "biz-1",
       sites: [
@@ -227,6 +228,7 @@ describe("NavShell", () => {
     mockUseOperatorContext.mockReturnValue({
       loading: false,
       error: null,
+      scopeWarning: null,
       token: "token-1",
       businessId: "biz-1",
       sites: [
@@ -277,6 +279,7 @@ describe("NavShell", () => {
     const mutableContext = {
       loading: false,
       error: null,
+      scopeWarning: null,
       token: "token-1",
       businessId: "biz-1",
       sites: [
@@ -294,8 +297,8 @@ describe("NavShell", () => {
         },
         {
           id: "site-2",
-          business_id: "biz-2",
-          display_name: "Cross Business Site",
+          business_id: "biz-1",
+          display_name: "Secondary Site",
           base_url: "https://example.org/",
           normalized_domain: "example.org",
           is_active: true,
@@ -344,7 +347,154 @@ describe("NavShell", () => {
     );
 
     expect(screen.getByTestId("topnav-context-identifiers")).toHaveTextContent("Site ID: site-2");
-    expect(screen.getByTestId("topnav-context-identifiers")).toHaveTextContent("Business ID: biz-2");
+    expect(screen.getByTestId("topnav-context-identifiers")).toHaveTextContent("Business ID: biz-1");
+  });
+
+  it("normalizes out-of-scope query site_id to the active authorized site", async () => {
+    mockUsePathname.mockReturnValue("/recommendations");
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("status=open&site_id=site-999"));
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-1",
+        display_name: "Operator One",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/recommendations?status=open&site_id=site-1");
+    });
+    expect(screen.getByTestId("topnav-context-warning")).toHaveTextContent(
+      "Requested site is outside your authorized workspace scope.",
+    );
+  });
+
+  it("shows persisted scope warning from operator context when available", () => {
+    mockUsePathname.mockReturnValue("/dashboard");
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-1",
+        display_name: "Operator One",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      scopeWarning: "Saved workspace site is no longer available in your authorized scope.",
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          business_id: "biz-1",
+          display_name: "Main Site",
+          base_url: "https://example.com/",
+          normalized_domain: "example.com",
+          is_active: true,
+          is_primary: true,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId: jest.fn(),
+      refreshSites: jest.fn(),
+    });
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    expect(screen.getByTestId("topnav-context-warning")).toHaveTextContent(
+      "Saved workspace site is no longer available in your authorized scope.",
+    );
+  });
+
+  it("rejects cross-business active selection and rehydrates to an authorized site", async () => {
+    const setSelectedSiteId = jest.fn();
+    mockUsePathname.mockReturnValue("/recommendations");
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("status=open"));
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-1",
+        display_name: "Operator One",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      scopeWarning: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          business_id: "biz-1",
+          display_name: "Main Site",
+          base_url: "https://example.com/",
+          normalized_domain: "example.com",
+          is_active: true,
+          is_primary: true,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+        {
+          id: "site-2",
+          business_id: "biz-2",
+          display_name: "Cross Business Site",
+          base_url: "https://example.org/",
+          normalized_domain: "example.org",
+          is_active: true,
+          is_primary: false,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+      ],
+      selectedSiteId: "site-2",
+      setSelectedSiteId,
+      refreshSites: jest.fn(),
+    });
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    await waitFor(() => {
+      expect(setSelectedSiteId).toHaveBeenCalledWith("site-1");
+    });
+
+    const selector = screen.getByLabelText("Site") as HTMLSelectElement;
+    expect(Array.from(selector.options).map((option) => option.value)).toEqual(["site-1"]);
   });
 
   it("toggles theme mode and persists the selection locally", () => {

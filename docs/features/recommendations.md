@@ -259,6 +259,18 @@ Rationale:
 - site/business context is already visible in the global workspace header
 - queue scanning should foreground execution signals (`priority`, `summary`, `status`, `decisiveness`) before IDs
 
+## Workspace Context Authority
+
+Recommendation surfaces now follow the same authority-bounded workspace context model as the global header selector:
+
+- only sites inside the authenticated principal business scope are selectable as active workspace context
+- persisted out-of-scope site ids are reset to an authorized site before recommendation data loads
+- route/query `site_id` values outside authorized scope are normalized to authorized context with inline warning
+
+Current limitation:
+- cross-business site switching is not supported end-to-end in recommendation workflows today
+- UI intentionally avoids showing an active site/business context that backend authorization will reject
+
 ## Final UI Ergonomics
 
 ### UI Stability and Error Signaling

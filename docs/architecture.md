@@ -148,6 +148,9 @@ Local validation strategy:
 - Header site selection is canonical context navigation: changing it updates route/query context and refreshes page content for the newly selected site.
 - Header context metadata (site name, site ID, business ID) is sourced from the active selected site record; route/page business context is fallback-only when no active selection is available.
 - Active workspace selection is persisted client-side (operator-scoped storage) and restored across page navigation/remounts, with safe fallback to current route context if the persisted site is missing.
+- Active workspace context is authority-bounded: only sites in the authenticated principal business scope can become active selector state.
+- Persisted or requested out-of-scope site ids are downgraded to an authorized site with inline context warning; UI must never keep a cosmetic active context that backend scope will reject.
+- Cross-business workspace switching is not currently supported end-to-end; the selector enforces backend-honorable scope until explicit cross-business authorization support is implemented.
 - Debug prompt panels are manual-expand only; they default collapsed and must not auto-open during polling or run creation.
 - Checkbox and dropdown rendering behavior is governed globally in `frontend/operator-ui/app/globals.css` to keep control sizing and selected-value shading consistent across pages.
 - Admin and User Mgmt responsibilities remain separated:

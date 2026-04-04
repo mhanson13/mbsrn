@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "./AuthProvider";
 import { WorkflowSiteSelector } from "./layout/WorkflowSiteSelector";
@@ -55,17 +55,111 @@ function isThemeMode(value: string | null): value is ThemeMode {
   return value === "light" || value === "dark";
 }
 
+function parseSiteIdFromSitePath(pathname: string): string | null {
+  if (!pathname.startsWith("/sites/")) {
+    return null;
+  }
+  const suffix = pathname.slice("/sites/".length);
+  if (!suffix || suffix.includes("/")) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(suffix);
+  } catch {
+    return suffix;
+  }
+}
+
 function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
   const context = useOperatorContext();
+  const {
+    loading: contextLoading,
+    error: contextError,
+    scopeWarning: contextScopeWarning,
+    businessId: contextBusinessId,
+    sites: contextSites,
+    selectedSiteId: contextSelectedSiteId,
+    setSelectedSiteId: setContextSelectedSiteId,
+  } = context;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const selectedSite = context.sites.find((site) => site.id === context.selectedSiteId) || null;
-  const activeBusinessId = selectedSite?.business_id || context.businessId || "";
+  const [scopeNotice, setScopeNotice] = useState<string | null>(null);
+  const searchParamsString = searchParams?.toString() || "";
+  const authorizedSites = useMemo(
+    () => contextSites.filter((site) => site.business_id === contextBusinessId),
+    [contextBusinessId, contextSites],
+  );
+  const selectedSite = authorizedSites.find((site) => site.id === contextSelectedSiteId) || null;
+  const effectiveSelectedSiteId = selectedSite?.id || authorizedSites[0]?.id || null;
+  const activeBusinessId = selectedSite?.business_id || contextBusinessId || "";
+  const contextWarning = contextScopeWarning || null;
+
+  useEffect(() => {
+    if (contextLoading || contextError || authorizedSites.length === 0 || !effectiveSelectedSiteId) {
+      return;
+    }
+    if (effectiveSelectedSiteId !== contextSelectedSiteId) {
+      setContextSelectedSiteId(effectiveSelectedSiteId);
+    }
+  }, [
+    authorizedSites.length,
+    contextError,
+    contextLoading,
+    contextSelectedSiteId,
+    setContextSelectedSiteId,
+    effectiveSelectedSiteId,
+  ]);
+
+  useEffect(() => {
+    if (contextLoading || contextError || authorizedSites.length === 0 || !effectiveSelectedSiteId) {
+      setScopeNotice(null);
+      return;
+    }
+
+    const authorizedSiteIds = new Set(authorizedSites.map((site) => site.id));
+    const requestedSiteIdFromPath = parseSiteIdFromSitePath(pathname);
+    const currentParams = new URLSearchParams(searchParamsString);
+    const requestedSiteIdFromQuery = (currentParams.get("site_id") || "").trim();
+
+    let nextPath: string | null = null;
+    if (requestedSiteIdFromPath && !authorizedSiteIds.has(requestedSiteIdFromPath)) {
+      nextPath = `/sites/${encodeURIComponent(effectiveSelectedSiteId)}`;
+    } else if (requestedSiteIdFromQuery && !authorizedSiteIds.has(requestedSiteIdFromQuery)) {
+      currentParams.set("site_id", effectiveSelectedSiteId);
+      const query = currentParams.toString();
+      nextPath = query ? `${pathname}?${query}` : pathname;
+    }
+
+    if (!nextPath) {
+      setScopeNotice(null);
+      return;
+    }
+
+    setScopeNotice("Requested site is outside your authorized workspace scope. Showing an authorized site instead.");
+
+    if (typeof window === "undefined") {
+      router.replace(nextPath);
+      return;
+    }
+
+    const currentPathWithQuery = `${window.location.pathname}${window.location.search}`;
+    if (currentPathWithQuery !== nextPath) {
+      router.replace(nextPath);
+    }
+  }, [
+    authorizedSites,
+    contextError,
+    contextLoading,
+    effectiveSelectedSiteId,
+    pathname,
+    router,
+    searchParamsString,
+  ]);
 
   if (
     !shouldShowWorkflowSiteSelector(pathname)
-    || context.loading
-    || !!context.error
+    || contextLoading
+    || !!contextError
     || !activeBusinessId
   ) {
     return null;
@@ -75,7 +169,7 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
     if (!siteId) {
       return;
     }
-    context.setSelectedSiteId(siteId);
+    setContextSelectedSiteId(siteId);
 
     if (pathname.startsWith("/sites/")) {
       const nextPath = `/sites/${encodeURIComponent(siteId)}`;
@@ -104,8 +198,8 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
       <div className="topnav-context-inner">
         <WorkflowSiteSelector
           id="global-workflow-site-selector"
-          sites={context.sites}
-          selectedSiteId={context.selectedSiteId}
+          sites={authorizedSites}
+          selectedSiteId={effectiveSelectedSiteId}
           onChange={handleSiteChange}
           className="topnav-site-selector"
         />
@@ -117,6 +211,11 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
             Business ID: <code>{activeBusinessId || "—"}</code>
           </span>
         </div>
+        {scopeNotice || contextWarning ? (
+          <p className="topnav-context-warning hint muted" data-testid="topnav-context-warning">
+            {scopeNotice || contextWarning}
+          </p>
+        ) : null}
       </div>
     </div>
   );
