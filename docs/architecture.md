@@ -146,6 +146,8 @@ Local validation strategy:
 
 - Site selection is centralized in the global workspace header context row for workflow routes (dashboard, sites list, audits, competitors, recommendations, automation, business profile).
 - Header site selection is canonical context navigation: changing it updates route/query context and refreshes page content for the newly selected site.
+- Header context metadata (site name, site ID, business ID) is sourced from the active selected site record; route/page business context is fallback-only when no active selection is available.
+- Active workspace selection is persisted client-side (operator-scoped storage) and restored across page navigation/remounts, with safe fallback to current route context if the persisted site is missing.
 - Debug prompt panels are manual-expand only; they default collapsed and must not auto-open during polling or run creation.
 - Checkbox and dropdown rendering behavior is governed globally in `frontend/operator-ui/app/globals.css` to keep control sizing and selected-value shading consistent across pages.
 - Admin and User Mgmt responsibilities remain separated:

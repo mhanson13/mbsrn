@@ -60,12 +60,13 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const selectedSite = context.sites.find((site) => site.id === context.selectedSiteId) || null;
+  const activeBusinessId = selectedSite?.business_id || context.businessId || "";
 
   if (
     !shouldShowWorkflowSiteSelector(pathname)
     || context.loading
     || !!context.error
-    || !context.businessId
+    || !activeBusinessId
   ) {
     return null;
   }
@@ -113,7 +114,7 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
             Site ID: <code>{selectedSite?.id || "—"}</code>
           </span>
           <span className="topnav-context-meta-item">
-            Business ID: <code>{context.businessId || "—"}</code>
+            Business ID: <code>{activeBusinessId || "—"}</code>
           </span>
         </div>
       </div>

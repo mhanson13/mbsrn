@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "./AuthProvider";
@@ -31,6 +31,7 @@ function readStoredSelectedSiteId(businessId: string): string | null {
     return null;
   }
   const value =
+    window.localStorage.getItem(selectedSiteStorageKey(businessId)) ||
     window.sessionStorage.getItem(selectedSiteStorageKey(businessId)) ||
     window.sessionStorage.getItem(`${LEGACY_STORAGE_SELECTED_SITE_PREFIX}.${businessId}`);
   return value && value.trim() ? value : null;
@@ -42,9 +43,11 @@ function writeStoredSelectedSiteId(businessId: string, siteId: string | null): v
   }
   const key = selectedSiteStorageKey(businessId);
   if (siteId && siteId.trim()) {
+    window.localStorage.setItem(key, siteId);
     window.sessionStorage.setItem(key, siteId);
     window.sessionStorage.removeItem(`${LEGACY_STORAGE_SELECTED_SITE_PREFIX}.${businessId}`);
   } else {
+    window.localStorage.removeItem(key);
     window.sessionStorage.removeItem(key);
     window.sessionStorage.removeItem(`${LEGACY_STORAGE_SELECTED_SITE_PREFIX}.${businessId}`);
   }
@@ -62,6 +65,7 @@ export function useOperatorContext(): OperatorContextResult {
   const [error, setError] = useState<string | null>(null);
   const [sites, setSites] = useState<SEOSite[]>([]);
   const [selectedSiteId, setSelectedSiteIdState] = useState<string | null>(null);
+  const selectedSiteIdRef = useRef<string | null>(null);
 
   const loadSites = useCallback(
     async (accessToken: string, businessId: string): Promise<SEOSite[]> => {
@@ -70,16 +74,19 @@ export function useOperatorContext(): OperatorContextResult {
       try {
         const response = await fetchSites(accessToken, businessId);
         const storedSiteId = readStoredSelectedSiteId(businessId);
+        const currentSelectedSiteId = selectedSiteIdRef.current;
+        let resolvedSelectedSiteId: string | null = null;
+        if (storedSiteId && response.items.some((site) => site.id === storedSiteId)) {
+          resolvedSelectedSiteId = storedSiteId;
+        } else if (currentSelectedSiteId && response.items.some((site) => site.id === currentSelectedSiteId)) {
+          resolvedSelectedSiteId = currentSelectedSiteId;
+        } else {
+          resolvedSelectedSiteId = response.items.length > 0 ? response.items[0].id : null;
+        }
         setSites(response.items);
-        setSelectedSiteIdState((current) => {
-          if (current && response.items.some((site) => site.id === current)) {
-            return current;
-          }
-          if (storedSiteId && response.items.some((site) => site.id === storedSiteId)) {
-            return storedSiteId;
-          }
-          return response.items.length > 0 ? response.items[0].id : null;
-        });
+        setSelectedSiteIdState(resolvedSelectedSiteId);
+        selectedSiteIdRef.current = resolvedSelectedSiteId;
+        writeStoredSelectedSiteId(businessId, resolvedSelectedSiteId);
         return response.items;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to load SEO sites.";
@@ -127,12 +134,8 @@ export function useOperatorContext(): OperatorContextResult {
   }, [clearSession, loadSites, principal, router, token]);
 
   useEffect(() => {
-    const businessId = principal?.business_id;
-    if (!businessId) {
-      return;
-    }
-    writeStoredSelectedSiteId(businessId, selectedSiteId);
-  }, [principal?.business_id, selectedSiteId]);
+    selectedSiteIdRef.current = selectedSiteId;
+  }, [selectedSiteId]);
 
   useEffect(() => {
     const businessId = principal?.business_id;
@@ -152,9 +155,11 @@ export function useOperatorContext(): OperatorContextResult {
           return current;
         }
         if (nextSiteId && sites.some((site) => site.id === nextSiteId)) {
+          selectedSiteIdRef.current = nextSiteId;
           return nextSiteId;
         }
         if (!nextSiteId) {
+          selectedSiteIdRef.current = null;
           return null;
         }
         return current;
@@ -167,6 +172,19 @@ export function useOperatorContext(): OperatorContextResult {
     };
   }, [principal?.business_id, sites]);
 
+  const setSelectedSiteId = useCallback(
+    (siteId: string) => {
+      setSelectedSiteIdState(siteId);
+      selectedSiteIdRef.current = siteId;
+      const businessId = principal?.business_id;
+      if (!businessId) {
+        return;
+      }
+      writeStoredSelectedSiteId(businessId, siteId);
+    },
+    [principal?.business_id],
+  );
+
   return {
     loading,
     error,
@@ -174,7 +192,7 @@ export function useOperatorContext(): OperatorContextResult {
     businessId: principal?.business_id || "",
     sites,
     selectedSiteId,
-    setSelectedSiteId: setSelectedSiteIdState,
+    setSelectedSiteId,
     refreshSites,
   };
 }
