@@ -54,6 +54,42 @@ class SEOAnalyticsSiteSummaryRead(BaseModel):
     top_pages_summary: list[SEOAnalyticsTopPageRead] = Field(default_factory=list)
 
 
+class SEOGA4AccessibleAccountRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: str
+    display_name: str
+    property_count: int = 0
+
+
+class SEOGA4AccessibleAccountsRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    business_id: str
+    site_id: str
+    available: bool
+    status: str
+    message: str | None = None
+    data_source: str | None = None
+    accounts: list[SEOGA4AccessibleAccountRead] = Field(default_factory=list)
+
+
+class SEOGA4SiteOnboardingStatusRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    business_id: str
+    site_id: str
+    ga4_onboarding_status: str
+    ga4_account_id: str | None = None
+    ga4_property_id: str | None = None
+    ga4_data_stream_id: str | None = None
+    ga4_measurement_id: str | None = None
+    account_discovery_available: bool = False
+    discovered_account_count: int = 0
+    auto_provisioning_eligible: bool = False
+    message: str | None = None
+
+
 class SEOSearchConsoleMetricWindowRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

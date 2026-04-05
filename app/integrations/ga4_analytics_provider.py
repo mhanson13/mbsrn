@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 _GA4_ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
 _DEFAULT_GA4_API_BASE_URL = "https://analyticsdata.googleapis.com/v1beta"
+_DEFAULT_GA4_ADMIN_API_BASE_URL = "https://analyticsadmin.googleapis.com/v1beta"
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,13 @@ class GA4TopPagePeriodMetrics:
 
 
 @dataclass(frozen=True)
+class GA4AccountSummary:
+    account_id: str
+    display_name: str
+    property_count: int
+
+
+@dataclass(frozen=True)
 class GA4SiteMetricsResult:
     current_period: GA4SitePeriodMetrics
     previous_period: GA4SitePeriodMetrics
@@ -56,6 +64,8 @@ class GA4SiteMetricsResult:
 
 class GA4AnalyticsProvider(Protocol):
     def is_configured(self) -> bool: ...
+
+    def fetch_account_summaries(self, *, page_size: int = 20) -> tuple[GA4AccountSummary, ...]: ...
 
     def fetch_site_metrics(
         self,
@@ -78,6 +88,10 @@ class GA4AnalyticsProvider(Protocol):
 class DisabledGA4AnalyticsProvider:
     def is_configured(self) -> bool:
         return False
+
+    def fetch_account_summaries(self, *, page_size: int = 20) -> tuple[GA4AccountSummary, ...]:
+        del page_size
+        raise GA4AnalyticsProviderConfigurationError("GA4 analytics is not configured.")
 
     def fetch_site_metrics(
         self,
@@ -104,6 +118,22 @@ class DisabledGA4AnalyticsProvider:
 class MockGA4AnalyticsProvider:
     def is_configured(self) -> bool:
         return True
+
+    def fetch_account_summaries(self, *, page_size: int = 20) -> tuple[GA4AccountSummary, ...]:
+        bounded = max(1, min(int(page_size), 5))
+        mock_accounts = (
+            GA4AccountSummary(
+                account_id="1000000001",
+                display_name="MBSRN Demo Account",
+                property_count=2,
+            ),
+            GA4AccountSummary(
+                account_id="1000000002",
+                display_name="MBSRN Secondary Account",
+                property_count=1,
+            ),
+        )
+        return mock_accounts[:bounded]
 
     def fetch_site_metrics(
         self,
@@ -182,16 +212,56 @@ class GoogleAnalyticsDataAPIClient:
         timeout_seconds: int = 10,
         credentials_json: str | None = None,
         api_base_url: str = _DEFAULT_GA4_API_BASE_URL,
+        ga_admin_api_base_url: str = _DEFAULT_GA4_ADMIN_API_BASE_URL,
     ) -> None:
         self.property_id = (property_id or "").strip()
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.credentials_json = (credentials_json or "").strip() or None
         self.api_base_url = (api_base_url or _DEFAULT_GA4_API_BASE_URL).rstrip("/")
+        self.ga_admin_api_base_url = (ga_admin_api_base_url or _DEFAULT_GA4_ADMIN_API_BASE_URL).rstrip("/")
         self._credentials: Any | None = None
         self._auth_request: Any | None = None
 
     def is_configured(self) -> bool:
         return bool(self.property_id)
+
+    def fetch_account_summaries(self, *, page_size: int = 20) -> tuple[GA4AccountSummary, ...]:
+        bounded_page_size = max(1, min(int(page_size), 200))
+        account_summaries: list[GA4AccountSummary] = []
+        seen_account_ids: set[str] = set()
+        page_token: str | None = None
+        max_pages = 5
+        for _ in range(max_pages):
+            endpoint = f"{self.ga_admin_api_base_url}/accountSummaries?pageSize={bounded_page_size}"
+            if page_token:
+                endpoint = f"{endpoint}&pageToken={page_token}"
+            response_payload = self._request_json(url=endpoint, method="GET", body=None)
+            summaries = response_payload.get("accountSummaries")
+            if isinstance(summaries, list):
+                for summary in summaries:
+                    if not isinstance(summary, dict):
+                        continue
+                    account_resource = str(summary.get("account") or summary.get("name") or "").strip()
+                    account_id = _parse_resource_id(account_resource, prefix="accounts")
+                    if not account_id or account_id in seen_account_ids:
+                        continue
+                    seen_account_ids.add(account_id)
+                    property_summaries = summary.get("propertySummaries")
+                    property_count = len(property_summaries) if isinstance(property_summaries, list) else 0
+                    display_name = str(summary.get("displayName") or "").strip() or f"Account {account_id}"
+                    account_summaries.append(
+                        GA4AccountSummary(
+                            account_id=account_id,
+                            display_name=display_name,
+                            property_count=max(0, int(property_count)),
+                        )
+                    )
+            next_page_token_raw = response_payload.get("nextPageToken")
+            next_page_token = str(next_page_token_raw or "").strip()
+            if not next_page_token:
+                break
+            page_token = next_page_token
+        return tuple(account_summaries)
 
     def fetch_site_metrics(
         self,
@@ -430,11 +500,24 @@ class GoogleAnalyticsDataAPIClient:
 
     def _request_report(self, *, body: dict[str, Any]) -> dict[str, Any]:
         endpoint = f"{self.api_base_url}/properties/{self.property_id}:runReport"
-        payload = json.dumps(body, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        return self._request_json(url=endpoint, method="POST", body=body)
+
+    def _request_json(
+        self,
+        *,
+        url: str,
+        method: str,
+        body: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        payload = (
+            json.dumps(body, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            if body is not None
+            else None
+        )
         access_token = self._resolve_access_token()
         request = Request(
-            url=endpoint,
-            method="POST",
+            url=url,
+            method=method,
             data=payload,
             headers={
                 "Authorization": f"Bearer {access_token}",
@@ -447,7 +530,7 @@ class GoogleAnalyticsDataAPIClient:
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
             detail_message = _extract_http_error_message(exc)
-            raise GA4AnalyticsProviderError(f"GA4 report request failed: {detail_message}") from exc
+            raise GA4AnalyticsProviderError(f"GA4 request failed: {detail_message}") from exc
         except TimeoutError as exc:
             raise GA4AnalyticsProviderError("GA4 request timed out.") from exc
         except URLError as exc:
@@ -594,3 +677,18 @@ def _summarize_error_message(error: Exception) -> str:
     if len(normalized) <= 220:
         return normalized
     return f"{normalized[:217]}..."
+
+
+def _parse_resource_id(resource: str, *, prefix: str) -> str | None:
+    normalized = str(resource or "").strip()
+    if not normalized:
+        return None
+    if normalized.startswith(f"{prefix}/"):
+        candidate = normalized.removeprefix(f"{prefix}/").strip()
+        return candidate or None
+    parts = [segment.strip() for segment in normalized.split("/") if segment.strip()]
+    if not parts:
+        return None
+    if len(parts) >= 2 and parts[-2] == prefix:
+        return parts[-1] or None
+    return parts[-1] or None

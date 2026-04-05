@@ -687,6 +687,16 @@ class SEOSiteService:
             raise SEOSiteValidationError(
                 "search_console_property_url is required when search_console_enabled is true"
             )
+        ga4_account_id = self._normalize_ga4_identifier(payload.ga4_account_id)
+        ga4_property_id = self._normalize_ga4_identifier(payload.ga4_property_id)
+        ga4_data_stream_id = self._normalize_ga4_identifier(payload.ga4_data_stream_id)
+        ga4_measurement_id = self._normalize_ga4_measurement_id(payload.ga4_measurement_id)
+        ga4_onboarding_status = self._derive_ga4_onboarding_status(
+            ga4_account_id=ga4_account_id,
+            ga4_property_id=ga4_property_id,
+            ga4_data_stream_id=ga4_data_stream_id,
+            ga4_measurement_id=ga4_measurement_id,
+        )
 
         site = SEOSite(
             id=str(uuid4()),
@@ -699,6 +709,11 @@ class SEOSiteService:
             service_areas_json=payload.service_areas,
             search_console_property_url=search_console_property_url,
             search_console_enabled=search_console_enabled,
+            ga4_onboarding_status=ga4_onboarding_status,
+            ga4_account_id=ga4_account_id,
+            ga4_property_id=ga4_property_id,
+            ga4_data_stream_id=ga4_data_stream_id,
+            ga4_measurement_id=ga4_measurement_id,
             is_active=payload.is_active,
             is_primary=is_primary,
         )
@@ -764,6 +779,26 @@ class SEOSiteService:
         if site.search_console_enabled and not site.search_console_property_url:
             raise SEOSiteValidationError(
                 "search_console_property_url is required when search_console_enabled is true"
+            )
+        ga4_fields_updated = False
+        if "ga4_account_id" in changes:
+            site.ga4_account_id = self._normalize_ga4_identifier(changes["ga4_account_id"])
+            ga4_fields_updated = True
+        if "ga4_property_id" in changes:
+            site.ga4_property_id = self._normalize_ga4_identifier(changes["ga4_property_id"])
+            ga4_fields_updated = True
+        if "ga4_data_stream_id" in changes:
+            site.ga4_data_stream_id = self._normalize_ga4_identifier(changes["ga4_data_stream_id"])
+            ga4_fields_updated = True
+        if "ga4_measurement_id" in changes:
+            site.ga4_measurement_id = self._normalize_ga4_measurement_id(changes["ga4_measurement_id"])
+            ga4_fields_updated = True
+        if ga4_fields_updated:
+            site.ga4_onboarding_status = self._derive_ga4_onboarding_status(
+                ga4_account_id=site.ga4_account_id,
+                ga4_property_id=site.ga4_property_id,
+                ga4_data_stream_id=site.ga4_data_stream_id,
+                ga4_measurement_id=site.ga4_measurement_id,
             )
         if "is_active" in changes:
             site.is_active = changes["is_active"]
@@ -867,6 +902,37 @@ class SEOSiteService:
         if not path.endswith("/"):
             path = f"{path}/"
         return urlunparse((scheme, netloc, path, "", "", ""))
+
+    def _normalize_ga4_identifier(self, raw_identifier: str | None) -> str | None:
+        return self._clean_optional(raw_identifier)
+
+    def _normalize_ga4_measurement_id(self, raw_measurement_id: str | None) -> str | None:
+        normalized = self._clean_optional(raw_measurement_id)
+        if normalized is None:
+            return None
+        return normalized.upper()
+
+    def _derive_ga4_onboarding_status(
+        self,
+        *,
+        ga4_account_id: str | None,
+        ga4_property_id: str | None,
+        ga4_data_stream_id: str | None,
+        ga4_measurement_id: str | None,
+    ) -> str:
+        has_account = bool(ga4_account_id)
+        has_property = bool(ga4_property_id)
+        has_stream = bool(ga4_data_stream_id)
+        has_measurement = bool(ga4_measurement_id)
+        if not has_account and not has_property and not has_stream and not has_measurement:
+            return "not_connected"
+        if has_account and not has_property and not has_stream and not has_measurement:
+            return "account_available"
+        if has_property and has_stream and has_measurement:
+            return "stream_configured"
+        if has_property and not has_stream and not has_measurement:
+            return "property_configured"
+        return "incomplete"
 
     @staticmethod
     def _clean_optional(value: str | None) -> str | None:

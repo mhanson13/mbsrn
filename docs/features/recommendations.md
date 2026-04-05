@@ -259,6 +259,29 @@ Rationale:
 - site/business context is already visible in the global workspace header
 - queue scanning should foreground execution signals (`priority`, `summary`, `status`, `decisiveness`) before IDs
 
+## GA4 Onboarding Dependency (Phase 1 Discovery)
+
+Recommendation measurement visibility now depends on per-site GA4 onboarding readiness.
+
+Per-site fields:
+
+- `ga4_onboarding_status`
+- `ga4_account_id`
+- `ga4_property_id`
+- `ga4_data_stream_id`
+- `ga4_measurement_id`
+
+Operational implications:
+
+- recommendation measurement context may be unavailable when a site is `not_connected` or `incomplete`
+- account discovery can be available even when property/stream configuration is incomplete
+- `stream_configured` is the expected ready state for full GA4 measurement coverage
+
+Phase boundary:
+
+- this phase is read-only onboarding/discovery
+- no automatic GA4 property or web-stream creation is performed yet
+
 ## Recommendation Measurement Context (Phase 2)
 
 Recommendations can now include additive page-aware measurement context in detail views:

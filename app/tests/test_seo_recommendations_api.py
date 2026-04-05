@@ -3534,7 +3534,11 @@ def test_recommendation_workspace_summary_adds_page_measurement_context_when_mat
     )
     assert run_response.status_code == 201
     run_id = run_response.json()["id"]
-    recommendation_anchor = utc_now() - timedelta(days=7)
+    # Keep the recommendation anchor close enough that the "after" comparison window
+    # resolves to the current day regardless of local-vs-UTC date boundaries.
+    # This avoids timezone-dependent fixture drift (130 vs 160 sessions) while still
+    # validating that page-level before/after context is used when a page match exists.
+    recommendation_anchor = utc_now() - timedelta(days=6)
 
     db_session.add_all(
         [

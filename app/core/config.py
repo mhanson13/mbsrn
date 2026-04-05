@@ -53,6 +53,7 @@ class Settings:
     ga4_property_id: str | None
     ga4_credentials_json: str | None
     ga4_api_base_url: str
+    ga4_admin_api_base_url: str
     ga4_timeout_seconds: int
     ga4_period_days: int
     ga4_top_pages_limit: int
@@ -389,6 +390,10 @@ def get_settings() -> Settings:
         ga4_api_base_url=os.getenv(
             "GA4_API_BASE_URL",
             "https://analyticsdata.googleapis.com/v1beta",
+        ).strip(),
+        ga4_admin_api_base_url=os.getenv(
+            "GA4_ADMIN_API_BASE_URL",
+            "https://analyticsadmin.googleapis.com/v1beta",
         ).strip(),
         ga4_timeout_seconds=_env_int("GA4_TIMEOUT_SECONDS", 10, min_value=1),
         ga4_period_days=_env_int("GA4_PERIOD_DAYS", 7, min_value=1),

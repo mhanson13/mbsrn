@@ -37,6 +37,10 @@ class SEOSiteCreateRequest(BaseModel):
     service_areas: list[str] | None = None
     search_console_property_url: str | None = Field(default=None, max_length=2048)
     search_console_enabled: bool | None = None
+    ga4_account_id: str | None = Field(default=None, max_length=128)
+    ga4_property_id: str | None = Field(default=None, max_length=128)
+    ga4_data_stream_id: str | None = Field(default=None, max_length=128)
+    ga4_measurement_id: str | None = Field(default=None, max_length=64)
     is_active: bool = True
     is_primary: bool = False
 
@@ -57,6 +61,10 @@ class SEOSiteUpdateRequest(BaseModel):
     service_areas: list[str] | None = None
     search_console_property_url: str | None = Field(default=None, max_length=2048)
     search_console_enabled: bool | None = None
+    ga4_account_id: str | None = Field(default=None, max_length=128)
+    ga4_property_id: str | None = Field(default=None, max_length=128)
+    ga4_data_stream_id: str | None = Field(default=None, max_length=128)
+    ga4_measurement_id: str | None = Field(default=None, max_length=64)
     is_active: bool | None = None
     is_primary: bool | None = None
 
@@ -73,6 +81,10 @@ class SEOSiteAdminUpdateRequest(BaseModel):
     url: str | None = Field(default=None, min_length=1, max_length=2048)
     search_console_property_url: str | None = Field(default=None, max_length=2048)
     search_console_enabled: bool | None = None
+    ga4_account_id: str | None = Field(default=None, max_length=128)
+    ga4_property_id: str | None = Field(default=None, max_length=128)
+    ga4_data_stream_id: str | None = Field(default=None, max_length=128)
+    ga4_measurement_id: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def require_name_or_url(self) -> "SEOSiteAdminUpdateRequest":
@@ -81,9 +93,14 @@ class SEOSiteAdminUpdateRequest(BaseModel):
             and self.url is None
             and self.search_console_property_url is None
             and self.search_console_enabled is None
+            and self.ga4_account_id is None
+            and self.ga4_property_id is None
+            and self.ga4_data_stream_id is None
+            and self.ga4_measurement_id is None
         ):
             raise ValueError(
-                "At least one of name, url, search_console_property_url, or search_console_enabled must be provided"
+                "At least one of name, url, search_console_property_url, search_console_enabled, "
+                "ga4_account_id, ga4_property_id, ga4_data_stream_id, or ga4_measurement_id must be provided"
             )
         return self
 
@@ -102,6 +119,11 @@ class SEOSiteRead(BaseModel):
     service_areas_json: list[str] | None
     search_console_property_url: str | None = None
     search_console_enabled: bool = False
+    ga4_onboarding_status: str = "not_connected"
+    ga4_account_id: str | None = None
+    ga4_property_id: str | None = None
+    ga4_data_stream_id: str | None = None
+    ga4_measurement_id: str | None = None
     is_active: bool
     is_primary: bool
     last_audit_run_id: str | None

@@ -37,6 +37,15 @@ class SEOSite(Base):
     service_areas_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     search_console_property_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     search_console_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ga4_onboarding_status: Mapped[str] = mapped_column(
+        String(32),
+        default="not_connected",
+        nullable=False,
+    )
+    ga4_account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ga4_property_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ga4_data_stream_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ga4_measurement_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_audit_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

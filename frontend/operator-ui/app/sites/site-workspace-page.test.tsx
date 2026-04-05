@@ -16,6 +16,7 @@ import type {
   CompetitorDomainListResponse,
   CompetitorSetListResponse,
   CompetitorSnapshotRunListResponse,
+  GA4SiteOnboardingStatusResponse,
   GoogleBusinessProfileConnectionStatusResponse,
   RecommendationAnalysisFreshness,
   Recommendation,
@@ -65,6 +66,7 @@ const mockFetchRecommendationWorkspaceSummary = jest.fn<Promise<RecommendationWo
 const mockFetchRecommendationRuns = jest.fn<Promise<RecommendationRunListResponse>, unknown[]>();
 const mockFetchAutomationRuns = jest.fn<Promise<AutomationRunListResponse>, unknown[]>();
 const mockFetchSiteAnalyticsSummary = jest.fn<Promise<SiteAnalyticsSummaryResponse>, unknown[]>();
+const mockFetchGA4SiteOnboardingStatus = jest.fn<Promise<GA4SiteOnboardingStatusResponse>, unknown[]>();
 const mockFetchSearchConsoleSiteSummary = jest.fn<Promise<SearchConsoleSiteSummaryResponse>, unknown[]>();
 const mockCreateRecommendationRun = jest.fn<Promise<RecommendationRun>, unknown[]>();
 const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<RecommendationNarrative>, unknown[]>();
@@ -121,6 +123,7 @@ jest.mock("../../lib/api/client", () => {
     fetchRecommendationRuns: (...args: unknown[]) => mockFetchRecommendationRuns(...args),
     fetchAutomationRuns: (...args: unknown[]) => mockFetchAutomationRuns(...args),
     fetchSiteAnalyticsSummary: (...args: unknown[]) => mockFetchSiteAnalyticsSummary(...args),
+    fetchGA4SiteOnboardingStatus: (...args: unknown[]) => mockFetchGA4SiteOnboardingStatus(...args),
     fetchSearchConsoleSiteSummary: (...args: unknown[]) => mockFetchSearchConsoleSiteSummary(...args),
     createRecommendationRun: (...args: unknown[]) => mockCreateRecommendationRun(...args),
     fetchLatestRecommendationRunNarrative: (...args: unknown[]) =>
@@ -416,6 +419,25 @@ function buildSiteAnalyticsSummary(
   };
 }
 
+function buildGA4OnboardingStatus(
+  overrides: Partial<GA4SiteOnboardingStatusResponse> = {},
+): GA4SiteOnboardingStatusResponse {
+  return {
+    business_id: "biz-1",
+    site_id: "site-1",
+    ga4_onboarding_status: "not_connected",
+    ga4_account_id: null,
+    ga4_property_id: null,
+    ga4_data_stream_id: null,
+    ga4_measurement_id: null,
+    account_discovery_available: false,
+    discovered_account_count: 0,
+    auto_provisioning_eligible: false,
+    message: "Google Analytics onboarding is not connected for this site yet.",
+    ...overrides,
+  };
+}
+
 function buildSearchConsoleSiteSummary(
   overrides: Partial<SearchConsoleSiteSummaryResponse> = {},
 ): SearchConsoleSiteSummaryResponse {
@@ -527,6 +549,15 @@ function seedCompetitorProfileGenerationDefaults(): void {
       data_source: null,
       site_metrics_summary: null,
       top_pages_summary: [],
+    }),
+  );
+  mockFetchGA4SiteOnboardingStatus.mockResolvedValue(
+    buildGA4OnboardingStatus({
+      ga4_onboarding_status: "not_connected",
+      account_discovery_available: false,
+      discovered_account_count: 0,
+      auto_provisioning_eligible: false,
+      message: "Google Analytics onboarding discovery is not configured for this workspace.",
     }),
   );
   mockFetchSearchConsoleSiteSummary.mockResolvedValue(
@@ -4485,6 +4516,31 @@ describe("site workspace timeline controls", () => {
     expect(within(summaryStrip).getByTestId("workspace-summary-traffic")).toHaveTextContent(
       "366 sessions (+22% vs prior period)",
     );
+    expect(within(summaryStrip).getByTestId("workspace-summary-ga4-onboarding")).toHaveTextContent("Not connected");
+  });
+
+  it("renders GA4 onboarding status in workspace snapshot", async () => {
+    seedRichWorkspaceData();
+    mockFetchGA4SiteOnboardingStatus.mockResolvedValue(
+      buildGA4OnboardingStatus({
+        ga4_onboarding_status: "stream_configured",
+        ga4_account_id: "1000000001",
+        ga4_property_id: "2000000002",
+        ga4_data_stream_id: "3000000003",
+        ga4_measurement_id: "G-TEST1234",
+        account_discovery_available: true,
+        discovered_account_count: 2,
+        auto_provisioning_eligible: false,
+        message: "Google Analytics property and web stream are configured for this site.",
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const summaryStrip = await screen.findByTestId("workspace-summary-strip");
+    const ga4Card = within(summaryStrip).getByTestId("workspace-summary-ga4-onboarding");
+    expect(ga4Card).toHaveTextContent("Configured");
+    expect(ga4Card).toHaveTextContent("2 accounts discovered");
   });
 
   it("renders search visibility trend in workspace snapshot when Search Console data is available", async () => {

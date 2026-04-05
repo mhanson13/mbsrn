@@ -21,6 +21,8 @@ import type {
   SEOSiteAdminUpdateRequest,
   SEOSiteUpdateRequest,
   SEOSiteListResponse,
+  GA4AccessibleAccountsResponse,
+  GA4SiteOnboardingStatusResponse,
   SearchConsoleSiteSummaryResponse,
   SiteAnalyticsSummaryResponse,
   CompetitorComparisonReport,
@@ -875,6 +877,28 @@ export async function fetchSiteAnalyticsSummary(
 ): Promise<SiteAnalyticsSummaryResponse> {
   return apiRequest<SiteAnalyticsSummaryResponse>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/analytics/site-summary`,
+    { token },
+  );
+}
+
+export async function fetchGA4SiteOnboardingStatus(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<GA4SiteOnboardingStatusResponse> {
+  return apiRequest<GA4SiteOnboardingStatusResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/analytics/ga4-onboarding-status`,
+    { token },
+  );
+}
+
+export async function fetchGA4AccessibleAccounts(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<GA4AccessibleAccountsResponse> {
+  return apiRequest<GA4AccessibleAccountsResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/analytics/ga4-accessible-accounts`,
     { token },
   );
 }

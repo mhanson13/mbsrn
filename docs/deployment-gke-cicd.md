@@ -237,6 +237,16 @@ Search Console runtime wiring in the same production-authoritative path:
 - `SEARCH_CONSOLE_CREDENTIALS_JSON` is optional; when omitted, runtime ADC fallback is used.
 - Search Console property URL enablement is configured per-site in application data (`seo_sites.search_console_property_url` + `search_console_enabled`), not as app-global env.
 
+GA4 runtime wiring in the same production-authoritative path:
+
+- `GA4_CREDENTIALS_JSON` is injected into `mbsrn-api-auth` (from GitHub secret scope).
+- `k8s/api-deployment.yaml` consumes `GA4_CREDENTIALS_JSON` via `valueFrom.secretKeyRef`.
+- `GA4_CREDENTIALS_JSON` is optional; when omitted, runtime ADC fallback is used.
+- `GA4_PROPERTY_ID` remains optional in discovery-first onboarding mode:
+  - account discovery can run without it
+  - site-level traffic summary requires a configured property id
+- GA4 onboarding state is persisted per-site in application data (`seo_sites.ga4_*` fields), not as app-global property binding.
+
 Session backend behavior:
 - Supported backends: `SESSION_STATE_BACKEND=auto|redis|inmemory`.
 - Redis-backed session state is required for correctness in multi-replica production.

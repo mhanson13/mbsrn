@@ -21,6 +21,7 @@ import {
   fetchAuditRuns,
   fetchAutomationRuns,
   fetchBusinessSettings,
+  fetchGA4SiteOnboardingStatus,
   fetchGoogleBusinessProfileConnection,
   fetchSearchConsoleSiteSummary,
   fetchSiteAnalyticsSummary,
@@ -74,6 +75,7 @@ import type {
   CompetitorSet,
   CompetitorSnapshotRun,
   GoogleBusinessProfileConnectionStatusResponse,
+  GA4SiteOnboardingStatusResponse,
   RecommendationAnalysisFreshness,
   RecommendationApplyOutcome,
   RecommendationEEATCategory,
@@ -4357,6 +4359,8 @@ export default function SiteWorkspacePage() {
   const [automationRunError, setAutomationRunError] = useState<string | null>(null);
   const [siteAnalyticsSummary, setSiteAnalyticsSummary] = useState<SiteAnalyticsSummaryResponse | null>(null);
   const [siteAnalyticsError, setSiteAnalyticsError] = useState<string | null>(null);
+  const [ga4OnboardingStatus, setGa4OnboardingStatus] = useState<GA4SiteOnboardingStatusResponse | null>(null);
+  const [ga4OnboardingError, setGa4OnboardingError] = useState<string | null>(null);
   const [searchConsoleSiteSummary, setSearchConsoleSiteSummary] = useState<SearchConsoleSiteSummaryResponse | null>(null);
   const [searchConsoleSiteSummaryError, setSearchConsoleSiteSummaryError] = useState<string | null>(null);
   const [recommendationGenerationInFlight, setRecommendationGenerationInFlight] = useState(false);
@@ -6435,6 +6439,8 @@ export default function SiteWorkspacePage() {
       setRecentTuningChanges([]);
       setSiteAnalyticsSummary(null);
       setSiteAnalyticsError(null);
+      setGa4OnboardingStatus(null);
+      setGa4OnboardingError(null);
       setSearchConsoleSiteSummary(null);
       setSearchConsoleSiteSummaryError(null);
       setCompetitorProfilePollingTargetRunId(null);
@@ -6464,6 +6470,7 @@ export default function SiteWorkspacePage() {
         googleBusinessProfileConnectionResult,
         businessSettingsResult,
         siteAnalyticsSummaryResult,
+        ga4OnboardingStatusResult,
         searchConsoleSiteSummaryResult,
         competitorProfileRunsResult,
         competitorProfileSummaryResult,
@@ -6484,6 +6491,7 @@ export default function SiteWorkspacePage() {
           fetchGoogleBusinessProfileConnection(context.token),
           fetchBusinessSettings(context.token, context.businessId),
           fetchSiteAnalyticsSummary(context.token, context.businessId, siteId),
+          fetchGA4SiteOnboardingStatus(context.token, context.businessId, siteId),
           fetchSearchConsoleSiteSummary(context.token, context.businessId, siteId),
           fetchCompetitorProfileGenerationRuns(context.token, context.businessId, siteId),
           fetchCompetitorProfileGenerationSummary(context.token, context.businessId, siteId),
@@ -6708,6 +6716,14 @@ export default function SiteWorkspacePage() {
       } else {
         setSiteAnalyticsSummary(null);
         setSiteAnalyticsError(safeSectionErrorMessage("traffic trend", siteAnalyticsSummaryResult.reason));
+      }
+
+      if (ga4OnboardingStatusResult.status === "fulfilled") {
+        setGa4OnboardingStatus(ga4OnboardingStatusResult.value);
+        setGa4OnboardingError(null);
+      } else {
+        setGa4OnboardingStatus(null);
+        setGa4OnboardingError(safeSectionErrorMessage("GA4 onboarding status", ga4OnboardingStatusResult.reason));
       }
 
       if (searchConsoleSiteSummaryResult.status === "fulfilled") {
@@ -7147,6 +7163,40 @@ export default function SiteWorkspacePage() {
         : "warning"
       : "neutral"
     : "neutral";
+  const ga4OnboardingStatusCode = ga4OnboardingStatus?.ga4_onboarding_status || "unavailable";
+  const ga4OnboardingValue = (() => {
+    if (ga4OnboardingStatusCode === "stream_configured") {
+      return "Configured";
+    }
+    if (ga4OnboardingStatusCode === "property_configured") {
+      return "Property set";
+    }
+    if (ga4OnboardingStatusCode === "account_available") {
+      return "Account available";
+    }
+    if (ga4OnboardingStatusCode === "incomplete") {
+      return "Incomplete";
+    }
+    if (ga4OnboardingStatusCode === "not_connected") {
+      return "Not connected";
+    }
+    return "Unavailable";
+  })();
+  const ga4OnboardingDetail = ga4OnboardingStatus
+    ? `${ga4OnboardingStatus.message || "GA4 onboarding status available."} (${ga4OnboardingStatus.discovered_account_count} account${ga4OnboardingStatus.discovered_account_count === 1 ? "" : "s"} discovered)`
+    : ga4OnboardingError || "GA4 onboarding discovery is not available for this site yet.";
+  const ga4OnboardingTone = (() => {
+    if (ga4OnboardingStatusCode === "stream_configured") {
+      return "success";
+    }
+    if (ga4OnboardingStatusCode === "property_configured" || ga4OnboardingStatusCode === "incomplete") {
+      return "warning";
+    }
+    if (ga4OnboardingStatusCode === "unavailable") {
+      return "danger";
+    }
+    return "neutral";
+  })();
   const searchVisibilityMetricsSummary = searchConsoleSiteSummary?.site_metrics_summary || null;
   const searchVisibilityTrendValue = searchVisibilityMetricsSummary
     ? `${searchVisibilityMetricsSummary.clicks.current.toLocaleString()} clicks`
@@ -7501,6 +7551,14 @@ export default function SiteWorkspacePage() {
             tone={trafficTrendTone}
             variant="elevated"
             data-testid="workspace-summary-traffic"
+          />
+          <SummaryStatCard
+            label="GA4 onboarding"
+            value={ga4OnboardingValue}
+            detail={ga4OnboardingDetail}
+            tone={ga4OnboardingTone}
+            variant="elevated"
+            data-testid="workspace-summary-ga4-onboarding"
           />
           <SummaryStatCard
             label="Search visibility trend"

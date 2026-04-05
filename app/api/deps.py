@@ -16,7 +16,6 @@ from app.core.token_cipher import FernetTokenCipher
 from app.db.session import SessionLocal, get_db_session
 from app.integrations import (
     DevEmailProvider,
-    DisabledGA4AnalyticsProvider,
     DisabledGooglePlacesSeedDiscoveryClient,
     DevSMSProvider,
     EmailProvider,
@@ -402,14 +401,12 @@ def get_ga4_analytics_provider() -> GA4AnalyticsProvider:
     if settings.ga4_use_mock_provider:
         logger.info("ga4_analytics_provider_mode mode=mock")
         return MockGA4AnalyticsProvider()
-    if not (settings.ga4_property_id or "").strip():
-        logger.info("ga4_analytics_provider_mode mode=disabled reason=missing_property_id")
-        return DisabledGA4AnalyticsProvider()
     return GoogleAnalyticsDataAPIClient(
         property_id=settings.ga4_property_id,
         timeout_seconds=settings.ga4_timeout_seconds,
         credentials_json=settings.ga4_credentials_json,
         api_base_url=settings.ga4_api_base_url,
+        ga_admin_api_base_url=settings.ga4_admin_api_base_url,
     )
 
 

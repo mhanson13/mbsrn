@@ -9,6 +9,7 @@ from app.api.deps import TenantContext, get_db, get_seo_analytics_service, get_t
 from app.api.routes.seo import router as seo_router
 from app.api.routes.seo import router_v1 as seo_v1_router
 from app.integrations.ga4_analytics_provider import (
+    GA4AccountSummary,
     DisabledGA4AnalyticsProvider,
     GA4AnalyticsProviderError,
     GA4SiteMetricsResult,
@@ -69,6 +70,10 @@ def _create_site(
     *,
     search_console_property_url: str | None = None,
     search_console_enabled: bool | None = None,
+    ga4_account_id: str | None = None,
+    ga4_property_id: str | None = None,
+    ga4_data_stream_id: str | None = None,
+    ga4_measurement_id: str | None = None,
 ) -> str:
     payload: dict[str, object] = {
         "display_name": "Analytics Site",
@@ -78,6 +83,14 @@ def _create_site(
         payload["search_console_property_url"] = search_console_property_url
     if search_console_enabled is not None:
         payload["search_console_enabled"] = search_console_enabled
+    if ga4_account_id is not None:
+        payload["ga4_account_id"] = ga4_account_id
+    if ga4_property_id is not None:
+        payload["ga4_property_id"] = ga4_property_id
+    if ga4_data_stream_id is not None:
+        payload["ga4_data_stream_id"] = ga4_data_stream_id
+    if ga4_measurement_id is not None:
+        payload["ga4_measurement_id"] = ga4_measurement_id
     response = client.post(
         f"/api/businesses/{business_id}/seo/sites",
         json=payload,
@@ -135,6 +148,28 @@ class _WindowComparisonProvider:
         if start_date == "2026-01-08":
             return GA4SitePeriodMetrics(users=260, sessions=370, pageviews=560, organic_search_sessions=220)
         return GA4SitePeriodMetrics(users=300, sessions=420, pageviews=640, organic_search_sessions=250)
+
+
+class _GA4AccountDiscoveryProvider:
+    def __init__(self, *, accounts: tuple[GA4AccountSummary, ...]) -> None:
+        self._accounts = accounts
+
+    def is_configured(self) -> bool:
+        return True
+
+    def fetch_account_summaries(self, *, page_size: int = 20) -> tuple[GA4AccountSummary, ...]:
+        del page_size
+        return self._accounts
+
+    def fetch_site_metrics(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_pages_limit: int,
+    ) -> GA4SiteMetricsResult:
+        del site_domain, period_days, top_pages_limit
+        raise GA4AnalyticsProviderError("site summary unavailable in discovery stub")
 
 
 class _SearchConsoleWindowProvider:
@@ -314,6 +349,135 @@ def test_site_analytics_summary_enforces_tenant_scope(db_session, seeded_busines
         f"/api/businesses/other-business/seo/sites/{site_id}/analytics/site-summary"
     )
     assert cross_business_response.status_code == 404
+
+
+def test_ga4_accessible_accounts_returns_account_summaries(db_session, seeded_business) -> None:
+    provider = _GA4AccountDiscoveryProvider(
+        accounts=(
+            GA4AccountSummary(account_id="1000000001", display_name="Primary Account", property_count=3),
+            GA4AccountSummary(account_id="1000000002", display_name="Secondary Account", property_count=1),
+        ),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(provider=provider),
+    )
+    site_id = _create_site(client, seeded_business.id, domain="analytics-ga4-accounts.example")
+
+    response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-accessible-accounts"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "ok"
+    assert payload["data_source"] == "ga4_admin_api"
+    assert payload["accounts"] == [
+        {
+            "account_id": "1000000001",
+            "display_name": "Primary Account",
+            "property_count": 3,
+        },
+        {
+            "account_id": "1000000002",
+            "display_name": "Secondary Account",
+            "property_count": 1,
+        },
+    ]
+
+
+def test_ga4_accessible_accounts_degrades_cleanly_when_not_configured(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(provider=DisabledGA4AnalyticsProvider()),
+    )
+    site_id = _create_site(client, seeded_business.id, domain="analytics-ga4-disabled.example")
+
+    response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-accessible-accounts"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "not_configured"
+    assert payload["accounts"] == []
+
+
+def test_ga4_site_onboarding_status_reflects_site_configuration(db_session, seeded_business) -> None:
+    provider = _GA4AccountDiscoveryProvider(
+        accounts=(GA4AccountSummary(account_id="1000000001", display_name="Primary Account", property_count=2),),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(provider=provider),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-ga4-onboarding.example",
+        ga4_account_id="1000000001",
+        ga4_property_id="2000000002",
+        ga4_data_stream_id="3000000003",
+        ga4_measurement_id="g-test1234",
+    )
+
+    response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-onboarding-status"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ga4_onboarding_status"] == "stream_configured"
+    assert payload["ga4_measurement_id"] == "G-TEST1234"
+    assert payload["account_discovery_available"] is True
+    assert payload["discovered_account_count"] == 1
+    assert payload["auto_provisioning_eligible"] is False
+
+
+def test_ga4_site_onboarding_status_uses_account_available_when_discovered(db_session, seeded_business) -> None:
+    provider = _GA4AccountDiscoveryProvider(
+        accounts=(GA4AccountSummary(account_id="1000000001", display_name="Primary Account", property_count=2),),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(provider=provider),
+    )
+    site_id = _create_site(client, seeded_business.id, domain="analytics-ga4-account-available.example")
+
+    response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-onboarding-status"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ga4_onboarding_status"] == "account_available"
+    assert payload["account_discovery_available"] is True
+    assert payload["discovered_account_count"] == 1
+    assert payload["auto_provisioning_eligible"] is True
+
+
+def test_ga4_onboarding_endpoints_enforce_tenant_scope(db_session, seeded_business) -> None:
+    provider = _GA4AccountDiscoveryProvider(
+        accounts=(GA4AccountSummary(account_id="1000000001", display_name="Primary Account", property_count=2),),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(provider=provider),
+    )
+    site_id = _create_site(client, seeded_business.id, domain="analytics-ga4-scope.example")
+
+    onboarding_response = client.get(
+        f"/api/businesses/other-business/seo/sites/{site_id}/analytics/ga4-onboarding-status"
+    )
+    assert onboarding_response.status_code == 404
+
+    accounts_response = client.get(
+        f"/api/businesses/other-business/seo/sites/{site_id}/analytics/ga4-accessible-accounts"
+    )
+    assert accounts_response.status_code == 404
 
 
 def test_match_recommendation_to_top_page_uses_target_page_hints_first() -> None:

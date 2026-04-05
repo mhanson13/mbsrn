@@ -221,6 +221,8 @@ from app.services.seo_summary import SEOSummaryNotFoundError, SEOSummaryService,
 from app.services.seo_analytics import SEOAnalyticsService
 from app.schemas.seo_summary import SEOAuditSummaryRead
 from app.schemas.seo_analytics import (
+    SEOGA4AccessibleAccountsRead,
+    SEOGA4SiteOnboardingStatusRead,
     SEOAnalyticsSiteSummaryRead,
     SEOSearchConsoleSiteSummaryRead,
 )
@@ -2912,17 +2914,27 @@ def patch_seo_site(
         tenant_context=tenant_context,
         requested_business_id=business_id,
     )
-    if tenant_context.principal_role != PrincipalRole.ADMIN and (
-        payload.display_name is not None
-        or payload.base_url is not None
-        or payload.search_console_property_url is not None
-        or payload.search_console_enabled is not None
-        or payload.is_active is not None
-        or payload.is_primary is not None
+    restricted_fields = {
+        "display_name",
+        "base_url",
+        "search_console_property_url",
+        "search_console_enabled",
+        "ga4_account_id",
+        "ga4_property_id",
+        "ga4_data_stream_id",
+        "ga4_measurement_id",
+        "is_active",
+        "is_primary",
+    }
+    if tenant_context.principal_role != PrincipalRole.ADMIN and any(
+        field_name in payload.model_fields_set for field_name in restricted_fields
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin principals can update site name, URL, activation, or primary state.",
+            detail=(
+                "Only admin principals can update site name, URL, analytics onboarding, "
+                "activation, or primary state."
+            ),
         )
     try:
         site = seo_site_service.update_site(
@@ -2951,7 +2963,7 @@ def patch_admin_seo_site(
         tenant_context=tenant_context,
         requested_business_id=business_id,
     )
-    update_payload_data: dict[str, str] = {}
+    update_payload_data: dict[str, object] = {}
     if payload.name is not None:
         update_payload_data["display_name"] = payload.name
     if payload.url is not None:
@@ -2960,6 +2972,14 @@ def patch_admin_seo_site(
         update_payload_data["search_console_property_url"] = payload.search_console_property_url
     if payload.search_console_enabled is not None:
         update_payload_data["search_console_enabled"] = payload.search_console_enabled
+    if payload.ga4_account_id is not None:
+        update_payload_data["ga4_account_id"] = payload.ga4_account_id
+    if payload.ga4_property_id is not None:
+        update_payload_data["ga4_property_id"] = payload.ga4_property_id
+    if payload.ga4_data_stream_id is not None:
+        update_payload_data["ga4_data_stream_id"] = payload.ga4_data_stream_id
+    if payload.ga4_measurement_id is not None:
+        update_payload_data["ga4_measurement_id"] = payload.ga4_measurement_id
     update_payload = SEOSiteUpdateRequest.model_validate(update_payload_data)
     try:
         site = seo_site_service.update_site(
@@ -4854,6 +4874,71 @@ def get_site_analytics_summary(
         business_id=scoped_business_id,
         site_id=site_id,
         site_domain=(site.normalized_domain or site.base_url or "").strip() or None,
+    )
+
+
+@router.get(
+    "/sites/{site_id}/analytics/ga4-onboarding-status",
+    response_model=SEOGA4SiteOnboardingStatusRead,
+)
+@router_v1.get(
+    "/sites/{site_id}/analytics/ga4-onboarding-status",
+    response_model=SEOGA4SiteOnboardingStatusRead,
+)
+def get_site_ga4_onboarding_status(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
+) -> SEOGA4SiteOnboardingStatusRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        site = seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+    except SEOSiteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return seo_analytics_service.get_ga4_site_onboarding_status(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        ga4_onboarding_status=site.ga4_onboarding_status,
+        ga4_account_id=site.ga4_account_id,
+        ga4_property_id=site.ga4_property_id,
+        ga4_data_stream_id=site.ga4_data_stream_id,
+        ga4_measurement_id=site.ga4_measurement_id,
+    )
+
+
+@router.get(
+    "/sites/{site_id}/analytics/ga4-accessible-accounts",
+    response_model=SEOGA4AccessibleAccountsRead,
+)
+@router_v1.get(
+    "/sites/{site_id}/analytics/ga4-accessible-accounts",
+    response_model=SEOGA4AccessibleAccountsRead,
+)
+def get_site_ga4_accessible_accounts(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
+) -> SEOGA4AccessibleAccountsRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+    except SEOSiteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return seo_analytics_service.get_ga4_accessible_accounts(
+        business_id=scoped_business_id,
+        site_id=site_id,
     )
 
 

@@ -59,6 +59,7 @@ from app.integrations.google_places import (
     GooglePlacesTextSearchClient,
 )
 from app.integrations.ga4_analytics_provider import (
+    GA4AccountSummary,
     DisabledGA4AnalyticsProvider,
     GA4AnalyticsProvider,
     GA4AnalyticsProviderConfigurationError,
@@ -125,6 +126,7 @@ __all__ = [
     "GooglePlacesSeedDiscoveryClient",
     "GooglePlacesTextSearchClient",
     "DisabledGA4AnalyticsProvider",
+    "GA4AccountSummary",
     "GA4AnalyticsProvider",
     "GA4AnalyticsProviderConfigurationError",
     "GA4AnalyticsProviderError",

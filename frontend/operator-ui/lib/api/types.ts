@@ -156,6 +156,11 @@ export interface SEOSite {
   service_areas_json?: string[] | null;
   search_console_property_url?: string | null;
   search_console_enabled?: boolean;
+  ga4_onboarding_status?: string;
+  ga4_account_id?: string | null;
+  ga4_property_id?: string | null;
+  ga4_data_stream_id?: string | null;
+  ga4_measurement_id?: string | null;
   is_active: boolean;
   is_primary: boolean;
   last_audit_run_id: string | null;
@@ -168,6 +173,10 @@ export interface SEOSiteCreateRequest {
   base_url: string;
   search_console_property_url?: string | null;
   search_console_enabled?: boolean | null;
+  ga4_account_id?: string | null;
+  ga4_property_id?: string | null;
+  ga4_data_stream_id?: string | null;
+  ga4_measurement_id?: string | null;
 }
 
 export interface SEOSiteUpdateRequest {
@@ -179,6 +188,10 @@ export interface SEOSiteUpdateRequest {
   service_areas?: string[] | null;
   search_console_property_url?: string | null;
   search_console_enabled?: boolean | null;
+  ga4_account_id?: string | null;
+  ga4_property_id?: string | null;
+  ga4_data_stream_id?: string | null;
+  ga4_measurement_id?: string | null;
   is_active?: boolean;
   is_primary?: boolean;
 }
@@ -188,6 +201,10 @@ export interface SEOSiteAdminUpdateRequest {
   url?: string;
   search_console_property_url?: string | null;
   search_console_enabled?: boolean | null;
+  ga4_account_id?: string | null;
+  ga4_property_id?: string | null;
+  ga4_data_stream_id?: string | null;
+  ga4_measurement_id?: string | null;
 }
 
 export interface SEOSiteListResponse {
@@ -234,6 +251,42 @@ export interface SiteAnalyticsSummaryResponse {
   data_source: string | null;
   site_metrics_summary: SiteAnalyticsMetricsSummary | null;
   top_pages_summary: SiteAnalyticsTopPageSummary[];
+}
+
+export interface GA4AccessibleAccountSummary {
+  account_id: string;
+  display_name: string;
+  property_count: number;
+}
+
+export interface GA4AccessibleAccountsResponse {
+  business_id: string;
+  site_id: string;
+  available: boolean;
+  status: "ok" | "not_configured" | "unavailable";
+  message: string | null;
+  data_source: string | null;
+  accounts: GA4AccessibleAccountSummary[];
+}
+
+export interface GA4SiteOnboardingStatusResponse {
+  business_id: string;
+  site_id: string;
+  ga4_onboarding_status:
+    | "not_connected"
+    | "account_available"
+    | "property_configured"
+    | "stream_configured"
+    | "incomplete"
+    | "unavailable";
+  ga4_account_id: string | null;
+  ga4_property_id: string | null;
+  ga4_data_stream_id: string | null;
+  ga4_measurement_id: string | null;
+  account_discovery_available: boolean;
+  discovered_account_count: number;
+  auto_provisioning_eligible: boolean;
+  message: string | null;
 }
 
 export interface SearchConsoleMetricWindow {

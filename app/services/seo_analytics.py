@@ -20,6 +20,9 @@ from app.integrations.search_console_analytics_provider import (
     SearchConsolePeriodMetrics,
 )
 from app.schemas.seo_analytics import (
+    SEOGA4AccessibleAccountRead,
+    SEOGA4AccessibleAccountsRead,
+    SEOGA4SiteOnboardingStatusRead,
     SEOAnalyticsMetricWindowRead,
     SEOAnalyticsSiteMetricsSummaryRead,
     SEOAnalyticsSiteSummaryRead,
@@ -197,6 +200,131 @@ class SEOAnalyticsService:
             data_source=result.data_source,
             site_metrics_summary=metrics_summary,
             top_pages_summary=top_pages_summary,
+        )
+
+    def get_ga4_accessible_accounts(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+    ) -> SEOGA4AccessibleAccountsRead:
+        try:
+            accounts = self.provider.fetch_account_summaries(page_size=25)
+        except GA4AnalyticsProviderConfigurationError:
+            return SEOGA4AccessibleAccountsRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="not_configured",
+                message="Google Analytics account discovery is not configured for this workspace.",
+                data_source=None,
+                accounts=[],
+            )
+        except GA4AnalyticsProviderError as exc:
+            logger.warning(
+                "seo_ga4_account_discovery_unavailable business_id=%s site_id=%s reason=%s",
+                business_id,
+                site_id,
+                str(exc),
+            )
+            return SEOGA4AccessibleAccountsRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="unavailable",
+                message="Google Analytics account discovery is temporarily unavailable.",
+                data_source=None,
+                accounts=[],
+            )
+
+        account_summaries = [
+            SEOGA4AccessibleAccountRead(
+                account_id=item.account_id,
+                display_name=item.display_name,
+                property_count=max(0, int(item.property_count)),
+            )
+            for item in accounts
+        ]
+        return SEOGA4AccessibleAccountsRead(
+            business_id=business_id,
+            site_id=site_id,
+            available=True,
+            status="ok",
+            message=None if account_summaries else "No accessible Google Analytics accounts were discovered.",
+            data_source="ga4_admin_api",
+            accounts=account_summaries,
+        )
+
+    def get_ga4_site_onboarding_status(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        ga4_onboarding_status: str | None,
+        ga4_account_id: str | None,
+        ga4_property_id: str | None,
+        ga4_data_stream_id: str | None,
+        ga4_measurement_id: str | None,
+    ) -> SEOGA4SiteOnboardingStatusRead:
+        account_discovery = self.get_ga4_accessible_accounts(
+            business_id=business_id,
+            site_id=site_id,
+        )
+        normalized_account_id = _clean_identifier(ga4_account_id)
+        normalized_property_id = _clean_identifier(ga4_property_id)
+        normalized_stream_id = _clean_identifier(ga4_data_stream_id)
+        normalized_measurement_id = _clean_identifier(ga4_measurement_id)
+
+        derived_status = _derive_ga4_onboarding_status_from_identifiers(
+            ga4_account_id=normalized_account_id,
+            ga4_property_id=normalized_property_id,
+            ga4_data_stream_id=normalized_stream_id,
+            ga4_measurement_id=normalized_measurement_id,
+        )
+        persisted_status = str(ga4_onboarding_status or "").strip().lower()
+        effective_status = (
+            persisted_status
+            if persisted_status in {
+                "not_connected",
+                "account_available",
+                "property_configured",
+                "stream_configured",
+                "incomplete",
+                "unavailable",
+            }
+            else derived_status
+        )
+        if effective_status == "not_connected":
+            if account_discovery.available and account_discovery.accounts:
+                effective_status = "account_available"
+            elif account_discovery.status == "unavailable":
+                effective_status = "unavailable"
+        if (
+            effective_status == "unavailable"
+            and derived_status not in {"not_connected", "unavailable"}
+        ):
+            effective_status = derived_status
+
+        discovered_account_count = len(account_discovery.accounts)
+        auto_provisioning_eligible = (
+            account_discovery.available
+            and effective_status in {"account_available", "property_configured", "incomplete"}
+        )
+        return SEOGA4SiteOnboardingStatusRead(
+            business_id=business_id,
+            site_id=site_id,
+            ga4_onboarding_status=effective_status,
+            ga4_account_id=normalized_account_id,
+            ga4_property_id=normalized_property_id,
+            ga4_data_stream_id=normalized_stream_id,
+            ga4_measurement_id=normalized_measurement_id,
+            account_discovery_available=account_discovery.available,
+            discovered_account_count=discovered_account_count,
+            auto_provisioning_eligible=auto_provisioning_eligible,
+            message=_ga4_onboarding_message_for_status(
+                status=effective_status,
+                account_discovery=account_discovery,
+            ),
         )
 
     def get_search_console_site_summary(
@@ -884,3 +1012,57 @@ def _search_console_message_for_diagnostic(diagnostic_status: str) -> str:
     if diagnostic_status == "property_not_accessible":
         return "Configured Search Console property is not accessible."
     return "Search Console data is temporarily unavailable."
+
+
+def _clean_identifier(value: str | None) -> str | None:
+    compacted = str(value or "").strip()
+    return compacted or None
+
+
+def _derive_ga4_onboarding_status_from_identifiers(
+    *,
+    ga4_account_id: str | None,
+    ga4_property_id: str | None,
+    ga4_data_stream_id: str | None,
+    ga4_measurement_id: str | None,
+) -> str:
+    has_account = bool(ga4_account_id)
+    has_property = bool(ga4_property_id)
+    has_stream = bool(ga4_data_stream_id)
+    has_measurement = bool(ga4_measurement_id)
+
+    if not has_account and not has_property and not has_stream and not has_measurement:
+        return "not_connected"
+    if has_account and not has_property and not has_stream and not has_measurement:
+        return "account_available"
+    if has_property and has_stream and has_measurement:
+        return "stream_configured"
+    if has_property and not has_stream and not has_measurement:
+        return "property_configured"
+    return "incomplete"
+
+
+def _ga4_onboarding_message_for_status(
+    *,
+    status: str,
+    account_discovery: SEOGA4AccessibleAccountsRead,
+) -> str:
+    if status == "stream_configured":
+        return "Google Analytics property and web stream are configured for this site."
+    if status == "property_configured":
+        return "Google Analytics property is configured. Add a web stream and measurement ID to finish setup."
+    if status == "account_available":
+        if account_discovery.accounts:
+            return "Accessible Google Analytics accounts were found for this workspace."
+        return "Google Analytics account discovery is available. Link an account to continue onboarding."
+    if status == "incomplete":
+        return "Google Analytics onboarding is partially configured. Complete missing account, property, or stream fields."
+    if status == "unavailable":
+        return account_discovery.message or "Google Analytics onboarding discovery is temporarily unavailable."
+    if account_discovery.status == "not_configured":
+        return "Google Analytics onboarding discovery is not configured for this workspace."
+    if account_discovery.status == "unavailable":
+        return account_discovery.message or "Google Analytics onboarding discovery is temporarily unavailable."
+    if account_discovery.accounts:
+        return "Google Analytics onboarding is not connected for this site yet."
+    return "No accessible Google Analytics accounts were discovered for this workspace."

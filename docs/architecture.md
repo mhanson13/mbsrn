@@ -116,6 +116,40 @@ Design constraints:
 
 This layer is intentionally lightweight and provides stable metrics inputs for operator visibility and future recommendation outcome validation.
 
+### GA4 Onboarding Discovery (Phase 1)
+
+The GA4 measurement layer now includes a bounded onboarding/discovery read path to prepare for future property/stream auto-provisioning.
+
+Per-site onboarding state is persisted on `seo_sites`:
+
+- `ga4_onboarding_status`
+- `ga4_account_id`
+- `ga4_property_id`
+- `ga4_data_stream_id`
+- `ga4_measurement_id`
+
+Read-only endpoints:
+
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/analytics/ga4-onboarding-status`
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/analytics/ga4-accessible-accounts`
+
+Status semantics are deterministic and scoped per site:
+
+- `not_connected`
+- `account_available`
+- `property_configured`
+- `stream_configured`
+- `incomplete`
+- `unavailable`
+
+Auth/ownership boundary:
+
+- account discovery uses the existing shared platform GA credential context (service-account JSON or ADC fallback)
+- site-level onboarding state is per-site and tenant-scoped
+- no property or stream creation occurs in this phase
+
+This keeps onboarding visibility production-safe while deferring write operations to a future phase.
+
 Phase 2 extends this with bounded page-aware context for recommendation detail views:
 
 - recommendation payloads now include additive `recommendation_measurement_context`
