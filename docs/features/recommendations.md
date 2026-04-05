@@ -558,6 +558,29 @@ Key properties:
   - clean fallback when provider data is temporarily unavailable
 - intended as outcome visibility input for future recommendation validation phases
 
+### GA4 Connect + Diagnostic Status
+
+Site workspace now includes a compact **Connect GA4** control for per-site property setup plus normalized diagnostic status.
+
+Operator inputs:
+
+- GA4 property ID (numeric, for example `123456789`)
+
+Operator-visible diagnostics:
+
+- `not_configured`
+- `access_denied`
+- `property_not_found`
+- `invalid_property_format`
+- `no_data`
+- `unknown_error`
+
+Operational requirements:
+
+- GA4 property must be configured on the site record
+- workspace GA4 credential context (service account JSON or ADC) must have read access to that property
+- diagnostics remain directional/read-only and do not change recommendation logic
+
 ### Search Visibility Context (Search Console Read-Only Layer)
 
 Recommendations can now include additive `recommendation_search_console_context` when Search Console data is configured and deterministically matchable.

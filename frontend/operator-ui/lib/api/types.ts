@@ -247,6 +247,15 @@ export interface SiteAnalyticsSummaryResponse {
   site_id: string;
   available: boolean;
   status: "ok" | "not_configured" | "unavailable";
+  ga4_status: "not_configured" | "configured" | "connected" | "error";
+  ga4_error_reason:
+    | "not_configured"
+    | "access_denied"
+    | "property_not_found"
+    | "invalid_property_format"
+    | "no_data"
+    | "unknown_error"
+    | null;
   message: string | null;
   data_source: string | null;
   site_metrics_summary: SiteAnalyticsMetricsSummary | null;

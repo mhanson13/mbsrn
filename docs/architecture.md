@@ -116,6 +116,27 @@ Design constraints:
 
 This layer is intentionally lightweight and provides stable metrics inputs for operator visibility and future recommendation outcome validation.
 
+### GA4 Connectivity Diagnostics (Site Workspace)
+
+The site summary read model now includes additive GA4 connectivity diagnostics so operators can distinguish configuration issues from runtime access failures without exposing raw provider errors.
+
+Additive fields on `SEOAnalyticsSiteSummaryRead`:
+
+- `ga4_status`: `not_configured` | `configured` | `connected` | `error`
+- `ga4_error_reason` (optional):
+  - `not_configured`
+  - `access_denied`
+  - `property_not_found`
+  - `invalid_property_format`
+  - `no_data`
+  - `unknown_error`
+
+Operational behavior:
+
+- site-level property configuration is required for `GET /analytics/site-summary` to report GA4 as connected
+- diagnostics remain deterministic and read-only
+- raw provider exception payloads are not surfaced to operator UI
+
 ### GA4 Onboarding Discovery (Phase 1)
 
 The GA4 measurement layer now includes a bounded onboarding/discovery read path to prepare for future property/stream auto-provisioning.

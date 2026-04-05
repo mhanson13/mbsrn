@@ -370,6 +370,8 @@ function buildSiteAnalyticsSummary(
     site_id: "site-1",
     available: true,
     status: "ok",
+    ga4_status: "connected",
+    ga4_error_reason: null,
     message: null,
     data_source: "ga4_mock",
     site_metrics_summary: {
@@ -4543,6 +4545,78 @@ describe("site workspace timeline controls", () => {
     expect(ga4Card).toHaveTextContent("2 accounts discovered");
   });
 
+  it("renders GA4 connection diagnostics and helper text in workspace snapshot", async () => {
+    seedRichWorkspaceData();
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        available: false,
+        status: "unavailable",
+        ga4_status: "error",
+        ga4_error_reason: "access_denied",
+        message: "Google Analytics data is temporarily unavailable.",
+        data_source: null,
+        site_metrics_summary: null,
+        top_pages_summary: [],
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const panel = await screen.findByTestId("workspace-ga4-connect-panel");
+    expect(within(panel).getByTestId("workspace-ga4-connection-status")).toHaveTextContent("Error");
+    expect(within(panel).getByTestId("workspace-ga4-diagnostic")).toHaveTextContent(
+      "GA4 access was denied",
+    );
+    expect(within(panel).getByText("GA4 property ID")).toBeInTheDocument();
+    expect(
+      within(panel).getByText("Find this in Google Analytics: Admin > Property settings. Example: 123456789."),
+    ).toBeInTheDocument();
+  });
+
+  it("saves GA4 property id from workspace connect panel", async () => {
+    seedRichWorkspaceData();
+    mockUseOperatorContext.mockReturnValue(
+      baseContext({
+        sites: [buildSite({ ga4_property_id: null })],
+      }),
+    );
+    mockUpdateSite.mockResolvedValue(buildSite({ ga4_property_id: "123456789" }));
+    const user = userEvent.setup();
+
+    render(<SiteWorkspacePage />);
+
+    const panel = await screen.findByTestId("workspace-ga4-connect-panel");
+    const input = within(panel).getByTestId("workspace-ga4-property-input");
+    await user.type(input, "123456789");
+    await user.click(within(panel).getByTestId("workspace-ga4-save-button"));
+
+    await waitFor(() => {
+      expect(mockUpdateSite).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        { ga4_property_id: "123456789" },
+      );
+    });
+    expect(within(panel).getByTestId("workspace-ga4-save-message")).toHaveTextContent(
+      "GA4 property saved",
+    );
+  });
+
+  it("shows lightweight inline hint for obviously invalid GA4 property format", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+
+    render(<SiteWorkspacePage />);
+
+    const panel = await screen.findByTestId("workspace-ga4-connect-panel");
+    const input = within(panel).getByTestId("workspace-ga4-property-input");
+    await user.type(input, "example.com");
+
+    expect(within(panel).getByText("Use only the numeric GA4 property ID (for example, 123456789).")).toBeInTheDocument();
+    expect(within(panel).getByTestId("workspace-ga4-save-button")).toBeDisabled();
+  });
+
   it("renders search visibility trend in workspace snapshot when Search Console data is available", async () => {
     seedRichWorkspaceData();
     mockFetchSearchConsoleSiteSummary.mockResolvedValue(
@@ -4557,7 +4631,9 @@ describe("site workspace timeline controls", () => {
 
     const summaryStrip = await screen.findByTestId("workspace-summary-strip");
     const searchVisibilityCard = within(summaryStrip).getByTestId("workspace-summary-search-visibility");
-    expect(searchVisibilityCard).toHaveTextContent("140 clicks");
+    await waitFor(() => {
+      expect(searchVisibilityCard).toHaveTextContent("140 clicks");
+    });
     expect(searchVisibilityCard).toHaveTextContent("4,100 impressions (+13.9% vs prior period), avg position 9.2");
   });
 
@@ -4578,8 +4654,10 @@ describe("site workspace timeline controls", () => {
 
     const summaryStrip = await screen.findByTestId("workspace-summary-strip");
     const trafficCard = within(summaryStrip).getByTestId("workspace-summary-traffic");
-    expect(trafficCard).toHaveTextContent("Unavailable");
-    expect(trafficCard).toHaveTextContent("Google Analytics is not configured for this workspace.");
+    await waitFor(() => {
+      expect(trafficCard).toHaveTextContent("Unavailable");
+      expect(trafficCard).toHaveTextContent("Google Analytics is not configured for this workspace.");
+    });
   });
 
   it("renders connected and usable Google Business Profile state with integration action link", async () => {

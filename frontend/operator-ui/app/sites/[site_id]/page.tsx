@@ -790,6 +790,42 @@ function safeSectionErrorMessage(section: string, error: unknown): string {
   return `Unable to load ${section} right now. Please try again.`;
 }
 
+function normalizeGa4PropertyInput(value: string): string {
+  const compacted = (value || "").trim();
+  if (!compacted) {
+    return "";
+  }
+  return compacted.replace(/^properties\//i, "");
+}
+
+function looksLikeGa4PropertyId(value: string): boolean {
+  return /^\d{4,20}$/.test(value);
+}
+
+function ga4DiagnosticReasonMessage(
+  reason: SiteAnalyticsSummaryResponse["ga4_error_reason"] | null | undefined,
+): string | null {
+  if (!reason) {
+    return null;
+  }
+  if (reason === "not_configured") {
+    return "GA4 is not configured yet. Add the site property ID and confirm workspace credentials are available.";
+  }
+  if (reason === "access_denied") {
+    return "GA4 access was denied. Confirm the service account has Analytics Viewer access to this property.";
+  }
+  if (reason === "property_not_found") {
+    return "GA4 property was not found. Verify the property ID matches Google Analytics exactly.";
+  }
+  if (reason === "invalid_property_format") {
+    return "GA4 property ID format is invalid. Use only the numeric property ID (for example, 123456789).";
+  }
+  if (reason === "no_data") {
+    return "GA4 is connected but no recent data is available yet for this site.";
+  }
+  return "GA4 connection failed for an unknown reason. Verify the site property ID and workspace GA4 access.";
+}
+
 function normalizeTimelineStatus(value: string | null | undefined): string {
   const normalized = (value || "").trim();
   return normalized || "-";
@@ -4361,6 +4397,10 @@ export default function SiteWorkspacePage() {
   const [siteAnalyticsError, setSiteAnalyticsError] = useState<string | null>(null);
   const [ga4OnboardingStatus, setGa4OnboardingStatus] = useState<GA4SiteOnboardingStatusResponse | null>(null);
   const [ga4OnboardingError, setGa4OnboardingError] = useState<string | null>(null);
+  const [ga4PropertyInput, setGa4PropertyInput] = useState("");
+  const [ga4PropertySavePending, setGa4PropertySavePending] = useState(false);
+  const [ga4PropertySaveError, setGa4PropertySaveError] = useState<string | null>(null);
+  const [ga4PropertySaveMessage, setGa4PropertySaveMessage] = useState<string | null>(null);
   const [searchConsoleSiteSummary, setSearchConsoleSiteSummary] = useState<SearchConsoleSiteSummaryResponse | null>(null);
   const [searchConsoleSiteSummaryError, setSearchConsoleSiteSummaryError] = useState<string | null>(null);
   const [recommendationGenerationInFlight, setRecommendationGenerationInFlight] = useState(false);
@@ -5305,6 +5345,18 @@ export default function SiteWorkspacePage() {
 
   useEffect(() => {
     if (!selectedSite) {
+      setGa4PropertyInput("");
+      setGa4PropertySaveError(null);
+      setGa4PropertySaveMessage(null);
+      return;
+    }
+    setGa4PropertyInput(normalizeGa4PropertyInput(selectedSite.ga4_property_id || ""));
+    setGa4PropertySaveError(null);
+    setGa4PropertySaveMessage(null);
+  }, [selectedSite?.id, selectedSite?.ga4_property_id]);
+
+  useEffect(() => {
+    if (!selectedSite) {
       return;
     }
     if (siteLocationContextStrength !== "weak" || Boolean(sitePrimaryBusinessZip)) {
@@ -5368,6 +5420,47 @@ export default function SiteWorkspacePage() {
       setZipCaptureError("Unable to save ZIP right now. Try again or skip for now.");
     } finally {
       setZipCaptureSaving(false);
+    }
+  }
+
+  async function handleSaveGa4Property(): Promise<void> {
+    if (!selectedSite) {
+      return;
+    }
+    const normalizedProperty = normalizeGa4PropertyInput(ga4PropertyInput);
+    if (normalizedProperty && !looksLikeGa4PropertyId(normalizedProperty)) {
+      setGa4PropertySaveError("Use only the numeric GA4 property ID (for example, 123456789).");
+      return;
+    }
+
+    setGa4PropertySavePending(true);
+    setGa4PropertySaveError(null);
+    setGa4PropertySaveMessage(null);
+    try {
+      await updateSite(context.token, context.businessId, selectedSite.id, {
+        ga4_property_id: normalizedProperty || null,
+      });
+      await context.refreshSites();
+      setWorkspaceRefreshNonce((current) => current + 1);
+      if (normalizedProperty) {
+        setGa4PropertySaveMessage("GA4 property saved. Connection status will refresh shortly.");
+      } else {
+        setGa4PropertySaveMessage("GA4 property cleared for this site.");
+      }
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        if (error.status === 403) {
+          setGa4PropertySaveError("Only admin users can update GA4 property settings.");
+        } else if (error.status === 422) {
+          setGa4PropertySaveError("Invalid GA4 property value. Use only the numeric GA4 property ID.");
+        } else {
+          setGa4PropertySaveError("Unable to save GA4 property right now. Try again.");
+        }
+      } else {
+        setGa4PropertySaveError("Unable to save GA4 property right now. Try again.");
+      }
+    } finally {
+      setGa4PropertySavePending(false);
     }
   }
 
@@ -7163,6 +7256,45 @@ export default function SiteWorkspacePage() {
         : "warning"
       : "neutral"
     : "neutral";
+  const ga4ConnectivityStatus = siteAnalyticsSummary?.ga4_status
+    || ((selectedSite?.ga4_property_id || "").trim() ? "configured" : "not_configured");
+  const ga4ConnectivityReason = siteAnalyticsSummary?.ga4_error_reason
+    || (ga4ConnectivityStatus === "not_configured" ? "not_configured" : null);
+  const ga4ConnectivityLabel = (() => {
+    if (ga4ConnectivityStatus === "connected") {
+      return "Connected";
+    }
+    if (ga4ConnectivityStatus === "configured") {
+      return "Configured";
+    }
+    if (ga4ConnectivityStatus === "error") {
+      return "Error";
+    }
+    return "Not configured";
+  })();
+  const ga4ConnectivityBadgeClass = (() => {
+    if (ga4ConnectivityStatus === "connected") {
+      return "badge badge-success";
+    }
+    if (ga4ConnectivityStatus === "configured") {
+      return "badge badge-muted";
+    }
+    if (ga4ConnectivityStatus === "error") {
+      return "badge badge-warn";
+    }
+    return "badge badge-muted";
+  })();
+  const ga4ConnectivityDetail = ga4DiagnosticReasonMessage(ga4ConnectivityReason)
+    || (ga4ConnectivityStatus === "connected"
+      ? "GA4 measurements are being read successfully for this site."
+      : "GA4 connection diagnostics are unavailable.");
+  const normalizedGa4PropertyInput = normalizeGa4PropertyInput(ga4PropertyInput);
+  const normalizedSavedGa4PropertyInput = normalizeGa4PropertyInput(selectedSite?.ga4_property_id || "");
+  const ga4PropertyChanged = normalizedGa4PropertyInput !== normalizedSavedGa4PropertyInput;
+  const ga4PropertyInputFormatWarning = normalizedGa4PropertyInput && !looksLikeGa4PropertyId(normalizedGa4PropertyInput)
+    ? "Use only the numeric GA4 property ID (for example, 123456789)."
+    : null;
+  const ga4PropertySaveDisabled = ga4PropertySavePending || Boolean(ga4PropertyInputFormatWarning) || !ga4PropertyChanged;
   const ga4OnboardingStatusCode = ga4OnboardingStatus?.ga4_onboarding_status || "unavailable";
   const ga4OnboardingValue = (() => {
     if (ga4OnboardingStatusCode === "stream_configured") {
@@ -7593,6 +7725,60 @@ export default function SiteWorkspacePage() {
             variant="elevated"
             data-testid="workspace-summary-gbp"
           />
+        </div>
+        <div className="panel panel-compact stack-tight" data-testid="workspace-ga4-connect-panel">
+          <div className="link-row">
+            <strong>Connect GA4</strong>
+            <span className={ga4ConnectivityBadgeClass} data-testid="workspace-ga4-connection-status">
+              {ga4ConnectivityLabel}
+            </span>
+          </div>
+          <span className="hint">
+            Configure this site&rsquo;s GA4 property to power traffic measurement in this workspace.
+          </span>
+          <label className="stack-tight">
+            <span className="hint muted">GA4 property ID</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={ga4PropertyInput}
+              onChange={(event) => {
+                setGa4PropertyInput(normalizeGa4PropertyInput(event.target.value));
+                setGa4PropertySaveError(null);
+                setGa4PropertySaveMessage(null);
+              }}
+              placeholder="123456789"
+              aria-label="GA4 property ID"
+              data-testid="workspace-ga4-property-input"
+            />
+          </label>
+          <span className="hint muted">
+            Find this in Google Analytics: Admin &gt; Property settings. Example: 123456789.
+          </span>
+          {ga4PropertyInputFormatWarning ? <span className="hint warning">{ga4PropertyInputFormatWarning}</span> : null}
+          <span
+            className={ga4ConnectivityStatus === "error" ? "hint warning" : "hint muted"}
+            data-testid="workspace-ga4-diagnostic"
+          >
+            {ga4ConnectivityDetail}
+          </span>
+          {ga4PropertySaveError ? (
+            <span className="hint warning" data-testid="workspace-ga4-save-error">{ga4PropertySaveError}</span>
+          ) : null}
+          {ga4PropertySaveMessage ? (
+            <span className="hint muted" data-testid="workspace-ga4-save-message">{ga4PropertySaveMessage}</span>
+          ) : null}
+          <div className="form-actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => void handleSaveGa4Property()}
+              disabled={ga4PropertySaveDisabled}
+              data-testid="workspace-ga4-save-button"
+            >
+              {ga4PropertySavePending ? "Saving..." : "Save GA4 property"}
+            </button>
+          </div>
         </div>
       </SectionCard>
 

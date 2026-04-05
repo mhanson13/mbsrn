@@ -4874,6 +4874,8 @@ def get_site_analytics_summary(
         business_id=scoped_business_id,
         site_id=site_id,
         site_domain=(site.normalized_domain or site.base_url or "").strip() or None,
+        ga4_property_id=site.ga4_property_id,
+        enforce_site_ga4_property=True,
     )
 
 

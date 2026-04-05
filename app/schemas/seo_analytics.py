@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,6 +49,15 @@ class SEOAnalyticsSiteSummaryRead(BaseModel):
     site_id: str
     available: bool
     status: str
+    ga4_status: Literal["not_configured", "configured", "connected", "error"] = "not_configured"
+    ga4_error_reason: Literal[
+        "not_configured",
+        "access_denied",
+        "property_not_found",
+        "invalid_property_format",
+        "no_data",
+        "unknown_error",
+    ] | None = None
     message: str | None = None
     data_source: str | None = None
     site_metrics_summary: SEOAnalyticsSiteMetricsSummaryRead | None = None

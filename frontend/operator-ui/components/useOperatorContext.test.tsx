@@ -131,9 +131,11 @@ describe("useOperatorContext", () => {
     await waitFor(() => {
       expect(screen.getByTestId("selected-site-id")).toHaveTextContent("site-1");
     });
-    expect(screen.getByTestId("scope-warning")).toHaveTextContent(
-      "Saved workspace site is no longer available in your authorized scope.",
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("scope-warning")).toHaveTextContent(
+        "Saved workspace site is no longer available in your authorized scope.",
+      );
+    });
   });
 
   it("filters out cross-business sites and rejects invalid manual selection attempts", async () => {

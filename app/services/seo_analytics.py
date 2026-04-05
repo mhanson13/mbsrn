@@ -98,7 +98,43 @@ class SEOAnalyticsService:
         business_id: str,
         site_id: str,
         site_domain: str | None,
+        ga4_property_id: str | None = None,
+        enforce_site_ga4_property: bool = False,
     ) -> SEOAnalyticsSiteSummaryRead:
+        normalized_site_ga4_property_id = _clean_identifier(ga4_property_id)
+        site_ga4_property_configured = bool(normalized_site_ga4_property_id)
+
+        if enforce_site_ga4_property and not site_ga4_property_configured:
+            return SEOAnalyticsSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="not_configured",
+                ga4_status="not_configured",
+                ga4_error_reason="not_configured",
+                message="Google Analytics property is not configured for this site.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+            )
+
+        if (
+            site_ga4_property_configured
+            and not _is_valid_ga4_property_id(normalized_site_ga4_property_id)
+        ):
+            return SEOAnalyticsSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="unavailable",
+                ga4_status="error",
+                ga4_error_reason="invalid_property_format",
+                message="Google Analytics property ID format is invalid for this site.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+            )
+
         normalized_domain = _normalize_site_domain(site_domain)
         if not normalized_domain:
             return SEOAnalyticsSiteSummaryRead(
@@ -106,6 +142,8 @@ class SEOAnalyticsService:
                 site_id=site_id,
                 available=False,
                 status="unavailable",
+                ga4_status="configured" if site_ga4_property_configured else "not_configured",
+                ga4_error_reason=None if site_ga4_property_configured else "not_configured",
                 message="Analytics unavailable because site domain is not configured.",
                 data_source=None,
                 site_metrics_summary=None,
@@ -122,6 +160,8 @@ class SEOAnalyticsService:
                 site_id=site_id,
                 available=False,
                 status="not_configured",
+                ga4_status="configured" if site_ga4_property_configured else "not_configured",
+                ga4_error_reason="not_configured",
                 message="Google Analytics is not configured for this workspace.",
                 data_source=None,
                 site_metrics_summary=None,
@@ -134,22 +174,32 @@ class SEOAnalyticsService:
                 period_days=period_days,
                 top_pages_limit=top_pages_limit,
             )
-        except GA4AnalyticsProviderConfigurationError:
+        except GA4AnalyticsProviderConfigurationError as exc:
+            diagnostic_reason = _classify_ga4_configuration_error_reason(exc)
+            ga4_status = (
+                "configured"
+                if diagnostic_reason == "not_configured" and site_ga4_property_configured
+                else "error"
+            )
             return SEOAnalyticsSiteSummaryRead(
                 business_id=business_id,
                 site_id=site_id,
                 available=False,
                 status="not_configured",
+                ga4_status=ga4_status,
+                ga4_error_reason=diagnostic_reason,
                 message="Google Analytics is not configured for this workspace.",
                 data_source=None,
                 site_metrics_summary=None,
                 top_pages_summary=[],
             )
         except GA4AnalyticsProviderError as exc:
+            diagnostic_reason = _classify_ga4_runtime_error_reason(exc)
             logger.warning(
-                "seo_analytics_unavailable business_id=%s site_id=%s reason=%s",
+                "seo_analytics_unavailable business_id=%s site_id=%s ga4_reason=%s reason=%s",
                 business_id,
                 site_id,
+                diagnostic_reason,
                 str(exc),
             )
             return SEOAnalyticsSiteSummaryRead(
@@ -157,6 +207,8 @@ class SEOAnalyticsService:
                 site_id=site_id,
                 available=False,
                 status="unavailable",
+                ga4_status="error",
+                ga4_error_reason=diagnostic_reason,
                 message="Google Analytics data is temporarily unavailable.",
                 data_source=None,
                 site_metrics_summary=None,
@@ -196,6 +248,8 @@ class SEOAnalyticsService:
             site_id=site_id,
             available=True,
             status="ok",
+            ga4_status="connected" if _ga4_site_metrics_have_data(metrics_summary) else "configured",
+            ga4_error_reason=None if _ga4_site_metrics_have_data(metrics_summary) else "no_data",
             message=None,
             data_source=result.data_source,
             site_metrics_summary=metrics_summary,
@@ -1012,6 +1066,58 @@ def _search_console_message_for_diagnostic(diagnostic_status: str) -> str:
     if diagnostic_status == "property_not_accessible":
         return "Configured Search Console property is not accessible."
     return "Search Console data is temporarily unavailable."
+
+
+def _is_valid_ga4_property_id(value: str | None) -> bool:
+    compacted = str(value or "").strip()
+    if not compacted:
+        return False
+    return compacted.isdigit()
+
+
+def _classify_ga4_configuration_error_reason(error: Exception) -> str:
+    message = str(error or "").strip().lower()
+    if not message:
+        return "unknown_error"
+    if (
+        "not configured" in message
+        or "property id is required" in message
+        or "credentials are required" in message
+    ):
+        return "not_configured"
+    if "invalid" in message and "property" in message:
+        return "invalid_property_format"
+    if "access denied" in message or "permission denied" in message:
+        return "access_denied"
+    if "404" in message or "not found" in message:
+        return "property_not_found"
+    if "credentials" in message or "authorize" in message:
+        return "not_configured"
+    return "unknown_error"
+
+
+def _classify_ga4_runtime_error_reason(error: Exception) -> str:
+    message = str(error or "").strip().lower()
+    if not message:
+        return "unknown_error"
+    if "permission_denied" in message or "permission denied" in message or "access denied" in message:
+        return "access_denied"
+    if "invalid argument" in message or "invalid property" in message or "malformed" in message:
+        return "invalid_property_format"
+    if "404" in message or "not found" in message or "unknown property" in message:
+        return "property_not_found"
+    if "not configured" in message:
+        return "not_configured"
+    return "unknown_error"
+
+
+def _ga4_site_metrics_have_data(metrics: SEOAnalyticsSiteMetricsSummaryRead) -> bool:
+    return (
+        metrics.users.current > 0
+        or metrics.sessions.current > 0
+        or metrics.pageviews.current > 0
+        or metrics.organic_search_sessions.current > 0
+    )
 
 
 def _clean_identifier(value: str | None) -> str | None:

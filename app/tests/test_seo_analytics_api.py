@@ -172,6 +172,39 @@ class _GA4AccountDiscoveryProvider:
         raise GA4AnalyticsProviderError("site summary unavailable in discovery stub")
 
 
+class _GA4ErrorProvider:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def is_configured(self) -> bool:
+        return True
+
+    def fetch_account_summaries(self, *, page_size: int = 20) -> tuple[GA4AccountSummary, ...]:
+        del page_size
+        return ()
+
+    def fetch_site_metrics(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_pages_limit: int,
+    ) -> GA4SiteMetricsResult:
+        del site_domain, period_days, top_pages_limit
+        raise GA4AnalyticsProviderError(self.message)
+
+    def fetch_window_metrics(
+        self,
+        *,
+        site_domain: str,
+        start_date: str,
+        end_date: str,
+        page_path: str | None = None,
+    ) -> GA4SitePeriodMetrics:
+        del site_domain, start_date, end_date, page_path
+        raise GA4AnalyticsProviderError(self.message)
+
+
 class _SearchConsoleWindowProvider:
     def is_configured(self) -> bool:
         return True
@@ -280,7 +313,12 @@ def test_site_analytics_summary_returns_metrics_with_mock_provider(db_session, s
             settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
         ),
     )
-    site_id = _create_site(client, seeded_business.id, domain="analytics-one.example")
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-one.example",
+        ga4_property_id="2000000002",
+    )
 
     response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
     assert response.status_code == 200
@@ -322,7 +360,12 @@ def test_site_analytics_summary_degrades_cleanly_when_not_configured(db_session,
             settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=5),
         ),
     )
-    site_id = _create_site(client, seeded_business.id, domain="analytics-two.example")
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-two.example",
+        ga4_property_id="2000000002",
+    )
 
     response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
     assert response.status_code == 200
@@ -332,6 +375,80 @@ def test_site_analytics_summary_degrades_cleanly_when_not_configured(db_session,
     assert payload["message"] == "Google Analytics is not configured for this workspace."
     assert payload["site_metrics_summary"] is None
     assert payload["top_pages_summary"] == []
+
+
+def test_site_analytics_summary_reports_site_level_not_configured_when_property_missing(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=MockGA4AnalyticsProvider(),
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_id = _create_site(client, seeded_business.id, domain="analytics-missing-property.example")
+
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "not_configured"
+    assert payload["ga4_status"] == "not_configured"
+    assert payload["ga4_error_reason"] == "not_configured"
+    assert payload["message"] == "Google Analytics property is not configured for this site."
+
+
+def test_site_analytics_summary_reports_invalid_property_format_reason(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=MockGA4AnalyticsProvider(),
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-invalid-property.example",
+        ga4_property_id="property/not-valid",
+    )
+
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "unavailable"
+    assert payload["ga4_status"] == "error"
+    assert payload["ga4_error_reason"] == "invalid_property_format"
+
+
+def test_site_analytics_summary_reports_access_denied_reason(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=_GA4ErrorProvider("GA4 request failed: PERMISSION_DENIED"),
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-access-denied.example",
+        ga4_property_id="2000000002",
+    )
+
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "unavailable"
+    assert payload["ga4_status"] == "error"
+    assert payload["ga4_error_reason"] == "access_denied"
 
 
 def test_site_analytics_summary_enforces_tenant_scope(db_session, seeded_business) -> None:
