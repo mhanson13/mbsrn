@@ -1,0 +1,807 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+import logging
+from typing import Literal
+from urllib.parse import urlparse
+
+from app.integrations.ga4_analytics_provider import (
+    GA4AnalyticsProvider,
+    GA4AnalyticsProviderConfigurationError,
+    GA4AnalyticsProviderError,
+    GA4SitePeriodMetrics,
+)
+from app.integrations.search_console_analytics_provider import (
+    DisabledSearchConsoleAnalyticsProvider,
+    SearchConsoleAnalyticsProvider,
+    SearchConsoleAnalyticsProviderConfigurationError,
+    SearchConsoleAnalyticsProviderError,
+    SearchConsolePeriodMetrics,
+)
+from app.schemas.seo_analytics import (
+    SEOAnalyticsMetricWindowRead,
+    SEOAnalyticsSiteMetricsSummaryRead,
+    SEOAnalyticsSiteSummaryRead,
+    SEOAnalyticsTopPageRead,
+    SEOSearchConsoleMetricWindowRead,
+    SEOSearchConsoleSiteMetricsSummaryRead,
+    SEOSearchConsoleSiteSummaryRead,
+    SEOSearchConsoleTopPageRead,
+    SEOSearchConsoleTopQueryRead,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SEOAnalyticsServiceSettings:
+    period_days: int = 7
+    top_pages_limit: int = 5
+    search_console_period_days: int = 7
+    search_console_top_pages_limit: int = 5
+    search_console_top_queries_limit: int = 3
+
+
+@dataclass(frozen=True)
+class SEOAnalyticsWindowSummary:
+    start_date: date
+    end_date: date
+    users: int
+    sessions: int
+    pageviews: int
+
+
+@dataclass(frozen=True)
+class SEOAnalyticsBeforeAfterComparison:
+    before_window: SEOAnalyticsWindowSummary
+    after_window: SEOAnalyticsWindowSummary
+    comparison_scope: str
+
+
+@dataclass(frozen=True)
+class SEOSearchConsoleWindowSummary:
+    start_date: date
+    end_date: date
+    clicks: int
+    impressions: int
+    ctr: float
+    average_position: float
+
+
+@dataclass(frozen=True)
+class SEOSearchConsoleBeforeAfterComparison:
+    before_window: SEOSearchConsoleWindowSummary
+    after_window: SEOSearchConsoleWindowSummary
+    comparison_scope: Literal["page", "site"]
+    top_queries: tuple[SEOSearchConsoleTopQueryRead, ...]
+
+
+class SEOAnalyticsService:
+    def __init__(
+        self,
+        *,
+        provider: GA4AnalyticsProvider,
+        search_console_provider: SearchConsoleAnalyticsProvider | None = None,
+        settings: SEOAnalyticsServiceSettings | None = None,
+    ) -> None:
+        self.provider = provider
+        self.search_console_provider = search_console_provider or DisabledSearchConsoleAnalyticsProvider()
+        self.settings = settings or SEOAnalyticsServiceSettings()
+
+    def get_site_summary(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        site_domain: str | None,
+    ) -> SEOAnalyticsSiteSummaryRead:
+        normalized_domain = _normalize_site_domain(site_domain)
+        if not normalized_domain:
+            return SEOAnalyticsSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="unavailable",
+                message="Analytics unavailable because site domain is not configured.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+            )
+
+        period_days = max(1, min(int(self.settings.period_days), 30))
+        top_pages_limit = max(1, min(int(self.settings.top_pages_limit), 10))
+        windows = _build_period_windows(period_days=period_days)
+
+        if not self.provider.is_configured():
+            return SEOAnalyticsSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="not_configured",
+                message="Google Analytics is not configured for this workspace.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+            )
+
+        try:
+            result = self.provider.fetch_site_metrics(
+                site_domain=normalized_domain,
+                period_days=period_days,
+                top_pages_limit=top_pages_limit,
+            )
+        except GA4AnalyticsProviderConfigurationError:
+            return SEOAnalyticsSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="not_configured",
+                message="Google Analytics is not configured for this workspace.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+            )
+        except GA4AnalyticsProviderError as exc:
+            logger.warning(
+                "seo_analytics_unavailable business_id=%s site_id=%s reason=%s",
+                business_id,
+                site_id,
+                str(exc),
+            )
+            return SEOAnalyticsSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="unavailable",
+                message="Google Analytics data is temporarily unavailable.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+            )
+
+        metrics_summary = SEOAnalyticsSiteMetricsSummaryRead(
+            current_period_start=windows.current_start,
+            current_period_end=windows.current_end,
+            previous_period_start=windows.previous_start,
+            previous_period_end=windows.previous_end,
+            users=_to_metric_window(
+                current=result.current_period.users,
+                previous=result.previous_period.users,
+            ),
+            sessions=_to_metric_window(
+                current=result.current_period.sessions,
+                previous=result.previous_period.sessions,
+            ),
+            pageviews=_to_metric_window(
+                current=result.current_period.pageviews,
+                previous=result.previous_period.pageviews,
+            ),
+            organic_search_sessions=_to_metric_window(
+                current=result.current_period.organic_search_sessions,
+                previous=result.previous_period.organic_search_sessions,
+            ),
+        )
+
+        top_pages_summary = [
+            _to_top_page_summary(item)
+            for item in result.top_pages[:top_pages_limit]
+        ]
+
+        return SEOAnalyticsSiteSummaryRead(
+            business_id=business_id,
+            site_id=site_id,
+            available=True,
+            status="ok",
+            message=None,
+            data_source=result.data_source,
+            site_metrics_summary=metrics_summary,
+            top_pages_summary=top_pages_summary,
+        )
+
+    def get_search_console_site_summary(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        site_domain: str | None,
+    ) -> SEOSearchConsoleSiteSummaryRead:
+        normalized_domain = _normalize_site_domain(site_domain)
+        if not normalized_domain:
+            return SEOSearchConsoleSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="unavailable",
+                message="Search visibility unavailable because site domain is not configured.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+                top_queries_summary=[],
+            )
+
+        period_days = max(1, min(int(self.settings.search_console_period_days), 30))
+        top_pages_limit = max(1, min(int(self.settings.search_console_top_pages_limit), 10))
+        top_queries_limit = max(1, min(int(self.settings.search_console_top_queries_limit), 10))
+        windows = _build_period_windows(period_days=period_days)
+
+        if not self.search_console_provider.is_configured():
+            return SEOSearchConsoleSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="not_configured",
+                message="Search Console is not configured for this workspace.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+                top_queries_summary=[],
+            )
+
+        site_property = _build_default_search_console_site_property(normalized_domain)
+        try:
+            result = self.search_console_provider.fetch_site_metrics(
+                site_property=site_property,
+                period_days=period_days,
+                top_pages_limit=top_pages_limit,
+                top_queries_limit=top_queries_limit,
+            )
+        except SearchConsoleAnalyticsProviderConfigurationError:
+            return SEOSearchConsoleSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="not_configured",
+                message="Search Console is not configured for this workspace.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+                top_queries_summary=[],
+            )
+        except SearchConsoleAnalyticsProviderError as exc:
+            logger.warning(
+                "seo_search_console_unavailable business_id=%s site_id=%s reason=%s",
+                business_id,
+                site_id,
+                str(exc),
+            )
+            return SEOSearchConsoleSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="unavailable",
+                message="Search Console data is temporarily unavailable.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+                top_queries_summary=[],
+            )
+
+        clicks_window = _to_metric_window(
+            current=result.current_period.clicks,
+            previous=result.previous_period.clicks,
+        )
+        impressions_window = _to_metric_window(
+            current=result.current_period.impressions,
+            previous=result.previous_period.impressions,
+        )
+        metrics_summary = SEOSearchConsoleSiteMetricsSummaryRead(
+            current_period_start=windows.current_start,
+            current_period_end=windows.current_end,
+            previous_period_start=windows.previous_start,
+            previous_period_end=windows.previous_end,
+            clicks=SEOSearchConsoleMetricWindowRead.model_validate(clicks_window.model_dump()),
+            impressions=SEOSearchConsoleMetricWindowRead.model_validate(impressions_window.model_dump()),
+            ctr_current=round(result.current_period.ctr, 4),
+            ctr_previous=round(result.previous_period.ctr, 4),
+            ctr_delta_absolute=round(result.current_period.ctr - result.previous_period.ctr, 4),
+            average_position_current=round(result.current_period.average_position, 4),
+            average_position_previous=round(result.previous_period.average_position, 4),
+            average_position_delta_absolute=round(
+                result.current_period.average_position - result.previous_period.average_position,
+                4,
+            ),
+        )
+        top_pages_summary = [
+            _to_search_console_top_page_summary(item)
+            for item in result.top_pages[:top_pages_limit]
+        ]
+        top_queries_summary = [
+            SEOSearchConsoleTopQueryRead(
+                query=item.query,
+                clicks=max(0, int(item.clicks)),
+                impressions=max(0, int(item.impressions)),
+                ctr=round(item.ctr, 4),
+                average_position=round(item.average_position, 4),
+            )
+            for item in result.top_queries[:top_queries_limit]
+        ]
+        return SEOSearchConsoleSiteSummaryRead(
+            business_id=business_id,
+            site_id=site_id,
+            available=True,
+            status="ok",
+            message=None,
+            data_source=result.data_source,
+            site_metrics_summary=metrics_summary,
+            top_pages_summary=top_pages_summary,
+            top_queries_summary=top_queries_summary,
+        )
+
+    def build_recommendation_before_after_comparison(
+        self,
+        *,
+        site_domain: str | None,
+        recommendation_created_at: datetime,
+        page_path: str | None,
+    ) -> SEOAnalyticsBeforeAfterComparison | None:
+        normalized_domain = _normalize_site_domain(site_domain)
+        if not normalized_domain or not self.provider.is_configured():
+            return None
+
+        period_days = max(1, min(int(self.settings.period_days), 30))
+        anchor_date = recommendation_created_at.date()
+        today = date.today()
+
+        before_end = anchor_date - timedelta(days=1)
+        before_start = before_end - timedelta(days=period_days - 1)
+        if before_end < before_start:
+            return None
+
+        desired_after_end = anchor_date + timedelta(days=period_days - 1)
+        if desired_after_end <= today:
+            after_start = anchor_date
+            after_end = desired_after_end
+        else:
+            after_end = today
+            after_start = anchor_date
+
+        if after_end < after_start:
+            return None
+
+        normalized_page_path = _normalize_page_path(page_path) if page_path else None
+        page_before = self._fetch_window_summary(
+            site_domain=normalized_domain,
+            start_date=before_start,
+            end_date=before_end,
+            page_path=normalized_page_path,
+        ) if normalized_page_path else None
+        page_after = self._fetch_window_summary(
+            site_domain=normalized_domain,
+            start_date=after_start,
+            end_date=after_end,
+            page_path=normalized_page_path,
+        ) if normalized_page_path else None
+        if page_before is not None and page_after is not None:
+            return SEOAnalyticsBeforeAfterComparison(
+                before_window=page_before,
+                after_window=page_after,
+                comparison_scope="page",
+            )
+
+        site_before = self._fetch_window_summary(
+            site_domain=normalized_domain,
+            start_date=before_start,
+            end_date=before_end,
+            page_path=None,
+        )
+        site_after = self._fetch_window_summary(
+            site_domain=normalized_domain,
+            start_date=after_start,
+            end_date=after_end,
+            page_path=None,
+        )
+        if site_before is not None and site_after is not None:
+            return SEOAnalyticsBeforeAfterComparison(
+                before_window=site_before,
+                after_window=site_after,
+                comparison_scope="site",
+            )
+        return None
+
+    def build_recommendation_search_console_before_after_comparison(
+        self,
+        *,
+        site_domain: str | None,
+        recommendation_created_at: datetime,
+        page_path: str | None,
+    ) -> SEOSearchConsoleBeforeAfterComparison | None:
+        normalized_domain = _normalize_site_domain(site_domain)
+        if not normalized_domain or not self.search_console_provider.is_configured():
+            return None
+        period_days = max(1, min(int(self.settings.search_console_period_days), 30))
+        anchor_date = recommendation_created_at.date()
+        today = date.today()
+
+        before_end = anchor_date - timedelta(days=1)
+        before_start = before_end - timedelta(days=period_days - 1)
+        if before_end < before_start:
+            return None
+
+        desired_after_end = anchor_date + timedelta(days=period_days - 1)
+        if desired_after_end <= today:
+            after_start = anchor_date
+            after_end = desired_after_end
+        else:
+            after_end = today
+            after_start = anchor_date
+
+        if after_end < after_start:
+            return None
+
+        site_property = _build_default_search_console_site_property(normalized_domain)
+        normalized_page_path = _normalize_page_path(page_path) if page_path else None
+        page_before = self._fetch_search_console_window_summary(
+            site_property=site_property,
+            start_date=before_start,
+            end_date=before_end,
+            page_path=normalized_page_path,
+        ) if normalized_page_path else None
+        page_after = self._fetch_search_console_window_summary(
+            site_property=site_property,
+            start_date=after_start,
+            end_date=after_end,
+            page_path=normalized_page_path,
+        ) if normalized_page_path else None
+        if page_before is not None and page_after is not None:
+            return SEOSearchConsoleBeforeAfterComparison(
+                before_window=page_before,
+                after_window=page_after,
+                comparison_scope="page",
+                top_queries=self._fetch_search_console_top_queries(
+                    site_property=site_property,
+                    start_date=after_start,
+                    end_date=after_end,
+                    page_path=normalized_page_path,
+                ),
+            )
+
+        site_before = self._fetch_search_console_window_summary(
+            site_property=site_property,
+            start_date=before_start,
+            end_date=before_end,
+            page_path=None,
+        )
+        site_after = self._fetch_search_console_window_summary(
+            site_property=site_property,
+            start_date=after_start,
+            end_date=after_end,
+            page_path=None,
+        )
+        if site_before is not None and site_after is not None:
+            return SEOSearchConsoleBeforeAfterComparison(
+                before_window=site_before,
+                after_window=site_after,
+                comparison_scope="site",
+                top_queries=self._fetch_search_console_top_queries(
+                    site_property=site_property,
+                    start_date=after_start,
+                    end_date=after_end,
+                    page_path=None,
+                ),
+            )
+        return None
+
+    def match_recommendation_to_top_page(
+        self,
+        *,
+        top_pages_summary: list[SEOAnalyticsTopPageRead],
+        recommendation_target_page_hints: list[str] | None,
+        recommendation_target_context: str | None,
+    ) -> SEOAnalyticsTopPageRead | None:
+        if not top_pages_summary:
+            return None
+
+        normalized_top_pages: dict[str, SEOAnalyticsTopPageRead] = {}
+        for page_summary in top_pages_summary:
+            normalized_path = _normalize_page_path(page_summary.page_path)
+            if normalized_path is None:
+                continue
+            normalized_top_pages[normalized_path] = page_summary
+
+        if not normalized_top_pages:
+            return None
+
+        for hint in recommendation_target_page_hints or []:
+            normalized_hint = _normalize_page_hint(hint)
+            if normalized_hint is None:
+                continue
+            matched = normalized_top_pages.get(normalized_hint)
+            if matched is not None:
+                return matched
+
+        normalized_context = str(recommendation_target_context or "").strip().lower()
+        if normalized_context == "homepage":
+            return normalized_top_pages.get("/")
+        if normalized_context == "sitewide":
+            return normalized_top_pages.get("/") or top_pages_summary[0]
+
+        return None
+
+    def match_recommendation_to_search_console_page(
+        self,
+        *,
+        top_pages_summary: list[SEOSearchConsoleTopPageRead],
+        recommendation_target_page_hints: list[str] | None,
+        recommendation_target_context: str | None,
+    ) -> SEOSearchConsoleTopPageRead | None:
+        if not top_pages_summary:
+            return None
+        normalized_top_pages: dict[str, SEOSearchConsoleTopPageRead] = {}
+        for page_summary in top_pages_summary:
+            normalized_path = _normalize_page_path(page_summary.page_path)
+            if normalized_path is None:
+                continue
+            normalized_top_pages[normalized_path] = page_summary
+        if not normalized_top_pages:
+            return None
+        for hint in recommendation_target_page_hints or []:
+            normalized_hint = _normalize_page_hint(hint)
+            if normalized_hint is None:
+                continue
+            matched = normalized_top_pages.get(normalized_hint)
+            if matched is not None:
+                return matched
+        normalized_context = str(recommendation_target_context or "").strip().lower()
+        if normalized_context == "homepage":
+            return normalized_top_pages.get("/")
+        if normalized_context == "sitewide":
+            return normalized_top_pages.get("/") or top_pages_summary[0]
+        return None
+
+    def _fetch_window_summary(
+        self,
+        *,
+        site_domain: str,
+        start_date: date,
+        end_date: date,
+        page_path: str | None,
+    ) -> SEOAnalyticsWindowSummary | None:
+        if start_date > end_date:
+            return None
+        fetch_window_metrics = getattr(self.provider, "fetch_window_metrics", None)
+        if not callable(fetch_window_metrics):
+            return None
+        try:
+            metrics = fetch_window_metrics(
+                site_domain=site_domain,
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
+                page_path=page_path,
+            )
+        except (GA4AnalyticsProviderConfigurationError, GA4AnalyticsProviderError):
+            return None
+        return _to_window_summary(start_date=start_date, end_date=end_date, metrics=metrics)
+
+    def _fetch_search_console_window_summary(
+        self,
+        *,
+        site_property: str,
+        start_date: date,
+        end_date: date,
+        page_path: str | None,
+    ) -> SEOSearchConsoleWindowSummary | None:
+        if start_date > end_date:
+            return None
+        try:
+            metrics = self.search_console_provider.fetch_window_metrics(
+                site_property=site_property,
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
+                page_path=page_path,
+            )
+        except (
+            SearchConsoleAnalyticsProviderConfigurationError,
+            SearchConsoleAnalyticsProviderError,
+        ):
+            return None
+        return _to_search_console_window_summary(
+            start_date=start_date,
+            end_date=end_date,
+            metrics=metrics,
+        )
+
+    def _fetch_search_console_top_queries(
+        self,
+        *,
+        site_property: str,
+        start_date: date,
+        end_date: date,
+        page_path: str | None,
+    ) -> tuple[SEOSearchConsoleTopQueryRead, ...]:
+        limit = max(1, min(int(self.settings.search_console_top_queries_limit), 10))
+        try:
+            queries = self.search_console_provider.fetch_top_queries(
+                site_property=site_property,
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
+                query_limit=limit,
+                page_path=page_path,
+            )
+        except (
+            SearchConsoleAnalyticsProviderConfigurationError,
+            SearchConsoleAnalyticsProviderError,
+        ):
+            return ()
+        normalized: list[SEOSearchConsoleTopQueryRead] = []
+        for query in queries[:limit]:
+            normalized.append(
+                SEOSearchConsoleTopQueryRead(
+                    query=str(query.query or "").strip(),
+                    clicks=max(0, int(query.clicks)),
+                    impressions=max(0, int(query.impressions)),
+                    ctr=round(float(query.ctr), 4),
+                    average_position=round(float(query.average_position), 4),
+                )
+            )
+        return tuple(normalized)
+
+
+@dataclass(frozen=True)
+class _PeriodWindows:
+    current_start: date
+    current_end: date
+    previous_start: date
+    previous_end: date
+
+
+def _build_period_windows(*, period_days: int) -> _PeriodWindows:
+    today = date.today()
+    current_end = today
+    current_start = current_end - timedelta(days=period_days - 1)
+    previous_end = current_start - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=period_days - 1)
+    return _PeriodWindows(
+        current_start=current_start,
+        current_end=current_end,
+        previous_start=previous_start,
+        previous_end=previous_end,
+    )
+
+
+def _to_metric_window(*, current: int, previous: int) -> SEOAnalyticsMetricWindowRead:
+    current_value = max(0, int(current))
+    previous_value = max(0, int(previous))
+    delta_absolute = current_value - previous_value
+    if previous_value <= 0:
+        delta_percent = None if current_value > 0 else 0.0
+    else:
+        delta_percent = round((delta_absolute / previous_value) * 100, 2)
+    return SEOAnalyticsMetricWindowRead(
+        current=current_value,
+        previous=previous_value,
+        delta_absolute=delta_absolute,
+        delta_percent=delta_percent,
+    )
+
+
+def _normalize_site_domain(value: str | None) -> str | None:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return None
+    if "://" not in raw:
+        return raw.rstrip("/")
+    parsed = urlparse(raw)
+    hostname = (parsed.hostname or "").strip().lower()
+    return hostname or None
+
+
+def _to_top_page_summary(item) -> SEOAnalyticsTopPageRead:
+    current_pageviews = max(0, int(item.current_pageviews))
+    previous_pageviews = max(0, int(item.previous_pageviews))
+    current_sessions = max(0, int(item.current_sessions))
+    previous_sessions = max(0, int(item.previous_sessions))
+    pageviews_window = _to_metric_window(current=current_pageviews, previous=previous_pageviews)
+    sessions_window = _to_metric_window(current=current_sessions, previous=previous_sessions)
+    return SEOAnalyticsTopPageRead(
+        page_path=item.page_path,
+        pageviews=current_pageviews,
+        sessions=current_sessions,
+        pageviews_previous=previous_pageviews,
+        sessions_previous=previous_sessions,
+        pageviews_delta_absolute=pageviews_window.delta_absolute,
+        sessions_delta_absolute=sessions_window.delta_absolute,
+        pageviews_delta_percent=pageviews_window.delta_percent,
+        sessions_delta_percent=sessions_window.delta_percent,
+    )
+
+
+def _to_search_console_top_page_summary(item) -> SEOSearchConsoleTopPageRead:
+    clicks_window = _to_metric_window(
+        current=max(0, int(item.current_clicks)),
+        previous=max(0, int(item.previous_clicks)),
+    )
+    impressions_window = _to_metric_window(
+        current=max(0, int(item.current_impressions)),
+        previous=max(0, int(item.previous_impressions)),
+    )
+    return SEOSearchConsoleTopPageRead(
+        page_path=item.page_path,
+        clicks=clicks_window.current,
+        clicks_previous=clicks_window.previous,
+        clicks_delta_absolute=clicks_window.delta_absolute,
+        clicks_delta_percent=clicks_window.delta_percent,
+        impressions=impressions_window.current,
+        impressions_previous=impressions_window.previous,
+        impressions_delta_absolute=impressions_window.delta_absolute,
+        impressions_delta_percent=impressions_window.delta_percent,
+        ctr=round(float(item.current_ctr), 4),
+        ctr_previous=round(float(item.previous_ctr), 4),
+        ctr_delta_absolute=round(float(item.current_ctr) - float(item.previous_ctr), 4),
+        average_position=round(float(item.current_average_position), 4),
+        average_position_previous=round(float(item.previous_average_position), 4),
+        average_position_delta_absolute=round(
+            float(item.current_average_position) - float(item.previous_average_position),
+            4,
+        ),
+    )
+
+
+def _normalize_page_path(value: str | None) -> str | None:
+    compacted = str(value or "").strip()
+    if not compacted:
+        return None
+
+    if "://" in compacted:
+        parsed = urlparse(compacted)
+    else:
+        prefixed = compacted if compacted.startswith("/") else f"/{compacted}"
+        parsed = urlparse(f"https://placeholder.invalid{prefixed}")
+    path = (parsed.path or "/").strip()
+    if not path:
+        path = "/"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    while "//" in path:
+        path = path.replace("//", "/")
+    if path != "/":
+        path = path.rstrip("/")
+    return path or "/"
+
+
+def _normalize_page_hint(value: object) -> str | None:
+    compacted = str(value or "").strip()
+    if not compacted:
+        return None
+    lowered = compacted.lower()
+    if lowered == "homepage":
+        return "/"
+    return _normalize_page_path(compacted)
+
+
+def _to_window_summary(
+    *,
+    start_date: date,
+    end_date: date,
+    metrics: GA4SitePeriodMetrics,
+) -> SEOAnalyticsWindowSummary:
+    return SEOAnalyticsWindowSummary(
+        start_date=start_date,
+        end_date=end_date,
+        users=max(0, int(metrics.users)),
+        sessions=max(0, int(metrics.sessions)),
+        pageviews=max(0, int(metrics.pageviews)),
+    )
+
+
+def _to_search_console_window_summary(
+    *,
+    start_date: date,
+    end_date: date,
+    metrics: SearchConsolePeriodMetrics,
+) -> SEOSearchConsoleWindowSummary:
+    return SEOSearchConsoleWindowSummary(
+        start_date=start_date,
+        end_date=end_date,
+        clicks=max(0, int(metrics.clicks)),
+        impressions=max(0, int(metrics.impressions)),
+        ctr=round(float(metrics.ctr), 4),
+        average_position=round(float(metrics.average_position), 4),
+    )
+
+
+def _build_default_search_console_site_property(site_domain: str) -> str:
+    normalized_domain = _normalize_site_domain(site_domain)
+    if not normalized_domain:
+        return ""
+    return f"sc-domain:{normalized_domain}"

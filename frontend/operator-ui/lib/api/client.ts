@@ -21,6 +21,8 @@ import type {
   SEOSiteAdminUpdateRequest,
   SEOSiteUpdateRequest,
   SEOSiteListResponse,
+  SearchConsoleSiteSummaryResponse,
+  SiteAnalyticsSummaryResponse,
   CompetitorComparisonReport,
   CompetitorDomainListResponse,
   CompetitorComparisonRunListResponse,
@@ -862,6 +864,28 @@ export async function fetchAutomationRuns(
 ): Promise<AutomationRunListResponse> {
   return apiRequest<AutomationRunListResponse>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/automation-runs`,
+    { token },
+  );
+}
+
+export async function fetchSiteAnalyticsSummary(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<SiteAnalyticsSummaryResponse> {
+  return apiRequest<SiteAnalyticsSummaryResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/analytics/site-summary`,
+    { token },
+  );
+}
+
+export async function fetchSearchConsoleSiteSummary(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<SearchConsoleSiteSummaryResponse> {
+  return apiRequest<SearchConsoleSiteSummaryResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/analytics/search-visibility-summary`,
     { token },
   );
 }

@@ -87,6 +87,7 @@ def test_main_app_mounts_seo_routes() -> None:
         "GET"
     }
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/automation-status"] >= {"GET"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/analytics/site-summary"] >= {"GET"}
 
     # Phase 2 v1 site-scoped compatibility surface.
     assert route_methods["/api/v1/businesses/{business_id}/seo/sites/{site_id}/competitor-sets"] >= {"GET", "POST"}
@@ -175,6 +176,7 @@ def test_main_app_mounts_seo_routes() -> None:
         "/api/v1/businesses/{business_id}/seo/sites/{site_id}/automation-runs/{automation_run_id}"
     ] >= {"GET"}
     assert route_methods["/api/v1/businesses/{business_id}/seo/sites/{site_id}/automation-status"] >= {"GET"}
+    assert route_methods["/api/v1/businesses/{business_id}/seo/sites/{site_id}/analytics/site-summary"] >= {"GET"}
 
     # Phase 4 scheduler-ready due-run entrypoint.
     assert route_methods["/api/jobs/seo-automation/run-due"] >= {"POST"}

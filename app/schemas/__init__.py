@@ -87,6 +87,17 @@ from app.schemas.seo_automation import (
     SEOAutomationRunRead,
     SEOAutomationStatusRead,
 )
+from app.schemas.seo_analytics import (
+    SEOAnalyticsMetricWindowRead,
+    SEOAnalyticsSiteMetricsSummaryRead,
+    SEOAnalyticsSiteSummaryRead,
+    SEOAnalyticsTopPageRead,
+    SEOSearchConsoleMetricWindowRead,
+    SEOSearchConsoleSiteMetricsSummaryRead,
+    SEOSearchConsoleSiteSummaryRead,
+    SEOSearchConsoleTopPageRead,
+    SEOSearchConsoleTopQueryRead,
+)
 from app.schemas.lead import (
     EmailIntakeRequest,
     EmailIntakeResponse,
@@ -192,6 +203,15 @@ __all__ = [
     "SEOAutomationRunListResponse",
     "SEOAutomationRunRead",
     "SEOAutomationStatusRead",
+    "SEOAnalyticsMetricWindowRead",
+    "SEOAnalyticsSiteMetricsSummaryRead",
+    "SEOAnalyticsSiteSummaryRead",
+    "SEOAnalyticsTopPageRead",
+    "SEOSearchConsoleMetricWindowRead",
+    "SEOSearchConsoleSiteMetricsSummaryRead",
+    "SEOSearchConsoleSiteSummaryRead",
+    "SEOSearchConsoleTopPageRead",
+    "SEOSearchConsoleTopQueryRead",
     "StatusPatchResponse",
     "GoogleAuthExchangeRequest",
 ]

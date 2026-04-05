@@ -187,6 +187,107 @@ export interface SEOSiteListResponse {
   total: number;
 }
 
+export interface SiteAnalyticsMetricWindow {
+  current: number;
+  previous: number;
+  delta_absolute: number;
+  delta_percent: number | null;
+}
+
+export interface SiteAnalyticsMetricsSummary {
+  current_period_start: string;
+  current_period_end: string;
+  previous_period_start: string;
+  previous_period_end: string;
+  users: SiteAnalyticsMetricWindow;
+  sessions: SiteAnalyticsMetricWindow;
+  pageviews: SiteAnalyticsMetricWindow;
+  organic_search_sessions: SiteAnalyticsMetricWindow;
+}
+
+export interface SiteAnalyticsTopPageSummary {
+  page_path: string;
+  pageviews: number;
+  sessions: number;
+  pageviews_previous: number;
+  sessions_previous: number;
+  pageviews_delta_absolute: number;
+  sessions_delta_absolute: number;
+  pageviews_delta_percent: number | null;
+  sessions_delta_percent: number | null;
+}
+
+export interface SiteAnalyticsSummaryResponse {
+  business_id: string;
+  site_id: string;
+  available: boolean;
+  status: "ok" | "not_configured" | "unavailable";
+  message: string | null;
+  data_source: string | null;
+  site_metrics_summary: SiteAnalyticsMetricsSummary | null;
+  top_pages_summary: SiteAnalyticsTopPageSummary[];
+}
+
+export interface SearchConsoleMetricWindow {
+  current: number;
+  previous: number;
+  delta_absolute: number;
+  delta_percent: number | null;
+}
+
+export interface SearchConsoleSiteMetricsSummary {
+  current_period_start: string;
+  current_period_end: string;
+  previous_period_start: string;
+  previous_period_end: string;
+  clicks: SearchConsoleMetricWindow;
+  impressions: SearchConsoleMetricWindow;
+  ctr_current: number;
+  ctr_previous: number;
+  ctr_delta_absolute: number;
+  average_position_current: number;
+  average_position_previous: number;
+  average_position_delta_absolute: number;
+}
+
+export interface SearchConsoleTopPageSummary {
+  page_path: string;
+  clicks: number;
+  clicks_previous: number;
+  clicks_delta_absolute: number;
+  clicks_delta_percent: number | null;
+  impressions: number;
+  impressions_previous: number;
+  impressions_delta_absolute: number;
+  impressions_delta_percent: number | null;
+  ctr: number;
+  ctr_previous: number;
+  ctr_delta_absolute: number;
+  average_position: number;
+  average_position_previous: number;
+  average_position_delta_absolute: number;
+}
+
+export interface SearchConsoleTopQuerySummary {
+  query: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  average_position: number;
+}
+
+export interface SearchConsoleSiteSummaryResponse {
+  business_id: string;
+  site_id: string;
+  available: boolean;
+  status: "ok" | "not_configured" | "unavailable";
+  message: string | null;
+  data_source: string | null;
+  site_metrics_summary: SearchConsoleSiteMetricsSummary | null;
+  top_pages_summary: SearchConsoleTopPageSummary[];
+  top_queries_summary: SearchConsoleTopQuerySummary[];
+}
+
 export interface SEOAuditRunCreateRequest {
   max_pages?: number;
   max_depth?: number;
@@ -1085,6 +1186,84 @@ export interface RecommendationPriority {
   effort_hint?: "quick_win" | "moderate" | "larger_change" | null;
 }
 
+export interface RecommendationMeasurementMetricWindow {
+  current: number;
+  previous: number;
+  delta_absolute: number;
+  delta_percent: number | null;
+}
+
+export interface RecommendationMeasurementWindowSummary {
+  start_date: string;
+  end_date: string;
+  users: number;
+  sessions: number;
+  pageviews: number;
+}
+
+export interface RecommendationMeasurementDeltaSummary {
+  users_delta_absolute: number;
+  users_delta_percent: number | null;
+  sessions_delta_absolute: number;
+  sessions_delta_percent: number | null;
+  pageviews_delta_absolute: number;
+  pageviews_delta_percent: number | null;
+}
+
+export interface RecommendationMeasurementContext {
+  measurement_status: "available" | "no_match" | "unavailable" | "not_configured";
+  matched_page_path?: string | null;
+  comparison_scope?: "page" | "site" | null;
+  sessions?: RecommendationMeasurementMetricWindow | null;
+  pageviews?: RecommendationMeasurementMetricWindow | null;
+  before_window_summary?: RecommendationMeasurementWindowSummary | null;
+  after_window_summary?: RecommendationMeasurementWindowSummary | null;
+  delta_summary?: RecommendationMeasurementDeltaSummary | null;
+}
+
+export interface RecommendationSearchConsoleWindowSummary {
+  start_date: string;
+  end_date: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  average_position: number;
+}
+
+export interface RecommendationSearchConsoleDeltaSummary {
+  clicks_delta_absolute: number;
+  clicks_delta_percent: number | null;
+  impressions_delta_absolute: number;
+  impressions_delta_percent: number | null;
+  ctr_delta_absolute: number;
+  average_position_delta_absolute: number;
+}
+
+export interface RecommendationSearchConsoleTopQuery {
+  query: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  average_position: number;
+}
+
+export interface RecommendationSearchConsoleContext {
+  search_console_status: "available" | "no_match" | "unavailable" | "not_configured";
+  matched_page_path?: string | null;
+  comparison_scope?: "page" | "site" | null;
+  current_window_summary?: RecommendationSearchConsoleWindowSummary | null;
+  previous_window_summary?: RecommendationSearchConsoleWindowSummary | null;
+  delta_summary?: RecommendationSearchConsoleDeltaSummary | null;
+  top_queries_summary?: RecommendationSearchConsoleTopQuery[];
+}
+
+export interface RecommendationEffectivenessContext {
+  effectiveness_status: "available" | "partial" | "insufficient";
+  traffic_direction: "up" | "down" | "flat" | "unknown";
+  search_visibility_direction: "up" | "down" | "flat" | "unknown";
+  summary?: string | null;
+}
+
 export interface ActionLineageDraft {
   id: string;
   source_action_id: string;
@@ -1202,6 +1381,9 @@ export interface Recommendation {
   competitor_linkage_summary?: string | null;
   recommendation_action_delta?: RecommendationActionDelta | null;
   recommendation_priority?: RecommendationPriority | null;
+  recommendation_measurement_context?: RecommendationMeasurementContext | null;
+  recommendation_search_console_context?: RecommendationSearchConsoleContext | null;
+  recommendation_effectiveness_context?: RecommendationEffectivenessContext | null;
   action_lineage?: ActionLineageResponse | null;
   decision_reason: string | null;
   created_at: string;

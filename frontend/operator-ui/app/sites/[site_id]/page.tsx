@@ -22,6 +22,8 @@ import {
   fetchAutomationRuns,
   fetchBusinessSettings,
   fetchGoogleBusinessProfileConnection,
+  fetchSearchConsoleSiteSummary,
+  fetchSiteAnalyticsSummary,
   fetchCompetitorProfileGenerationRunDetail,
   fetchCompetitorProfileGenerationRuns,
   fetchCompetitorProfileGenerationSummary,
@@ -93,6 +95,8 @@ import type {
   RecommendationRun,
   RecommendationTuningSuggestion,
   RecommendationWorkspaceSummaryResponse,
+  SearchConsoleSiteSummaryResponse,
+  SiteAnalyticsSummaryResponse,
   SEOAuditRun,
   WorkspaceSectionFreshness,
   WorkspaceTrustSummary,
@@ -1035,6 +1039,16 @@ function formatSignedDelta(value: number): string {
     return `+${value}`;
   }
   return String(value);
+}
+
+function formatSignedPercent(value: number | null | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "No prior baseline";
+  }
+  const rounded = Math.round(value * 10) / 10;
+  const prefix = rounded > 0 ? "+" : "";
+  const formatted = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  return `${prefix}${formatted}%`;
 }
 
 function sanitizeDomId(value: string): string {
@@ -2581,6 +2595,534 @@ function normalizeRecommendationCompetitorInsight(item: Recommendation): string 
   return truncateOptionalText(item.competitor_insight, 220);
 }
 
+function normalizeRecommendationMeasurementContext(
+  item: Recommendation,
+): {
+  measurementStatus: "available" | "no_match" | "unavailable" | "not_configured";
+  matchedPagePath: string | null;
+  comparisonScope: "page" | "site" | null;
+  sessions: {
+    current: number;
+    previous: number;
+    deltaAbsolute: number;
+    deltaPercent: number | null;
+  } | null;
+  pageviews: {
+    current: number;
+    previous: number;
+    deltaAbsolute: number;
+    deltaPercent: number | null;
+  } | null;
+  beforeWindowSummary: {
+    startDate: string;
+    endDate: string;
+    users: number;
+    sessions: number;
+    pageviews: number;
+  } | null;
+  afterWindowSummary: {
+    startDate: string;
+    endDate: string;
+    users: number;
+    sessions: number;
+    pageviews: number;
+  } | null;
+  deltaSummary: {
+    usersDeltaAbsolute: number;
+    usersDeltaPercent: number | null;
+    sessionsDeltaAbsolute: number;
+    sessionsDeltaPercent: number | null;
+    pageviewsDeltaAbsolute: number;
+    pageviewsDeltaPercent: number | null;
+  } | null;
+} | null {
+  const raw = item.recommendation_measurement_context;
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const measurementStatus = (raw.measurement_status || "").trim().toLowerCase();
+  if (
+    measurementStatus !== "available"
+    && measurementStatus !== "no_match"
+    && measurementStatus !== "unavailable"
+    && measurementStatus !== "not_configured"
+  ) {
+    return null;
+  }
+
+  const sessions = raw.sessions;
+  const pageviews = raw.pageviews;
+  const beforeWindowSummaryRaw = raw.before_window_summary;
+  const afterWindowSummaryRaw = raw.after_window_summary;
+  const deltaSummaryRaw = raw.delta_summary;
+
+  const normalizeWindowSummary = (
+    value: Recommendation["recommendation_measurement_context"] extends infer Context
+      ? Context extends { before_window_summary?: infer WindowSummary }
+        ? WindowSummary
+        : never
+      : never,
+  ) => {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const startDate = typeof (value as { start_date?: string }).start_date === "string"
+      ? (value as { start_date: string }).start_date.trim()
+      : "";
+    const endDate = typeof (value as { end_date?: string }).end_date === "string"
+      ? (value as { end_date: string }).end_date.trim()
+      : "";
+    if (!startDate || !endDate) {
+      return null;
+    }
+    return {
+      startDate,
+      endDate,
+      users: Math.max(0, Number((value as { users?: number }).users) || 0),
+      sessions: Math.max(0, Number((value as { sessions?: number }).sessions) || 0),
+      pageviews: Math.max(0, Number((value as { pageviews?: number }).pageviews) || 0),
+    };
+  };
+
+  const normalizeDeltaSummary = (
+    value: Recommendation["recommendation_measurement_context"] extends infer Context
+      ? Context extends { delta_summary?: infer DeltaSummary }
+        ? DeltaSummary
+        : never
+      : never,
+  ) => {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const usersDeltaPercent = (value as { users_delta_percent?: number | null }).users_delta_percent;
+    const sessionsDeltaPercent = (value as { sessions_delta_percent?: number | null }).sessions_delta_percent;
+    const pageviewsDeltaPercent = (value as { pageviews_delta_percent?: number | null }).pageviews_delta_percent;
+    return {
+      usersDeltaAbsolute: Number((value as { users_delta_absolute?: number }).users_delta_absolute) || 0,
+      usersDeltaPercent: typeof usersDeltaPercent === "number" && Number.isFinite(usersDeltaPercent)
+        ? usersDeltaPercent
+        : null,
+      sessionsDeltaAbsolute:
+        Number((value as { sessions_delta_absolute?: number }).sessions_delta_absolute) || 0,
+      sessionsDeltaPercent: typeof sessionsDeltaPercent === "number" && Number.isFinite(sessionsDeltaPercent)
+        ? sessionsDeltaPercent
+        : null,
+      pageviewsDeltaAbsolute:
+        Number((value as { pageviews_delta_absolute?: number }).pageviews_delta_absolute) || 0,
+      pageviewsDeltaPercent: typeof pageviewsDeltaPercent === "number" && Number.isFinite(pageviewsDeltaPercent)
+        ? pageviewsDeltaPercent
+        : null,
+    };
+  };
+
+  return {
+    measurementStatus,
+    matchedPagePath: truncateOptionalText(raw.matched_page_path, 220),
+    comparisonScope:
+      raw.comparison_scope === "page" || raw.comparison_scope === "site" ? raw.comparison_scope : null,
+    sessions: sessions
+      ? {
+        current: Math.max(0, Number(sessions.current) || 0),
+        previous: Math.max(0, Number(sessions.previous) || 0),
+        deltaAbsolute: Number(sessions.delta_absolute) || 0,
+        deltaPercent:
+            typeof sessions.delta_percent === "number" && Number.isFinite(sessions.delta_percent)
+              ? sessions.delta_percent
+              : null,
+      }
+      : null,
+    pageviews: pageviews
+      ? {
+        current: Math.max(0, Number(pageviews.current) || 0),
+        previous: Math.max(0, Number(pageviews.previous) || 0),
+        deltaAbsolute: Number(pageviews.delta_absolute) || 0,
+        deltaPercent:
+            typeof pageviews.delta_percent === "number" && Number.isFinite(pageviews.delta_percent)
+            ? pageviews.delta_percent
+            : null,
+      }
+      : null,
+    beforeWindowSummary: normalizeWindowSummary(beforeWindowSummaryRaw ?? null),
+    afterWindowSummary: normalizeWindowSummary(afterWindowSummaryRaw ?? null),
+    deltaSummary: normalizeDeltaSummary(deltaSummaryRaw ?? null),
+  };
+}
+
+function buildRecommendationMeasurementContextLine(
+  measurementContext: {
+    measurementStatus: "available" | "no_match" | "unavailable" | "not_configured";
+    matchedPagePath: string | null;
+    comparisonScope: "page" | "site" | null;
+    sessions: {
+      current: number;
+      previous: number;
+      deltaAbsolute: number;
+      deltaPercent: number | null;
+    } | null;
+    pageviews: {
+      current: number;
+      previous: number;
+      deltaAbsolute: number;
+      deltaPercent: number | null;
+    } | null;
+    beforeWindowSummary: {
+      startDate: string;
+      endDate: string;
+      users: number;
+      sessions: number;
+      pageviews: number;
+    } | null;
+    afterWindowSummary: {
+      startDate: string;
+      endDate: string;
+      users: number;
+      sessions: number;
+      pageviews: number;
+    } | null;
+    deltaSummary: {
+      usersDeltaAbsolute: number;
+      usersDeltaPercent: number | null;
+      sessionsDeltaAbsolute: number;
+      sessionsDeltaPercent: number | null;
+      pageviewsDeltaAbsolute: number;
+      pageviewsDeltaPercent: number | null;
+    } | null;
+  } | null,
+): string | null {
+  if (
+    !measurementContext
+    || measurementContext.measurementStatus !== "available"
+    || !measurementContext.sessions
+    || !measurementContext.pageviews
+  ) {
+    return null;
+  }
+  const pathLabel = measurementContext.matchedPagePath ? `${measurementContext.matchedPagePath} — ` : "";
+  return (
+    `${pathLabel}${measurementContext.sessions.current.toLocaleString()} sessions `
+    + `(${formatSignedPercent(measurementContext.sessions.deltaPercent)} vs prior period), `
+    + `${measurementContext.pageviews.current.toLocaleString()} pageviews `
+    + `(${formatSignedPercent(measurementContext.pageviews.deltaPercent)} vs prior period)`
+  );
+}
+
+function formatDirectionalPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "no prior baseline";
+  }
+  const rounded = Math.round(Math.abs(value) * 10) / 10;
+  if (value > 0) {
+    return `↑ ${rounded}%`;
+  }
+  if (value < 0) {
+    return `↓ ${rounded}%`;
+  }
+  return "→ 0%";
+}
+
+function buildRecommendationMeasurementSinceLine(
+  measurementContext: {
+    measurementStatus: "available" | "no_match" | "unavailable" | "not_configured";
+    matchedPagePath: string | null;
+    comparisonScope: "page" | "site" | null;
+    sessions: {
+      current: number;
+      previous: number;
+      deltaAbsolute: number;
+      deltaPercent: number | null;
+    } | null;
+    pageviews: {
+      current: number;
+      previous: number;
+      deltaAbsolute: number;
+      deltaPercent: number | null;
+    } | null;
+    beforeWindowSummary: {
+      startDate: string;
+      endDate: string;
+      users: number;
+      sessions: number;
+      pageviews: number;
+    } | null;
+    afterWindowSummary: {
+      startDate: string;
+      endDate: string;
+      users: number;
+      sessions: number;
+      pageviews: number;
+    } | null;
+    deltaSummary: {
+      usersDeltaAbsolute: number;
+      usersDeltaPercent: number | null;
+      sessionsDeltaAbsolute: number;
+      sessionsDeltaPercent: number | null;
+      pageviewsDeltaAbsolute: number;
+      pageviewsDeltaPercent: number | null;
+    } | null;
+  } | null,
+): string | null {
+  if (
+    !measurementContext
+    || measurementContext.measurementStatus !== "available"
+    || !measurementContext.deltaSummary
+  ) {
+    return null;
+  }
+  const scopeLabel = measurementContext.comparisonScope === "site" ? "site trend" : "page trend";
+  return (
+    `${scopeLabel}: sessions ${formatDirectionalPercent(measurementContext.deltaSummary.sessionsDeltaPercent)}, `
+    + `pageviews ${formatDirectionalPercent(measurementContext.deltaSummary.pageviewsDeltaPercent)}.`
+  );
+}
+
+function normalizeRecommendationSearchConsoleContext(
+  item: Recommendation,
+): {
+  searchConsoleStatus: "available" | "no_match" | "unavailable" | "not_configured";
+  matchedPagePath: string | null;
+  comparisonScope: "page" | "site" | null;
+  currentWindowSummary: {
+    startDate: string;
+    endDate: string;
+    clicks: number;
+    impressions: number;
+    ctr: number;
+    averagePosition: number;
+  } | null;
+  previousWindowSummary: {
+    startDate: string;
+    endDate: string;
+    clicks: number;
+    impressions: number;
+    ctr: number;
+    averagePosition: number;
+  } | null;
+  deltaSummary: {
+    clicksDeltaAbsolute: number;
+    clicksDeltaPercent: number | null;
+    impressionsDeltaAbsolute: number;
+    impressionsDeltaPercent: number | null;
+    ctrDeltaAbsolute: number;
+    averagePositionDeltaAbsolute: number;
+  } | null;
+  topQueriesSummary: {
+    query: string;
+    clicks: number;
+    impressions: number;
+    ctr: number;
+    averagePosition: number;
+  }[];
+} | null {
+  const raw = item.recommendation_search_console_context;
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const searchConsoleStatus = (raw.search_console_status || "").trim().toLowerCase();
+  if (
+    searchConsoleStatus !== "available"
+    && searchConsoleStatus !== "no_match"
+    && searchConsoleStatus !== "unavailable"
+    && searchConsoleStatus !== "not_configured"
+  ) {
+    return null;
+  }
+
+  const normalizeWindowSummary = (value: unknown) => {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const startDate = typeof (value as { start_date?: string }).start_date === "string"
+      ? (value as { start_date: string }).start_date.trim()
+      : "";
+    const endDate = typeof (value as { end_date?: string }).end_date === "string"
+      ? (value as { end_date: string }).end_date.trim()
+      : "";
+    if (!startDate || !endDate) {
+      return null;
+    }
+    return {
+      startDate,
+      endDate,
+      clicks: Math.max(0, Number((value as { clicks?: number }).clicks) || 0),
+      impressions: Math.max(0, Number((value as { impressions?: number }).impressions) || 0),
+      ctr: Number((value as { ctr?: number }).ctr) || 0,
+      averagePosition: Number((value as { average_position?: number }).average_position) || 0,
+    };
+  };
+
+  const normalizeDeltaSummary = (value: unknown) => {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const clicksDeltaPercent = (value as { clicks_delta_percent?: number | null }).clicks_delta_percent;
+    const impressionsDeltaPercent = (value as { impressions_delta_percent?: number | null }).impressions_delta_percent;
+    return {
+      clicksDeltaAbsolute: Number((value as { clicks_delta_absolute?: number }).clicks_delta_absolute) || 0,
+      clicksDeltaPercent: typeof clicksDeltaPercent === "number" && Number.isFinite(clicksDeltaPercent)
+        ? clicksDeltaPercent
+        : null,
+      impressionsDeltaAbsolute:
+        Number((value as { impressions_delta_absolute?: number }).impressions_delta_absolute) || 0,
+      impressionsDeltaPercent: typeof impressionsDeltaPercent === "number" && Number.isFinite(impressionsDeltaPercent)
+        ? impressionsDeltaPercent
+        : null,
+      ctrDeltaAbsolute: Number((value as { ctr_delta_absolute?: number }).ctr_delta_absolute) || 0,
+      averagePositionDeltaAbsolute:
+        Number((value as { average_position_delta_absolute?: number }).average_position_delta_absolute) || 0,
+    };
+  };
+
+  const topQueriesSummary = Array.isArray(raw.top_queries_summary)
+    ? raw.top_queries_summary
+      .map((value) => {
+        if (!value || typeof value !== "object") {
+          return null;
+        }
+        const query = truncateOptionalText((value as { query?: string }).query, 120);
+        if (!query) {
+          return null;
+        }
+        return {
+          query,
+          clicks: Math.max(0, Number((value as { clicks?: number }).clicks) || 0),
+          impressions: Math.max(0, Number((value as { impressions?: number }).impressions) || 0),
+          ctr: Number((value as { ctr?: number }).ctr) || 0,
+          averagePosition: Number((value as { average_position?: number }).average_position) || 0,
+        };
+      })
+      .filter((value): value is NonNullable<typeof value> => value !== null)
+      .slice(0, 3)
+    : [];
+
+  return {
+    searchConsoleStatus,
+    matchedPagePath: truncateOptionalText(raw.matched_page_path, 220),
+    comparisonScope:
+      raw.comparison_scope === "page" || raw.comparison_scope === "site" ? raw.comparison_scope : null,
+    currentWindowSummary: normalizeWindowSummary(raw.current_window_summary ?? null),
+    previousWindowSummary: normalizeWindowSummary(raw.previous_window_summary ?? null),
+    deltaSummary: normalizeDeltaSummary(raw.delta_summary ?? null),
+    topQueriesSummary,
+  };
+}
+
+function buildRecommendationSearchVisibilityContextLine(
+  searchContext: {
+    searchConsoleStatus: "available" | "no_match" | "unavailable" | "not_configured";
+    matchedPagePath: string | null;
+    comparisonScope: "page" | "site" | null;
+    currentWindowSummary: {
+      startDate: string;
+      endDate: string;
+      clicks: number;
+      impressions: number;
+      ctr: number;
+      averagePosition: number;
+    } | null;
+    previousWindowSummary: {
+      startDate: string;
+      endDate: string;
+      clicks: number;
+      impressions: number;
+      ctr: number;
+      averagePosition: number;
+    } | null;
+    deltaSummary: {
+      clicksDeltaAbsolute: number;
+      clicksDeltaPercent: number | null;
+      impressionsDeltaAbsolute: number;
+      impressionsDeltaPercent: number | null;
+      ctrDeltaAbsolute: number;
+      averagePositionDeltaAbsolute: number;
+    } | null;
+    topQueriesSummary: {
+      query: string;
+      clicks: number;
+      impressions: number;
+      ctr: number;
+      averagePosition: number;
+    }[];
+  } | null,
+): string | null {
+  if (!searchContext || searchContext.searchConsoleStatus !== "available" || !searchContext.currentWindowSummary) {
+    return null;
+  }
+  const summary = searchContext.currentWindowSummary;
+  const delta = searchContext.deltaSummary;
+  const pathLabel = searchContext.matchedPagePath ? `${searchContext.matchedPagePath} — ` : "";
+  return (
+    `${pathLabel}${summary.clicks.toLocaleString()} clicks `
+    + `(${formatSignedPercent(delta?.clicksDeltaPercent ?? null)} vs prior period), `
+    + `${summary.impressions.toLocaleString()} impressions `
+    + `(${formatSignedPercent(delta?.impressionsDeltaPercent ?? null)} vs prior period), `
+    + `avg position ${summary.averagePosition.toFixed(1)}`
+  );
+}
+
+function buildRecommendationSearchVisibilitySinceLine(
+  searchContext: {
+    searchConsoleStatus: "available" | "no_match" | "unavailable" | "not_configured";
+    matchedPagePath: string | null;
+    comparisonScope: "page" | "site" | null;
+    currentWindowSummary: {
+      startDate: string;
+      endDate: string;
+      clicks: number;
+      impressions: number;
+      ctr: number;
+      averagePosition: number;
+    } | null;
+    previousWindowSummary: {
+      startDate: string;
+      endDate: string;
+      clicks: number;
+      impressions: number;
+      ctr: number;
+      averagePosition: number;
+    } | null;
+    deltaSummary: {
+      clicksDeltaAbsolute: number;
+      clicksDeltaPercent: number | null;
+      impressionsDeltaAbsolute: number;
+      impressionsDeltaPercent: number | null;
+      ctrDeltaAbsolute: number;
+      averagePositionDeltaAbsolute: number;
+    } | null;
+    topQueriesSummary: {
+      query: string;
+      clicks: number;
+      impressions: number;
+      ctr: number;
+      averagePosition: number;
+    }[];
+  } | null,
+): string | null {
+  if (!searchContext || searchContext.searchConsoleStatus !== "available" || !searchContext.deltaSummary) {
+    return null;
+  }
+  const scopeLabel = searchContext.comparisonScope === "site" ? "site visibility trend" : "page visibility trend";
+  const positionDelta = searchContext.deltaSummary.averagePositionDeltaAbsolute;
+  const roundedPositionDelta = Math.round(Math.abs(positionDelta) * 10) / 10;
+  const positionDirection = positionDelta < 0 ? "improved" : positionDelta > 0 ? "declined" : "held steady";
+  return (
+    `${scopeLabel}: clicks ${formatDirectionalPercent(searchContext.deltaSummary.clicksDeltaPercent)}, `
+    + `impressions ${formatDirectionalPercent(searchContext.deltaSummary.impressionsDeltaPercent)}, `
+    + `position ${positionDirection}${roundedPositionDelta > 0 ? ` by ${roundedPositionDelta}` : ""}.`
+  );
+}
+
+function normalizeRecommendationEffectivenessSummary(item: Recommendation): string | null {
+  const raw = item.recommendation_effectiveness_context;
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const status = (raw.effectiveness_status || "").trim().toLowerCase();
+  if (status !== "available" && status !== "partial") {
+    return null;
+  }
+  return truncateOptionalText(raw.summary, 220);
+}
+
 function normalizeRecommendationExecutionType(
   item: Recommendation,
 ):
@@ -3813,6 +4355,10 @@ export default function SiteWorkspacePage() {
   const [recommendationRunError, setRecommendationRunError] = useState<string | null>(null);
   const [automationRuns, setAutomationRuns] = useState<AutomationRun[]>([]);
   const [automationRunError, setAutomationRunError] = useState<string | null>(null);
+  const [siteAnalyticsSummary, setSiteAnalyticsSummary] = useState<SiteAnalyticsSummaryResponse | null>(null);
+  const [siteAnalyticsError, setSiteAnalyticsError] = useState<string | null>(null);
+  const [searchConsoleSiteSummary, setSearchConsoleSiteSummary] = useState<SearchConsoleSiteSummaryResponse | null>(null);
+  const [searchConsoleSiteSummaryError, setSearchConsoleSiteSummaryError] = useState<string | null>(null);
   const [recommendationGenerationInFlight, setRecommendationGenerationInFlight] = useState(false);
   const [recommendationGenerationMessage, setRecommendationGenerationMessage] = useState<string | null>(null);
   const [recommendationGenerationError, setRecommendationGenerationError] = useState<string | null>(null);
@@ -5887,6 +6433,10 @@ export default function SiteWorkspacePage() {
       setAiActionFocusedTargetId(null);
       setPendingAiApplyAttributionByPreviewKey({});
       setRecentTuningChanges([]);
+      setSiteAnalyticsSummary(null);
+      setSiteAnalyticsError(null);
+      setSearchConsoleSiteSummary(null);
+      setSearchConsoleSiteSummaryError(null);
       setCompetitorProfilePollingTargetRunId(null);
       setCompetitorProfilePolling(false);
       setCompetitorProfileSummaryError(null);
@@ -5913,6 +6463,8 @@ export default function SiteWorkspacePage() {
         recommendationWorkspaceSummaryResult,
         googleBusinessProfileConnectionResult,
         businessSettingsResult,
+        siteAnalyticsSummaryResult,
+        searchConsoleSiteSummaryResult,
         competitorProfileRunsResult,
         competitorProfileSummaryResult,
       ] =
@@ -5931,6 +6483,8 @@ export default function SiteWorkspacePage() {
           fetchRecommendationWorkspaceSummary(context.token, context.businessId, siteId),
           fetchGoogleBusinessProfileConnection(context.token),
           fetchBusinessSettings(context.token, context.businessId),
+          fetchSiteAnalyticsSummary(context.token, context.businessId, siteId),
+          fetchSearchConsoleSiteSummary(context.token, context.businessId, siteId),
           fetchCompetitorProfileGenerationRuns(context.token, context.businessId, siteId),
           fetchCompetitorProfileGenerationSummary(context.token, context.businessId, siteId),
         ]);
@@ -6146,6 +6700,24 @@ export default function SiteWorkspacePage() {
         setTuningSettings(businessSettingsResult.value);
       } else {
         setTuningSettings(null);
+      }
+
+      if (siteAnalyticsSummaryResult.status === "fulfilled") {
+        setSiteAnalyticsSummary(siteAnalyticsSummaryResult.value);
+        setSiteAnalyticsError(null);
+      } else {
+        setSiteAnalyticsSummary(null);
+        setSiteAnalyticsError(safeSectionErrorMessage("traffic trend", siteAnalyticsSummaryResult.reason));
+      }
+
+      if (searchConsoleSiteSummaryResult.status === "fulfilled") {
+        setSearchConsoleSiteSummary(searchConsoleSiteSummaryResult.value);
+        setSearchConsoleSiteSummaryError(null);
+      } else {
+        setSearchConsoleSiteSummary(null);
+        setSearchConsoleSiteSummaryError(
+          safeSectionErrorMessage("search visibility trend", searchConsoleSiteSummaryResult.reason),
+        );
       }
 
       if (competitorProfileSummaryResult.status === "fulfilled") {
@@ -6559,6 +7131,40 @@ export default function SiteWorkspacePage() {
     const normalizedStatus = normalizeAutomationRunStatus(run.status);
     return normalizedStatus === "queued" || normalizedStatus === "running";
   });
+  const siteTrafficMetricsSummary = siteAnalyticsSummary?.site_metrics_summary || null;
+  const trafficTrendValue = siteTrafficMetricsSummary
+    ? `${siteTrafficMetricsSummary.users.current.toLocaleString()} users`
+    : "Unavailable";
+  const trafficTrendDetail = siteTrafficMetricsSummary
+    ? `${siteTrafficMetricsSummary.sessions.current.toLocaleString()} sessions (${formatSignedPercent(
+      siteTrafficMetricsSummary.sessions.delta_percent,
+    )} vs prior period)`
+    : siteAnalyticsSummary?.message || siteAnalyticsError || "Google Analytics data is not available for this site yet.";
+  const trafficTrendTone = siteTrafficMetricsSummary
+    ? siteTrafficMetricsSummary.sessions.delta_percent !== null
+      ? siteTrafficMetricsSummary.sessions.delta_percent >= 0
+        ? "success"
+        : "warning"
+      : "neutral"
+    : "neutral";
+  const searchVisibilityMetricsSummary = searchConsoleSiteSummary?.site_metrics_summary || null;
+  const searchVisibilityTrendValue = searchVisibilityMetricsSummary
+    ? `${searchVisibilityMetricsSummary.clicks.current.toLocaleString()} clicks`
+    : "Unavailable";
+  const searchVisibilityTrendDetail = searchVisibilityMetricsSummary
+    ? `${searchVisibilityMetricsSummary.impressions.current.toLocaleString()} impressions `
+      + `(${formatSignedPercent(searchVisibilityMetricsSummary.impressions.delta_percent)} vs prior period), `
+      + `avg position ${searchVisibilityMetricsSummary.average_position_current.toFixed(1)}`
+    : searchConsoleSiteSummary?.message
+      || searchConsoleSiteSummaryError
+      || "Search Console data is not available for this site yet.";
+  const searchVisibilityTrendTone = searchVisibilityMetricsSummary
+    ? searchVisibilityMetricsSummary.impressions.delta_percent !== null
+      ? searchVisibilityMetricsSummary.impressions.delta_percent >= 0
+        ? "success"
+        : "warning"
+      : "neutral"
+    : "neutral";
   const topQueueRecommendation = queueResponse?.items?.[0] || null;
   const topQueueRecommendationActionState = topQueueRecommendation
     ? deriveRecommendationOperatorActionState({
@@ -6887,6 +7493,22 @@ export default function SiteWorkspacePage() {
             tone={latestAutomationStatus === "failed" ? "danger" : latestAutomationStatus === "completed" ? "success" : "neutral"}
             variant="elevated"
             data-testid="workspace-summary-automation"
+          />
+          <SummaryStatCard
+            label="Traffic trend"
+            value={trafficTrendValue}
+            detail={trafficTrendDetail}
+            tone={trafficTrendTone}
+            variant="elevated"
+            data-testid="workspace-summary-traffic"
+          />
+          <SummaryStatCard
+            label="Search visibility trend"
+            value={searchVisibilityTrendValue}
+            detail={searchVisibilityTrendDetail}
+            tone={searchVisibilityTrendTone}
+            variant="elevated"
+            data-testid="workspace-summary-search-visibility"
           />
           <SummaryStatCard
             label="Competitor readiness"
@@ -9029,6 +9651,29 @@ export default function SiteWorkspacePage() {
                         const recommendationWhyNow = normalizeRecommendationWhyNow(item);
                         const recommendationNextAction = normalizeRecommendationNextAction(item);
                         const recommendationCompetitorInsight = normalizeRecommendationCompetitorInsight(item);
+                        const recommendationMeasurementContext = normalizeRecommendationMeasurementContext(item);
+                        const recommendationMeasurementContextLine = buildRecommendationMeasurementContextLine(
+                          recommendationMeasurementContext,
+                        );
+                        const recommendationMeasurementSinceLine = buildRecommendationMeasurementSinceLine(
+                          recommendationMeasurementContext,
+                        );
+                        const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
+                        const recommendationSearchVisibilityContextLine = buildRecommendationSearchVisibilityContextLine(
+                          recommendationSearchConsoleContext,
+                        );
+                        const recommendationSearchVisibilitySinceLine = buildRecommendationSearchVisibilitySinceLine(
+                          recommendationSearchConsoleContext,
+                        );
+                        const recommendationSearchQueriesLine = recommendationSearchConsoleContext
+                          && recommendationSearchConsoleContext.searchConsoleStatus === "available"
+                          && recommendationSearchConsoleContext.topQueriesSummary.length > 0
+                          ? recommendationSearchConsoleContext.topQueriesSummary
+                            .map((query) => query.query)
+                            .slice(0, 3)
+                            .join(" · ")
+                          : null;
+                        const recommendationEffectivenessSummary = normalizeRecommendationEffectivenessSummary(item);
                         const recommendationExecutionType = normalizeRecommendationExecutionType(item);
                         const recommendationExecutionScope = normalizeRecommendationExecutionScope(item);
                         const recommendationExecutionInputs = normalizeRecommendationExecutionInputs(item);
@@ -9158,6 +9803,46 @@ export default function SiteWorkspacePage() {
                                   {recommendationTargetContentSummary ? (
                                     <span className="hint muted" data-testid="recommendation-target-content-summary">
                                       Content to update: {recommendationTargetContentSummary}
+                                    </span>
+                                  ) : null}
+                                  {recommendationMeasurementContextLine ? (
+                                    <span className="hint muted" data-testid="recommendation-measurement-context">
+                                      Recent traffic for this page/topic: {recommendationMeasurementContextLine}
+                                    </span>
+                                  ) : null}
+                                  {recommendationMeasurementSinceLine ? (
+                                    <span className="hint muted" data-testid="recommendation-measurement-since">
+                                      Since this recommendation: {recommendationMeasurementSinceLine}
+                                    </span>
+                                  ) : null}
+                                  {recommendationMeasurementContext?.measurementStatus === "no_match" ? (
+                                    <span className="hint muted" data-testid="recommendation-measurement-no-match">
+                                      No page-level measurement match available.
+                                    </span>
+                                  ) : null}
+                                  {recommendationSearchVisibilityContextLine ? (
+                                    <span className="hint muted" data-testid="recommendation-search-context">
+                                      Recent search visibility for this page/topic: {recommendationSearchVisibilityContextLine}
+                                    </span>
+                                  ) : null}
+                                  {recommendationSearchVisibilitySinceLine ? (
+                                    <span className="hint muted" data-testid="recommendation-search-since">
+                                      Since this recommendation (search): {recommendationSearchVisibilitySinceLine}
+                                    </span>
+                                  ) : null}
+                                  {recommendationSearchQueriesLine ? (
+                                    <span className="hint muted" data-testid="recommendation-search-queries">
+                                      Top queries: {recommendationSearchQueriesLine}
+                                    </span>
+                                  ) : null}
+                                  {recommendationSearchConsoleContext?.searchConsoleStatus === "no_match" ? (
+                                    <span className="hint muted" data-testid="recommendation-search-no-match">
+                                      No page-level search visibility match available.
+                                    </span>
+                                  ) : null}
+                                  {recommendationEffectivenessSummary ? (
+                                    <span className="hint muted" data-testid="recommendation-effectiveness-summary">
+                                      Directional outcome: {recommendationEffectivenessSummary}
                                     </span>
                                   ) : null}
                                   {recommendationActionPlanSteps.length > 0 ? (
@@ -9370,6 +10055,29 @@ export default function SiteWorkspacePage() {
                               const recommendationWhyNow = normalizeRecommendationWhyNow(item);
                               const recommendationNextAction = normalizeRecommendationNextAction(item);
                               const recommendationCompetitorInsight = normalizeRecommendationCompetitorInsight(item);
+                              const recommendationMeasurementContext = normalizeRecommendationMeasurementContext(item);
+                              const recommendationMeasurementContextLine = buildRecommendationMeasurementContextLine(
+                                recommendationMeasurementContext,
+                              );
+                              const recommendationMeasurementSinceLine = buildRecommendationMeasurementSinceLine(
+                                recommendationMeasurementContext,
+                              );
+                              const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
+                              const recommendationSearchVisibilityContextLine = buildRecommendationSearchVisibilityContextLine(
+                                recommendationSearchConsoleContext,
+                              );
+                              const recommendationSearchVisibilitySinceLine = buildRecommendationSearchVisibilitySinceLine(
+                                recommendationSearchConsoleContext,
+                              );
+                              const recommendationSearchQueriesLine = recommendationSearchConsoleContext
+                                && recommendationSearchConsoleContext.searchConsoleStatus === "available"
+                                && recommendationSearchConsoleContext.topQueriesSummary.length > 0
+                                ? recommendationSearchConsoleContext.topQueriesSummary
+                                  .map((query) => query.query)
+                                  .slice(0, 3)
+                                  .join(" · ")
+                                : null;
+                              const recommendationEffectivenessSummary = normalizeRecommendationEffectivenessSummary(item);
                               const recommendationExecutionType = normalizeRecommendationExecutionType(item);
                               const recommendationExecutionScope = normalizeRecommendationExecutionScope(item);
                               const recommendationExecutionInputs = normalizeRecommendationExecutionInputs(item);
@@ -9499,6 +10207,46 @@ export default function SiteWorkspacePage() {
                                         {recommendationTargetContentSummary ? (
                                           <span className="hint muted" data-testid="recommendation-target-content-summary">
                                             Content to update: {recommendationTargetContentSummary}
+                                          </span>
+                                        ) : null}
+                                        {recommendationMeasurementContextLine ? (
+                                          <span className="hint muted" data-testid="recommendation-measurement-context">
+                                            Recent traffic for this page/topic: {recommendationMeasurementContextLine}
+                                          </span>
+                                        ) : null}
+                                        {recommendationMeasurementSinceLine ? (
+                                          <span className="hint muted" data-testid="recommendation-measurement-since">
+                                            Since this recommendation: {recommendationMeasurementSinceLine}
+                                          </span>
+                                        ) : null}
+                                        {recommendationMeasurementContext?.measurementStatus === "no_match" ? (
+                                          <span className="hint muted" data-testid="recommendation-measurement-no-match">
+                                            No page-level measurement match available.
+                                          </span>
+                                        ) : null}
+                                        {recommendationSearchVisibilityContextLine ? (
+                                          <span className="hint muted" data-testid="recommendation-search-context">
+                                            Recent search visibility for this page/topic: {recommendationSearchVisibilityContextLine}
+                                          </span>
+                                        ) : null}
+                                        {recommendationSearchVisibilitySinceLine ? (
+                                          <span className="hint muted" data-testid="recommendation-search-since">
+                                            Since this recommendation (search): {recommendationSearchVisibilitySinceLine}
+                                          </span>
+                                        ) : null}
+                                        {recommendationSearchQueriesLine ? (
+                                          <span className="hint muted" data-testid="recommendation-search-queries">
+                                            Top queries: {recommendationSearchQueriesLine}
+                                          </span>
+                                        ) : null}
+                                        {recommendationSearchConsoleContext?.searchConsoleStatus === "no_match" ? (
+                                          <span className="hint muted" data-testid="recommendation-search-no-match">
+                                            No page-level search visibility match available.
+                                          </span>
+                                        ) : null}
+                                        {recommendationEffectivenessSummary ? (
+                                          <span className="hint muted" data-testid="recommendation-effectiveness-summary">
+                                            Directional outcome: {recommendationEffectivenessSummary}
                                           </span>
                                         ) : null}
                                         {recommendationActionPlanSteps.length > 0 ? (

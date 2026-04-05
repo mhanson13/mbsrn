@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -39,6 +39,10 @@ SEORecommendationExecutionType = Literal[
     "mixed",
 ]
 SEORecommendationExecutionReadiness = Literal["ready", "needs_review", "needs_more_input"]
+SEORecommendationMeasurementStatus = Literal["available", "no_match", "unavailable", "not_configured"]
+SEORecommendationSearchConsoleStatus = Literal["available", "no_match", "unavailable", "not_configured"]
+SEORecommendationEffectivenessStatus = Literal["available", "partial", "insufficient"]
+SEORecommendationEffectivenessDirection = Literal["up", "down", "flat", "unknown"]
 SEORecommendationPriorityLevel = Literal["high", "medium", "low"]
 SEORecommendationEffortHint = Literal["quick_win", "moderate", "larger_change"]
 SEORecommendationCompetitorEvidenceTrustTier = Literal[
@@ -176,6 +180,9 @@ _RECOMMENDATION_EXECUTION_SCOPE_MAX_CHARS = 220
 _RECOMMENDATION_EXECUTION_INPUT_MAX_ITEMS = 4
 _RECOMMENDATION_EXECUTION_INPUT_MAX_CHARS = 140
 _RECOMMENDATION_BLOCKING_REASON_MAX_CHARS = 220
+_RECOMMENDATION_MEASUREMENT_PATH_MAX_CHARS = 220
+_RECOMMENDATION_SEARCH_QUERY_MAX_CHARS = 120
+_RECOMMENDATION_EFFECTIVENESS_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_ITEMS = 5
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
@@ -3048,6 +3055,167 @@ class SEORecommendationActionPlanRead(BaseModel):
         return normalized
 
 
+class SEORecommendationMeasurementMetricWindowRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current: int = 0
+    previous: int = 0
+    delta_absolute: int = 0
+    delta_percent: float | None = None
+
+
+class SEORecommendationMeasurementWindowSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_date: date
+    end_date: date
+    users: int = 0
+    sessions: int = 0
+    pageviews: int = 0
+
+
+class SEORecommendationMeasurementDeltaSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    users_delta_absolute: int = 0
+    users_delta_percent: float | None = None
+    sessions_delta_absolute: int = 0
+    sessions_delta_percent: float | None = None
+    pageviews_delta_absolute: int = 0
+    pageviews_delta_percent: float | None = None
+
+
+class SEORecommendationMeasurementContextRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    measurement_status: SEORecommendationMeasurementStatus
+    matched_page_path: str | None = Field(default=None, max_length=_RECOMMENDATION_MEASUREMENT_PATH_MAX_CHARS)
+    comparison_scope: Literal["page", "site"] | None = None
+    sessions: SEORecommendationMeasurementMetricWindowRead | None = None
+    pageviews: SEORecommendationMeasurementMetricWindowRead | None = None
+    before_window_summary: SEORecommendationMeasurementWindowSummaryRead | None = None
+    after_window_summary: SEORecommendationMeasurementWindowSummaryRead | None = None
+    delta_summary: SEORecommendationMeasurementDeltaSummaryRead | None = None
+
+    @field_validator("measurement_status", mode="before")
+    @classmethod
+    def normalize_measurement_status(
+        cls,
+        value: Any,
+    ) -> SEORecommendationMeasurementStatus:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"available", "no_match", "unavailable", "not_configured"}:
+            return "unavailable"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("matched_page_path", mode="before")
+    @classmethod
+    def normalize_matched_page_path(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_MEASUREMENT_PATH_MAX_CHARS)
+
+
+class SEORecommendationSearchConsoleWindowSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_date: date
+    end_date: date
+    clicks: int = 0
+    impressions: int = 0
+    ctr: float = 0.0
+    average_position: float = 0.0
+
+
+class SEORecommendationSearchConsoleDeltaSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clicks_delta_absolute: int = 0
+    clicks_delta_percent: float | None = None
+    impressions_delta_absolute: int = 0
+    impressions_delta_percent: float | None = None
+    ctr_delta_absolute: float = 0.0
+    average_position_delta_absolute: float = 0.0
+
+
+class SEORecommendationSearchConsoleTopQueryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=_RECOMMENDATION_SEARCH_QUERY_MAX_CHARS)
+    clicks: int = 0
+    impressions: int = 0
+    ctr: float = 0.0
+    average_position: float = 0.0
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def normalize_query(cls, value: Any) -> str:
+        cleaned = _compact_text(value, max_length=_RECOMMENDATION_SEARCH_QUERY_MAX_CHARS)
+        return cleaned or "unknown query"
+
+
+class SEORecommendationSearchConsoleContextRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    search_console_status: SEORecommendationSearchConsoleStatus
+    matched_page_path: str | None = Field(default=None, max_length=_RECOMMENDATION_MEASUREMENT_PATH_MAX_CHARS)
+    comparison_scope: Literal["page", "site"] | None = None
+    current_window_summary: SEORecommendationSearchConsoleWindowSummaryRead | None = None
+    previous_window_summary: SEORecommendationSearchConsoleWindowSummaryRead | None = None
+    delta_summary: SEORecommendationSearchConsoleDeltaSummaryRead | None = None
+    top_queries_summary: list[SEORecommendationSearchConsoleTopQueryRead] = Field(default_factory=list)
+
+    @field_validator("search_console_status", mode="before")
+    @classmethod
+    def normalize_search_console_status(
+        cls,
+        value: Any,
+    ) -> SEORecommendationSearchConsoleStatus:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"available", "no_match", "unavailable", "not_configured"}:
+            return "unavailable"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("matched_page_path", mode="before")
+    @classmethod
+    def normalize_search_console_matched_page_path(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_MEASUREMENT_PATH_MAX_CHARS)
+
+
+class SEORecommendationEffectivenessContextRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    effectiveness_status: SEORecommendationEffectivenessStatus = "insufficient"
+    traffic_direction: SEORecommendationEffectivenessDirection = "unknown"
+    search_visibility_direction: SEORecommendationEffectivenessDirection = "unknown"
+    summary: str | None = Field(default=None, max_length=_RECOMMENDATION_EFFECTIVENESS_SUMMARY_MAX_CHARS)
+
+    @field_validator("effectiveness_status", mode="before")
+    @classmethod
+    def normalize_effectiveness_status(
+        cls,
+        value: Any,
+    ) -> SEORecommendationEffectivenessStatus:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"available", "partial", "insufficient"}:
+            return "insufficient"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("traffic_direction", "search_visibility_direction", mode="before")
+    @classmethod
+    def normalize_effectiveness_direction(
+        cls,
+        value: Any,
+    ) -> SEORecommendationEffectivenessDirection:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"up", "down", "flat", "unknown"}:
+            return "unknown"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def normalize_effectiveness_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_EFFECTIVENESS_SUMMARY_MAX_CHARS)
+
+
 class SEORecommendationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -3111,6 +3279,9 @@ class SEORecommendationRead(BaseModel):
         default=None,
         max_length=_RECOMMENDATION_COMPETITOR_INSIGHT_MAX_CHARS,
     )
+    recommendation_measurement_context: SEORecommendationMeasurementContextRead | None = None
+    recommendation_search_console_context: SEORecommendationSearchConsoleContextRead | None = None
+    recommendation_effectiveness_context: SEORecommendationEffectivenessContextRead | None = None
     execution_type: SEORecommendationExecutionType = "mixed"
     execution_scope: str | None = Field(
         default=None,
@@ -3287,6 +3458,51 @@ class SEORecommendationRead(BaseModel):
     @classmethod
     def normalize_competitor_insight(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_COMPETITOR_INSIGHT_MAX_CHARS)
+
+    @field_validator("recommendation_measurement_context", mode="before")
+    @classmethod
+    def normalize_recommendation_measurement_context(
+        cls,
+        value: Any,
+    ) -> SEORecommendationMeasurementContextRead | None:
+        if value is None:
+            return None
+        if isinstance(value, SEORecommendationMeasurementContextRead):
+            return value
+        try:
+            return SEORecommendationMeasurementContextRead.model_validate(value)
+        except Exception:  # noqa: BLE001
+            return None
+
+    @field_validator("recommendation_search_console_context", mode="before")
+    @classmethod
+    def normalize_recommendation_search_console_context(
+        cls,
+        value: Any,
+    ) -> SEORecommendationSearchConsoleContextRead | None:
+        if value is None:
+            return None
+        if isinstance(value, SEORecommendationSearchConsoleContextRead):
+            return value
+        try:
+            return SEORecommendationSearchConsoleContextRead.model_validate(value)
+        except Exception:  # noqa: BLE001
+            return None
+
+    @field_validator("recommendation_effectiveness_context", mode="before")
+    @classmethod
+    def normalize_recommendation_effectiveness_context(
+        cls,
+        value: Any,
+    ) -> SEORecommendationEffectivenessContextRead | None:
+        if value is None:
+            return None
+        if isinstance(value, SEORecommendationEffectivenessContextRead):
+            return value
+        try:
+            return SEORecommendationEffectivenessContextRead.model_validate(value)
+        except Exception:  # noqa: BLE001
+            return None
 
     @field_validator("execution_type", mode="before")
     @classmethod

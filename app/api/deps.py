@@ -16,14 +16,21 @@ from app.core.token_cipher import FernetTokenCipher
 from app.db.session import SessionLocal, get_db_session
 from app.integrations import (
     DevEmailProvider,
+    DisabledGA4AnalyticsProvider,
+    DisabledSearchConsoleAnalyticsProvider,
     DisabledGooglePlacesSeedDiscoveryClient,
     DevSMSProvider,
     EmailProvider,
+    GA4AnalyticsProvider,
     GoogleBusinessProfileClient,
+    GoogleAnalyticsDataAPIClient,
+    GoogleSearchConsoleAPIClient,
     GooglePlacesSeedDiscoveryClient,
     GooglePlacesTextSearchClient,
     MisconfiguredSEOCompetitorProfileGenerationProvider,
     MisconfiguredSEORecommendationNarrativeProvider,
+    MockGA4AnalyticsProvider,
+    MockSearchConsoleAnalyticsProvider,
     MockSEOCompetitorComparisonSummaryProvider,
     MockSEOCompetitorProfileGenerationProvider,
     MockSEORecommendationNarrativeProvider,
@@ -34,6 +41,7 @@ from app.integrations import (
     MockSMSProvider,
     SEOCompetitorProfileGenerationProvider,
     SEORecommendationNarrativeProvider,
+    SearchConsoleAnalyticsProvider,
     SEOCompetitorComparisonSummaryProvider,
     SEOAuditSummaryProvider,
     GoogleOIDCJWKSVerifier,
@@ -105,6 +113,7 @@ from app.services.action_chain_activation_service import ActionChainActivationSe
 from app.services.action_lineage_service import ActionLineageService
 from app.services.seo_recommendation_narrative_prompt import SEO_RECOMMENDATION_NARRATIVE_PROMPT_VERSION
 from app.services.seo_sites import SEOSiteService
+from app.services.seo_analytics import SEOAnalyticsService, SEOAnalyticsServiceSettings
 from app.services.seo_summary import SEOSummaryService
 from app.services.summary import LeadSummaryService
 from app.services.timeline import LeadTimelineService
@@ -386,6 +395,56 @@ def get_gcp_logs_query_service(
     return GCPLogsQueryService(
         client=client,
         project_id=settings.gcp_logging_project_id,
+    )
+
+
+def get_ga4_analytics_provider() -> GA4AnalyticsProvider:
+    settings = get_settings()
+    if settings.ga4_use_mock_provider:
+        logger.info("ga4_analytics_provider_mode mode=mock")
+        return MockGA4AnalyticsProvider()
+    if not (settings.ga4_property_id or "").strip():
+        logger.info("ga4_analytics_provider_mode mode=disabled reason=missing_property_id")
+        return DisabledGA4AnalyticsProvider()
+    return GoogleAnalyticsDataAPIClient(
+        property_id=settings.ga4_property_id,
+        timeout_seconds=settings.ga4_timeout_seconds,
+        credentials_json=settings.ga4_credentials_json,
+        api_base_url=settings.ga4_api_base_url,
+    )
+
+
+def get_search_console_analytics_provider() -> SearchConsoleAnalyticsProvider:
+    settings = get_settings()
+    if settings.search_console_use_mock_provider:
+        logger.info("search_console_analytics_provider_mode mode=mock")
+        return MockSearchConsoleAnalyticsProvider()
+    if not (settings.search_console_site_property_url or "").strip():
+        logger.info("search_console_analytics_provider_mode mode=disabled reason=missing_site_property_url")
+        return DisabledSearchConsoleAnalyticsProvider()
+    return GoogleSearchConsoleAPIClient(
+        site_property_url=settings.search_console_site_property_url,
+        timeout_seconds=settings.search_console_timeout_seconds,
+        credentials_json=settings.search_console_credentials_json,
+        api_base_url=settings.search_console_api_base_url,
+    )
+
+
+def get_seo_analytics_service(
+    provider: GA4AnalyticsProvider = Depends(get_ga4_analytics_provider),
+    search_console_provider: SearchConsoleAnalyticsProvider = Depends(get_search_console_analytics_provider),
+) -> SEOAnalyticsService:
+    settings = get_settings()
+    return SEOAnalyticsService(
+        provider=provider,
+        search_console_provider=search_console_provider,
+        settings=SEOAnalyticsServiceSettings(
+            period_days=settings.ga4_period_days,
+            top_pages_limit=settings.ga4_top_pages_limit,
+            search_console_period_days=settings.search_console_period_days,
+            search_console_top_pages_limit=settings.search_console_top_pages_limit,
+            search_console_top_queries_limit=settings.search_console_top_queries_limit,
+        ),
     )
 
 

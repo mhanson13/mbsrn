@@ -97,6 +97,85 @@ Frontend contract note:
 - Verify token usability and scope enforcement before provider-call paths.
 - Keep tests deterministic (fixed fixtures, explicit error mapping expectations).
 
+## GA4 Read-Only Measurement Layer
+
+Phase 1 GA4 support is an additive read path for operator outcome visibility.
+
+- Integration client: `app/integrations/ga4_analytics_provider.py`
+- Service mapping layer: `app/services/seo_analytics.py`
+- Site endpoint: `GET /api/businesses/{business_id}/seo/sites/{site_id}/analytics/site-summary`
+
+Design constraints:
+
+- read-only only (no write-back, no mutation side effects)
+- deterministic summaries over a fixed 7-day current vs previous window
+- optional/guarded runtime behavior:
+  - `status=not_configured` when GA4 is not configured
+  - `status=unavailable` for temporary provider failures
+- tenant/business scope enforcement follows the existing SEO route model
+
+This layer is intentionally lightweight and provides stable metrics inputs for operator visibility and future recommendation outcome validation.
+
+Phase 2 extends this with bounded page-aware context for recommendation detail views:
+
+- recommendation payloads now include additive `recommendation_measurement_context`
+- context is matched deterministically from existing recommendation page hints/target context to GA4 top pages
+- `measurement_status` is explicit:
+  - `available`
+  - `no_match`
+  - `unavailable`
+  - `not_configured`
+
+Interpretation guardrails:
+
+- this is contextual measurement only
+- no attribution or causal claims are made
+- context is suppressed or downgraded when matching is weak/unavailable
+
+Phase 3 adds a bounded before-vs-after comparison tied to recommendation timing anchors:
+
+- recommendation timestamp anchor uses existing lifecycle fields (`created_at` with deterministic fallback to run timestamp when needed)
+- fixed comparison window: 7 days before vs 7 days after (or most recent bounded after window)
+- additive recommendation context fields:
+  - `comparison_scope` (`page` | `site`)
+  - `before_window_summary`
+  - `after_window_summary`
+  - `delta_summary`
+- matching precedence remains conservative:
+  - page-level window comparison when a deterministic page match exists
+  - site-level fallback when page match is unavailable
+  - suppress context when analytics is unavailable/not configured
+
+Interpretation guardrail:
+
+- UI copy must remain directional only (for example, “traffic has increased/decreased since this recommendation”)
+- no causal attribution claims are made
+
+## Search Console Read-Only Visibility Layer
+
+Phase 4 extends measurement visibility with Google Search Console signals while keeping the system read-only and deterministic.
+
+- Integration client: `app/integrations/search_console_analytics_provider.py`
+- Service mapping layer: `app/services/seo_analytics.py`
+- Site endpoint: `GET /api/businesses/{business_id}/seo/sites/{site_id}/analytics/search-visibility-summary`
+
+What is exposed (bounded):
+
+- site-level clicks, impressions, CTR, and average position
+- top pages and optional top query summaries (bounded list sizes)
+- recommendation-level page/site search visibility context when deterministic matching succeeds
+
+How it complements GA4:
+
+- GA4 provides traffic outcome direction
+- Search Console provides search visibility direction
+- recommendation payloads now carry both contexts and a combined directional effectiveness summary
+
+Interpretation guardrails:
+
+- combined effectiveness is contextual only, not attributional
+- wording must remain directional and conservative, especially when only one source is available or signals conflict
+
 ## Frontend Action Control Layer
 
 The operator UI includes a frontend-only Action Control Layer for recommendation/automation decision surfaces.

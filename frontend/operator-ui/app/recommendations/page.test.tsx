@@ -578,6 +578,165 @@ describe("recommendations queue optimistic workflows", () => {
     expect(influenceLine).toHaveTextContent("Meaningful influence");
   });
 
+  it("renders recommendation measurement context only when page matching is available", async () => {
+    const matchedRecommendation = {
+      ...createRecommendation("rec-measure-1", "open", "high", "Homepage trust content"),
+      recommendation_measurement_context: {
+        measurement_status: "available",
+        matched_page_path: "/",
+        comparison_scope: "page",
+        sessions: {
+          current: 160,
+          previous: 130,
+          delta_absolute: 30,
+          delta_percent: 23.1,
+        },
+        pageviews: {
+          current: 220,
+          previous: 190,
+          delta_absolute: 30,
+          delta_percent: 15.8,
+        },
+        before_window_summary: {
+          start_date: "2026-03-14",
+          end_date: "2026-03-20",
+          users: 100,
+          sessions: 130,
+          pageviews: 190,
+        },
+        after_window_summary: {
+          start_date: "2026-03-21",
+          end_date: "2026-03-27",
+          users: 120,
+          sessions: 160,
+          pageviews: 220,
+        },
+        delta_summary: {
+          users_delta_absolute: 20,
+          users_delta_percent: 20.0,
+          sessions_delta_absolute: 30,
+          sessions_delta_percent: 23.1,
+          pageviews_delta_absolute: 30,
+          pageviews_delta_percent: 15.8,
+        },
+      },
+      recommendation_search_console_context: {
+        search_console_status: "available",
+        comparison_scope: "page",
+        matched_page_path: "/",
+        current_window_summary: {
+          start_date: "2026-03-21",
+          end_date: "2026-03-27",
+          clicks: 48,
+          impressions: 1100,
+          ctr: 4.36,
+          average_position: 7.8,
+        },
+        previous_window_summary: {
+          start_date: "2026-03-14",
+          end_date: "2026-03-20",
+          clicks: 36,
+          impressions: 980,
+          ctr: 3.67,
+          average_position: 8.6,
+        },
+        delta_summary: {
+          clicks_delta_absolute: 12,
+          clicks_delta_percent: 33.3,
+          impressions_delta_absolute: 120,
+          impressions_delta_percent: 12.2,
+          ctr_delta_absolute: 0.69,
+          average_position_delta_absolute: -0.8,
+        },
+        top_queries_summary: [
+          {
+            query: "plumbing services denver",
+            clicks: 14,
+            impressions: 180,
+            ctr: 7.8,
+            average_position: 7.4,
+          },
+          {
+            query: "emergency plumber denver",
+            clicks: 11,
+            impressions: 140,
+            ctr: 7.9,
+            average_position: 7.9,
+          },
+        ],
+      },
+      recommendation_effectiveness_context: {
+        effectiveness_status: "available",
+        traffic_direction: "up",
+        search_visibility_direction: "up",
+        summary: "Traffic and search visibility are both trending up since this recommendation.",
+      },
+    } satisfies Recommendation;
+    const noMatchRecommendation = {
+      ...createRecommendation("rec-measure-2", "open", "medium", "General SEO suggestion"),
+      recommendation_measurement_context: {
+        measurement_status: "no_match",
+        matched_page_path: null,
+        sessions: null,
+        pageviews: null,
+      },
+      recommendation_search_console_context: {
+        search_console_status: "no_match",
+      },
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [matchedRecommendation, noMatchRecommendation],
+        {
+          total: 2,
+          open: 2,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Homepage trust content");
+    expect(screen.queryByTestId("recommendation-expanded-measurement-context-rec-measure-1")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-expanded-measurement-no-match-rec-measure-2")).not.toBeInTheDocument();
+
+    const matchedCell = screen.getByTestId("recommendation-decisiveness-rec-measure-1");
+    await user.click(within(matchedCell).getByRole("button", { name: "View details" }));
+    expect(screen.getByTestId("recommendation-expanded-measurement-context-rec-measure-1")).toHaveTextContent(
+      "Recent traffic for this page/topic: / — 160 sessions (+23.1% vs prior period), 220 pageviews (+15.8% vs prior period)",
+    );
+    expect(screen.getByTestId("recommendation-expanded-measurement-since-rec-measure-1")).toHaveTextContent(
+      "Since this recommendation: page trend: sessions ↑ 23.1%, pageviews ↑ 15.8%.",
+    );
+    expect(screen.getByTestId("recommendation-expanded-search-context-rec-measure-1")).toHaveTextContent(
+      "Recent search visibility for this page/topic: / — 48 clicks (+33.3% vs prior period), 1,100 impressions (+12.2% vs prior period), avg position 7.8",
+    );
+    expect(screen.getByTestId("recommendation-expanded-search-since-rec-measure-1")).toHaveTextContent(
+      "Since this recommendation (search): page visibility trend: clicks ↑ 33.3%, impressions ↑ 12.2%, position improved by 0.8.",
+    );
+    expect(screen.getByTestId("recommendation-expanded-search-queries-rec-measure-1")).toHaveTextContent(
+      "Top queries: plumbing services denver · emergency plumber denver",
+    );
+    expect(screen.getByTestId("recommendation-expanded-effectiveness-rec-measure-1")).toHaveTextContent(
+      "Directional outcome: Traffic and search visibility are both trending up since this recommendation.",
+    );
+
+    const noMatchCell = screen.getByTestId("recommendation-decisiveness-rec-measure-2");
+    await user.click(within(noMatchCell).getByRole("button", { name: "View details" }));
+    expect(screen.getByTestId("recommendation-expanded-measurement-no-match-rec-measure-2")).toHaveTextContent(
+      "No page-level measurement match available.",
+    );
+    expect(screen.getByTestId("recommendation-expanded-search-no-match-rec-measure-2")).toHaveTextContent(
+      "No page-level search visibility match available.",
+    );
+    expect(screen.queryByTestId("recommendation-expanded-measurement-context-rec-measure-2")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-expanded-search-context-rec-measure-2")).not.toBeInTheDocument();
+  });
+
   it("renders execution-readiness guidance only in expanded recommendation details", async () => {
     const recommendation = {
       ...createRecommendation("rec-execution-1", "open", "high", "Clarify metadata for service pages"),

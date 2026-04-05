@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 import logging
 import re
@@ -25,6 +25,7 @@ from app.api.deps import (
     get_seo_recommendation_narrative_service,
     get_seo_competitor_service,
     get_seo_recommendation_service,
+    get_seo_analytics_service,
     get_seo_site_service,
     get_seo_summary_service,
     require_admin_rate_limit,
@@ -114,6 +115,15 @@ from app.schemas.seo_recommendation import (
     SEORecommendationOrderingExplanationRead,
     SEORecommendationPriorityRead,
     SEORecommendationStartHereRead,
+    SEORecommendationMeasurementContextRead,
+    SEORecommendationMeasurementDeltaSummaryRead,
+    SEORecommendationMeasurementMetricWindowRead,
+    SEORecommendationMeasurementWindowSummaryRead,
+    SEORecommendationSearchConsoleContextRead,
+    SEORecommendationSearchConsoleDeltaSummaryRead,
+    SEORecommendationSearchConsoleTopQueryRead,
+    SEORecommendationSearchConsoleWindowSummaryRead,
+    SEORecommendationEffectivenessContextRead,
     SEORecommendationThemeGroupRead,
     SEOWorkspaceSectionFreshnessRead,
     SEORecommendationWorkspaceTrustSummaryRead,
@@ -208,7 +218,12 @@ from app.services.seo_sites import (
     build_location_context,
 )
 from app.services.seo_summary import SEOSummaryNotFoundError, SEOSummaryService, SEOSummaryValidationError
+from app.services.seo_analytics import SEOAnalyticsService
 from app.schemas.seo_summary import SEOAuditSummaryRead
+from app.schemas.seo_analytics import (
+    SEOAnalyticsSiteSummaryRead,
+    SEOSearchConsoleSiteSummaryRead,
+)
 
 router = APIRouter(prefix="/api/businesses/{business_id}/seo", tags=["seo"])
 router_v1 = APIRouter(prefix="/api/v1/businesses/{business_id}/seo", tags=["seo"])
@@ -384,6 +399,487 @@ def _attach_action_lineage_to_recommendations(
         recommendation.model_copy(
             update={
                 "action_lineage": lineage_by_source_action_id.get(recommendation.id),
+            }
+        )
+        for recommendation in recommendations
+    ]
+
+
+def _to_recommendation_measurement_window(
+    *,
+    current: int,
+    previous: int,
+    delta_absolute: int,
+    delta_percent: float | None,
+) -> SEORecommendationMeasurementMetricWindowRead:
+    return SEORecommendationMeasurementMetricWindowRead(
+        current=max(0, int(current)),
+        previous=max(0, int(previous)),
+        delta_absolute=int(delta_absolute),
+        delta_percent=delta_percent,
+    )
+
+
+def _to_recommendation_measurement_window_summary(
+    *,
+    start_date: date,
+    end_date: date,
+    users: int,
+    sessions: int,
+    pageviews: int,
+) -> SEORecommendationMeasurementWindowSummaryRead:
+    return SEORecommendationMeasurementWindowSummaryRead(
+        start_date=start_date,
+        end_date=end_date,
+        users=max(0, int(users)),
+        sessions=max(0, int(sessions)),
+        pageviews=max(0, int(pageviews)),
+    )
+
+
+def _to_recommendation_measurement_delta_summary(
+    *,
+    before_window: SEORecommendationMeasurementWindowSummaryRead,
+    after_window: SEORecommendationMeasurementWindowSummaryRead,
+) -> SEORecommendationMeasurementDeltaSummaryRead:
+    users_delta_absolute = int(after_window.users) - int(before_window.users)
+    sessions_delta_absolute = int(after_window.sessions) - int(before_window.sessions)
+    pageviews_delta_absolute = int(after_window.pageviews) - int(before_window.pageviews)
+
+    def _delta_percent(current: int, previous: int) -> float | None:
+        if previous <= 0:
+            return None if current > 0 else 0.0
+        return round(((current - previous) / previous) * 100, 2)
+
+    return SEORecommendationMeasurementDeltaSummaryRead(
+        users_delta_absolute=users_delta_absolute,
+        users_delta_percent=_delta_percent(after_window.users, before_window.users),
+        sessions_delta_absolute=sessions_delta_absolute,
+        sessions_delta_percent=_delta_percent(after_window.sessions, before_window.sessions),
+        pageviews_delta_absolute=pageviews_delta_absolute,
+        pageviews_delta_percent=_delta_percent(after_window.pageviews, before_window.pageviews),
+    )
+
+
+def _to_recommendation_search_console_window_summary(
+    *,
+    start_date: date,
+    end_date: date,
+    clicks: int,
+    impressions: int,
+    ctr: float,
+    average_position: float,
+) -> SEORecommendationSearchConsoleWindowSummaryRead:
+    return SEORecommendationSearchConsoleWindowSummaryRead(
+        start_date=start_date,
+        end_date=end_date,
+        clicks=max(0, int(clicks)),
+        impressions=max(0, int(impressions)),
+        ctr=round(float(ctr), 4),
+        average_position=round(float(average_position), 4),
+    )
+
+
+def _to_recommendation_search_console_delta_summary(
+    *,
+    before_window: SEORecommendationSearchConsoleWindowSummaryRead,
+    after_window: SEORecommendationSearchConsoleWindowSummaryRead,
+) -> SEORecommendationSearchConsoleDeltaSummaryRead:
+    clicks_delta_absolute = int(after_window.clicks) - int(before_window.clicks)
+    impressions_delta_absolute = int(after_window.impressions) - int(before_window.impressions)
+
+    def _delta_percent(current: int, previous: int) -> float | None:
+        if previous <= 0:
+            return None if current > 0 else 0.0
+        return round(((current - previous) / previous) * 100, 2)
+
+    return SEORecommendationSearchConsoleDeltaSummaryRead(
+        clicks_delta_absolute=clicks_delta_absolute,
+        clicks_delta_percent=_delta_percent(after_window.clicks, before_window.clicks),
+        impressions_delta_absolute=impressions_delta_absolute,
+        impressions_delta_percent=_delta_percent(after_window.impressions, before_window.impressions),
+        ctr_delta_absolute=round(float(after_window.ctr) - float(before_window.ctr), 4),
+        average_position_delta_absolute=round(
+            float(after_window.average_position) - float(before_window.average_position),
+            4,
+        ),
+    )
+
+
+def _derive_direction_from_percent(value: float | None) -> Literal["up", "down", "flat", "unknown"]:
+    if value is None:
+        return "unknown"
+    if value > 0:
+        return "up"
+    if value < 0:
+        return "down"
+    return "flat"
+
+
+def _derive_effectiveness_context(
+    *,
+    traffic_context: SEORecommendationMeasurementContextRead | None,
+    search_context: SEORecommendationSearchConsoleContextRead | None,
+) -> SEORecommendationEffectivenessContextRead | None:
+    traffic_direction = "unknown"
+    if (
+        traffic_context is not None
+        and traffic_context.measurement_status == "available"
+        and traffic_context.delta_summary is not None
+    ):
+        traffic_direction = _derive_direction_from_percent(
+            traffic_context.delta_summary.sessions_delta_percent
+        )
+
+    search_direction = "unknown"
+    if (
+        search_context is not None
+        and search_context.search_console_status == "available"
+        and search_context.delta_summary is not None
+    ):
+        search_direction = _derive_direction_from_percent(
+            search_context.delta_summary.impressions_delta_percent
+        )
+
+    if traffic_direction == "unknown" and search_direction == "unknown":
+        return None
+
+    if traffic_direction != "unknown" and search_direction != "unknown":
+        status = "available"
+        summary = (
+            "Traffic and search visibility are both trending up since this recommendation."
+            if traffic_direction == "up" and search_direction == "up"
+            else "Traffic and search visibility are mixed since this recommendation."
+        )
+    else:
+        status = "partial"
+        summary = "Traffic or search visibility context is partially available since this recommendation."
+
+    return SEORecommendationEffectivenessContextRead(
+        effectiveness_status=status,
+        traffic_direction=traffic_direction,
+        search_visibility_direction=search_direction,
+        summary=summary,
+    )
+
+
+def _build_recommendation_measurement_context_by_id(
+    *,
+    recommendations: list[SEORecommendationRead],
+    site_analytics_summary: SEOAnalyticsSiteSummaryRead,
+    seo_analytics_service: SEOAnalyticsService,
+    site_domain: str | None,
+) -> dict[str, SEORecommendationMeasurementContextRead]:
+    if not recommendations:
+        return {}
+
+    analytics_status = str(site_analytics_summary.status or "").strip().lower()
+    if analytics_status in {"not_configured", "unavailable"}:
+        if analytics_status == "not_configured":
+            measurement_status: str = "not_configured"
+        else:
+            measurement_status = "unavailable"
+        return {
+            recommendation.id: SEORecommendationMeasurementContextRead(
+                measurement_status=measurement_status,
+            )
+            for recommendation in recommendations
+        }
+
+    if not site_analytics_summary.available or not site_analytics_summary.top_pages_summary:
+        return {
+            recommendation.id: SEORecommendationMeasurementContextRead(
+                measurement_status="unavailable",
+            )
+            for recommendation in recommendations
+        }
+
+    context_by_recommendation_id: dict[str, SEORecommendationMeasurementContextRead] = {}
+    for recommendation in recommendations:
+        matched_page = seo_analytics_service.match_recommendation_to_top_page(
+            top_pages_summary=site_analytics_summary.top_pages_summary,
+            recommendation_target_page_hints=recommendation.recommendation_target_page_hints,
+            recommendation_target_context=recommendation.recommendation_target_context,
+        )
+        matched_page_path = matched_page.page_path if matched_page is not None else None
+        comparison = seo_analytics_service.build_recommendation_before_after_comparison(
+            site_domain=site_domain,
+            recommendation_created_at=recommendation.created_at,
+            page_path=matched_page_path,
+        )
+
+        if comparison is not None:
+            before_window_summary = _to_recommendation_measurement_window_summary(
+                start_date=comparison.before_window.start_date,
+                end_date=comparison.before_window.end_date,
+                users=comparison.before_window.users,
+                sessions=comparison.before_window.sessions,
+                pageviews=comparison.before_window.pageviews,
+            )
+            after_window_summary = _to_recommendation_measurement_window_summary(
+                start_date=comparison.after_window.start_date,
+                end_date=comparison.after_window.end_date,
+                users=comparison.after_window.users,
+                sessions=comparison.after_window.sessions,
+                pageviews=comparison.after_window.pageviews,
+            )
+            delta_summary = _to_recommendation_measurement_delta_summary(
+                before_window=before_window_summary,
+                after_window=after_window_summary,
+            )
+            comparison_scope = "page" if comparison.comparison_scope == "page" else "site"
+            context_by_recommendation_id[recommendation.id] = SEORecommendationMeasurementContextRead(
+                measurement_status="available",
+                matched_page_path=matched_page_path if comparison_scope == "page" else None,
+                comparison_scope=comparison_scope,
+                sessions=_to_recommendation_measurement_window(
+                    current=after_window_summary.sessions,
+                    previous=before_window_summary.sessions,
+                    delta_absolute=after_window_summary.sessions - before_window_summary.sessions,
+                    delta_percent=delta_summary.sessions_delta_percent,
+                ),
+                pageviews=_to_recommendation_measurement_window(
+                    current=after_window_summary.pageviews,
+                    previous=before_window_summary.pageviews,
+                    delta_absolute=after_window_summary.pageviews - before_window_summary.pageviews,
+                    delta_percent=delta_summary.pageviews_delta_percent,
+                ),
+                before_window_summary=before_window_summary,
+                after_window_summary=after_window_summary,
+                delta_summary=delta_summary,
+            )
+            continue
+
+        if matched_page is not None:
+            sessions_window = _to_recommendation_measurement_window(
+                current=matched_page.sessions,
+                previous=matched_page.sessions_previous,
+                delta_absolute=matched_page.sessions_delta_absolute,
+                delta_percent=matched_page.sessions_delta_percent,
+            )
+            pageviews_window = _to_recommendation_measurement_window(
+                current=matched_page.pageviews,
+                previous=matched_page.pageviews_previous,
+                delta_absolute=matched_page.pageviews_delta_absolute,
+                delta_percent=matched_page.pageviews_delta_percent,
+            )
+            context_by_recommendation_id[recommendation.id] = SEORecommendationMeasurementContextRead(
+                measurement_status="available",
+                matched_page_path=matched_page.page_path,
+                comparison_scope="page",
+                sessions=sessions_window,
+                pageviews=pageviews_window,
+            )
+            continue
+
+        site_metrics_summary = site_analytics_summary.site_metrics_summary
+        if site_metrics_summary is not None:
+            site_sessions_window = _to_recommendation_measurement_window(
+                current=site_metrics_summary.sessions.current,
+                previous=site_metrics_summary.sessions.previous,
+                delta_absolute=site_metrics_summary.sessions.delta_absolute,
+                delta_percent=site_metrics_summary.sessions.delta_percent,
+            )
+            site_pageviews_window = _to_recommendation_measurement_window(
+                current=site_metrics_summary.pageviews.current,
+                previous=site_metrics_summary.pageviews.previous,
+                delta_absolute=site_metrics_summary.pageviews.delta_absolute,
+                delta_percent=site_metrics_summary.pageviews.delta_percent,
+            )
+            context_by_recommendation_id[recommendation.id] = SEORecommendationMeasurementContextRead(
+                measurement_status="available",
+                matched_page_path=None,
+                comparison_scope="site",
+                sessions=site_sessions_window,
+                pageviews=site_pageviews_window,
+            )
+            continue
+        context_by_recommendation_id[recommendation.id] = SEORecommendationMeasurementContextRead(
+            measurement_status="no_match",
+        )
+    return context_by_recommendation_id
+
+
+def _build_recommendation_search_console_context_by_id(
+    *,
+    recommendations: list[SEORecommendationRead],
+    search_console_site_summary: SEOSearchConsoleSiteSummaryRead,
+    seo_analytics_service: SEOAnalyticsService,
+    site_domain: str | None,
+) -> dict[str, SEORecommendationSearchConsoleContextRead]:
+    if not recommendations:
+        return {}
+
+    search_console_status = str(search_console_site_summary.status or "").strip().lower()
+    if search_console_status in {"not_configured", "unavailable"}:
+        status_value = "not_configured" if search_console_status == "not_configured" else "unavailable"
+        return {
+            recommendation.id: SEORecommendationSearchConsoleContextRead(
+                search_console_status=status_value
+            )
+            for recommendation in recommendations
+        }
+
+    if not search_console_site_summary.available or not search_console_site_summary.top_pages_summary:
+        return {
+            recommendation.id: SEORecommendationSearchConsoleContextRead(
+                search_console_status="unavailable"
+            )
+            for recommendation in recommendations
+        }
+
+    context_by_recommendation_id: dict[str, SEORecommendationSearchConsoleContextRead] = {}
+    for recommendation in recommendations:
+        matched_page = seo_analytics_service.match_recommendation_to_search_console_page(
+            top_pages_summary=search_console_site_summary.top_pages_summary,
+            recommendation_target_page_hints=recommendation.recommendation_target_page_hints,
+            recommendation_target_context=recommendation.recommendation_target_context,
+        )
+        matched_page_path = matched_page.page_path if matched_page is not None else None
+        comparison = seo_analytics_service.build_recommendation_search_console_before_after_comparison(
+            site_domain=site_domain,
+            recommendation_created_at=recommendation.created_at,
+            page_path=matched_page_path,
+        )
+        if comparison is not None:
+            before_window_summary = _to_recommendation_search_console_window_summary(
+                start_date=comparison.before_window.start_date,
+                end_date=comparison.before_window.end_date,
+                clicks=comparison.before_window.clicks,
+                impressions=comparison.before_window.impressions,
+                ctr=comparison.before_window.ctr,
+                average_position=comparison.before_window.average_position,
+            )
+            after_window_summary = _to_recommendation_search_console_window_summary(
+                start_date=comparison.after_window.start_date,
+                end_date=comparison.after_window.end_date,
+                clicks=comparison.after_window.clicks,
+                impressions=comparison.after_window.impressions,
+                ctr=comparison.after_window.ctr,
+                average_position=comparison.after_window.average_position,
+            )
+            delta_summary = _to_recommendation_search_console_delta_summary(
+                before_window=before_window_summary,
+                after_window=after_window_summary,
+            )
+            context_by_recommendation_id[recommendation.id] = SEORecommendationSearchConsoleContextRead(
+                search_console_status="available",
+                matched_page_path=matched_page_path if comparison.comparison_scope == "page" else None,
+                comparison_scope=comparison.comparison_scope,
+                current_window_summary=after_window_summary,
+                previous_window_summary=before_window_summary,
+                delta_summary=delta_summary,
+                top_queries_summary=[
+                    SEORecommendationSearchConsoleTopQueryRead.model_validate(query.model_dump())
+                    for query in comparison.top_queries
+                ],
+            )
+            continue
+
+        if matched_page is not None:
+            current_summary = _to_recommendation_search_console_window_summary(
+                start_date=date.today(),
+                end_date=date.today(),
+                clicks=matched_page.clicks,
+                impressions=matched_page.impressions,
+                ctr=matched_page.ctr,
+                average_position=matched_page.average_position,
+            )
+            previous_summary = _to_recommendation_search_console_window_summary(
+                start_date=date.today(),
+                end_date=date.today(),
+                clicks=matched_page.clicks_previous,
+                impressions=matched_page.impressions_previous,
+                ctr=matched_page.ctr_previous,
+                average_position=matched_page.average_position_previous,
+            )
+            context_by_recommendation_id[recommendation.id] = SEORecommendationSearchConsoleContextRead(
+                search_console_status="available",
+                matched_page_path=matched_page.page_path,
+                comparison_scope="page",
+                current_window_summary=current_summary,
+                previous_window_summary=previous_summary,
+                delta_summary=_to_recommendation_search_console_delta_summary(
+                    before_window=previous_summary,
+                    after_window=current_summary,
+                ),
+            )
+            continue
+
+        site_metrics_summary = search_console_site_summary.site_metrics_summary
+        if site_metrics_summary is not None:
+            current_summary = _to_recommendation_search_console_window_summary(
+                start_date=site_metrics_summary.current_period_start,
+                end_date=site_metrics_summary.current_period_end,
+                clicks=site_metrics_summary.clicks.current,
+                impressions=site_metrics_summary.impressions.current,
+                ctr=site_metrics_summary.ctr_current,
+                average_position=site_metrics_summary.average_position_current,
+            )
+            previous_summary = _to_recommendation_search_console_window_summary(
+                start_date=site_metrics_summary.previous_period_start,
+                end_date=site_metrics_summary.previous_period_end,
+                clicks=site_metrics_summary.clicks.previous,
+                impressions=site_metrics_summary.impressions.previous,
+                ctr=site_metrics_summary.ctr_previous,
+                average_position=site_metrics_summary.average_position_previous,
+            )
+            context_by_recommendation_id[recommendation.id] = SEORecommendationSearchConsoleContextRead(
+                search_console_status="available",
+                matched_page_path=None,
+                comparison_scope="site",
+                current_window_summary=current_summary,
+                previous_window_summary=previous_summary,
+                delta_summary=_to_recommendation_search_console_delta_summary(
+                    before_window=previous_summary,
+                    after_window=current_summary,
+                ),
+                top_queries_summary=[
+                    SEORecommendationSearchConsoleTopQueryRead.model_validate(query.model_dump())
+                    for query in search_console_site_summary.top_queries_summary[:3]
+                ],
+            )
+            continue
+
+        context_by_recommendation_id[recommendation.id] = SEORecommendationSearchConsoleContextRead(
+            search_console_status="no_match"
+        )
+    return context_by_recommendation_id
+
+
+def _attach_measurement_context_to_recommendations(
+    *,
+    recommendations: list[SEORecommendationRead],
+    site_analytics_summary: SEOAnalyticsSiteSummaryRead,
+    search_console_site_summary: SEOSearchConsoleSiteSummaryRead,
+    seo_analytics_service: SEOAnalyticsService,
+    site_domain: str | None,
+) -> list[SEORecommendationRead]:
+    if not recommendations:
+        return recommendations
+    context_by_recommendation_id = _build_recommendation_measurement_context_by_id(
+        recommendations=recommendations,
+        site_analytics_summary=site_analytics_summary,
+        seo_analytics_service=seo_analytics_service,
+        site_domain=site_domain,
+    )
+    search_console_context_by_recommendation_id = _build_recommendation_search_console_context_by_id(
+        recommendations=recommendations,
+        search_console_site_summary=search_console_site_summary,
+        seo_analytics_service=seo_analytics_service,
+        site_domain=site_domain,
+    )
+    return [
+        recommendation.model_copy(
+            update={
+                "recommendation_measurement_context": context_by_recommendation_id.get(recommendation.id),
+                "recommendation_search_console_context": search_console_context_by_recommendation_id.get(
+                    recommendation.id
+                ),
+                "recommendation_effectiveness_context": _derive_effectiveness_context(
+                    traffic_context=context_by_recommendation_id.get(recommendation.id),
+                    search_context=search_console_context_by_recommendation_id.get(recommendation.id),
+                ),
             }
         )
         for recommendation in recommendations
@@ -2648,6 +3144,7 @@ def get_seo_recommendation_workspace_summary(
     recommendation_narrative_service: SEORecommendationNarrativeService = Depends(
         get_seo_recommendation_narrative_service
     ),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationWorkspaceSummaryRead:
@@ -2989,6 +3486,24 @@ def get_seo_recommendation_workspace_summary(
         site_id=site_id,
         action_lineage_service=action_lineage_service,
     )
+    if recommendations_payload.items:
+        site_analytics_summary = seo_analytics_service.get_site_summary(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            site_domain=site.base_url or site.normalized_domain,
+        )
+        search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            site_domain=site.base_url or site.normalized_domain,
+        )
+        recommendations_payload.items = _attach_measurement_context_to_recommendations(
+            recommendations=recommendations_payload.items,
+            site_analytics_summary=site_analytics_summary,
+            search_console_site_summary=search_console_site_summary,
+            seo_analytics_service=seo_analytics_service,
+            site_domain=site.base_url or site.normalized_domain,
+        )
     ordering_explanation = _build_workspace_ordering_explanation(
         recommendations=recommendations_payload.items,
         analysis_freshness=analysis_freshness,
@@ -3081,6 +3596,7 @@ def list_seo_recommendations_for_run(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationListResponse:
     scoped_business_id = resolve_tenant_business_id(
@@ -3088,7 +3604,7 @@ def list_seo_recommendations_for_run(
         requested_business_id=business_id,
     )
     try:
-        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        site = seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
         run = recommendation_service.get_run(
             business_id=scoped_business_id,
             recommendation_run_id=recommendation_run_id,
@@ -3110,6 +3626,23 @@ def list_seo_recommendations_for_run(
         business_id=scoped_business_id,
         site_id=site_id,
         action_lineage_service=action_lineage_service,
+    )
+    site_analytics_summary = seo_analytics_service.get_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    serialized_items = _attach_measurement_context_to_recommendations(
+        recommendations=serialized_items,
+        site_analytics_summary=site_analytics_summary,
+        search_console_site_summary=search_console_site_summary,
+        seo_analytics_service=seo_analytics_service,
+        site_domain=site.base_url or site.normalized_domain,
     )
     by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
         serialized_items
@@ -3134,6 +3667,7 @@ def list_seo_recommendations(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationListResponse:
     scoped_business_id = resolve_tenant_business_id(
@@ -3141,7 +3675,7 @@ def list_seo_recommendations(
         requested_business_id=business_id,
     )
     try:
-        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        site = seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
         page_result = recommendation_service.list_site_recommendations(
             business_id=scoped_business_id,
             site_id=site_id,
@@ -3158,6 +3692,23 @@ def list_seo_recommendations(
         business_id=scoped_business_id,
         site_id=site_id,
         action_lineage_service=action_lineage_service,
+    )
+    site_analytics_summary = seo_analytics_service.get_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    serialized_items = _attach_measurement_context_to_recommendations(
+        recommendations=serialized_items,
+        site_analytics_summary=site_analytics_summary,
+        search_console_site_summary=search_console_site_summary,
+        seo_analytics_service=seo_analytics_service,
+        site_domain=site.base_url or site.normalized_domain,
     )
     filtered_summary = SEORecommendationFilteredSummary(
         total=page_result.total,
@@ -3188,6 +3739,7 @@ def patch_seo_recommendation(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationRead:
     scoped_business_id = resolve_tenant_business_id(
@@ -3195,7 +3747,7 @@ def patch_seo_recommendation(
         requested_business_id=business_id,
     )
     try:
-        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        site = seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
         recommendation = recommendation_service.update_recommendation_workflow(
             business_id=scoped_business_id,
             site_id=site_id,
@@ -3214,7 +3766,24 @@ def patch_seo_recommendation(
         site_id=site_id,
         action_lineage_service=action_lineage_service,
     )
-    return serialized_with_lineage[0]
+    site_analytics_summary = seo_analytics_service.get_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    serialized_with_measurement = _attach_measurement_context_to_recommendations(
+        recommendations=serialized_with_lineage,
+        site_analytics_summary=site_analytics_summary,
+        search_console_site_summary=search_console_site_summary,
+        seo_analytics_service=seo_analytics_service,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    return serialized_with_measurement[0]
 
 
 @router.get("/sites/{site_id}/actions/{action_id}/next-actions", response_model=list[NextActionDraft])
@@ -3472,6 +4041,7 @@ def get_seo_recommendation(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationRead:
     scoped_business_id = resolve_tenant_business_id(
@@ -3479,7 +4049,7 @@ def get_seo_recommendation(
         requested_business_id=business_id,
     )
     try:
-        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        site = seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
         recommendation = recommendation_service.get_recommendation(
             business_id=scoped_business_id,
             recommendation_id=recommendation_id,
@@ -3498,7 +4068,24 @@ def get_seo_recommendation(
         site_id=site_id,
         action_lineage_service=action_lineage_service,
     )
-    return serialized_with_lineage[0]
+    site_analytics_summary = seo_analytics_service.get_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    serialized_with_measurement = _attach_measurement_context_to_recommendations(
+        recommendations=serialized_with_lineage,
+        site_analytics_summary=site_analytics_summary,
+        search_console_site_summary=search_console_site_summary,
+        seo_analytics_service=seo_analytics_service,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    return serialized_with_measurement[0]
 
 
 @router.get(
@@ -3516,6 +4103,7 @@ def get_seo_recommendation_run_report(
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
 ) -> SEORecommendationRunReportRead:
     scoped_business_id = resolve_tenant_business_id(
@@ -3523,7 +4111,7 @@ def get_seo_recommendation_run_report(
         requested_business_id=business_id,
     )
     try:
-        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        site = seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
         report = recommendation_service.get_report(
             business_id=scoped_business_id,
             recommendation_run_id=recommendation_run_id,
@@ -3541,6 +4129,23 @@ def get_seo_recommendation_run_report(
         business_id=scoped_business_id,
         site_id=site_id,
         action_lineage_service=action_lineage_service,
+    )
+    site_analytics_summary = seo_analytics_service.get_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site.base_url or site.normalized_domain,
+    )
+    serialized_items = _attach_measurement_context_to_recommendations(
+        recommendations=serialized_items,
+        site_analytics_summary=site_analytics_summary,
+        search_console_site_summary=search_console_site_summary,
+        seo_analytics_service=seo_analytics_service,
+        site_domain=site.base_url or site.normalized_domain,
     )
     by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
         serialized_items
@@ -4022,6 +4627,62 @@ def get_seo_automation_status(
         site_id=site_id,
         config=SEOAutomationConfigRead.model_validate(config),
         latest_run=SEOAutomationRunRead.model_validate(latest_run) if latest_run is not None else None,
+    )
+
+
+@router.get("/sites/{site_id}/analytics/site-summary", response_model=SEOAnalyticsSiteSummaryRead)
+@router_v1.get("/sites/{site_id}/analytics/site-summary", response_model=SEOAnalyticsSiteSummaryRead)
+def get_site_analytics_summary(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
+) -> SEOAnalyticsSiteSummaryRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        site = seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+    except SEOSiteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return seo_analytics_service.get_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=(site.normalized_domain or site.base_url or "").strip() or None,
+    )
+
+
+@router.get(
+    "/sites/{site_id}/analytics/search-visibility-summary",
+    response_model=SEOSearchConsoleSiteSummaryRead,
+)
+@router_v1.get(
+    "/sites/{site_id}/analytics/search-visibility-summary",
+    response_model=SEOSearchConsoleSiteSummaryRead,
+)
+def get_site_search_console_summary(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
+) -> SEOSearchConsoleSiteSummaryRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        site = seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+    except SEOSiteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return seo_analytics_service.get_search_console_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=(site.normalized_domain or site.base_url or "").strip() or None,
     )
 
 

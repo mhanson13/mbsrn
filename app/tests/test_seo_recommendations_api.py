@@ -1,17 +1,24 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 import json
 from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.deps import TenantContext, get_db, get_tenant_context
+from app.api.deps import TenantContext, get_db, get_seo_analytics_service, get_tenant_context
 from app.core.config import get_settings
 from app.core.time import utc_now
 from app.api.routes.seo import router as seo_router
 from app.api.routes.seo import router_v1 as seo_v1_router
+from app.integrations.ga4_analytics_provider import GA4SiteMetricsResult, GA4SitePeriodMetrics, GA4TopPageMetrics
+from app.integrations.search_console_analytics_provider import (
+    SearchConsolePeriodMetrics,
+    SearchConsoleSiteMetricsResult,
+    SearchConsoleTopPageMetrics,
+    SearchConsoleTopQueryMetrics,
+)
 from app.models.business import Business
 from app.models.principal import Principal, PrincipalRole
 from app.models.seo_audit_finding import SEOAuditFinding
@@ -32,6 +39,7 @@ from app.models.seo_automation_run import SEOAutomationRun
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_narrative import SEORecommendationNarrative
 from app.models.seo_recommendation_run import SEORecommendationRun
+from app.services.seo_analytics import SEOAnalyticsService
 
 _PROMPT_INSTRUCTION_MARKERS = ("PROMPT_VERSION:", "TASK:", "RESPONSE RULES:")
 _RECOMMENDATION_CONTEXT_MARKERS = ("YOU ARE AN SEO", "TASK:", "OUTPUT STYLE", "WRITING RULES")
@@ -58,6 +66,7 @@ def _make_client(
     *,
     business_id: str,
     principal_role: PrincipalRole | None = None,
+    analytics_service: SEOAnalyticsService | None = None,
 ) -> TestClient:
     app = FastAPI()
     app.include_router(seo_router)
@@ -74,7 +83,198 @@ def _make_client(
         business_id,
         principal_role=principal_role,
     )
+    if analytics_service is not None:
+        app.dependency_overrides[get_seo_analytics_service] = lambda: analytics_service
     return TestClient(app)
+
+
+class _DeterministicRecommendationAnalyticsProvider:
+    def is_configured(self) -> bool:
+        return True
+
+    def fetch_site_metrics(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_pages_limit: int,
+    ) -> GA4SiteMetricsResult:
+        del site_domain, period_days
+        top_pages = (
+            GA4TopPageMetrics(
+                page_path="/",
+                current_pageviews=220,
+                previous_pageviews=190,
+                current_sessions=160,
+                previous_sessions=130,
+            ),
+            GA4TopPageMetrics(
+                page_path="/services/flooring",
+                current_pageviews=150,
+                previous_pageviews=110,
+                current_sessions=95,
+                previous_sessions=76,
+            ),
+        )[: max(1, top_pages_limit)]
+        return GA4SiteMetricsResult(
+            current_period=GA4SitePeriodMetrics(
+                users=320,
+                sessions=440,
+                pageviews=710,
+                organic_search_sessions=260,
+            ),
+            previous_period=GA4SitePeriodMetrics(
+                users=280,
+                sessions=390,
+                pageviews=620,
+                organic_search_sessions=220,
+            ),
+            top_pages=top_pages,
+            data_source="ga4_mock",
+        )
+
+    def fetch_window_metrics(
+        self,
+        *,
+        site_domain: str,
+        start_date: str,
+        end_date: str,
+        page_path: str | None = None,
+    ) -> GA4SitePeriodMetrics:
+        del site_domain, start_date
+        is_after_window = end_date == date.today().isoformat()
+        if page_path:
+            if is_after_window:
+                return GA4SitePeriodMetrics(
+                    users=120,
+                    sessions=160,
+                    pageviews=220,
+                    organic_search_sessions=96,
+                )
+            return GA4SitePeriodMetrics(
+                users=100,
+                sessions=130,
+                pageviews=190,
+                organic_search_sessions=78,
+            )
+        if is_after_window:
+            return GA4SitePeriodMetrics(
+                users=320,
+                sessions=440,
+                pageviews=710,
+                organic_search_sessions=260,
+            )
+        return GA4SitePeriodMetrics(
+            users=280,
+            sessions=390,
+            pageviews=620,
+            organic_search_sessions=220,
+        )
+
+
+class _DeterministicRecommendationSearchConsoleProvider:
+    def is_configured(self) -> bool:
+        return True
+
+    def fetch_site_metrics(
+        self,
+        *,
+        site_property: str,
+        period_days: int,
+        top_pages_limit: int,
+        top_queries_limit: int,
+    ) -> SearchConsoleSiteMetricsResult:
+        del site_property, period_days
+        top_pages = (
+            SearchConsoleTopPageMetrics(
+                page_path="/",
+                current_clicks=80,
+                previous_clicks=62,
+                current_impressions=2100,
+                previous_impressions=1900,
+                current_ctr=3.81,
+                previous_ctr=3.26,
+                current_average_position=8.4,
+                previous_average_position=9.1,
+            ),
+            SearchConsoleTopPageMetrics(
+                page_path="/services/flooring",
+                current_clicks=48,
+                previous_clicks=36,
+                current_impressions=1100,
+                previous_impressions=980,
+                current_ctr=4.36,
+                previous_ctr=3.67,
+                current_average_position=7.8,
+                previous_average_position=8.6,
+            ),
+        )[: max(1, top_pages_limit)]
+        top_queries = tuple(
+            SearchConsoleTopQueryMetrics(
+                query=f"query {index + 1}",
+                clicks=max(1, 18 - (index * 2)),
+                impressions=max(1, 210 - (index * 22)),
+                ctr=8.6,
+                average_position=7.2 + (index * 0.4),
+            )
+            for index in range(max(1, top_queries_limit))
+        )
+        return SearchConsoleSiteMetricsResult(
+            current_period=SearchConsolePeriodMetrics(
+                clicks=132,
+                impressions=3900,
+                ctr=3.38,
+                average_position=8.2,
+            ),
+            previous_period=SearchConsolePeriodMetrics(
+                clicks=102,
+                impressions=3520,
+                ctr=2.9,
+                average_position=9.0,
+            ),
+            top_pages=top_pages,
+            top_queries=top_queries,
+            data_source="search_console_mock",
+        )
+
+    def fetch_window_metrics(
+        self,
+        *,
+        site_property: str,
+        start_date: str,
+        end_date: str,
+        page_path: str | None = None,
+    ) -> SearchConsolePeriodMetrics:
+        del site_property, start_date
+        is_after_window = end_date == date.today().isoformat()
+        if page_path:
+            if is_after_window:
+                return SearchConsolePeriodMetrics(clicks=48, impressions=1100, ctr=4.36, average_position=7.8)
+            return SearchConsolePeriodMetrics(clicks=36, impressions=980, ctr=3.67, average_position=8.6)
+        if is_after_window:
+            return SearchConsolePeriodMetrics(clicks=132, impressions=3900, ctr=3.38, average_position=8.2)
+        return SearchConsolePeriodMetrics(clicks=102, impressions=3520, ctr=2.9, average_position=9.0)
+
+    def fetch_top_queries(
+        self,
+        *,
+        site_property: str,
+        start_date: str,
+        end_date: str,
+        query_limit: int,
+        page_path: str | None = None,
+    ) -> tuple[SearchConsoleTopQueryMetrics, ...]:
+        del site_property, start_date, end_date, page_path
+        return tuple(
+            SearchConsoleTopQueryMetrics(
+                query=f"query {index + 1}",
+                clicks=max(1, 14 - (index * 2)),
+                impressions=max(1, 180 - (index * 20)),
+                ctr=7.8,
+                average_position=7.4 + (index * 0.5),
+            )
+            for index in range(max(1, query_limit))
+        )
 
 
 def _seed_other_business(db_session) -> Business:
@@ -373,6 +573,10 @@ def test_create_recommendation_run_from_persisted_inputs(db_session, seeded_busi
     assert "fix_missing_title_tags" in rule_keys
     assert "expand_thin_content_pages" in rule_keys
     assert "close_competitor_gap_missing_title_count" in rule_keys
+    assert all(
+        (item.get("recommendation_measurement_context") or {}).get("measurement_status") == "not_configured"
+        for item in payload["items"]
+    )
 
     # Deterministic merge check: two missing_title findings should yield one recommendation rule.
     assert sum(1 for item in payload["items"] if item["rule_key"] == "fix_missing_title_tags") == 1
@@ -3257,6 +3461,138 @@ def test_recommendation_workspace_summary_derives_target_page_hints_from_audit_i
     )
     assert "Location pages" in by_rule_key["workspace_hint_location_pages"]["recommendation_evidence_trace"]
     assert by_rule_key["workspace_hint_location_pages"]["recommendation_priority"]["priority_level"] == "low"
+
+
+def test_recommendation_workspace_summary_adds_page_measurement_context_when_match_is_available(
+    db_session, seeded_business
+) -> None:
+    analytics_service = SEOAnalyticsService(
+        provider=_DeterministicRecommendationAnalyticsProvider(),
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=analytics_service,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    audit_run_id = _seed_completed_audit_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+    )
+    _seed_audit_pages(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=audit_run_id,
+        pages=[
+            {"url": "https://client.example/", "title": "Homepage"},
+            {"url": "https://client.example/services/flooring", "title": "Flooring Services"},
+        ],
+    )
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    db_session.add_all(
+        [
+            SEORecommendation(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_id,
+                audit_run_id=audit_run_id,
+                comparison_run_id=None,
+                rule_key="workspace_hint_homepage",
+                category="SEO",
+                severity="WARNING",
+                title="Strengthen homepage messaging",
+                rationale="Homepage should better explain core services.",
+                priority_score=90,
+                priority_band="high",
+                effort_bucket="MEDIUM",
+                status="open",
+            ),
+            SEORecommendation(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_id,
+                audit_run_id=audit_run_id,
+                comparison_run_id=None,
+                rule_key="custom_general_gap",
+                category="SEO",
+                severity="WARNING",
+                title="Generic recommendation without clear page mapping",
+                rationale="General recommendation with no deterministic page hint.",
+                priority_score=60,
+                priority_band="medium",
+                effort_bucket="SMALL",
+                status="open",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
+    assert summary.status_code == 200
+    payload = summary.json()
+    by_rule_key = {recommendation["rule_key"]: recommendation for recommendation in payload["recommendations"]["items"]}
+
+    homepage_context = by_rule_key["workspace_hint_homepage"]["recommendation_measurement_context"]
+    assert homepage_context["measurement_status"] == "available"
+    assert homepage_context["matched_page_path"] == "/"
+    assert homepage_context["comparison_scope"] == "page"
+    assert homepage_context["sessions"]["current"] == 160
+    assert homepage_context["sessions"]["previous"] == 130
+    assert homepage_context["pageviews"]["current"] == 220
+    assert homepage_context["pageviews"]["previous"] == 190
+    assert homepage_context["before_window_summary"]["sessions"] == 130
+    assert homepage_context["after_window_summary"]["sessions"] == 160
+    assert homepage_context["delta_summary"]["sessions_delta_absolute"] == 30
+    assert homepage_context["delta_summary"]["sessions_delta_percent"] == 23.08
+    homepage_search_context = by_rule_key["workspace_hint_homepage"]["recommendation_search_console_context"]
+    assert homepage_search_context["search_console_status"] == "available"
+    assert homepage_search_context["comparison_scope"] == "page"
+    assert homepage_search_context["matched_page_path"] == "/"
+    assert homepage_search_context["current_window_summary"]["clicks"] == 48
+    assert homepage_search_context["previous_window_summary"]["clicks"] == 36
+    assert homepage_search_context["delta_summary"]["clicks_delta_absolute"] == 12
+    assert homepage_search_context["delta_summary"]["clicks_delta_percent"] == 33.33
+    assert homepage_search_context["top_queries_summary"]
+    assert homepage_search_context["top_queries_summary"][0]["query"] == "query 1"
+    homepage_effectiveness = by_rule_key["workspace_hint_homepage"]["recommendation_effectiveness_context"]
+    assert homepage_effectiveness is not None
+    assert homepage_effectiveness["effectiveness_status"] == "available"
+    assert homepage_effectiveness["traffic_direction"] == "up"
+    assert homepage_effectiveness["search_visibility_direction"] == "up"
+    assert "trending up" in homepage_effectiveness["summary"].lower()
+
+    no_match_context = by_rule_key["custom_general_gap"]["recommendation_measurement_context"]
+    assert no_match_context["measurement_status"] == "available"
+    assert no_match_context.get("comparison_scope") == "site"
+    assert no_match_context.get("matched_page_path") in {None, ""}
+    assert no_match_context["sessions"]["current"] == 440
+    assert no_match_context["sessions"]["previous"] == 390
+    assert no_match_context["pageviews"]["current"] == 710
+    assert no_match_context["pageviews"]["previous"] == 620
+    assert no_match_context["before_window_summary"]["sessions"] == 390
+    assert no_match_context["after_window_summary"]["sessions"] == 440
+    assert no_match_context["delta_summary"]["sessions_delta_absolute"] == 50
+    no_match_search_context = by_rule_key["custom_general_gap"]["recommendation_search_console_context"]
+    assert no_match_search_context["search_console_status"] == "available"
+    assert no_match_search_context["comparison_scope"] == "site"
+    assert no_match_search_context.get("matched_page_path") in {None, ""}
+    assert no_match_search_context["current_window_summary"]["clicks"] == 132
+    assert no_match_search_context["previous_window_summary"]["clicks"] == 102
+    no_match_effectiveness = by_rule_key["custom_general_gap"]["recommendation_effectiveness_context"]
+    assert no_match_effectiveness is not None
+    assert no_match_effectiveness["traffic_direction"] == "up"
+    assert no_match_effectiveness["search_visibility_direction"] == "up"
 
 
 def test_recommendation_workspace_summary_derives_medium_priority_from_moderate_competitor_evidence(

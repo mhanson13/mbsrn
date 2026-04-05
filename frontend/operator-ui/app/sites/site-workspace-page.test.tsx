@@ -25,8 +25,10 @@ import type {
   RecommendationRun,
   RecommendationRunListResponse,
   RecommendationWorkspaceSummaryResponse,
+  SearchConsoleSiteSummaryResponse,
   SEOAuditRunListResponse,
   SEOSite,
+  SiteAnalyticsSummaryResponse,
 } from "../../lib/api/types";
 
 type OperatorContextMockValue = {
@@ -62,6 +64,8 @@ const mockFetchRecommendations = jest.fn<Promise<RecommendationListResponse>, un
 const mockFetchRecommendationWorkspaceSummary = jest.fn<Promise<RecommendationWorkspaceSummaryResponse>, unknown[]>();
 const mockFetchRecommendationRuns = jest.fn<Promise<RecommendationRunListResponse>, unknown[]>();
 const mockFetchAutomationRuns = jest.fn<Promise<AutomationRunListResponse>, unknown[]>();
+const mockFetchSiteAnalyticsSummary = jest.fn<Promise<SiteAnalyticsSummaryResponse>, unknown[]>();
+const mockFetchSearchConsoleSiteSummary = jest.fn<Promise<SearchConsoleSiteSummaryResponse>, unknown[]>();
 const mockCreateRecommendationRun = jest.fn<Promise<RecommendationRun>, unknown[]>();
 const mockFetchLatestRecommendationRunNarrative = jest.fn<Promise<RecommendationNarrative>, unknown[]>();
 const mockPreviewRecommendationTuningImpact = jest.fn<Promise<RecommendationTuningImpactPreview>, unknown[]>();
@@ -116,6 +120,8 @@ jest.mock("../../lib/api/client", () => {
     fetchRecommendationWorkspaceSummary: (...args: unknown[]) => mockFetchRecommendationWorkspaceSummary(...args),
     fetchRecommendationRuns: (...args: unknown[]) => mockFetchRecommendationRuns(...args),
     fetchAutomationRuns: (...args: unknown[]) => mockFetchAutomationRuns(...args),
+    fetchSiteAnalyticsSummary: (...args: unknown[]) => mockFetchSiteAnalyticsSummary(...args),
+    fetchSearchConsoleSiteSummary: (...args: unknown[]) => mockFetchSearchConsoleSiteSummary(...args),
     createRecommendationRun: (...args: unknown[]) => mockCreateRecommendationRun(...args),
     fetchLatestRecommendationRunNarrative: (...args: unknown[]) =>
       mockFetchLatestRecommendationRunNarrative(...args),
@@ -353,6 +359,129 @@ function buildGoogleBusinessProfileConnection(
   };
 }
 
+function buildSiteAnalyticsSummary(
+  overrides: Partial<SiteAnalyticsSummaryResponse> = {},
+): SiteAnalyticsSummaryResponse {
+  return {
+    business_id: "biz-1",
+    site_id: "site-1",
+    available: true,
+    status: "ok",
+    message: null,
+    data_source: "ga4_mock",
+    site_metrics_summary: {
+      current_period_start: "2026-03-15",
+      current_period_end: "2026-03-21",
+      previous_period_start: "2026-03-08",
+      previous_period_end: "2026-03-14",
+      users: {
+        current: 220,
+        previous: 200,
+        delta_absolute: 20,
+        delta_percent: 10,
+      },
+      sessions: {
+        current: 310,
+        previous: 280,
+        delta_absolute: 30,
+        delta_percent: 10.7,
+      },
+      pageviews: {
+        current: 560,
+        previous: 520,
+        delta_absolute: 40,
+        delta_percent: 7.7,
+      },
+      organic_search_sessions: {
+        current: 180,
+        previous: 170,
+        delta_absolute: 10,
+        delta_percent: 5.9,
+      },
+    },
+    top_pages_summary: [
+      {
+        page_path: "/",
+        pageviews: 140,
+        sessions: 100,
+        pageviews_previous: 120,
+        sessions_previous: 90,
+        pageviews_delta_absolute: 20,
+        sessions_delta_absolute: 10,
+        pageviews_delta_percent: 16.7,
+        sessions_delta_percent: 11.1,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function buildSearchConsoleSiteSummary(
+  overrides: Partial<SearchConsoleSiteSummaryResponse> = {},
+): SearchConsoleSiteSummaryResponse {
+  return {
+    business_id: "biz-1",
+    site_id: "site-1",
+    available: true,
+    status: "ok",
+    message: null,
+    data_source: "search_console_mock",
+    site_metrics_summary: {
+      current_period_start: "2026-03-15",
+      current_period_end: "2026-03-21",
+      previous_period_start: "2026-03-08",
+      previous_period_end: "2026-03-14",
+      clicks: {
+        current: 140,
+        previous: 120,
+        delta_absolute: 20,
+        delta_percent: 16.7,
+      },
+      impressions: {
+        current: 4100,
+        previous: 3600,
+        delta_absolute: 500,
+        delta_percent: 13.9,
+      },
+      ctr_current: 3.41,
+      ctr_previous: 3.33,
+      ctr_delta_absolute: 0.08,
+      average_position_current: 9.2,
+      average_position_previous: 9.8,
+      average_position_delta_absolute: -0.6,
+    },
+    top_pages_summary: [
+      {
+        page_path: "/",
+        clicks: 55,
+        clicks_previous: 44,
+        clicks_delta_absolute: 11,
+        clicks_delta_percent: 25,
+        impressions: 1900,
+        impressions_previous: 1650,
+        impressions_delta_absolute: 250,
+        impressions_delta_percent: 15.2,
+        ctr: 2.89,
+        ctr_previous: 2.67,
+        ctr_delta_absolute: 0.22,
+        average_position: 8.8,
+        average_position_previous: 9.5,
+        average_position_delta_absolute: -0.7,
+      },
+    ],
+    top_queries_summary: [
+      {
+        query: "plumbing services denver",
+        clicks: 22,
+        impressions: 420,
+        ctr: 5.24,
+        average_position: 7.3,
+      },
+    ],
+    ...overrides,
+  };
+}
+
 function baseContext(overrides: Partial<OperatorContextMockValue> = {}): OperatorContextMockValue {
   return {
     loading: false,
@@ -390,6 +519,27 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({ items: [], total: 0 });
   mockFetchCompetitorProfileGenerationRunDetail.mockReset();
   mockFetchAutomationRuns.mockResolvedValue({ items: [], total: 0 });
+  mockFetchSiteAnalyticsSummary.mockResolvedValue(
+    buildSiteAnalyticsSummary({
+      available: false,
+      status: "not_configured",
+      message: "Google Analytics is not configured for this workspace.",
+      data_source: null,
+      site_metrics_summary: null,
+      top_pages_summary: [],
+    }),
+  );
+  mockFetchSearchConsoleSiteSummary.mockResolvedValue(
+    buildSearchConsoleSiteSummary({
+      available: false,
+      status: "not_configured",
+      message: "Search Console is not configured for this workspace.",
+      data_source: null,
+      site_metrics_summary: null,
+      top_pages_summary: [],
+      top_queries_summary: [],
+    }),
+  );
   mockFetchRecommendationWorkspaceSummary.mockResolvedValue({
     business_id: "biz-1",
     site_id: "site-1",
@@ -461,6 +611,17 @@ function seedCompetitorProfileGenerationDefaults(): void {
 }
 
 function seedRichWorkspaceData(): void {
+  mockFetchSearchConsoleSiteSummary.mockResolvedValue(
+    buildSearchConsoleSiteSummary({
+      available: false,
+      status: "not_configured",
+      message: "Search Console is not configured for this workspace.",
+      data_source: null,
+      site_metrics_summary: null,
+      top_pages_summary: [],
+      top_queries_summary: [],
+    }),
+  );
   mockFetchAuditRuns.mockResolvedValue({
     items: [
       {
@@ -3243,6 +3404,45 @@ describe("site workspace timeline controls", () => {
                   },
                 ],
               },
+              recommendation_measurement_context: {
+                measurement_status: "available",
+                matched_page_path: "/services/flooring",
+                comparison_scope: "page",
+                sessions: {
+                  current: 95,
+                  previous: 76,
+                  delta_absolute: 19,
+                  delta_percent: 25,
+                },
+                pageviews: {
+                  current: 150,
+                  previous: 110,
+                  delta_absolute: 40,
+                  delta_percent: 36.4,
+                },
+                before_window_summary: {
+                  start_date: "2026-03-14",
+                  end_date: "2026-03-20",
+                  users: 61,
+                  sessions: 76,
+                  pageviews: 110,
+                },
+                after_window_summary: {
+                  start_date: "2026-03-21",
+                  end_date: "2026-03-27",
+                  users: 74,
+                  sessions: 95,
+                  pageviews: 150,
+                },
+                delta_summary: {
+                  users_delta_absolute: 13,
+                  users_delta_percent: 21.3,
+                  sessions_delta_absolute: 19,
+                  sessions_delta_percent: 25.0,
+                  pageviews_delta_absolute: 40,
+                  pageviews_delta_percent: 36.4,
+                },
+              },
             }),
             buildRecommendation({
               id: "rec-action-2",
@@ -3252,6 +3452,12 @@ describe("site workspace timeline controls", () => {
               why_now: null,
               next_action: null,
               competitor_insight: null,
+              recommendation_measurement_context: {
+                measurement_status: "no_match",
+                matched_page_path: null,
+                sessions: null,
+                pageviews: null,
+              },
             }),
           ],
           total: 2,
@@ -3339,6 +3545,19 @@ describe("site workspace timeline controls", () => {
     expect(actionPlanLines[0]).toHaveTextContent(
       "After: Flooring Installation in Your Area | Trusted local support",
     );
+    const measurementLines = screen.getAllByTestId("recommendation-measurement-context");
+    expect(measurementLines).toHaveLength(1);
+    expect(measurementLines[0]).toHaveTextContent(
+      "Recent traffic for this page/topic: /services/flooring — 95 sessions (+25% vs prior period), 150 pageviews (+36.4% vs prior period)",
+    );
+    const measurementSinceLines = screen.getAllByTestId("recommendation-measurement-since");
+    expect(measurementSinceLines).toHaveLength(1);
+    expect(measurementSinceLines[0]).toHaveTextContent(
+      "Since this recommendation: page trend: sessions ↑ 25%, pageviews ↑ 36.4%.",
+    );
+    const measurementNoMatchLines = screen.getAllByTestId("recommendation-measurement-no-match");
+    expect(measurementNoMatchLines).toHaveLength(1);
+    expect(measurementNoMatchLines[0]).toHaveTextContent("No page-level measurement match available.");
 
     const observedGapLines = screen.getAllByTestId("recommendation-observed-gap-summary");
     expect(observedGapLines).toHaveLength(1);
@@ -4176,6 +4395,40 @@ describe("site workspace timeline controls", () => {
 
   it("renders workspace snapshot summary strip with compact operator status cards", async () => {
     seedRichWorkspaceData();
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        site_metrics_summary: {
+          current_period_start: "2026-03-15",
+          current_period_end: "2026-03-21",
+          previous_period_start: "2026-03-08",
+          previous_period_end: "2026-03-14",
+          users: {
+            current: 245,
+            previous: 210,
+            delta_absolute: 35,
+            delta_percent: 16.7,
+          },
+          sessions: {
+            current: 366,
+            previous: 300,
+            delta_absolute: 66,
+            delta_percent: 22,
+          },
+          pageviews: {
+            current: 620,
+            previous: 540,
+            delta_absolute: 80,
+            delta_percent: 14.8,
+          },
+          organic_search_sessions: {
+            current: 208,
+            previous: 174,
+            delta_absolute: 34,
+            delta_percent: 19.5,
+          },
+        },
+      }),
+    );
     mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
       buildRecommendationWorkspaceSummary({
         workspace_trust_summary: {
@@ -4228,6 +4481,49 @@ describe("site workspace timeline controls", () => {
     expect(within(summaryStrip).getByTestId("workspace-summary-readiness")).toHaveTextContent(
       "Nearby seed discovery used: yes",
     );
+    expect(within(summaryStrip).getByTestId("workspace-summary-traffic")).toHaveTextContent("245 users");
+    expect(within(summaryStrip).getByTestId("workspace-summary-traffic")).toHaveTextContent(
+      "366 sessions (+22% vs prior period)",
+    );
+  });
+
+  it("renders search visibility trend in workspace snapshot when Search Console data is available", async () => {
+    seedRichWorkspaceData();
+    mockFetchSearchConsoleSiteSummary.mockResolvedValue(
+      buildSearchConsoleSiteSummary({
+        available: true,
+        status: "ok",
+        message: null,
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const summaryStrip = await screen.findByTestId("workspace-summary-strip");
+    const searchVisibilityCard = within(summaryStrip).getByTestId("workspace-summary-search-visibility");
+    expect(searchVisibilityCard).toHaveTextContent("140 clicks");
+    expect(searchVisibilityCard).toHaveTextContent("4,100 impressions (+13.9% vs prior period), avg position 9.2");
+  });
+
+  it("shows a clean traffic fallback when analytics is unavailable", async () => {
+    seedRichWorkspaceData();
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        available: false,
+        status: "not_configured",
+        message: "Google Analytics is not configured for this workspace.",
+        data_source: null,
+        site_metrics_summary: null,
+        top_pages_summary: [],
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const summaryStrip = await screen.findByTestId("workspace-summary-strip");
+    const trafficCard = within(summaryStrip).getByTestId("workspace-summary-traffic");
+    expect(trafficCard).toHaveTextContent("Unavailable");
+    expect(trafficCard).toHaveTextContent("Google Analytics is not configured for this workspace.");
   });
 
   it("renders connected and usable Google Business Profile state with integration action link", async () => {

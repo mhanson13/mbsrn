@@ -50,6 +50,21 @@ class Settings:
     google_places_api_timeout_seconds: int
     google_places_seed_max_candidates: int
     google_places_seed_query_limit: int
+    ga4_property_id: str | None
+    ga4_credentials_json: str | None
+    ga4_api_base_url: str
+    ga4_timeout_seconds: int
+    ga4_period_days: int
+    ga4_top_pages_limit: int
+    ga4_use_mock_provider: bool
+    search_console_site_property_url: str | None
+    search_console_credentials_json: str | None
+    search_console_api_base_url: str
+    search_console_timeout_seconds: int
+    search_console_period_days: int
+    search_console_top_pages_limit: int
+    search_console_top_queries_limit: int
+    search_console_use_mock_provider: bool
     gcp_logging_project_id: str | None
     gcp_logging_api_timeout_seconds: int
     google_oauth_token_encryption_secret: str | None
@@ -370,6 +385,27 @@ def get_settings() -> Settings:
         google_places_api_timeout_seconds=_env_int("GOOGLE_PLACES_API_TIMEOUT_SECONDS", 8, min_value=1),
         google_places_seed_max_candidates=_env_int("GOOGLE_PLACES_SEED_MAX_CANDIDATES", 8, min_value=1),
         google_places_seed_query_limit=_env_int("GOOGLE_PLACES_SEED_QUERY_LIMIT", 5, min_value=1),
+        ga4_property_id=os.getenv("GA4_PROPERTY_ID"),
+        ga4_credentials_json=os.getenv("GA4_CREDENTIALS_JSON"),
+        ga4_api_base_url=os.getenv(
+            "GA4_API_BASE_URL",
+            "https://analyticsdata.googleapis.com/v1beta",
+        ).strip(),
+        ga4_timeout_seconds=_env_int("GA4_TIMEOUT_SECONDS", 10, min_value=1),
+        ga4_period_days=_env_int("GA4_PERIOD_DAYS", 7, min_value=1),
+        ga4_top_pages_limit=_env_int("GA4_TOP_PAGES_LIMIT", 5, min_value=1),
+        ga4_use_mock_provider=_env_bool("GA4_USE_MOCK_PROVIDER", False),
+        search_console_site_property_url=os.getenv("SEARCH_CONSOLE_SITE_PROPERTY_URL"),
+        search_console_credentials_json=os.getenv("SEARCH_CONSOLE_CREDENTIALS_JSON"),
+        search_console_api_base_url=os.getenv(
+            "SEARCH_CONSOLE_API_BASE_URL",
+            "https://searchconsole.googleapis.com/webmasters/v3",
+        ).strip(),
+        search_console_timeout_seconds=_env_int("SEARCH_CONSOLE_TIMEOUT_SECONDS", 10, min_value=1),
+        search_console_period_days=_env_int("SEARCH_CONSOLE_PERIOD_DAYS", 7, min_value=1),
+        search_console_top_pages_limit=_env_int("SEARCH_CONSOLE_TOP_PAGES_LIMIT", 5, min_value=1),
+        search_console_top_queries_limit=_env_int("SEARCH_CONSOLE_TOP_QUERIES_LIMIT", 3, min_value=1),
+        search_console_use_mock_provider=_env_bool("SEARCH_CONSOLE_USE_MOCK_PROVIDER", False),
         gcp_logging_project_id=(os.getenv("GCP_PROJECT_ID") or None),
         gcp_logging_api_timeout_seconds=_env_int("GCP_LOGGING_API_TIMEOUT_SECONDS", 10, min_value=1),
         google_oauth_token_encryption_secret=google_oauth_token_encryption_secret,

@@ -259,6 +259,55 @@ Rationale:
 - site/business context is already visible in the global workspace header
 - queue scanning should foreground execution signals (`priority`, `summary`, `status`, `decisiveness`) before IDs
 
+## Recommendation Measurement Context (Phase 2)
+
+Recommendations can now include additive page-aware measurement context in detail views:
+
+- `recommendation_measurement_context.measurement_status`
+- `matched_page_path` when a deterministic page match is available
+- bounded session/pageview current-vs-previous windows and deltas
+
+When this appears:
+- shown in expanded recommendation detail views only
+- shown when matching is confident enough (`measurement_status=available`)
+
+When this is suppressed or downgraded:
+- `no_match`: recommendation has no conservative page-level match
+- `unavailable`: analytics is temporarily unavailable
+- `not_configured`: GA4 is not configured for the workspace
+
+Interpretation boundary:
+- traffic context is directional support only
+- it is not attribution and does not claim recommendation-caused impact
+
+## Recommendation Timing Comparison (Phase 3)
+
+Expanded recommendation details can now include a bounded “Since this recommendation” comparison derived from existing analytics context.
+
+What is added:
+
+- `comparison_scope` (`page` or `site`)
+- `before_window_summary` (fixed 7-day window before recommendation timing anchor)
+- `after_window_summary` (fixed 7-day window after recommendation timing anchor, or latest bounded after window)
+- `delta_summary` (absolute and percent deltas for users, sessions, and pageviews)
+
+Window/matching rules:
+
+- page-level comparison is preferred when deterministic page matching is available
+- site-level comparison is used as fallback when page matching is unavailable
+- comparison is suppressed when analytics is unavailable/not configured
+
+Operator UI behavior:
+
+- shown only in expanded recommendation detail views
+- rendered as concise directional context (`Since this recommendation: ...`)
+- no charts and no expanded analytics dashboard surface
+
+Interpretation boundary (strict):
+
+- this comparison is contextual and directional only
+- it does **not** claim recommendation-caused impact
+
 ## Deterministic Trust + Actionability Fields
 
 Recommendation payloads now include additive deterministic explanation fields with no additional AI/provider calls:
@@ -466,6 +515,68 @@ Additional cleanup:
 - does not auto-expand during recommendation generation
 - does not auto-expand on polling refresh
 - does not auto-expand when a new run is created
+
+## Outcome Measurement Signals (GA4 Phase 1)
+
+The operator workspace now has an additive, read-only GA4 measurement summary for site-level traffic trend visibility.
+
+What is exposed:
+
+- users (current 7 days vs previous 7 days)
+- sessions (current 7 days vs previous 7 days)
+- pageviews and organic sessions in the API read model
+- bounded optional top-pages summary
+
+Key properties:
+
+- deterministic read model only (no AI calls, no recommendation logic changes)
+- optional by configuration:
+  - clean fallback when GA is not configured
+  - clean fallback when provider data is temporarily unavailable
+- intended as outcome visibility input for future recommendation validation phases
+
+### Search Visibility Context (Search Console Read-Only Layer)
+
+Recommendations can now include additive `recommendation_search_console_context` when Search Console data is configured and deterministically matchable.
+
+Field shape (bounded):
+
+- `search_console_status`: `available` | `no_match` | `unavailable` | `not_configured`
+- `comparison_scope`: `page` | `site` (when available)
+- `matched_page_path` (optional)
+- `current_window_summary` / `previous_window_summary`
+- `delta_summary` (clicks/impressions/CTR/position deltas)
+- optional bounded `top_queries_summary`
+
+Display behavior:
+
+- shown only in expanded recommendation detail
+- suppressed or reduced when status is `no_match`, `unavailable`, or `not_configured`
+- no competitor names or sensitive query diagnostics are exposed
+
+Interpretation guardrail:
+
+- search visibility context is directional support only
+- it does **not** prove recommendation causation
+
+### Combined Directional Effectiveness Context
+
+Recommendations can now include additive `recommendation_effectiveness_context` that combines:
+
+- GA4 traffic direction
+- Search Console visibility direction
+
+Field shape:
+
+- `effectiveness_status`: `available` | `partial`
+- `traffic_direction`: `up` | `down` | `flat` | `unknown`
+- `search_visibility_direction`: `up` | `down` | `flat` | `unknown`
+- `summary` (short directional message)
+
+Operator-facing rule:
+
+- use this for directional context only
+- never interpret it as attribution proof
 
 ## Action Plans
 
