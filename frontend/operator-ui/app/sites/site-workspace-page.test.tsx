@@ -4698,10 +4698,12 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Workspace Snapshot" });
-    const gbpSummary = screen.getByTestId("workspace-summary-gbp");
-    expect(gbpSummary).toHaveTextContent("Action needed");
-    expect(gbpSummary).toHaveTextContent("reauthorization or scope review is required");
+    const summaryStrip = await screen.findByTestId("workspace-summary-strip");
+    const gbpSummary = within(summaryStrip).getByTestId("workspace-summary-gbp");
+    await waitFor(() => {
+      expect(gbpSummary).toHaveTextContent("Action needed");
+      expect(gbpSummary).toHaveTextContent("reauthorization or scope review is required");
+    });
     expect(within(gbpSummary).getByRole("link", { name: "Reconnect Google Business Profile" })).toHaveAttribute(
       "href",
       "/business-profile",
