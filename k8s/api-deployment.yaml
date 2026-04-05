@@ -5,6 +5,13 @@ metadata:
   namespace: mbsrn
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Keep rollout capacity deterministic under node pressure by replacing
+      # one pod at a time instead of requiring surge capacity.
+      maxUnavailable: 1
+      maxSurge: 0
   selector:
     matchLabels:
       app: mbsrn-api
@@ -104,11 +111,19 @@ spec:
               cpu: __API_CPU_LIMIT__
               memory: __API_MEMORY_LIMIT__
               ephemeral-storage: __API_EPHEMERAL_STORAGE_LIMIT__
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            # App startup can include bounded DB/proxy readiness retries.
+            # Allow a conservative warm-up window before readiness/liveness.
+            periodSeconds: 5
+            failureThreshold: 24
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8000
-            initialDelaySeconds: 5
+            initialDelaySeconds: 0
             periodSeconds: 10
           livenessProbe:
             httpGet:
@@ -128,3 +143,12 @@ spec:
                 secretKeyRef:
                   name: mbsrn-api-auth
                   key: CLOUD_SQL_INSTANCE_CONNECTION_NAME
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+              ephemeral-storage: "256Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+              ephemeral-storage: "512Mi"

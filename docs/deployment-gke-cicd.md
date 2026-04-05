@@ -316,6 +316,41 @@ Keep diagnostics sanitized:
 - do not print DB credentials
 - log host/port and mode only
 
+### Distinguish Proxy-Health Failures From Rollout/Capacity Churn
+Recent production evidence confirmed an important split:
+
+- Proxy-health path can be fully healthy (`cloud-sql-proxy` auth/listen/accepted connections),
+  while rollout still shows transient readiness failures due to scheduling pressure and
+  replacement timing.
+
+Treat these as separate failure classes:
+
+1. Proxy-health failure:
+   - proxy container cannot authenticate/start/listen/connect
+2. Rollout/resource-pressure churn:
+   - events show `FailedScheduling` (`Insufficient cpu/memory`) and transient readiness probe
+     connection-refused on newly replaced API pods
+
+When diagnosing rollout churn, capture pod-specific previous logs (not deployment aggregate logs):
+
+```bash
+kubectl get pods -n mbsrn -l app=mbsrn-api -o wide
+kubectl describe pod <failing-api-pod> -n mbsrn
+kubectl logs -n mbsrn pod/<failing-api-pod> -c mbsrn-api --previous --tail=300
+kubectl logs -n mbsrn pod/<failing-api-pod> -c cloud-sql-proxy --previous --tail=300
+kubectl get events -n mbsrn --sort-by=.metadata.creationTimestamp | tail -n 150
+```
+
+Correlation guidance:
+- If proxy previous logs still show healthy auth/listen and accepted local connections,
+  but events show scheduling pressure/readiness churn, prioritize rollout/capacity tuning
+  over DB/proxy changes.
+- If proxy previous logs show auth/instance/bind errors, follow the proxy-health path above.
+
+Important separation:
+- `mbsrn-seo-competitor-profile-retention` `StartError` triage is a separate operational issue
+  and should not be used as evidence for API rollout DB/proxy regressions.
+
 Production-authoritative path (`deploy-prod.yml` + `k8s/*`) injects `GOOGLE_PLACES_API_KEY` into
 Kubernetes Secret `mbsrn-api-auth`, and API runtime consumes it via
 `valueFrom.secretKeyRef` as `GOOGLE_PLACES_API_KEY`.
