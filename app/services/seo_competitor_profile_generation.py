@@ -753,7 +753,11 @@ class SEOCompetitorProfileGenerationService:
                 draft_result=draft_result,
                 parsed_candidate_count=len(output.candidates),
             )
-            drafts = draft_result.drafts
+            pre_insert_drafts, pre_insert_duplicate_count = self._dedupe_drafts_for_persistence(
+                run_id=run.id,
+                drafts=draft_result.drafts,
+            )
+            drafts = pre_insert_drafts
             if not drafts and draft_result.raw_candidate_count > 0 and draft_result.forced_draft_count <= 0:
                 raise SEOCompetitorProfileGenerationValidationError(
                     "No viable competitor candidates were available for draft output"
@@ -764,9 +768,14 @@ class SEOCompetitorProfileGenerationService:
             run.raw_candidate_count = draft_result.raw_candidate_count
             run.included_candidate_count = draft_result.included_candidate_count
             run.excluded_candidate_count = draft_result.excluded_candidate_count
-            run.exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(
+            exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(
                 draft_result.exclusion_counts_by_reason
             )
+            if pre_insert_duplicate_count > 0:
+                exclusion_counts_by_reason["duplicate"] = (
+                    int(exclusion_counts_by_reason.get("duplicate", 0)) + pre_insert_duplicate_count
+                )
+            run.exclusion_counts_by_reason = exclusion_counts_by_reason
             run.provider_name = provider_name
             run.model_name = model_name
             run.prompt_version = prompt_version
@@ -795,8 +804,33 @@ class SEOCompetitorProfileGenerationService:
             run.error_summary = None
             run.completed_at = utc_now()
             self.seo_competitor_profile_generation_repository.save_run(run)
-            for draft in drafts:
-                self.seo_competitor_profile_generation_repository.create_draft(draft)
+            persisted_drafts, db_duplicate_count = self._persist_drafts_conflict_safe(
+                run=run,
+                drafts=drafts,
+            )
+            if db_duplicate_count > 0:
+                run.exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(
+                    {
+                        **run.exclusion_counts_by_reason,
+                        "duplicate": int(run.exclusion_counts_by_reason.get("duplicate", 0)) + db_duplicate_count,
+                    }
+                )
+            if pre_insert_duplicate_count > 0 or db_duplicate_count > 0:
+                self._emit_structured_service_log(
+                    payload={
+                        "event": "competitor_duplicate_domain_summary",
+                        "run_id": run.id,
+                        "business_id": run.business_id,
+                        "site_id": run.site_id,
+                        "pre_insert_duplicate_count": pre_insert_duplicate_count,
+                        "db_conflict_duplicate_count": db_duplicate_count,
+                        "dedup_strategy_used": "pre_insert_best_candidate+conflict_safe_upsert",
+                    },
+                    fallback_message="competitor_duplicate_domain_summary",
+                )
+            drafts = persisted_drafts
+            run.generated_draft_count = len(drafts)
+            self.seo_competitor_profile_generation_repository.save_run(run)
             try:
                 self._evaluate_pending_preview_accuracy_for_completed_run(
                     business_id=business_id,
@@ -2054,6 +2088,179 @@ class SEOCompetitorProfileGenerationService:
                 break
         return forced_candidates
 
+    def _dedupe_drafts_for_persistence(
+        self,
+        *,
+        run_id: str,
+        drafts: list[SEOCompetitorProfileDraft],
+    ) -> tuple[list[SEOCompetitorProfileDraft], int]:
+        if not drafts:
+            return [], 0
+
+        deduped_by_domain: dict[str, SEOCompetitorProfileDraft] = {}
+        ordered_domains: list[str] = []
+        duplicate_count = 0
+
+        for draft in drafts:
+            domain_key = self._draft_domain_dedupe_key(draft)
+            existing = deduped_by_domain.get(domain_key)
+            if existing is None:
+                deduped_by_domain[domain_key] = draft
+                ordered_domains.append(domain_key)
+                continue
+
+            duplicate_count += 1
+            retained = existing
+            discarded = draft
+            if self._is_preferred_draft_candidate(candidate=draft, incumbent=existing):
+                retained = draft
+                discarded = existing
+                deduped_by_domain[domain_key] = draft
+
+            self._emit_structured_service_log(
+                payload={
+                    "event": "duplicate_domain_detected",
+                    "run_id": run_id,
+                    "domain": domain_key,
+                    "dedup_strategy_used": "pre_insert_best_candidate",
+                    "retained_suggested_name": retained.suggested_name,
+                    "discarded_suggested_name": discarded.suggested_name,
+                },
+                fallback_message="duplicate_domain_detected",
+            )
+
+        return [deduped_by_domain[key] for key in ordered_domains], duplicate_count
+
+    def _persist_drafts_conflict_safe(
+        self,
+        *,
+        run: SEOCompetitorProfileGenerationRun,
+        drafts: list[SEOCompetitorProfileDraft],
+    ) -> tuple[list[SEOCompetitorProfileDraft], int]:
+        duplicate_count = 0
+
+        for draft in drafts:
+            normalized_domain = self._normalize_optional_domain_value(draft.suggested_domain)
+            stored_domain = normalized_domain if normalized_domain is not None else (draft.suggested_domain or "")
+            domain_key = stored_domain.lower() if stored_domain else self._draft_domain_dedupe_key(draft)
+
+            try:
+                with self.session.begin_nested():
+                    existing = self.seo_competitor_profile_generation_repository.get_draft_for_business_run_domain(
+                        business_id=run.business_id,
+                        generation_run_id=run.id,
+                        suggested_domain=stored_domain,
+                    )
+                    if existing is not None:
+                        duplicate_count += 1
+                        updated_existing = False
+                        if self._is_preferred_draft_candidate(candidate=draft, incumbent=existing):
+                            self._apply_draft_candidate_fields(target=existing, source=draft)
+                            self.seo_competitor_profile_generation_repository.save_draft(existing)
+                            updated_existing = True
+                        self._emit_structured_service_log(
+                            payload={
+                                "event": "duplicate_domain_detected",
+                                "run_id": run.id,
+                                "domain": domain_key,
+                                "dedup_strategy_used": "conflict_safe_upsert_existing",
+                                "updated_existing": updated_existing,
+                            },
+                            fallback_message="duplicate_domain_detected",
+                        )
+                        continue
+
+                    draft.suggested_domain = stored_domain
+                    self.seo_competitor_profile_generation_repository.create_draft(draft)
+            except IntegrityError as exc:
+                if not self._is_duplicate_draft_integrity_error(exc):
+                    raise
+                duplicate_count += 1
+                self._emit_structured_service_log(
+                    payload={
+                        "event": "duplicate_domain_detected",
+                        "run_id": run.id,
+                        "domain": domain_key,
+                        "dedup_strategy_used": "db_conflict_skip",
+                    },
+                    fallback_message="duplicate_domain_detected",
+                )
+
+        persisted = self.seo_competitor_profile_generation_repository.list_drafts_for_business_run(
+            run.business_id,
+            run.id,
+        )
+        return persisted, duplicate_count
+
+    @staticmethod
+    def _is_duplicate_draft_integrity_error(exc: IntegrityError) -> bool:
+        error_text = str(exc).lower()
+        if "uq_seo_competitor_profile_drafts_business_run_domain" in error_text:
+            return True
+        return (
+            "unique constraint failed" in error_text
+            and "seo_competitor_profile_drafts.business_id" in error_text
+            and "seo_competitor_profile_drafts.generation_run_id" in error_text
+            and "seo_competitor_profile_drafts.suggested_domain" in error_text
+        )
+
+    def _draft_domain_dedupe_key(self, draft: SEOCompetitorProfileDraft) -> str:
+        normalized = self._normalize_optional_domain_value(draft.suggested_domain)
+        if normalized:
+            return normalized.lower()
+        fallback = self._clean_optional(draft.suggested_domain)
+        if fallback:
+            return fallback.lower()
+        fallback_name = self._clean_optional(draft.suggested_name)
+        if fallback_name:
+            return f"missing-domain:{fallback_name.lower()}"
+        return "missing-domain:unknown"
+
+    @staticmethod
+    def _draft_supporting_signal_score(draft: SEOCompetitorProfileDraft) -> int:
+        evidence_length = len((draft.evidence or "").strip())
+        why_length = len((draft.why_competitor or "").strip())
+        summary_length = len((draft.summary or "").strip())
+        return evidence_length + why_length + summary_length
+
+    def _is_preferred_draft_candidate(
+        self,
+        *,
+        candidate: SEOCompetitorProfileDraft,
+        incumbent: SEOCompetitorProfileDraft,
+    ) -> bool:
+        candidate_name = (candidate.suggested_name or "").strip().lower()
+        incumbent_name = (incumbent.suggested_name or "").strip().lower()
+        candidate_score = (
+            float(candidate.confidence_score or 0.0),
+            int(candidate.relevance_score or 0),
+            self._draft_supporting_signal_score(candidate),
+            len(candidate_name),
+        )
+        incumbent_score = (
+            float(incumbent.confidence_score or 0.0),
+            int(incumbent.relevance_score or 0),
+            self._draft_supporting_signal_score(incumbent),
+            len(incumbent_name),
+        )
+        return candidate_score > incumbent_score
+
+    @staticmethod
+    def _apply_draft_candidate_fields(
+        *,
+        target: SEOCompetitorProfileDraft,
+        source: SEOCompetitorProfileDraft,
+    ) -> None:
+        target.suggested_name = source.suggested_name
+        target.suggested_domain = source.suggested_domain
+        target.competitor_type = source.competitor_type
+        target.summary = source.summary
+        target.why_competitor = source.why_competitor
+        target.evidence = source.evidence
+        target.confidence_score = source.confidence_score
+        target.relevance_score = source.relevance_score
+        target.source = source.source
+
     def _forced_fallback_domain(self, *, domain: str, source_index: int) -> str:
         cleaned = self._clean_optional(domain)
         if cleaned:
@@ -2525,14 +2732,23 @@ class SEOCompetitorProfileGenerationService:
             draft_result=draft_result,
             parsed_candidate_count=0,
         )
+        pre_insert_drafts, pre_insert_duplicate_count = self._dedupe_drafts_for_persistence(
+            run_id=run.id,
+            drafts=draft_result.drafts,
+        )
+        exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(
+            draft_result.exclusion_counts_by_reason
+        )
+        if pre_insert_duplicate_count > 0:
+            exclusion_counts_by_reason["duplicate"] = (
+                int(exclusion_counts_by_reason.get("duplicate", 0)) + pre_insert_duplicate_count
+            )
         run.status = "completed"
-        run.generated_draft_count = len(draft_result.drafts)
+        run.generated_draft_count = len(pre_insert_drafts)
         run.raw_candidate_count = draft_result.raw_candidate_count
         run.included_candidate_count = draft_result.included_candidate_count
         run.excluded_candidate_count = draft_result.excluded_candidate_count
-        run.exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(
-            draft_result.exclusion_counts_by_reason
-        )
+        run.exclusion_counts_by_reason = exclusion_counts_by_reason
         run.provider_name = self._clean_required_value(provider_name, field_name="provider_name")
         run.model_name = self._clean_required_value(model_name, field_name="model_name")
         run.prompt_version = self._clean_required_value(prompt_version, field_name="prompt_version")
@@ -2550,8 +2766,32 @@ class SEOCompetitorProfileGenerationService:
             )
         )
         self.seo_competitor_profile_generation_repository.save_run(run)
-        for draft in draft_result.drafts:
-            self.seo_competitor_profile_generation_repository.create_draft(draft)
+        persisted_drafts, db_duplicate_count = self._persist_drafts_conflict_safe(
+            run=run,
+            drafts=pre_insert_drafts,
+        )
+        if db_duplicate_count > 0:
+            run.exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(
+                {
+                    **run.exclusion_counts_by_reason,
+                    "duplicate": int(run.exclusion_counts_by_reason.get("duplicate", 0)) + db_duplicate_count,
+                }
+            )
+        if pre_insert_duplicate_count > 0 or db_duplicate_count > 0:
+            self._emit_structured_service_log(
+                payload={
+                    "event": "competitor_duplicate_domain_summary",
+                    "run_id": run.id,
+                    "business_id": run.business_id,
+                    "site_id": run.site_id,
+                    "pre_insert_duplicate_count": pre_insert_duplicate_count,
+                    "db_conflict_duplicate_count": db_duplicate_count,
+                    "dedup_strategy_used": "pre_insert_best_candidate+conflict_safe_upsert",
+                },
+                fallback_message="competitor_duplicate_domain_summary",
+            )
+        run.generated_draft_count = len(persisted_drafts)
+        self.seo_competitor_profile_generation_repository.save_run(run)
         self.session.commit()
         self.session.refresh(run)
         logger.warning(
@@ -2559,7 +2799,7 @@ class SEOCompetitorProfileGenerationService:
             business_id,
             site.id,
             run.id,
-            len(draft_result.drafts),
+            len(persisted_drafts),
             fallback_reason,
         )
         outcome_summary = self._build_operator_outcome_summary(
@@ -2569,7 +2809,7 @@ class SEOCompetitorProfileGenerationService:
         )
         return SEOCompetitorProfileGenerationRunDetail(
             run=run,
-            drafts=draft_result.drafts,
+            drafts=persisted_drafts,
             rejected_candidate_count=max(0, len(draft_result.rejected_candidates)),
             rejected_candidates=draft_result.rejected_candidates,
             tuning_rejected_candidate_count=max(0, len(draft_result.tuning_rejected_candidates)),

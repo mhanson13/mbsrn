@@ -424,6 +424,8 @@ def test_seo_site_crud_and_business_scoping(db_session, seeded_business) -> None
     assert created["last_audit_run_id"] is None
     assert created["last_audit_status"] is None
     assert created["last_audit_completed_at"] is None
+    assert created["search_console_property_url"] is None
+    assert created["search_console_enabled"] is False
 
     site_id = created["id"]
     list_response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites")
@@ -443,9 +445,40 @@ def test_seo_site_crud_and_business_scoping(db_session, seeded_business) -> None
     patched = patch_response.json()
     assert patched["display_name"] == "Main Site Updated"
     assert patched["base_url"] == "https://example.com/services"
+    assert patched["search_console_property_url"] is None
+    assert patched["search_console_enabled"] is False
 
     cross_tenant = client.get(f"/api/businesses/{other_business.id}/seo/sites/{site_id}")
     assert cross_tenant.status_code == 404
+
+
+def test_admin_can_set_site_level_search_console_configuration(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_role=PrincipalRole.ADMIN,
+    )
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={
+            "display_name": "Search Console Site",
+            "base_url": "https://search-console.example/",
+        },
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    patch_response = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={
+            "search_console_property_url": "sc-domain:search-console.example",
+            "search_console_enabled": True,
+        },
+    )
+    assert patch_response.status_code == 200
+    payload = patch_response.json()
+    assert payload["search_console_property_url"] == "sc-domain:search-console.example"
+    assert payload["search_console_enabled"] is True
 
 
 def test_seo_site_invalid_url_rejected(db_session, seeded_business) -> None:
@@ -595,6 +628,15 @@ def test_operator_cannot_patch_site_name_or_url(db_session, seeded_business) -> 
         json={"base_url": "https://example.com/new"},
     )
     assert reurl_response.status_code == 403
+
+    search_console_response = client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={
+            "search_console_property_url": "sc-domain:example.com",
+            "search_console_enabled": True,
+        },
+    )
+    assert search_console_response.status_code == 403
 
 
 def test_admin_can_update_site_name_via_admin_endpoint(db_session, seeded_business) -> None:

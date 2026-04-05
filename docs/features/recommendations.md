@@ -559,6 +559,26 @@ Interpretation guardrail:
 - search visibility context is directional support only
 - it does **not** prove recommendation causation
 
+Operational requirements:
+
+- site-level Search Console config must be set on the workspace site:
+  - `search_console_enabled=true`
+  - `search_console_property_url` set to a valid URL-prefix or `sc-domain:` property
+- auth resolves in this order:
+  1. `SEARCH_CONSOLE_CREDENTIALS_JSON` (service-account JSON blob)
+  2. runtime ADC fallback when JSON is omitted
+
+Diagnostics:
+
+- site summary payloads now include additive `diagnostic_status` for Search Console failures:
+  - `missing_config`
+  - `invalid_credentials`
+  - `adc_unavailable`
+  - `access_denied`
+  - `property_not_accessible`
+  - `api_unavailable`
+- coarse `status` remains `ok` / `not_configured` / `unavailable` for backward-compatible UI handling.
+
 ### Combined Directional Effectiveness Context
 
 Recommendations can now include additive `recommendation_effectiveness_context` that combines:
@@ -571,12 +591,32 @@ Field shape:
 - `effectiveness_status`: `available` | `partial`
 - `traffic_direction`: `up` | `down` | `flat` | `unknown`
 - `search_visibility_direction`: `up` | `down` | `flat` | `unknown`
+- `effectiveness_trend`: `improving` | `flat` | `declining` | `insufficient_data`
+- `effectiveness_confidence`: `high` | `moderate` | `low`
 - `summary` (short directional message)
 
 Operator-facing rule:
 
 - use this for directional context only
 - never interpret it as attribution proof
+
+### Effectiveness Confidence Calibration
+
+Effectiveness wording is now calibrated conservatively using deterministic signal quality checks. No additional AI calls are used.
+
+Calibration inputs:
+
+- absolute volume (sessions, clicks, impressions)
+- absolute and percent deltas
+- agreement/conflict between GA4 and Search Console direction
+- page-level vs site-level comparison scope
+
+Conservative behavior:
+
+- clear high-volume aligned movement can produce high-confidence wording (`has improved` / `has declined`)
+- low-volume noisy movement is downgraded (`appears to be improving/declining` or flat)
+- conflicting source directions are downgraded to flat/low confidence messaging
+- insufficient signals return `insufficient_data`
 
 ## Action Plans
 

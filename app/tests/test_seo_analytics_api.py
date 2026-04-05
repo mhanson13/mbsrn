@@ -18,6 +18,8 @@ from app.integrations.ga4_analytics_provider import (
 )
 from app.integrations.search_console_analytics_provider import (
     DisabledSearchConsoleAnalyticsProvider,
+    SearchConsoleAnalyticsProviderConfigurationError,
+    SearchConsoleAnalyticsProviderError,
     SearchConsolePeriodMetrics,
     SearchConsoleSiteMetricsResult,
     SearchConsoleTopPageMetrics,
@@ -60,10 +62,25 @@ def _make_client(
     return TestClient(app)
 
 
-def _create_site(client: TestClient, business_id: str, domain: str = "analytics.example") -> str:
+def _create_site(
+    client: TestClient,
+    business_id: str,
+    domain: str = "analytics.example",
+    *,
+    search_console_property_url: str | None = None,
+    search_console_enabled: bool | None = None,
+) -> str:
+    payload: dict[str, object] = {
+        "display_name": "Analytics Site",
+        "base_url": f"https://{domain}/",
+    }
+    if search_console_property_url is not None:
+        payload["search_console_property_url"] = search_console_property_url
+    if search_console_enabled is not None:
+        payload["search_console_enabled"] = search_console_enabled
     response = client.post(
         f"/api/businesses/{business_id}/seo/sites",
-        json={"display_name": "Analytics Site", "base_url": f"https://{domain}/"},
+        json=payload,
     )
     assert response.status_code == 201
     return response.json()["id"]
@@ -200,6 +217,23 @@ class _SearchConsoleWindowProvider:
             )
             for index in range(max(1, query_limit))
         )
+
+
+class _SearchConsoleErrorProvider:
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def is_configured(self) -> bool:
+        return True
+
+    def fetch_site_metrics(self, **_: object) -> SearchConsoleSiteMetricsResult:
+        raise self._exc
+
+    def fetch_window_metrics(self, **_: object) -> SearchConsolePeriodMetrics:
+        raise self._exc
+
+    def fetch_top_queries(self, **_: object) -> tuple[SearchConsoleTopQueryMetrics, ...]:
+        raise self._exc
 
 
 def test_site_analytics_summary_returns_metrics_with_mock_provider(db_session, seeded_business) -> None:
@@ -414,7 +448,13 @@ def test_search_console_site_summary_returns_metrics_with_mock_provider(db_sessi
             ),
         ),
     )
-    site_id = _create_site(client, seeded_business.id, domain="analytics-search.example")
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-search.example",
+        search_console_property_url="sc-domain:analytics-search.example",
+        search_console_enabled=True,
+    )
 
     response = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/search-visibility-summary"
@@ -451,7 +491,8 @@ def test_search_console_site_summary_degrades_cleanly_when_not_configured(db_ses
     payload = response.json()
     assert payload["available"] is False
     assert payload["status"] == "not_configured"
-    assert payload["message"] == "Search Console is not configured for this workspace."
+    assert payload["diagnostic_status"] == "missing_config"
+    assert payload["message"] == "Search Console is not enabled for this site."
     assert payload["site_metrics_summary"] is None
     assert payload["top_pages_summary"] == []
     assert payload["top_queries_summary"] == []
@@ -467,9 +508,218 @@ def test_search_console_site_summary_enforces_tenant_scope(db_session, seeded_bu
             settings=SEOAnalyticsServiceSettings(search_console_period_days=7),
         ),
     )
-    site_id = _create_site(client, seeded_business.id, domain="analytics-search-scope.example")
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-search-scope.example",
+        search_console_property_url="sc-domain:analytics-search-scope.example",
+        search_console_enabled=True,
+    )
 
     cross_business_response = client.get(
         f"/api/businesses/other-business/seo/sites/{site_id}/analytics/search-visibility-summary"
     )
     assert cross_business_response.status_code == 404
+
+
+def test_search_console_site_summary_is_configured_per_site(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=MockGA4AnalyticsProvider(),
+            search_console_provider=_SearchConsoleWindowProvider(),
+            settings=SEOAnalyticsServiceSettings(search_console_period_days=7),
+        ),
+    )
+    configured_site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-search-configured.example",
+        search_console_property_url="sc-domain:analytics-search-configured.example",
+        search_console_enabled=True,
+    )
+    unconfigured_site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-search-unconfigured.example",
+    )
+
+    configured_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{configured_site_id}/analytics/search-visibility-summary"
+    )
+    assert configured_response.status_code == 200
+    assert configured_response.json()["status"] == "ok"
+
+    unconfigured_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{unconfigured_site_id}/analytics/search-visibility-summary"
+    )
+    assert unconfigured_response.status_code == 200
+    assert unconfigured_response.json()["status"] == "not_configured"
+    assert unconfigured_response.json()["diagnostic_status"] == "missing_config"
+
+
+def test_search_console_site_summary_surfaces_invalid_credentials_diagnostic(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=MockGA4AnalyticsProvider(),
+            search_console_provider=_SearchConsoleErrorProvider(
+                SearchConsoleAnalyticsProviderConfigurationError(
+                    "bad credentials",
+                    diagnostic_status="invalid_credentials",
+                )
+            ),
+            settings=SEOAnalyticsServiceSettings(search_console_period_days=7),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-search-invalid.example",
+        search_console_property_url="sc-domain:analytics-search-invalid.example",
+        search_console_enabled=True,
+    )
+
+    response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/search-visibility-summary"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "not_configured"
+    assert payload["diagnostic_status"] == "invalid_credentials"
+    assert payload["message"] == "Search Console credentials are invalid or unreadable."
+
+
+def test_search_console_site_summary_surfaces_adc_unavailable_diagnostic(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=MockGA4AnalyticsProvider(),
+            search_console_provider=_SearchConsoleErrorProvider(
+                SearchConsoleAnalyticsProviderConfigurationError(
+                    "adc unavailable",
+                    diagnostic_status="adc_unavailable",
+                )
+            ),
+            settings=SEOAnalyticsServiceSettings(search_console_period_days=7),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-search-adc.example",
+        search_console_property_url="sc-domain:analytics-search-adc.example",
+        search_console_enabled=True,
+    )
+
+    response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/search-visibility-summary"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_configured"
+    assert payload["diagnostic_status"] == "adc_unavailable"
+    assert payload["message"] == "Search Console credentials are unavailable in runtime."
+
+
+def test_search_console_site_summary_surfaces_access_denied_diagnostic(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=MockGA4AnalyticsProvider(),
+            search_console_provider=_SearchConsoleErrorProvider(
+                SearchConsoleAnalyticsProviderConfigurationError(
+                    "forbidden",
+                    diagnostic_status="access_denied",
+                )
+            ),
+            settings=SEOAnalyticsServiceSettings(search_console_period_days=7),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-search-denied.example",
+        search_console_property_url="sc-domain:analytics-search-denied.example",
+        search_console_enabled=True,
+    )
+
+    response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/search-visibility-summary"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_configured"
+    assert payload["diagnostic_status"] == "access_denied"
+    assert payload["message"] == "Search Console access was denied for this workspace."
+
+
+def test_search_console_site_summary_surfaces_property_not_accessible_diagnostic(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=MockGA4AnalyticsProvider(),
+            search_console_provider=_SearchConsoleErrorProvider(
+                SearchConsoleAnalyticsProviderConfigurationError(
+                    "property not accessible",
+                    diagnostic_status="property_not_accessible",
+                )
+            ),
+            settings=SEOAnalyticsServiceSettings(search_console_period_days=7),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-search-property.example",
+        search_console_property_url="sc-domain:analytics-search-property.example",
+        search_console_enabled=True,
+    )
+
+    response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/search-visibility-summary"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_configured"
+    assert payload["diagnostic_status"] == "property_not_accessible"
+    assert payload["message"] == "Configured Search Console property is not accessible."
+
+
+def test_search_console_site_summary_surfaces_api_unavailable_diagnostic(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=MockGA4AnalyticsProvider(),
+            search_console_provider=_SearchConsoleErrorProvider(
+                SearchConsoleAnalyticsProviderError(
+                    "downstream unavailable",
+                    diagnostic_status="api_unavailable",
+                )
+            ),
+            settings=SEOAnalyticsServiceSettings(search_console_period_days=7),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-search-unavailable.example",
+        search_console_property_url="sc-domain:analytics-search-unavailable.example",
+        search_console_enabled=True,
+    )
+
+    response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/search-visibility-summary"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "unavailable"
+    assert payload["diagnostic_status"] == "api_unavailable"
+    assert payload["message"] == "Search Console data is temporarily unavailable."

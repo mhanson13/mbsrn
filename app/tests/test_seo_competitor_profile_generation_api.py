@@ -1103,6 +1103,48 @@ class _DedupScoringCompetitorProfileProvider:
         )
 
 
+class _DuplicateCollisionCompetitorProfileProvider:
+    provider_name = "duplicate-collision-provider"
+    model_name = "duplicate-collision-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains
+        candidates = [
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Draft Competitor One (preferred)",
+                suggested_domain="draft-competitor-one.example",
+                competitor_type="direct",
+                summary="Preferred duplicate candidate with stronger evidence.",
+                why_competitor="Better overlap and stronger local relevance.",
+                evidence="High-confidence duplicate-domain candidate.",
+                confidence_score=0.92,
+            ),
+            SEOCompetitorProfileDraftCandidateOutput(
+                suggested_name="Draft Competitor Two",
+                suggested_domain="draft-competitor-two.example",
+                competitor_type="local",
+                summary="Unique candidate for persistence path validation.",
+                why_competitor="Unique candidate should still persist.",
+                evidence="Distinct domain candidate.",
+                confidence_score=0.78,
+            ),
+        ]
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=candidates[:candidate_count],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"name":"Draft Competitor One (preferred)"}]}',
+        )
+
+
 class _AllExcludedCompetitorProfileProvider:
     provider_name = "all-excluded-provider"
     model_name = "all-excluded-model"
@@ -3985,6 +4027,72 @@ def test_generation_ordering_is_deterministic_for_same_input(db_session, seeded_
     first_domains = [item["suggested_domain"] for item in first_detail.json()["drafts"]]
     second_domains = [item["suggested_domain"] for item in second_detail.json()["drafts"]]
     assert first_domains == second_domains
+
+
+def test_generation_duplicate_domain_conflict_is_idempotent_and_run_completes(
+    db_session, seeded_business, caplog
+) -> None:
+    provider = _DuplicateCollisionCompetitorProfileProvider()
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=2)["run"]["id"]
+
+    preexisting_duplicate = SEOCompetitorProfileDraft(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        generation_run_id=run_id,
+        suggested_name="Preexisting low-quality duplicate",
+        suggested_domain="draft-competitor-one.example",
+        competitor_type="direct",
+        summary="Low quality existing row.",
+        why_competitor="Existing row from prior partial insert.",
+        evidence="weak",
+        confidence_score=0.21,
+        relevance_score=20,
+        source="ai_generated",
+        review_status="pending",
+    )
+    db_session.add(preexisting_duplicate)
+    db_session.commit()
+
+    with caplog.at_level(logging.INFO):
+        detail = _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=provider,
+        )
+
+    assert detail is not None
+    assert detail.run.status == "completed"
+    assert detail.run.error_summary is None
+    assert "duplicate_domain_detected" in caplog.text
+    assert "competitor_duplicate_domain_summary" in caplog.text
+
+    persisted_drafts = (
+        db_session.query(SEOCompetitorProfileDraft)
+        .filter(SEOCompetitorProfileDraft.business_id == seeded_business.id)
+        .filter(SEOCompetitorProfileDraft.generation_run_id == run_id)
+        .order_by(SEOCompetitorProfileDraft.suggested_domain.asc())
+        .all()
+    )
+    persisted_domains = [draft.suggested_domain for draft in persisted_drafts]
+    assert len(persisted_domains) == len(set(persisted_domains))
+    assert persisted_domains == ["draft-competitor-one.example", "draft-competitor-two.example"]
+
+    retained_duplicate = next(
+        draft for draft in persisted_drafts if draft.suggested_domain == "draft-competitor-one.example"
+    )
+    assert retained_duplicate.suggested_name == "Draft Competitor One (preferred)"
+    assert retained_duplicate.confidence_score >= 0.9
 
 
 def test_generation_pipeline_summary_tracks_final_limit_stage(db_session, seeded_business) -> None:

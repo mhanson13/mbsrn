@@ -35,6 +35,8 @@ class SEOSiteCreateRequest(BaseModel):
     primary_location: str | None = Field(default=None, max_length=255)
     primary_business_zip: str | None = Field(default=None, max_length=5)
     service_areas: list[str] | None = None
+    search_console_property_url: str | None = Field(default=None, max_length=2048)
+    search_console_enabled: bool | None = None
     is_active: bool = True
     is_primary: bool = False
 
@@ -53,6 +55,8 @@ class SEOSiteUpdateRequest(BaseModel):
     primary_location: str | None = Field(default=None, max_length=255)
     primary_business_zip: str | None = Field(default=None, max_length=5)
     service_areas: list[str] | None = None
+    search_console_property_url: str | None = Field(default=None, max_length=2048)
+    search_console_enabled: bool | None = None
     is_active: bool | None = None
     is_primary: bool | None = None
 
@@ -67,11 +71,20 @@ class SEOSiteUpdateRequest(BaseModel):
 class SEOSiteAdminUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     url: str | None = Field(default=None, min_length=1, max_length=2048)
+    search_console_property_url: str | None = Field(default=None, max_length=2048)
+    search_console_enabled: bool | None = None
 
     @model_validator(mode="after")
     def require_name_or_url(self) -> "SEOSiteAdminUpdateRequest":
-        if self.name is None and self.url is None:
-            raise ValueError("At least one of name or url must be provided")
+        if (
+            self.name is None
+            and self.url is None
+            and self.search_console_property_url is None
+            and self.search_console_enabled is None
+        ):
+            raise ValueError(
+                "At least one of name, url, search_console_property_url, or search_console_enabled must be provided"
+            )
         return self
 
 
@@ -87,6 +100,8 @@ class SEOSiteRead(BaseModel):
     primary_location: str | None
     primary_business_zip: str | None = None
     service_areas_json: list[str] | None
+    search_console_property_url: str | None = None
+    search_console_enabled: bool = False
     is_active: bool
     is_primary: bool
     last_audit_run_id: str | None

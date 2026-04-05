@@ -117,6 +117,7 @@ class SEOSearchConsoleSiteSummaryRead(BaseModel):
     site_id: str
     available: bool
     status: str
+    diagnostic_status: str | None = None
     message: str | None = None
     data_source: str | None = None
     site_metrics_summary: SEOSearchConsoleSiteMetricsSummaryRead | None = None

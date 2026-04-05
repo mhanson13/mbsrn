@@ -219,6 +219,22 @@ class SEOCompetitorProfileGenerationRepository:
         self.session.flush()
         return draft
 
+    def get_draft_for_business_run_domain(
+        self,
+        *,
+        business_id: str,
+        generation_run_id: str,
+        suggested_domain: str,
+    ) -> SEOCompetitorProfileDraft | None:
+        stmt: Select[tuple[SEOCompetitorProfileDraft]] = (
+            select(SEOCompetitorProfileDraft)
+            .where(SEOCompetitorProfileDraft.business_id == business_id)
+            .where(SEOCompetitorProfileDraft.generation_run_id == generation_run_id)
+            .where(SEOCompetitorProfileDraft.suggested_domain == suggested_domain)
+            .limit(1)
+        )
+        return self.session.scalar(stmt)
+
     def save_draft(self, draft: SEOCompetitorProfileDraft) -> SEOCompetitorProfileDraft:
         self.session.add(draft)
         self.session.flush()

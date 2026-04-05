@@ -17,7 +17,6 @@ from app.db.session import SessionLocal, get_db_session
 from app.integrations import (
     DevEmailProvider,
     DisabledGA4AnalyticsProvider,
-    DisabledSearchConsoleAnalyticsProvider,
     DisabledGooglePlacesSeedDiscoveryClient,
     DevSMSProvider,
     EmailProvider,
@@ -419,11 +418,7 @@ def get_search_console_analytics_provider() -> SearchConsoleAnalyticsProvider:
     if settings.search_console_use_mock_provider:
         logger.info("search_console_analytics_provider_mode mode=mock")
         return MockSearchConsoleAnalyticsProvider()
-    if not (settings.search_console_site_property_url or "").strip():
-        logger.info("search_console_analytics_provider_mode mode=disabled reason=missing_site_property_url")
-        return DisabledSearchConsoleAnalyticsProvider()
     return GoogleSearchConsoleAPIClient(
-        site_property_url=settings.search_console_site_property_url,
         timeout_seconds=settings.search_console_timeout_seconds,
         credentials_json=settings.search_console_credentials_json,
         api_base_url=settings.search_console_api_base_url,

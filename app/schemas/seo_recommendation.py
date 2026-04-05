@@ -43,6 +43,8 @@ SEORecommendationMeasurementStatus = Literal["available", "no_match", "unavailab
 SEORecommendationSearchConsoleStatus = Literal["available", "no_match", "unavailable", "not_configured"]
 SEORecommendationEffectivenessStatus = Literal["available", "partial", "insufficient"]
 SEORecommendationEffectivenessDirection = Literal["up", "down", "flat", "unknown"]
+SEORecommendationEffectivenessTrend = Literal["improving", "flat", "declining", "insufficient_data"]
+SEORecommendationEffectivenessConfidence = Literal["high", "moderate", "low"]
 SEORecommendationPriorityLevel = Literal["high", "medium", "low"]
 SEORecommendationEffortHint = Literal["quick_win", "moderate", "larger_change"]
 SEORecommendationCompetitorEvidenceTrustTier = Literal[
@@ -3186,6 +3188,8 @@ class SEORecommendationEffectivenessContextRead(BaseModel):
     effectiveness_status: SEORecommendationEffectivenessStatus = "insufficient"
     traffic_direction: SEORecommendationEffectivenessDirection = "unknown"
     search_visibility_direction: SEORecommendationEffectivenessDirection = "unknown"
+    effectiveness_trend: SEORecommendationEffectivenessTrend = "insufficient_data"
+    effectiveness_confidence: SEORecommendationEffectivenessConfidence = "low"
     summary: str | None = Field(default=None, max_length=_RECOMMENDATION_EFFECTIVENESS_SUMMARY_MAX_CHARS)
 
     @field_validator("effectiveness_status", mode="before")
@@ -3208,6 +3212,28 @@ class SEORecommendationEffectivenessContextRead(BaseModel):
         normalized = str(value or "").strip().lower()
         if normalized not in {"up", "down", "flat", "unknown"}:
             return "unknown"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("effectiveness_trend", mode="before")
+    @classmethod
+    def normalize_effectiveness_trend(
+        cls,
+        value: Any,
+    ) -> SEORecommendationEffectivenessTrend:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"improving", "flat", "declining", "insufficient_data"}:
+            return "insufficient_data"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("effectiveness_confidence", mode="before")
+    @classmethod
+    def normalize_effectiveness_confidence(
+        cls,
+        value: Any,
+    ) -> SEORecommendationEffectivenessConfidence:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"high", "moderate", "low"}:
+            return "low"
         return normalized  # type: ignore[return-value]
 
     @field_validator("summary", mode="before")

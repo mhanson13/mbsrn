@@ -509,11 +509,106 @@ def _to_recommendation_search_console_delta_summary(
 def _derive_direction_from_percent(value: float | None) -> Literal["up", "down", "flat", "unknown"]:
     if value is None:
         return "unknown"
+    if abs(value) < 3.0:
+        return "flat"
     if value > 0:
         return "up"
     if value < 0:
         return "down"
     return "flat"
+
+
+def _derive_effectiveness_confidence(
+    *,
+    volume: int | None,
+    delta_absolute: int | float | None,
+    delta_percent: float | None,
+    comparison_scope: Literal["page", "site"] | None,
+    volume_moderate_threshold: int,
+    volume_high_threshold: int,
+    delta_absolute_moderate_threshold: float,
+    delta_absolute_high_threshold: float,
+    delta_percent_moderate_threshold: float,
+    delta_percent_high_threshold: float,
+) -> Literal["high", "moderate", "low"]:
+    absolute_delta = abs(float(delta_absolute)) if delta_absolute is not None else 0.0
+    percent_delta = abs(float(delta_percent)) if delta_percent is not None else 0.0
+
+    # Low-volume windows are intentionally conservative to avoid noisy percent swings.
+    low_volume = volume is not None and volume < volume_moderate_threshold
+    if low_volume:
+        has_minimum_absolute_change = absolute_delta >= delta_absolute_moderate_threshold
+        has_material_percent_change = percent_delta >= delta_percent_high_threshold
+        if not has_minimum_absolute_change or not has_material_percent_change:
+            return "low"
+
+    score = 0
+    if volume is not None:
+        if volume >= volume_high_threshold:
+            score += 2
+        elif volume >= volume_moderate_threshold:
+            score += 1
+    if absolute_delta >= delta_absolute_high_threshold or percent_delta >= delta_percent_high_threshold:
+        score += 2
+    elif absolute_delta >= delta_absolute_moderate_threshold or percent_delta >= delta_percent_moderate_threshold:
+        score += 1
+    if comparison_scope == "page":
+        score += 1
+    if low_volume and score >= 4:
+        # Even strong directional movement on small samples should not be treated as high confidence.
+        return "moderate"
+    if score >= 4:
+        return "high"
+    if score >= 2:
+        return "moderate"
+    return "low"
+
+
+def _confidence_rank(value: Literal["high", "moderate", "low"]) -> int:
+    if value == "high":
+        return 3
+    if value == "moderate":
+        return 2
+    return 1
+
+
+def _rank_to_confidence(value: int) -> Literal["high", "moderate", "low"]:
+    if value >= 3:
+        return "high"
+    if value == 2:
+        return "moderate"
+    return "low"
+
+
+def _build_effectiveness_summary(
+    *,
+    trend: Literal["improving", "flat", "declining", "insufficient_data"],
+    confidence: Literal["high", "moderate", "low"],
+    traffic_direction: Literal["up", "down", "flat", "unknown"],
+    search_direction: Literal["up", "down", "flat", "unknown"],
+) -> str:
+    if trend == "insufficient_data":
+        return "Insufficient directional measurement data is available since this recommendation."
+    has_traffic = traffic_direction != "unknown"
+    has_search = search_direction != "unknown"
+    source_label = "Traffic and search visibility" if has_traffic and has_search else (
+        "Traffic" if has_traffic else "Search visibility"
+    )
+    if trend == "improving":
+        if confidence == "high":
+            return f"{source_label} has improved since this recommendation."
+        if confidence == "moderate":
+            return f"{source_label} is trending up since this recommendation."
+        return f"{source_label} appears to be improving, but signal strength is limited."
+    if trend == "declining":
+        if confidence == "high":
+            return f"{source_label} has declined since this recommendation."
+        if confidence == "moderate":
+            return f"{source_label} is trending down since this recommendation."
+        return f"{source_label} appears to be declining, but signal strength is limited."
+    if has_traffic and has_search and traffic_direction != "flat" and search_direction != "flat":
+        return "Traffic and search visibility are mixed, so overall directional impact is unclear."
+    return f"{source_label} is mostly flat since this recommendation."
 
 
 def _derive_effectiveness_context(
@@ -522,43 +617,121 @@ def _derive_effectiveness_context(
     search_context: SEORecommendationSearchConsoleContextRead | None,
 ) -> SEORecommendationEffectivenessContextRead | None:
     traffic_direction = "unknown"
+    traffic_confidence: Literal["high", "moderate", "low"] = "low"
     if (
         traffic_context is not None
         and traffic_context.measurement_status == "available"
         and traffic_context.delta_summary is not None
     ):
-        traffic_direction = _derive_direction_from_percent(
-            traffic_context.delta_summary.sessions_delta_percent
+        sessions_delta_percent = traffic_context.delta_summary.sessions_delta_percent
+        traffic_direction = _derive_direction_from_percent(sessions_delta_percent)
+        traffic_volume = (
+            traffic_context.after_window_summary.sessions
+            if traffic_context.after_window_summary is not None
+            else (traffic_context.sessions.current if traffic_context.sessions is not None else None)
+        )
+        traffic_confidence = _derive_effectiveness_confidence(
+            volume=traffic_volume,
+            delta_absolute=traffic_context.delta_summary.sessions_delta_absolute,
+            delta_percent=sessions_delta_percent,
+            comparison_scope=traffic_context.comparison_scope,
+            volume_moderate_threshold=60,
+            volume_high_threshold=160,
+            delta_absolute_moderate_threshold=10.0,
+            delta_absolute_high_threshold=30.0,
+            delta_percent_moderate_threshold=5.0,
+            delta_percent_high_threshold=12.0,
         )
 
     search_direction = "unknown"
+    search_confidence: Literal["high", "moderate", "low"] = "low"
     if (
         search_context is not None
         and search_context.search_console_status == "available"
         and search_context.delta_summary is not None
     ):
-        search_direction = _derive_direction_from_percent(
-            search_context.delta_summary.impressions_delta_percent
+        impressions_delta_percent = search_context.delta_summary.impressions_delta_percent
+        search_direction = _derive_direction_from_percent(impressions_delta_percent)
+        search_volume = (
+            search_context.current_window_summary.impressions
+            if search_context.current_window_summary is not None
+            else None
+        )
+        search_confidence = _derive_effectiveness_confidence(
+            volume=search_volume,
+            delta_absolute=search_context.delta_summary.impressions_delta_absolute,
+            delta_percent=impressions_delta_percent,
+            comparison_scope=search_context.comparison_scope,
+            volume_moderate_threshold=900,
+            volume_high_threshold=2500,
+            delta_absolute_moderate_threshold=100.0,
+            delta_absolute_high_threshold=300.0,
+            delta_percent_moderate_threshold=4.0,
+            delta_percent_high_threshold=10.0,
         )
 
-    if traffic_direction == "unknown" and search_direction == "unknown":
-        return None
+    has_traffic_signal = traffic_direction != "unknown"
+    has_search_signal = search_direction != "unknown"
+    if not has_traffic_signal and not has_search_signal:
+        return SEORecommendationEffectivenessContextRead(
+            effectiveness_status="insufficient",
+            traffic_direction=traffic_direction,
+            search_visibility_direction=search_direction,
+            effectiveness_trend="insufficient_data",
+            effectiveness_confidence="low",
+            summary=_build_effectiveness_summary(
+                trend="insufficient_data",
+                confidence="low",
+                traffic_direction=traffic_direction,
+                search_direction=search_direction,
+            ),
+        )
 
-    if traffic_direction != "unknown" and search_direction != "unknown":
+    if has_traffic_signal and has_search_signal:
         status = "available"
-        summary = (
-            "Traffic and search visibility are both trending up since this recommendation."
-            if traffic_direction == "up" and search_direction == "up"
-            else "Traffic and search visibility are mixed since this recommendation."
-        )
+        if traffic_direction == search_direction:
+            if traffic_direction == "up":
+                trend: Literal["improving", "flat", "declining", "insufficient_data"] = "improving"
+            elif traffic_direction == "down":
+                trend = "declining"
+            else:
+                trend = "flat"
+            confidence = _rank_to_confidence(min(_confidence_rank(traffic_confidence), _confidence_rank(search_confidence)))
+        elif traffic_direction == "flat" and search_direction in {"up", "down"}:
+            trend = "improving" if search_direction == "up" else "declining"
+            confidence = _rank_to_confidence(max(1, _confidence_rank(search_confidence) - 1))
+        elif search_direction == "flat" and traffic_direction in {"up", "down"}:
+            trend = "improving" if traffic_direction == "up" else "declining"
+            confidence = _rank_to_confidence(max(1, _confidence_rank(traffic_confidence) - 1))
+        else:
+            trend = "flat"
+            confidence = "low"
     else:
         status = "partial"
-        summary = "Traffic or search visibility context is partially available since this recommendation."
+        if has_traffic_signal:
+            trend = "improving" if traffic_direction == "up" else "declining" if traffic_direction == "down" else "flat"
+            confidence = traffic_confidence
+        else:
+            trend = "improving" if search_direction == "up" else "declining" if search_direction == "down" else "flat"
+            confidence = search_confidence
+
+    if confidence == "low" and trend in {"improving", "declining"} and status == "available":
+        # Mixed strength from multiple sources is treated conservatively.
+        trend = "flat"
+
+    summary = _build_effectiveness_summary(
+        trend=trend,
+        confidence=confidence,
+        traffic_direction=traffic_direction,
+        search_direction=search_direction,
+    )
 
     return SEORecommendationEffectivenessContextRead(
         effectiveness_status=status,
         traffic_direction=traffic_direction,
         search_visibility_direction=search_direction,
+        effectiveness_trend=trend,
+        effectiveness_confidence=confidence,
         summary=summary,
     )
 
@@ -705,7 +878,8 @@ def _build_recommendation_search_console_context_by_id(
     recommendations: list[SEORecommendationRead],
     search_console_site_summary: SEOSearchConsoleSiteSummaryRead,
     seo_analytics_service: SEOAnalyticsService,
-    site_domain: str | None,
+    search_console_property_url: str | None,
+    search_console_enabled: bool,
 ) -> dict[str, SEORecommendationSearchConsoleContextRead]:
     if not recommendations:
         return {}
@@ -737,7 +911,8 @@ def _build_recommendation_search_console_context_by_id(
         )
         matched_page_path = matched_page.page_path if matched_page is not None else None
         comparison = seo_analytics_service.build_recommendation_search_console_before_after_comparison(
-            site_domain=site_domain,
+            search_console_property_url=search_console_property_url,
+            search_console_enabled=search_console_enabled,
             recommendation_created_at=recommendation.created_at,
             page_path=matched_page_path,
         )
@@ -854,6 +1029,8 @@ def _attach_measurement_context_to_recommendations(
     search_console_site_summary: SEOSearchConsoleSiteSummaryRead,
     seo_analytics_service: SEOAnalyticsService,
     site_domain: str | None,
+    search_console_property_url: str | None,
+    search_console_enabled: bool,
 ) -> list[SEORecommendationRead]:
     if not recommendations:
         return recommendations
@@ -867,7 +1044,8 @@ def _attach_measurement_context_to_recommendations(
         recommendations=recommendations,
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
-        site_domain=site_domain,
+        search_console_property_url=search_console_property_url,
+        search_console_enabled=search_console_enabled,
     )
     return [
         recommendation.model_copy(
@@ -2737,6 +2915,8 @@ def patch_seo_site(
     if tenant_context.principal_role != PrincipalRole.ADMIN and (
         payload.display_name is not None
         or payload.base_url is not None
+        or payload.search_console_property_url is not None
+        or payload.search_console_enabled is not None
         or payload.is_active is not None
         or payload.is_primary is not None
     ):
@@ -2776,6 +2956,10 @@ def patch_admin_seo_site(
         update_payload_data["display_name"] = payload.name
     if payload.url is not None:
         update_payload_data["base_url"] = payload.url
+    if payload.search_console_property_url is not None:
+        update_payload_data["search_console_property_url"] = payload.search_console_property_url
+    if payload.search_console_enabled is not None:
+        update_payload_data["search_console_enabled"] = payload.search_console_enabled
     update_payload = SEOSiteUpdateRequest.model_validate(update_payload_data)
     try:
         site = seo_site_service.update_site(
@@ -3495,7 +3679,8 @@ def get_seo_recommendation_workspace_summary(
         search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
             business_id=scoped_business_id,
             site_id=site_id,
-            site_domain=site.base_url or site.normalized_domain,
+            search_console_property_url=site.search_console_property_url,
+            search_console_enabled=bool(site.search_console_enabled),
         )
         recommendations_payload.items = _attach_measurement_context_to_recommendations(
             recommendations=recommendations_payload.items,
@@ -3503,6 +3688,8 @@ def get_seo_recommendation_workspace_summary(
             search_console_site_summary=search_console_site_summary,
             seo_analytics_service=seo_analytics_service,
             site_domain=site.base_url or site.normalized_domain,
+            search_console_property_url=site.search_console_property_url,
+            search_console_enabled=bool(site.search_console_enabled),
         )
     ordering_explanation = _build_workspace_ordering_explanation(
         recommendations=recommendations_payload.items,
@@ -3635,7 +3822,8 @@ def list_seo_recommendations_for_run(
     search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
         site_id=site_id,
-        site_domain=site.base_url or site.normalized_domain,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
     serialized_items = _attach_measurement_context_to_recommendations(
         recommendations=serialized_items,
@@ -3643,6 +3831,8 @@ def list_seo_recommendations_for_run(
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site.base_url or site.normalized_domain,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
     by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
         serialized_items
@@ -3701,7 +3891,8 @@ def list_seo_recommendations(
     search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
         site_id=site_id,
-        site_domain=site.base_url or site.normalized_domain,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
     serialized_items = _attach_measurement_context_to_recommendations(
         recommendations=serialized_items,
@@ -3709,6 +3900,8 @@ def list_seo_recommendations(
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site.base_url or site.normalized_domain,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
     filtered_summary = SEORecommendationFilteredSummary(
         total=page_result.total,
@@ -3774,7 +3967,8 @@ def patch_seo_recommendation(
     search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
         site_id=site_id,
-        site_domain=site.base_url or site.normalized_domain,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
     serialized_with_measurement = _attach_measurement_context_to_recommendations(
         recommendations=serialized_with_lineage,
@@ -3782,6 +3976,8 @@ def patch_seo_recommendation(
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site.base_url or site.normalized_domain,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
     return serialized_with_measurement[0]
 
@@ -4076,7 +4272,8 @@ def get_seo_recommendation(
     search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
         site_id=site_id,
-        site_domain=site.base_url or site.normalized_domain,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
     serialized_with_measurement = _attach_measurement_context_to_recommendations(
         recommendations=serialized_with_lineage,
@@ -4084,6 +4281,8 @@ def get_seo_recommendation(
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site.base_url or site.normalized_domain,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
     return serialized_with_measurement[0]
 
@@ -4138,7 +4337,8 @@ def get_seo_recommendation_run_report(
     search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
         site_id=site_id,
-        site_domain=site.base_url or site.normalized_domain,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
     serialized_items = _attach_measurement_context_to_recommendations(
         recommendations=serialized_items,
@@ -4146,6 +4346,8 @@ def get_seo_recommendation_run_report(
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site.base_url or site.normalized_domain,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
     by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
         serialized_items
@@ -4682,7 +4884,8 @@ def get_site_search_console_summary(
     return seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
         site_id=site_id,
-        site_domain=(site.normalized_domain or site.base_url or "").strip() or None,
+        search_console_property_url=site.search_console_property_url,
+        search_console_enabled=bool(site.search_console_enabled),
     )
 
 

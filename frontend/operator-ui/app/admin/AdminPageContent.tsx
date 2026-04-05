@@ -77,6 +77,13 @@ interface AdminPageProps {
   mode?: AdminPageMode;
 }
 
+interface SiteManagementDraft {
+  name: string;
+  url: string;
+  searchConsolePropertyUrl: string;
+  searchConsoleEnabled: boolean;
+}
+
 function parseBoundedInteger(input: string, bounds: { min: number; max: number }): number | null {
   const normalized = input.trim();
   if (!/^\d+$/.test(normalized)) {
@@ -592,7 +599,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
   const [promptOverrideMessage, setPromptOverrideMessage] = useState<string | null>(null);
   const [promptOverrideError, setPromptOverrideError] = useState<string | null>(null);
-  const [siteDraftsById, setSiteDraftsById] = useState<Record<string, { name: string; url: string }>>({});
+  const [siteDraftsById, setSiteDraftsById] = useState<Record<string, SiteManagementDraft>>({});
   const [siteManagementMessage, setSiteManagementMessage] = useState<string | null>(null);
   const [siteManagementError, setSiteManagementError] = useState<string | null>(null);
   const [updatingSiteId, setUpdatingSiteId] = useState<string | null>(null);
@@ -783,11 +790,13 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   }, [identityPrincipalId, users]);
 
   useEffect(() => {
-    const nextDrafts: Record<string, { name: string; url: string }> = {};
+    const nextDrafts: Record<string, SiteManagementDraft> = {};
     for (const site of context.sites) {
       nextDrafts[site.id] = {
         name: site.display_name,
         url: site.base_url,
+        searchConsolePropertyUrl: site.search_console_property_url || "",
+        searchConsoleEnabled: Boolean(site.search_console_enabled),
       };
     }
     setSiteDraftsById(nextDrafts);
@@ -1101,14 +1110,41 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     }
   };
 
-  const handleSiteDraftChange = (siteId: string, field: "name" | "url", value: string) => {
+  const handleSiteDraftChange = (
+    siteId: string,
+    field: "name" | "url" | "searchConsolePropertyUrl",
+    value: string,
+  ) => {
     setSiteDraftsById((current) => {
-      const existing = current[siteId] || { name: "", url: "" };
+      const existing = current[siteId] || {
+        name: "",
+        url: "",
+        searchConsolePropertyUrl: "",
+        searchConsoleEnabled: false,
+      };
       return {
         ...current,
         [siteId]: {
           ...existing,
           [field]: value,
+        },
+      };
+    });
+  };
+
+  const handleSiteDraftToggle = (siteId: string, searchConsoleEnabled: boolean) => {
+    setSiteDraftsById((current) => {
+      const existing = current[siteId] || {
+        name: "",
+        url: "",
+        searchConsolePropertyUrl: "",
+        searchConsoleEnabled: false,
+      };
+      return {
+        ...current,
+        [siteId]: {
+          ...existing,
+          searchConsoleEnabled,
         },
       };
     });
@@ -1132,6 +1168,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       return;
     }
 
+    const normalizedSearchConsolePropertyUrl = (draft?.searchConsolePropertyUrl || "").trim();
+
     setSiteManagementError(null);
     setSiteManagementMessage(null);
     setUpdatingSiteId(site.id);
@@ -1139,6 +1177,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       const updatedSite = await updateAdminSite(context.token, context.businessId, site.id, {
         name: normalizedName,
         url: normalizedUrl,
+        search_console_property_url: normalizedSearchConsolePropertyUrl || null,
+        search_console_enabled: draft?.searchConsoleEnabled ?? false,
       });
       await context.refreshSites();
       setSiteManagementMessage(`Site ${updatedSite.display_name} updated.`);
@@ -1938,7 +1978,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader
           title="Site Management"
-          subtitle="Rename sites, update base URLs, and permanently delete site-owned SEO data."
+          subtitle="Rename sites, update base URLs, manage per-site Search Console property settings, and permanently delete site-owned SEO data."
           headingLevel={2}
           variant="support"
         />
@@ -1952,6 +1992,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               <tr>
                 <th>Site Name</th>
                 <th>Site URL</th>
+                <th>Search Console Property</th>
+                <th>Search Console Enabled</th>
                 <th>Domain</th>
                 <th>Active</th>
                 <th>Edit</th>
@@ -1974,6 +2016,24 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                       aria-label={`Site URL ${site.id}`}
                       value={siteDraftsById[site.id]?.url ?? site.base_url}
                       onChange={(event) => handleSiteDraftChange(site.id, "url", event.target.value)}
+                      disabled={!!updatingSiteId || !!deletingSiteId}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      aria-label={`Search Console property ${site.id}`}
+                      value={siteDraftsById[site.id]?.searchConsolePropertyUrl ?? site.search_console_property_url ?? ""}
+                      onChange={(event) => handleSiteDraftChange(site.id, "searchConsolePropertyUrl", event.target.value)}
+                      placeholder="sc-domain:example.com"
+                      disabled={!!updatingSiteId || !!deletingSiteId}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      aria-label={`Search Console enabled ${site.id}`}
+                      type="checkbox"
+                      checked={siteDraftsById[site.id]?.searchConsoleEnabled ?? Boolean(site.search_console_enabled)}
+                      onChange={(event) => handleSiteDraftToggle(site.id, event.target.checked)}
                       disabled={!!updatingSiteId || !!deletingSiteId}
                     />
                   </td>
@@ -2007,7 +2067,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               ))}
               {context.sites.length === 0 ? (
                 <tr>
-                  <td colSpan={6}>No sites found for this business.</td>
+                  <td colSpan={8}>No sites found for this business.</td>
                 </tr>
               ) : null}
             </tbody>

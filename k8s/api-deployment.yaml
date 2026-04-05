@@ -74,6 +74,12 @@ spec:
                   name: mbsrn-api-auth
                   key: GOOGLE_PLACES_API_KEY
                   optional: true
+            - name: SEARCH_CONSOLE_CREDENTIALS_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: SEARCH_CONSOLE_CREDENTIALS_JSON
+                  optional: true
             - name: AI_PROVIDER_NAME
               valueFrom:
                 secretKeyRef:

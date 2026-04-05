@@ -165,6 +165,27 @@ What is exposed (bounded):
 - top pages and optional top query summaries (bounded list sizes)
 - recommendation-level page/site search visibility context when deterministic matching succeeds
 
+Configuration and auth selection:
+
+- Search Console property configuration is now per-site (`seo_sites.search_console_property_url` + `seo_sites.search_console_enabled`).
+- `SEARCH_CONSOLE_CREDENTIALS_JSON` is optional shared platform auth:
+  - when present, service-account JSON credentials are used
+  - when absent, runtime ADC (`google.auth.default`) is used
+- deployment wiring should inject shared auth only; per-site property URLs are persisted on the site record.
+- secrets are never logged.
+
+Operational diagnostics (additive `diagnostic_status` in site summary payload):
+
+- `missing_config`
+- `invalid_credentials`
+- `adc_unavailable`
+- `access_denied`
+- `property_not_accessible`
+- `api_unavailable`
+
+Coarse `status` remains stable for UI compatibility (`ok` / `not_configured` / `unavailable`), while
+`diagnostic_status` provides bounded failure detail for runbook/debug use.
+
 How it complements GA4:
 
 - GA4 provides traffic outcome direction
@@ -175,6 +196,23 @@ Interpretation guardrails:
 
 - combined effectiveness is contextual only, not attributional
 - wording must remain directional and conservative, especially when only one source is available or signals conflict
+
+Phase 5 adds internal signal confidence calibration for recommendation effectiveness summaries:
+
+- additive confidence classification: `high` | `moderate` | `low`
+- additive trend field: `improving` | `flat` | `declining` | `insufficient_data`
+- deterministic confidence inputs:
+  - volume floors (sessions/impressions)
+  - absolute + percent delta magnitude
+  - source agreement vs conflict (GA4 vs Search Console)
+  - page-scope vs site-scope weighting
+- low-volume percent-only movement is downgraded conservatively to avoid overstating noisy swings
+
+UI contract remains intentionally simple:
+
+- no new confidence badges/panels are required
+- summary wording is adjusted by confidence strength only
+- no causal language is introduced
 
 ## Frontend Action Control Layer
 
@@ -636,6 +674,34 @@ Competitor prompt execution and preview use the same resolved prompt assembly pi
   - malformed provider output: parsing/shape failure only
   - zero provider candidates: valid empty outcome
   - later-stage filtering to zero drafts: non-provider pipeline rejection outcome
+
+## Competitor Draft Dedup + Idempotent Persistence
+
+Competitor draft persistence is now hardened so duplicate domains in a single generation run do not fail the run.
+
+- Deterministic pre-insert dedup is applied at draft persistence boundary:
+  - dedupe key: normalized domain
+  - retained candidate preference order: confidence score, relevance score, supporting evidence density
+- Persistence uses a conflict-safe upsert pattern:
+  - look up existing `(business_id, generation_run_id, suggested_domain)` draft
+  - if duplicate exists:
+    - keep existing unless incoming draft is stronger
+    - update existing draft when incoming candidate is stronger
+  - if no duplicate exists: create draft normally
+- Duplicate collision behavior is non-fatal:
+  - duplicate insert collisions are skipped/merged
+  - run completion continues
+  - duplicate counts are recorded in exclusion telemetry
+
+Observability additions:
+
+- `duplicate_domain_detected` structured events include:
+  - `run_id`
+  - `domain`
+  - `dedup_strategy_used`
+- `competitor_duplicate_domain_summary` includes per-run duplicate counts for:
+  - pre-insert duplicate removal
+  - DB conflict duplicate handling
 
 ## Admin Site Maintenance
 - Admin-only site maintenance endpoints are exposed under business-scoped SEO routes:

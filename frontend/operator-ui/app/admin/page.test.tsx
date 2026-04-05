@@ -157,6 +157,8 @@ describe("admin route", () => {
     expect(screen.queryByRole("button", { name: "Create User" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create and Link Identity" })).not.toBeInTheDocument();
     expect(screen.getByText("Platform operations tools for diagnostics, site maintenance, and safe configuration updates.")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Search Console Property" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Search Console Enabled" })).toBeInTheDocument();
     expect(
       screen.getByText('severity="ERROR" resource.labels.namespace_name="mbsrn" -textPayload =~ "INFO*"'),
     ).toBeInTheDocument();

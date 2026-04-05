@@ -313,10 +313,25 @@ def _seed_principal(
     return principal
 
 
-def _create_site(client: TestClient, business_id: str, *, domain: str = "client.example") -> str:
+def _create_site(
+    client: TestClient,
+    business_id: str,
+    *,
+    domain: str = "client.example",
+    search_console_property_url: str | None = None,
+    search_console_enabled: bool | None = None,
+) -> str:
+    payload: dict[str, object] = {
+        "display_name": f"Client Site {domain}",
+        "base_url": f"https://{domain}/",
+    }
+    if search_console_property_url is not None:
+        payload["search_console_property_url"] = search_console_property_url
+    if search_console_enabled is not None:
+        payload["search_console_enabled"] = search_console_enabled
     create_site = client.post(
         f"/api/businesses/{business_id}/seo/sites",
-        json={"display_name": f"Client Site {domain}", "base_url": f"https://{domain}/"},
+        json=payload,
     )
     assert create_site.status_code == 201
     return create_site.json()["id"]
@@ -535,7 +550,12 @@ def _seed_completed_comparison_run(
 
 def test_create_recommendation_run_from_persisted_inputs(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
-    site_id = _create_site(client, seeded_business.id)
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        search_console_property_url="sc-domain:client.example",
+        search_console_enabled=True,
+    )
     audit_run_id = _seed_completed_audit_run(
         db_session,
         business_id=seeded_business.id,
@@ -593,7 +613,12 @@ def test_create_recommendation_run_from_persisted_inputs(db_session, seeded_busi
 
 def test_recommendation_run_requires_lineage_and_completed_inputs(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
-    site_id = _create_site(client, seeded_business.id)
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        search_console_property_url="sc-domain:client.example",
+        search_console_enabled=True,
+    )
 
     missing_lineage = client.post(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
@@ -681,7 +706,12 @@ def test_recommendation_lineage_mismatch_is_rejected(db_session, seeded_business
 
 def test_phase2_v1_site_scoped_recommendation_routes(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
-    site_id = _create_site(client, seeded_business.id)
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        search_console_property_url="sc-domain:client.example",
+        search_console_enabled=True,
+    )
     audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
 
     create_run = client.post(
@@ -3346,6 +3376,7 @@ def test_recommendation_workspace_summary_derives_target_page_hints_from_audit_i
     )
     assert run_response.status_code == 201
     run_id = run_response.json()["id"]
+    recommendation_anchor = utc_now() - timedelta(days=7)
 
     db_session.add_all(
         [
@@ -3399,6 +3430,7 @@ def test_recommendation_workspace_summary_derives_target_page_hints_from_audit_i
                 priority_band="high",
                 effort_bucket="MEDIUM",
                 status="open",
+                created_at=recommendation_anchor,
             ),
             SEORecommendation(
                 id=str(uuid4()),
@@ -3475,7 +3507,12 @@ def test_recommendation_workspace_summary_adds_page_measurement_context_when_mat
         business_id=seeded_business.id,
         analytics_service=analytics_service,
     )
-    site_id = _create_site(client, seeded_business.id)
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        search_console_property_url="sc-domain:client.example",
+        search_console_enabled=True,
+    )
     audit_run_id = _seed_completed_audit_run(
         db_session,
         business_id=seeded_business.id,
@@ -3497,6 +3534,7 @@ def test_recommendation_workspace_summary_adds_page_measurement_context_when_mat
     )
     assert run_response.status_code == 201
     run_id = run_response.json()["id"]
+    recommendation_anchor = utc_now() - timedelta(days=7)
 
     db_session.add_all(
         [
@@ -3516,6 +3554,7 @@ def test_recommendation_workspace_summary_adds_page_measurement_context_when_mat
                 priority_band="high",
                 effort_bucket="MEDIUM",
                 status="open",
+                created_at=recommendation_anchor,
             ),
             SEORecommendation(
                 id=str(uuid4()),
@@ -3533,6 +3572,7 @@ def test_recommendation_workspace_summary_adds_page_measurement_context_when_mat
                 priority_band="medium",
                 effort_bucket="SMALL",
                 status="open",
+                created_at=recommendation_anchor,
             ),
         ]
     )
@@ -3570,7 +3610,9 @@ def test_recommendation_workspace_summary_adds_page_measurement_context_when_mat
     assert homepage_effectiveness["effectiveness_status"] == "available"
     assert homepage_effectiveness["traffic_direction"] == "up"
     assert homepage_effectiveness["search_visibility_direction"] == "up"
-    assert "trending up" in homepage_effectiveness["summary"].lower()
+    assert homepage_effectiveness["effectiveness_trend"] == "improving"
+    assert homepage_effectiveness["effectiveness_confidence"] in {"high", "moderate"}
+    assert "improv" in homepage_effectiveness["summary"].lower()
 
     no_match_context = by_rule_key["custom_general_gap"]["recommendation_measurement_context"]
     assert no_match_context["measurement_status"] == "available"

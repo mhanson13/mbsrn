@@ -230,6 +230,13 @@ Production-authoritative path (`deploy-prod.yml` + `k8s/*`) injects `GOOGLE_PLAC
 Kubernetes Secret `mbsrn-api-auth`, and API runtime consumes it via
 `valueFrom.secretKeyRef` as `GOOGLE_PLACES_API_KEY`.
 
+Search Console runtime wiring in the same production-authoritative path:
+
+- `SEARCH_CONSOLE_CREDENTIALS_JSON` is injected into `mbsrn-api-auth` (from GitHub secret scope).
+- `k8s/api-deployment.yaml` consumes `SEARCH_CONSOLE_CREDENTIALS_JSON` via `valueFrom.secretKeyRef`.
+- `SEARCH_CONSOLE_CREDENTIALS_JSON` is optional; when omitted, runtime ADC fallback is used.
+- Search Console property URL enablement is configured per-site in application data (`seo_sites.search_console_property_url` + `search_console_enabled`), not as app-global env.
+
 Session backend behavior:
 - Supported backends: `SESSION_STATE_BACKEND=auto|redis|inmemory`.
 - Redis-backed session state is required for correctness in multi-replica production.

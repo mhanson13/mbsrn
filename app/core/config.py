@@ -57,7 +57,6 @@ class Settings:
     ga4_period_days: int
     ga4_top_pages_limit: int
     ga4_use_mock_provider: bool
-    search_console_site_property_url: str | None
     search_console_credentials_json: str | None
     search_console_api_base_url: str
     search_console_timeout_seconds: int
@@ -395,7 +394,6 @@ def get_settings() -> Settings:
         ga4_period_days=_env_int("GA4_PERIOD_DAYS", 7, min_value=1),
         ga4_top_pages_limit=_env_int("GA4_TOP_PAGES_LIMIT", 5, min_value=1),
         ga4_use_mock_provider=_env_bool("GA4_USE_MOCK_PROVIDER", False),
-        search_console_site_property_url=os.getenv("SEARCH_CONSOLE_SITE_PROPERTY_URL"),
         search_console_credentials_json=os.getenv("SEARCH_CONSOLE_CREDENTIALS_JSON"),
         search_console_api_base_url=os.getenv(
             "SEARCH_CONSOLE_API_BASE_URL",

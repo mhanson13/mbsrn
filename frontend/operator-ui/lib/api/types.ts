@@ -154,6 +154,8 @@ export interface SEOSite {
   primary_location?: string | null;
   primary_business_zip?: string | null;
   service_areas_json?: string[] | null;
+  search_console_property_url?: string | null;
+  search_console_enabled?: boolean;
   is_active: boolean;
   is_primary: boolean;
   last_audit_run_id: string | null;
@@ -164,6 +166,8 @@ export interface SEOSite {
 export interface SEOSiteCreateRequest {
   display_name: string;
   base_url: string;
+  search_console_property_url?: string | null;
+  search_console_enabled?: boolean | null;
 }
 
 export interface SEOSiteUpdateRequest {
@@ -173,6 +177,8 @@ export interface SEOSiteUpdateRequest {
   primary_location?: string | null;
   primary_business_zip?: string | null;
   service_areas?: string[] | null;
+  search_console_property_url?: string | null;
+  search_console_enabled?: boolean | null;
   is_active?: boolean;
   is_primary?: boolean;
 }
@@ -180,6 +186,8 @@ export interface SEOSiteUpdateRequest {
 export interface SEOSiteAdminUpdateRequest {
   name?: string;
   url?: string;
+  search_console_property_url?: string | null;
+  search_console_enabled?: boolean | null;
 }
 
 export interface SEOSiteListResponse {
@@ -281,6 +289,14 @@ export interface SearchConsoleSiteSummaryResponse {
   site_id: string;
   available: boolean;
   status: "ok" | "not_configured" | "unavailable";
+  diagnostic_status?:
+    | "missing_config"
+    | "invalid_credentials"
+    | "adc_unavailable"
+    | "access_denied"
+    | "property_not_accessible"
+    | "api_unavailable"
+    | null;
   message: string | null;
   data_source: string | null;
   site_metrics_summary: SearchConsoleSiteMetricsSummary | null;
@@ -1261,6 +1277,8 @@ export interface RecommendationEffectivenessContext {
   effectiveness_status: "available" | "partial" | "insufficient";
   traffic_direction: "up" | "down" | "flat" | "unknown";
   search_visibility_direction: "up" | "down" | "flat" | "unknown";
+  effectiveness_trend?: "improving" | "flat" | "declining" | "insufficient_data";
+  effectiveness_confidence?: "high" | "moderate" | "low";
   summary?: string | null;
 }
 

@@ -677,6 +677,16 @@ class SEOSiteService:
         primary_location = self._clean_optional(payload.primary_location)
         if primary_location is None and payload.primary_business_zip is not None:
             primary_location = build_primary_location_from_zip(payload.primary_business_zip)
+        search_console_property_url = self._normalize_search_console_property_url(payload.search_console_property_url)
+        search_console_enabled = (
+            payload.search_console_enabled
+            if payload.search_console_enabled is not None
+            else bool(search_console_property_url)
+        )
+        if search_console_enabled and not search_console_property_url:
+            raise SEOSiteValidationError(
+                "search_console_property_url is required when search_console_enabled is true"
+            )
 
         site = SEOSite(
             id=str(uuid4()),
@@ -687,6 +697,8 @@ class SEOSiteService:
             industry=self._clean_optional(payload.industry),
             primary_location=primary_location,
             service_areas_json=payload.service_areas,
+            search_console_property_url=search_console_property_url,
+            search_console_enabled=search_console_enabled,
             is_active=payload.is_active,
             is_primary=is_primary,
         )
@@ -739,6 +751,20 @@ class SEOSiteService:
             )
         if "service_areas" in changes:
             site.service_areas_json = changes["service_areas"]
+        property_updated = False
+        if "search_console_property_url" in changes:
+            site.search_console_property_url = self._normalize_search_console_property_url(
+                changes["search_console_property_url"]
+            )
+            property_updated = True
+        if "search_console_enabled" in changes:
+            site.search_console_enabled = bool(changes["search_console_enabled"])
+        elif property_updated:
+            site.search_console_enabled = bool(site.search_console_property_url)
+        if site.search_console_enabled and not site.search_console_property_url:
+            raise SEOSiteValidationError(
+                "search_console_property_url is required when search_console_enabled is true"
+            )
         if "is_active" in changes:
             site.is_active = changes["is_active"]
         if "is_primary" in changes:
@@ -805,6 +831,42 @@ class SEOSiteService:
 
         normalized = urlunparse((scheme, domain, path, "", "", ""))
         return NormalizedURL(url=normalized, domain=domain)
+
+    def _normalize_search_console_property_url(self, raw_property_url: str | None) -> str | None:
+        cleaned = self._clean_optional(raw_property_url)
+        if cleaned is None:
+            return None
+        lowered = cleaned.lower()
+        if lowered.startswith("sc-domain:"):
+            domain = lowered.removeprefix("sc-domain:").strip()
+            if not domain:
+                raise SEOSiteValidationError("search_console_property_url must include a domain after sc-domain:")
+            if "/" in domain:
+                domain = domain.split("/", 1)[0].strip()
+            if not domain:
+                raise SEOSiteValidationError("search_console_property_url must include a valid domain")
+            return f"sc-domain:{domain}"
+
+        parsed = urlparse(cleaned)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in {"http", "https"}:
+            raise SEOSiteValidationError(
+                "search_console_property_url must be an sc-domain property or http/https URL-prefix property"
+            )
+        hostname = (parsed.hostname or "").strip().lower()
+        if not hostname:
+            raise SEOSiteValidationError("search_console_property_url must include a valid host")
+        netloc = hostname
+        if parsed.port is not None:
+            netloc = f"{hostname}:{parsed.port}"
+        path = (parsed.path or "/").strip()
+        if not path:
+            path = "/"
+        if not path.startswith("/"):
+            path = f"/{path}"
+        if not path.endswith("/"):
+            path = f"{path}/"
+        return urlunparse((scheme, netloc, path, "", "", ""))
 
     @staticmethod
     def _clean_optional(value: str | None) -> str | None:

@@ -11,14 +11,26 @@ from urllib.request import Request, urlopen
 
 _SEARCH_CONSOLE_READONLY_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 _DEFAULT_SEARCH_CONSOLE_API_BASE_URL = "https://searchconsole.googleapis.com/webmasters/v3"
+_SEARCH_CONSOLE_DIAGNOSTIC_STATUSES = {
+    "missing_config",
+    "invalid_credentials",
+    "adc_unavailable",
+    "access_denied",
+    "property_not_accessible",
+    "api_unavailable",
+}
 
 
 class SearchConsoleAnalyticsProviderConfigurationError(ValueError):
-    pass
+    def __init__(self, message: str, *, diagnostic_status: str = "missing_config") -> None:
+        super().__init__(message)
+        self.diagnostic_status = _normalize_diagnostic_status(diagnostic_status, fallback="missing_config")
 
 
 class SearchConsoleAnalyticsProviderError(ValueError):
-    pass
+    def __init__(self, message: str, *, diagnostic_status: str = "api_unavailable") -> None:
+        super().__init__(message)
+        self.diagnostic_status = _normalize_diagnostic_status(diagnostic_status, fallback="api_unavailable")
 
 
 @dataclass(frozen=True)
@@ -97,13 +109,22 @@ class DisabledSearchConsoleAnalyticsProvider:
         return False
 
     def fetch_site_metrics(self, **_: object) -> SearchConsoleSiteMetricsResult:
-        raise SearchConsoleAnalyticsProviderConfigurationError("Search Console analytics is not configured.")
+        raise SearchConsoleAnalyticsProviderConfigurationError(
+            "Search Console analytics is not configured.",
+            diagnostic_status="missing_config",
+        )
 
     def fetch_window_metrics(self, **_: object) -> SearchConsolePeriodMetrics:
-        raise SearchConsoleAnalyticsProviderConfigurationError("Search Console analytics is not configured.")
+        raise SearchConsoleAnalyticsProviderConfigurationError(
+            "Search Console analytics is not configured.",
+            diagnostic_status="missing_config",
+        )
 
     def fetch_top_queries(self, **_: object) -> tuple[SearchConsoleTopQueryMetrics, ...]:
-        raise SearchConsoleAnalyticsProviderConfigurationError("Search Console analytics is not configured.")
+        raise SearchConsoleAnalyticsProviderConfigurationError(
+            "Search Console analytics is not configured.",
+            diagnostic_status="missing_config",
+        )
 
 
 class MockSearchConsoleAnalyticsProvider:
@@ -212,12 +233,10 @@ class GoogleSearchConsoleAPIClient:
     def __init__(
         self,
         *,
-        site_property_url: str | None,
         timeout_seconds: int = 10,
         credentials_json: str | None = None,
         api_base_url: str = _DEFAULT_SEARCH_CONSOLE_API_BASE_URL,
     ) -> None:
-        self.site_property_url = (site_property_url or "").strip()
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.credentials_json = (credentials_json or "").strip() or None
         self.api_base_url = (api_base_url or _DEFAULT_SEARCH_CONSOLE_API_BASE_URL).rstrip("/")
@@ -225,7 +244,7 @@ class GoogleSearchConsoleAPIClient:
         self._auth_request: Any | None = None
 
     def is_configured(self) -> bool:
-        return bool(self.site_property_url)
+        return True
 
     def fetch_site_metrics(
         self,
@@ -430,9 +449,12 @@ class GoogleSearchConsoleAPIClient:
         return tuple(top_pages[:top_pages_limit])
 
     def _query(self, *, site_property: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
-        resolved_property = (site_property or self.site_property_url).strip()
+        resolved_property = str(site_property or "").strip()
         if not resolved_property:
-            raise SearchConsoleAnalyticsProviderConfigurationError("Search Console site property URL is required.")
+            raise SearchConsoleAnalyticsProviderConfigurationError(
+                "Search Console site property URL is required.",
+                diagnostic_status="missing_config",
+            )
         token = self._resolve_access_token()
         request = Request(
             f"{self.api_base_url}/sites/{quote(resolved_property, safe='')}/searchAnalytics/query",
@@ -444,23 +466,43 @@ class GoogleSearchConsoleAPIClient:
             with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
-            if exc.code in {401, 403}:
+            diagnostic_status = _classify_search_console_http_error(exc.code, _read_http_error_body(exc))
+            if diagnostic_status in {"access_denied", "property_not_accessible"}:
                 raise SearchConsoleAnalyticsProviderConfigurationError(
-                    "Search Console credentials or property access are not configured."
+                    "Search Console credentials or property access are not configured.",
+                    diagnostic_status=diagnostic_status,
                 ) from exc
-            raise SearchConsoleAnalyticsProviderError("Search Console request failed.") from exc
+            raise SearchConsoleAnalyticsProviderError(
+                "Search Console request failed.",
+                diagnostic_status=diagnostic_status,
+            ) from exc
         except TimeoutError as exc:
-            raise SearchConsoleAnalyticsProviderError("Search Console request timed out.") from exc
+            raise SearchConsoleAnalyticsProviderError(
+                "Search Console request timed out.",
+                diagnostic_status="api_unavailable",
+            ) from exc
         except URLError as exc:
             if isinstance(getattr(exc, "reason", None), socket.timeout):
-                raise SearchConsoleAnalyticsProviderError("Search Console request timed out.") from exc
-            raise SearchConsoleAnalyticsProviderError("Search Console endpoint unavailable.") from exc
+                raise SearchConsoleAnalyticsProviderError(
+                    "Search Console request timed out.",
+                    diagnostic_status="api_unavailable",
+                ) from exc
+            raise SearchConsoleAnalyticsProviderError(
+                "Search Console endpoint unavailable.",
+                diagnostic_status="api_unavailable",
+            ) from exc
         except OSError as exc:
-            raise SearchConsoleAnalyticsProviderError("Search Console request failed.") from exc
+            raise SearchConsoleAnalyticsProviderError(
+                "Search Console request failed.",
+                diagnostic_status="api_unavailable",
+            ) from exc
         try:
             body = json.loads(raw) if raw else {}
         except json.JSONDecodeError as exc:
-            raise SearchConsoleAnalyticsProviderError("Search Console response is not valid JSON.") from exc
+            raise SearchConsoleAnalyticsProviderError(
+                "Search Console response is not valid JSON.",
+                diagnostic_status="api_unavailable",
+            ) from exc
         rows = body.get("rows") if isinstance(body, dict) else None
         return rows if isinstance(rows, list) else []
 
@@ -473,14 +515,23 @@ class GoogleSearchConsoleAPIClient:
             token = getattr(credentials, "token", None)
             if not token:
                 raise SearchConsoleAnalyticsProviderConfigurationError(
-                    "Search Console credentials did not return an access token."
+                    "Search Console credentials did not return an access token.",
+                    diagnostic_status="invalid_credentials" if self.credentials_json else "adc_unavailable",
                 )
             return str(token)
         except SearchConsoleAnalyticsProviderConfigurationError:
             raise
         except Exception as exc:  # noqa: BLE001
+            lower_detail = str(exc).lower()
+            if "permission" in lower_detail or "forbidden" in lower_detail or "insufficient" in lower_detail:
+                diagnostic_status = "access_denied"
+            elif self.credentials_json:
+                diagnostic_status = "invalid_credentials"
+            else:
+                diagnostic_status = "adc_unavailable"
             raise SearchConsoleAnalyticsProviderConfigurationError(
-                "Unable to authorize Search Console analytics request."
+                "Unable to authorize Search Console analytics request.",
+                diagnostic_status=diagnostic_status,
             ) from exc
 
     def _get_credentials(self):
@@ -492,22 +543,49 @@ class GoogleSearchConsoleAPIClient:
             from google.oauth2 import service_account
         except ImportError as exc:
             raise SearchConsoleAnalyticsProviderConfigurationError(
-                "google-auth dependencies are required for Search Console analytics."
+                "google-auth dependencies are required for Search Console analytics.",
+                diagnostic_status="missing_config",
             ) from exc
         try:
             if self.credentials_json:
-                info = json.loads(self.credentials_json)
-                credentials = service_account.Credentials.from_service_account_info(
-                    info,
-                    scopes=[_SEARCH_CONSOLE_READONLY_SCOPE],
-                )
+                try:
+                    info = json.loads(self.credentials_json)
+                except json.JSONDecodeError as exc:
+                    raise SearchConsoleAnalyticsProviderConfigurationError(
+                        "Search Console credentials JSON could not be parsed.",
+                        diagnostic_status="invalid_credentials",
+                    ) from exc
+                try:
+                    credentials = service_account.Credentials.from_service_account_info(
+                        info,
+                        scopes=[_SEARCH_CONSOLE_READONLY_SCOPE],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    raise SearchConsoleAnalyticsProviderConfigurationError(
+                        "Search Console credentials JSON is invalid.",
+                        diagnostic_status="invalid_credentials",
+                    ) from exc
             else:
-                credentials, _ = google_auth_default(scopes=[_SEARCH_CONSOLE_READONLY_SCOPE])
+                try:
+                    credentials, _ = google_auth_default(scopes=[_SEARCH_CONSOLE_READONLY_SCOPE])
+                except Exception as exc:  # noqa: BLE001
+                    raise SearchConsoleAnalyticsProviderConfigurationError(
+                        "Search Console ADC credentials are unavailable.",
+                        diagnostic_status="adc_unavailable",
+                    ) from exc
             self._credentials = credentials
             self._auth_request = GoogleAuthRequest()
+            if self._credentials is None:
+                raise SearchConsoleAnalyticsProviderConfigurationError(
+                    "Search Console credentials are unavailable.",
+                    diagnostic_status="adc_unavailable",
+                )
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, SearchConsoleAnalyticsProviderConfigurationError):
+                raise
             raise SearchConsoleAnalyticsProviderConfigurationError(
-                "Unable to initialize Search Console credentials."
+                "Unable to initialize Search Console credentials.",
+                diagnostic_status="invalid_credentials" if self.credentials_json else "adc_unavailable",
             ) from exc
         return self._credentials
 
@@ -547,3 +625,46 @@ def _normalize_page_path(value: str | None) -> str | None:
 
 def _days_ago_iso(days_ago: int) -> str:
     return (date.today() - timedelta(days=max(0, int(days_ago)))).isoformat()
+
+
+def _normalize_diagnostic_status(value: str | None, *, fallback: str) -> str:
+    candidate = str(value or "").strip().lower()
+    if candidate in _SEARCH_CONSOLE_DIAGNOSTIC_STATUSES:
+        return candidate
+    return fallback
+
+
+def _read_http_error_body(exc: HTTPError) -> str:
+    try:
+        payload = exc.read()
+    except Exception:  # noqa: BLE001
+        return ""
+    if not payload:
+        return ""
+    try:
+        return payload.decode("utf-8", errors="ignore")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _classify_search_console_http_error(status_code: int, body: str) -> str:
+    lowered = str(body or "").lower()
+    property_markers = (
+        "siteurl",
+        "property",
+        "not a verified owner",
+        "not found",
+        "insufficient permission for site",
+        "permission for site",
+    )
+    if status_code == 401:
+        return "access_denied"
+    if status_code == 403:
+        if any(marker in lowered for marker in property_markers):
+            return "property_not_accessible"
+        return "access_denied"
+    if status_code in {404}:
+        return "property_not_accessible"
+    if status_code == 400 and any(marker in lowered for marker in property_markers):
+        return "property_not_accessible"
+    return "api_unavailable"

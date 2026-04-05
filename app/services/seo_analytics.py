@@ -204,16 +204,31 @@ class SEOAnalyticsService:
         *,
         business_id: str,
         site_id: str,
-        site_domain: str | None,
+        search_console_property_url: str | None = None,
+        search_console_enabled: bool = False,
     ) -> SEOSearchConsoleSiteSummaryRead:
-        normalized_domain = _normalize_site_domain(site_domain)
-        if not normalized_domain:
+        if not search_console_enabled:
             return SEOSearchConsoleSiteSummaryRead(
                 business_id=business_id,
                 site_id=site_id,
                 available=False,
-                status="unavailable",
-                message="Search visibility unavailable because site domain is not configured.",
+                status="not_configured",
+                diagnostic_status="missing_config",
+                message="Search Console is not enabled for this site.",
+                data_source=None,
+                site_metrics_summary=None,
+                top_pages_summary=[],
+                top_queries_summary=[],
+            )
+        site_property = _normalize_search_console_site_property_url(search_console_property_url)
+        if not site_property:
+            return SEOSearchConsoleSiteSummaryRead(
+                business_id=business_id,
+                site_id=site_id,
+                available=False,
+                status="not_configured",
+                diagnostic_status="missing_config",
+                message="Search Console property is not configured for this site.",
                 data_source=None,
                 site_metrics_summary=None,
                 top_pages_summary=[],
@@ -231,14 +246,13 @@ class SEOAnalyticsService:
                 site_id=site_id,
                 available=False,
                 status="not_configured",
+                diagnostic_status="missing_config",
                 message="Search Console is not configured for this workspace.",
                 data_source=None,
                 site_metrics_summary=None,
                 top_pages_summary=[],
                 top_queries_summary=[],
             )
-
-        site_property = _build_default_search_console_site_property(normalized_domain)
         try:
             result = self.search_console_provider.fetch_site_metrics(
                 site_property=site_property,
@@ -246,23 +260,39 @@ class SEOAnalyticsService:
                 top_pages_limit=top_pages_limit,
                 top_queries_limit=top_queries_limit,
             )
-        except SearchConsoleAnalyticsProviderConfigurationError:
+        except SearchConsoleAnalyticsProviderConfigurationError as exc:
+            diagnostic_status = _to_search_console_diagnostic_status(
+                getattr(exc, "diagnostic_status", None),
+                fallback="missing_config",
+            )
+            logger.info(
+                "seo_search_console_not_configured business_id=%s site_id=%s diagnostic_status=%s",
+                business_id,
+                site_id,
+                diagnostic_status,
+            )
             return SEOSearchConsoleSiteSummaryRead(
                 business_id=business_id,
                 site_id=site_id,
                 available=False,
                 status="not_configured",
-                message="Search Console is not configured for this workspace.",
+                diagnostic_status=diagnostic_status,
+                message=_search_console_message_for_diagnostic(diagnostic_status),
                 data_source=None,
                 site_metrics_summary=None,
                 top_pages_summary=[],
                 top_queries_summary=[],
             )
         except SearchConsoleAnalyticsProviderError as exc:
+            diagnostic_status = _to_search_console_diagnostic_status(
+                getattr(exc, "diagnostic_status", None),
+                fallback="api_unavailable",
+            )
             logger.warning(
-                "seo_search_console_unavailable business_id=%s site_id=%s reason=%s",
+                "seo_search_console_unavailable business_id=%s site_id=%s diagnostic_status=%s reason=%s",
                 business_id,
                 site_id,
+                diagnostic_status,
                 str(exc),
             )
             return SEOSearchConsoleSiteSummaryRead(
@@ -270,7 +300,8 @@ class SEOAnalyticsService:
                 site_id=site_id,
                 available=False,
                 status="unavailable",
-                message="Search Console data is temporarily unavailable.",
+                diagnostic_status=diagnostic_status,
+                message=_search_console_message_for_diagnostic(diagnostic_status),
                 data_source=None,
                 site_metrics_summary=None,
                 top_pages_summary=[],
@@ -321,6 +352,7 @@ class SEOAnalyticsService:
             site_id=site_id,
             available=True,
             status="ok",
+            diagnostic_status=None,
             message=None,
             data_source=result.data_source,
             site_metrics_summary=metrics_summary,
@@ -402,12 +434,15 @@ class SEOAnalyticsService:
     def build_recommendation_search_console_before_after_comparison(
         self,
         *,
-        site_domain: str | None,
+        search_console_property_url: str | None,
+        search_console_enabled: bool,
         recommendation_created_at: datetime,
         page_path: str | None,
     ) -> SEOSearchConsoleBeforeAfterComparison | None:
-        normalized_domain = _normalize_site_domain(site_domain)
-        if not normalized_domain or not self.search_console_provider.is_configured():
+        if not search_console_enabled:
+            return None
+        site_property = _normalize_search_console_site_property_url(search_console_property_url)
+        if not site_property or not self.search_console_provider.is_configured():
             return None
         period_days = max(1, min(int(self.settings.search_console_period_days), 30))
         anchor_date = recommendation_created_at.date()
@@ -429,7 +464,6 @@ class SEOAnalyticsService:
         if after_end < after_start:
             return None
 
-        site_property = _build_default_search_console_site_property(normalized_domain)
         normalized_page_path = _normalize_page_path(page_path) if page_path else None
         page_before = self._fetch_search_console_window_summary(
             site_property=site_property,
@@ -686,6 +720,30 @@ def _normalize_site_domain(value: str | None) -> str | None:
     return hostname or None
 
 
+def _normalize_search_console_site_property_url(value: str | None) -> str | None:
+    compacted = str(value or "").strip()
+    if not compacted:
+        return None
+    lowered = compacted.lower()
+    if lowered.startswith("sc-domain:"):
+        domain = lowered.removeprefix("sc-domain:").strip()
+        if "/" in domain:
+            domain = domain.split("/", 1)[0].strip()
+        return f"sc-domain:{domain}" if domain else None
+    parsed = urlparse(compacted)
+    scheme = (parsed.scheme or "").lower()
+    hostname = (parsed.hostname or "").strip().lower()
+    if scheme not in {"http", "https"} or not hostname:
+        return None
+    netloc = hostname if parsed.port is None else f"{hostname}:{parsed.port}"
+    path = (parsed.path or "/").strip() or "/"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    if not path.endswith("/"):
+        path = f"{path}/"
+    return f"{scheme}://{netloc}{path}"
+
+
 def _to_top_page_summary(item) -> SEOAnalyticsTopPageRead:
     current_pageviews = max(0, int(item.current_pageviews))
     previous_pageviews = max(0, int(item.previous_pageviews))
@@ -800,8 +858,29 @@ def _to_search_console_window_summary(
     )
 
 
-def _build_default_search_console_site_property(site_domain: str) -> str:
-    normalized_domain = _normalize_site_domain(site_domain)
-    if not normalized_domain:
-        return ""
-    return f"sc-domain:{normalized_domain}"
+def _to_search_console_diagnostic_status(value: str | None, *, fallback: str) -> str:
+    candidate = str(value or "").strip().lower()
+    if candidate in {
+        "missing_config",
+        "invalid_credentials",
+        "adc_unavailable",
+        "access_denied",
+        "property_not_accessible",
+        "api_unavailable",
+    }:
+        return candidate
+    return fallback
+
+
+def _search_console_message_for_diagnostic(diagnostic_status: str) -> str:
+    if diagnostic_status == "missing_config":
+        return "Search Console is not configured for this workspace."
+    if diagnostic_status == "invalid_credentials":
+        return "Search Console credentials are invalid or unreadable."
+    if diagnostic_status == "adc_unavailable":
+        return "Search Console credentials are unavailable in runtime."
+    if diagnostic_status == "access_denied":
+        return "Search Console access was denied for this workspace."
+    if diagnostic_status == "property_not_accessible":
+        return "Configured Search Console property is not accessible."
+    return "Search Console data is temporarily unavailable."
