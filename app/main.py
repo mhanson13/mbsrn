@@ -88,7 +88,7 @@ EXPECTED_ALEMBIC_HEAD = _resolve_expected_alembic_head()
 DATABASE_TARGET_HOST, DATABASE_TARGET_PORT = get_database_target()
 DATABASE_TARGET_PORT_LABEL = str(DATABASE_TARGET_PORT) if DATABASE_TARGET_PORT is not None else "default"
 _LOCALHOST_DATABASE_TARGETS = {"localhost", "127.0.0.1", "::1"}
-_CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS = 15
+_CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS = 60
 _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_RETRY_DELAY_SECONDS = 1.0
 _SCHEMA_READINESS_LOGGED_REVISION: str | None = None
 
@@ -124,9 +124,11 @@ def _ensure_database_connectivity() -> None:
 
     max_attempts = 1
     retry_delay_seconds = 0.0
+    proxy_retry_path_entered = False
     if _is_cloudsql_proxy_mode() and _is_localhost_database_target():
         max_attempts = _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS
         retry_delay_seconds = _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_RETRY_DELAY_SECONDS
+        proxy_retry_path_entered = True
         logger.info(
             "Startup database connectivity check using cloudsql proxy retry budget host=%s port=%s app_env=%s "
             "db_connection_mode=%s max_attempts=%s retry_delay_seconds=%s",
@@ -137,6 +139,18 @@ def _ensure_database_connectivity() -> None:
             max_attempts,
             retry_delay_seconds,
         )
+    logger.info(
+        "Startup database connectivity check starting host=%s port=%s app_env=%s db_connection_mode=%s "
+        "database_target_classification=%s max_attempts=%s retry_delay_seconds=%s proxy_retry_path_entered=%s",
+        DATABASE_TARGET_HOST,
+        DATABASE_TARGET_PORT_LABEL,
+        settings.app_env,
+        settings.db_connection_mode,
+        _database_target_classification(),
+        max_attempts,
+        retry_delay_seconds,
+        proxy_retry_path_entered,
+    )
 
     start = time.monotonic()
     for attempt in range(1, max_attempts + 1):
@@ -173,6 +187,16 @@ def _ensure_database_connectivity() -> None:
                     elapsed_ms,
                     exc,
                 )
+                if proxy_retry_path_entered:
+                    logger.error(
+                        "Cloud SQL proxy startup path exhausted retry budget host=%s port=%s app_env=%s "
+                        "db_connection_mode=%s hint=%s",
+                        DATABASE_TARGET_HOST,
+                        DATABASE_TARGET_PORT_LABEL,
+                        settings.app_env,
+                        settings.db_connection_mode,
+                        "verify cloud-sql-proxy sidecar readiness/logs and CLOUD_SQL_INSTANCE_CONNECTION_NAME wiring",
+                    )
                 raise RuntimeError(
                     "Startup database connectivity check failed. Verify DATABASE_URL and database reachability."
                 ) from exc

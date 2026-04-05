@@ -226,6 +226,26 @@ On `mbsrn-api` rollout failure, `deploy-prod.yml` now emits safe diagnostics (no
   - loopback detection result
   - final accept/reject result
 
+### Quick Triage: `127.0.0.1:5432 connection refused` On API Startup
+If API startup fails with:
+
+- `Startup database connectivity check failed`
+- `connection to server at "127.0.0.1", port 5432 failed: Connection refused`
+
+validate the production DB path in this order:
+
+1. Runtime mode must be proxy-backed production:
+   - `APP_ENV=production`
+   - `DB_CONNECTION_MODE=cloudsql_proxy`
+2. `DATABASE_URL` must resolve to loopback (`127.0.0.1` / `localhost`) only for this proxy-backed mode.
+3. `CLOUD_SQL_INSTANCE_CONNECTION_NAME` must be present in secret `mbsrn-api-auth` and wired into the `cloud-sql-proxy` sidecar env.
+4. Confirm sidecar health/logs:
+   - `kubectl -n <namespace> logs deployment/mbsrn-api -c cloud-sql-proxy --tail=200`
+5. Confirm API startup diagnostics show sanitized DB target and retry path:
+   - `app_env`, `db_connection_mode`, host/port, retry budget, and retry outcome.
+
+The API startup check intentionally retries in proxy-backed production mode to tolerate sidecar cold starts. If the retry budget is exhausted, treat this as proxy wiring/readiness failure rather than a local-dev fallback path.
+
 Production-authoritative path (`deploy-prod.yml` + `k8s/*`) injects `GOOGLE_PLACES_API_KEY` into
 Kubernetes Secret `mbsrn-api-auth`, and API runtime consumes it via
 `valueFrom.secretKeyRef` as `GOOGLE_PLACES_API_KEY`.
