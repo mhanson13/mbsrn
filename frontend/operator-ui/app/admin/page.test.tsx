@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import AdminPage from "./page";
 import UsersCompatibilityPage from "../users/page";
@@ -14,6 +14,8 @@ type OperatorContextMockValue = {
     display_name: string;
     base_url: string;
     normalized_domain: string;
+    search_console_property_url?: string | null;
+    search_console_enabled?: boolean;
     is_active: boolean;
     is_primary: boolean;
     last_audit_run_id: string | null;
@@ -159,9 +161,59 @@ describe("admin route", () => {
     expect(screen.getByText("Platform operations tools for diagnostics, site maintenance, and safe configuration updates.")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Property" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Enabled" })).toBeInTheDocument();
+    expect(screen.getByText("sc-domain:example.com")).toBeInTheDocument();
+    expect(screen.getByText("https://example.com")).toBeInTheDocument();
     expect(
       screen.getByText('severity="ERROR" resource.labels.namespace_name="mbsrn" -textPayload =~ "INFO*"'),
     ).toBeInTheDocument();
+  });
+
+  it("shows lightweight Search Console property format hint for obvious invalid input", async () => {
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-3",
+        display_name: "Admin Three",
+        role: "admin",
+        is_active: true,
+      },
+    });
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          business_id: "biz-1",
+          display_name: "Site One",
+          base_url: "https://site-one.example",
+          normalized_domain: "site-one.example",
+          search_console_property_url: null,
+          search_console_enabled: false,
+          is_active: true,
+          is_primary: true,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId: jest.fn(),
+      refreshSites: jest.fn(),
+    });
+
+    render(<AdminPage />);
+
+    await waitFor(() => {
+      expect(mockFetchBusinessSettings).toHaveBeenCalled();
+    });
+
+    const propertyInput = screen.getByRole("textbox", { name: "Search Console property site-1" });
+    fireEvent.change(propertyInput, { target: { value: "example.com" } });
+
+    expect(screen.getByText("Use sc-domain:example.com or https://example.com.")).toBeInTheDocument();
   });
 
   it("keeps /users as a compatibility route", async () => {

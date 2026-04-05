@@ -469,10 +469,38 @@ function safeAdminSiteUpdateErrorMessage(error: unknown): string {
       return "Site not found in this business scope.";
     }
     if (error.status === 422) {
+      if (apiErrorMessageContains(error, "search_console_property_url is required when search_console_enabled is true")) {
+        return "Search Console property is required when Search Console Enabled is checked.";
+      }
+      if (apiErrorMessageContains(error, "search_console_property_url")) {
+        return "Search Console property must be sc-domain:example.com or https://example.com and must match the configured Search Console property exactly.";
+      }
       return "Unable to save site changes. Check name and URL.";
     }
   }
   return "Failed to update site.";
+}
+
+function searchConsolePropertyFormatHint(value: string): string | null {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const lowered = normalized.toLowerCase();
+  if (lowered.startsWith("sc-domain:")) {
+    const domainPart = normalized.slice("sc-domain:".length).trim();
+    if (!domainPart || domainPart.includes("://")) {
+      return "Use sc-domain:example.com for domain properties.";
+    }
+    return null;
+  }
+
+  if (lowered.startsWith("http://") || lowered.startsWith("https://")) {
+    return null;
+  }
+
+  return "Use sc-domain:example.com or https://example.com.";
 }
 
 function safeAdminSiteDeleteErrorMessage(error: unknown): string {
@@ -1986,6 +2014,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           {siteManagementMessage ? <p className="hint">{siteManagementMessage}</p> : null}
           {siteManagementError ? <p className="hint error">{siteManagementError}</p> : null}
         </div>
+        <p className="hint muted">
+          Search Console property format: domain property <code>sc-domain:example.com</code> or URL-prefix
+          property <code>https://example.com</code>. The value must match the Search Console property exactly.
+        </p>
         <div className="table-container">
           <table className="table">
             <thead>
@@ -2020,13 +2052,23 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     />
                   </td>
                   <td>
+                    {(() => {
+                      const searchConsolePropertyValue =
+                        siteDraftsById[site.id]?.searchConsolePropertyUrl ?? site.search_console_property_url ?? "";
+                      const formatHint = searchConsolePropertyFormatHint(searchConsolePropertyValue);
+                      return (
+                        <>
                     <input
                       aria-label={`Search Console property ${site.id}`}
-                      value={siteDraftsById[site.id]?.searchConsolePropertyUrl ?? site.search_console_property_url ?? ""}
+                      value={searchConsolePropertyValue}
                       onChange={(event) => handleSiteDraftChange(site.id, "searchConsolePropertyUrl", event.target.value)}
                       placeholder="sc-domain:example.com"
                       disabled={!!updatingSiteId || !!deletingSiteId}
                     />
+                          {formatHint ? <p className="hint warning">{formatHint}</p> : null}
+                        </>
+                      );
+                    })()}
                   </td>
                   <td>
                     <input
