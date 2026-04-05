@@ -246,6 +246,76 @@ validate the production DB path in this order:
 
 The API startup check intentionally retries in proxy-backed production mode to tolerate sidecar cold starts. If the retry budget is exhausted, treat this as proxy wiring/readiness failure rather than a local-dev fallback path.
 
+### Proxy Not Listening Diagnostic Path (Authoritative Sequence)
+Use this sequence when API startup still fails after retry budget exhaustion and the failure is confirmed as **not timing-related**.
+
+1. Inspect sidecar logs directly:
+
+```bash
+kubectl logs -n mbsrn deployment/mbsrn-api -c cloud-sql-proxy --tail=200
+```
+
+2. Verify pod/container health and restart behavior:
+
+```bash
+kubectl get pods -n mbsrn -o wide
+kubectl describe pod <pod_name> -n mbsrn
+```
+
+3. Verify deployed proxy args and expected port wiring:
+
+```bash
+kubectl -n mbsrn get deploy mbsrn-api -o yaml | sed -n '/name: cloud-sql-proxy/,$p'
+```
+
+Expected key args:
+- `--port=5432`
+- `<instance-connection-name>` (resolved from `CLOUD_SQL_INSTANCE_CONNECTION_NAME`)
+
+4. Verify in-pod listener state:
+
+```bash
+kubectl exec -it <pod_name> -n mbsrn -- sh -c "netstat -tlnp || ss -tlnp"
+```
+
+Expected:
+- listener on `127.0.0.1:5432` (or `0.0.0.0:5432` in equivalent proxy mode)
+
+5. Verify Cloud SQL env injection in the running pod:
+
+```bash
+kubectl exec -it <pod_name> -n mbsrn -- env | grep CLOUD_SQL
+```
+
+Expected:
+- `CLOUD_SQL_INSTANCE_CONNECTION_NAME` present and non-empty
+
+6. Verify runtime identity has Cloud SQL client permission:
+
+```bash
+gcloud projects get-iam-policy mbsrn-prod \
+  --flatten="bindings[].members" \
+  --format="table(bindings.role, bindings.members)" \
+  | grep mbsrn-api
+```
+
+Expected:
+- runtime GSA used by `mbsrn-api` has `roles/cloudsql.client`
+
+#### Error → Likely Cause Mapping
+- `cloud-sql-proxy` container CrashLoopBackOff + logs show credential/permission errors:
+  - Workload Identity mapping missing on KSA, or runtime GSA missing `roles/cloudsql.client`
+- logs show invalid/unknown instance connection name:
+  - bad `CLOUD_SQL_INSTANCE_CONNECTION_NAME` secret value or wrong project/region/instance tuple
+- sidecar running but no `:5432` listener:
+  - proxy args/flags malformed or startup fatal before bind
+- sidecar running with listener but app still gets refusal:
+  - wrong target host/port in effective `DATABASE_URL`, or app container not sharing expected pod net namespace (rare; validate manifest/runtime)
+
+Keep diagnostics sanitized:
+- do not print DB credentials
+- log host/port and mode only
+
 Production-authoritative path (`deploy-prod.yml` + `k8s/*`) injects `GOOGLE_PLACES_API_KEY` into
 Kubernetes Secret `mbsrn-api-auth`, and API runtime consumes it via
 `valueFrom.secretKeyRef` as `GOOGLE_PLACES_API_KEY`.
