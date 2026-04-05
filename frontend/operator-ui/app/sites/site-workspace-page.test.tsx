@@ -4525,7 +4525,7 @@ describe("site workspace timeline controls", () => {
     seedRichWorkspaceData();
     mockFetchGA4SiteOnboardingStatus.mockResolvedValue(
       buildGA4OnboardingStatus({
-        ga4_onboarding_status: "stream_configured",
+        ga4_onboarding_status: "property_configured",
         ga4_account_id: "1000000001",
         ga4_property_id: "2000000002",
         ga4_data_stream_id: "3000000003",
@@ -4533,7 +4533,7 @@ describe("site workspace timeline controls", () => {
         account_discovery_available: true,
         discovered_account_count: 2,
         auto_provisioning_eligible: false,
-        message: "Google Analytics property and web stream are configured for this site.",
+        message: "Google Analytics property is configured for this site.",
       }),
     );
 
@@ -4541,8 +4541,9 @@ describe("site workspace timeline controls", () => {
 
     const summaryStrip = await screen.findByTestId("workspace-summary-strip");
     const ga4Card = within(summaryStrip).getByTestId("workspace-summary-ga4-onboarding");
-    expect(ga4Card).toHaveTextContent("Configured");
-    expect(ga4Card).toHaveTextContent("2 accounts discovered");
+    expect(ga4Card).toHaveTextContent("Property configured");
+    expect(ga4Card).toHaveTextContent("Google Analytics property is configured for this site.");
+    expect(ga4Card).not.toHaveTextContent("accounts discovered");
   });
 
   it("renders GA4 connection diagnostics and helper text in workspace snapshot", async () => {
@@ -4565,11 +4566,11 @@ describe("site workspace timeline controls", () => {
     const panel = await screen.findByTestId("workspace-ga4-connect-panel");
     expect(within(panel).getByTestId("workspace-ga4-connection-status")).toHaveTextContent("Error");
     expect(within(panel).getByTestId("workspace-ga4-diagnostic")).toHaveTextContent(
-      "GA4 access was denied",
+      "This property is not accessible. Ensure the service account has Viewer access.",
     );
     expect(within(panel).getByText("GA4 property ID")).toBeInTheDocument();
     expect(
-      within(panel).getByText("Find this in Google Analytics: Admin > Property settings. Example: 123456789."),
+      within(panel).getByText("Enter your GA4 Property ID (numeric, for example 123456789). You do not need a measurement ID (G-XXXX)."),
     ).toBeInTheDocument();
   });
 
@@ -4666,11 +4667,12 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("heading", { name: "Workspace Snapshot" });
-    const summaryStrip = screen.getByTestId("workspace-summary-strip");
+    const summaryStrip = await screen.findByTestId("workspace-summary-strip");
     const gbpSummary = within(summaryStrip).getByTestId("workspace-summary-gbp");
-    expect(gbpSummary).toHaveTextContent("Connected and usable");
-    expect(gbpSummary).toHaveTextContent("Google Business Profile access is healthy for this business.");
+    await waitFor(() => {
+      expect(gbpSummary).toHaveTextContent("Connected and usable");
+      expect(gbpSummary).toHaveTextContent("Google Business Profile access is healthy for this business.");
+    });
     expect(within(gbpSummary).getByRole("link", { name: "Review integration status" })).toHaveAttribute(
       "href",
       "/business-profile",

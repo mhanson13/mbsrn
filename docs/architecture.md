@@ -134,6 +134,8 @@ Additive fields on `SEOAnalyticsSiteSummaryRead`:
 Operational behavior:
 
 - site-level property configuration is required for `GET /analytics/site-summary` to report GA4 as connected
+- GA4 setup requires the numeric property ID only (for example `123456789`)
+- measurement IDs (`G-XXXX`) are not required for this read-only connectivity layer
 - diagnostics remain deterministic and read-only
 - raw provider exception payloads are not surfaced to operator UI
 
@@ -159,9 +161,9 @@ Status semantics are deterministic and scoped per site:
 - `not_connected`
 - `account_available`
 - `property_configured`
-- `stream_configured`
-- `incomplete`
 - `unavailable`
+
+For current production-safe onboarding, property configuration is treated as the actionable ready state for GA4 read access. Legacy stream/measurement identifiers may still be present in persisted site metadata, but onboarding classification no longer requires web-stream or measurement ID completion.
 
 Auth/ownership boundary:
 

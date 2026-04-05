@@ -273,14 +273,15 @@ Per-site fields:
 
 Operational implications:
 
-- recommendation measurement context may be unavailable when a site is `not_connected` or `incomplete`
-- account discovery can be available even when property/stream configuration is incomplete
-- `stream_configured` is the expected ready state for full GA4 measurement coverage
+- recommendation measurement context may be unavailable when a site has no GA4 property configured
+- GA4 setup for this phase requires only a GA4 property ID (`123456789` format)
+- measurement IDs (`G-XXXX`) are not required for read-only measurement visibility
+- account discovery is optional and does not block direct property-based setup
 
 Phase boundary:
 
 - this phase is read-only onboarding/discovery
-- no automatic GA4 property or web-stream creation is performed yet
+- no automatic GA4 property or stream creation is performed yet
 
 ## Recommendation Measurement Context (Phase 2)
 

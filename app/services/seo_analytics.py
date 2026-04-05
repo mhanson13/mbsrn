@@ -176,17 +176,12 @@ class SEOAnalyticsService:
             )
         except GA4AnalyticsProviderConfigurationError as exc:
             diagnostic_reason = _classify_ga4_configuration_error_reason(exc)
-            ga4_status = (
-                "configured"
-                if diagnostic_reason == "not_configured" and site_ga4_property_configured
-                else "error"
-            )
             return SEOAnalyticsSiteSummaryRead(
                 business_id=business_id,
                 site_id=site_id,
                 available=False,
                 status="not_configured",
-                ga4_status=ga4_status,
+                ga4_status="error",
                 ga4_error_reason=diagnostic_reason,
                 message="Google Analytics is not configured for this workspace.",
                 data_source=None,
@@ -248,7 +243,7 @@ class SEOAnalyticsService:
             site_id=site_id,
             available=True,
             status="ok",
-            ga4_status="connected" if _ga4_site_metrics_have_data(metrics_summary) else "configured",
+            ga4_status="connected",
             ga4_error_reason=None if _ga4_site_metrics_have_data(metrics_summary) else "no_data",
             message=None,
             data_source=result.data_source,
@@ -348,6 +343,8 @@ class SEOAnalyticsService:
             }
             else derived_status
         )
+        if effective_status in {"stream_configured", "incomplete"}:
+            effective_status = "property_configured" if normalized_property_id else "not_connected"
         if effective_status == "not_connected":
             if account_discovery.available and account_discovery.accounts:
                 effective_status = "account_available"
@@ -362,7 +359,7 @@ class SEOAnalyticsService:
         discovered_account_count = len(account_discovery.accounts)
         auto_provisioning_eligible = (
             account_discovery.available
-            and effective_status in {"account_available", "property_configured", "incomplete"}
+            and effective_status in {"account_available"}
         )
         return SEOGA4SiteOnboardingStatusRead(
             business_id=business_id,
@@ -1134,18 +1131,15 @@ def _derive_ga4_onboarding_status_from_identifiers(
 ) -> str:
     has_account = bool(ga4_account_id)
     has_property = bool(ga4_property_id)
-    has_stream = bool(ga4_data_stream_id)
-    has_measurement = bool(ga4_measurement_id)
-
-    if not has_account and not has_property and not has_stream and not has_measurement:
+    # Stream and measurement identifiers are intentionally not required for GA4
+    # onboarding classification in this phase. Property configuration is sufficient.
+    if not has_account and not has_property:
         return "not_connected"
-    if has_account and not has_property and not has_stream and not has_measurement:
+    if has_account and not has_property:
         return "account_available"
-    if has_property and has_stream and has_measurement:
-        return "stream_configured"
-    if has_property and not has_stream and not has_measurement:
+    if has_property:
         return "property_configured"
-    return "incomplete"
+    return "not_connected"
 
 
 def _ga4_onboarding_message_for_status(
@@ -1153,22 +1147,18 @@ def _ga4_onboarding_message_for_status(
     status: str,
     account_discovery: SEOGA4AccessibleAccountsRead,
 ) -> str:
-    if status == "stream_configured":
-        return "Google Analytics property and web stream are configured for this site."
     if status == "property_configured":
-        return "Google Analytics property is configured. Add a web stream and measurement ID to finish setup."
+        return "Google Analytics property is configured for this site."
     if status == "account_available":
         if account_discovery.accounts:
             return "Accessible Google Analytics accounts were found for this workspace."
-        return "Google Analytics account discovery is available. Link an account to continue onboarding."
-    if status == "incomplete":
-        return "Google Analytics onboarding is partially configured. Complete missing account, property, or stream fields."
+        return "Google Analytics account discovery is available. Enter your GA4 property ID to continue."
     if status == "unavailable":
         return account_discovery.message or "Google Analytics onboarding discovery is temporarily unavailable."
     if account_discovery.status == "not_configured":
-        return "Google Analytics onboarding discovery is not configured for this workspace."
+        return "Account discovery is not enabled. Enter your GA4 property ID directly."
     if account_discovery.status == "unavailable":
         return account_discovery.message or "Google Analytics onboarding discovery is temporarily unavailable."
     if account_discovery.accounts:
         return "Google Analytics onboarding is not connected for this site yet."
-    return "No accessible Google Analytics accounts were discovered for this workspace."
+    return "Account discovery is not enabled. Enter your GA4 property ID directly."

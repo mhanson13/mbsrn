@@ -205,6 +205,41 @@ class _GA4ErrorProvider:
         raise GA4AnalyticsProviderError(self.message)
 
 
+class _GA4NoDataProvider:
+    def is_configured(self) -> bool:
+        return True
+
+    def fetch_account_summaries(self, *, page_size: int = 20) -> tuple[GA4AccountSummary, ...]:
+        del page_size
+        return ()
+
+    def fetch_site_metrics(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_pages_limit: int,
+    ) -> GA4SiteMetricsResult:
+        del site_domain, period_days, top_pages_limit
+        return GA4SiteMetricsResult(
+            current_period=GA4SitePeriodMetrics(users=0, sessions=0, pageviews=0, organic_search_sessions=0),
+            previous_period=GA4SitePeriodMetrics(users=0, sessions=0, pageviews=0, organic_search_sessions=0),
+            top_pages=(),
+            data_source="ga4_mock",
+        )
+
+    def fetch_window_metrics(
+        self,
+        *,
+        site_domain: str,
+        start_date: str,
+        end_date: str,
+        page_path: str | None = None,
+    ) -> GA4SitePeriodMetrics:
+        del site_domain, start_date, end_date, page_path
+        return GA4SitePeriodMetrics(users=0, sessions=0, pageviews=0, organic_search_sessions=0)
+
+
 class _SearchConsoleWindowProvider:
     def is_configured(self) -> bool:
         return True
@@ -451,6 +486,56 @@ def test_site_analytics_summary_reports_access_denied_reason(db_session, seeded_
     assert payload["ga4_error_reason"] == "access_denied"
 
 
+def test_site_analytics_summary_reports_property_not_found_reason(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=_GA4ErrorProvider("GA4 request failed: 404 property not found"),
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-property-not-found.example",
+        ga4_property_id="2000000002",
+    )
+
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "unavailable"
+    assert payload["ga4_status"] == "error"
+    assert payload["ga4_error_reason"] == "property_not_found"
+
+
+def test_site_analytics_summary_reports_connected_with_no_data_reason(db_session, seeded_business) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=_GA4NoDataProvider(),
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-no-data.example",
+        ga4_property_id="2000000002",
+    )
+
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "ok"
+    assert payload["ga4_status"] == "connected"
+    assert payload["ga4_error_reason"] == "no_data"
+
+
 def test_site_analytics_summary_enforces_tenant_scope(db_session, seeded_business) -> None:
     client = _make_client(
         db_session,
@@ -546,7 +631,7 @@ def test_ga4_site_onboarding_status_reflects_site_configuration(db_session, seed
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["ga4_onboarding_status"] == "stream_configured"
+    assert payload["ga4_onboarding_status"] == "property_configured"
     assert payload["ga4_measurement_id"] == "G-TEST1234"
     assert payload["account_discovery_available"] is True
     assert payload["discovered_account_count"] == 1

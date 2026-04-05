@@ -812,16 +812,16 @@ function ga4DiagnosticReasonMessage(
     return "GA4 is not configured yet. Add the site property ID and confirm workspace credentials are available.";
   }
   if (reason === "access_denied") {
-    return "GA4 access was denied. Confirm the service account has Analytics Viewer access to this property.";
+    return "This property is not accessible. Ensure the service account has Viewer access.";
   }
   if (reason === "property_not_found") {
-    return "GA4 property was not found. Verify the property ID matches Google Analytics exactly.";
+    return "This GA4 property ID was not found.";
   }
   if (reason === "invalid_property_format") {
     return "GA4 property ID format is invalid. Use only the numeric property ID (for example, 123456789).";
   }
   if (reason === "no_data") {
-    return "GA4 is connected but no recent data is available yet for this site.";
+    return "Property is connected but has limited or no recent data.";
   }
   return "GA4 connection failed for an unknown reason. Verify the site property ID and workspace GA4 access.";
 }
@@ -7297,17 +7297,11 @@ export default function SiteWorkspacePage() {
   const ga4PropertySaveDisabled = ga4PropertySavePending || Boolean(ga4PropertyInputFormatWarning) || !ga4PropertyChanged;
   const ga4OnboardingStatusCode = ga4OnboardingStatus?.ga4_onboarding_status || "unavailable";
   const ga4OnboardingValue = (() => {
-    if (ga4OnboardingStatusCode === "stream_configured") {
-      return "Configured";
+    if (ga4OnboardingStatusCode === "stream_configured" || ga4OnboardingStatusCode === "property_configured") {
+      return "Property configured";
     }
-    if (ga4OnboardingStatusCode === "property_configured") {
-      return "Property set";
-    }
-    if (ga4OnboardingStatusCode === "account_available") {
-      return "Account available";
-    }
-    if (ga4OnboardingStatusCode === "incomplete") {
-      return "Incomplete";
+    if (ga4OnboardingStatusCode === "account_available" || ga4OnboardingStatusCode === "incomplete") {
+      return "Property needed";
     }
     if (ga4OnboardingStatusCode === "not_connected") {
       return "Not connected";
@@ -7315,13 +7309,17 @@ export default function SiteWorkspacePage() {
     return "Unavailable";
   })();
   const ga4OnboardingDetail = ga4OnboardingStatus
-    ? `${ga4OnboardingStatus.message || "GA4 onboarding status available."} (${ga4OnboardingStatus.discovered_account_count} account${ga4OnboardingStatus.discovered_account_count === 1 ? "" : "s"} discovered)`
-    : ga4OnboardingError || "GA4 onboarding discovery is not available for this site yet.";
+    ? (
+      ga4OnboardingStatus.account_discovery_available
+        ? (ga4OnboardingStatus.message || "GA4 onboarding status available.")
+        : "Account discovery is not enabled. Enter your GA4 property ID directly."
+    )
+    : ga4OnboardingError || "Account discovery is not enabled. Enter your GA4 property ID directly.";
   const ga4OnboardingTone = (() => {
-    if (ga4OnboardingStatusCode === "stream_configured") {
+    if (ga4OnboardingStatusCode === "stream_configured" || ga4OnboardingStatusCode === "property_configured") {
       return "success";
     }
-    if (ga4OnboardingStatusCode === "property_configured" || ga4OnboardingStatusCode === "incomplete") {
+    if (ga4OnboardingStatusCode === "account_available" || ga4OnboardingStatusCode === "incomplete") {
       return "warning";
     }
     if (ga4OnboardingStatusCode === "unavailable") {
@@ -7753,7 +7751,7 @@ export default function SiteWorkspacePage() {
             />
           </label>
           <span className="hint muted">
-            Find this in Google Analytics: Admin &gt; Property settings. Example: 123456789.
+            Enter your GA4 Property ID (numeric, for example 123456789). You do not need a measurement ID (G-XXXX).
           </span>
           {ga4PropertyInputFormatWarning ? <span className="hint warning">{ga4PropertyInputFormatWarning}</span> : null}
           <span
