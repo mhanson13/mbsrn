@@ -110,6 +110,10 @@ Website copy sources:
 - Public website (`www.mbsrn.com`) deploys via `.github/workflows/deploy-www-prod.yml`.
 - Website Kubernetes resources are isolated under `k8s/www-*`.
 - Rollout + smoke-test checklist: `docs/frontend/public-website.md`.
+- Final DNS + TLS + OAuth cutover runbook: `docs/runbooks/dns-tls-oauth-cutover.md`.
+- GKE managed TLS is split by host:
+  - `app.mbsrn.com` -> `k8s/app-ingress.yaml` + `k8s/app-managed-certificate.yaml`
+  - `www.mbsrn.com` -> `k8s/www-ingress.yaml` + `k8s/www-managed-certificate.yaml`
 
 ## Tests and Quality
 Backend tests live in `app/tests` and are discovered via `pytest.ini`.

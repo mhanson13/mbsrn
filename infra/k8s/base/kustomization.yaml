@@ -12,5 +12,8 @@ resources:
   - www-deployment.yaml
   - www-service.yaml
   - frontend-config.yaml
+  - www-frontend-config.yaml
   - managed-certificate.yaml
+  - www-managed-certificate.yaml
   - ingress.yaml
+  - www-ingress.yaml

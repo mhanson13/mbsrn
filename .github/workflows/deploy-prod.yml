@@ -190,6 +190,9 @@ jobs:
             k8s/namespace.yaml
             k8s/ui-serviceaccount.yaml
             k8s/api-serviceaccount.yaml
+            k8s/app-frontend-config.yaml
+            k8s/app-managed-certificate.yaml
+            k8s/app-ingress.yaml
             k8s/redis-deployment.yaml
             k8s/redis-service.yaml
             k8s/ui-deployment.yaml
@@ -296,6 +299,9 @@ jobs:
           cp k8s/namespace.yaml "${render_dir}/namespace.yaml"
           cp k8s/ui-serviceaccount.yaml "${render_dir}/ui-serviceaccount.yaml"
           cp k8s/api-serviceaccount.yaml "${render_dir}/api-serviceaccount.yaml"
+          cp k8s/app-frontend-config.yaml "${render_dir}/app-frontend-config.yaml"
+          cp k8s/app-managed-certificate.yaml "${render_dir}/app-managed-certificate.yaml"
+          cp k8s/app-ingress.yaml "${render_dir}/app-ingress.yaml"
           cp k8s/redis-deployment.yaml "${render_dir}/redis-deployment.yaml"
           cp k8s/redis-service.yaml "${render_dir}/redis-service.yaml"
           cp k8s/ui-service.yaml "${render_dir}/ui-service.yaml"
@@ -546,6 +552,9 @@ jobs:
 
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/ui-deployment.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/ui-service.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/app-frontend-config.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/app-managed-certificate.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/app-ingress.yaml"
           kubectl delete deployment mbsrn-api -n "${K8S_NAMESPACE}" --ignore-not-found=true
           kubectl wait --for=delete deployment/mbsrn-api -n "${K8S_NAMESPACE}" --timeout=120s || true
           kubectl apply --dry-run=server -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-deployment.yaml"

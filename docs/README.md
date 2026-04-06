@@ -29,6 +29,7 @@
 - [GCP GitHub Actions Deployment Prerequisites](gcp-github-actions-deployment-prerequisites.md)
 - [Phase 4 Runtime Validation Runbook](phase4-runtime-validation-runbook.md)
 - [Competitor Timeouts Runbook](runbooks/competitor-timeouts.md)
+- [DNS + TLS + OAuth Production Cutover Runbook](runbooks/dns-tls-oauth-cutover.md)
 
 ## Development
 - [Testing](development/testing.md)

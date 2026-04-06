@@ -33,7 +33,7 @@ patches:
         value: mbsrn-dev-static-ip
   - target:
       kind: ManagedCertificate
-      name: mbsrn-managed-cert
+      name: mbsrn-app-managed-cert
     patch: |-
       - op: replace
         path: /spec/domains/0

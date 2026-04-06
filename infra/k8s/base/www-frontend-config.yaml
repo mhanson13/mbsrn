@@ -1,7 +1,7 @@
 apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
 metadata:
-  name: mbsrn-app-frontend-config
+  name: mbsrn-www-frontend-config
 spec:
   redirectToHttps:
     enabled: true

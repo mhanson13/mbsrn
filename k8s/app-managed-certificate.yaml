@@ -1,9 +1,8 @@
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
-  # Placeholder/example operator-app certificate resource name.
   name: mbsrn-app-managed-cert
+  namespace: mbsrn
 spec:
-  # Overlays can patch domains per environment.
   domains:
     - app.mbsrn.com

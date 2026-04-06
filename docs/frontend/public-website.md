@@ -55,6 +55,29 @@ It applies:
 
 Operator app deployment remains in `.github/workflows/deploy-prod.yml` with `k8s/ui-*` and `k8s/api-*`.
 
+## GKE TLS Topology (ManagedCertificate + Ingress)
+
+Production endpoints are split across two GKE Ingress resources:
+
+- `app.mbsrn.com` -> `mbsrn-ingress` -> `mbsrn-app-managed-cert`
+- `www.mbsrn.com` -> `mbsrn-www-ingress` -> `mbsrn-www-managed-cert`
+
+Manifest sources:
+
+- app ingress/cert:
+  - `k8s/app-ingress.yaml`
+  - `k8s/app-managed-certificate.yaml`
+  - `k8s/app-frontend-config.yaml`
+- website ingress/cert:
+  - `k8s/www-ingress.yaml`
+  - `k8s/www-managed-certificate.yaml`
+  - `k8s/www-frontend-config.yaml`
+
+Notes:
+- TLS is managed by GKE ManagedCertificate resources via annotation `networking.gke.io/managed-certificates`.
+- Website ingress keeps its current static-IP behavior; no static-IP annotation changes are made in this doc path.
+- App ingress keeps explicit static-IP binding annotation (`mbsrn-prod-static-ip`) in `k8s/app-ingress.yaml`.
+
 Required deployment config mirrors the existing production deploy model:
 
 - GitHub variables:
@@ -75,6 +98,9 @@ Required deployment config mirrors the existing production deploy model:
 ## Production Rollout Checklist
 
 Run this checklist in order for every `www.mbsrn.com` release.
+
+For the final combined production cutover flow across both hosts (`app` + `www`), including GO/NO-GO and rollback criteria, use:
+- `docs/runbooks/dns-tls-oauth-cutover.md`
 
 1. Pre-deploy repository checks
 - `cd frontend/www && npm run lint`
@@ -136,6 +162,16 @@ Expected:
 - each route returns `200 OK`
 - no auth redirect on public pages
 
+Operator app TLS quick check:
+
+```bash
+curl -I https://app.mbsrn.com
+```
+
+Expected:
+- `200`, `302`, or `307` from app entry path is acceptable based on auth/session flow
+- certificate served for `app.mbsrn.com` (no browser cert warning)
+
 ### Asset and metadata checks
 
 Run:
@@ -163,9 +199,22 @@ Open `https://www.mbsrn.com/` and verify:
 ### Troubleshooting quick mapping
 
 - `404/5xx on all routes`: check ingress/service binding and `mbsrn-www` pod readiness.
+- cert stuck `Provisioning`/`Failed`: verify host DNS points to ingress LB IP and wait for managed cert issuance.
 - TLS pending/invalid: check managed certificate status and DNS host mapping.
 - Route works but missing styles/assets: verify `frontend/www/public/*` assets are present in image.
 - OAuth branding rejected: verify exact URLs and authorized domain in Google Cloud console.
+
+Managed certificate status commands:
+
+```bash
+kubectl get managedcertificate -n mbsrn
+kubectl describe managedcertificate mbsrn-app-managed-cert -n mbsrn
+kubectl describe managedcertificate mbsrn-www-managed-cert -n mbsrn
+kubectl get ingress -n mbsrn
+```
+
+Provisioning delay expectation:
+- managed certificate issuance commonly takes several minutes and may take longer depending on DNS propagation and GCLB state.
 
 ## Content Ownership
 

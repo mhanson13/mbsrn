@@ -26,6 +26,29 @@ Base resources are namespace-neutral and include:
 - ManagedCertificate (Google-managed TLS certificate)
 - ConfigMap
 
+### Production Ingress TLS Split (Authoritative `k8s/*` Path)
+
+Production host routing is intentionally split:
+
+- `app.mbsrn.com`:
+  - Ingress: `mbsrn-ingress` (`k8s/app-ingress.yaml`)
+  - Managed cert: `mbsrn-app-managed-cert` (`k8s/app-managed-certificate.yaml`)
+  - FrontendConfig: `mbsrn-app-frontend-config` (`k8s/app-frontend-config.yaml`)
+- `www.mbsrn.com`:
+  - Ingress: `mbsrn-www-ingress` (`k8s/www-ingress.yaml`)
+  - Managed cert: `mbsrn-www-managed-cert` (`k8s/www-managed-certificate.yaml`)
+  - FrontendConfig: `mbsrn-www-frontend-config` (`k8s/www-frontend-config.yaml`)
+
+Both ingresses use the GKE Ingress + ManagedCertificate model (not Gateway API).
+Managed certificate binding is via ingress annotation:
+`networking.gke.io/managed-certificates`.
+
+Static IP behavior:
+- app ingress (`k8s/app-ingress.yaml`) keeps explicit reserved IP annotation:
+  - `kubernetes.io/ingress.global-static-ip-name: mbsrn-prod-static-ip`
+- website ingress currently preserves its existing behavior and does not set a static-IP annotation in `k8s/www-ingress.yaml`.
+  - If website IP pinning is required, add the known reserved IP resource name explicitly before recreating ingress resources.
+
 Each overlay owns its namespace resource:
 - `infra/k8s/overlays/dev/namespace.yaml` (`mbsrn-dev`)
 - `infra/k8s/overlays/prod/namespace.yaml` (`mbsrn`)
@@ -497,3 +520,27 @@ Prompt configuration note:
   - `/` -> `mbsrn-ui` service
   - `/api` -> `mbsrn-api` service
 - API and UI services remain internal `ClusterIP`; production NodePort exposure is not used.
+
+### TLS Verification Commands (Post-Deploy)
+
+For full production cutover order (DNS + TLS + OAuth GO/NO-GO), use:
+- `docs/runbooks/dns-tls-oauth-cutover.md`
+
+```bash
+kubectl get managedcertificate -n mbsrn
+kubectl describe managedcertificate mbsrn-app-managed-cert -n mbsrn
+kubectl describe managedcertificate mbsrn-www-managed-cert -n mbsrn
+kubectl get ingress -n mbsrn
+
+curl -I https://app.mbsrn.com
+curl -I https://www.mbsrn.com
+```
+
+Expected:
+- both managed certificates progress to `Active`
+- both ingresses retain their intended host mapping
+- HTTPS is reachable for both domains without certificate warnings
+
+Caveat:
+- Managed certificate provisioning is not instant; allow for propagation/issuance delay before treating initial non-Active states as failure.
+- App ingress currently enables HTTP->HTTPS redirect via `mbsrn-app-frontend-config`; keep OAuth redirect URIs configured as HTTPS (`https://app.mbsrn.com/...`) before enforcing production OAuth publishing changes.
