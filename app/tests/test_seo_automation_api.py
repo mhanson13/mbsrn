@@ -188,6 +188,24 @@ def test_phase4_manual_automation_run_sequencing_and_history(db_session, seeded_
     assert status.json()["latest_run"]["id"] == run_id
 
 
+def test_phase4_manual_run_bootstraps_default_config_when_missing(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id)
+
+    triggered = client.post(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-runs")
+    assert triggered.status_code == 201
+    payload = triggered.json()
+    assert payload["status"] in {"completed", "failed"}
+
+    config = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-config")
+    assert config.status_code == 200
+    config_payload = config.json()
+    assert config_payload["cadence_type"] == "manual"
+    assert config_payload["is_enabled"] is False
+    assert config_payload["trigger_audit"] is True
+    assert config_payload["trigger_recommendations"] is True
+
+
 def test_phase4_automation_scope_guards_and_not_found(db_session, seeded_business) -> None:
     other_business = _seed_other_business(db_session)
     client = _make_client(db_session, business_id=seeded_business.id)

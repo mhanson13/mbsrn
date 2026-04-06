@@ -239,7 +239,23 @@ class SEOAutomationService:
         site_id: str,
         created_by_principal_id: str | None,
     ) -> SEOAutomationRun:
-        config = self.get_config(business_id=business_id, site_id=site_id)
+        self._require_business(business_id)
+        self._require_site(business_id=business_id, site_id=site_id)
+        config = self.seo_automation_repository.get_config_for_business_site(business_id, site_id)
+        if config is None:
+            # Keep manual operator runs actionable even before explicit automation config setup.
+            # Defaults preserve current behavior (manual cadence, bounded trigger set) and are
+            # persisted so subsequent runs behave deterministically.
+            config = self.create_or_replace_config(
+                business_id=business_id,
+                site_id=site_id,
+                payload=SEOAutomationConfigUpsertRequest(),
+            )
+            logger.info(
+                "SEO automation config auto-created for manual run business_id=%s site_id=%s",
+                business_id,
+                site_id,
+            )
         return self._start_run(config=config, trigger_source="manual", created_by_principal_id=created_by_principal_id)
 
     def list_runs(self, *, business_id: str, site_id: str) -> list[SEOAutomationRun]:

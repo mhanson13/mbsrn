@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 
 import AutomationPage from "./page";
 import type { AutomationRun } from "../../lib/api/types";
+import { ApiRequestError } from "../../lib/api/client";
 
 const mockUseOperatorContext = jest.fn();
 const mockFetchAutomationRuns = jest.fn();
@@ -120,6 +121,46 @@ describe("automation page shared-shell framing", () => {
     const triggerContext = await screen.findByTestId("automation-trigger-context");
     expect(triggerContext).toHaveTextContent("Triggered from recommendation: Fix service page copy (rec-7)");
     await waitFor(() => expect(setSelectedSiteId).toHaveBeenCalledWith("site-1"));
+  });
+
+  it("maps automation config missing failures to actionable operator guidance", async () => {
+    const user = userEvent.setup();
+    mockUseOperatorContext.mockReturnValue(buildContext());
+    mockFetchAutomationRuns.mockResolvedValueOnce({ items: [], total: 0 });
+    mockCreateAutomationRun.mockRejectedValueOnce(
+      new ApiRequestError("SEO automation config not found", {
+        status: 404,
+        detail: null,
+      }),
+    );
+
+    render(<AutomationPage />);
+
+    await user.click(await screen.findByTestId("automation-empty-state-run-button"));
+
+    expect(await screen.findByTestId("automation-empty-state-run-error")).toHaveTextContent(
+      "Automation configuration was missing and could not be prepared for this site. Retry in a moment.",
+    );
+  });
+
+  it("maps site-context mismatch failures to a re-selection message", async () => {
+    const user = userEvent.setup();
+    mockUseOperatorContext.mockReturnValue(buildContext());
+    mockFetchAutomationRuns.mockResolvedValueOnce({ items: [], total: 0 });
+    mockCreateAutomationRun.mockRejectedValueOnce(
+      new ApiRequestError("SEO site not found", {
+        status: 404,
+        detail: null,
+      }),
+    );
+
+    render(<AutomationPage />);
+
+    await user.click(await screen.findByTestId("automation-empty-state-run-button"));
+
+    expect(await screen.findByTestId("automation-empty-state-run-error")).toHaveTextContent(
+      "This site context could not be resolved. Re-select the site and try again.",
+    );
   });
 
   it("renders summary cards and run table for a configured site", async () => {

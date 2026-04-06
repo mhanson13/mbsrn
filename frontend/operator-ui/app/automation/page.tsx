@@ -525,6 +525,26 @@ function deriveLatestAutomationRun(items: AutomationRun[]): AutomationRun | null
   return sorted[0] || null;
 }
 
+function mapAutomationRunCreateError(error: ApiRequestError): string {
+  const normalizedMessage = (error.message || "").trim().toLowerCase();
+  if (error.status === 409) {
+    return "An automation run is already in progress for this site.";
+  }
+  if (error.status === 404) {
+    if (normalizedMessage.includes("automation config not found")) {
+      return "Automation configuration was missing and could not be prepared for this site. Retry in a moment.";
+    }
+    if (normalizedMessage.includes("seo site not found")) {
+      return "This site context could not be resolved. Re-select the site and try again.";
+    }
+    return "Automation run creation is unavailable for this site right now.";
+  }
+  if (error.status === 422) {
+    return "This site is missing required automation inputs. Review site setup and retry.";
+  }
+  return "Unable to start an automation run right now.";
+}
+
 export default function AutomationPage() {
   const context = useOperatorContext();
   const contextLoading = context.loading;
@@ -624,13 +644,7 @@ export default function AutomationPage() {
       setRefreshNonce((current) => current + 1);
     } catch (error) {
       if (error instanceof ApiRequestError) {
-        if (error.status === 409) {
-          setTriggerRunError("An automation run is already in progress for this site.");
-        } else if (error.status === 404) {
-          setTriggerRunError("The selected site is no longer available for automation.");
-        } else {
-          setTriggerRunError("Unable to start an automation run right now.");
-        }
+        setTriggerRunError(mapAutomationRunCreateError(error));
       } else {
         setTriggerRunError("Unable to start an automation run right now.");
       }

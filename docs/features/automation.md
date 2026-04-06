@@ -9,6 +9,16 @@
 - Recommendation surfaces use `Generate automation run (preview)` to route into Automation with recommendation context.
 - The Automation page empty state always provides a primary `Run SEO automation` CTA so the page is not a dead end.
 - Runs are on-demand operator-triggered analysis runs, not continuous/scheduled automation in this phase.
+- Manual run prerequisites:
+  - site must resolve inside the current business scope
+  - no active automation run can already be in progress for that site
+- If a site has no saved automation config yet, the backend auto-creates a default manual config at first run trigger.
+
+Operator-visible run trigger failures are mapped to actionable states:
+- in-progress conflict: `An automation run is already in progress for this site.`
+- site context mismatch/not found: `This site context could not be resolved. Re-select the site and try again.`
+- missing inputs/validation: `This site is missing required automation inputs. Review site setup and retry.`
+- unavailable/other errors: `Automation run creation is unavailable for this site right now.`
 
 Current manual execution path:
 
