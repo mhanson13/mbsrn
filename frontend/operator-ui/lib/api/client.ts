@@ -57,6 +57,7 @@ import type {
   RecommendationListResponse,
   BindActionAutomationResponse,
   RunActionAutomationResponse,
+  AutomationRun,
   AutomationRunListResponse,
   GoogleBusinessProfileAccountsResponse,
   GoogleBusinessProfileConnectionStatusResponse,
@@ -867,6 +868,20 @@ export async function fetchAutomationRuns(
   return apiRequest<AutomationRunListResponse>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/automation-runs`,
     { token },
+  );
+}
+
+export async function createAutomationRun(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<AutomationRun> {
+  return apiRequest<AutomationRun>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/automation-runs`,
+    {
+      method: "POST",
+      token,
+    },
   );
 }
 

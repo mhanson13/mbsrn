@@ -3622,6 +3622,68 @@ describe("site workspace timeline controls", () => {
     expect(screen.queryByText(/Competitor insight: Recommendation without action metadata/i)).not.toBeInTheDocument();
   });
 
+  it("keeps recommendation details collapsed by default and expands implementation guidance on demand", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        recommendations: {
+          items: [
+            buildRecommendation({
+              id: "rec-detail-toggle",
+              title: "Recommendation with expandable details",
+              recommendation_action_clarity: "Update the main service content block.",
+              recommendation_evidence_summary: "Service detail depth is weaker than nearby competitors.",
+              next_action: "Open Homepage and update the main service block copy.",
+              action_plan: {
+                action_steps: [
+                  {
+                    step_number: 1,
+                    title: "Update service block",
+                    instruction: "Replace the generic copy with a service/location-specific summary.",
+                    target_type: "content",
+                    target_identifier: "Homepage",
+                    field: "service_description",
+                    before_example: "We provide quality services.",
+                    after_example: "Licensed HVAC repair in Denver with same-day response.",
+                    confidence: 0.86,
+                  },
+                ],
+              },
+              recommendation_priority: {
+                priority_level: "high",
+                priority_reason: "This page is high visibility and has a clear action gap.",
+                effort_hint: "quick_win",
+              },
+              evidence_strength: "strong",
+              execution_readiness: "ready",
+            }),
+          ],
+          total: 1,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByRole("heading", { name: "Recommendations" });
+    const detailPanel = screen.getByTestId("recommendation-details-rec-detail-toggle");
+    expect(detailPanel).not.toHaveAttribute("open");
+    expect(screen.getByTestId("recommendation-what-to-do-now-summary")).toHaveTextContent(
+      "Open Homepage and update the main service block copy.",
+    );
+    expect(screen.getByTestId("recommendation-why-it-matters-summary")).toHaveTextContent(
+      "Service detail depth is weaker than nearby competitors.",
+    );
+    expect(screen.getByTestId("recommendation-priority")).toHaveTextContent("Take first");
+    expect(screen.getByTestId("recommendation-evidence-strength")).toHaveTextContent("Strong evidence");
+
+    await userEvent.click(within(detailPanel).getByText("Show implementation steps"));
+    expect(detailPanel).toHaveAttribute("open");
+    expect(screen.getByTestId("recommendation-action-plan-rec-detail-toggle")).toHaveTextContent(
+      "Step 1: Update service block",
+    );
+  });
+
   it("labels unverified competitor linkage entries explicitly when present", async () => {
     seedRichWorkspaceData();
     mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
@@ -4165,7 +4227,7 @@ describe("site workspace timeline controls", () => {
     const groupedBlock = screen.getByTestId("recommendation-theme-groups");
     expect(groupedBlock).toBeInTheDocument();
     const renderedThemeOrder = Array.from(
-      groupedBlock.querySelectorAll('[data-testid^="recommendation-theme-group-"] strong'),
+      groupedBlock.querySelectorAll('[data-testid^="recommendation-theme-group-"] > .link-row > strong'),
     ).map((node) => (node.textContent || "").trim());
     expect(renderedThemeOrder).toEqual([
       "Trust & legitimacy",

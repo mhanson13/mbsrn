@@ -4476,10 +4476,31 @@ function resolveWorkspaceRecommendationControlHref(params: {
     const recommendationRunId = linkedRecommendationRunOutputId || recommendation.recommendation_run_id;
     return buildRecommendationRunHref(recommendationRunId, siteId);
   }
-  if (control.type === "run_automation" || control.type === "view_automation_status") {
+  if (control.type === "run_automation") {
+    const automationParams = new URLSearchParams();
+    automationParams.set("site_id", siteId);
+    automationParams.set("trigger", "recommendation");
+    automationParams.set("recommendation_id", recommendation.id);
+    automationParams.set("recommendation_title", recommendation.title);
+    return `/automation?${automationParams.toString()}`;
+  }
+  if (control.type === "view_automation_status") {
     return buildAutomationPageHref(siteId);
   }
   return undefined;
+}
+
+function decorateWorkspaceRecommendationActionControls(controls: ActionControl[]): ActionControl[] {
+  return controls.map((control) => {
+    if (control.type !== "run_automation") {
+      return control;
+    }
+    return {
+      ...control,
+      label: "Generate automation run (preview)",
+      reason: "Start an on-demand automation run and review lifecycle/output in Automation.",
+    };
+  });
 }
 
 function resolveWorkspaceAutomationControlHref(params: {
@@ -7602,7 +7623,9 @@ export default function SiteWorkspacePage() {
     })
     : null;
   const topQueueRecommendationActionControls = effectiveTopQueueRecommendationActionExecutionItem
-    ? deriveActionControls(effectiveTopQueueRecommendationActionExecutionItem)
+    ? decorateWorkspaceRecommendationActionControls(
+      deriveActionControls(effectiveTopQueueRecommendationActionExecutionItem),
+    )
     : [];
   const latestAutomationActionExecutionItem = latestAutomationRun
     ? deriveWorkspaceAutomationActionExecutionItem({
@@ -10154,6 +10177,18 @@ export default function SiteWorkspacePage() {
                           targetPageHints: recommendationTargetPageHints,
                           targetContentSummary: recommendationTargetContentSummary,
                         });
+                        const recommendationActionSummary = recommendationNextAction
+                          || recommendationActionClarity
+                          || recommendationDetailClarity.recommendedAction
+                          || recommendationExpectedOutcome;
+                        const recommendationWhyItMattersSummary = recommendationEvidenceSummary
+                          || recommendationWhyNow
+                          || recommendationObservedGapSummary
+                          || recommendationExpectedOutcome
+                          || recommendationCompetitorInsight;
+                        const recommendationDetailsToggleLabel = recommendationActionPlanSteps.length > 0
+                          ? "Show implementation steps"
+                          : "Show details";
                         const rowId = recommendationRowId(item.id);
                         return (
                           <article
@@ -10171,6 +10206,21 @@ export default function SiteWorkspacePage() {
                                   data-testid={`recommendation-row-main-${item.id}`}
                                 >
                                   <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
+                                  {recommendationActionSummary ? (
+                                    <span className="hint workspace-recommendation-summary-line" data-testid="recommendation-what-to-do-now-summary">
+                                      <span className="workspace-recommendation-summary-label">What to do now</span>
+                                      <strong>{recommendationActionSummary}</strong>
+                                    </span>
+                                  ) : null}
+                                  {recommendationWhyItMattersSummary ? (
+                                    <span className="hint muted workspace-recommendation-summary-line" data-testid="recommendation-why-it-matters-summary">
+                                      <span className="workspace-recommendation-summary-label">Why it matters</span>
+                                      <span>{recommendationWhyItMattersSummary}</span>
+                                    </span>
+                                  ) : null}
+                                  <details className="workspace-recommendation-details" data-testid={`recommendation-details-${item.id}`}>
+                                    <summary className="workspace-recommendation-details-toggle">{recommendationDetailsToggleLabel}</summary>
+                                    <div className="workspace-recommendation-details-content">
                                   <RecommendationDetailClarity
                                     clarity={recommendationDetailClarity}
                                     bucketKey={recommendationPresentationBucketKey}
@@ -10375,6 +10425,8 @@ export default function SiteWorkspacePage() {
                                       .
                                     </span>
                                   ) : null}
+                                    </div>
+                                  </details>
                                 </div>
                                 <aside className="workspace-recommendation-row-support" data-testid="recommendation-row-support">
                                   {impactLabel ? (
@@ -10558,6 +10610,18 @@ export default function SiteWorkspacePage() {
                                 targetPageHints: recommendationTargetPageHints,
                                 targetContentSummary: recommendationTargetContentSummary,
                               });
+                              const recommendationActionSummary = recommendationNextAction
+                                || recommendationActionClarity
+                                || recommendationDetailClarity.recommendedAction
+                                || recommendationExpectedOutcome;
+                              const recommendationWhyItMattersSummary = recommendationEvidenceSummary
+                                || recommendationWhyNow
+                                || recommendationObservedGapSummary
+                                || recommendationExpectedOutcome
+                                || recommendationCompetitorInsight;
+                              const recommendationDetailsToggleLabel = recommendationActionPlanSteps.length > 0
+                                ? "Show implementation steps"
+                                : "Show details";
                               const rowId = recommendationRowId(item.id);
                               return (
                                 <article
@@ -10575,6 +10639,21 @@ export default function SiteWorkspacePage() {
                                         data-testid={`recommendation-row-main-${item.id}`}
                                       >
                                         <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
+                                        {recommendationActionSummary ? (
+                                          <span className="hint workspace-recommendation-summary-line" data-testid="recommendation-what-to-do-now-summary">
+                                            <span className="workspace-recommendation-summary-label">What to do now</span>
+                                            <strong>{recommendationActionSummary}</strong>
+                                          </span>
+                                        ) : null}
+                                        {recommendationWhyItMattersSummary ? (
+                                          <span className="hint muted workspace-recommendation-summary-line" data-testid="recommendation-why-it-matters-summary">
+                                            <span className="workspace-recommendation-summary-label">Why it matters</span>
+                                            <span>{recommendationWhyItMattersSummary}</span>
+                                          </span>
+                                        ) : null}
+                                        <details className="workspace-recommendation-details" data-testid={`recommendation-details-${item.id}`}>
+                                          <summary className="workspace-recommendation-details-toggle">{recommendationDetailsToggleLabel}</summary>
+                                          <div className="workspace-recommendation-details-content">
                                         <RecommendationDetailClarity
                                           clarity={recommendationDetailClarity}
                                           bucketKey={recommendationPresentationBucketKey}
@@ -10784,6 +10863,8 @@ export default function SiteWorkspacePage() {
                                             .
                                           </span>
                                         ) : null}
+                                          </div>
+                                        </details>
                                       </div>
                                       <aside className="workspace-recommendation-row-support" data-testid="recommendation-row-support">
                                         {impactLabel ? (

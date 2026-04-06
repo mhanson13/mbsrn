@@ -1,17 +1,21 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import AutomationPage from "./page";
+import type { AutomationRun } from "../../lib/api/types";
 
 const mockUseOperatorContext = jest.fn();
 const mockFetchAutomationRuns = jest.fn();
+const mockCreateAutomationRun = jest.fn();
 
 jest.mock("../../components/useOperatorContext", () => ({
   useOperatorContext: () => mockUseOperatorContext(),
 }));
 
 jest.mock("../../lib/api/client", () => ({
+  ...jest.requireActual("../../lib/api/client"),
   fetchAutomationRuns: (...args: unknown[]) => mockFetchAutomationRuns(...args),
+  createAutomationRun: (...args: unknown[]) => mockCreateAutomationRun(...args),
 }));
 
 function buildContext(overrides: Record<string, unknown> = {}) {
@@ -32,10 +36,29 @@ function buildContext(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function buildAutomationRun(overrides: Partial<AutomationRun> = {}): AutomationRun {
+  return {
+    id: "run-created-1",
+    business_id: "biz-1",
+    site_id: "site-1",
+    status: "running",
+    trigger_source: "manual",
+    started_at: "2026-03-26T10:00:00Z",
+    finished_at: null,
+    error_message: null,
+    steps_json: [],
+    created_at: "2026-03-26T10:00:00Z",
+    updated_at: "2026-03-26T10:00:00Z",
+    ...overrides,
+  };
+}
+
 describe("automation page shared-shell framing", () => {
   beforeEach(() => {
     mockUseOperatorContext.mockReset();
     mockFetchAutomationRuns.mockReset();
+    mockCreateAutomationRun.mockReset();
+    window.history.replaceState({}, "", "/automation");
   });
 
   it("renders a no-sites support state when no sites are configured", () => {
@@ -47,6 +70,56 @@ describe("automation page shared-shell framing", () => {
     expect(
       screen.getByText("No SEO sites are configured yet. Add a site before reviewing automation run history."),
     ).toBeInTheDocument();
+  });
+
+  it("renders actionable empty state and creates a run from the empty-state CTA", async () => {
+    const user = userEvent.setup();
+    const createdRun = buildAutomationRun({ id: "run-created-1", status: "running" });
+    mockUseOperatorContext.mockReturnValue(buildContext());
+    mockFetchAutomationRuns
+      .mockResolvedValueOnce({ items: [], total: 0 })
+      .mockResolvedValue({ items: [createdRun], total: 1 });
+    mockCreateAutomationRun.mockResolvedValueOnce(createdRun);
+
+    render(<AutomationPage />);
+
+    const emptyState = await screen.findByTestId("automation-empty-state");
+    expect(emptyState).toHaveTextContent("No automation runs yet");
+    const runButton = screen.getByTestId("automation-empty-state-run-button");
+    expect(runButton).toHaveTextContent("Run SEO automation");
+
+    await user.click(runButton);
+
+    await waitFor(() =>
+      expect(mockCreateAutomationRun).toHaveBeenCalledWith("token-1", "biz-1", "site-1"),
+    );
+    expect(await screen.findByText("run-created-1")).toBeInTheDocument();
+  });
+
+  it("shows recommendation trigger context and syncs site context from query params", async () => {
+    const setSelectedSiteId = jest.fn();
+    window.history.replaceState(
+      {},
+      "",
+      "/automation?site_id=site-1&recommendation_id=rec-7&recommendation_title=Fix%20service%20page%20copy",
+    );
+    mockUseOperatorContext.mockReturnValue(
+      buildContext({
+        selectedSiteId: "site-2",
+        setSelectedSiteId,
+        sites: [
+          { id: "site-1", display_name: "Site One" },
+          { id: "site-2", display_name: "Site Two" },
+        ],
+      }),
+    );
+    mockFetchAutomationRuns.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<AutomationPage />);
+
+    const triggerContext = await screen.findByTestId("automation-trigger-context");
+    expect(triggerContext).toHaveTextContent("Triggered from recommendation: Fix service page copy (rec-7)");
+    await waitFor(() => expect(setSelectedSiteId).toHaveBeenCalledWith("site-1"));
   });
 
   it("renders summary cards and run table for a configured site", async () => {

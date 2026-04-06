@@ -279,7 +279,14 @@ describe("recommendations queue optimistic workflows", () => {
     expect(quickScanItem).toHaveTextContent("No automation linkage detected");
     const quickScanControls = screen.getByTestId("recommendation-action-controls-rec-1");
     expect(quickScanControls).toHaveTextContent("Review recommendation");
-    expect(quickScanControls).toHaveTextContent("Run SEO automation");
+    expect(quickScanControls).toHaveTextContent("Generate automation run (preview)");
+    const quickScanAutomationLink = within(quickScanControls).getByRole("link", {
+      name: "Generate automation run (preview)",
+    });
+    expect(quickScanAutomationLink).toHaveAttribute(
+      "href",
+      "/automation?site_id=site-1&trigger=recommendation&recommendation_id=rec-1&recommendation_title=Recommendation+One",
+    );
     const quickScanToggle = within(quickScanItem).getByRole("button", { name: "Show details" });
     expect(quickScanToggle).toHaveAttribute("aria-expanded", "false");
     await user.click(quickScanToggle);
@@ -329,7 +336,14 @@ describe("recommendations queue optimistic workflows", () => {
     const recOneDetailPanel = screen.getByTestId("recommendation-decisiveness-detail-panel-rec-1");
     const recOneExpandedControls = screen.getByTestId("recommendation-expanded-action-controls-rec-1");
     expect(recOneExpandedControls).toHaveTextContent("Review recommendation");
-    expect(recOneExpandedControls).toHaveTextContent("Run SEO automation");
+    expect(recOneExpandedControls).toHaveTextContent("Generate automation run (preview)");
+    const expandedAutomationLink = within(recOneExpandedControls).getByRole("link", {
+      name: "Generate automation run (preview)",
+    });
+    expect(expandedAutomationLink).toHaveAttribute(
+      "href",
+      "/automation?site_id=site-1&trigger=recommendation&recommendation_id=rec-1&recommendation_title=Recommendation+One",
+    );
     expect(recOneDetailRow).toBeInTheDocument();
     expect(recOneDetailPanel.closest("td")).toHaveAttribute("colspan", "9");
     expect(recOneDetailPanel).toHaveTextContent("High-value next step");

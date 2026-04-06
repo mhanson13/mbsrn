@@ -2310,10 +2310,28 @@ function RecommendationsPageContent() {
       if (item.site_id) {
         params.set("site_id", item.site_id);
       }
+      if (control.type === "run_automation") {
+        params.set("trigger", "recommendation");
+        params.set("recommendation_id", item.id);
+        params.set("recommendation_title", item.title);
+      }
       const query = params.toString();
       return query ? `/automation?${query}` : "/automation";
     }
     return undefined;
+  }
+
+  function decorateRecommendationActionControls(controls: ActionControl[]): ActionControl[] {
+    return controls.map((control) => {
+      if (control.type !== "run_automation") {
+        return control;
+      }
+      return {
+        ...control,
+        label: "Generate automation run (preview)",
+        reason: "Start an on-demand automation run and review lifecycle/output in Automation.",
+      };
+    });
   }
 
   function resolveRecommendationOutputReviewHref(
@@ -3037,7 +3055,9 @@ function RecommendationsPageContent() {
                 const recommendationExecutionScope = deriveRecommendationExecutionScope(item);
                 const recommendationExecutionInputs = deriveRecommendationExecutionInputs(item);
                 const recommendationBlockingReason = deriveRecommendationBlockingReason(item);
-                const actionControls = deriveActionControls(effectiveActionExecutionItem);
+                const actionControls = decorateRecommendationActionControls(
+                  deriveActionControls(effectiveActionExecutionItem),
+                );
                 const showBlockerBadge =
                   decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
                 return (
@@ -3417,7 +3437,9 @@ function RecommendationsPageContent() {
                 const recommendationExecutionScope = deriveRecommendationExecutionScope(item);
                 const recommendationExecutionInputs = deriveRecommendationExecutionInputs(item);
                 const recommendationBlockingReason = deriveRecommendationBlockingReason(item);
-                const actionControls = deriveActionControls(effectiveActionExecutionItem);
+                const actionControls = decorateRecommendationActionControls(
+                  deriveActionControls(effectiveActionExecutionItem),
+                );
                 const isExpanded = expandedRecommendationIds.has(item.id);
                 const detailsId = `recommendation-details-${item.id}`;
                 const showBlockerBadge = decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";

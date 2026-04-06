@@ -754,3 +754,23 @@ Example:
 Boundary note:
 - action plans prepare operators for implementation and future automation targeting
 - this layer does **not** execute site changes
+
+## Sites Workspace Card Presentation
+
+Sites workspace recommendation cards now use progressive disclosure so operators can scan actionability quickly without losing detail.
+
+Default (collapsed) view emphasizes:
+- recommendation title
+- **What to do now** (short action sentence)
+- **Why it matters** (short rationale sentence)
+- compact support cues in the side rail (impact/progress/lifecycle/priority/evidence/readiness/category)
+
+Expanded view (`Show details` / `Show implementation steps`) contains full supporting detail:
+- evidence trace and observed gap context
+- target context/pages/content
+- execution scope/inputs/blockers
+- measurement/search visibility context
+- competitor linkage and action-delta details
+- implementation steps with before/after examples
+
+This is a presentation-only change: recommendation semantics, scoring, evidence derivation, and execution-readiness logic are unchanged.

@@ -818,3 +818,13 @@ Observability additions:
   - tuning preview events
   - competitor profile cleanup execution records scoped to the site
 - Delete is hard-delete behavior (no soft delete) and is intended to be irreversible once confirmed in admin UI.
+
+## Recommendation Presentation Compression (Sites Workspace)
+- Sites workspace recommendation rendering now follows a compressed read-model pattern:
+  - action-first summary in collapsed state
+  - compact scan rail for key trust/action cues
+  - progressive disclosure for long-form context and implementation detail
+- This is a frontend presentation refactor only:
+  - no API/schema changes
+  - no scoring/evidence/readiness semantics changes
+  - no workflow/mutation behavior changes

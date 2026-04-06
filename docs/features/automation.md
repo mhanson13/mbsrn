@@ -4,6 +4,12 @@
 
 `Run automation` is an internal SEO workflow trigger. It does **not** publish or modify external websites.
 
+## Operator Run Initiation
+
+- Recommendation surfaces use `Generate automation run (preview)` to route into Automation with recommendation context.
+- The Automation page empty state always provides a primary `Run SEO automation` CTA so the page is not a dead end.
+- Runs are on-demand operator-triggered analysis runs, not continuous/scheduled automation in this phase.
+
 Current manual execution path:
 
 1. `POST /.../actions/execution-items/{id}/run-automation` requests execution for a bound activated action.

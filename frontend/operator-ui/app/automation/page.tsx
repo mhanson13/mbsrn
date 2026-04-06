@@ -11,7 +11,7 @@ import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
-import { fetchAutomationRuns } from "../../lib/api/client";
+import { ApiRequestError, createAutomationRun, fetchAutomationRuns } from "../../lib/api/client";
 import { deriveAutomationRunOperatorActionState } from "../../lib/operatorActionState";
 import {
   applyActionDecisionLocally,
@@ -234,6 +234,42 @@ function buildAutomationStatusHref(siteId: string): string {
   }
   const query = params.toString();
   return query ? `/automation?${query}` : "/automation";
+}
+
+type AutomationTriggerContext = {
+  siteId: string | null;
+  recommendationId: string | null;
+  recommendationTitle: string | null;
+};
+
+function readAutomationTriggerContextFromLocation(): AutomationTriggerContext {
+  if (typeof window === "undefined") {
+    return {
+      siteId: null,
+      recommendationId: null,
+      recommendationTitle: null,
+    };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const siteId = (params.get("site_id") || "").trim();
+  const recommendationId = (params.get("recommendation_id") || "").trim();
+  const recommendationTitle = (params.get("recommendation_title") || "").trim();
+  return {
+    siteId: siteId.length > 0 ? siteId : null,
+    recommendationId: recommendationId.length > 0 ? recommendationId : null,
+    recommendationTitle: recommendationTitle.length > 0 ? recommendationTitle : null,
+  };
+}
+
+function sortAutomationRunsNewestFirst(items: AutomationRun[]): AutomationRun[] {
+  return [...items].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || left.started_at || "");
+    const rightTime = Date.parse(right.created_at || right.started_at || "");
+    if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+      return right.id.localeCompare(left.id);
+    }
+    return rightTime - leftTime;
+  });
 }
 
 function deriveAutomationActionExecutionItem(params: {
@@ -491,9 +527,21 @@ function deriveLatestAutomationRun(items: AutomationRun[]): AutomationRun | null
 
 export default function AutomationPage() {
   const context = useOperatorContext();
+  const contextLoading = context.loading;
+  const contextError = context.error;
+  const selectedSiteId = context.selectedSiteId;
+  const availableSites = context.sites;
+  const setContextSelectedSiteId = context.setSelectedSiteId;
+  const [triggerContext, setTriggerContext] = useState<AutomationTriggerContext>({
+    siteId: null,
+    recommendationId: null,
+    recommendationTitle: null,
+  });
   const [items, setItems] = useState<AutomationRun[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
+  const [triggerRunPending, setTriggerRunPending] = useState(false);
+  const [triggerRunError, setTriggerRunError] = useState<string | null>(null);
   const [actionDecisions, setActionDecisions] = useState<Record<string, ActionDecision>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
 
@@ -558,6 +606,64 @@ export default function AutomationPage() {
     }));
   }
 
+  async function handleRunAutomationNow(): Promise<void> {
+    if (!context.selectedSiteId || context.loading || context.error) {
+      setTriggerRunError("Select a site before starting automation.");
+      return;
+    }
+    setTriggerRunPending(true);
+    setTriggerRunError(null);
+    try {
+      const createdRun = await createAutomationRun(context.token, context.businessId, context.selectedSiteId);
+      setItems((current) =>
+        sortAutomationRunsNewestFirst([
+          createdRun,
+          ...current.filter((run) => run.id !== createdRun.id),
+        ]),
+      );
+      setRefreshNonce((current) => current + 1);
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        if (error.status === 409) {
+          setTriggerRunError("An automation run is already in progress for this site.");
+        } else if (error.status === 404) {
+          setTriggerRunError("The selected site is no longer available for automation.");
+        } else {
+          setTriggerRunError("Unable to start an automation run right now.");
+        }
+      } else {
+        setTriggerRunError("Unable to start an automation run right now.");
+      }
+    } finally {
+      setTriggerRunPending(false);
+    }
+  }
+
+  useEffect(() => {
+    setTriggerContext(readAutomationTriggerContextFromLocation());
+  }, []);
+
+  useEffect(() => {
+    if (!triggerContext.siteId || contextLoading || contextError) {
+      return;
+    }
+    if (selectedSiteId === triggerContext.siteId) {
+      return;
+    }
+    const hasMatchingSite = availableSites.some((site) => site.id === triggerContext.siteId);
+    if (!hasMatchingSite) {
+      return;
+    }
+    setContextSelectedSiteId(triggerContext.siteId);
+  }, [
+    availableSites,
+    contextError,
+    contextLoading,
+    selectedSiteId,
+    setContextSelectedSiteId,
+    triggerContext.siteId,
+  ]);
+
   useEffect(() => {
     if (!context.selectedSiteId || context.loading || context.error) {
       return;
@@ -569,7 +675,7 @@ export default function AutomationPage() {
       try {
         const response = await fetchAutomationRuns(context.token, context.businessId, context.selectedSiteId as string);
         if (!cancelled) {
-          setItems(response.items);
+          setItems(sortAutomationRunsNewestFirst(response.items));
         }
       } catch (err) {
         if (!cancelled) {
@@ -698,10 +804,42 @@ export default function AutomationPage() {
         <p className="hint muted" data-testid="automation-non-publishing-banner">
           This automation analyzes your site and generates recommendations. It does not make changes to your website.
         </p>
+        {triggerContext.recommendationTitle ? (
+          <p className="hint muted" data-testid="automation-trigger-context">
+            Triggered from recommendation: {triggerContext.recommendationTitle}
+            {triggerContext.recommendationId ? ` (${triggerContext.recommendationId})` : ""}
+          </p>
+        ) : null}
         {automationPollingActive ? (
           <p className="hint muted" data-testid="automation-polling-status">
             Automation execution is in progress. Status refreshes automatically every few seconds.
           </p>
+        ) : null}
+        {!loadingItems && items.length === 0 ? (
+          <div className="panel panel-compact stack-tight" data-testid="automation-empty-state">
+            <strong>No automation runs yet</strong>
+            <span className="hint muted">
+              Generate a new automation run to analyze this site and produce updated recommendations.
+            </span>
+            <div className="form-actions">
+              <button
+                type="button"
+                className="button button-primary button-inline"
+                onClick={() => {
+                  void handleRunAutomationNow();
+                }}
+                disabled={triggerRunPending}
+                data-testid="automation-empty-state-run-button"
+              >
+                {triggerRunPending ? "Starting run..." : "Run SEO automation"}
+              </button>
+            </div>
+            {triggerRunError ? (
+              <span className="hint error" data-testid="automation-empty-state-run-error">
+                {triggerRunError}
+              </span>
+            ) : null}
+          </div>
         ) : null}
 
         <div className="stack" data-testid="automation-quick-scan">
@@ -811,7 +949,7 @@ export default function AutomationPage() {
             Summary-first cards show automation status, blockers, and follow-up urgency before deep history review.
           </p>
           {items.length === 0 && !loadingItems ? (
-            <p className="hint muted">No automation runs available for quick scan.</p>
+            <p className="hint muted">No automation runs available for quick scan. Start a run to populate history.</p>
           ) : null}
           {items.length > 0 ? (
             <div className="operational-item-list">
