@@ -1,13 +1,13 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: work-boots-dev
+namespace: mbsrn-dev
 resources:
   - namespace.yaml
   - ../../base
 patches:
   - target:
       kind: ConfigMap
-      name: work-boots-config
+      name: mbsrn-config
     patch: |-
       - op: replace
         path: /data/ENVIRONMENT
@@ -17,37 +17,37 @@ patches:
         value: development
       - op: replace
         path: /data/NEXT_PUBLIC_API_BASE_URL
-        value: https://dev.workboots.example.com
+        value: https://dev.mbsrn.example.com
       - op: replace
         path: /data/GOOGLE_BUSINESS_PROFILE_REDIRECT_URI
-        value: https://dev.workboots.example.com/api/integrations/google/business-profile/connect/callback
+        value: https://dev.mbsrn.example.com/api/integrations/google/business-profile/connect/callback
   - target:
       kind: Ingress
-      name: work-boots-ingress
+      name: mbsrn-ingress
     patch: |-
       - op: replace
         path: /spec/rules/0/host
-        value: dev.workboots.example.com
+        value: dev.mbsrn.example.com
       - op: replace
         path: /metadata/annotations/kubernetes.io~1ingress.global-static-ip-name
-        value: work-boots-dev-static-ip
+        value: mbsrn-dev-static-ip
   - target:
       kind: ManagedCertificate
-      name: work-boots-managed-cert
+      name: mbsrn-managed-cert
     patch: |-
       - op: replace
         path: /spec/domains/0
-        value: dev.workboots.example.com
+        value: dev.mbsrn.example.com
   - target:
       kind: Deployment
-      name: work-boots-api
+      name: mbsrn-api
     patch: |-
       - op: replace
         path: /spec/replicas
         value: 1
   - target:
       kind: Deployment
-      name: work-boots-ui
+      name: mbsrn-ui
     patch: |-
       - op: replace
         path: /spec/replicas

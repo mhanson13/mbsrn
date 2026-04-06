@@ -1,14 +1,14 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: work-boots-ingress
+  name: mbsrn-ingress
   annotations:
     kubernetes.io/ingress.class: gce
     # Placeholder/example static IP name. Overlays should patch this per environment.
-    kubernetes.io/ingress.global-static-ip-name: work-boots-static-ip
+    kubernetes.io/ingress.global-static-ip-name: mbsrn-static-ip
     # Placeholder/example managed certificate resource name.
-    networking.gke.io/managed-certificates: work-boots-managed-cert
-    networking.gke.io/v1beta1.FrontendConfig: work-boots-frontend-config
+    networking.gke.io/managed-certificates: mbsrn-managed-cert
+    networking.gke.io/v1beta1.FrontendConfig: mbsrn-frontend-config
 spec:
   rules:
     - host: app.mbsrn.com
@@ -35,3 +35,13 @@ spec:
                 name: mbsrn-ui
                 port:
                   number: 80
+    - host: www.mbsrn.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mbsrn-www
+                port:
+                  number: 3000

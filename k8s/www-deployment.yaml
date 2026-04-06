@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mbsrn-www
+  namespace: mbsrn
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mbsrn-www
+  template:
+    metadata:
+      labels:
+        app: mbsrn-www
+    spec:
+      serviceAccountName: mbsrn-www
+      containers:
+        - name: mbsrn-www
+          image: __WWW_IMAGE__
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: __WWW_CPU_REQUEST__
+              memory: __WWW_MEMORY_REQUEST__
+              ephemeral-storage: __WWW_EPHEMERAL_STORAGE_REQUEST__
+            limits:
+              cpu: __WWW_CPU_LIMIT__
+              memory: __WWW_MEMORY_LIMIT__
+              ephemeral-storage: __WWW_EPHEMERAL_STORAGE_LIMIT__
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20

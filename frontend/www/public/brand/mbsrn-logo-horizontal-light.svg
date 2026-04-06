@@ -1,0 +1,12 @@
+<svg width="460" height="96" viewBox="0 0 460 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MBSRN logo light">
+  <defs>
+    <linearGradient id="mbsrnLogoLightGradient" x1="14" y1="12" x2="84" y2="84" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0F766E"/>
+      <stop offset="100%" stop-color="#2563EB"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="88" height="88" rx="22" fill="#EFF4FF"/>
+  <path d="M18 71L30 27H43L53 56L63 27H76L64 71H51L42 44L33 71H18Z" fill="url(#mbsrnLogoLightGradient)"/>
+  <text x="112" y="45" fill="#13233C" font-family="Segoe UI, sans-serif" font-size="34" font-weight="700">MBSRN</text>
+  <text x="112" y="69" fill="#4C648A" font-family="Segoe UI, sans-serif" font-size="15" font-weight="600">MY BUSINESS SUCKS RIGHT NOW</text>
+</svg>

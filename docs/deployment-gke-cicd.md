@@ -27,8 +27,8 @@ Base resources are namespace-neutral and include:
 - ConfigMap
 
 Each overlay owns its namespace resource:
-- `infra/k8s/overlays/dev/namespace.yaml` (`work-boots-dev`)
-- `infra/k8s/overlays/prod/namespace.yaml` (`work-boots`)
+- `infra/k8s/overlays/dev/namespace.yaml` (`mbsrn-dev`)
+- `infra/k8s/overlays/prod/namespace.yaml` (`mbsrn`)
 
 A secret template is provided at:
 - `infra/k8s/base/secrets.template.yaml`
@@ -79,9 +79,17 @@ This produces OCI-compatible images suitable for containerd on GKE.
   - preflight `DATABASE_URL` validation via `scripts/validate_production_database_url.py`
     using `DB_CONNECTION_MODE=cloudsql_proxy`
 
+- `deploy-www-prod.yml`
+  - push-to-main/workflow-dispatch production rollout path for public website only
+  - builds/pushes `frontend/www` image
+  - applies website-only `k8s/www-*` resources
+  - keeps `app.mbsrn.com` operator deployment path isolated
+
 ### Deployment Path Precedence
 - Production-authoritative path:
   - `.github/workflows/deploy-prod.yml` + `k8s/*`
+- Public-website production path:
+  - `.github/workflows/deploy-www-prod.yml` + `k8s/www-*`
 - Secondary/manual path:
   - `.github/workflows/deploy-gke.yml` + `infra/k8s/overlays/*`
 - Session/Redis contract is standardized across both paths:
@@ -92,7 +100,7 @@ This produces OCI-compatible images suitable for containerd on GKE.
 
 GitHub variable:
 
-- `GCP_PROJECT_ID` (for example `work-boots`)
+- `GCP_PROJECT_ID` (for example `mbsrn`)
 
 - `CONTAINER_REGISTRY_REGION`
 - `CONTAINER_REGISTRY_REPOSITORY`
@@ -138,7 +146,7 @@ Kubernetes Secret handles sensitive values including:
 - `GOOGLE_PLACES_API_KEY` (optional but recommended for Google Places seed discovery)
 - provider credentials (Twilio/SMTP) when enabled
 
-`work-boots-secrets` is required by both API/UI Deployments and migration Job (`envFrom.secretRef`).
+`mbsrn-secrets` is required by both API/UI Deployments and migration Job (`envFrom.secretRef`).
 
 Database URL safety contract:
 - `APP_ENV` is the sole authority for localhost database safety checks.
@@ -486,6 +494,6 @@ Prompt configuration note:
 - Rollback is available using standard Kubernetes rollout history commands.
 - Public internet access is through GKE Ingress + external HTTP(S) load balancer.
 - Ingress path routing uses one hostname:
-  - `/` -> `work-boots-ui` service
-  - `/api` -> `work-boots-api` service
+  - `/` -> `mbsrn-ui` service
+  - `/api` -> `mbsrn-api` service
 - API and UI services remain internal `ClusterIP`; production NodePort exposure is not used.

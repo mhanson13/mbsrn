@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mbsrn-www
+spec:
+  type: ClusterIP
+  selector:
+    app: mbsrn-www
+  ports:
+    - name: http
+      protocol: TCP
+      port: 3000
+      targetPort: 3000

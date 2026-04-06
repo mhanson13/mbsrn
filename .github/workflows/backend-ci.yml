@@ -41,11 +41,11 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: work_boots_console_ci
+          POSTGRES_DB: mbsrn_console_ci
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d work_boots_console_ci"
+          --health-cmd "pg_isready -U postgres -d mbsrn_console_ci"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
@@ -53,7 +53,7 @@ jobs:
       APP_ENV: ci
       ENVIRONMENT: ci
       DB_AUTO_CREATE_LOCAL: "false"
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/work_boots_console_ci
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn_console_ci
 
     steps:
       - name: Checkout

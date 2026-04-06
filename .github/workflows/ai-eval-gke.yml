@@ -88,7 +88,7 @@ jobs:
             echo "::error::Only dev overlay is supported for this workflow."
             exit 1
           fi
-          echo "namespace=work-boots-dev" >> "$GITHUB_OUTPUT"
+          echo "namespace=mbsrn-dev" >> "$GITHUB_OUTPUT"
 
       - name: Validate API rollout and resolve pod
         id: pod
@@ -96,10 +96,10 @@ jobs:
         run: |
           set -euo pipefail
           NAMESPACE="${{ steps.target.outputs.namespace }}"
-          kubectl -n "${NAMESPACE}" rollout status deployment/work-boots-api --timeout=5m
-          POD="$(kubectl -n "${NAMESPACE}" get pods -l app=work-boots-api --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')"
+          kubectl -n "${NAMESPACE}" rollout status deployment/mbsrn-api --timeout=5m
+          POD="$(kubectl -n "${NAMESPACE}" get pods -l app=mbsrn-api --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')"
           if [ -z "${POD}" ]; then
-            echo "::error::No running work-boots-api pod found in namespace ${NAMESPACE}."
+            echo "::error::No running mbsrn-api pod found in namespace ${NAMESPACE}."
             exit 1
           fi
           echo "pod=${POD}" >> "$GITHUB_OUTPUT"

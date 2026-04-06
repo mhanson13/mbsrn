@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: work-boots-ui
+  name: mbsrn-ui
 spec:
   type: ClusterIP
   selector:
-    app: work-boots-ui
+    app: mbsrn-ui
   ports:
     - name: http
       protocol: TCP

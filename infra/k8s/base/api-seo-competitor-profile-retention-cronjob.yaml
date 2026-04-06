@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: work-boots-seo-competitor-profile-retention
+  name: mbsrn-seo-competitor-profile-retention
 spec:
   schedule: "0 3 * * *"
   concurrencyPolicy: Forbid
@@ -16,7 +16,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: retention-cleanup
-              image: us-central1-docker.pkg.dev/PROJECT_ID/work-boots/api:latest
+              image: us-central1-docker.pkg.dev/PROJECT_ID/mbsrn/api:latest
               imagePullPolicy: IfNotPresent
               command:
                 - "python"
@@ -24,9 +24,9 @@ spec:
                 - "app.cli.seo_competitor_profile_generation_retention_cleanup"
               envFrom:
                 - configMapRef:
-                    name: work-boots-config
+                    name: mbsrn-config
                 - secretRef:
-                    name: work-boots-secrets
+                    name: mbsrn-secrets
               resources:
                 requests:
                   cpu: "100m"

@@ -56,6 +56,7 @@ app/                    FastAPI app (routes, services, models, repositories, tes
 alembic/                Database migrations
 docs/                   Canonical docs index, feature docs, operations and development guides
 frontend/operator-ui/   Next.js operator workspace
+frontend/www/           Next.js public marketing/legal site for www.mbsrn.com
 infra/                  Kubernetes manifests/overlays
 scripts/                Local/dev and bootstrap scripts
 ```
@@ -84,6 +85,31 @@ npm run dev
 Required local frontend env values in `frontend/operator-ui/.env.local`:
 - `NEXT_PUBLIC_API_BASE_URL`
 - `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
+
+### Public Website (`www.mbsrn.com`)
+```powershell
+cd frontend/www
+npm ci
+npm run dev
+```
+
+Public routes:
+- `/`
+- `/features`
+- `/privacy`
+- `/terms`
+
+The website is static-first and currently requires no env vars for local development.
+
+Website copy sources:
+- `frontend/www/lib/siteContent.ts` (homepage/features messaging constants)
+- `frontend/www/app/privacy/page.tsx` and `frontend/www/app/terms/page.tsx` (starter legal content pending legal review)
+
+## Public Website Deployment Separation
+- Operator app (`app.mbsrn.com`) remains deployed via `.github/workflows/deploy-prod.yml`.
+- Public website (`www.mbsrn.com`) deploys via `.github/workflows/deploy-www-prod.yml`.
+- Website Kubernetes resources are isolated under `k8s/www-*`.
+- Rollout + smoke-test checklist: `docs/frontend/public-website.md`.
 
 ## Tests and Quality
 Backend tests live in `app/tests` and are discovered via `pytest.ini`.
@@ -156,6 +182,15 @@ python scripts/verify_gcp_logs_wiring.py --cluster --project-id <PROJECT_ID> --g
 
 ## Documentation
 Start with [docs/README.md](docs/README.md) for canonical navigation.
+
+### Google OAuth Branding URLs
+For Google OAuth branding fields, use:
+- Homepage: `https://www.mbsrn.com/`
+- Privacy policy: `https://www.mbsrn.com/privacy`
+- Terms of service: `https://www.mbsrn.com/terms`
+
+Authorized domain expectation:
+- `mbsrn.com`
 
 ## Branding
 - Product: **MBSRN (My Business Sucks Right Now)**

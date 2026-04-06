@@ -6,8 +6,30 @@ mbsrn is a multi-tenant platform with a FastAPI monolith and a standalone Next.j
 Primary runtime components:
 - Backend API: `app/`
 - Operator UI: `frontend/operator-ui/`
+- Public website: `frontend/www/`
 - Kubernetes manifests: `infra/k8s/`
 - CI/CD workflows: `.github/workflows/`
+
+## Public Website Surface
+
+The public website and operator app are intentionally separate surfaces.
+
+- `app.mbsrn.com` -> operator workspace (`frontend/operator-ui`)
+- `www.mbsrn.com` -> marketing/legal website (`frontend/www`)
+
+Isolation goals:
+
+- separate codebase paths
+- separate image/build paths
+- separate deployment resources/workflows
+
+This prevents routine public-website content updates from requiring operator-app changes.
+
+Google OAuth branding URLs are served from the public website:
+
+- `https://www.mbsrn.com/`
+- `https://www.mbsrn.com/privacy`
+- `https://www.mbsrn.com/terms`
 
 ## API-First Design
 - The API is the system of record for business logic.

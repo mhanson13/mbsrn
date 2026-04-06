@@ -303,7 +303,7 @@ Prompt behavior notes:
 Deployment/runtime notes:
 - API runtime must inject `AI_PROVIDER_API_KEY` into API pods for provider-backed generation.
 - `deploy-prod` wires AI settings via Kubernetes secret `mbsrn-api-auth` and API deployment env refs.
-- `deploy-gke` expects `AI_PROVIDER_API_KEY` in Kubernetes secret `work-boots-ai-provider` and uses ConfigMap defaults for non-secret AI vars.
+- `deploy-gke` expects `AI_PROVIDER_API_KEY` in Kubernetes secret `mbsrn-ai-provider` and uses ConfigMap defaults for non-secret AI vars.
 - Non-secret AI values remain deployment-configurable runtime env with safe defaults above.
 
 ### Retention/config

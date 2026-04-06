@@ -1,0 +1,207 @@
+name: deploy-www-prod
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "frontend/www/**"
+      - "k8s/www-*"
+      - ".github/workflows/deploy-www-prod.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-www-prod
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  GKE_CLUSTER: ${{ vars.GKE_CLUSTER }}
+  K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}
+  AR_REGION: ${{ vars.AR_REGION }}
+  AR_REPOSITORY: ${{ vars.AR_REPOSITORY }}
+  WWW_IMAGE_NAME: ${{ vars.WWW_IMAGE_NAME || 'mbsrn-www' }}
+  WWW_CPU_REQUEST: ${{ vars.WWW_CPU_REQUEST || vars.UI_CPU_REQUEST || '100m' }}
+  WWW_MEMORY_REQUEST: ${{ vars.WWW_MEMORY_REQUEST || vars.UI_MEMORY_REQUEST || '256Mi' }}
+  WWW_EPHEMERAL_STORAGE_REQUEST: ${{ vars.WWW_EPHEMERAL_STORAGE_REQUEST || vars.UI_EPHEMERAL_STORAGE_REQUEST || '256Mi' }}
+  WWW_CPU_LIMIT: ${{ vars.WWW_CPU_LIMIT || vars.UI_CPU_LIMIT || '500m' }}
+  WWW_MEMORY_LIMIT: ${{ vars.WWW_MEMORY_LIMIT || vars.UI_MEMORY_LIMIT || '512Mi' }}
+  WWW_EPHEMERAL_STORAGE_LIMIT: ${{ vars.WWW_EPHEMERAL_STORAGE_LIMIT || vars.UI_EPHEMERAL_STORAGE_LIMIT || '512Mi' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required inputs
+        shell: bash
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        run: |
+          set -euo pipefail
+
+          required=(
+            GCP_PROJECT_ID
+            GCP_REGION
+            GKE_CLUSTER
+            K8S_NAMESPACE
+            AR_REGION
+            AR_REPOSITORY
+            WWW_IMAGE_NAME
+            GCP_WORKLOAD_IDENTITY_PROVIDER
+            GCP_SERVICE_ACCOUNT_EMAIL
+          )
+
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required input: ${name}" >&2
+              exit 1
+            fi
+          done
+
+          files=(
+            frontend/www/Dockerfile
+            k8s/namespace.yaml
+            k8s/www-serviceaccount.yaml
+            k8s/www-service.yaml
+            k8s/www-deployment.yaml
+            k8s/www-frontend-config.yaml
+            k8s/www-managed-certificate.yaml
+            k8s/www-ingress.yaml
+          )
+
+          for path in "${files[@]}"; do
+            if [[ ! -f "${path}" ]]; then
+              echo "Missing required file: ${path}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Verify GKE cluster exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud container clusters describe "${GKE_CLUSTER}" \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --format='value(name)' > /dev/null
+
+      - name: Configure Docker auth for Artifact Registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${AR_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push website image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WWW_IMAGE="${AR_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPOSITORY}/${WWW_IMAGE_NAME}:${GITHUB_SHA}"
+
+          echo "WWW_IMAGE=${WWW_IMAGE}" >> "${GITHUB_ENV}"
+
+          docker build \
+            --file frontend/www/Dockerfile \
+            --tag "${WWW_IMAGE}" \
+            frontend/www
+
+          docker push "${WWW_IMAGE}"
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GCP_REGION }}
+
+      - name: Render website manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          render_dir="${RUNNER_TEMP}/rendered-www-${GITHUB_SHA}"
+          rm -rf "${render_dir}"
+          mkdir -p "${render_dir}"
+
+          cp k8s/namespace.yaml "${render_dir}/namespace.yaml"
+          cp k8s/www-serviceaccount.yaml "${render_dir}/www-serviceaccount.yaml"
+          cp k8s/www-service.yaml "${render_dir}/www-service.yaml"
+          cp k8s/www-frontend-config.yaml "${render_dir}/www-frontend-config.yaml"
+          cp k8s/www-managed-certificate.yaml "${render_dir}/www-managed-certificate.yaml"
+          cp k8s/www-ingress.yaml "${render_dir}/www-ingress.yaml"
+
+          grep -q "__WWW_IMAGE__" k8s/www-deployment.yaml
+          grep -q "__WWW_CPU_REQUEST__" k8s/www-deployment.yaml
+          grep -q "__WWW_MEMORY_REQUEST__" k8s/www-deployment.yaml
+          grep -q "__WWW_EPHEMERAL_STORAGE_REQUEST__" k8s/www-deployment.yaml
+          grep -q "__WWW_CPU_LIMIT__" k8s/www-deployment.yaml
+          grep -q "__WWW_MEMORY_LIMIT__" k8s/www-deployment.yaml
+          grep -q "__WWW_EPHEMERAL_STORAGE_LIMIT__" k8s/www-deployment.yaml
+
+          sed \
+            -e "s|__WWW_IMAGE__|${WWW_IMAGE}|g" \
+            -e "s|__WWW_CPU_REQUEST__|${WWW_CPU_REQUEST}|g" \
+            -e "s|__WWW_MEMORY_REQUEST__|${WWW_MEMORY_REQUEST}|g" \
+            -e "s|__WWW_EPHEMERAL_STORAGE_REQUEST__|${WWW_EPHEMERAL_STORAGE_REQUEST}|g" \
+            -e "s|__WWW_CPU_LIMIT__|${WWW_CPU_LIMIT}|g" \
+            -e "s|__WWW_MEMORY_LIMIT__|${WWW_MEMORY_LIMIT}|g" \
+            -e "s|__WWW_EPHEMERAL_STORAGE_LIMIT__|${WWW_EPHEMERAL_STORAGE_LIMIT}|g" \
+            k8s/www-deployment.yaml > "${render_dir}/www-deployment.yaml"
+
+          if grep -q "__[A-Z0-9_][A-Z0-9_]*__" "${render_dir}/www-deployment.yaml"; then
+            echo "Unresolved placeholder detected in rendered website deployment." >&2
+            exit 1
+          fi
+
+          if ! grep -Fq "image: ${WWW_IMAGE}" "${render_dir}/www-deployment.yaml"; then
+            echo "Rendered website deployment does not use expected image ${WWW_IMAGE}." >&2
+            exit 1
+          fi
+
+          echo "RENDER_DIR=${render_dir}" >> "${GITHUB_ENV}"
+
+      - name: Apply website manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kubectl apply -f "${RENDER_DIR}/namespace.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/www-serviceaccount.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/www-service.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/www-deployment.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/www-frontend-config.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/www-managed-certificate.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/www-ingress.yaml"
+
+      - name: Wait for website rollout
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! kubectl rollout status deployment/mbsrn-www --namespace "${K8S_NAMESPACE}" --timeout=300s; then
+            kubectl describe deployment mbsrn-www --namespace "${K8S_NAMESPACE}" || true
+            kubectl get pods --namespace "${K8S_NAMESPACE}" -l app=mbsrn-www -o wide || true
+            kubectl logs deployment/mbsrn-www --namespace "${K8S_NAMESPACE}" --tail=200 || true
+            exit 1
+          fi

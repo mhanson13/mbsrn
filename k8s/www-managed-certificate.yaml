@@ -1,0 +1,8 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: mbsrn-www-managed-cert
+  namespace: mbsrn
+spec:
+  domains:
+    - www.mbsrn.com

@@ -287,7 +287,7 @@ class SEOCrawler:
         request = Request(
             url=url,
             headers={
-                "User-Agent": "WorkBootsSEOAudit/1.0",
+                "User-Agent": "MBSRNSEOAudit/1.0",
                 "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
             },
             method="GET",

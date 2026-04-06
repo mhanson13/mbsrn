@@ -329,9 +329,9 @@ jobs:
       - name: Resolve deployment namespace
         id: target
         run: |
-          NAMESPACE="work-boots"
+          NAMESPACE="mbsrn"
           if [ "${TARGET_OVERLAY}" = "dev" ]; then
-            NAMESPACE="work-boots-dev"
+            NAMESPACE="mbsrn-dev"
           fi
           echo "namespace=${NAMESPACE}" >> "$GITHUB_OUTPUT"
 
@@ -343,24 +343,24 @@ jobs:
             kubectl create namespace "${NAMESPACE}"
           fi
 
-          if ! kubectl -n "${NAMESPACE}" get secret work-boots-secrets >/dev/null 2>&1; then
-            echo "::error::Missing required secret work-boots-secrets in namespace ${NAMESPACE}."
+          if ! kubectl -n "${NAMESPACE}" get secret mbsrn-secrets >/dev/null 2>&1; then
+            echo "::error::Missing required secret mbsrn-secrets in namespace ${NAMESPACE}."
             exit 1
           fi
 
-          if ! kubectl -n "${NAMESPACE}" get secret work-boots-ai-provider >/dev/null 2>&1; then
-            echo "::error::Missing required secret work-boots-ai-provider in namespace ${NAMESPACE}."
+          if ! kubectl -n "${NAMESPACE}" get secret mbsrn-ai-provider >/dev/null 2>&1; then
+            echo "::error::Missing required secret mbsrn-ai-provider in namespace ${NAMESPACE}."
             exit 1
           fi
 
-          if [ -z "$(kubectl -n "${NAMESPACE}" get secret work-boots-ai-provider -o jsonpath='{.data.AI_PROVIDER_API_KEY}')" ]; then
-            echo "::error::Secret work-boots-ai-provider is missing key AI_PROVIDER_API_KEY in namespace ${NAMESPACE}."
+          if [ -z "$(kubectl -n "${NAMESPACE}" get secret mbsrn-ai-provider -o jsonpath='{.data.AI_PROVIDER_API_KEY}')" ]; then
+            echo "::error::Secret mbsrn-ai-provider is missing key AI_PROVIDER_API_KEY in namespace ${NAMESPACE}."
             exit 1
           fi
 
-          DATABASE_URL_B64="$(kubectl -n "${NAMESPACE}" get secret work-boots-secrets -o jsonpath='{.data.DATABASE_URL}')"
+          DATABASE_URL_B64="$(kubectl -n "${NAMESPACE}" get secret mbsrn-secrets -o jsonpath='{.data.DATABASE_URL}')"
           if [ -z "${DATABASE_URL_B64}" ]; then
-            echo "::error::Secret work-boots-secrets is missing key DATABASE_URL in namespace ${NAMESPACE}."
+            echo "::error::Secret mbsrn-secrets is missing key DATABASE_URL in namespace ${NAMESPACE}."
             exit 1
           fi
 
@@ -384,7 +384,7 @@ jobs:
           NAMESPACE: ${{ steps.target.outputs.namespace }}
           API_IMAGE: ${{ needs.backend-build.outputs.image_uri }}
         run: |
-          MIGRATION_JOB="work-boots-migrate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          MIGRATION_JOB="mbsrn-migrate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           cat <<EOF | kubectl -n "${NAMESPACE}" apply -f -
           apiVersion: batch/v1
           kind: Job
@@ -409,9 +409,9 @@ jobs:
                         memory: "512Mi"
                     envFrom:
                       - configMapRef:
-                          name: work-boots-config
+                          name: mbsrn-config
                       - secretRef:
-                          name: work-boots-secrets
+                          name: mbsrn-secrets
           EOF
 
           if ! kubectl -n "${NAMESPACE}" wait --for=condition=complete --timeout=10m "job/${MIGRATION_JOB}"; then
@@ -424,7 +424,7 @@ jobs:
         env:
           NAMESPACE: ${{ steps.target.outputs.namespace }}
         run: |
-          MIGRATION_JOB="work-boots-migrate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          MIGRATION_JOB="mbsrn-migrate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           kubectl -n "${NAMESPACE}" delete job "${MIGRATION_JOB}" --ignore-not-found
 
       - name: Update deployment images
@@ -432,12 +432,12 @@ jobs:
           NAMESPACE="${{ steps.target.outputs.namespace }}"
           API_IMAGE="${{ needs.backend-build.outputs.image_uri }}"
           UI_IMAGE="${{ needs.frontend-build.outputs.image_uri }}"
-          kubectl -n "${NAMESPACE}" set image deployment/work-boots-api api="${API_IMAGE}"
-          kubectl -n "${NAMESPACE}" set image deployment/work-boots-ui ui="${UI_IMAGE}"
-          kubectl -n "${NAMESPACE}" set image cronjob/work-boots-seo-competitor-profile-retention retention-cleanup="${API_IMAGE}"
+          kubectl -n "${NAMESPACE}" set image deployment/mbsrn-api api="${API_IMAGE}"
+          kubectl -n "${NAMESPACE}" set image deployment/mbsrn-ui ui="${UI_IMAGE}"
+          kubectl -n "${NAMESPACE}" set image cronjob/mbsrn-seo-competitor-profile-retention retention-cleanup="${API_IMAGE}"
 
       - name: Verify rollout
         run: |
           NAMESPACE="${{ steps.target.outputs.namespace }}"
-          kubectl -n "${NAMESPACE}" rollout status deployment/work-boots-api --timeout=5m
-          kubectl -n "${NAMESPACE}" rollout status deployment/work-boots-ui --timeout=5m
+          kubectl -n "${NAMESPACE}" rollout status deployment/mbsrn-api --timeout=5m
+          kubectl -n "${NAMESPACE}" rollout status deployment/mbsrn-ui --timeout=5m

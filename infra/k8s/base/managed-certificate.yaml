@@ -2,8 +2,9 @@ apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
   # Placeholder/example certificate resource name.
-  name: work-boots-managed-cert
+  name: mbsrn-managed-cert
 spec:
-  # Placeholder/example domain. Overlays should patch this to the environment host.
+  # Overlays can patch domains per environment.
   domains:
-    - workboots.example.com
+    - app.mbsrn.com
+    - www.mbsrn.com

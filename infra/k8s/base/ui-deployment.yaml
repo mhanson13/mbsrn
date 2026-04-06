@@ -1,28 +1,28 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: work-boots-ui
+  name: mbsrn-ui
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: work-boots-ui
+      app: mbsrn-ui
   template:
     metadata:
       labels:
-        app: work-boots-ui
+        app: mbsrn-ui
     spec:
       containers:
         - name: ui
-          image: us-central1-docker.pkg.dev/PROJECT_ID/work-boots/ui:latest
+          image: us-central1-docker.pkg.dev/PROJECT_ID/mbsrn/ui:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
           envFrom:
             - configMapRef:
-                name: work-boots-config
+                name: mbsrn-config
             - secretRef:
-                name: work-boots-secrets
+                name: mbsrn-secrets
           readinessProbe:
             httpGet:
               path: /

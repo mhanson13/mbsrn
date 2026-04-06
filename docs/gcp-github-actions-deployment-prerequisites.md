@@ -66,13 +66,13 @@ Google Cloud Console -> top project selector -> `New Project`
 **Steps:**
 1. Click the project selector in the top header.
 2. Click `New Project`.
-3. Project name: `work-boots` (or your org standard).
+3. Project name: `mbsrn` (or your org standard).
 4. Select billing account.
 5. Click `Create`.
 6. Re-open the project selector and switch to the new project.
 
 **Copy This Value:**
-- Project ID: `my-work-boots-prod` (example)
+- Project ID: `my-mbsrn-prod` (example)
 - Project Number: `123456789012` (example)
 
 **Used In:**
@@ -103,21 +103,21 @@ Google Cloud Console -> Artifact Registry -> Repositories -> `Create Repository`
 
 **Steps:**
 1. Click `Create Repository`.
-2. Name: `work-boots` (or your chosen name).
+2. Name: `mbsrn` (or your chosen name).
 3. Format: `Docker`.
 4. Region: choose one region (example: `us-central1`).
 5. Click `Create`.
 
 **Copy This Value:**
 - Region: `us-central1`
-- Repository name: `work-boots`
+- Repository name: `mbsrn`
 - Full repository prefix:
-  `us-central1-docker.pkg.dev/<GCP_PROJECT_ID>/work-boots`
+  `us-central1-docker.pkg.dev/<GCP_PROJECT_ID>/mbsrn`
 
 **Used In:**
 - GitHub secrets:
   - `CONTAINER_REGISTRY_REGION` = `us-central1`
-  - `CONTAINER_REGISTRY_REPOSITORY` = `work-boots`
+  - `CONTAINER_REGISTRY_REPOSITORY` = `mbsrn`
 - Image URI construction in `.github/workflows/deploy-gke.yml`:
   - API: `${CONTAINER_REGISTRY_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${CONTAINER_REGISTRY_REPOSITORY}/api:${GITHUB_SHA}`
   - UI: `${CONTAINER_REGISTRY_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${CONTAINER_REGISTRY_REPOSITORY}/ui:${GITHUB_SHA}`
@@ -129,14 +129,14 @@ Google Cloud Console -> Kubernetes Engine -> Clusters -> `Create` -> `Switch to 
 **Steps:**
 1. Click `Create`.
 2. Select `Autopilot`.
-3. Cluster name: `work-boots-cluster` (example).
+3. Cluster name: `mbsrn-cluster` (example).
 4. Region: choose your deploy region (for example `us-central1`).
 5. Networking: keep defaults unless your org requires custom VPC/subnet.
 6. Click `Create`.
 7. Wait until cluster status is `Running`.
 
 **Copy This Value:**
-- Cluster name: `work-boots-cluster`
+- Cluster name: `mbsrn-cluster`
 - Cluster region: `us-central1`
 
 **Used In:**
@@ -191,7 +191,7 @@ Google Cloud Console -> IAM & Admin -> Service Accounts -> `Create Service Accou
 
 **Steps:**
 1. Click `Create Service Account`.
-2. Name: `work-boots-github-deployer` (example).
+2. Name: `mbsrn-github-deployer` (example).
 3. Description: `Deploys mbsrn from GitHub Actions to GKE`.
 4. Click `Create and Continue`.
 5. Grant required roles (minimum set in Section 5.4).
@@ -199,7 +199,7 @@ Google Cloud Console -> IAM & Admin -> Service Accounts -> `Create Service Accou
 
 **Copy This Value:**
 - Service account email:
-  `work-boots-github-deployer@<GCP_PROJECT_ID>.iam.gserviceaccount.com`
+  `mbsrn-github-deployer@<GCP_PROJECT_ID>.iam.gserviceaccount.com`
 
 **Used In:**
 - GitHub secret `DEPLOY_SERVICE_ACCOUNT`
@@ -219,7 +219,7 @@ Google Cloud Console -> IAM & Admin -> Service Accounts -> select deployer SA ->
 
 **Copy This Value:**
 - Principal set member string (example):
-  `principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/attribute.repository/mhanson13/work-boots`
+  `principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/attribute.repository/mhanson13/mbsrn`
 
 **Used In:**
 - Allows GitHub OIDC tokens to impersonate the deployer SA.
@@ -265,11 +265,11 @@ Google Cloud Console -> SQL -> `Create Instance` -> `Choose PostgreSQL`
 **Steps:**
 1. Click `Create Instance`.
 2. Choose `PostgreSQL`.
-3. Instance ID: `work-boots-postgres` (example).
+3. Instance ID: `mbsrn-postgres` (example).
 4. Set admin password.
 5. Choose region (prefer same as GKE).
 6. Configure connectivity according to your network model.
-7. Create database (example: `work_boots_console`).
+7. Create database (example: `mbsrn_console`).
 8. Create application user.
 9. Click `Create`.
 
@@ -288,13 +288,13 @@ Google Cloud Console -> SQL -> `Create Instance` -> `Choose PostgreSQL`
 
 ### 3.11 Configure TLS/Certificate For Ingress Hostnames
 Ingress hosts are defined in overlays:
-- dev: `dev.workboots.example.com` (`infra/k8s/overlays/dev/kustomization.yaml`)
-- prod: `workboots.example.com` (`infra/k8s/overlays/prod/kustomization.yaml`)
+- dev: `dev.mbsrn.example.com` (`infra/k8s/overlays/dev/kustomization.yaml`)
+- prod: `mbsrn.example.com` (`infra/k8s/overlays/prod/kustomization.yaml`)
 
 Ingress/TLS resources in base manifests:
 - `infra/k8s/base/ingress.yaml`:
-  - `/` -> `work-boots-ui`
-  - `/api` -> `work-boots-api`
+  - `/` -> `mbsrn-ui`
+  - `/api` -> `mbsrn-api`
   - annotations for global static IP name, managed certificate, and frontend config
 - `infra/k8s/base/managed-certificate.yaml`:
   - Google-managed certificate resource (domain patched by overlays)
@@ -331,10 +331,10 @@ Google Cloud Console -> APIs & Services -> Credentials -> `Create Credentials` -
 1. If prompted, configure OAuth consent screen first.
 2. Click `Create Credentials` -> `OAuth client ID`.
 3. Application type: `Web application`.
-4. Name: `work-boots-operator-ui` (example).
+4. Name: `mbsrn-operator-ui` (example).
 5. Add authorized JavaScript origins:
-   - `https://dev.workboots.example.com`
-   - `https://workboots.example.com`
+   - `https://dev.mbsrn.example.com`
+   - `https://mbsrn.example.com`
 6. Add authorized redirect URIs if your UI flow requires them.
 7. Click `Create`.
 
@@ -344,7 +344,7 @@ Google Cloud Console -> APIs & Services -> Credentials -> `Create Credentials` -
 - OAuth Client Secret (if your deployment requires it)
 
 **Used In:**
-- Kubernetes Secret `work-boots-secrets`:
+- Kubernetes Secret `mbsrn-secrets`:
   - `GOOGLE_OIDC_CLIENT_ID`
   - `GOOGLE_OIDC_CLIENT_SECRET`
 - API runtime Google token validation/auth flow
@@ -410,7 +410,7 @@ Google Cloud Console -> IAM & Admin -> Workload Identity Federation -> select `g
 2. Provider ID: `github-provider`.
 3. Issuer (URL): `https://token.actions.githubusercontent.com`.
 4. Allowed audiences:
-   - `https://github.com/mhanson13/work-boots`
+   - `https://github.com/mhanson13/mbsrn`
 5. Attribute mappings (add exactly):
    - `google.subject=assertion.sub`
    - `attribute.actor=assertion.actor`
@@ -418,9 +418,9 @@ Google Cloud Console -> IAM & Admin -> Workload Identity Federation -> select `g
    - `attribute.repository_owner=assertion.repository_owner`
    - `attribute.ref=assertion.ref`
 6. Attribute condition (recommended baseline):
-   - `assertion.repository=='mhanson13/work-boots'`
+   - `assertion.repository=='mhanson13/mbsrn'`
    - optionally restrict branch:
-     `assertion.repository=='mhanson13/work-boots' && assertion.ref=='refs/heads/main'`
+     `assertion.repository=='mhanson13/mbsrn' && assertion.ref=='refs/heads/main'`
 7. Click `Create`.
 
 **Copy This Value:**
@@ -437,7 +437,7 @@ Google Cloud Console -> IAM & Admin -> Service Accounts -> `Create Service Accou
 
 **Steps:**
 1. Create service account:
-   - Name: `work-boots-github-deployer`
+   - Name: `mbsrn-github-deployer`
 2. Grant project roles (pilot baseline; tighten later):
    - `Artifact Registry Writer` (`roles/artifactregistry.writer`)
    - `Kubernetes Engine Developer` (`roles/container.developer`)
@@ -447,7 +447,7 @@ Google Cloud Console -> IAM & Admin -> Service Accounts -> `Create Service Accou
 
 **Copy This Value:**
 - Service account email:
-  `work-boots-github-deployer@<GCP_PROJECT_ID>.iam.gserviceaccount.com`
+  `mbsrn-github-deployer@<GCP_PROJECT_ID>.iam.gserviceaccount.com`
 
 **Used In:**
 - GitHub secret `DEPLOY_SERVICE_ACCOUNT`
@@ -460,7 +460,7 @@ Google Cloud Console -> IAM & Admin -> Service Accounts -> select deployer SA ->
 **Steps:**
 1. Click `Grant Access`.
 2. New principals:
-   `principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool/attribute.repository/mhanson13/work-boots`
+   `principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool/attribute.repository/mhanson13/mbsrn`
 3. Role:
    `Workload Identity User` (`roles/iam.workloadIdentityUser`)
 4. Click `Save`.
@@ -486,19 +486,19 @@ Mapping to repository secrets:
 Add secrets in GitHub:
 
 **Console Path:**
-GitHub -> `mhanson13/work-boots` -> `Settings` -> `Secrets and variables` -> `Actions` -> `New repository secret`
+GitHub -> `mhanson13/mbsrn` -> `Settings` -> `Secrets and variables` -> `Actions` -> `New repository secret`
 
 Create these repository secrets/variables (exact names from `.github/workflows/deploy-gke.yml`):
 
 | Name | Type | Example | Where to get it | Used in |
 |---|---|---|---|---|
-| `GCP_PROJECT_ID` | Variable | `work-boots` | Google Cloud project ID selection | deploy workflow `gcloud` project + image URI construction |
+| `GCP_PROJECT_ID` | Variable | `mbsrn` | Google Cloud project ID selection | deploy workflow `gcloud` project + image URI construction |
 | `CONTAINER_REGISTRY_REGION` | Secret | `us-central1` | Artifact Registry repository region | image URI build/push paths |
-| `CONTAINER_REGISTRY_REPOSITORY` | Secret | `work-boots` | Artifact Registry repository name | image URI build/push paths |
-| `BUILD_SOURCE_DIR` | Secret | `gs://work-boots-build-source/source` | bootstrap script output or GCS bucket design | `gcloud builds submit --gcs-source-staging-dir=...` |
+| `CONTAINER_REGISTRY_REPOSITORY` | Secret | `mbsrn` | Artifact Registry repository name | image URI build/push paths |
+| `BUILD_SOURCE_DIR` | Secret | `gs://mbsrn-build-source/source` | bootstrap script output or GCS bucket design | `gcloud builds submit --gcs-source-staging-dir=...` |
 | `OIDC_WORKLOAD_IDENTITY_PROVIDER` | Secret | `projects/123456789012/locations/global/workloadIdentityPools/github-pool/providers/github-provider` | WIF provider details | `google-github-actions/auth@v3` |
-| `DEPLOY_SERVICE_ACCOUNT` | Secret | `work-boots-github-deployer@my-work-boots-prod.iam.gserviceaccount.com` | IAM Service Accounts | `google-github-actions/auth@v3` |
-| `KUBERNETES_CLUSTER_NAME` | Secret | `work-boots-cluster` | GKE cluster details | `gcloud container clusters get-credentials` |
+| `DEPLOY_SERVICE_ACCOUNT` | Secret | `mbsrn-github-deployer@my-mbsrn-prod.iam.gserviceaccount.com` | IAM Service Accounts | `google-github-actions/auth@v3` |
+| `KUBERNETES_CLUSTER_NAME` | Secret | `mbsrn-cluster` | GKE cluster details | `gcloud container clusters get-credentials` |
 | `KUBERNETES_CLUSTER_LOCATION` | Secret | `us-central1` | GKE cluster location (region or zone) | `gcloud container clusters get-credentials --region/--zone` |
 | `KUBERNETES_CLUSTER_LOCATION_TYPE` | Secret | `region` | GKE cluster location selector | controls `--region` vs `--zone` in deploy workflow |
 
@@ -512,8 +512,8 @@ Notes:
 ## 7) Application Runtime Configuration
 ### 7.1 How Config Is Injected
 Both API and UI Deployments use:
-- ConfigMap: `work-boots-config` (non-secret settings)
-- Secret: `work-boots-secrets` (sensitive values)
+- ConfigMap: `mbsrn-config` (non-secret settings)
+- Secret: `mbsrn-secrets` (sensitive values)
 
 Repository files:
 - ConfigMap template: `infra/k8s/base/configmap.yaml`
@@ -539,20 +539,20 @@ Google Cloud Console -> Kubernetes Engine -> Workloads -> your cluster -> Config
    - `REDIS_URL` only if intentionally overriding `redis://mbsrn-redis:6379/0`
 4. Apply to dev namespace:
    ```bash
-   kubectl -n work-boots-dev apply -f infra/k8s/base/secrets.yaml
+   kubectl -n mbsrn-dev apply -f infra/k8s/base/secrets.yaml
    ```
 5. Apply to prod namespace:
    ```bash
-   kubectl -n work-boots apply -f infra/k8s/base/secrets.yaml
+   kubectl -n mbsrn apply -f infra/k8s/base/secrets.yaml
    ```
 6. Verify secret exists:
    ```bash
-   kubectl -n work-boots-dev get secret work-boots-secrets
-   kubectl -n work-boots get secret work-boots-secrets
+   kubectl -n mbsrn-dev get secret mbsrn-secrets
+   kubectl -n mbsrn get secret mbsrn-secrets
    ```
 
 **Copy This Value:**
-- Secret name: `work-boots-secrets`
+- Secret name: `mbsrn-secrets`
 - Confirmed key names present (do not copy values to shared docs/screenshots)
 
 **Used In:**
@@ -591,8 +591,8 @@ How this repo maps:
   - `ingress.yaml`
   - `configmap.yaml`
 - Overlays:
-  - dev namespace `work-boots-dev` -> `infra/k8s/overlays/dev/`
-  - prod namespace `work-boots` -> `infra/k8s/overlays/prod/`
+  - dev namespace `mbsrn-dev` -> `infra/k8s/overlays/dev/`
+  - prod namespace `mbsrn` -> `infra/k8s/overlays/prod/`
 - Deploy workflow applies overlay:
   - `kubectl apply -k "infra/k8s/overlays/${TARGET_OVERLAY}"`
 
@@ -607,8 +607,8 @@ and DNS path: Google Cloud Console -> Network Services -> Cloud DNS
 **Steps:**
 1. Reserve static external IP for ingress (recommended for stable DNS target).
 2. Create DNS `A` records:
-   - `workboots.example.com`
-   - `dev.workboots.example.com`
+   - `mbsrn.example.com`
+   - `dev.mbsrn.example.com`
    pointing to ingress IP.
 3. Configure managed certificate strategy for your ingress path.
 4. Wait for certificate provisioning.
@@ -631,15 +631,15 @@ Google Cloud Console -> Kubernetes Engine -> Workloads -> your cluster -> Config
 1. Obtain TLS cert + private key from your CA.
 2. Create secret in target namespace:
    ```bash
-   kubectl -n work-boots create secret tls work-boots-tls \
+   kubectl -n mbsrn create secret tls mbsrn-tls \
      --cert=fullchain.pem \
      --key=privkey.pem
    ```
-3. Add/patch ingress TLS section to reference `work-boots-tls`.
+3. Add/patch ingress TLS section to reference `mbsrn-tls`.
 4. Apply overlay and verify HTTPS.
 
 **Copy This Value:**
-- TLS secret name (`work-boots-tls`)
+- TLS secret name (`mbsrn-tls`)
 
 **Used In:**
 - Ingress TLS termination when using manually managed certs
@@ -681,7 +681,7 @@ Fix:
 2. Confirm deploy job has:
    - `permissions: id-token: write`
 3. In GCP, verify provider condition matches:
-   - repository `mhanson13/work-boots`
+   - repository `mhanson13/mbsrn`
    - branch rule if configured.
 
 ### 11.2 Secrets Missing In Pull Request Runs
@@ -708,7 +708,7 @@ Cause:
 - network path from GKE pods to Redis blocked
 
 Fix:
-1. Verify `REDIS_URL` in `work-boots-secrets`.
+1. Verify `REDIS_URL` in `mbsrn-secrets`.
 2. Verify service/network/firewall connectivity from cluster.
 3. Check API logs for redis backend initialization errors.
 
@@ -730,7 +730,7 @@ Cause:
 - ingress TLS config incomplete
 
 Fix:
-1. Verify DNS records for `dev.workboots.example.com` and `workboots.example.com`.
+1. Verify DNS records for `dev.mbsrn.example.com` and `mbsrn.example.com`.
 2. Verify ingress external IP and host mapping.
 3. Verify certificate resource/secret is correctly attached.
 
@@ -743,10 +743,10 @@ Fix:
 6. Create deployer service account and grant required roles.
 7. Grant `roles/iam.workloadIdentityUser` binding from WIF principal set to deployer SA.
 8. Add required GitHub repository secrets (Section 6).
-9. Create/update Kubernetes secret `work-boots-secrets` in `work-boots-dev` and `work-boots`.
+9. Create/update Kubernetes secret `mbsrn-secrets` in `mbsrn-dev` and `mbsrn`.
 10. Confirm overlays/namespaces:
-    - dev -> `work-boots-dev`
-    - prod -> `work-boots`
+    - dev -> `mbsrn-dev`
+    - prod -> `mbsrn`
 11. Configure DNS + TLS for ingress hostnames.
 12. Trigger deploy:
     - GitHub -> Actions -> `deploy-gke` -> `Run workflow` -> choose `dev` first.

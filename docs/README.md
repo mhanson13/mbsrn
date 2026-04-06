@@ -33,6 +33,7 @@
 ## Development
 - [Testing](development/testing.md)
 - [Migration Hygiene](development/migration-hygiene.md)
+- [Public Website (`frontend/www`)](frontend/public-website.md)
 
 ## SEO Phase Specifications
 These are retained as implementation/reference specs for shipped SEO phases:

@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "frontend/www/**"
+      - "k8s/www-*"
+      - ".github/workflows/deploy-www-prod.yml"
   workflow_dispatch:
     inputs:
       db_alignment_mode:

@@ -1,0 +1,10 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MBSRN mark">
+  <defs>
+    <linearGradient id="mbsrnMarkGradient" x1="16" y1="14" x2="111" y2="116" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4FD1C5"/>
+      <stop offset="100%" stop-color="#60A5FA"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="108" height="108" rx="28" fill="#0B172E"/>
+  <path d="M27 91L42 37H58L71 73L84 37H100L84 91H68L56 58L44 91H27Z" fill="url(#mbsrnMarkGradient)"/>
+</svg>

@@ -23,10 +23,10 @@ Required:
 - `CONTAINER_REGISTRY_REPOSITORY`
 
 Optional (with defaults):
-- `REPO` (default: `mhanson13/work-boots`)
+- `REPO` (default: `mhanson13/mbsrn`)
 - `POOL_ID` (default: `github-pool`)
 - `PROVIDER_ID` (default: `github-provider`)
-- `SERVICE_ACCOUNT_ID` (default: `work-boots-github-deployer`)
+- `SERVICE_ACCOUNT_ID` (default: `mbsrn-github-deployer`)
 - `BUILD_SOURCE_DIR` (default: `gs://<GCP_PROJECT_ID>-build-source/source`)
 - `KUBERNETES_CLUSTER_NAME` (optional create/reuse target)
 - `KUBERNETES_CLUSTER_LOCATION` (optional create/reuse target; region or zone)
@@ -38,10 +38,10 @@ Optional (with defaults):
 Example:
 
 ```bash
-GCP_PROJECT_ID=work-boots \
+GCP_PROJECT_ID=mbsrn \
 CONTAINER_REGISTRY_REGION=us-central1 \
-CONTAINER_REGISTRY_REPOSITORY=work-boots \
-REPO=mhanson13/work-boots \
+CONTAINER_REGISTRY_REPOSITORY=mbsrn \
+REPO=mhanson13/mbsrn \
 scripts/bootstrap_gcp_github_actions.sh
 ```
 
@@ -49,14 +49,14 @@ Flag-based equivalent:
 
 ```bash
 scripts/bootstrap_gcp_github_actions.sh \
-  --gcp-project-id work-boots \
+  --gcp-project-id mbsrn \
   --container-registry-region us-central1 \
-  --container-registry-repository work-boots \
-  --kubernetes-cluster-name work-boots-cluster \
+  --container-registry-repository mbsrn \
+  --kubernetes-cluster-name mbsrn-cluster \
   --kubernetes-cluster-location us-central1 \
   --kubernetes-cluster-location-type region \
   --kubernetes-cluster-mode autopilot \
-  --repo mhanson13/work-boots
+  --repo mhanson13/mbsrn
 ```
 
 Legacy flag aliases (`--project-id`, `--gar-location`, `--gar-repository`, `--build-source-bucket`, `--gke-cluster`, `--gke-location`, `--kubernetes-cluster-region`) are still accepted for transition, but canonical names are preferred.
@@ -103,7 +103,7 @@ The script is idempotent where practical (create-if-missing, safe re-apply for I
 From `.github/workflows/deploy-gke.yml`:
 
 GitHub variable:
-- `GCP_PROJECT_ID` (for example `work-boots`)
+- `GCP_PROJECT_ID` (for example `mbsrn`)
 
 - `OIDC_WORKLOAD_IDENTITY_PROVIDER`
 - `DEPLOY_SERVICE_ACCOUNT`
@@ -136,12 +136,12 @@ Notes:
   - deployment image updates + rollout checks
 - Reserve global static IPs and update ingress overlay placeholders before production traffic:
   - `infra/k8s/overlays/dev/kustomization.yaml`:
-    - ingress host (example: `dev.workboots.example.com`)
-    - annotation `kubernetes.io/ingress.global-static-ip-name` (example: `work-boots-dev-static-ip`)
+    - ingress host (example: `dev.mbsrn.example.com`)
+    - annotation `kubernetes.io/ingress.global-static-ip-name` (example: `mbsrn-dev-static-ip`)
     - managed certificate domain patch
   - `infra/k8s/overlays/prod/kustomization.yaml`:
-    - ingress host (example: `workboots.example.com`)
-    - annotation `kubernetes.io/ingress.global-static-ip-name` (example: `work-boots-prod-static-ip`)
+    - ingress host (example: `mbsrn.example.com`)
+    - annotation `kubernetes.io/ingress.global-static-ip-name` (example: `mbsrn-prod-static-ip`)
     - managed certificate domain patch
 - Point DNS records to the ingress external IP after apply.
 

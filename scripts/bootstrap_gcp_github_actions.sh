@@ -11,10 +11,10 @@ Usage:
 
 Options:
   --gcp-project-id <id>            GCP project ID (required; no default)
-  --repo <owner/name>          GitHub repo allowed to impersonate via WIF (default: mhanson13/work-boots)
+  --repo <owner/name>          GitHub repo allowed to impersonate via WIF (default: mhanson13/mbsrn)
   --pool-id <id>               Workload Identity Pool ID (default: github-pool)
   --provider-id <id>           Workload Identity Provider ID (default: github-provider)
-  --service-account-id <id>    Deployer service account ID (default: work-boots-github-deployer)
+  --service-account-id <id>    Deployer service account ID (default: mbsrn-github-deployer)
   --container-registry-region <region>      Artifact Registry region (required)
   --container-registry-repository <name>      Artifact Registry repository name (required)
   --build-source-dir <gs://...>  Cloud Build source staging dir (default: gs://<GCP_PROJECT_ID>-build-source/source)
@@ -33,7 +33,7 @@ Deprecated aliases (still accepted for transition):
   PROJECT_ID, GAR_LOCATION, GAR_REPOSITORY, BUILD_SOURCE_BUCKET, GKE_CLUSTER, GKE_LOCATION, KUBERNETES_CLUSTER_REGION
 
 Example:
-  GCP_PROJECT_ID=work-boots CONTAINER_REGISTRY_REGION=us-central1 CONTAINER_REGISTRY_REPOSITORY=work-boots \
+  GCP_PROJECT_ID=mbsrn CONTAINER_REGISTRY_REGION=us-central1 CONTAINER_REGISTRY_REPOSITORY=mbsrn \
   scripts/bootstrap_gcp_github_actions.sh
 EOF
 }
@@ -52,10 +52,10 @@ trimmed_nonempty() {
 }
 
 GCP_PROJECT_ID="${GCP_PROJECT_ID:-${PROJECT_ID:-}}"
-REPO="${REPO:-mhanson13/work-boots}"
+REPO="${REPO:-mhanson13/mbsrn}"
 POOL_ID="${POOL_ID:-github-pool}"
 PROVIDER_ID="${PROVIDER_ID:-github-provider}"
-SERVICE_ACCOUNT_ID="${SERVICE_ACCOUNT_ID:-work-boots-github-deployer}"
+SERVICE_ACCOUNT_ID="${SERVICE_ACCOUNT_ID:-mbsrn-github-deployer}"
 CONTAINER_REGISTRY_REGION="${CONTAINER_REGISTRY_REGION:-${GAR_LOCATION:-}}"
 CONTAINER_REGISTRY_REPOSITORY="${CONTAINER_REGISTRY_REPOSITORY:-${GAR_REPOSITORY:-}}"
 BUILD_SOURCE_DIR="${BUILD_SOURCE_DIR:-${BUILD_SOURCE_BUCKET:-}}"

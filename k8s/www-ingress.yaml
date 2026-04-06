@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mbsrn-www-ingress
+  namespace: mbsrn
+  annotations:
+    kubernetes.io/ingress.class: gce
+    networking.gke.io/managed-certificates: mbsrn-www-managed-cert
+    networking.gke.io/v1beta1.FrontendConfig: mbsrn-www-frontend-config
+spec:
+  rules:
+    - host: www.mbsrn.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mbsrn-www
+                port:
+                  number: 80

@@ -9,6 +9,8 @@ resources:
   - api-service.yaml
   - ui-deployment.yaml
   - ui-service.yaml
+  - www-deployment.yaml
+  - www-service.yaml
   - frontend-config.yaml
   - managed-certificate.yaml
   - ingress.yaml
