@@ -140,6 +140,11 @@ Required manual checks before changing OAuth publishing status:
 2. OAuth redirect URIs for app remain exact HTTPS values (`https://app.mbsrn.com/...`)
 3. public URLs above load without auth and without TLS warnings
 4. no temporary placeholder policy/legal copy is still exposed
+5. product name shown in reviewer-visible UI aligns with consent-screen app name:
+   - `My Business Sucks Right Now`
+6. if Google reviews the app sign-in surface (`https://app.mbsrn.com/`), confirm visible links to:
+   - `https://www.mbsrn.com/privacy`
+   - `https://www.mbsrn.com/terms`
 
 ## GO / NO-GO Criteria
 

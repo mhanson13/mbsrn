@@ -4,7 +4,7 @@ export const supportEmail = "support@mbsrn.com";
 export const homeContent = {
   hero: {
     eyebrow: "My Business Sucks Right Now (MBSRN)",
-    heading: "Fix weak website visibility with an operator workflow you can actually run.",
+    heading: "My Business Sucks Right Now helps you fix weak website visibility with an operator workflow you can actually run.",
     subheading:
       "MBSRN gives small business operators practical SEO operations: audit visibility, competitor pressure signals, Google-connected measurement, and clear next actions.",
   },

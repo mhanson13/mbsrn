@@ -18,16 +18,16 @@ export function SiteHeader() {
             src="/brand/mbsrn-logo-horizontal-dark.svg"
             alt="MBSRN"
             className="brand-logo brand-logo-dark"
-            width={172}
-            height={36}
+            width={196}
+            height={41}
             priority
           />
           <Image
             src="/brand/mbsrn-logo-horizontal-light.svg"
             alt="MBSRN"
             className="brand-logo brand-logo-light"
-            width={172}
-            height={36}
+            width={196}
+            height={41}
             priority
           />
         </Link>

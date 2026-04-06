@@ -258,6 +258,9 @@ Before changing OAuth publishing status, verify manually in Google Cloud Console
 3. The public pages are accessible anonymously and return production content (no draft placeholders).
 
 4. Privacy/Terms copy has completed legal/business review for production use.
+5. If Google reviewer lands on `https://app.mbsrn.com/`, confirm:
+   - visible product name alignment with OAuth consent screen (`My Business Sucks Right Now`)
+   - visible links to `https://www.mbsrn.com/privacy` and `https://www.mbsrn.com/terms`
 
 ## Apex Domain Note
 

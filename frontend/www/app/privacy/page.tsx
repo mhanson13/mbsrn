@@ -20,79 +20,107 @@ export default function PrivacyPage() {
   return (
     <div className="page-shell page-shell-narrow">
       <section className="legal-page">
-        <p className="eyebrow">Legal</p>
-        <h1>Privacy Policy</h1>
-        <p className="legal-updated">Last updated: April 6, 2026</p>
+        <header className="legal-intro">
+          <p className="eyebrow">Legal</p>
+          <h1>Privacy Policy</h1>
+          <p className="lead">
+            This policy describes what MBSRN may process, how it is used, and where operators can
+            request support.
+          </p>
+          <p className="legal-updated">Last updated: April 6, 2026</p>
+        </header>
 
-        <h2>1. What this policy covers</h2>
-        <p>
-          This policy covers the MBSRN public website and operator application. It explains what
-          information may be processed, why it is processed, and how operators can request support.
-        </p>
+        <div className="legal-sections">
+          <article className="legal-section">
+            <h2>1. What this policy covers</h2>
+            <p>
+              This policy covers the MBSRN public website and operator application. It explains what
+              information may be processed, why it is processed, and how operators can request support.
+            </p>
+          </article>
 
-        <h2>2. Information we may collect</h2>
-        <ul>
-          <li>
-            <strong>Account and authentication data:</strong> identity details required to sign in and
-            authorize workspace access.
-          </li>
-          <li>
-            <strong>Workspace and configuration data:</strong> business/site records, workflow settings,
-            and operator-entered metadata.
-          </li>
-          <li>
-            <strong>Usage and diagnostic data:</strong> application logs, run outcomes, status indicators,
-            and operational diagnostics needed to keep the service reliable.
-          </li>
-          <li>
-            <strong>Connected Google data (when authorized):</strong> limited Google integration data used
-            by enabled product features.
-          </li>
-        </ul>
+          <article className="legal-section">
+            <h2>2. Information we may collect</h2>
+            <ul>
+              <li>
+                <strong>Account and authentication data:</strong> identity details required to sign in
+                and authorize workspace access.
+              </li>
+              <li>
+                <strong>Workspace and configuration data:</strong> business/site records, workflow
+                settings, and operator-entered metadata.
+              </li>
+              <li>
+                <strong>Usage and diagnostic data:</strong> application logs, run outcomes, status
+                indicators, and operational diagnostics needed to keep the service reliable.
+              </li>
+              <li>
+                <strong>Connected Google data (when authorized):</strong> limited Google integration
+                data used by enabled product features.
+              </li>
+            </ul>
+          </article>
 
-        <h2>3. How we use information</h2>
-        <ul>
-          <li>Provide and secure operator workflows.</li>
-          <li>Run SEO analysis and recommendation surfaces requested by the operator.</li>
-          <li>Provide integration health and diagnostics.</li>
-          <li>Maintain service reliability, abuse prevention, and platform operations.</li>
-        </ul>
+          <article className="legal-section">
+            <h2>3. How we use information</h2>
+            <ul>
+              <li>Provide and secure operator workflows.</li>
+              <li>Run SEO analysis and recommendation surfaces requested by the operator.</li>
+              <li>Provide integration health and diagnostics.</li>
+              <li>Maintain service reliability, abuse prevention, and platform operations.</li>
+            </ul>
+          </article>
 
-        <h2>4. Google data usage boundary</h2>
-        <p>
-          Connected Google data is used only to provide authorized functionality requested by the user
-          or workspace admin. We do not use connected Google data for unrelated advertising purposes.
-        </p>
+          <article className="legal-section">
+            <h2>4. Google data usage boundary</h2>
+            <p>
+              Connected Google data is used only to provide authorized functionality requested by the
+              user or workspace admin. We do not use connected Google data for unrelated advertising
+              purposes.
+            </p>
+          </article>
 
-        <h2>5. Sharing and service providers</h2>
-        <p>
-          We may use infrastructure and service providers needed to operate MBSRN (for example cloud
-          hosting, observability, and API infrastructure). We do not sell personal information.
-        </p>
+          <article className="legal-section">
+            <h2>5. Sharing and service providers</h2>
+            <p>
+              We may use infrastructure and service providers needed to operate MBSRN (for example
+              cloud hosting, observability, and API infrastructure). We do not sell personal
+              information.
+            </p>
+          </article>
 
-        <h2>6. Retention and security</h2>
-        <p>
-          Data is retained according to operational requirements and platform policies. MBSRN applies
-          reasonable technical and organizational safeguards for a SaaS environment. No system can be
-          guaranteed 100% secure.
-        </p>
+          <article className="legal-section">
+            <h2>6. Retention and security</h2>
+            <p>
+              Data is retained according to operational requirements and platform policies. MBSRN
+              applies reasonable technical and organizational safeguards for a SaaS environment. No
+              system can be guaranteed 100% secure.
+            </p>
+          </article>
 
-        <h2>7. Your choices and requests</h2>
-        <p>
-          Workspace admins can update site-level integration settings from the operator app. For data
-          access, correction, or deletion requests, contact support.
-        </p>
+          <article className="legal-section">
+            <h2>7. Your choices and requests</h2>
+            <p>
+              Workspace admins can update site-level integration settings from the operator app. For
+              data access, correction, or deletion requests, contact support.
+            </p>
+          </article>
 
-        <h2>8. Contact</h2>
-        <p>
-          Contact: <strong>{supportEmail}</strong>
-        </p>
+          <article className="legal-section">
+            <h2>8. Contact</h2>
+            <p>
+              Contact: <strong>{supportEmail}</strong>
+            </p>
+          </article>
 
-        <h2>9. Policy updates</h2>
-        <p>
-          We may update this policy as the product evolves. Material updates will be posted on this page
-          with an updated effective date.
-        </p>
+          <article className="legal-section">
+            <h2>9. Policy updates</h2>
+            <p>
+              We may update this policy as the product evolves. Material updates will be posted on this
+              page with an updated effective date.
+            </p>
+          </article>
+        </div>
 
         <p className="legal-note">
           Starter policy notice: this page is practical product copy and should be reviewed by legal

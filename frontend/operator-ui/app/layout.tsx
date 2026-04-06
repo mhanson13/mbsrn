@@ -4,7 +4,7 @@ import { AuthProvider } from "../components/AuthProvider";
 import { NavShell } from "../components/NavShell";
 
 export const metadata: Metadata = {
-  title: "MBSRN Operator Workspace",
+  title: "My Business Sucks Right Now | Operator Workspace",
   description: "Operator workspace for My Business Sucks Right Now (MBSRN)",
 };
 

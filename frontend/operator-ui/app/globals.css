@@ -2446,6 +2446,25 @@ code {
   color: var(--auth-error);
 }
 
+.auth-policy-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: var(--type-sm);
+}
+
+.auth-policy-links a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.auth-policy-links a:hover {
+  color: var(--text-strong);
+}
+
 .auth-status {
   display: inline-flex;
   align-items: center;

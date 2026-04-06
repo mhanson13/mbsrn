@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: "/",
   },
   openGraph: {
-    title: "MBSRN | SEO Operations For Small Businesses",
+    title: "My Business Sucks Right Now (MBSRN) | SEO Operations For Small Businesses",
     description:
       "Audit visibility, competitor intelligence, recommendation workflows, and operator-first SEO execution.",
     url: "https://www.mbsrn.com/",
@@ -43,6 +43,9 @@ export default function HomePage() {
             </Link>
             <Link href="/privacy" className="cta-button cta-button-secondary">
               Review privacy
+            </Link>
+            <Link href="/terms" className="cta-button cta-button-secondary">
+              Review terms
             </Link>
           </div>
         </div>

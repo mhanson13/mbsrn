@@ -58,21 +58,26 @@ describe("login page", () => {
   it("renders production-ready operator sign-in copy", () => {
     render(<LoginPage />);
 
-    expect(screen.getByText("MBSRN Operator Workspace")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Sign in to manage SEO operations" })).toBeInTheDocument();
-    expect(screen.getByText("Manual Google ID token exchange (fallback)")).toBeInTheDocument();
+    expect(screen.getByText("My Business Sucks Right Now")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sign in to My Business Sucks Right Now" })).toBeInTheDocument();
+    expect(screen.queryByText("Manual Google ID token exchange (fallback)")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Mock Google Sign-In" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute(
+      "href",
+      "https://www.mbsrn.com/privacy",
+    );
+    expect(screen.getByRole("link", { name: "Terms of Service" })).toHaveAttribute(
+      "href",
+      "https://www.mbsrn.com/terms",
+    );
   });
 
-  it("exchanges a manual id token and redirects to dashboard", async () => {
+  it("exchanges Google sign-in credential and redirects to dashboard", async () => {
     render(<LoginPage />);
 
-    fireEvent.change(screen.getByLabelText("Manual Google ID token exchange (fallback)"), {
-      target: { value: "  token-123  " },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Exchange Token" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mock Google Sign-In" }));
 
-    await waitFor(() => expect(mockExchangeGoogleIdToken).toHaveBeenCalledWith("token-123"));
+    await waitFor(() => expect(mockExchangeGoogleIdToken).toHaveBeenCalledWith("google-credential"));
     await waitFor(() => expect(mockSetSession).toHaveBeenCalled());
     expect(mockPush).toHaveBeenCalledWith("/dashboard");
   });

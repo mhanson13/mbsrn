@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "MBSRN | SEO Operations For Small Businesses",
+    default: "My Business Sucks Right Now (MBSRN) | SEO Operations For Small Businesses",
     template: "%s | MBSRN",
   },
   description:
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
     canonical: "/",
   },
   openGraph: {
-    title: "MBSRN | SEO Operations For Small Businesses",
+    title: "My Business Sucks Right Now (MBSRN) | SEO Operations For Small Businesses",
     description:
       "Operator-friendly SEO operations platform for audits, competitor pressure visibility, and clear next actions.",
     url: "https://www.mbsrn.com/",

@@ -99,12 +99,15 @@ main {
 .brand-link {
   display: inline-flex;
   align-items: center;
-  line-height: 0;
+  line-height: 1;
+  min-height: 42px;
+  overflow: visible;
 }
 
 .brand-logo {
-  height: 34px;
-  width: auto;
+  display: block;
+  width: clamp(170px, 20vw, 196px);
+  height: auto;
 }
 
 .brand-logo-light {
@@ -458,10 +461,52 @@ main {
   font-size: clamp(1.48rem, 2.15vw, 1.95rem);
 }
 
+.legal-intro {
+  margin-bottom: 0.4rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.legal-intro .lead {
+  margin: 0;
+}
+
 .legal-updated {
   margin: 0 0 1rem;
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+.legal-sections {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.legal-section {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.9rem;
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+}
+
+.legal-section h2 {
+  margin-bottom: 0.45rem;
+}
+
+.legal-section p {
+  margin: 0;
+}
+
+.legal-section p + p {
+  margin-top: 0.6rem;
+}
+
+.legal-section ul {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
 }
 
 .legal-page p {
@@ -476,8 +521,10 @@ main {
 
 .legal-note {
   margin-top: 1.1rem;
-  padding-top: 0.75rem;
-  border-top: 1px dashed var(--border);
+  padding: 0.8rem 0.9rem;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
   font-size: 0.82rem;
 }
 

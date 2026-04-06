@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { GoogleSignIn } from "../components/GoogleSignIn";
@@ -10,7 +10,6 @@ import { exchangeGoogleIdToken } from "../lib/api/client";
 export default function LoginPage() {
   const router = useRouter();
   const { setSession, principal } = useAuth();
-  const [idToken, setIdToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
@@ -31,15 +30,6 @@ export default function LoginPage() {
     },
     [router, setSession],
   );
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!idToken.trim()) {
-      setError("Google id_token is required.");
-      return;
-    }
-    await handleExchange(idToken.trim());
-  };
 
   useEffect(() => {
     if (principal) {
@@ -65,11 +55,11 @@ export default function LoginPage() {
     <section className="auth-shell">
       <div className="auth-card">
         <div className="auth-header">
-          <p className="auth-badge">MBSRN Operator Workspace</p>
-          <h1>Sign in to manage SEO operations</h1>
+          <p className="auth-badge">My Business Sucks Right Now</p>
+          <h1>Sign in to My Business Sucks Right Now</h1>
           <p className="auth-subtitle">
-            Use your approved Google identity to access business-scoped operator tooling, reviews,
-            and recommendation workflows.
+            MBSRN Operator Workspace. Use your approved Google identity to access business-scoped
+            operator tooling, reviews, and recommendation workflows.
           </p>
         </div>
 
@@ -81,20 +71,18 @@ export default function LoginPage() {
               void handleExchange(credential);
             }}
           />
+          {loading ? <p className="auth-subtitle">Signing in...</p> : null}
         </div>
 
-        <form onSubmit={(event) => void handleSubmit(event)} className="auth-section stack">
-          <label htmlFor="idToken">Manual Google ID token exchange (fallback)</label>
-          <input
-            id="idToken"
-            value={idToken}
-            onChange={(event) => setIdToken(event.target.value)}
-            placeholder="Paste Google id_token"
-          />
-          <button className="primary" type="submit" disabled={loading}>
-            {loading ? "Signing in..." : "Exchange Token"}
-          </button>
-        </form>
+        <div className="auth-policy-links" aria-label="Legal links">
+          <a href="https://www.mbsrn.com/privacy" target="_blank" rel="noreferrer">
+            Privacy Policy
+          </a>
+          <span aria-hidden="true">·</span>
+          <a href="https://www.mbsrn.com/terms" target="_blank" rel="noreferrer">
+            Terms of Service
+          </a>
+        </div>
 
         {error ? <p className="auth-error">{error}</p> : null}
       </div>
