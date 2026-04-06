@@ -582,6 +582,29 @@ Operational requirements:
 - workspace GA4 credential context (service account JSON or ADC) must have read access to that property
 - diagnostics remain directional/read-only and do not change recommendation logic
 
+### GA4 Last Data Seen + Freshness
+
+Workspace GA4 cards now include explicit freshness indicators:
+
+- **Last data seen**
+- **Last successful sync**
+- **Freshness**: `Fresh`, `Stale`, or `Unknown`
+
+Operator interpretation:
+
+- **Fresh**: data is actively flowing
+- **Stale**: connected, but no recent data detected
+- **Unknown**: connected, awaiting data (or no timestamp signal yet)
+
+Timing expectations:
+
+- GA4 data may lag by roughly 24-48 hours
+
+Note:
+
+- The system does not run continuous background polling for this surface.
+- Freshness updates during normal workspace summary reads.
+
 ### Search Visibility Context (Search Console Read-Only Layer)
 
 Recommendations can now include additive `recommendation_search_console_context` when Search Console data is configured and deterministically matchable.
@@ -625,6 +648,26 @@ Diagnostics:
   - `property_not_accessible`
   - `api_unavailable`
 - coarse `status` remains `ok` / `not_configured` / `unavailable` for backward-compatible UI handling.
+
+### Search Console Last Data Seen + Freshness
+
+Workspace Search Console cards now include:
+
+- **Last data seen**
+- **Last successful sync**
+- **Freshness**: `Fresh`, `Stale`, or `Unknown`
+
+Operator interpretation:
+
+- **Fresh**: recent Search Console data is present
+- **Stale**: connected, but recent data is outside expected window
+- **Unknown**: connected, awaiting data / no timestamp signal
+
+Timing expectations:
+
+- Search Console data may lag by roughly 48-72 hours
+
+These are contextual health signals only and are not causal proof of recommendation impact.
 
 ### Combined Directional Effectiveness Context
 

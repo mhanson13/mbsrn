@@ -256,6 +256,9 @@ export interface SiteAnalyticsSummaryResponse {
     | "no_data"
     | "unknown_error"
     | null;
+  ga4_last_successful_fetch_at?: string | null;
+  ga4_last_data_timestamp?: string | null;
+  ga4_data_freshness_status?: "fresh" | "stale" | "unknown";
   message: string | null;
   data_source: string | null;
   site_metrics_summary: SiteAnalyticsMetricsSummary | null;
@@ -359,6 +362,9 @@ export interface SearchConsoleSiteSummaryResponse {
     | "property_not_accessible"
     | "api_unavailable"
     | null;
+  sc_last_successful_fetch_at?: string | null;
+  sc_last_data_timestamp?: string | null;
+  sc_data_freshness_status?: "fresh" | "stale" | "unknown";
   message: string | null;
   data_source: string | null;
   site_metrics_summary: SearchConsoleSiteMetricsSummary | null;

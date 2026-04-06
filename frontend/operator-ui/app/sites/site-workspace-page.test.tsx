@@ -372,6 +372,9 @@ function buildSiteAnalyticsSummary(
     status: "ok",
     ga4_status: "connected",
     ga4_error_reason: null,
+    ga4_last_successful_fetch_at: "2026-03-21T17:30:00Z",
+    ga4_last_data_timestamp: "2026-03-21T16:00:00Z",
+    ga4_data_freshness_status: "fresh",
     message: null,
     data_source: "ga4_mock",
     site_metrics_summary: {
@@ -448,6 +451,9 @@ function buildSearchConsoleSiteSummary(
     site_id: "site-1",
     available: true,
     status: "ok",
+    sc_last_successful_fetch_at: "2026-03-21T17:45:00Z",
+    sc_last_data_timestamp: "2026-03-21T15:00:00Z",
+    sc_data_freshness_status: "fresh",
     message: null,
     data_source: "search_console_mock",
     site_metrics_summary: {
@@ -4574,6 +4580,60 @@ describe("site workspace timeline controls", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders GA4 freshness indicators with relative timestamps when data is recent", async () => {
+    seedRichWorkspaceData();
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        ga4_status: "connected",
+        ga4_error_reason: null,
+        ga4_data_freshness_status: "fresh",
+        ga4_last_data_timestamp: "2026-03-21T16:00:00Z",
+        ga4_last_successful_fetch_at: "2026-03-21T17:30:00Z",
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const summaryStrip = await screen.findByTestId("workspace-summary-strip");
+    const trafficCard = within(summaryStrip).getByTestId("workspace-summary-traffic");
+    expect(within(trafficCard).getByTestId("workspace-ga4-freshness-badge")).toHaveTextContent("Fresh");
+    expect(within(trafficCard).getByTestId("workspace-ga4-freshness-message")).toHaveTextContent("Data is actively flowing.");
+    expect(within(trafficCard).getByTestId("workspace-ga4-last-data-seen")).toHaveTextContent("Last data seen: 2h ago");
+    expect(within(trafficCard).getByTestId("workspace-ga4-last-data-seen")).toHaveAttribute(
+      "title",
+      "Based on most recent data returned from provider",
+    );
+    expect(within(trafficCard).getByTestId("workspace-ga4-last-sync")).toHaveTextContent("Last successful sync: 30m ago");
+    expect(within(trafficCard).queryByTestId("workspace-ga4-delay-hint")).not.toBeInTheDocument();
+  });
+
+  it("renders stale GA4 freshness state when data is old", async () => {
+    seedRichWorkspaceData();
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        ga4_status: "connected",
+        ga4_error_reason: null,
+        ga4_data_freshness_status: "stale",
+        ga4_last_data_timestamp: "2026-03-18T12:00:00Z",
+        ga4_last_successful_fetch_at: "2026-03-21T17:30:00Z",
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const summaryStrip = await screen.findByTestId("workspace-summary-strip");
+    const trafficCard = within(summaryStrip).getByTestId("workspace-summary-traffic");
+    expect(within(trafficCard).getByTestId("workspace-ga4-freshness-badge")).toHaveTextContent("Stale");
+    expect(within(trafficCard).getByTestId("workspace-ga4-freshness-badge")).toHaveClass("badge-muted");
+    expect(within(trafficCard).getByTestId("workspace-ga4-freshness-message")).toHaveTextContent(
+      "Connected, but no recent data detected.",
+    );
+    expect(within(trafficCard).getByTestId("workspace-ga4-delay-hint")).toHaveTextContent(
+      "GA4 data may be delayed up to 24-48 hours.",
+    );
+    expect(trafficCard).toHaveClass("summary-stat-card-neutral");
+  });
+
   it("saves GA4 property id from workspace connect panel", async () => {
     seedRichWorkspaceData();
     mockUseOperatorContext.mockReturnValue(
@@ -4636,6 +4696,62 @@ describe("site workspace timeline controls", () => {
       expect(searchVisibilityCard).toHaveTextContent("140 clicks");
     });
     expect(searchVisibilityCard).toHaveTextContent("4,100 impressions (+13.9% vs prior period), avg position 9.2");
+  });
+
+  it("renders unknown Search Console freshness when no data timestamp is available", async () => {
+    seedRichWorkspaceData();
+    mockFetchSearchConsoleSiteSummary.mockResolvedValue(
+      buildSearchConsoleSiteSummary({
+        status: "ok",
+        sc_data_freshness_status: "unknown",
+        sc_last_data_timestamp: null,
+        sc_last_successful_fetch_at: "2026-03-21T17:45:00Z",
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const summaryStrip = await screen.findByTestId("workspace-summary-strip");
+    const searchVisibilityCard = within(summaryStrip).getByTestId("workspace-summary-search-visibility");
+    await waitFor(() => {
+      expect(within(searchVisibilityCard).getByTestId("workspace-search-freshness-badge")).toHaveTextContent("Unknown");
+      expect(within(searchVisibilityCard).getByTestId("workspace-search-freshness-message")).toHaveTextContent(
+        "Connected, awaiting data.",
+      );
+      expect(within(searchVisibilityCard).getByTestId("workspace-search-last-data-seen")).toHaveTextContent(
+        "Last data seen: No data observed yet",
+      );
+      expect(within(searchVisibilityCard).getByTestId("workspace-search-last-data-seen")).toHaveAttribute(
+        "title",
+        "Based on most recent data returned from provider",
+      );
+      expect(within(searchVisibilityCard).getByTestId("workspace-search-delay-hint")).toHaveTextContent(
+        "Search Console data may be delayed up to 48-72 hours.",
+      );
+    });
+  });
+
+  it("uses danger tone when GA4 status is error", async () => {
+    seedRichWorkspaceData();
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        available: false,
+        status: "unavailable",
+        ga4_status: "error",
+        ga4_error_reason: "access_denied",
+        message: "Google Analytics data is temporarily unavailable.",
+        site_metrics_summary: null,
+        top_pages_summary: [],
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const summaryStrip = await screen.findByTestId("workspace-summary-strip");
+    const trafficCard = within(summaryStrip).getByTestId("workspace-summary-traffic");
+    await waitFor(() => {
+      expect(trafficCard).toHaveClass("summary-stat-card-danger");
+    });
   });
 
   it("shows a clean traffic fallback when analytics is unavailable", async () => {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -58,6 +58,9 @@ class SEOAnalyticsSiteSummaryRead(BaseModel):
         "no_data",
         "unknown_error",
     ] | None = None
+    ga4_last_successful_fetch_at: datetime | None = None
+    ga4_last_data_timestamp: datetime | None = None
+    ga4_data_freshness_status: Literal["fresh", "stale", "unknown"] = "unknown"
     message: str | None = None
     data_source: str | None = None
     site_metrics_summary: SEOAnalyticsSiteMetricsSummaryRead | None = None
@@ -164,6 +167,9 @@ class SEOSearchConsoleSiteSummaryRead(BaseModel):
     available: bool
     status: str
     diagnostic_status: str | None = None
+    sc_last_successful_fetch_at: datetime | None = None
+    sc_last_data_timestamp: datetime | None = None
+    sc_data_freshness_status: Literal["fresh", "stale", "unknown"] = "unknown"
     message: str | None = None
     data_source: str | None = None
     site_metrics_summary: SEOSearchConsoleSiteMetricsSummaryRead | None = None

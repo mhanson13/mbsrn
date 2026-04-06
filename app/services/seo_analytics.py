@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 import logging
 from typing import Literal
 from urllib.parse import urlparse
@@ -35,6 +35,9 @@ from app.schemas.seo_analytics import (
 )
 
 logger = logging.getLogger(__name__)
+
+_GA4_DATA_FRESHNESS_THRESHOLD_HOURS = 48
+_SEARCH_CONSOLE_DATA_FRESHNESS_THRESHOLD_HOURS = 72
 
 
 @dataclass(frozen=True)
@@ -237,6 +240,17 @@ class SEOAnalyticsService:
             _to_top_page_summary(item)
             for item in result.top_pages[:top_pages_limit]
         ]
+        fetch_completed_at = _utcnow()
+        has_metric_data = _ga4_site_metrics_have_data(metrics_summary)
+        last_data_timestamp = _derive_period_data_timestamp(
+            period_end=windows.current_end,
+            has_data=has_metric_data,
+        )
+        ga4_data_freshness_status = _classify_data_freshness_status(
+            last_data_timestamp=last_data_timestamp,
+            stale_after_hours=_GA4_DATA_FRESHNESS_THRESHOLD_HOURS,
+            now=fetch_completed_at,
+        )
 
         return SEOAnalyticsSiteSummaryRead(
             business_id=business_id,
@@ -244,7 +258,10 @@ class SEOAnalyticsService:
             available=True,
             status="ok",
             ga4_status="connected",
-            ga4_error_reason=None if _ga4_site_metrics_have_data(metrics_summary) else "no_data",
+            ga4_error_reason=None if has_metric_data else "no_data",
+            ga4_last_successful_fetch_at=fetch_completed_at,
+            ga4_last_data_timestamp=last_data_timestamp,
+            ga4_data_freshness_status=ga4_data_freshness_status,
             message=None,
             data_source=result.data_source,
             site_metrics_summary=metrics_summary,
@@ -526,12 +543,26 @@ class SEOAnalyticsService:
             )
             for item in result.top_queries[:top_queries_limit]
         ]
+        fetch_completed_at = _utcnow()
+        has_metric_data = _search_console_site_metrics_have_data(metrics_summary)
+        last_data_timestamp = _derive_period_data_timestamp(
+            period_end=windows.current_end,
+            has_data=has_metric_data,
+        )
+        sc_data_freshness_status = _classify_data_freshness_status(
+            last_data_timestamp=last_data_timestamp,
+            stale_after_hours=_SEARCH_CONSOLE_DATA_FRESHNESS_THRESHOLD_HOURS,
+            now=fetch_completed_at,
+        )
         return SEOSearchConsoleSiteSummaryRead(
             business_id=business_id,
             site_id=site_id,
             available=True,
             status="ok",
             diagnostic_status=None,
+            sc_last_successful_fetch_at=fetch_completed_at,
+            sc_last_data_timestamp=last_data_timestamp,
+            sc_data_freshness_status=sc_data_freshness_status,
             message=None,
             data_source=result.data_source,
             site_metrics_summary=metrics_summary,
@@ -1115,6 +1146,44 @@ def _ga4_site_metrics_have_data(metrics: SEOAnalyticsSiteMetricsSummaryRead) -> 
         or metrics.pageviews.current > 0
         or metrics.organic_search_sessions.current > 0
     )
+
+
+def _search_console_site_metrics_have_data(metrics: SEOSearchConsoleSiteMetricsSummaryRead) -> bool:
+    return (
+        metrics.clicks.current > 0
+        or metrics.impressions.current > 0
+    )
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _derive_period_data_timestamp(*, period_end: date, has_data: bool) -> datetime | None:
+    if not has_data:
+        return None
+    return datetime.combine(period_end, time.min, tzinfo=timezone.utc)
+
+
+def _classify_data_freshness_status(
+    *,
+    last_data_timestamp: datetime | None,
+    stale_after_hours: int,
+    now: datetime | None = None,
+) -> Literal["fresh", "stale", "unknown"]:
+    if last_data_timestamp is None:
+        return "unknown"
+    if stale_after_hours <= 0:
+        return "unknown"
+    reference_now = now or _utcnow()
+    if last_data_timestamp.tzinfo is None:
+        normalized_last_seen = last_data_timestamp.replace(tzinfo=timezone.utc)
+    else:
+        normalized_last_seen = last_data_timestamp.astimezone(timezone.utc)
+    age = reference_now - normalized_last_seen
+    if age <= timedelta(hours=stale_after_hours):
+        return "fresh"
+    return "stale"
 
 
 def _clean_identifier(value: str | None) -> str | None:

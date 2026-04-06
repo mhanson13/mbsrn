@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -27,7 +27,11 @@ from app.integrations.search_console_analytics_provider import (
     SearchConsoleTopQueryMetrics,
 )
 from app.schemas.seo_analytics import SEOAnalyticsTopPageRead
-from app.services.seo_analytics import SEOAnalyticsService, SEOAnalyticsServiceSettings
+from app.services.seo_analytics import (
+    SEOAnalyticsService,
+    SEOAnalyticsServiceSettings,
+    _classify_data_freshness_status,
+)
 
 
 def _override_tenant_context(business_id: str):
@@ -367,6 +371,9 @@ def test_site_analytics_summary_returns_metrics_with_mock_provider(db_session, s
     assert payload["site_metrics_summary"]["sessions"]["current"] > 0
     assert payload["site_metrics_summary"]["pageviews"]["current"] > 0
     assert payload["site_metrics_summary"]["organic_search_sessions"]["current"] >= 0
+    assert payload["ga4_last_successful_fetch_at"] is not None
+    assert payload["ga4_last_data_timestamp"] is not None
+    assert payload["ga4_data_freshness_status"] == "fresh"
     assert len(payload["top_pages_summary"]) == 3
     first_top_page = payload["top_pages_summary"][0]
     assert "page_path" in first_top_page
@@ -408,6 +415,9 @@ def test_site_analytics_summary_degrades_cleanly_when_not_configured(db_session,
     assert payload["available"] is False
     assert payload["status"] == "not_configured"
     assert payload["message"] == "Google Analytics is not configured for this workspace."
+    assert payload["ga4_last_successful_fetch_at"] is None
+    assert payload["ga4_last_data_timestamp"] is None
+    assert payload["ga4_data_freshness_status"] == "unknown"
     assert payload["site_metrics_summary"] is None
     assert payload["top_pages_summary"] == []
 
@@ -534,6 +544,9 @@ def test_site_analytics_summary_reports_connected_with_no_data_reason(db_session
     assert payload["status"] == "ok"
     assert payload["ga4_status"] == "connected"
     assert payload["ga4_error_reason"] == "no_data"
+    assert payload["ga4_last_successful_fetch_at"] is not None
+    assert payload["ga4_last_data_timestamp"] is None
+    assert payload["ga4_data_freshness_status"] == "unknown"
 
 
 def test_site_analytics_summary_enforces_tenant_scope(db_session, seeded_business) -> None:
@@ -832,6 +845,9 @@ def test_search_console_site_summary_returns_metrics_with_mock_provider(db_sessi
     assert payload["available"] is True
     assert payload["status"] == "ok"
     assert payload["data_source"] == "search_console_mock"
+    assert payload["sc_last_successful_fetch_at"] is not None
+    assert payload["sc_last_data_timestamp"] is not None
+    assert payload["sc_data_freshness_status"] == "fresh"
     assert payload["site_metrics_summary"]["clicks"]["current"] == 120
     assert payload["site_metrics_summary"]["impressions"]["current"] == 3600
     assert len(payload["top_pages_summary"]) == 3
@@ -858,6 +874,9 @@ def test_search_console_site_summary_degrades_cleanly_when_not_configured(db_ses
     assert payload["available"] is False
     assert payload["status"] == "not_configured"
     assert payload["diagnostic_status"] == "missing_config"
+    assert payload["sc_last_successful_fetch_at"] is None
+    assert payload["sc_last_data_timestamp"] is None
+    assert payload["sc_data_freshness_status"] == "unknown"
     assert payload["message"] == "Search Console is not enabled for this site."
     assert payload["site_metrics_summary"] is None
     assert payload["top_pages_summary"] == []
@@ -1089,3 +1108,41 @@ def test_search_console_site_summary_surfaces_api_unavailable_diagnostic(db_sess
     assert payload["status"] == "unavailable"
     assert payload["diagnostic_status"] == "api_unavailable"
     assert payload["message"] == "Search Console data is temporarily unavailable."
+
+
+def test_data_freshness_classification_is_fresh_within_threshold() -> None:
+    now = datetime(2026, 3, 21, 18, 0, 0, tzinfo=timezone.utc)
+    last_data_timestamp = datetime(2026, 3, 20, 19, 0, 0, tzinfo=timezone.utc)
+
+    status = _classify_data_freshness_status(
+        last_data_timestamp=last_data_timestamp,
+        stale_after_hours=48,
+        now=now,
+    )
+
+    assert status == "fresh"
+
+
+def test_data_freshness_classification_is_stale_outside_threshold() -> None:
+    now = datetime(2026, 3, 21, 18, 0, 0, tzinfo=timezone.utc)
+    last_data_timestamp = datetime(2026, 3, 17, 17, 0, 0, tzinfo=timezone.utc)
+
+    status = _classify_data_freshness_status(
+        last_data_timestamp=last_data_timestamp,
+        stale_after_hours=48,
+        now=now,
+    )
+
+    assert status == "stale"
+
+
+def test_data_freshness_classification_is_unknown_without_data_timestamp() -> None:
+    now = datetime(2026, 3, 21, 18, 0, 0, tzinfo=timezone.utc)
+
+    status = _classify_data_freshness_status(
+        last_data_timestamp=None,
+        stale_after_hours=48,
+        now=now,
+    )
+
+    assert status == "unknown"

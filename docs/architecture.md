@@ -139,6 +139,28 @@ Operational behavior:
 - diagnostics remain deterministic and read-only
 - raw provider exception payloads are not surfaced to operator UI
 
+### GA4 Freshness Visibility
+
+Site analytics summary now carries additive GA4 freshness fields so operators can verify connection health without guessing:
+
+- `ga4_last_successful_fetch_at`
+- `ga4_last_data_timestamp`
+- `ga4_data_freshness_status` (`fresh` | `stale` | `unknown`)
+
+Semantics:
+
+- **Last successful sync**: when the backend last completed a successful GA4 read call
+- **Last data seen**: timestamp of the latest period endpoint actually containing metrics (when available)
+- **Freshness status**:
+  - `fresh`: data timestamp is within the configured GA4 freshness threshold (48h)
+  - `stale`: data exists but is older than threshold
+  - `unknown`: no data timestamp available yet
+
+Operational note:
+
+- The system does not continuously poll GA4.
+- Freshness updates on normal operator-triggered/site-summary read flows.
+
 ### GA4 Onboarding Discovery (Phase 1)
 
 The GA4 measurement layer now includes a bounded onboarding/discovery read path to prepare for future property/stream auto-provisioning.
@@ -253,6 +275,28 @@ Interpretation guardrails:
 
 - combined effectiveness is contextual only, not attributional
 - wording must remain directional and conservative, especially when only one source is available or signals conflict
+
+### Search Console Freshness Visibility
+
+Search visibility summary now carries additive Search Console freshness fields:
+
+- `sc_last_successful_fetch_at`
+- `sc_last_data_timestamp`
+- `sc_data_freshness_status` (`fresh` | `stale` | `unknown`)
+
+Semantics:
+
+- **Last successful sync**: when the backend last completed a successful Search Console read call
+- **Last data seen**: latest available data timestamp from the bounded summary window (when present)
+- **Freshness status**:
+  - `fresh`: data timestamp is within the Search Console freshness threshold (72h)
+  - `stale`: data exists but is older than threshold
+  - `unknown`: no data timestamp signal yet
+
+Expected delay guidance:
+
+- GA4 signals typically lag by ~24-48h
+- Search Console signals typically lag by ~48-72h
 
 Phase 5 adds internal signal confidence calibration for recommendation effectiveness summaries:
 

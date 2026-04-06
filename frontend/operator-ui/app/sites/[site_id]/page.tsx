@@ -258,6 +258,164 @@ function formatDateTime(value: string | null): string {
   return parsed.toLocaleString();
 }
 
+type DataFreshnessStatus = "fresh" | "stale" | "unknown";
+type IntegrationRenderStatus = "connected" | "configured" | "not_configured" | "error";
+type IntegrationType = "ga4" | "search_console";
+
+function formatRelativeTime(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  const deltaMs = Date.now() - parsed.getTime();
+  if (deltaMs <= 60_000) {
+    return "just now";
+  }
+  const deltaMinutes = Math.floor(deltaMs / 60_000);
+  if (deltaMinutes < 60) {
+    return `${deltaMinutes}m ago`;
+  }
+  const deltaHours = Math.floor(deltaMinutes / 60);
+  if (deltaHours < 48) {
+    return `${deltaHours}h ago`;
+  }
+  const deltaDays = Math.floor(deltaHours / 24);
+  return `${deltaDays}d ago`;
+}
+
+function normalizeDataFreshnessStatus(value: string | null | undefined): DataFreshnessStatus {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "fresh" || normalized === "stale" || normalized === "unknown") {
+    return normalized;
+  }
+  return "unknown";
+}
+
+function dataFreshnessBadgeClass(status: DataFreshnessStatus): string {
+  if (status === "fresh") {
+    return "badge badge-success";
+  }
+  if (status === "stale") {
+    return "badge badge-muted";
+  }
+  return "badge badge-muted";
+}
+
+function dataFreshnessLabel(status: DataFreshnessStatus): string {
+  if (status === "fresh") {
+    return "Fresh";
+  }
+  if (status === "stale") {
+    return "Stale";
+  }
+  return "Unknown";
+}
+
+function integrationStatusLabel(status: IntegrationRenderStatus): string {
+  if (status === "connected") {
+    return "Connected";
+  }
+  if (status === "configured") {
+    return "Configured";
+  }
+  if (status === "error") {
+    return "Error";
+  }
+  return "Not configured";
+}
+
+function integrationFreshnessMessage(
+  status: IntegrationRenderStatus,
+  freshness: DataFreshnessStatus,
+): string {
+  if (status !== "connected") {
+    return "Freshness signal unavailable.";
+  }
+  if (freshness === "fresh") {
+    return "Data is actively flowing.";
+  }
+  if (freshness === "stale") {
+    return "Connected, but no recent data detected.";
+  }
+  return "Connected, awaiting data.";
+}
+
+function integrationDelayHint(integrationType: IntegrationType): string {
+  if (integrationType === "ga4") {
+    return "GA4 data may be delayed up to 24-48 hours.";
+  }
+  return "Search Console data may be delayed up to 48-72 hours.";
+}
+
+function integrationSummaryTone(
+  status: IntegrationRenderStatus,
+  freshness: DataFreshnessStatus,
+): "neutral" | "success" | "warning" | "danger" {
+  if (status === "error") {
+    return "danger";
+  }
+  if (status === "connected" && freshness === "fresh") {
+    return "success";
+  }
+  return "neutral";
+}
+
+function renderIntegrationStatus({
+  status,
+  freshness,
+  errorMessage,
+  lastDataSeenLabel,
+  lastSyncLabel,
+  integrationType,
+  testIdPrefix,
+}: {
+  status: IntegrationRenderStatus;
+  freshness: DataFreshnessStatus;
+  errorMessage?: string | null;
+  lastDataSeenLabel: string;
+  lastSyncLabel: string;
+  integrationType: IntegrationType;
+  testIdPrefix: "workspace-ga4" | "workspace-search";
+}): JSX.Element {
+  const message = integrationFreshnessMessage(status, freshness);
+  const showDelayHint = status === "connected" && freshness !== "fresh";
+  return (
+    <span className="hint muted" data-testid={`${testIdPrefix}-freshness-row`}>
+      <span data-testid={`${testIdPrefix}-status`}>Status: {integrationStatusLabel(status)}</span>
+      {" "}
+      <span
+        data-testid={`${testIdPrefix}-last-data-seen`}
+        title="Based on most recent data returned from provider"
+      >
+        Last data seen: {lastDataSeenLabel}
+      </span>
+      {" "}
+      <span data-testid={`${testIdPrefix}-last-sync`}>Last successful sync: {lastSyncLabel}</span>
+      {" "}
+      <span className={dataFreshnessBadgeClass(freshness)} data-testid={`${testIdPrefix}-freshness-badge`}>
+        {dataFreshnessLabel(freshness)}
+      </span>
+      {" "}
+      <span data-testid={`${testIdPrefix}-freshness-message`}>{message}</span>
+      {showDelayHint ? (
+        <>
+          {" "}
+          <span data-testid={`${testIdPrefix}-delay-hint`}>{integrationDelayHint(integrationType)}</span>
+        </>
+      ) : null}
+      {status === "error" && errorMessage ? (
+        <>
+          {" "}
+          <span data-testid={`${testIdPrefix}-error-message`}>{errorMessage}</span>
+        </>
+      ) : null}
+    </span>
+  );
+}
+
 function normalizeAutomationRunStatus(status: string | null | undefined): string {
   return (status || "").trim().toLowerCase();
 }
@@ -7244,18 +7402,51 @@ export default function SiteWorkspacePage() {
   const trafficTrendValue = siteTrafficMetricsSummary
     ? `${siteTrafficMetricsSummary.users.current.toLocaleString()} users`
     : "Unavailable";
-  const trafficTrendDetail = siteTrafficMetricsSummary
+  const trafficTrendPrimaryDetail = siteTrafficMetricsSummary
     ? `${siteTrafficMetricsSummary.sessions.current.toLocaleString()} sessions (${formatSignedPercent(
       siteTrafficMetricsSummary.sessions.delta_percent,
     )} vs prior period)`
     : siteAnalyticsSummary?.message || siteAnalyticsError || "Google Analytics data is not available for this site yet.";
-  const trafficTrendTone = siteTrafficMetricsSummary
-    ? siteTrafficMetricsSummary.sessions.delta_percent !== null
-      ? siteTrafficMetricsSummary.sessions.delta_percent >= 0
-        ? "success"
-        : "warning"
-      : "neutral"
-    : "neutral";
+  const ga4TrendStatus: IntegrationRenderStatus = (() => {
+    const rawStatus = siteAnalyticsSummary?.ga4_status
+      || ((selectedSite?.ga4_property_id || "").trim() ? "configured" : "not_configured");
+    if (
+      rawStatus === "connected"
+      || rawStatus === "configured"
+      || rawStatus === "not_configured"
+      || rawStatus === "error"
+    ) {
+      return rawStatus;
+    }
+    return "not_configured";
+  })();
+  const ga4FreshnessStatus = normalizeDataFreshnessStatus(siteAnalyticsSummary?.ga4_data_freshness_status);
+  const ga4LastDataTimestamp = siteAnalyticsSummary?.ga4_last_data_timestamp || null;
+  const ga4LastSuccessfulFetchAt = siteAnalyticsSummary?.ga4_last_successful_fetch_at || null;
+  const ga4LastDataSeenLabel = ga4LastDataTimestamp
+    ? `${formatRelativeTime(ga4LastDataTimestamp)} (${formatDateTime(ga4LastDataTimestamp)})`
+    : "No data observed yet";
+  const ga4LastSuccessfulSyncLabel = ga4LastSuccessfulFetchAt
+    ? `${formatRelativeTime(ga4LastSuccessfulFetchAt)} (${formatDateTime(ga4LastSuccessfulFetchAt)})`
+    : "No successful sync observed yet";
+  const ga4FreshnessErrorMessage = ga4TrendStatus === "error"
+    ? ga4DiagnosticReasonMessage(siteAnalyticsSummary?.ga4_error_reason)
+    : null;
+  const trafficTrendDetail = (
+    <>
+      <span>{trafficTrendPrimaryDetail}</span>
+      {renderIntegrationStatus({
+        status: ga4TrendStatus,
+        freshness: ga4FreshnessStatus,
+        errorMessage: ga4FreshnessErrorMessage,
+        lastDataSeenLabel: ga4LastDataSeenLabel,
+        lastSyncLabel: ga4LastSuccessfulSyncLabel,
+        integrationType: "ga4",
+        testIdPrefix: "workspace-ga4",
+      })}
+    </>
+  );
+  const trafficTrendTone = integrationSummaryTone(ga4TrendStatus, ga4FreshnessStatus);
   const ga4ConnectivityStatus = siteAnalyticsSummary?.ga4_status
     || ((selectedSite?.ga4_property_id || "").trim() ? "configured" : "not_configured");
   const ga4ConnectivityReason = siteAnalyticsSummary?.ga4_error_reason
@@ -7331,20 +7522,49 @@ export default function SiteWorkspacePage() {
   const searchVisibilityTrendValue = searchVisibilityMetricsSummary
     ? `${searchVisibilityMetricsSummary.clicks.current.toLocaleString()} clicks`
     : "Unavailable";
-  const searchVisibilityTrendDetail = searchVisibilityMetricsSummary
+  const searchVisibilityPrimaryDetail = searchVisibilityMetricsSummary
     ? `${searchVisibilityMetricsSummary.impressions.current.toLocaleString()} impressions `
       + `(${formatSignedPercent(searchVisibilityMetricsSummary.impressions.delta_percent)} vs prior period), `
       + `avg position ${searchVisibilityMetricsSummary.average_position_current.toFixed(1)}`
     : searchConsoleSiteSummary?.message
       || searchConsoleSiteSummaryError
       || "Search Console data is not available for this site yet.";
-  const searchVisibilityTrendTone = searchVisibilityMetricsSummary
-    ? searchVisibilityMetricsSummary.impressions.delta_percent !== null
-      ? searchVisibilityMetricsSummary.impressions.delta_percent >= 0
-        ? "success"
-        : "warning"
-      : "neutral"
-    : "neutral";
+  const searchConsoleTrendStatus: IntegrationRenderStatus = (() => {
+    if (searchConsoleSiteSummary?.status === "ok") {
+      return "connected";
+    }
+    if (searchConsoleSiteSummary?.status === "unavailable") {
+      return "error";
+    }
+    return "not_configured";
+  })();
+  const searchConsoleFreshnessStatus = normalizeDataFreshnessStatus(searchConsoleSiteSummary?.sc_data_freshness_status);
+  const searchConsoleLastDataTimestamp = searchConsoleSiteSummary?.sc_last_data_timestamp || null;
+  const searchConsoleLastSuccessfulFetchAt = searchConsoleSiteSummary?.sc_last_successful_fetch_at || null;
+  const searchConsoleLastDataSeenLabel = searchConsoleLastDataTimestamp
+    ? `${formatRelativeTime(searchConsoleLastDataTimestamp)} (${formatDateTime(searchConsoleLastDataTimestamp)})`
+    : "No data observed yet";
+  const searchConsoleLastSuccessfulSyncLabel = searchConsoleLastSuccessfulFetchAt
+    ? `${formatRelativeTime(searchConsoleLastSuccessfulFetchAt)} (${formatDateTime(searchConsoleLastSuccessfulFetchAt)})`
+    : "No successful sync observed yet";
+  const searchConsoleFreshnessErrorMessage = searchConsoleTrendStatus === "error"
+    ? (searchConsoleSiteSummary?.message || searchConsoleSiteSummaryError || null)
+    : null;
+  const searchVisibilityTrendDetail = (
+    <>
+      <span>{searchVisibilityPrimaryDetail}</span>
+      {renderIntegrationStatus({
+        status: searchConsoleTrendStatus,
+        freshness: searchConsoleFreshnessStatus,
+        errorMessage: searchConsoleFreshnessErrorMessage,
+        lastDataSeenLabel: searchConsoleLastDataSeenLabel,
+        lastSyncLabel: searchConsoleLastSuccessfulSyncLabel,
+        integrationType: "search_console",
+        testIdPrefix: "workspace-search",
+      })}
+    </>
+  );
+  const searchVisibilityTrendTone = integrationSummaryTone(searchConsoleTrendStatus, searchConsoleFreshnessStatus);
   const topQueueRecommendation = queueResponse?.items?.[0] || null;
   const topQueueRecommendationActionState = topQueueRecommendation
     ? deriveRecommendationOperatorActionState({
