@@ -14,22 +14,24 @@ export function SiteHeader() {
     <header className="site-header">
       <div className="site-header-inner">
         <Link href="/" className="brand-link" aria-label="MBSRN Home">
-          <Image
-            src="/brand/mbsrn-logo-horizontal-dark.svg"
-            alt="MBSRN"
-            className="brand-logo brand-logo-dark"
-            width={196}
-            height={41}
-            priority
-          />
-          <Image
-            src="/brand/mbsrn-logo-horizontal-light.svg"
-            alt="MBSRN"
-            className="brand-logo brand-logo-light"
-            width={196}
-            height={41}
-            priority
-          />
+          <span className="brand-logo-frame" aria-hidden="true">
+            <Image
+              src="/brand/mbsrn-logo-horizontal-dark.svg"
+              alt="MBSRN"
+              className="brand-logo brand-logo-dark"
+              width={196}
+              height={41}
+              priority
+            />
+            <Image
+              src="/brand/mbsrn-logo-horizontal-light.svg"
+              alt="MBSRN"
+              className="brand-logo brand-logo-light"
+              width={196}
+              height={41}
+              priority
+            />
+          </span>
         </Link>
         <nav className="site-nav" aria-label="Primary">
           {navItems.map((item) => (

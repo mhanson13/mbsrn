@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import {
   appUrl,
   coreFeatureHighlights,
-  homeContent,
   howItWorksSteps,
   outcomes,
   trustSignals,
@@ -29,11 +29,22 @@ export const metadata: Metadata = {
 export default function HomePage() {
   return (
     <div className="page-shell">
-      <section className="hero">
+      <section className="hero hero-upgraded">
         <div className="hero-copy">
-          <p className="eyebrow">{homeContent.hero.eyebrow}</p>
-          <h1>{homeContent.hero.heading}</h1>
-          <p className="lead">{homeContent.hero.subheading}</p>
+          <div className="hero-logo">
+            <Image
+              src="/images/mbsrn-logo-small.jpg"
+              alt="My Business Sucks Right Now logo"
+              width={128}
+              height={128}
+              className="hero-logo-image"
+              priority
+            />
+            <p className="eyebrow">My Business Sucks Right Now (MBSRN)</p>
+          </div>
+          <h1>My Business Sucks Right Now.</h1>
+          <p className="hero-subheadline">But it doesn&apos;t have to stay that way.</p>
+          <p className="lead">Turn scattered SEO chaos into clear next actions.</p>
           <div className="hero-actions">
             <a href={appUrl} target="_blank" rel="noreferrer" className="cta-button cta-button-primary">
               Open the app
@@ -41,22 +52,117 @@ export default function HomePage() {
             <Link href="/features" className="cta-button cta-button-secondary">
               Learn what MBSRN does
             </Link>
-            <Link href="/privacy" className="cta-button cta-button-secondary">
-              Review privacy
-            </Link>
-            <Link href="/terms" className="cta-button cta-button-secondary">
-              Review terms
-            </Link>
           </div>
+          <p className="hero-legal-links">
+            <Link href="/privacy">Privacy Policy</Link>
+            <span aria-hidden="true">·</span>
+            <Link href="/terms">Terms of Service</Link>
+          </p>
         </div>
-        <div className="hero-panel">
-          <h2>{homeContent.audience.title}</h2>
-          <ul>
-            {homeContent.audience.items.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-          <p className="hero-panel-note">{homeContent.problem.body}</p>
+        <div className="hero-panel hero-visual-panel">
+          <h2>Real operator chaos, not theory</h2>
+          <div className="hero-visual-grid" aria-label="Frustrated operators handling day-to-day chaos">
+            <article className="hero-visual-card">
+              <Image
+                src="/images/frust-cleaning-person.png"
+                alt="Cleaning operator overwhelmed by schedule changes"
+                width={1024}
+                height={1536}
+                className="hero-visual-image"
+                sizes="(max-width: 980px) 100vw, 260px"
+                priority
+              />
+            </article>
+            <article className="hero-visual-card">
+              <Image
+                src="/images/frust-plumber-person.png"
+                alt="Plumber operator dealing with a broken laptop in the field"
+                width={1024}
+                height={1536}
+                className="hero-visual-image"
+                sizes="(max-width: 980px) 100vw, 260px"
+                priority
+              />
+            </article>
+          </div>
+          <p className="hero-panel-note">
+            Most operators are already maxed out. SEO should reduce confusion, not add another fire.
+          </p>
+        </div>
+      </section>
+
+      <section className="section section-story">
+        <div className="section-header">
+          <h2>You&apos;re not bad at your business. You&apos;re overloaded.</h2>
+          <p>You&apos;re on-site, on calls, fixing real problems.</p>
+          <p>Your website? It&apos;s just another thing breaking.</p>
+          <p>SEO tools don&apos;t help - they add noise.</p>
+        </div>
+        <div className="story-image-grid" aria-label="Examples of overloaded operators">
+          <article className="story-image-card">
+            <Image
+              src="/images/frust-foodservice-person.png"
+              alt="Food service operator overwhelmed during kitchen operations"
+              width={1024}
+              height={1536}
+              className="story-image"
+              sizes="(max-width: 980px) 100vw, 320px"
+            />
+          </article>
+          <article className="story-image-card">
+            <Image
+              src="/images/frust-general-contractor-person.png"
+              alt="General contractor struggling with field laptop issues"
+              width={1024}
+              height={1536}
+              className="story-image"
+              sizes="(max-width: 980px) 100vw, 320px"
+            />
+          </article>
+          <article className="story-image-card">
+            <Image
+              src="/images/frust-yard-service-person.png"
+              alt="Yard service operator handling equipment failure and communication issues"
+              width={1024}
+              height={1536}
+              className="story-image"
+              sizes="(max-width: 980px) 100vw, 320px"
+            />
+          </article>
+        </div>
+      </section>
+
+      <section className="section section-transition">
+        <div className="section-header">
+          <h2>From &apos;Sucks Right Now&apos; -&gt; &apos;Starts Right Now&apos;</h2>
+          <p>You don&apos;t need another dashboard.</p>
+          <p>You need to know what to do next.</p>
+          <p>MBSRN gives you that - clearly.</p>
+        </div>
+      </section>
+
+      <section className="section section-before-after">
+        <div className="section-header">
+          <h2>What changes</h2>
+          <p>Same business. Better operational focus.</p>
+        </div>
+        <div className="before-after-grid">
+          <article className="before-after-card before-card">
+            <h3>Before</h3>
+            <ul>
+              <li>No priorities</li>
+              <li>Confusing tools</li>
+              <li>Guessing what matters</li>
+            </ul>
+          </article>
+          <article className="before-after-card after-card">
+            <h3>After</h3>
+            <ul>
+              <li>Clear next actions</li>
+              <li>Ranked priorities</li>
+              <li>Work you can actually execute</li>
+            </ul>
+          </article>
         </div>
       </section>
 

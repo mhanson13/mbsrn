@@ -20,6 +20,37 @@ Operator-visible run trigger failures are mapped to actionable states:
 - missing inputs/validation: `This site is missing required automation inputs. Review site setup and retry.`
 - unavailable/other errors: `Automation run creation is unavailable for this site right now.`
 
+## Automation Configuration Visibility and Step Editor
+
+Automation run history exposes the effective run configuration so skipped-step outcomes are explainable, and now supports a minimal step-toggle editor for admins.
+
+- Automation page includes a configuration summary:
+  - grouped by:
+    - Site audit
+    - Competitor analysis
+    - Recommendations
+  - each step includes plain-language helper text describing output, value, and typical enable/disable usage
+  - lightweight dependency notes clarify implications (for example, competitor comparison and summary depend on competitor snapshot output)
+- Each step shows `enabled` or `disabled` and a backend-provided config source label:
+  - `Default system configuration` (`config_source=default`)
+  - `Site-specific configuration` (`config_source=site`)
+- Config source is now resolved by backend response fields, not inferred in frontend UI.
+
+- Admins can edit step enable/disable toggles directly from the Automation page (`Edit step settings`).
+- Save uses the existing automation config patch API and updates the displayed config state immediately.
+- Non-admin users retain read-only visibility and are directed to contact an admin for changes.
+
+Step-level skip output is now structured for operators:
+
+- `Step`
+- `Status`
+- `Reason`
+- `Config source` (shown when skipped because configuration disabled the step)
+
+Current editor scope is intentionally narrow:
+- step-level enable/disable toggles only
+- no scheduling, templates, or policy editing in this phase
+
 Current manual execution path:
 
 1. `POST /.../actions/execution-items/{id}/run-automation` requests execution for a bound activated action.

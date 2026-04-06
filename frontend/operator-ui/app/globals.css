@@ -2446,6 +2446,20 @@ code {
   color: var(--auth-error);
 }
 
+.auth-policy-block {
+  display: grid;
+  gap: 0.35rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.72rem;
+}
+
+.auth-policy-intro {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--type-xs);
+  letter-spacing: 0.01em;
+}
+
 .auth-policy-links {
   display: inline-flex;
   align-items: center;

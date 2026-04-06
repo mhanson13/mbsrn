@@ -13,12 +13,15 @@ export function SiteFooter() {
             width={32}
             height={32}
           />
-          <p>
-            MBSRN helps small businesses turn weak website visibility into
-            actionable SEO operations.
-          </p>
+          <div>
+            <p className="site-footer-brand-title">My Business Sucks Right Now</p>
+            <p className="site-footer-brand-copy">
+              MBSRN helps small businesses turn weak website visibility into actionable
+              SEO operations.
+            </p>
+          </div>
         </div>
-        <div className="site-footer-links">
+        <div className="site-footer-links" aria-label="Footer links">
           <Link href="/features">Features</Link>
           <Link href="/privacy">Privacy Policy</Link>
           <Link href="/terms">Terms of Service</Link>
@@ -26,6 +29,9 @@ export function SiteFooter() {
             Operator App
           </a>
         </div>
+        <p className="site-footer-meta">
+          Public website for My Business Sucks Right Now (MBSRN).
+        </p>
       </div>
     </footer>
   );

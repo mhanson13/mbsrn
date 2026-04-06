@@ -112,10 +112,12 @@ def test_phase4_automation_config_crud_and_status(db_session, seeded_business) -
     assert config["is_enabled"] is True
     assert config["cadence_type"] == "interval_minutes"
     assert config["next_run_at"] is not None
+    assert config["config_source"] == "site"
 
     get_config = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-config")
     assert get_config.status_code == 200
     assert get_config.json()["id"] == config["id"]
+    assert get_config.json()["config_source"] == "site"
 
     patched = client.patch(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-config",
@@ -124,21 +126,25 @@ def test_phase4_automation_config_crud_and_status(db_session, seeded_business) -
     assert patched.status_code == 200
     assert patched.json()["trigger_recommendation_narrative"] is True
     assert patched.json()["cadence_minutes"] == 120
+    assert patched.json()["config_source"] == "site"
 
     disabled = client.post(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-config/disable")
     assert disabled.status_code == 200
     assert disabled.json()["is_enabled"] is False
     assert disabled.json()["next_run_at"] is None
+    assert disabled.json()["config_source"] == "site"
 
     enabled = client.post(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-config/enable")
     assert enabled.status_code == 200
     assert enabled.json()["is_enabled"] is True
+    assert enabled.json()["config_source"] == "site"
 
     status = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-status")
     assert status.status_code == 200
     payload = status.json()
     assert payload["business_id"] == seeded_business.id
     assert payload["site_id"] == site_id
+    assert payload["config"]["config_source"] == "site"
     assert payload["latest_run"] is None
 
 
@@ -204,6 +210,7 @@ def test_phase4_manual_run_bootstraps_default_config_when_missing(db_session, se
     assert config_payload["is_enabled"] is False
     assert config_payload["trigger_audit"] is True
     assert config_payload["trigger_recommendations"] is True
+    assert config_payload["config_source"] == "default"
 
 
 def test_phase4_automation_scope_guards_and_not_found(db_session, seeded_business) -> None:
@@ -332,6 +339,7 @@ def test_phase4_v1_automation_surface(db_session, seeded_business) -> None:
 
     status = client.get(f"/api/v1/businesses/{seeded_business.id}/seo/sites/{site_id}/automation-status")
     assert status.status_code == 200
+    assert status.json()["config"]["config_source"] == "site"
 
 
 def test_phase4_automation_audit_step_uses_business_crawl_page_limit(db_session, seeded_business) -> None:

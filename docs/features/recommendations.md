@@ -763,9 +763,13 @@ Default (collapsed) view emphasizes:
 - recommendation title
 - **What to do now** (short action sentence)
 - **Why it matters** (short rationale sentence)
+- **How actionable** (readiness + effort + blocked-by-prerequisite cue when applicable)
 - compact support cues in the side rail (impact/progress/lifecycle/priority/evidence/readiness/category)
 
 Expanded view (`Show details` / `Show implementation steps`) contains full supporting detail:
+- action section (what to do, execution scope, execution inputs, implementation steps)
+- why-it-matters section (gap/evidence/competitor context)
+- readiness-and-confidence section (priority rationale, evidence strength, directional outcome context)
 - evidence trace and observed gap context
 - target context/pages/content
 - execution scope/inputs/blockers

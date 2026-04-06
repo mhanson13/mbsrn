@@ -21,6 +21,12 @@ This is the final readiness path for DNS + TLS + Google OAuth branding/publicati
 - App ingress HTTPS redirect:
   - enabled via `mbsrn-app-frontend-config`
 
+## Apex (`mbsrn.com`) Recommendation
+
+- Keep `www.mbsrn.com` as the canonical public website hostname.
+- Configure apex `mbsrn.com` as a permanent redirect to `https://www.mbsrn.com`.
+- Keep `app.mbsrn.com` isolated for operator sign-in/workspace traffic.
+
 ## Preconditions
 
 Before cutover checks:

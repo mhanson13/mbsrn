@@ -28,6 +28,20 @@ export default function PrivacyPage() {
             request support.
           </p>
           <p className="legal-updated">Last updated: April 6, 2026</p>
+          <div className="legal-highlights" aria-label="Privacy scope highlights">
+            <p>
+              <span>Product</span>
+              My Business Sucks Right Now (MBSRN)
+            </p>
+            <p>
+              <span>Coverage</span>
+              Public website and operator workspace
+            </p>
+            <p>
+              <span>Support</span>
+              {supportEmail}
+            </p>
+          </div>
         </header>
 
         <div className="legal-sections">

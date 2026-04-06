@@ -227,6 +227,33 @@ Update website content in:
 - terms content: `frontend/www/app/terms/page.tsx`
 - shell nav/footer: `frontend/www/components/SiteHeader.tsx`, `frontend/www/components/SiteFooter.tsx`
 
+## Brand Narrative and Visual Strategy
+
+The homepage now leads with a direct brand narrative:
+
+- `My Business Sucks Right Now` -> `My Business Starts Right Now`
+- operator frustration first, then clear operational direction
+- action-focused positioning over generic analytics language
+
+Homepage narrative order:
+
+1. Hero with high-visibility brand and emotional hook
+2. "This is you" section for overloaded operators
+3. Transition moment (`Sucks -> Starts`)
+4. Before/After operational clarity
+5. Existing feature/outcome/how-it-works/trust sections
+
+Imagery guidance for future updates:
+
+- use real-world operator contexts (field work, service jobs, operations pressure)
+- avoid sterile corporate stock visuals
+- keep visual tone practical and high-stakes, not gimmicky
+- pair emotional imagery with clear "what to do next" copy
+
+Asset location for homepage narrative visuals:
+
+- `frontend/www/public/images/`
+
 Policy page note:
 - Privacy/Terms are starter SaaS policy copy for launch readiness and OAuth branding fields.
 - Keep legal review explicit until counsel sign-off is complete.
@@ -266,9 +293,13 @@ Before changing OAuth publishing status, verify manually in Google Cloud Console
 
 This repo deploys the public site for `www.mbsrn.com`.
 
-If apex (`mbsrn.com`) should also serve public web traffic, keep DNS/edge behavior explicit:
+Recommended production state:
 
-- either redirect apex to `www.mbsrn.com`
-- or add an additional ingress/certificate host entry and route apex to `mbsrn-www`
+- keep `www.mbsrn.com` as the canonical public hostname
+- configure apex `mbsrn.com` to issue a permanent redirect to `https://www.mbsrn.com`
+
+Alternative (only if required by product/legal requirements):
+
+- add an additional ingress/certificate host entry and route apex to `mbsrn-www`
 
 Do not repoint `app.mbsrn.com`; it remains the operator workspace domain.

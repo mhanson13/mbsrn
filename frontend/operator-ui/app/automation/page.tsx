@@ -5,13 +5,20 @@ import { useEffect, useState } from "react";
 
 import { ActionControls } from "../../components/action-execution/ActionControls";
 import { OutputReview } from "../../components/action-execution/OutputReview";
+import { useAuth } from "../../components/AuthProvider";
 import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { useOperatorContext } from "../../components/useOperatorContext";
-import { ApiRequestError, createAutomationRun, fetchAutomationRuns } from "../../lib/api/client";
+import {
+  ApiRequestError,
+  createAutomationRun,
+  fetchAutomationRuns,
+  fetchAutomationStatus,
+  patchAutomationConfig,
+} from "../../lib/api/client";
 import { deriveAutomationRunOperatorActionState } from "../../lib/operatorActionState";
 import {
   applyActionDecisionLocally,
@@ -22,6 +29,8 @@ import type {
   ActionControl,
   ActionDecision,
   ActionExecutionItem,
+  AutomationConfig,
+  AutomationConfigPatchRequest,
   AutomationRun,
   AutomationRunOutcomeSummary,
   AutomationRunStep,
@@ -52,6 +61,117 @@ const COMPETITOR_DEPENDENCY_TERMS = [
   "dependency",
   "not completed",
   "not ready",
+];
+
+type AutomationEditableStepField =
+  | "trigger_audit"
+  | "trigger_audit_summary"
+  | "trigger_competitor_snapshot"
+  | "trigger_comparison"
+  | "trigger_competitor_summary"
+  | "trigger_recommendations"
+  | "trigger_recommendation_narrative";
+
+type AutomationConfigStepDefinition = {
+  field: AutomationEditableStepField;
+  label: string;
+  helperText: string;
+};
+
+type AutomationConfigStepGroup = {
+  id: string;
+  label: string;
+  description: string;
+  dependencyNote: string | null;
+  fields: AutomationEditableStepField[];
+};
+
+const AUTOMATION_CONFIG_STEP_DEFINITIONS: Record<AutomationEditableStepField, AutomationConfigStepDefinition> = {
+  trigger_audit: {
+    field: "trigger_audit",
+    label: "Audit run",
+    helperText:
+      "Creates the crawl + issue dataset. Keep enabled for full site health checks; disable for quick output refreshes.",
+  },
+  trigger_audit_summary: {
+    field: "trigger_audit_summary",
+    label: "Audit summary",
+    helperText:
+      "Builds the plain-language audit summary. Keep enabled when operators need concise issue rollups.",
+  },
+  trigger_competitor_snapshot: {
+    field: "trigger_competitor_snapshot",
+    label: "Competitor snapshot",
+    helperText:
+      "Collects competitor baseline inputs. Disable when competitor analysis is intentionally out of scope.",
+  },
+  trigger_comparison: {
+    field: "trigger_comparison",
+    label: "Competitor comparison",
+    helperText:
+      "Compares your site against snapshot output. Most useful when competitor snapshot is enabled.",
+  },
+  trigger_competitor_summary: {
+    field: "trigger_competitor_summary",
+    label: "Competitor summary",
+    helperText:
+      "Summarizes competitor comparison findings for operators. Disable if you only need raw comparison output.",
+  },
+  trigger_recommendations: {
+    field: "trigger_recommendations",
+    label: "Recommendation run",
+    helperText:
+      "Generates structured recommendation outputs. Keep enabled for recommendation-driven workflows.",
+  },
+  trigger_recommendation_narrative: {
+    field: "trigger_recommendation_narrative",
+    label: "Recommendation narrative",
+    helperText:
+      "Generates narrative guidance from recommendation output. Disable when structured recommendation data is enough.",
+  },
+};
+
+const AUTOMATION_EDITABLE_STEP_FIELDS: Array<{ field: AutomationEditableStepField; label: string }> = [
+  { field: "trigger_audit", label: AUTOMATION_CONFIG_STEP_DEFINITIONS.trigger_audit.label },
+  { field: "trigger_audit_summary", label: AUTOMATION_CONFIG_STEP_DEFINITIONS.trigger_audit_summary.label },
+  {
+    field: "trigger_competitor_snapshot",
+    label: AUTOMATION_CONFIG_STEP_DEFINITIONS.trigger_competitor_snapshot.label,
+  },
+  { field: "trigger_comparison", label: AUTOMATION_CONFIG_STEP_DEFINITIONS.trigger_comparison.label },
+  {
+    field: "trigger_competitor_summary",
+    label: AUTOMATION_CONFIG_STEP_DEFINITIONS.trigger_competitor_summary.label,
+  },
+  { field: "trigger_recommendations", label: AUTOMATION_CONFIG_STEP_DEFINITIONS.trigger_recommendations.label },
+  {
+    field: "trigger_recommendation_narrative",
+    label: AUTOMATION_CONFIG_STEP_DEFINITIONS.trigger_recommendation_narrative.label,
+  },
+];
+
+const AUTOMATION_CONFIG_STEP_GROUPS: AutomationConfigStepGroup[] = [
+  {
+    id: "site-audit",
+    label: "Site audit",
+    description: "Crawl, issue detection, and audit summary outputs.",
+    dependencyNote: "Audit summary is most useful when Audit run is enabled.",
+    fields: ["trigger_audit", "trigger_audit_summary"],
+  },
+  {
+    id: "competitor-analysis",
+    label: "Competitor analysis",
+    description: "Competitor snapshot, comparison, and summary outputs.",
+    dependencyNote: "Competitor comparison and summary rely on competitor snapshot output.",
+    fields: ["trigger_competitor_snapshot", "trigger_comparison", "trigger_competitor_summary"],
+  },
+  {
+    id: "recommendations",
+    label: "Recommendations",
+    description: "Recommendation outputs and narrative guidance.",
+    dependencyNote: "Recommendation narrative is most useful when Recommendation run is enabled.",
+    fields: ["trigger_recommendations", "trigger_recommendation_narrative"],
+  },
 ];
 
 function formatDateTime(value: string | null): string {
@@ -99,6 +219,78 @@ function hasCompetitorDependencyReason(reason: string | null | undefined): boole
     return false;
   }
   return COMPETITOR_DEPENDENCY_TERMS.some((term) => normalizedReason.includes(term));
+}
+
+function deriveAutomationConfigSourceLabel(config: AutomationConfig | null): string {
+  if (!config) {
+    return "Unknown configuration source";
+  }
+  if (config.config_source === "default") {
+    return "Default system configuration";
+  }
+  if (config.config_source === "site") {
+    return "Site-specific configuration";
+  }
+  return "Unknown configuration source";
+}
+
+function isStepDisabledByAutomationConfig(step: AutomationRunStep): boolean {
+  const reason = (step.reason_summary || step.error_message || "").trim().toLowerCase();
+  if (!reason) {
+    return false;
+  }
+  return reason.includes("disabled in automation configuration") || reason.includes("disabled by config");
+}
+
+type AutomationConfigStepDraft = Record<AutomationEditableStepField, boolean>;
+
+function extractAutomationConfigStepDraft(config: AutomationConfig | null): AutomationConfigStepDraft | null {
+  if (!config) {
+    return null;
+  }
+  return {
+    trigger_audit: config.trigger_audit,
+    trigger_audit_summary: config.trigger_audit_summary,
+    trigger_competitor_snapshot: config.trigger_competitor_snapshot,
+    trigger_comparison: config.trigger_comparison,
+    trigger_competitor_summary: config.trigger_competitor_summary,
+    trigger_recommendations: config.trigger_recommendations,
+    trigger_recommendation_narrative: config.trigger_recommendation_narrative,
+  };
+}
+
+function buildAutomationConfigPatchPayload(
+  current: AutomationConfig | null,
+  draft: AutomationConfigStepDraft | null,
+): AutomationConfigPatchRequest {
+  if (!current || !draft) {
+    return {};
+  }
+  const payload: AutomationConfigPatchRequest = {};
+  for (const definition of AUTOMATION_EDITABLE_STEP_FIELDS) {
+    const field = definition.field;
+    if (current[field] !== draft[field]) {
+      payload[field] = draft[field];
+    }
+  }
+  return payload;
+}
+
+function mapAutomationConfigSaveError(error: ApiRequestError): string {
+  if (error.status === 404) {
+    return "Automation configuration is unavailable for this site right now.";
+  }
+  if (error.status === 422) {
+    return "Unable to save settings. Keep at least one automation step enabled.";
+  }
+  return "Unable to save automation settings right now.";
+}
+
+function describeAutomationConfigStepState(enabled: boolean | null): string {
+  if (enabled === null) {
+    return "unknown";
+  }
+  return enabled ? "enabled" : "disabled";
 }
 
 function deriveAutomationCompletenessSignal(
@@ -546,6 +738,7 @@ function mapAutomationRunCreateError(error: ApiRequestError): string {
 }
 
 export default function AutomationPage() {
+  const { principal } = useAuth();
   const context = useOperatorContext();
   const contextLoading = context.loading;
   const contextError = context.error;
@@ -558,6 +751,12 @@ export default function AutomationPage() {
     recommendationTitle: null,
   });
   const [items, setItems] = useState<AutomationRun[]>([]);
+  const [automationConfig, setAutomationConfig] = useState<AutomationConfig | null>(null);
+  const [automationConfigDraft, setAutomationConfigDraft] = useState<AutomationConfigStepDraft | null>(null);
+  const [automationConfigEditing, setAutomationConfigEditing] = useState(false);
+  const [automationConfigSaving, setAutomationConfigSaving] = useState(false);
+  const [automationConfigSaveSuccess, setAutomationConfigSaveSuccess] = useState<string | null>(null);
+  const [automationConfigSaveError, setAutomationConfigSaveError] = useState<string | null>(null);
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [triggerRunPending, setTriggerRunPending] = useState(false);
@@ -618,6 +817,25 @@ export default function AutomationPage() {
     && !loadingItems
     && context.selectedSiteId,
   );
+  const automationConfigSourceLabel = deriveAutomationConfigSourceLabel(automationConfig);
+  const canEditAutomationConfig = principal?.role === "admin";
+  const automationConfigPatchPayload = buildAutomationConfigPatchPayload(automationConfig, automationConfigDraft);
+  const automationConfigHasChanges = Object.keys(automationConfigPatchPayload).length > 0;
+  const automationConfigHasEnabledStep = automationConfigDraft
+    ? AUTOMATION_EDITABLE_STEP_FIELDS.some(({ field }) => automationConfigDraft[field])
+    : false;
+  const automationConfigurationGroups = AUTOMATION_CONFIG_STEP_GROUPS.map((group) => ({
+    id: group.id,
+    label: group.label,
+    description: group.description,
+    dependencyNote: group.dependencyNote,
+    steps: group.fields.map((field) => ({
+      field,
+      label: AUTOMATION_CONFIG_STEP_DEFINITIONS[field].label,
+      helperText: AUTOMATION_CONFIG_STEP_DEFINITIONS[field].helperText,
+      enabled: automationConfig ? automationConfig[field] : null,
+    })),
+  }));
 
   function handleLocalDecision(actionItemId: string, decision: ActionDecision): void {
     setActionDecisions((current) => ({
@@ -650,6 +868,71 @@ export default function AutomationPage() {
       }
     } finally {
       setTriggerRunPending(false);
+    }
+  }
+
+  function handleAutomationConfigEditStart(): void {
+    setAutomationConfigDraft(extractAutomationConfigStepDraft(automationConfig));
+    setAutomationConfigEditing(true);
+    setAutomationConfigSaveError(null);
+    setAutomationConfigSaveSuccess(null);
+  }
+
+  function handleAutomationConfigEditCancel(): void {
+    setAutomationConfigDraft(extractAutomationConfigStepDraft(automationConfig));
+    setAutomationConfigEditing(false);
+    setAutomationConfigSaveError(null);
+  }
+
+  function handleAutomationConfigToggleChange(field: AutomationEditableStepField, enabled: boolean): void {
+    setAutomationConfigDraft((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        [field]: enabled,
+      };
+    });
+    setAutomationConfigSaveError(null);
+    setAutomationConfigSaveSuccess(null);
+  }
+
+  async function handleAutomationConfigSave(): Promise<void> {
+    if (!context.selectedSiteId || !automationConfig || !automationConfigDraft) {
+      return;
+    }
+    if (!automationConfigHasEnabledStep) {
+      setAutomationConfigSaveError("Keep at least one automation step enabled.");
+      return;
+    }
+    if (!automationConfigHasChanges) {
+      setAutomationConfigEditing(false);
+      setAutomationConfigSaveSuccess("No automation configuration changes to save.");
+      return;
+    }
+    setAutomationConfigSaving(true);
+    setAutomationConfigSaveError(null);
+    setAutomationConfigSaveSuccess(null);
+    try {
+      const updatedConfig = await patchAutomationConfig(
+        context.token,
+        context.businessId,
+        context.selectedSiteId,
+        automationConfigPatchPayload,
+      );
+      setAutomationConfig(updatedConfig);
+      setAutomationConfigDraft(extractAutomationConfigStepDraft(updatedConfig));
+      setAutomationConfigEditing(false);
+      setAutomationConfigSaveSuccess("Automation configuration updated.");
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        setAutomationConfigSaveError(mapAutomationConfigSaveError(error));
+      } else {
+        setAutomationConfigSaveError("Unable to save automation settings right now.");
+      }
+    } finally {
+      setAutomationConfigSaving(false);
     }
   }
 
@@ -687,13 +970,24 @@ export default function AutomationPage() {
       setLoadingItems(true);
       setItemsError(null);
       try {
-        const response = await fetchAutomationRuns(context.token, context.businessId, context.selectedSiteId as string);
-        if (!cancelled) {
-          setItems(sortAutomationRunsNewestFirst(response.items));
+        const [runsResult, statusResult] = await Promise.allSettled([
+          fetchAutomationRuns(context.token, context.businessId, context.selectedSiteId as string),
+          fetchAutomationStatus(context.token, context.businessId, context.selectedSiteId as string),
+        ]);
+        if (cancelled) {
+          return;
         }
-      } catch (err) {
-        if (!cancelled) {
-          setItemsError(err instanceof Error ? err.message : "Failed to load automation runs.");
+        if (runsResult.status === "fulfilled") {
+          setItems(sortAutomationRunsNewestFirst(runsResult.value.items));
+        } else {
+          setItemsError(
+            runsResult.reason instanceof Error ? runsResult.reason.message : "Failed to load automation runs.",
+          );
+        }
+        if (statusResult.status === "fulfilled") {
+          setAutomationConfig(statusResult.value.config);
+        } else {
+          setAutomationConfig(null);
         }
       } finally {
         if (!cancelled) {
@@ -718,6 +1012,13 @@ export default function AutomationPage() {
       window.clearInterval(intervalId);
     };
   }, [automationPollingActive]);
+
+  useEffect(() => {
+    if (automationConfigEditing) {
+      return;
+    }
+    setAutomationConfigDraft(extractAutomationConfigStepDraft(automationConfig));
+  }, [automationConfig, automationConfigEditing]);
 
   if (context.loading) {
     return (
@@ -824,6 +1125,114 @@ export default function AutomationPage() {
             {triggerContext.recommendationId ? ` (${triggerContext.recommendationId})` : ""}
           </p>
         ) : null}
+        <div className="panel panel-compact stack-tight" data-testid="automation-config-summary">
+          <span className="text-strong">Automation configuration</span>
+          <span className="hint muted">
+            Configure which automation outputs are generated for this site. Changes apply to future runs only.
+          </span>
+          {automationConfigEditing && automationConfigDraft ? (
+            <div className="stack-tight" data-testid="automation-config-editor">
+              {automationConfigurationGroups.map((group) => (
+                <div
+                  key={`automation-config-group-editor-${group.id}`}
+                  className="panel panel-compact stack-tight"
+                  data-testid={`automation-config-group-${group.id}`}
+                >
+                  <span className="text-strong">{group.label}</span>
+                  <span className="hint muted">{group.description}</span>
+                  {group.dependencyNote ? <span className="hint muted">{group.dependencyNote}</span> : null}
+                  {group.steps.map((step) => (
+                    <div key={`automation-config-editor-${step.field}`} className="stack-tight">
+                      <label className="checkbox-chip">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(automationConfigDraft[step.field])}
+                          onChange={(event) => handleAutomationConfigToggleChange(step.field, event.target.checked)}
+                          disabled={automationConfigSaving}
+                        />
+                        <span>{step.label}</span>
+                      </label>
+                      <span className="hint muted">{step.helperText}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              {!automationConfigHasEnabledStep ? (
+                <span className="hint muted">Keep at least one step enabled before saving.</span>
+              ) : null}
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="button button-primary button-inline"
+                  onClick={() => {
+                    void handleAutomationConfigSave();
+                  }}
+                  disabled={automationConfigSaving || !automationConfigHasEnabledStep}
+                  data-testid="automation-config-save-button"
+                >
+                  {automationConfigSaving ? "Saving..." : "Save step settings"}
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary button-inline"
+                  onClick={handleAutomationConfigEditCancel}
+                  disabled={automationConfigSaving}
+                  data-testid="automation-config-cancel-button"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="stack-tight">
+              {automationConfigurationGroups.map((group) => (
+                <div
+                  key={`automation-config-group-read-${group.id}`}
+                  className="panel panel-compact stack-tight"
+                  data-testid={`automation-config-group-${group.id}`}
+                >
+                  <span className="text-strong">{group.label}</span>
+                  <span className="hint muted">{group.description}</span>
+                  {group.dependencyNote ? <span className="hint muted">{group.dependencyNote}</span> : null}
+                  <ul className="list-compact-reset">
+                    {group.steps.map((step) => (
+                      <li key={`automation-config-${group.id}-${step.field}`} className="hint muted">
+                        <span className="text-strong">{step.label}:</span> {describeAutomationConfigStepState(step.enabled)}
+                        <div className="hint muted">{step.helperText}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+          <span className="hint muted">Config source: {automationConfigSourceLabel}</span>
+          {automationConfigSaveSuccess ? (
+            <span className="hint">{automationConfigSaveSuccess}</span>
+          ) : null}
+          {automationConfigSaveError ? (
+            <span className="hint error" data-testid="automation-config-save-error">
+              {automationConfigSaveError}
+            </span>
+          ) : null}
+          {canEditAutomationConfig ? (
+            automationConfigEditing ? null : (
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="button button-secondary button-inline"
+                  onClick={handleAutomationConfigEditStart}
+                  disabled={!automationConfig}
+                  data-testid="automation-config-edit-button"
+                >
+                  Edit step settings
+                </button>
+              </div>
+            )
+          ) : (
+            <span className="hint muted">Read-only view. Contact admin to change automation settings.</span>
+          )}
+        </div>
         {automationPollingActive ? (
           <p className="hint muted" data-testid="automation-polling-status">
             Automation execution is in progress. Status refreshes automatically every few seconds.
@@ -1098,39 +1507,69 @@ export default function AutomationPage() {
                                   ? step.linked_output_id
                                   : null;
                                 const stepReason = summarizeAutomationStepReason(step);
+                                const disabledByAutomationConfig = isStepDisabledByAutomationConfig(step);
+                                const structuredReason = disabledByAutomationConfig
+                                  ? "Disabled in automation configuration"
+                                  : stepReason || "No explicit reason provided";
                                 return (
-                                  <li key={`automation-step-${item.id}-${step.step_name}-${index}`} className="hint muted">
-                                    <span className={`badge ${automationStatusBadgeClass(step.status)}`}>{step.status}</span>{" "}
-                                    <span className="text-strong">{formatAutomationStepName(step.step_name)}</span>:{" "}
-                                    {automationStepOutcomeLabel(step)}
-                                    {step.started_at ? ` · started ${formatDateTime(step.started_at)}` : ""}
-                                    {step.finished_at ? ` · finished ${formatDateTime(step.finished_at)}` : ""}
-                                    {stepReason ? ` · reason: ${stepReason}` : ""}
-                                    {step.pages_analyzed_count !== null && step.pages_analyzed_count !== undefined
-                                      ? ` · pages analyzed: ${step.pages_analyzed_count}`
-                                      : ""}
-                                    {step.issues_found_count !== null && step.issues_found_count !== undefined
-                                      ? ` · issues found: ${step.issues_found_count}`
-                                      : ""}
+                                  <li
+                                    key={`automation-step-${item.id}-${step.step_name}-${index}`}
+                                    className="panel panel-compact stack-tight"
+                                  >
+                                    <span className="hint muted">
+                                      <span className="text-strong">Step:</span> {formatAutomationStepName(step.step_name)}
+                                    </span>
+                                    <span className="hint muted">
+                                      <span className="text-strong">Status:</span>{" "}
+                                      <span className={`badge ${automationStatusBadgeClass(step.status)}`}>{step.status}</span>
+                                    </span>
+                                    <span className="hint muted">
+                                      <span className="text-strong">Outcome:</span> {automationStepOutcomeLabel(step)}
+                                    </span>
+                                    <span className="hint muted">
+                                      <span className="text-strong">Reason:</span> {structuredReason}
+                                    </span>
+                                    {disabledByAutomationConfig ? (
+                                      <span className="hint muted">
+                                        <span className="text-strong">Config source:</span> {automationConfigSourceLabel}
+                                      </span>
+                                    ) : null}
+                                    {step.started_at ? (
+                                      <span className="hint muted">
+                                        <span className="text-strong">Started:</span> {formatDateTime(step.started_at)}
+                                      </span>
+                                    ) : null}
+                                    {step.finished_at ? (
+                                      <span className="hint muted">
+                                        <span className="text-strong">Finished:</span> {formatDateTime(step.finished_at)}
+                                      </span>
+                                    ) : null}
+                                    {step.pages_analyzed_count !== null && step.pages_analyzed_count !== undefined ? (
+                                      <span className="hint muted">
+                                        <span className="text-strong">Pages analyzed:</span> {step.pages_analyzed_count}
+                                      </span>
+                                    ) : null}
+                                    {step.issues_found_count !== null && step.issues_found_count !== undefined ? (
+                                      <span className="hint muted">
+                                        <span className="text-strong">Issues found:</span> {step.issues_found_count}
+                                      </span>
+                                    ) : null}
                                     {step.recommendations_generated_count !== null
-                                      && step.recommendations_generated_count !== undefined
-                                      ? ` · recommendations generated: ${step.recommendations_generated_count}`
-                                      : ""}
-                                    {stepRecommendationRunOutputId ? (
-                                      <>
-                                        {" "}
-                                        ·{" "}
+                                      && step.recommendations_generated_count !== undefined ? (
+                                      <span className="hint muted">
+                                        <span className="text-strong">Recommendations generated:</span>{" "}
+                                        {step.recommendations_generated_count}
+                                      </span>
+                                      ) : null}
+                                    <div className="link-row">
+                                      {stepRecommendationRunOutputId ? (
                                         <Link
                                           href={buildAutomationRecommendationRunHref(stepRecommendationRunOutputId, item.site_id)}
                                         >
                                           Recommendation run output
                                         </Link>
-                                      </>
-                                    ) : null}
-                                    {recommendationRunOutputId && stepRecommendationNarrativeOutputId ? (
-                                      <>
-                                        {" "}
-                                        ·{" "}
+                                      ) : null}
+                                      {recommendationRunOutputId && stepRecommendationNarrativeOutputId ? (
                                         <Link
                                           href={buildAutomationRecommendationNarrativeHref(
                                             recommendationRunOutputId,
@@ -1140,8 +1579,8 @@ export default function AutomationPage() {
                                         >
                                           Narrative output
                                         </Link>
-                                      </>
-                                    ) : null}
+                                      ) : null}
+                                    </div>
                                   </li>
                                 );
                               })}

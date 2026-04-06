@@ -57,6 +57,8 @@ import type {
   RecommendationListResponse,
   BindActionAutomationResponse,
   RunActionAutomationResponse,
+  AutomationStatusResponse,
+  AutomationConfigPatchRequest,
   AutomationRun,
   AutomationRunListResponse,
   GoogleBusinessProfileAccountsResponse,
@@ -881,6 +883,33 @@ export async function createAutomationRun(
     {
       method: "POST",
       token,
+    },
+  );
+}
+
+export async function fetchAutomationStatus(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<AutomationStatusResponse> {
+  return apiRequest<AutomationStatusResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/automation-status`,
+    { token },
+  );
+}
+
+export async function patchAutomationConfig(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: AutomationConfigPatchRequest,
+): Promise<AutomationStatusResponse["config"]> {
+  return apiRequest<AutomationStatusResponse["config"]>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/automation-config`,
+    {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(payload),
     },
   );
 }

@@ -1653,6 +1653,46 @@ export interface AutomationRunListResponse {
   total: number;
 }
 
+export interface AutomationConfig {
+  id: string;
+  business_id: string;
+  site_id: string;
+  config_source: "default" | "site";
+  is_enabled: boolean;
+  cadence_type: "manual" | "interval_minutes";
+  cadence_minutes: number | null;
+  trigger_audit: boolean;
+  trigger_audit_summary: boolean;
+  trigger_competitor_snapshot: boolean;
+  trigger_comparison: boolean;
+  trigger_competitor_summary: boolean;
+  trigger_recommendations: boolean;
+  trigger_recommendation_narrative: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  last_status: string | null;
+  last_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AutomationStatusResponse {
+  business_id: string;
+  site_id: string;
+  config: AutomationConfig;
+  latest_run: AutomationRun | null;
+}
+
+export interface AutomationConfigPatchRequest {
+  trigger_audit?: boolean;
+  trigger_audit_summary?: boolean;
+  trigger_competitor_snapshot?: boolean;
+  trigger_comparison?: boolean;
+  trigger_competitor_summary?: boolean;
+  trigger_recommendations?: boolean;
+  trigger_recommendation_narrative?: boolean;
+}
+
 export type GoogleBusinessProfileTokenStatus =
   | "usable"
   | "refresh_required"

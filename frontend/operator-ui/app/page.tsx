@@ -74,14 +74,17 @@ export default function LoginPage() {
           {loading ? <p className="auth-subtitle">Signing in...</p> : null}
         </div>
 
-        <div className="auth-policy-links" aria-label="Legal links">
-          <a href="https://www.mbsrn.com/privacy" target="_blank" rel="noreferrer">
-            Privacy Policy
-          </a>
-          <span aria-hidden="true">·</span>
-          <a href="https://www.mbsrn.com/terms" target="_blank" rel="noreferrer">
-            Terms of Service
-          </a>
+        <div className="auth-policy-block">
+          <p className="auth-policy-intro">Review our public policies before signing in:</p>
+          <div className="auth-policy-links" aria-label="Legal links">
+            <a href="https://www.mbsrn.com/privacy" target="_blank" rel="noreferrer">
+              Privacy Policy
+            </a>
+            <span aria-hidden="true">·</span>
+            <a href="https://www.mbsrn.com/terms" target="_blank" rel="noreferrer">
+              Terms of Service
+            </a>
+          </div>
         </div>
 
         {error ? <p className="auth-error">{error}</p> : null}

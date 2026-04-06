@@ -26,6 +26,10 @@ class SEOAutomationConfig(Base):
             "last_status IS NULL OR last_status IN ('queued', 'running', 'completed', 'failed', 'skipped')",
             name="ck_seo_automation_configs_last_status",
         ),
+        CheckConstraint(
+            "config_source IN ('default', 'site')",
+            name="ck_seo_automation_configs_config_source",
+        ),
         Index(
             "ix_seo_automation_configs_business_enabled_next_run",
             "business_id",
@@ -64,6 +68,7 @@ class SEOAutomationConfig(Base):
     trigger_competitor_summary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     trigger_recommendations: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     trigger_recommendation_narrative: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    config_source: Mapped[str] = mapped_column(String(16), nullable=False, default="site")
 
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

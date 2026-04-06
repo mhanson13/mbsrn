@@ -407,6 +407,18 @@ def _attach_action_lineage_to_recommendations(
     ]
 
 
+def _to_automation_config_read(
+    *,
+    automation_service: SEOAutomationService,
+    config,
+) -> SEOAutomationConfigRead:
+    return SEOAutomationConfigRead.model_validate(config).model_copy(
+        update={
+            "config_source": automation_service.get_config_source(config=config),
+        }
+    )
+
+
 def _to_recommendation_measurement_window(
     *,
     current: int,
@@ -4624,7 +4636,7 @@ def create_or_replace_seo_automation_config(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOAutomationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-    return SEOAutomationConfigRead.model_validate(config)
+    return _to_automation_config_read(automation_service=automation_service, config=config)
 
 
 @router.get("/sites/{site_id}/automation-config", response_model=SEOAutomationConfigRead)
@@ -4648,7 +4660,7 @@ def get_seo_automation_config(
         )
     except (SEOSiteNotFoundError, SEOAutomationNotFoundError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return SEOAutomationConfigRead.model_validate(config)
+    return _to_automation_config_read(automation_service=automation_service, config=config)
 
 
 @router.patch("/sites/{site_id}/automation-config", response_model=SEOAutomationConfigRead)
@@ -4676,7 +4688,7 @@ def patch_seo_automation_config(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOAutomationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-    return SEOAutomationConfigRead.model_validate(config)
+    return _to_automation_config_read(automation_service=automation_service, config=config)
 
 
 @router.post("/sites/{site_id}/automation-config/enable", response_model=SEOAutomationConfigRead)
@@ -4703,7 +4715,7 @@ def enable_seo_automation_config(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOAutomationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-    return SEOAutomationConfigRead.model_validate(config)
+    return _to_automation_config_read(automation_service=automation_service, config=config)
 
 
 @router.post("/sites/{site_id}/automation-config/disable", response_model=SEOAutomationConfigRead)
@@ -4730,7 +4742,7 @@ def disable_seo_automation_config(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOAutomationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-    return SEOAutomationConfigRead.model_validate(config)
+    return _to_automation_config_read(automation_service=automation_service, config=config)
 
 
 @router.post(
@@ -4847,7 +4859,7 @@ def get_seo_automation_status(
     return SEOAutomationStatusRead(
         business_id=scoped_business_id,
         site_id=site_id,
-        config=SEOAutomationConfigRead.model_validate(config),
+        config=_to_automation_config_read(automation_service=automation_service, config=config),
         latest_run=SEOAutomationRunRead.model_validate(latest_run) if latest_run is not None else None,
     )
 

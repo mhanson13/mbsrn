@@ -3528,6 +3528,10 @@ describe("site workspace timeline controls", () => {
     expect(nextActionLines[0]).toHaveTextContent(
       "Next action: Open Homepage and add stronger trust proof in the main service section.",
     );
+    const actionabilitySummaryLines = screen.getAllByTestId("recommendation-actionability-summary");
+    expect(actionabilitySummaryLines.length).toBeGreaterThan(0);
+    expect(actionabilitySummaryLines[0]).toHaveTextContent("How actionable");
+    expect(actionabilitySummaryLines.some((line) => line.textContent?.includes("Ready to act"))).toBe(true);
     const executionReadinessLines = screen.getAllByTestId("recommendation-execution-readiness");
     expect(executionReadinessLines).toHaveLength(1);
     expect(executionReadinessLines[0]).toHaveTextContent("Execution readiness:");
@@ -3567,6 +3571,10 @@ describe("site workspace timeline controls", () => {
     const evidenceStrengthLines = screen.getAllByTestId("recommendation-evidence-strength");
     expect(evidenceStrengthLines).toHaveLength(1);
     expect(evidenceStrengthLines[0]).toHaveTextContent("Strong evidence");
+    const actionabilitySupportGroups = screen.getAllByTestId("recommendation-actionability-support");
+    expect(actionabilitySupportGroups.length).toBeGreaterThan(0);
+    expect(actionabilitySupportGroups[0]).toHaveTextContent("Actionability");
+    expect(actionabilitySupportGroups.some((group) => group.textContent?.includes("Ready to act"))).toBe(true);
 
     const targetPageHintLines = screen.getAllByTestId("recommendation-target-page-hints");
     expect(targetPageHintLines).toHaveLength(1);
@@ -3609,6 +3617,12 @@ describe("site workspace timeline controls", () => {
     expect(evidenceTraceLines[0]).toHaveTextContent(
       "Evidence trace: Competitor-backed · Trust/verification gap · Service pages",
     );
+    const actionSectionLabels = screen.getAllByTestId("recommendation-action-section-label");
+    expect(actionSectionLabels.length).toBeGreaterThan(0);
+    const evidenceSectionLabels = screen.getAllByTestId("recommendation-evidence-section-label");
+    expect(evidenceSectionLabels.length).toBeGreaterThan(0);
+    const readinessSectionLabels = screen.getAllByTestId("recommendation-readiness-section-label");
+    expect(readinessSectionLabels.length).toBeGreaterThan(0);
 
     expect(
       screen.queryByText("Action: Recommendation without action metadata"),

@@ -44,6 +44,8 @@ from app.services.seo_summary import SEOSummaryNotFoundError, SEOSummaryService,
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_AUTOMATION_CONFIG_TEMPLATE = SEOAutomationConfigUpsertRequest()
+
 
 STEP_AUDIT_RUN = "audit_run"
 STEP_AUDIT_SUMMARY = "audit_summary"
@@ -113,6 +115,7 @@ class SEOAutomationService:
         business_id: str,
         site_id: str,
         payload: SEOAutomationConfigUpsertRequest,
+        config_source: str = "site",
     ) -> SEOAutomationConfig:
         self._require_business(business_id)
         self._require_site(business_id=business_id, site_id=site_id)
@@ -134,6 +137,7 @@ class SEOAutomationService:
                 trigger_competitor_summary=payload.trigger_competitor_summary,
                 trigger_recommendations=payload.trigger_recommendations,
                 trigger_recommendation_narrative=payload.trigger_recommendation_narrative,
+                config_source=config_source,
                 next_run_at=self._calculate_next_run_at(
                     now=now,
                     is_enabled=payload.is_enabled,
@@ -158,6 +162,7 @@ class SEOAutomationService:
             config.trigger_competitor_summary = payload.trigger_competitor_summary
             config.trigger_recommendations = payload.trigger_recommendations
             config.trigger_recommendation_narrative = payload.trigger_recommendation_narrative
+            config.config_source = "site"
             config.next_run_at = self._calculate_next_run_at(
                 now=now,
                 is_enabled=config.is_enabled,
@@ -201,6 +206,8 @@ class SEOAutomationService:
                 cadence_changed = True
             if key == "is_enabled":
                 enabled_changed = True
+
+        config.config_source = "site"
 
         self._validate_effective_config(config)
 
@@ -250,6 +257,7 @@ class SEOAutomationService:
                 business_id=business_id,
                 site_id=site_id,
                 payload=SEOAutomationConfigUpsertRequest(),
+                config_source="default",
             )
             logger.info(
                 "SEO automation config auto-created for manual run business_id=%s site_id=%s",
@@ -276,6 +284,28 @@ class SEOAutomationService:
         runs = self.seo_automation_repository.list_runs_for_business_site(business_id, site_id)
         latest_run = runs[0] if runs else None
         return config, latest_run
+
+    def get_config_source(self, *, config: SEOAutomationConfig) -> str:
+        normalized_source = str(getattr(config, "config_source", "") or "").strip().lower()
+        if normalized_source in {"default", "site"}:
+            return normalized_source
+        if (
+            config.is_enabled == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.is_enabled
+            and config.cadence_type == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.cadence_type
+            and config.cadence_minutes == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.cadence_minutes
+            and config.trigger_audit == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_audit
+            and config.trigger_audit_summary == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_audit_summary
+            and config.trigger_competitor_snapshot
+            == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_competitor_snapshot
+            and config.trigger_comparison == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_comparison
+            and config.trigger_competitor_summary
+            == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_competitor_summary
+            and config.trigger_recommendations == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_recommendations
+            and config.trigger_recommendation_narrative
+            == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_recommendation_narrative
+        ):
+            return "default"
+        return "site"
 
     def run_due_configs(self, *, limit: int = 25, business_id: str | None = None) -> SEOAutomationDueRunSummary:
         now = utc_now()

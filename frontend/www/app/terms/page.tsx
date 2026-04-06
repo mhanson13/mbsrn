@@ -27,6 +27,20 @@ export default function TermsPage() {
             These terms define baseline responsibilities for using the MBSRN operator platform.
           </p>
           <p className="legal-updated">Last updated: April 6, 2026</p>
+          <div className="legal-highlights" aria-label="Terms scope highlights">
+            <p>
+              <span>Product</span>
+              My Business Sucks Right Now (MBSRN)
+            </p>
+            <p>
+              <span>Scope</span>
+              SaaS operator workflows and integrations
+            </p>
+            <p>
+              <span>Support</span>
+              {supportEmail}
+            </p>
+          </div>
         </header>
 
         <div className="legal-sections">

@@ -14,6 +14,7 @@ SEOAutomationCadenceType = Literal["manual", "interval_minutes"]
 SEOAutomationTriggerSource = Literal["manual", "scheduled"]
 SEOAutomationStatus = Literal["queued", "running", "completed", "failed", "skipped"]
 SEOAutomationTerminalOutcome = Literal["completed", "completed_with_skips", "failed", "partial"]
+SEOAutomationConfigSource = Literal["default", "site"]
 SEOAutomationStepName = Literal[
     "audit_run",
     "audit_summary",
@@ -100,6 +101,7 @@ class SEOAutomationConfigRead(BaseModel):
     trigger_competitor_summary: bool
     trigger_recommendations: bool
     trigger_recommendation_narrative: bool
+    config_source: SEOAutomationConfigSource = "site"
 
     last_run_at: datetime | None
     next_run_at: datetime | None

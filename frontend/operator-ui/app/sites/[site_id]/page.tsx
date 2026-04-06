@@ -10186,6 +10186,52 @@ export default function SiteWorkspacePage() {
                           || recommendationObservedGapSummary
                           || recommendationExpectedOutcome
                           || recommendationCompetitorInsight;
+                        const recommendationEffortHintLabel = recommendationPriority?.effortHint
+                          ? formatRecommendationEffortHintLabel(recommendationPriority.effortHint)
+                          : null;
+                        const recommendationIsBlocked = recommendationExecutionReadiness !== "ready"
+                          && Boolean(recommendationBlockingReason);
+                        const hasActionabilitySummary = Boolean(
+                          recommendationExecutionReadiness || recommendationEffortHintLabel || recommendationIsBlocked,
+                        );
+                        const hasActionSectionDetails = Boolean(
+                          recommendationActionClarity
+                          || recommendationNextAction
+                          || recommendationExecutionType
+                          || recommendationExecutionScope
+                          || recommendationExecutionInputs.length > 0
+                          || recommendationExecutionReadiness
+                          || recommendationBlockingReason
+                          || recommendationTargetContext
+                          || recommendationTargetPageHints.length > 0
+                          || recommendationTargetContentSummary
+                          || recommendationActionPlanSteps.length > 0,
+                        );
+                        const hasEvidenceSectionDetails = Boolean(
+                          recommendationEvidenceSummary
+                          || recommendationEvidenceTrace.length > 0
+                          || renderObservedGapSummary
+                          || recommendationCompetitorInsight
+                          || (recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none")
+                          || recommendationCompetitorLinkageSummary
+                          || recommendationCompetitorEvidenceLinks.length > 0
+                          || recommendationActionDelta
+                          || recommendationWhyNow
+                          || recommendationExpectedOutcome,
+                        );
+                        const hasReadinessSectionDetails = Boolean(
+                          recommendationExecutionReadiness
+                          || recommendationPriorityRationale
+                          || recommendationEvidenceStrength
+                          || recommendationEffectivenessSummary
+                          || recommendationMeasurementContextLine
+                          || recommendationMeasurementSinceLine
+                          || recommendationSearchVisibilityContextLine
+                          || recommendationSearchVisibilitySinceLine
+                          || recommendationSearchQueriesLine
+                          || recommendationMeasurementContext?.measurementStatus === "no_match"
+                          || recommendationSearchConsoleContext?.searchConsoleStatus === "no_match",
+                        );
                         const recommendationDetailsToggleLabel = recommendationActionPlanSteps.length > 0
                           ? "Show implementation steps"
                           : "Show details";
@@ -10218,6 +10264,24 @@ export default function SiteWorkspacePage() {
                                       <span>{recommendationWhyItMattersSummary}</span>
                                     </span>
                                   ) : null}
+                                  {hasActionabilitySummary ? (
+                                    <div className="hint muted workspace-recommendation-summary-line" data-testid="recommendation-actionability-summary">
+                                      <span className="workspace-recommendation-summary-label">How actionable</span>
+                                      <div className="link-row">
+                                        {recommendationExecutionReadiness ? (
+                                          <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
+                                            {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
+                                          </span>
+                                        ) : null}
+                                        {recommendationEffortHintLabel ? (
+                                          <span className="badge badge-muted">Effort: {recommendationEffortHintLabel}</span>
+                                        ) : null}
+                                        {recommendationIsBlocked ? (
+                                          <span className="badge badge-warn">Blocked by prerequisite</span>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  ) : null}
                                   <details className="workspace-recommendation-details" data-testid={`recommendation-details-${item.id}`}>
                                     <summary className="workspace-recommendation-details-toggle">{recommendationDetailsToggleLabel}</summary>
                                     <div className="workspace-recommendation-details-content">
@@ -10226,6 +10290,16 @@ export default function SiteWorkspacePage() {
                                     bucketKey={recommendationPresentationBucketKey}
                                     testId={`recommendation-detail-clarity-row-${item.id}`}
                                   />
+                                  {hasActionSectionDetails ? (
+                                    <span className="workspace-recommendation-summary-label" data-testid="recommendation-action-section-label">
+                                      Action
+                                    </span>
+                                  ) : null}
+                                  {hasEvidenceSectionDetails ? (
+                                    <span className="workspace-recommendation-summary-label" data-testid="recommendation-evidence-section-label">
+                                      Why this matters
+                                    </span>
+                                  ) : null}
                                   {recommendationEvidenceSummary ? (
                                     <span className="hint muted" data-testid="recommendation-evidence-summary">
                                       Why this matters: {recommendationEvidenceSummary}
@@ -10425,6 +10499,11 @@ export default function SiteWorkspacePage() {
                                       .
                                     </span>
                                   ) : null}
+                                  {hasReadinessSectionDetails ? (
+                                    <span className="workspace-recommendation-summary-label" data-testid="recommendation-readiness-section-label">
+                                      Readiness and confidence
+                                    </span>
+                                  ) : null}
                                     </div>
                                   </details>
                                 </div>
@@ -10501,6 +10580,24 @@ export default function SiteWorkspacePage() {
                                           {formatRecommendationEvidenceStrengthLabel(recommendationEvidenceStrength)}
                                         </span>
                                       </div>
+                                    </div>
+                                  ) : null}
+                                  {hasActionabilitySummary ? (
+                                    <div className="workspace-recommendation-row-support-group" data-testid="recommendation-actionability-support">
+                                      <span className="workspace-recommendation-row-support-label">Actionability</span>
+                                      <div className="link-row">
+                                        {recommendationExecutionReadiness ? (
+                                          <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
+                                            {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
+                                          </span>
+                                        ) : null}
+                                        {recommendationEffortHintLabel ? (
+                                          <span className="badge badge-muted">Effort: {recommendationEffortHintLabel}</span>
+                                        ) : null}
+                                      </div>
+                                      {recommendationIsBlocked && recommendationBlockingReason ? (
+                                        <span className="hint muted">{recommendationBlockingReason}</span>
+                                      ) : null}
                                     </div>
                                   ) : null}
                                   <div className="workspace-recommendation-row-support-group">
@@ -10619,6 +10716,52 @@ export default function SiteWorkspacePage() {
                                 || recommendationObservedGapSummary
                                 || recommendationExpectedOutcome
                                 || recommendationCompetitorInsight;
+                              const recommendationEffortHintLabel = recommendationPriority?.effortHint
+                                ? formatRecommendationEffortHintLabel(recommendationPriority.effortHint)
+                                : null;
+                              const recommendationIsBlocked = recommendationExecutionReadiness !== "ready"
+                                && Boolean(recommendationBlockingReason);
+                              const hasActionabilitySummary = Boolean(
+                                recommendationExecutionReadiness || recommendationEffortHintLabel || recommendationIsBlocked,
+                              );
+                              const hasActionSectionDetails = Boolean(
+                                recommendationActionClarity
+                                || recommendationNextAction
+                                || recommendationExecutionType
+                                || recommendationExecutionScope
+                                || recommendationExecutionInputs.length > 0
+                                || recommendationExecutionReadiness
+                                || recommendationBlockingReason
+                                || recommendationTargetContext
+                                || recommendationTargetPageHints.length > 0
+                                || recommendationTargetContentSummary
+                                || recommendationActionPlanSteps.length > 0,
+                              );
+                              const hasEvidenceSectionDetails = Boolean(
+                                recommendationEvidenceSummary
+                                || recommendationEvidenceTrace.length > 0
+                                || renderObservedGapSummary
+                                || recommendationCompetitorInsight
+                                || (recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none")
+                                || recommendationCompetitorLinkageSummary
+                                || recommendationCompetitorEvidenceLinks.length > 0
+                                || recommendationActionDelta
+                                || recommendationWhyNow
+                                || recommendationExpectedOutcome,
+                              );
+                              const hasReadinessSectionDetails = Boolean(
+                                recommendationExecutionReadiness
+                                || recommendationPriorityRationale
+                                || recommendationEvidenceStrength
+                                || recommendationEffectivenessSummary
+                                || recommendationMeasurementContextLine
+                                || recommendationMeasurementSinceLine
+                                || recommendationSearchVisibilityContextLine
+                                || recommendationSearchVisibilitySinceLine
+                                || recommendationSearchQueriesLine
+                                || recommendationMeasurementContext?.measurementStatus === "no_match"
+                                || recommendationSearchConsoleContext?.searchConsoleStatus === "no_match",
+                              );
                               const recommendationDetailsToggleLabel = recommendationActionPlanSteps.length > 0
                                 ? "Show implementation steps"
                                 : "Show details";
@@ -10651,6 +10794,24 @@ export default function SiteWorkspacePage() {
                                             <span>{recommendationWhyItMattersSummary}</span>
                                           </span>
                                         ) : null}
+                                        {hasActionabilitySummary ? (
+                                          <div className="hint muted workspace-recommendation-summary-line" data-testid="recommendation-actionability-summary">
+                                            <span className="workspace-recommendation-summary-label">How actionable</span>
+                                            <div className="link-row">
+                                              {recommendationExecutionReadiness ? (
+                                                <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
+                                                  {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
+                                                </span>
+                                              ) : null}
+                                              {recommendationEffortHintLabel ? (
+                                                <span className="badge badge-muted">Effort: {recommendationEffortHintLabel}</span>
+                                              ) : null}
+                                              {recommendationIsBlocked ? (
+                                                <span className="badge badge-warn">Blocked by prerequisite</span>
+                                              ) : null}
+                                            </div>
+                                          </div>
+                                        ) : null}
                                         <details className="workspace-recommendation-details" data-testid={`recommendation-details-${item.id}`}>
                                           <summary className="workspace-recommendation-details-toggle">{recommendationDetailsToggleLabel}</summary>
                                           <div className="workspace-recommendation-details-content">
@@ -10659,6 +10820,16 @@ export default function SiteWorkspacePage() {
                                           bucketKey={recommendationPresentationBucketKey}
                                           testId={`recommendation-detail-clarity-row-${section.theme}-${item.id}`}
                                         />
+                                        {hasActionSectionDetails ? (
+                                          <span className="workspace-recommendation-summary-label" data-testid="recommendation-action-section-label">
+                                            Action
+                                          </span>
+                                        ) : null}
+                                        {hasEvidenceSectionDetails ? (
+                                          <span className="workspace-recommendation-summary-label" data-testid="recommendation-evidence-section-label">
+                                            Why this matters
+                                          </span>
+                                        ) : null}
                                         {recommendationEvidenceSummary ? (
                                           <span className="hint muted" data-testid="recommendation-evidence-summary">
                                             Why this matters: {recommendationEvidenceSummary}
@@ -10863,6 +11034,11 @@ export default function SiteWorkspacePage() {
                                             .
                                           </span>
                                         ) : null}
+                                        {hasReadinessSectionDetails ? (
+                                          <span className="workspace-recommendation-summary-label" data-testid="recommendation-readiness-section-label">
+                                            Readiness and confidence
+                                          </span>
+                                        ) : null}
                                           </div>
                                         </details>
                                       </div>
@@ -10941,6 +11117,24 @@ export default function SiteWorkspacePage() {
                                                 {formatRecommendationEvidenceStrengthLabel(recommendationEvidenceStrength)}
                                               </span>
                                             </div>
+                                          </div>
+                                        ) : null}
+                                        {hasActionabilitySummary ? (
+                                          <div className="workspace-recommendation-row-support-group" data-testid="recommendation-actionability-support">
+                                            <span className="workspace-recommendation-row-support-label">Actionability</span>
+                                            <div className="link-row">
+                                              {recommendationExecutionReadiness ? (
+                                                <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
+                                                  {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
+                                                </span>
+                                              ) : null}
+                                              {recommendationEffortHintLabel ? (
+                                                <span className="badge badge-muted">Effort: {recommendationEffortHintLabel}</span>
+                                              ) : null}
+                                            </div>
+                                            {recommendationIsBlocked && recommendationBlockingReason ? (
+                                              <span className="hint muted">{recommendationBlockingReason}</span>
+                                            ) : null}
                                           </div>
                                         ) : null}
                                         <div className="workspace-recommendation-row-support-group">
