@@ -26,18 +26,25 @@ from app.integrations import (
     GooglePlacesSeedDiscoveryClient,
     GooglePlacesTextSearchClient,
     MisconfiguredSEOCompetitorProfileGenerationProvider,
+    MisconfiguredSEOMigrationArtifactGenerationProvider,
     MisconfiguredSEORecommendationNarrativeProvider,
     MockGA4AnalyticsProvider,
     MockSearchConsoleAnalyticsProvider,
     MockSEOCompetitorComparisonSummaryProvider,
     MockSEOCompetitorProfileGenerationProvider,
+    MockSEOMigrationArtifactGenerationProvider,
+    MisconfiguredSEOMigrationGitHubPublisher,
     MockSEORecommendationNarrativeProvider,
     MockSEOAuditSummaryProvider,
     MockEmailProvider,
+    GitHubSEOMigrationPublisher,
     OpenAISEOCompetitorProfileGenerationProvider,
+    OpenAISEOMigrationArtifactGenerationProvider,
     OpenAISEORecommendationNarrativeProvider,
     MockSMSProvider,
     SEOCompetitorProfileGenerationProvider,
+    SEOMigrationArtifactGenerationProvider,
+    SEOMigrationGitHubPublisher,
     SEORecommendationNarrativeProvider,
     SearchConsoleAnalyticsProvider,
     SEOCompetitorComparisonSummaryProvider,
@@ -69,6 +76,7 @@ from app.repositories.seo_action_execution_item_repository import SEOActionExecu
 from app.repositories.seo_competitor_repository import SEOCompetitorRepository
 from app.repositories.seo_competitor_profile_generation_repository import SEOCompetitorProfileGenerationRepository
 from app.repositories.seo_competitor_summary_repository import SEOCompetitorSummaryRepository
+from app.repositories.seo_migration_repository import SEOMigrationRepository
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
@@ -105,6 +113,10 @@ from app.services.seo_competitor_summary import SEOCompetitorSummaryService
 from app.services.seo_crawler import SEOCrawler
 from app.services.seo_extractor import SEOExtractor
 from app.services.seo_finding_rules import SEOFindingRules
+from app.services.seo_migration import SEOMigrationService
+from app.services.seo_migration_context import SEOMigrationContextAssembler
+from app.services.seo_migration_ingest import SEOMigrationSourceIngestService
+from app.services.seo_migration_prompt import SEO_MIGRATION_PROMPT_VERSION
 from app.services.seo_recommendation_narratives import SEORecommendationNarrativeService
 from app.services.seo_recommendations import SEORecommendationService
 from app.services.action_chain_activation_service import ActionChainActivationService
@@ -218,6 +230,10 @@ def get_seo_recommendation_narrative_repository(
     db: Session = Depends(get_db),
 ) -> SEORecommendationNarrativeRepository:
     return SEORecommendationNarrativeRepository(db)
+
+
+def get_seo_migration_repository(db: Session = Depends(get_db)) -> SEOMigrationRepository:
+    return SEOMigrationRepository(db)
 
 
 def get_parser_service() -> LeadParserService:
@@ -664,6 +680,101 @@ def get_seo_recommendation_narrative_provider() -> SEORecommendationNarrativePro
     )
 
 
+def get_seo_migration_ingest_service() -> SEOMigrationSourceIngestService:
+    return SEOMigrationSourceIngestService()
+
+
+def get_seo_migration_context_assembler() -> SEOMigrationContextAssembler:
+    return SEOMigrationContextAssembler()
+
+
+def get_seo_migration_artifact_provider() -> SEOMigrationArtifactGenerationProvider:
+    settings = get_settings()
+    provider_name = settings.ai_provider_name
+    model_name = settings.ai_model_name
+    prompt_version = SEO_MIGRATION_PROMPT_VERSION
+
+    if provider_name == "openai":
+        api_key = (settings.ai_provider_api_key or "").strip()
+        if not api_key:
+            local_test_env_tokens = {
+                (settings.app_env or "").strip().lower(),
+                (settings.environment or "").strip().lower(),
+            }
+            if local_test_env_tokens & {"local", "development", "dev", "test", "testing"}:
+                logger.warning(
+                    "SEO migration artifact provider falling back to mock in local/test because AI_PROVIDER_API_KEY is missing."
+                )
+                return MockSEOMigrationArtifactGenerationProvider(
+                    provider_name="mock",
+                    model_name=model_name or "mock-seo-migration-v1",
+                    prompt_version=prompt_version,
+                )
+            logger.warning(
+                "SEO migration artifact provider misconfigured: AI_PROVIDER_API_KEY is missing for provider=openai"
+            )
+            return MisconfiguredSEOMigrationArtifactGenerationProvider(
+                provider_name="openai",
+                model_name=model_name or "gpt-4o-mini",
+                prompt_version=prompt_version,
+                safe_message="AI provider credentials are not configured for migration draft generation.",
+            )
+        try:
+            return OpenAISEOMigrationArtifactGenerationProvider(
+                api_key=api_key,
+                model_name=model_name or "gpt-4o-mini",
+                timeout_seconds=settings.ai_timeout_value,
+                api_base_url=settings.openai_api_base_url,
+                prompt_version=prompt_version,
+                prompt_text_recommendations=settings.ai_prompt_text_recommendations,
+            )
+        except ValueError as exc:
+            logger.warning("Failed to initialize OpenAI migration artifact provider: %s", str(exc))
+            return MisconfiguredSEOMigrationArtifactGenerationProvider(
+                provider_name="openai",
+                model_name=model_name or "gpt-4o-mini",
+                prompt_version=prompt_version,
+                safe_message="AI provider configuration is invalid for migration draft generation.",
+            )
+
+    if provider_name == "mock":
+        return MockSEOMigrationArtifactGenerationProvider(
+            provider_name="mock",
+            model_name=model_name or "mock-seo-migration-v1",
+            prompt_version=prompt_version,
+        )
+
+    logger.warning("Unknown SEO migration artifact provider '%s'", provider_name)
+    return MisconfiguredSEOMigrationArtifactGenerationProvider(
+        provider_name=provider_name or "unknown",
+        model_name=model_name or "unknown-model",
+        prompt_version=prompt_version,
+        safe_message="AI provider selection is invalid for migration draft generation.",
+    )
+
+
+def get_seo_migration_github_publisher() -> SEOMigrationGitHubPublisher:
+    settings = get_settings()
+    token = (settings.migration_github_token or "").strip()
+    if not token:
+        return MisconfiguredSEOMigrationGitHubPublisher(
+            safe_message="GitHub migration publisher is not configured.",
+        )
+    try:
+        return GitHubSEOMigrationPublisher(
+            token=token,
+            api_base_url=settings.migration_github_api_base_url,
+            timeout_seconds=settings.migration_github_timeout_seconds,
+            committer_name=settings.migration_publish_committer_name,
+            committer_email=settings.migration_publish_committer_email,
+        )
+    except ValueError as exc:
+        logger.warning("Failed to initialize GitHub migration publisher: %s", str(exc))
+        return MisconfiguredSEOMigrationGitHubPublisher(
+            safe_message="GitHub migration publisher configuration is invalid.",
+        )
+
+
 def get_google_oidc_verifier() -> GoogleOIDCJWKSVerifier:
     settings = get_settings()
     client_id = (settings.google_oidc_client_id or "").strip()
@@ -938,6 +1049,53 @@ def get_seo_recommendation_narrative_service(
         seo_recommendation_narrative_repository=seo_recommendation_narrative_repository,
         seo_competitor_profile_generation_repository=seo_competitor_profile_generation_repository,
         provider=provider,
+    )
+
+
+def get_seo_migration_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
+    seo_migration_repository: SEOMigrationRepository = Depends(get_seo_migration_repository),
+    seo_audit_repository: SEOAuditRepository = Depends(get_seo_audit_repository),
+    seo_audit_summary_repository: SEOAuditSummaryRepository = Depends(get_seo_audit_summary_repository),
+    seo_recommendation_repository: SEORecommendationRepository = Depends(get_seo_recommendation_repository),
+    seo_recommendation_narrative_repository: SEORecommendationNarrativeRepository = Depends(
+        get_seo_recommendation_narrative_repository
+    ),
+    seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
+    seo_competitor_summary_repository: SEOCompetitorSummaryRepository = Depends(get_seo_competitor_summary_repository),
+    ingest_service: SEOMigrationSourceIngestService = Depends(get_seo_migration_ingest_service),
+    context_assembler: SEOMigrationContextAssembler = Depends(get_seo_migration_context_assembler),
+    artifact_provider: SEOMigrationArtifactGenerationProvider = Depends(get_seo_migration_artifact_provider),
+    github_publisher: SEOMigrationGitHubPublisher = Depends(get_seo_migration_github_publisher),
+) -> SEOMigrationService:
+    settings = get_settings()
+    provider_name = str(getattr(artifact_provider, "provider_name", settings.ai_provider_name or "unknown"))
+    provider_model_name = str(getattr(artifact_provider, "model_name", settings.ai_model_name or "unknown-model"))
+    prompt_version = str(getattr(artifact_provider, "prompt_version", SEO_MIGRATION_PROMPT_VERSION))
+    return SEOMigrationService(
+        session=db,
+        business_repository=business_repository,
+        seo_site_repository=seo_site_repository,
+        seo_migration_repository=seo_migration_repository,
+        seo_audit_repository=seo_audit_repository,
+        seo_audit_summary_repository=seo_audit_summary_repository,
+        seo_recommendation_repository=seo_recommendation_repository,
+        seo_recommendation_narrative_repository=seo_recommendation_narrative_repository,
+        seo_competitor_repository=seo_competitor_repository,
+        seo_competitor_summary_repository=seo_competitor_summary_repository,
+        ingest_service=ingest_service,
+        context_assembler=context_assembler,
+        artifact_provider=artifact_provider,
+        github_publisher=github_publisher,
+        provider_name=provider_name,
+        provider_model_name=provider_model_name,
+        prompt_version=prompt_version,
+        prompt_text_recommendations=settings.ai_prompt_text_recommendations,
+        publish_commit_message_prefix=settings.migration_publish_commit_message_prefix,
+        deploy_default_workflow_id=settings.migration_deploy_default_workflow_id,
+        deploy_default_ref=settings.migration_deploy_default_ref,
     )
 
 

@@ -50,6 +50,8 @@ from app.models import (
     seo_recommendation,
     seo_recommendation_narrative,
     seo_recommendation_run,
+    seo_migration_artifact_version,
+    seo_migration_workspace,
     seo_site,
 )
 

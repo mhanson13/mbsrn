@@ -13,6 +13,7 @@ from app.repositories.seo_competitor_repository import SEOCompetitorRepository
 from app.repositories.seo_competitor_summary_repository import SEOCompetitorSummaryRepository
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
+from app.repositories.seo_migration_repository import SEOMigrationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "SEOCompetitorSummaryRepository",
     "SEORecommendationNarrativeRepository",
     "SEORecommendationRepository",
+    "SEOMigrationRepository",
     "SEOSiteRepository",
 ]

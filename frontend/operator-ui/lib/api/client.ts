@@ -16,6 +16,26 @@ import type {
   PrincipalIdentityCreateRequest,
   PrincipalIdentityListResponse,
   PrincipalListResponse,
+  MigrationArtifactFilePreview,
+  MigrationArtifactApproveRequest,
+  MigrationArtifactVersion,
+  MigrationArtifactVersionListResponse,
+  MigrationAnalyticsConfigUpdateRequest,
+  MigrationDeployActionResponse,
+  MigrationDeployConfigUpdateRequest,
+  MigrationDeployRequest,
+  MigrationDraftGenerateRequest,
+  MigrationEnrichedContentUpdateRequest,
+  MigrationHistoryListResponse,
+  MigrationPublishActionResponse,
+  MigrationPublishConfigUpdateRequest,
+  MigrationPublishRequest,
+  MigrationPromptPreview,
+  MigrationRequirementsUpdateRequest,
+  MigrationSourceIngestRequest,
+  MigrationWorkspace,
+  MigrationWorkspaceCreateOrUpdateRequest,
+  MigrationWorkspaceSummary,
   SEOSite,
   SEOSiteCreateRequest,
   SEOSiteAdminUpdateRequest,
@@ -239,6 +259,273 @@ export async function activateSite(token: string, businessId: string, siteId: st
     method: "POST",
     token,
   });
+}
+
+export async function upsertMigrationWorkspace(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationWorkspaceCreateOrUpdateRequest = {},
+): Promise<MigrationWorkspace> {
+  return apiRequest<MigrationWorkspace>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/workspace`,
+    {
+      method: "PUT",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function fetchMigrationWorkspace(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<MigrationWorkspace> {
+  return apiRequest<MigrationWorkspace>(`/api/businesses/${businessId}/seo/sites/${siteId}/migration/workspace`, {
+    token,
+  });
+}
+
+export async function ingestMigrationSource(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationSourceIngestRequest,
+): Promise<MigrationWorkspace> {
+  return apiRequest<MigrationWorkspace>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/source-ingest`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateMigrationRequirements(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationRequirementsUpdateRequest,
+): Promise<MigrationWorkspace> {
+  return apiRequest<MigrationWorkspace>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/operator-requirements`,
+    {
+      method: "PUT",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateMigrationEnrichedContent(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationEnrichedContentUpdateRequest,
+): Promise<MigrationWorkspace> {
+  return apiRequest<MigrationWorkspace>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/enriched-content`,
+    {
+      method: "PUT",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateMigrationPublishConfig(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationPublishConfigUpdateRequest,
+): Promise<MigrationWorkspace> {
+  return apiRequest<MigrationWorkspace>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/publish-config`,
+    {
+      method: "PUT",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateMigrationDeployConfig(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationDeployConfigUpdateRequest,
+): Promise<MigrationWorkspace> {
+  return apiRequest<MigrationWorkspace>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/deploy-config`,
+    {
+      method: "PUT",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateMigrationAnalyticsConfig(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationAnalyticsConfigUpdateRequest,
+): Promise<MigrationWorkspace> {
+  return apiRequest<MigrationWorkspace>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/analytics-config`,
+    {
+      method: "PUT",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function fetchMigrationWorkspaceSummary(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<MigrationWorkspaceSummary> {
+  return apiRequest<MigrationWorkspaceSummary>(`/api/businesses/${businessId}/seo/sites/${siteId}/migration/summary`, {
+    token,
+  });
+}
+
+export async function fetchMigrationPromptPreview(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<MigrationPromptPreview> {
+  return apiRequest<MigrationPromptPreview>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/prompt-preview`,
+    { token },
+  );
+}
+
+export async function generateMigrationDraftArtifacts(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationDraftGenerateRequest = {},
+): Promise<MigrationArtifactVersion> {
+  return apiRequest<MigrationArtifactVersion>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/generate-draft-artifacts`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function fetchMigrationArtifactVersions(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<MigrationArtifactVersionListResponse> {
+  return apiRequest<MigrationArtifactVersionListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/artifact-versions`,
+    { token },
+  );
+}
+
+export async function fetchMigrationArtifactVersion(
+  token: string,
+  businessId: string,
+  siteId: string,
+  artifactVersionId: string,
+): Promise<MigrationArtifactVersion> {
+  return apiRequest<MigrationArtifactVersion>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/artifact-versions/${artifactVersionId}`,
+    { token },
+  );
+}
+
+export async function approveMigrationArtifactVersion(
+  token: string,
+  businessId: string,
+  siteId: string,
+  artifactVersionId: string,
+  payload: MigrationArtifactApproveRequest = {},
+): Promise<MigrationArtifactVersion> {
+  return apiRequest<MigrationArtifactVersion>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/artifact-versions/${artifactVersionId}/approve`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function publishMigrationArtifactVersion(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationPublishRequest,
+): Promise<MigrationPublishActionResponse> {
+  return apiRequest<MigrationPublishActionResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/publish`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deployMigrationArtifactVersion(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationDeployRequest,
+): Promise<MigrationDeployActionResponse> {
+  return apiRequest<MigrationDeployActionResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/deploy`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function fetchMigrationPublishHistory(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<MigrationHistoryListResponse> {
+  return apiRequest<MigrationHistoryListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/publish-history`,
+    { token },
+  );
+}
+
+export async function fetchMigrationDeployHistory(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<MigrationHistoryListResponse> {
+  return apiRequest<MigrationHistoryListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/deploy-history`,
+    { token },
+  );
+}
+
+export async function fetchMigrationArtifactFilePreview(
+  token: string,
+  businessId: string,
+  siteId: string,
+  artifactVersionId: string,
+  path: string,
+): Promise<MigrationArtifactFilePreview> {
+  const search = new URLSearchParams({ path }).toString();
+  return apiRequest<MigrationArtifactFilePreview>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/artifact-versions/${artifactVersionId}/file-preview?${search}`,
+    { token },
+  );
 }
 
 export async function fetchAuditRuns(

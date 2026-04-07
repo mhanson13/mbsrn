@@ -18,6 +18,14 @@ import type {
   CompetitorSnapshotRunListResponse,
   GA4SiteOnboardingStatusResponse,
   GoogleBusinessProfileConnectionStatusResponse,
+  MigrationArtifactFilePreview,
+  MigrationArtifactVersion,
+  MigrationDeployActionResponse,
+  MigrationHistoryListResponse,
+  MigrationPublishActionResponse,
+  MigrationArtifactVersionListResponse,
+  MigrationWorkspace,
+  MigrationWorkspaceSummary,
   RecommendationAnalysisFreshness,
   Recommendation,
   RecommendationListResponse,
@@ -99,6 +107,22 @@ const mockRejectCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>
 const mockEditCompetitorProfileDraft = jest.fn<Promise<CompetitorProfileDraft>, unknown[]>();
 const mockBindActionExecutionItemAutomation = jest.fn<Promise<unknown>, unknown[]>();
 const mockRunActionExecutionItemAutomation = jest.fn<Promise<unknown>, unknown[]>();
+const mockUpsertMigrationWorkspace = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
+const mockFetchMigrationWorkspaceSummary = jest.fn<Promise<MigrationWorkspaceSummary>, unknown[]>();
+const mockFetchMigrationArtifactVersions = jest.fn<Promise<MigrationArtifactVersionListResponse>, unknown[]>();
+const mockFetchMigrationArtifactFilePreview = jest.fn<Promise<MigrationArtifactFilePreview>, unknown[]>();
+const mockIngestMigrationSource = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
+const mockUpdateMigrationRequirements = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
+const mockUpdateMigrationEnrichedContent = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
+const mockUpdateMigrationPublishConfig = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
+const mockUpdateMigrationDeployConfig = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
+const mockUpdateMigrationAnalyticsConfig = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
+const mockApproveMigrationArtifactVersion = jest.fn<Promise<MigrationArtifactVersion>, unknown[]>();
+const mockPublishMigrationArtifactVersion = jest.fn<Promise<MigrationPublishActionResponse>, unknown[]>();
+const mockDeployMigrationArtifactVersion = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
+const mockFetchMigrationPublishHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
+const mockFetchMigrationDeployHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
+const mockGenerateMigrationDraftArtifacts = jest.fn<Promise<MigrationArtifactVersion>, unknown[]>();
 
 jest.mock("next/navigation", () => ({
   useParams: () => navigationState.params,
@@ -149,6 +173,22 @@ jest.mock("../../lib/api/client", () => {
       mockBindActionExecutionItemAutomation(...args),
     runActionExecutionItemAutomation: (...args: unknown[]) =>
       mockRunActionExecutionItemAutomation(...args),
+    upsertMigrationWorkspace: (...args: unknown[]) => mockUpsertMigrationWorkspace(...args),
+    fetchMigrationWorkspaceSummary: (...args: unknown[]) => mockFetchMigrationWorkspaceSummary(...args),
+    fetchMigrationArtifactVersions: (...args: unknown[]) => mockFetchMigrationArtifactVersions(...args),
+    fetchMigrationArtifactFilePreview: (...args: unknown[]) => mockFetchMigrationArtifactFilePreview(...args),
+    ingestMigrationSource: (...args: unknown[]) => mockIngestMigrationSource(...args),
+    updateMigrationRequirements: (...args: unknown[]) => mockUpdateMigrationRequirements(...args),
+    updateMigrationEnrichedContent: (...args: unknown[]) => mockUpdateMigrationEnrichedContent(...args),
+    updateMigrationPublishConfig: (...args: unknown[]) => mockUpdateMigrationPublishConfig(...args),
+    updateMigrationDeployConfig: (...args: unknown[]) => mockUpdateMigrationDeployConfig(...args),
+    updateMigrationAnalyticsConfig: (...args: unknown[]) => mockUpdateMigrationAnalyticsConfig(...args),
+    approveMigrationArtifactVersion: (...args: unknown[]) => mockApproveMigrationArtifactVersion(...args),
+    publishMigrationArtifactVersion: (...args: unknown[]) => mockPublishMigrationArtifactVersion(...args),
+    deployMigrationArtifactVersion: (...args: unknown[]) => mockDeployMigrationArtifactVersion(...args),
+    fetchMigrationPublishHistory: (...args: unknown[]) => mockFetchMigrationPublishHistory(...args),
+    fetchMigrationDeployHistory: (...args: unknown[]) => mockFetchMigrationDeployHistory(...args),
+    generateMigrationDraftArtifacts: (...args: unknown[]) => mockGenerateMigrationDraftArtifacts(...args),
   };
 });
 
@@ -512,6 +552,182 @@ function buildSearchConsoleSiteSummary(
   };
 }
 
+function buildMigrationWorkspace(overrides: Partial<MigrationWorkspace> = {}): MigrationWorkspace {
+  return {
+    id: "migration-workspace-1",
+    business_id: "biz-1",
+    site_id: "site-1",
+    source_url: "https://legacy.example/",
+    source_site_status: "not_ingested",
+    migration_status: "draft",
+    operator_requirements_json: {},
+    enriched_content_notes_json: {},
+    brand_business_facts_snapshot_json: {},
+    imported_source_snapshot_json: {},
+    latest_generated_artifact_version_id: null,
+    latest_generated_artifact_version_number: null,
+    latest_approved_artifact_version_id: null,
+    latest_approved_artifact_version_number: null,
+    publish_config_json: null,
+    deploy_config_json: null,
+    analytics_config_json: null,
+    publish_status: "not_ready",
+    deploy_status: "not_ready",
+    last_published_artifact_version_id: null,
+    last_published_artifact_version_number: null,
+    last_published_commit_sha: null,
+    last_published_at: null,
+    last_published_by_principal_id: null,
+    last_deployed_artifact_version_id: null,
+    last_deployed_artifact_version_number: null,
+    last_deployed_at: null,
+    last_deployed_by_principal_id: null,
+    publish_history_json: [],
+    deploy_history_json: [],
+    created_by_principal_id: "principal-1",
+    updated_by_principal_id: "principal-1",
+    created_at: "2026-03-21T00:00:00Z",
+    updated_at: "2026-03-21T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function buildMigrationArtifactVersion(
+  overrides: Partial<MigrationArtifactVersion> = {},
+): MigrationArtifactVersion {
+  return {
+    id: "migration-artifact-1",
+    business_id: "biz-1",
+    site_id: "site-1",
+    workspace_id: "migration-workspace-1",
+    version: 1,
+    status: "completed",
+    strategy_summary: "Draft migration strategy summary.",
+    page_map_json: [{ path: "/", title: "Homepage" }],
+    homepage_structure_json: [],
+    service_page_suggestions_json: [],
+    cta_contact_structure_json: {},
+    seo_meta_suggestions_json: {},
+    redirect_suggestions_json: [],
+    analytics_placeholders_json: [],
+    generated_files_json: [
+      {
+        path: "index.html",
+        media_type: "text/html",
+        content: "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>Draft</body></html>",
+        size_bytes: 78,
+      },
+      {
+        path: "styles.css",
+        media_type: "text/css",
+        content: "body { color: #111; }",
+        size_bytes: 20,
+      },
+    ],
+    file_count: 2,
+    total_bytes: 98,
+    provider_name: "mock",
+    model_name: "mock-seo-migration-v1",
+    prompt_version: "seo-migration-v1",
+    parse_warnings_json: [],
+    error_summary: null,
+    approval_status: "pending",
+    approved_by_principal_id: null,
+    approved_at: null,
+    approval_notes: null,
+    publish_status: "not_published",
+    deploy_status: "not_deployed",
+    last_published_commit_sha: null,
+    last_published_at: null,
+    last_publish_error_summary: null,
+    last_deployed_at: null,
+    last_deploy_error_summary: null,
+    created_by_principal_id: "principal-1",
+    created_at: "2026-03-21T00:00:00Z",
+    updated_at: "2026-03-21T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function buildMigrationWorkspaceSummary(
+  overrides: Partial<MigrationWorkspaceSummary> = {},
+): MigrationWorkspaceSummary {
+  const artifact = buildMigrationArtifactVersion();
+  return {
+    workspace: buildMigrationWorkspace({
+      latest_generated_artifact_version_id: artifact.id,
+      latest_generated_artifact_version_number: artifact.version,
+      source_site_status: "ingested",
+      migration_status: "draft_generated",
+      operator_requirements_json: {
+        business_objectives: ["Replace weak source content"],
+      },
+      enriched_content_notes_json: {
+        replacement_summary: "Enriched replacement content.",
+      },
+    }),
+    source_snapshot: {
+      fetched_at: "2026-03-21T00:00:00Z",
+      final_url: "https://legacy.example/",
+      status_code: 200,
+      content_type: "text/html",
+      title: "Legacy Site",
+      meta_description: "Legacy brochure description",
+      canonical_url: "https://legacy.example/",
+      headings: ["Legacy heading"],
+      contact_signals: ["Call for quote"],
+      phone_numbers: ["+13035550100"],
+      emails: ["info@legacy.example"],
+      addresses: ["123 Main Street"],
+      internal_links: ["https://legacy.example/services"],
+      service_blocks: ["Installation and inspection"],
+      asset_references: { stylesheets: [], scripts: [], images: [] },
+      cleaned_text_blocks: ["Legacy content block"],
+      warnings: [],
+    },
+    context_summary: {
+      has_source_snapshot: true,
+      has_operator_requirements: true,
+      has_enriched_content_notes: true,
+      has_audit_summary: true,
+      has_recommendation_summary: true,
+      has_competitor_summary: true,
+      existing_context_summaries: {
+        audit_summary: { id: "audit-summary-1", overall_health_summary: "Audit summary context." },
+        recommendation_summary: { id: "recommendation-summary-1", narrative_text: "Recommendation context." },
+        competitor_summary: { id: "competitor-summary-1", overall_gap_summary: "Competitor context." },
+      },
+    },
+    latest_artifact: artifact,
+    publish_readiness: {
+      ready: false,
+      reasons: ["Publish target is not enabled."],
+      target: {},
+    },
+    deploy_readiness: {
+      ready: false,
+      reasons: ["Deploy target is not enabled."],
+      target: {},
+    },
+    publish_history: [],
+    deploy_history: [],
+    draft_only_notice: "Draft artifacts only. Not published and not deployed.",
+    ...overrides,
+  };
+}
+
+function buildMigrationArtifactFilePreview(
+  overrides: Partial<MigrationArtifactFilePreview> = {},
+): MigrationArtifactFilePreview {
+  return {
+    artifact_version_id: "migration-artifact-1",
+    path: "index.html",
+    media_type: "text/html",
+    content: "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>Draft</body></html>",
+    ...overrides,
+  };
+}
+
 function baseContext(overrides: Partial<OperatorContextMockValue> = {}): OperatorContextMockValue {
   return {
     loading: false,
@@ -647,6 +863,109 @@ function seedCompetitorProfileGenerationDefaults(): void {
     automation_ready: true,
     automation_template_key: "performance_check_followup",
   });
+  const defaultMigrationWorkspace = buildMigrationWorkspace();
+  const defaultMigrationArtifact = buildMigrationArtifactVersion();
+  mockUpsertMigrationWorkspace.mockReset();
+  mockFetchMigrationWorkspaceSummary.mockReset();
+  mockFetchMigrationArtifactVersions.mockReset();
+  mockFetchMigrationArtifactFilePreview.mockReset();
+  mockIngestMigrationSource.mockReset();
+  mockUpdateMigrationRequirements.mockReset();
+  mockUpdateMigrationEnrichedContent.mockReset();
+  mockUpdateMigrationPublishConfig.mockReset();
+  mockUpdateMigrationDeployConfig.mockReset();
+  mockUpdateMigrationAnalyticsConfig.mockReset();
+  mockApproveMigrationArtifactVersion.mockReset();
+  mockPublishMigrationArtifactVersion.mockReset();
+  mockDeployMigrationArtifactVersion.mockReset();
+  mockFetchMigrationPublishHistory.mockReset();
+  mockFetchMigrationDeployHistory.mockReset();
+  mockGenerateMigrationDraftArtifacts.mockReset();
+  mockUpsertMigrationWorkspace.mockResolvedValue(defaultMigrationWorkspace);
+  mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+    buildMigrationWorkspaceSummary({
+      workspace: {
+        ...defaultMigrationWorkspace,
+        latest_generated_artifact_version_id: defaultMigrationArtifact.id,
+        latest_generated_artifact_version_number: defaultMigrationArtifact.version,
+      },
+      latest_artifact: defaultMigrationArtifact,
+    }),
+  );
+  mockFetchMigrationArtifactVersions.mockResolvedValue({
+    items: [defaultMigrationArtifact],
+    total: 1,
+  });
+  mockFetchMigrationArtifactFilePreview.mockResolvedValue(
+    buildMigrationArtifactFilePreview({ artifact_version_id: defaultMigrationArtifact.id }),
+  );
+  mockFetchMigrationPublishHistory.mockResolvedValue({ items: [], total: 0 });
+  mockFetchMigrationDeployHistory.mockResolvedValue({ items: [], total: 0 });
+  mockIngestMigrationSource.mockResolvedValue({
+    ...defaultMigrationWorkspace,
+    source_site_status: "ingested",
+    migration_status: "source_ingested",
+  });
+  mockUpdateMigrationRequirements.mockResolvedValue({
+    ...defaultMigrationWorkspace,
+    migration_status: "requirements_captured",
+  });
+  mockUpdateMigrationEnrichedContent.mockResolvedValue({
+    ...defaultMigrationWorkspace,
+    migration_status: "enriched_content_captured",
+  });
+  mockUpdateMigrationPublishConfig.mockResolvedValue(defaultMigrationWorkspace);
+  mockUpdateMigrationDeployConfig.mockResolvedValue(defaultMigrationWorkspace);
+  mockUpdateMigrationAnalyticsConfig.mockResolvedValue(defaultMigrationWorkspace);
+  mockApproveMigrationArtifactVersion.mockResolvedValue(
+    buildMigrationArtifactVersion({
+      approval_status: "approved",
+      approved_by_principal_id: "principal-1",
+      approved_at: "2026-03-21T00:10:00Z",
+    }),
+  );
+  mockPublishMigrationArtifactVersion.mockResolvedValue({
+    workspace: buildMigrationWorkspace({
+      publish_status: "published",
+      migration_status: "published_to_github",
+      last_published_artifact_version_id: defaultMigrationArtifact.id,
+      last_published_artifact_version_number: defaultMigrationArtifact.version,
+      last_published_commit_sha: "abc123",
+      last_published_at: "2026-03-21T00:12:00Z",
+      latest_approved_artifact_version_id: defaultMigrationArtifact.id,
+      latest_approved_artifact_version_number: defaultMigrationArtifact.version,
+    }),
+    artifact: buildMigrationArtifactVersion({
+      id: defaultMigrationArtifact.id,
+      approval_status: "approved",
+      publish_status: "published",
+      last_published_commit_sha: "abc123",
+      last_published_at: "2026-03-21T00:12:00Z",
+    }),
+    readiness: { ready: true, reasons: [] },
+    result: { status: "published" },
+  });
+  mockDeployMigrationArtifactVersion.mockResolvedValue({
+    workspace: buildMigrationWorkspace({
+      deploy_status: "deploy_requested",
+      migration_status: "deploy_requested",
+      last_deployed_artifact_version_id: defaultMigrationArtifact.id,
+      last_deployed_artifact_version_number: defaultMigrationArtifact.version,
+      last_deployed_at: "2026-03-21T00:14:00Z",
+      latest_approved_artifact_version_id: defaultMigrationArtifact.id,
+      latest_approved_artifact_version_number: defaultMigrationArtifact.version,
+    }),
+    artifact: buildMigrationArtifactVersion({
+      id: defaultMigrationArtifact.id,
+      approval_status: "approved",
+      publish_status: "published",
+      deploy_status: "deploy_requested",
+      last_deployed_at: "2026-03-21T00:14:00Z",
+    }),
+    readiness: { ready: true, reasons: [] },
+    result: { status: "deploy_requested" },
+  });
+  mockGenerateMigrationDraftArtifacts.mockResolvedValue(defaultMigrationArtifact);
 }
 
 function seedRichWorkspaceData(): void {
@@ -1778,6 +2097,424 @@ async function switchToActivityTab(user: ReturnType<typeof userEvent.setup>): Pr
   }
   await waitFor(() => expect(activityTab).toHaveAttribute("aria-selected", "true"));
 }
+
+async function switchToMigrationTab(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  const migrationTab = await screen.findByRole("tab", { name: "Migration" });
+  if (migrationTab.getAttribute("aria-selected") !== "true") {
+    await user.click(migrationTab);
+  }
+  await waitFor(() => expect(migrationTab).toHaveAttribute("aria-selected", "true"));
+}
+
+describe("site workspace migration tab", () => {
+  it("renders migration tab with explicit draft-only messaging", async () => {
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+    const migrationPanel = await screen.findByTestId("workspace-migration-tab-panel");
+    expect(migrationPanel).toBeInTheDocument();
+    expect(screen.getByTestId("migration-draft-banner")).toHaveTextContent(
+      "Draft-only mode: generated files are review artifacts",
+    );
+    expect(screen.getByTestId("migration-draft-banner")).toHaveTextContent(
+      "Legacy source content may be incomplete or poor quality",
+    );
+    expect(screen.getByTestId("workspace-migration-tab-panel")).toHaveTextContent(
+      "Rollback is explicit: select a previously approved artifact and run publish/deploy again.",
+    );
+    expect(screen.getByTestId("workspace-migration-tab-panel")).toHaveTextContent(
+      "Publish writes approved artifacts to GitHub only. Deploy remains a separate explicit request.",
+    );
+    expect(mockFetchMigrationWorkspaceSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
+    expect(mockFetchMigrationArtifactVersions).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
+  });
+
+  it("gates publish and deploy actions based on backend readiness", async () => {
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    expect(screen.getByRole("button", { name: "Approve Selected Draft" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Publish Approved Draft to GitHub" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Request GKE Deploy" })).toBeDisabled();
+  });
+
+  it("disables publish and deploy when selected artifact does not match readiness artifact id", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: "migration-artifact-1",
+          latest_generated_artifact_version_number: 1,
+          latest_approved_artifact_version_id: "migration-artifact-ready",
+          latest_approved_artifact_version_number: 2,
+          publish_status: "ready",
+          deploy_status: "ready",
+        }),
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          target: { enabled: true },
+          approved_artifact_version_id: "migration-artifact-ready",
+        },
+        deploy_readiness: {
+          ready: true,
+          reasons: [],
+          target: { enabled: true },
+          approved_artifact_version_id: "migration-artifact-ready",
+        },
+      }),
+    );
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    expect(screen.getByRole("button", { name: "Publish Approved Draft to GitHub" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Request GKE Deploy" })).toBeDisabled();
+  });
+
+  it("runs source ingest from migration tab and shows refreshed source summary", async () => {
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+    await user.click(await screen.findByRole("button", { name: "Ingest / Refresh Source" }));
+
+    await waitFor(() =>
+      expect(mockIngestMigrationSource).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        expect.objectContaining({ source_url: "https://legacy.example/" }),
+      ),
+    );
+    expect(await screen.findByText("Source ingest completed.")).toBeInTheDocument();
+    expect(screen.getByTestId("migration-source-summary")).toHaveTextContent("Source Snapshot Summary");
+  });
+
+  it("saves structured migration inputs and previews generated draft files", async () => {
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    await user.clear(screen.getByLabelText("Business objectives (one per line)"));
+    await user.type(
+      screen.getByLabelText("Business objectives (one per line)"),
+      "Improve conversion path{enter}Improve trust proof",
+    );
+    await user.click(screen.getByRole("button", { name: "Save Requirements" }));
+    await waitFor(() =>
+      expect(mockUpdateMigrationRequirements).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          operator_requirements: expect.objectContaining({
+            business_objectives: ["Improve conversion path", "Improve trust proof"],
+          }),
+        },
+      ),
+    );
+
+    await user.clear(screen.getByLabelText("Replacement summary"));
+    await user.type(screen.getByLabelText("Replacement summary"), "Prepared replacement content package.");
+    await user.click(screen.getByRole("button", { name: "Save Enriched Content" }));
+    await waitFor(() =>
+      expect(mockUpdateMigrationEnrichedContent).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          enriched_content_notes: expect.objectContaining({
+            replacement_summary: "Prepared replacement content package.",
+          }),
+        },
+      ),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Generate Draft Mockup" }));
+    await waitFor(() =>
+      expect(mockGenerateMigrationDraftArtifacts).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        { force_new_version: true },
+      ),
+    );
+    expect(await screen.findByText("Draft migration artifacts generated for operator review.")).toBeInTheDocument();
+
+    const fileTree = await screen.findByTestId("migration-file-tree");
+    await user.click(within(fileTree).getByRole("button", { name: "index.html" }));
+    await waitFor(() =>
+      expect(mockFetchMigrationArtifactFilePreview).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "migration-artifact-1",
+        "index.html",
+      ),
+    );
+    expect(await screen.findByTestId("migration-file-preview")).toHaveTextContent("ANALYTICS_PLACEHOLDER");
+  });
+
+  it("saves publish/deploy target config and analytics rules", async () => {
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    await user.type(screen.getByPlaceholderText("Repo owner"), "acme");
+    await user.type(screen.getByPlaceholderText("Repo name"), "tnmfire-site");
+    await user.click(screen.getByRole("button", { name: "Save Publish Target" }));
+    await waitFor(() =>
+      expect(mockUpdateMigrationPublishConfig).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          publish_config: expect.objectContaining({
+            repo_owner: "acme",
+            repo_name: "tnmfire-site",
+          }),
+        },
+      ),
+    );
+
+    await user.clear(screen.getByPlaceholderText("Workflow ID"));
+    await user.type(screen.getByPlaceholderText("Workflow ID"), "deploy-www-prod.yml");
+    await user.click(screen.getByRole("button", { name: "Save Deploy Target" }));
+    await waitFor(() =>
+      expect(mockUpdateMigrationDeployConfig).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          deploy_config: expect.objectContaining({
+            workflow_id: "deploy-www-prod.yml",
+          }),
+        },
+      ),
+    );
+
+    await user.clear(screen.getByPlaceholderText("GA measurement ID (G-XXXX)"));
+    await user.type(screen.getByPlaceholderText("GA measurement ID (G-XXXX)"), "G-ABCD1234");
+    await user.click(screen.getByRole("button", { name: "Save Analytics Rules" }));
+    await waitFor(() =>
+      expect(mockUpdateMigrationAnalyticsConfig).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          analytics_config: expect.objectContaining({
+            ga_measurement_id: "G-ABCD1234",
+          }),
+        },
+      ),
+    );
+  });
+
+  it("approves, publishes, and deploys selected migration artifacts with explicit actions", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: "migration-artifact-1",
+          latest_generated_artifact_version_number: 1,
+          latest_approved_artifact_version_id: "migration-artifact-1",
+          latest_approved_artifact_version_number: 1,
+          publish_status: "ready",
+          deploy_status: "ready",
+        }),
+        publish_readiness: { ready: true, reasons: [], target: { enabled: true } },
+        deploy_readiness: { ready: true, reasons: [], target: { enabled: true } },
+      }),
+    );
+    mockFetchMigrationPublishHistory.mockResolvedValue({
+      items: [{ timestamp: "2026-03-21T00:12:00Z", status: "published", artifact_version: "1" }],
+      total: 1,
+    });
+    mockFetchMigrationDeployHistory.mockResolvedValue({
+      items: [{ timestamp: "2026-03-21T00:14:00Z", status: "deploy_requested", artifact_version: "1" }],
+      total: 1,
+    });
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+    expect(screen.getByText("GitHub publish does not equal production deployment. Deploy remains explicit.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Approve Selected Draft" }));
+    await waitFor(() =>
+      expect(mockApproveMigrationArtifactVersion).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "migration-artifact-1",
+        expect.any(Object),
+      ),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Publish Approved Draft to GitHub" }));
+    await waitFor(() =>
+      expect(mockPublishMigrationArtifactVersion).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        expect.objectContaining({
+          artifact_version_id: "migration-artifact-1",
+          dry_run: true,
+        }),
+      ),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Request GKE Deploy" }));
+    await waitFor(() =>
+      expect(mockDeployMigrationArtifactVersion).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        expect.objectContaining({
+          artifact_version_id: "migration-artifact-1",
+          dry_run: true,
+        }),
+      ),
+    );
+
+    expect(await screen.findByTestId("migration-publish-history")).toHaveTextContent("published");
+    expect(await screen.findByTestId("migration-deploy-history")).toHaveTextContent("deploy_requested");
+  });
+
+  it("renders publish failure safely and allows retry", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: "migration-artifact-1",
+          latest_generated_artifact_version_number: 1,
+          latest_approved_artifact_version_id: "migration-artifact-1",
+          latest_approved_artifact_version_number: 1,
+          publish_status: "ready",
+          deploy_status: "not_ready",
+        }),
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          target: { enabled: true },
+          approved_artifact_version_id: "migration-artifact-1",
+        },
+      }),
+    );
+    mockPublishMigrationArtifactVersion
+      .mockRejectedValueOnce(
+        new ApiRequestError("This artifact version is already published to the configured GitHub target.", {
+          status: 422,
+          detail: null,
+        }),
+      )
+      .mockResolvedValueOnce({
+        workspace: buildMigrationWorkspace({
+          publish_status: "published",
+          migration_status: "published_to_github",
+          last_published_artifact_version_id: "migration-artifact-1",
+          last_published_artifact_version_number: 1,
+          last_published_commit_sha: "abc123",
+          last_published_at: "2026-03-21T00:12:00Z",
+          latest_approved_artifact_version_id: "migration-artifact-1",
+          latest_approved_artifact_version_number: 1,
+        }),
+        artifact: buildMigrationArtifactVersion({
+          id: "migration-artifact-1",
+          approval_status: "approved",
+          publish_status: "published",
+          last_published_commit_sha: "abc123",
+          last_published_at: "2026-03-21T00:12:00Z",
+        }),
+        readiness: { ready: true, reasons: [] },
+        result: { status: "published" },
+      });
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    const publishButton = screen.getByRole("button", { name: "Publish Approved Draft to GitHub" });
+    expect(publishButton).toBeEnabled();
+    await user.click(publishButton);
+    expect(
+      await screen.findByText(
+        "Duplicate publish request detected. This artifact version is already published to the configured GitHub target.",
+      ),
+    ).toBeInTheDocument();
+    expect(publishButton).toBeEnabled();
+
+    await user.click(publishButton);
+    await waitFor(() => expect(mockPublishMigrationArtifactVersion).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Publish dry-run completed.")).toBeInTheDocument();
+  });
+
+  it("renders config validation failures distinctly and shows diagnostics defaults", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: "migration-artifact-1",
+          latest_generated_artifact_version_number: 1,
+          latest_approved_artifact_version_id: "migration-artifact-1",
+          latest_approved_artifact_version_number: 1,
+          publish_status: "ready",
+          deploy_status: "not_ready",
+        }),
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          target: { enabled: true },
+          config_prerequisites: {
+            github_publisher_configured: false,
+            target_config_valid: true,
+            target_enabled: true,
+          },
+        },
+        deploy_readiness: {
+          ready: false,
+          reasons: ["Deploy target is not enabled."],
+          target: { enabled: false },
+          config_prerequisites: {
+            github_publisher_configured: false,
+            target_config_valid: true,
+            target_enabled: false,
+          },
+        },
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          migration_diagnostics: {},
+        },
+      }),
+    );
+    mockPublishMigrationArtifactVersion.mockRejectedValueOnce(
+      new ApiRequestError("GitHub migration publisher is not configured.", {
+        status: 422,
+        detail: null,
+      }),
+    );
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    expect(screen.getByTestId("migration-action-diagnostics")).toHaveTextContent("Last publish status: n/a");
+    expect(screen.getByTestId("migration-action-diagnostics")).toHaveTextContent("Last deploy status: n/a");
+    expect(screen.getByTestId("migration-publish-readiness")).toHaveTextContent("Runtime config: Missing/invalid");
+
+    const publishButton = screen.getByRole("button", { name: "Publish Approved Draft to GitHub" });
+    expect(publishButton).toBeEnabled();
+    await user.click(publishButton);
+    expect(
+      await screen.findByText(
+        "Publish blocked by runtime configuration. GitHub migration publisher is not configured.",
+      ),
+    ).toBeInTheDocument();
+  });
+});
 
 describe("site workspace timeline controls", () => {
   it("keeps timeline hidden in summary tab by default and shows it in activity tab", async () => {

@@ -14,6 +14,13 @@ Set environment values in `.env.local`:
 - `NEXT_PUBLIC_API_BASE_URL`
 - `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
 
+## Production standalone build note
+
+This app uses Next.js `output: "standalone"`.
+
+- `sharp` must remain installed in `dependencies` (not `devDependencies`) for image optimization in standalone runtime mode.
+- The standalone build output (`.next/standalone`) includes traced runtime `node_modules` used by `server.js`; runtime images should copy that output directly.
+
 Authentication flow:
 
 1. UI collects Google ID token (Google Identity Services button or manual token input).

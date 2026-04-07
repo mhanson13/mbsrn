@@ -94,6 +94,37 @@ def test_main_app_mounts_seo_routes() -> None:
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/analytics/ga4-accessible-accounts"] >= {
         "GET"
     }
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace"] >= {
+        "GET",
+        "PUT",
+    }
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/source-ingest"] >= {"POST"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/operator-requirements"] >= {
+        "PUT"
+    }
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/enriched-content"] >= {"PUT"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish-config"] >= {"PUT"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy-config"] >= {"PUT"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/analytics-config"] >= {"PUT"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary"] >= {"GET"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/prompt-preview"] >= {"GET"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts"] >= {
+        "POST"
+    }
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions"] >= {"GET"}
+    assert route_methods[
+        "/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_version_id}"
+    ] >= {"GET"}
+    assert route_methods[
+        "/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_version_id}/approve"
+    ] >= {"POST"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish"] >= {"POST"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy"] >= {"POST"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish-history"] >= {"GET"}
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy-history"] >= {"GET"}
+    assert route_methods[
+        "/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_version_id}/file-preview"
+    ] >= {"GET"}
 
     # Phase 2 v1 site-scoped compatibility surface.
     assert route_methods["/api/v1/businesses/{business_id}/seo/sites/{site_id}/competitor-sets"] >= {"GET", "POST"}

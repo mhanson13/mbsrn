@@ -30,6 +30,8 @@ from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_narrative import SEORecommendationNarrative
 from app.models.seo_recommendation_run import SEORecommendationRun
+from app.models.seo_migration_artifact_version import SEOMigrationArtifactVersion
+from app.models.seo_migration_workspace import SEOMigrationWorkspace
 from app.models.seo_site import SEOSite
 
 __all__ = [
@@ -71,5 +73,7 @@ __all__ = [
     "SEORecommendation",
     "SEORecommendationNarrative",
     "SEORecommendationRun",
+    "SEOMigrationArtifactVersion",
+    "SEOMigrationWorkspace",
     "SEOSite",
 ]

@@ -10,6 +10,7 @@
 - [SEO Crawl Settings](features/seo-audit-or-crawl-settings.md)
 - [SEO Recommendation AI Assist](features/seo-recommendations-ai-assist.md)
 - [Competitor Profile Retention](features/seo-competitor-profile-generation-retention.md)
+- [SEO Migration Workspace (Phase 1-4)](features/seo-migration-workspace.md)
 
 ## API and Architecture (Current)
 - [API Overview](api.md)

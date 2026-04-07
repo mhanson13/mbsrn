@@ -21,6 +21,7 @@ from app.api.routes import (
     intake_router,
     jobs_router,
     leads_router,
+    seo_migration_router,
     seo_router,
     seo_v1_router,
 )
@@ -416,3 +417,4 @@ app.include_router(auth_router)
 app.include_router(integrations_router)
 app.include_router(seo_router)
 app.include_router(seo_v1_router)
+app.include_router(seo_migration_router)

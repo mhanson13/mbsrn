@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { ActionControls } from "../../../components/action-execution/ActionControls";
+import { MigrationWorkspacePanel } from "../../../components/MigrationWorkspacePanel";
 import { OutputReview } from "../../../components/action-execution/OutputReview";
 import { PageContainer } from "../../../components/layout/PageContainer";
 import { SectionHeader } from "../../../components/layout/SectionHeader";
@@ -134,7 +135,7 @@ type SiteTimelineEventType =
   | "comparison_run"
   | "recommendation_run"
   | "narrative";
-type WorkspaceContentTab = "summary" | "recommendations" | "activity";
+type WorkspaceContentTab = "summary" | "recommendations" | "migration" | "activity";
 
 const TIMELINE_EVENT_TYPE_OPTIONS: Array<{ value: SiteTimelineEventType; label: string }> = [
   { value: "audit_run", label: "Audit Runs" },
@@ -7433,6 +7434,7 @@ export default function SiteWorkspacePage() {
 
   const showSummaryTab = activeWorkspaceContentTab === "summary";
   const showRecommendationsTab = activeWorkspaceContentTab === "recommendations";
+  const showMigrationTab = activeWorkspaceContentTab === "migration";
   const showRecommendationSections = showSummaryTab || showRecommendationsTab;
   const showActivityTab = activeWorkspaceContentTab === "activity";
   const latestAuditRun = auditRuns[0] || null;
@@ -8414,10 +8416,25 @@ export default function SiteWorkspacePage() {
           >
             Activity
           </button>
+          <button
+            type="button"
+            id="workspace-content-tab-migration"
+            role="tab"
+            className={`button button-secondary workspace-subtab-button ${
+              activeWorkspaceContentTab === "migration" ? "workspace-subtab-button-active" : ""
+            }`}
+            aria-selected={activeWorkspaceContentTab === "migration"}
+            aria-controls="workspace-content-migration-panel"
+            onClick={() => setActiveWorkspaceContentTab("migration")}
+          >
+            Migration
+          </button>
         </div>
         <p className="hint muted">
           {activeWorkspaceContentTab === "activity"
             ? "Activity keeps full timeline and run-history tables separated from decision surfaces."
+            : activeWorkspaceContentTab === "migration"
+              ? "Migration is a controlled draft workflow for replacing weak incumbent sites with reviewable static artifacts."
             : activeWorkspaceContentTab === "recommendations"
               ? "Recommendations keeps recommendation queue and run narratives front and center."
               : "Summary keeps top operator actions and compact status signals in front."}
@@ -8570,6 +8587,27 @@ export default function SiteWorkspacePage() {
               ) : null}
             </div>
           </div>
+        </SectionCard>
+      ) : null}
+
+      {showMigrationTab ? (
+        <SectionCard
+          className="operator-shell-section operator-shell-secondary-zone"
+          role="tabpanel"
+          id="workspace-content-migration-panel"
+          aria-labelledby="workspace-content-tab-migration"
+          data-testid="workspace-migration-tab-panel"
+        >
+          <SectionHeader
+            title="Migration"
+            subtitle="Controlled operator workflow for replacing weak incumbent sites with draft-only structured artifacts."
+            headingLevel={2}
+          />
+          <MigrationWorkspacePanel
+            token={context.token}
+            businessId={context.businessId}
+            siteId={selectedSite.id}
+          />
         </SectionCard>
       ) : null}
 

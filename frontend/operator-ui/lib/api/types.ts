@@ -212,6 +212,258 @@ export interface SEOSiteListResponse {
   total: number;
 }
 
+export interface MigrationOperatorRequirements {
+  business_objectives: string[];
+  requested_pages: string[];
+  must_include: string[];
+  must_avoid: string[];
+  tone_preferences: string[];
+  calls_to_action: string[];
+  additional_notes: string | null;
+}
+
+export interface MigrationEnrichedContentNotes {
+  replacement_summary: string | null;
+  homepage_value_proposition: string | null;
+  about_business: string | null;
+  service_highlights: string[];
+  trust_signals: string[];
+  faq_items: string[];
+  contact_overrides: Record<string, string>;
+  additional_notes: string | null;
+}
+
+export interface MigrationPublishConfig {
+  enabled: boolean;
+  repo_owner: string | null;
+  repo_name: string | null;
+  branch: string;
+  artifact_root: string | null;
+}
+
+export interface MigrationDeployConfig {
+  enabled: boolean;
+  repo_owner: string | null;
+  repo_name: string | null;
+  workflow_id: string | null;
+  ref: string | null;
+  inputs: Record<string, string>;
+}
+
+export interface MigrationAnalyticsConfig {
+  enabled: boolean;
+  ga_measurement_id: string | null;
+  insertion_mode: "publish_only" | "publish_and_deploy";
+}
+
+export interface MigrationWorkspaceCreateOrUpdateRequest {
+  source_url?: string | null;
+  operator_requirements?: MigrationOperatorRequirements | null;
+  enriched_content_notes?: MigrationEnrichedContentNotes | null;
+  publish_config?: MigrationPublishConfig | null;
+  deploy_config?: MigrationDeployConfig | null;
+  analytics_config?: MigrationAnalyticsConfig | null;
+}
+
+export interface MigrationSourceIngestRequest {
+  source_url?: string | null;
+}
+
+export interface MigrationRequirementsUpdateRequest {
+  operator_requirements: MigrationOperatorRequirements;
+}
+
+export interface MigrationEnrichedContentUpdateRequest {
+  enriched_content_notes: MigrationEnrichedContentNotes;
+}
+
+export interface MigrationPublishConfigUpdateRequest {
+  publish_config: MigrationPublishConfig;
+}
+
+export interface MigrationDeployConfigUpdateRequest {
+  deploy_config: MigrationDeployConfig;
+}
+
+export interface MigrationAnalyticsConfigUpdateRequest {
+  analytics_config: MigrationAnalyticsConfig;
+}
+
+export interface MigrationDraftGenerateRequest {
+  force_new_version?: boolean;
+}
+
+export interface MigrationArtifactApproveRequest {
+  approval_notes?: string | null;
+}
+
+export interface MigrationPublishRequest {
+  artifact_version_id: string;
+  dry_run?: boolean;
+  commit_message?: string | null;
+  analytics_measurement_id?: string | null;
+}
+
+export interface MigrationDeployRequest {
+  artifact_version_id: string;
+  dry_run?: boolean;
+}
+
+export interface MigrationSourceSnapshot {
+  fetched_at?: string | null;
+  final_url?: string | null;
+  status_code?: number | null;
+  content_type?: string | null;
+  title?: string | null;
+  meta_description?: string | null;
+  canonical_url?: string | null;
+  headings: string[];
+  contact_signals: string[];
+  phone_numbers: string[];
+  emails: string[];
+  addresses: string[];
+  internal_links: string[];
+  service_blocks: string[];
+  asset_references: Record<string, string[]>;
+  cleaned_text_blocks: string[];
+  warnings: string[];
+}
+
+export interface MigrationArtifactFile {
+  path: string;
+  media_type: string;
+  size_bytes: number;
+  content?: string | null;
+}
+
+export interface MigrationArtifactVersion {
+  id: string;
+  business_id: string;
+  site_id: string;
+  workspace_id: string;
+  version: number;
+  status: string;
+  strategy_summary: string | null;
+  page_map_json: Array<Record<string, unknown>> | null;
+  homepage_structure_json: Array<Record<string, unknown>> | null;
+  service_page_suggestions_json: Array<Record<string, unknown>> | null;
+  cta_contact_structure_json: Record<string, unknown> | null;
+  seo_meta_suggestions_json: Record<string, unknown> | null;
+  redirect_suggestions_json: Array<Record<string, unknown>> | null;
+  analytics_placeholders_json: Array<Record<string, unknown>> | null;
+  generated_files_json: Array<Record<string, unknown>> | null;
+  file_count: number;
+  total_bytes: number;
+  provider_name: string;
+  model_name: string;
+  prompt_version: string;
+  parse_warnings_json: string[] | null;
+  error_summary: string | null;
+  approval_status: string;
+  approved_by_principal_id: string | null;
+  approved_at: string | null;
+  approval_notes: string | null;
+  publish_status: string;
+  deploy_status: string;
+  last_published_commit_sha: string | null;
+  last_published_at: string | null;
+  last_publish_error_summary: string | null;
+  last_deployed_at: string | null;
+  last_deploy_error_summary: string | null;
+  created_by_principal_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MigrationArtifactVersionListResponse {
+  items: MigrationArtifactVersion[];
+  total: number;
+}
+
+export interface MigrationPromptPreview {
+  provider_name: string;
+  model_name: string;
+  prompt_version: string;
+  context_json: Record<string, unknown>;
+  system_prompt: string;
+  user_prompt: string;
+}
+
+export interface MigrationWorkspace {
+  id: string;
+  business_id: string;
+  site_id: string;
+  source_url: string | null;
+  source_site_status: string;
+  migration_status: string;
+  operator_requirements_json: Record<string, unknown> | null;
+  enriched_content_notes_json: Record<string, unknown> | null;
+  brand_business_facts_snapshot_json: Record<string, unknown> | null;
+  imported_source_snapshot_json: Record<string, unknown> | null;
+  latest_generated_artifact_version_id: string | null;
+  latest_generated_artifact_version_number: number | null;
+  latest_approved_artifact_version_id: string | null;
+  latest_approved_artifact_version_number: number | null;
+  publish_config_json: Record<string, unknown> | null;
+  deploy_config_json: Record<string, unknown> | null;
+  analytics_config_json: Record<string, unknown> | null;
+  publish_status: string;
+  deploy_status: string;
+  last_published_artifact_version_id: string | null;
+  last_published_artifact_version_number: number | null;
+  last_published_commit_sha: string | null;
+  last_published_at: string | null;
+  last_published_by_principal_id: string | null;
+  last_deployed_artifact_version_id: string | null;
+  last_deployed_artifact_version_number: number | null;
+  last_deployed_at: string | null;
+  last_deployed_by_principal_id: string | null;
+  publish_history_json: Array<Record<string, unknown>> | null;
+  deploy_history_json: Array<Record<string, unknown>> | null;
+  created_by_principal_id: string | null;
+  updated_by_principal_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MigrationWorkspaceSummary {
+  workspace: MigrationWorkspace;
+  source_snapshot: MigrationSourceSnapshot | null;
+  context_summary: Record<string, unknown>;
+  latest_artifact: MigrationArtifactVersion | null;
+  publish_readiness: Record<string, unknown>;
+  deploy_readiness: Record<string, unknown>;
+  publish_history: Array<Record<string, unknown>>;
+  deploy_history: Array<Record<string, unknown>>;
+  draft_only_notice: string;
+}
+
+export interface MigrationArtifactFilePreview {
+  artifact_version_id: string;
+  path: string;
+  media_type: string;
+  content: string;
+}
+
+export interface MigrationPublishActionResponse {
+  workspace: MigrationWorkspace;
+  artifact: MigrationArtifactVersion;
+  readiness: Record<string, unknown>;
+  result: Record<string, unknown>;
+}
+
+export interface MigrationDeployActionResponse {
+  workspace: MigrationWorkspace;
+  artifact: MigrationArtifactVersion;
+  readiness: Record<string, unknown>;
+  result: Record<string, unknown>;
+}
+
+export interface MigrationHistoryListResponse {
+  items: Array<Record<string, unknown>>;
+  total: number;
+}
+
 export interface SiteAnalyticsMetricWindow {
   current: number;
   previous: number;

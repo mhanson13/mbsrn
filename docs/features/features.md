@@ -197,6 +197,27 @@ It transforms a business's website and market context into structured insights a
 
 ---
 
+## 11. Controlled Website Migration Workspace (Phase 1-4)
+
+### What it does
+- Provides a site-scoped migration workspace for replacing weak incumbent SMB websites
+- Captures bounded source-site signals plus operator overrides and enriched replacement content
+- Reuses existing audit/recommendation/competitor summaries as migration context
+- Generates draft-only static-site artifacts for operator review
+- Supports explicit operator approval, GitHub publish, and GKE deploy request flows
+- Preserves publish/deploy history and readiness traceability
+
+### Key capability
+- Enforces explicit trust/approval gates:
+- source import is advisory
+- operator input can override weak source material
+- generated outputs remain operator-controlled through approval, publish, and deploy gates (no auto actions)
+
+### Operator value
+> "I can replace a low-quality incumbent site with a structured draft package before any publication step."
+
+---
+
 ## Summary
 
 MBSRN transforms a small business from:

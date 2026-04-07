@@ -41,6 +41,8 @@ from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun  # n
 from app.models.seo_recommendation import SEORecommendation  # noqa: F401
 from app.models.seo_recommendation_narrative import SEORecommendationNarrative  # noqa: F401
 from app.models.seo_recommendation_run import SEORecommendationRun  # noqa: F401
+from app.models.seo_migration_artifact_version import SEOMigrationArtifactVersion  # noqa: F401
+from app.models.seo_migration_workspace import SEOMigrationWorkspace  # noqa: F401
 from app.models.seo_site import SEOSite  # noqa: F401
 
 os.environ.setdefault("APP_ENV", "test")
