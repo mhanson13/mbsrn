@@ -61,13 +61,7 @@ class ActionLineageService:
             source_action_ids=unique_ids,
         )
         run_ids = list(
-            dict.fromkeys(
-                [
-                    record.last_automation_run_id
-                    for record in action_records
-                    if record.last_automation_run_id
-                ]
-            )
+            dict.fromkeys([record.last_automation_run_id for record in action_records if record.last_automation_run_id])
         )
         run_records = self.seo_automation_repository.list_runs_for_business_site_ids(
             business_id=business_id,
@@ -76,7 +70,9 @@ class ActionLineageService:
         )
         run_by_id = {run.id: run for run in run_records}
 
-        drafts_by_source_action_id: dict[str, list[ActionLineageDraft]] = {source_action_id: [] for source_action_id in unique_ids}
+        drafts_by_source_action_id: dict[str, list[ActionLineageDraft]] = {
+            source_action_id: [] for source_action_id in unique_ids
+        }
         for record in draft_records:
             drafts_by_source_action_id.setdefault(record.source_action_id, []).append(
                 ActionLineageDraft(
@@ -170,9 +166,7 @@ class ActionLineageService:
                         run_outcome_summary.get("issues_found_count") if run_outcome_summary else None
                     ),
                     automation_run_recommendations_generated_count=(
-                        run_outcome_summary.get("recommendations_generated_count")
-                        if run_outcome_summary
-                        else None
+                        run_outcome_summary.get("recommendations_generated_count") if run_outcome_summary else None
                     ),
                     created_at=record.created_at,
                 )

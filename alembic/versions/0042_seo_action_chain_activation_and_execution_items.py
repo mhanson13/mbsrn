@@ -168,4 +168,3 @@ def downgrade() -> None:
     op.drop_column("seo_action_chain_drafts", "automation_template_key")
     op.drop_column("seo_action_chain_drafts", "activated_action_id")
     op.drop_column("seo_action_chain_drafts", "activation_state")
-

@@ -83,14 +83,10 @@ def upsert_seo_migration_workspace(
                 else None
             ),
             publish_config=(
-                normalized_payload.publish_config.model_dump(mode="json")
-                if normalized_payload.publish_config
-                else None
+                normalized_payload.publish_config.model_dump(mode="json") if normalized_payload.publish_config else None
             ),
             deploy_config=(
-                normalized_payload.deploy_config.model_dump(mode="json")
-                if normalized_payload.deploy_config
-                else None
+                normalized_payload.deploy_config.model_dump(mode="json") if normalized_payload.deploy_config else None
             ),
             analytics_config=(
                 normalized_payload.analytics_config.model_dump(mode="json")
@@ -298,9 +294,7 @@ def get_seo_migration_workspace_summary(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     source_snapshot = (
-        SEOMigrationSourceSnapshotRead.model_validate(summary.source_snapshot)
-        if summary.source_snapshot
-        else None
+        SEOMigrationSourceSnapshotRead.model_validate(summary.source_snapshot) if summary.source_snapshot else None
     )
     latest_artifact = _to_artifact_read(summary.latest_artifact) if summary.latest_artifact else None
     return SEOMigrationWorkspaceSummaryRead(

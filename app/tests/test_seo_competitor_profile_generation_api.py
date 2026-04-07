@@ -3576,10 +3576,7 @@ def test_synthetic_competitor_profile_draft_accept_requires_explicit_confirmatio
         json={},
     )
     assert accept.status_code == 422
-    assert (
-        accept.json()["detail"]
-        == "Synthetic review scaffold drafts require explicit confirmation before acceptance"
-    )
+    assert accept.json()["detail"] == "Synthetic review scaffold drafts require explicit confirmation before acceptance"
 
 
 def test_synthetic_competitor_profile_draft_accept_verified_path_requires_verified_domain(

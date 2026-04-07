@@ -88,9 +88,7 @@ def test_main_app_mounts_seo_routes() -> None:
     }
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/automation-status"] >= {"GET"}
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/analytics/site-summary"] >= {"GET"}
-    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/analytics/ga4-onboarding-status"] >= {
-        "GET"
-    }
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/analytics/ga4-onboarding-status"] >= {"GET"}
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/analytics/ga4-accessible-accounts"] >= {
         "GET"
     }
@@ -99,9 +97,7 @@ def test_main_app_mounts_seo_routes() -> None:
         "PUT",
     }
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/source-ingest"] >= {"POST"}
-    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/operator-requirements"] >= {
-        "PUT"
-    }
+    assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/operator-requirements"] >= {"PUT"}
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/enriched-content"] >= {"PUT"}
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish-config"] >= {"PUT"}
     assert route_methods["/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy-config"] >= {"PUT"}

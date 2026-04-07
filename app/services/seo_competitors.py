@@ -189,9 +189,7 @@ class SEOCompetitorService:
             competitor_set_id,
         )
         if active_domain_count == 0:
-            raise SEOCompetitorValidationError(
-                "Cannot create snapshot run without active verified competitor domains"
-            )
+            raise SEOCompetitorValidationError("Cannot create snapshot run without active verified competitor domains")
 
         snapshot_run = SEOCompetitorSnapshotRun(
             id=str(uuid4()),

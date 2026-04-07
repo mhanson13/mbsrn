@@ -121,10 +121,7 @@ class SEOAnalyticsService:
                 top_pages_summary=[],
             )
 
-        if (
-            site_ga4_property_configured
-            and not _is_valid_ga4_property_id(normalized_site_ga4_property_id)
-        ):
+        if site_ga4_property_configured and not _is_valid_ga4_property_id(normalized_site_ga4_property_id):
             return SEOAnalyticsSiteSummaryRead(
                 business_id=business_id,
                 site_id=site_id,
@@ -236,10 +233,7 @@ class SEOAnalyticsService:
             ),
         )
 
-        top_pages_summary = [
-            _to_top_page_summary(item)
-            for item in result.top_pages[:top_pages_limit]
-        ]
+        top_pages_summary = [_to_top_page_summary(item) for item in result.top_pages[:top_pages_limit]]
         fetch_completed_at = _utcnow()
         has_metric_data = _ga4_site_metrics_have_data(metrics_summary)
         last_data_timestamp = _derive_period_data_timestamp(
@@ -350,7 +344,8 @@ class SEOAnalyticsService:
         persisted_status = str(ga4_onboarding_status or "").strip().lower()
         effective_status = (
             persisted_status
-            if persisted_status in {
+            if persisted_status
+            in {
                 "not_connected",
                 "account_available",
                 "property_configured",
@@ -367,17 +362,11 @@ class SEOAnalyticsService:
                 effective_status = "account_available"
             elif account_discovery.status == "unavailable":
                 effective_status = "unavailable"
-        if (
-            effective_status == "unavailable"
-            and derived_status not in {"not_connected", "unavailable"}
-        ):
+        if effective_status == "unavailable" and derived_status not in {"not_connected", "unavailable"}:
             effective_status = derived_status
 
         discovered_account_count = len(account_discovery.accounts)
-        auto_provisioning_eligible = (
-            account_discovery.available
-            and effective_status in {"account_available"}
-        )
+        auto_provisioning_eligible = account_discovery.available and effective_status in {"account_available"}
         return SEOGA4SiteOnboardingStatusRead(
             business_id=business_id,
             site_id=site_id,
@@ -529,10 +518,7 @@ class SEOAnalyticsService:
                 4,
             ),
         )
-        top_pages_summary = [
-            _to_search_console_top_page_summary(item)
-            for item in result.top_pages[:top_pages_limit]
-        ]
+        top_pages_summary = [_to_search_console_top_page_summary(item) for item in result.top_pages[:top_pages_limit]]
         top_queries_summary = [
             SEOSearchConsoleTopQueryRead(
                 query=item.query,
@@ -602,18 +588,26 @@ class SEOAnalyticsService:
             return None
 
         normalized_page_path = _normalize_page_path(page_path) if page_path else None
-        page_before = self._fetch_window_summary(
-            site_domain=normalized_domain,
-            start_date=before_start,
-            end_date=before_end,
-            page_path=normalized_page_path,
-        ) if normalized_page_path else None
-        page_after = self._fetch_window_summary(
-            site_domain=normalized_domain,
-            start_date=after_start,
-            end_date=after_end,
-            page_path=normalized_page_path,
-        ) if normalized_page_path else None
+        page_before = (
+            self._fetch_window_summary(
+                site_domain=normalized_domain,
+                start_date=before_start,
+                end_date=before_end,
+                page_path=normalized_page_path,
+            )
+            if normalized_page_path
+            else None
+        )
+        page_after = (
+            self._fetch_window_summary(
+                site_domain=normalized_domain,
+                start_date=after_start,
+                end_date=after_end,
+                page_path=normalized_page_path,
+            )
+            if normalized_page_path
+            else None
+        )
         if page_before is not None and page_after is not None:
             return SEOAnalyticsBeforeAfterComparison(
                 before_window=page_before,
@@ -675,18 +669,26 @@ class SEOAnalyticsService:
             return None
 
         normalized_page_path = _normalize_page_path(page_path) if page_path else None
-        page_before = self._fetch_search_console_window_summary(
-            site_property=site_property,
-            start_date=before_start,
-            end_date=before_end,
-            page_path=normalized_page_path,
-        ) if normalized_page_path else None
-        page_after = self._fetch_search_console_window_summary(
-            site_property=site_property,
-            start_date=after_start,
-            end_date=after_end,
-            page_path=normalized_page_path,
-        ) if normalized_page_path else None
+        page_before = (
+            self._fetch_search_console_window_summary(
+                site_property=site_property,
+                start_date=before_start,
+                end_date=before_end,
+                page_path=normalized_page_path,
+            )
+            if normalized_page_path
+            else None
+        )
+        page_after = (
+            self._fetch_search_console_window_summary(
+                site_property=site_property,
+                start_date=after_start,
+                end_date=after_end,
+                page_path=normalized_page_path,
+            )
+            if normalized_page_path
+            else None
+        )
         if page_before is not None and page_after is not None:
             return SEOSearchConsoleBeforeAfterComparison(
                 before_window=page_before,
@@ -1107,11 +1109,7 @@ def _classify_ga4_configuration_error_reason(error: Exception) -> str:
     message = str(error or "").strip().lower()
     if not message:
         return "unknown_error"
-    if (
-        "not configured" in message
-        or "property id is required" in message
-        or "credentials are required" in message
-    ):
+    if "not configured" in message or "property id is required" in message or "credentials are required" in message:
         return "not_configured"
     if "invalid" in message and "property" in message:
         return "invalid_property_format"
@@ -1149,10 +1147,7 @@ def _ga4_site_metrics_have_data(metrics: SEOAnalyticsSiteMetricsSummaryRead) -> 
 
 
 def _search_console_site_metrics_have_data(metrics: SEOSearchConsoleSiteMetricsSummaryRead) -> bool:
-    return (
-        metrics.clicks.current > 0
-        or metrics.impressions.current > 0
-    )
+    return metrics.clicks.current > 0 or metrics.impressions.current > 0
 
 
 def _utcnow() -> datetime:

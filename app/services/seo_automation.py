@@ -295,11 +295,9 @@ class SEOAutomationService:
             and config.cadence_minutes == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.cadence_minutes
             and config.trigger_audit == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_audit
             and config.trigger_audit_summary == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_audit_summary
-            and config.trigger_competitor_snapshot
-            == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_competitor_snapshot
+            and config.trigger_competitor_snapshot == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_competitor_snapshot
             and config.trigger_comparison == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_comparison
-            and config.trigger_competitor_summary
-            == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_competitor_summary
+            and config.trigger_competitor_summary == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_competitor_summary
             and config.trigger_recommendations == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_recommendations
             and config.trigger_recommendation_narrative
             == DEFAULT_AUTOMATION_CONFIG_TEMPLATE.trigger_recommendation_narrative

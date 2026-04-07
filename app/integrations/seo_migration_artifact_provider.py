@@ -162,18 +162,18 @@ class MockSEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGenerationP
                 media_type="text/html",
                 content=(
                     "<!doctype html>\n"
-                    "<html lang=\"en\">\n<head>\n"
-                    "  <meta charset=\"utf-8\" />\n"
-                    "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n"
+                    '<html lang="en">\n<head>\n'
+                    '  <meta charset="utf-8" />\n'
+                    '  <meta name="viewport" content="width=device-width, initial-scale=1" />\n'
                     f"  <title>{site_name} | Local Fire Protection Services</title>\n"
-                    "  <meta name=\"description\" content=\"Local fire protection installation, inspection, and service.\" />\n"
+                    '  <meta name="description" content="Local fire protection installation, inspection, and service." />\n'
                     "  <!-- ANALYTICS_PLACEHOLDER -->\n"
-                    "  <link rel=\"stylesheet\" href=\"styles.css\" />\n"
+                    '  <link rel="stylesheet" href="styles.css" />\n'
                     "</head>\n<body>\n"
                     f"  <header><h1>{site_name}</h1><p>Reliable local fire protection support.</p></header>\n"
                     "  <main>\n"
                     "    <section><h2>Services</h2><p>Installation, inspection, testing, and maintenance.</p></section>\n"
-                    "    <section><h2>Contact</h2><p><a href=\"contact.html\">Request service</a></p></section>\n"
+                    '    <section><h2>Contact</h2><p><a href="contact.html">Request service</a></p></section>\n'
                     "  </main>\n"
                     "</body>\n</html>\n"
                 ),
@@ -182,9 +182,9 @@ class MockSEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGenerationP
                 path="services.html",
                 media_type="text/html",
                 content=(
-                    "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\" />"
-                    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />"
-                    "<title>Services</title><link rel=\"stylesheet\" href=\"styles.css\" /></head>"
+                    '<!doctype html>\n<html lang="en"><head><meta charset="utf-8" />'
+                    '<meta name="viewport" content="width=device-width, initial-scale=1" />'
+                    '<title>Services</title><link rel="stylesheet" href="styles.css" /></head>'
                     "<body><h1>Services</h1><p>Detailed service scope and coverage.</p></body></html>\n"
                 ),
             ),
@@ -192,9 +192,9 @@ class MockSEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGenerationP
                 path="contact.html",
                 media_type="text/html",
                 content=(
-                    "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\" />"
-                    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />"
-                    "<title>Contact</title><link rel=\"stylesheet\" href=\"styles.css\" /></head>"
+                    '<!doctype html>\n<html lang="en"><head><meta charset="utf-8" />'
+                    '<meta name="viewport" content="width=device-width, initial-scale=1" />'
+                    '<title>Contact</title><link rel="stylesheet" href="styles.css" /></head>'
                     "<body><h1>Contact</h1><p>Call or submit a quote request.</p></body></html>\n"
                 ),
             ),
@@ -538,7 +538,9 @@ class _OpenAIMigrationResponse(BaseModel):
     strategy_summary: str
     page_map: list[_OpenAIMigrationPageMapItem] = Field(default_factory=list, max_length=_MAX_PAGE_MAP_ITEMS)
     homepage_structure: list[_OpenAIMigrationPageMapItem] = Field(default_factory=list, max_length=_MAX_LIST_ITEMS)
-    service_page_suggestions: list[_OpenAIMigrationPageMapItem] = Field(default_factory=list, max_length=_MAX_LIST_ITEMS)
+    service_page_suggestions: list[_OpenAIMigrationPageMapItem] = Field(
+        default_factory=list, max_length=_MAX_LIST_ITEMS
+    )
     cta_contact_structure: dict[str, object] | None = None
     seo_meta_suggestions: dict[str, object] | None = None
     redirect_suggestions: list[_OpenAIMigrationPageMapItem] = Field(default_factory=list, max_length=_MAX_LIST_ITEMS)
@@ -614,4 +616,3 @@ def _clean_optional_value(value: object) -> str | None:
         return None
     normalized = " ".join(str(value).split()).strip()
     return normalized or None
-

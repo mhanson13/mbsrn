@@ -106,4 +106,3 @@ def downgrade() -> None:
     op.drop_index("ix_seo_action_chain_drafts_site_id", table_name="seo_action_chain_drafts")
     op.drop_index("ix_seo_action_chain_drafts_business_id", table_name="seo_action_chain_drafts")
     op.drop_table("seo_action_chain_drafts")
-

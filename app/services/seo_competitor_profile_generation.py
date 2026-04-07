@@ -1932,11 +1932,14 @@ class SEOCompetitorProfileGenerationService:
                     )
                     if not suggested_name:
                         continue
-                    suggested_domain = self._clean_optional(
-                        str(synthetic_candidate.get("suggested_domain"))
-                        if synthetic_candidate.get("suggested_domain") is not None
-                        else None
-                    ) or ""
+                    suggested_domain = (
+                        self._clean_optional(
+                            str(synthetic_candidate.get("suggested_domain"))
+                            if synthetic_candidate.get("suggested_domain") is not None
+                            else None
+                        )
+                        or ""
+                    )
                     synthetic_domain_key = suggested_domain.lower()
                     synthetic_name_key = suggested_name.strip().lower()
                     synthetic_family_key = self._clean_optional(
@@ -2736,9 +2739,7 @@ class SEOCompetitorProfileGenerationService:
             run_id=run.id,
             drafts=draft_result.drafts,
         )
-        exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(
-            draft_result.exclusion_counts_by_reason
-        )
+        exclusion_counts_by_reason = self._normalize_exclusion_counts_by_reason(draft_result.exclusion_counts_by_reason)
         if pre_insert_duplicate_count > 0:
             exclusion_counts_by_reason["duplicate"] = (
                 int(exclusion_counts_by_reason.get("duplicate", 0)) + pre_insert_duplicate_count

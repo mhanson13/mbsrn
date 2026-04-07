@@ -78,7 +78,13 @@ _WEAK_SITE_CONTEXT_MODE_NORMAL = "normal"
 _WEAK_SITE_CONTEXT_MODE_FALLBACK = "weak_site_fallback"
 _ALLOWED_SITE_CONTEXT_MODES = {_WEAK_SITE_CONTEXT_MODE_NORMAL, _WEAK_SITE_CONTEXT_MODE_FALLBACK}
 _ALLOWED_SITE_CONTENT_SIGNAL_STRENGTH = {"strong", "moderate", "weak"}
-_ALLOWED_CONTEXT_INFERENCE_SOURCES = {"site_content", "structured_metadata", "domain_hints", "explicit_industry", "fallback"}
+_ALLOWED_CONTEXT_INFERENCE_SOURCES = {
+    "site_content",
+    "structured_metadata",
+    "domain_hints",
+    "explicit_industry",
+    "fallback",
+}
 _ALLOWED_CONTEXT_SOURCE_CLASSIFICATION = {"structured", "mixed", "site_heavy"}
 _MAX_WEAK_SITE_FALLBACK_SOURCES = 6
 _MAX_STRUCTURED_CONTEXT_FIELDS_USED = 6
@@ -1437,20 +1443,16 @@ def _derive_weak_site_context_decision(
     content_is_weak = signal_strength == "weak"
     content_is_moderate = signal_strength == "moderate"
     has_site_content_signals = bool(site_content_signals)
-    baseline_relies_on_site_content = baseline_service_source == "site_content" or baseline_industry_source == "site_content"
+    baseline_relies_on_site_content = (
+        baseline_service_source == "site_content" or baseline_industry_source == "site_content"
+    )
     structured_has_service_signal = bool(structured_context.service_focus_terms)
     structured_has_industry_signal = bool(
         structured_context.industry_context and structured_context.industry_context != _INDUSTRY_FALLBACK_TEXT
     )
     structured_context_is_stronger = (
-        structured_has_service_signal
-        and baseline_service_terms_thin
-        and baseline_service_source == "site_content"
-    ) or (
-        structured_has_industry_signal
-        and baseline_industry_weak
-        and baseline_industry_source == "site_content"
-    )
+        structured_has_service_signal and baseline_service_terms_thin and baseline_service_source == "site_content"
+    ) or (structured_has_industry_signal and baseline_industry_weak and baseline_industry_source == "site_content")
     weak_site_moderate_metadata_rescue = bool(
         content_is_moderate
         and baseline_relies_on_site_content
@@ -1460,8 +1462,7 @@ def _derive_weak_site_context_decision(
 
     weak_site_mode = bool(
         (content_is_weak and has_site_content_signals and meaningful_signal_count == 0)
-        or
-        (content_is_weak and (baseline_service_missing or baseline_industry_weak or baseline_relies_on_site_content))
+        or (content_is_weak and (baseline_service_missing or baseline_industry_weak or baseline_relies_on_site_content))
         or weak_site_moderate_metadata_rescue
         or (content_is_weak and structured_context_is_stronger)
         or (location_is_weak and (content_is_weak or (content_is_moderate and baseline_service_missing)))

@@ -189,7 +189,9 @@ class MockGA4AnalyticsProvider:
         end_date: str,
         page_path: str | None = None,
     ) -> GA4SitePeriodMetrics:
-        seed_components = f"{_normalize_domain(site_domain)}|{start_date}|{end_date}|{(page_path or '').strip().lower()}"
+        seed_components = (
+            f"{_normalize_domain(site_domain)}|{start_date}|{end_date}|{(page_path or '').strip().lower()}"
+        )
         seed = sum(ord(character) for character in seed_components) % 71
         base_sessions = 90 if page_path else 180
         sessions = max(0, base_sessions + seed)
@@ -386,11 +388,7 @@ class GoogleAnalyticsDataAPIClient:
         organic_payload: dict[str, Any] = {
             "dateRanges": [{"startDate": start_date, "endDate": end_date}],
             "metrics": [{"name": "sessions"}],
-            "dimensionFilter": {
-                "andGroup": {
-                    "expressions": organic_filter_expressions
-                }
-            },
+            "dimensionFilter": {"andGroup": {"expressions": organic_filter_expressions}},
         }
         organic_response = self._request_report(body=organic_payload)
         organic_row = _first_row(organic_response)
@@ -510,9 +508,7 @@ class GoogleAnalyticsDataAPIClient:
         body: dict[str, Any] | None,
     ) -> dict[str, Any]:
         payload = (
-            json.dumps(body, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-            if body is not None
-            else None
+            json.dumps(body, separators=(",", ":"), ensure_ascii=True).encode("utf-8") if body is not None else None
         )
         access_token = self._resolve_access_token()
         request = Request(
@@ -567,9 +563,7 @@ class GoogleAnalyticsDataAPIClient:
                     try:
                         credentials_payload = json.loads(self.credentials_json)
                     except json.JSONDecodeError as exc:
-                        raise GA4AnalyticsProviderConfigurationError(
-                            "GA4 service account JSON is invalid."
-                        ) from exc
+                        raise GA4AnalyticsProviderConfigurationError("GA4 service account JSON is invalid.") from exc
                     if not isinstance(credentials_payload, dict):
                         raise GA4AnalyticsProviderConfigurationError(
                             "GA4 service account JSON must decode to an object."
@@ -599,9 +593,7 @@ class GoogleAnalyticsDataAPIClient:
                 exc.__class__.__name__,
                 _summarize_error_message(exc),
             )
-            raise GA4AnalyticsProviderConfigurationError(
-                "Unable to authorize GA4 analytics request."
-            ) from exc
+            raise GA4AnalyticsProviderConfigurationError("Unable to authorize GA4 analytics request.") from exc
 
 
 def _extract_http_error_message(error: HTTPError) -> str:

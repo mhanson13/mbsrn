@@ -81,9 +81,7 @@ class ActionAutomationBindingService:
             draft_id=action_record.source_draft_id,
         )
         if draft_record is None:
-            raise SEOActionAutomationBindingValidationError(
-                "Source chained draft is missing for action execution item"
-            )
+            raise SEOActionAutomationBindingValidationError("Source chained draft is missing for action execution item")
         if draft_record.activation_state != "activated" or draft_record.activated_action_id != action_record.id:
             raise SEOActionAutomationBindingValidationError(
                 "Action execution item is not linked to an activated chained draft"

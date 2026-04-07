@@ -82,6 +82,7 @@ def classify_competitor_evidence_link(
             return "informational_unverified"
     return "informational_candidate"
 
+
 AUDIT_TEMPLATES: dict[str, tuple[str, str, str]] = {
     "missing_title": ("fix_missing_title_tags", "Fix missing title tags", "LOW"),
     "duplicate_title": ("resolve_duplicate_title_tags", "Resolve duplicate title tags", "LOW"),

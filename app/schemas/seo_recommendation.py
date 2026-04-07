@@ -1303,9 +1303,7 @@ def _derive_recommendation_evidence_strength(
         else:
             points += 1
 
-    trusted_link_count = sum(
-        1 for link in competitor_evidence_links if link.trust_tier == "trusted_verified"
-    )
+    trusted_link_count = sum(1 for link in competitor_evidence_links if link.trust_tier == "trusted_verified")
     if trusted_link_count > 0:
         points += 2
     elif competitor_evidence_links:
@@ -1363,7 +1361,11 @@ def _derive_recommendation_competitor_influence_level(
     directional_text = " ".join(
         value
         for value in (
-            recommendation_action_delta.observed_competitor_pattern if recommendation_action_delta is not None else None,
+            (
+                recommendation_action_delta.observed_competitor_pattern
+                if recommendation_action_delta is not None
+                else None
+            ),
             recommendation_action_delta.observed_site_gap if recommendation_action_delta is not None else None,
             recommendation_observed_gap_summary,
             competitor_linkage_summary,
@@ -1392,20 +1394,12 @@ def _derive_recommendation_competitor_influence_level(
     if not has_directional_difference:
         return "none"
 
-    trusted_link_count = sum(
-        1 for link in competitor_evidence_links if link.trust_tier == "trusted_verified"
-    )
+    trusted_link_count = sum(1 for link in competitor_evidence_links if link.trust_tier == "trusted_verified")
     has_meaningful_action_delta = bool(
-        recommendation_action_delta is not None
-        and recommendation_action_delta.evidence_strength in {"high", "medium"}
+        recommendation_action_delta is not None and recommendation_action_delta.evidence_strength in {"high", "medium"}
     )
-    if (
-        "competitor_gap" in priority_reasons
-        and (
-            trusted_link_count > 0
-            or has_meaningful_action_delta
-            or (competitor_linkage_summary or "").strip()
-        )
+    if "competitor_gap" in priority_reasons and (
+        trusted_link_count > 0 or has_meaningful_action_delta or (competitor_linkage_summary or "").strip()
     ):
         return "meaningful"
 
@@ -1505,7 +1499,9 @@ def _derive_recommendation_why_now(
 
     has_competitor_priority = "competitor_gap" in priority_reasons
     if has_competitor_priority and competitor_influence_level == "meaningful":
-        return "Competitor-backed gaps remain materially stronger than the current page, so this should be reviewed now."
+        return (
+            "Competitor-backed gaps remain materially stronger than the current page, so this should be reviewed now."
+        )
     if has_competitor_priority and competitor_influence_level == "supporting":
         return "Competitor context supports acting now while this gap is still visible."
     if priority_band in {"critical", "high"}:
@@ -1585,7 +1581,7 @@ def _derive_recommendation_next_action(
             return sentence
 
     sentence = _compact_sentence(
-        f"Review \"{title}\" and decide whether to apply now",
+        f'Review "{title}" and decide whether to apply now',
         max_length=_RECOMMENDATION_NEXT_ACTION_MAX_CHARS,
     )
     if sentence:
@@ -1635,13 +1631,13 @@ def _derive_recommendation_execution_type(
     if target_keys & metadata_keys:
         execution_types.add("metadata_update")
     if "internal_links" in target_keys or any(
-        keyword in signal
-        for keyword in ("internal link", "interlink", "cross-link", "link this page")
+        keyword in signal for keyword in ("internal link", "interlink", "cross-link", "link this page")
     ):
         execution_types.add("internal_linking")
-    if "location_copy" in target_keys or recommendation_target_context == "location_pages" or any(
-        keyword in signal
-        for keyword in ("location", "local", "service area", "city", "zip", "nearby", "gbp")
+    if (
+        "location_copy" in target_keys
+        or recommendation_target_context == "location_pages"
+        or any(keyword in signal for keyword in ("location", "local", "service area", "city", "zip", "nearby", "gbp"))
     ):
         execution_types.add("local_seo")
     if target_keys & content_keys:
@@ -1668,7 +1664,13 @@ def _derive_recommendation_execution_type(
         execution_types.add("page_update")
 
     if not execution_types:
-        if recommendation_target_context in {"homepage", "service_pages", "contact_about", "location_pages", "sitewide"}:
+        if recommendation_target_context in {
+            "homepage",
+            "service_pages",
+            "contact_about",
+            "location_pages",
+            "sitewide",
+        }:
             execution_types.add("page_update")
         elif recommendation_target_content_summary or recommendation_action_clarity:
             execution_types.add("content_update")
@@ -1878,7 +1880,11 @@ def _derive_recommendation_competitor_insight(
     directional_text = " ".join(
         value
         for value in (
-            recommendation_action_delta.observed_competitor_pattern if recommendation_action_delta is not None else None,
+            (
+                recommendation_action_delta.observed_competitor_pattern
+                if recommendation_action_delta is not None
+                else None
+            ),
             recommendation_action_delta.observed_site_gap if recommendation_action_delta is not None else None,
             recommendation_observed_gap_summary,
             competitor_linkage_summary,
@@ -1924,10 +1930,7 @@ def _derive_recommendation_competitor_insight(
         primary = "Competing sites include clearer location-targeted content for this topic."
     elif any(token in directional_text for token in link_tokens):
         primary = "Competing sites are using stronger internal linking around this topic."
-    elif (
-        any(token in directional_text for token in service_tokens)
-        or recommendation_target_context == "service_pages"
-    ):
+    elif any(token in directional_text for token in service_tokens) or recommendation_target_context == "service_pages":
         primary = "Competitors appear to have stronger service-specific coverage for this topic."
     elif any(token in directional_text for token in depth_tokens):
         primary = "Similar local businesses are covering this topic more completely."

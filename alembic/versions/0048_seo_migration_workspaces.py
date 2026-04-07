@@ -48,8 +48,14 @@ def upgrade() -> None:
         sa.Column("updated_by_principal_id", sa.String(length=64), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["business_id"], ["businesses.id"], ),
-        sa.ForeignKeyConstraint(["site_id"], ["seo_sites.id"], ),
+        sa.ForeignKeyConstraint(
+            ["business_id"],
+            ["businesses.id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["site_id"],
+            ["seo_sites.id"],
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("business_id", "site_id", name="uq_seo_migration_workspaces_business_site"),
     )
@@ -105,9 +111,18 @@ def upgrade() -> None:
         sa.Column("created_by_principal_id", sa.String(length=64), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["business_id"], ["businesses.id"], ),
-        sa.ForeignKeyConstraint(["site_id"], ["seo_sites.id"], ),
-        sa.ForeignKeyConstraint(["workspace_id"], ["seo_migration_workspaces.id"], ),
+        sa.ForeignKeyConstraint(
+            ["business_id"],
+            ["businesses.id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["site_id"],
+            ["seo_sites.id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["workspace_id"],
+            ["seo_migration_workspaces.id"],
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "workspace_id",
@@ -155,4 +170,3 @@ def downgrade() -> None:
     op.drop_index("ix_seo_migration_workspaces_site_id", table_name="seo_migration_workspaces")
     op.drop_index("ix_seo_migration_workspaces_business_id", table_name="seo_migration_workspaces")
     op.drop_table("seo_migration_workspaces")
-

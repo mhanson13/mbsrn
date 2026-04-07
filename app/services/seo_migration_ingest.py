@@ -286,9 +286,7 @@ class SEOMigrationSourceIngestService:
                 content_type_header = response.headers.get("Content-Type", "")
                 content_type = content_type_header.split(";", 1)[0].strip().lower()
                 if content_type not in _ALLOWED_CONTENT_TYPES:
-                    raise SEOMigrationSourceIngestError(
-                        "Source URL did not return an HTML document."
-                    )
+                    raise SEOMigrationSourceIngestError("Source URL did not return an HTML document.")
                 body_bytes = self._read_bounded_body(response)
                 final_url = str(getattr(response, "url", normalized_source_url) or normalized_source_url)
                 status_code = int(getattr(response, "status", 200) or 200)
@@ -313,7 +311,9 @@ class SEOMigrationSourceIngestService:
         combined_text = "\n".join(parser.text_blocks)
         phones = _dedupe_results(_PHONE_PATTERN.findall(combined_text), max_items=_MAX_PHONE_RESULTS, max_len=48)
         emails = _dedupe_results(_EMAIL_PATTERN.findall(combined_text), max_items=_MAX_EMAIL_RESULTS, max_len=120)
-        addresses = _dedupe_results(_ADDRESS_PATTERN.findall(combined_text), max_items=_MAX_ADDRESS_RESULTS, max_len=180)
+        addresses = _dedupe_results(
+            _ADDRESS_PATTERN.findall(combined_text), max_items=_MAX_ADDRESS_RESULTS, max_len=180
+        )
         fetched_at = _format_datetime(utc_now())
 
         snapshot: dict[str, object] = {
@@ -401,10 +401,7 @@ def _resolve_charset(content_type_header: str) -> str:
 def _is_same_origin(base_url: str, candidate_url: str) -> bool:
     base = urllib.parse.urlsplit(base_url)
     candidate = urllib.parse.urlsplit(candidate_url)
-    return (
-        base.scheme.lower() == candidate.scheme.lower()
-        and base.netloc.lower() == candidate.netloc.lower()
-    )
+    return base.scheme.lower() == candidate.scheme.lower() and base.netloc.lower() == candidate.netloc.lower()
 
 
 def _dedupe_results(items: list[str], *, max_items: int, max_len: int) -> list[str]:
@@ -426,4 +423,3 @@ def _dedupe_results(items: list[str], *, max_items: int, max_len: int) -> list[s
 
 def _format_datetime(value: datetime) -> str:
     return value.isoformat()
-

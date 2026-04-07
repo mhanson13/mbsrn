@@ -1113,7 +1113,12 @@ def test_recommendation_read_derives_internal_linking_execution_type_and_bounded
             title="Strengthen internal links between service pages",
             rationale="Related service pages are not linked clearly.",
             evidence_json={"sources": ["audit"], "finding_types": ["missing_internal_links"]},
-            recommendation_target_page_hints=["/services", "/services/plumbing", "/services/drain", "/services/install"],
+            recommendation_target_page_hints=[
+                "/services",
+                "/services/plumbing",
+                "/services/drain",
+                "/services/install",
+            ],
             recommendation_target_content_types=[
                 {
                     "type_key": "internal_links",

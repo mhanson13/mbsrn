@@ -84,7 +84,9 @@ def test_google_search_console_client_invalid_credentials_json_returns_diagnosti
 
 def test_search_console_http_403_site_permission_maps_property_not_accessible() -> None:
     assert (
-        _classify_search_console_http_error(403, "User does not have sufficient permission for site sc-domain:example.com")
+        _classify_search_console_http_error(
+            403, "User does not have sufficient permission for site sc-domain:example.com"
+        )
         == "property_not_accessible"
     )
 

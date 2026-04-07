@@ -41,4 +41,3 @@ def downgrade() -> None:
         type_="check",
     )
     op.drop_column("seo_automation_configs", "config_source")
-

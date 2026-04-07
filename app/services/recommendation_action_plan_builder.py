@@ -348,4 +348,3 @@ def build_action_plan(recommendation: Mapping[str, Any] | object) -> dict[str, A
             break
 
     return {"action_steps": action_steps}
-

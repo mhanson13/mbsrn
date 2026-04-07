@@ -71,10 +71,8 @@ class SEOMigrationRepository:
         return self.session.scalar(stmt)
 
     def next_artifact_version_number(self, workspace_id: str) -> int:
-        stmt = (
-            select(func.max(SEOMigrationArtifactVersion.version))
-            .where(SEOMigrationArtifactVersion.workspace_id == workspace_id)
+        stmt = select(func.max(SEOMigrationArtifactVersion.version)).where(
+            SEOMigrationArtifactVersion.workspace_id == workspace_id
         )
         max_version = self.session.scalar(stmt)
         return int(max_version or 0) + 1
-

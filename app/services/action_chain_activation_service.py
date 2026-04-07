@@ -134,4 +134,3 @@ class ActionChainActivationService:
             automation_ready=bool(record.automation_ready),
             metadata=record.metadata_json or {},
         )
-

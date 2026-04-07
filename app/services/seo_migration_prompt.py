@@ -55,4 +55,3 @@ def build_seo_migration_prompt(
         context_json_chars=len(context_json),
         total_prompt_chars=len(system_prompt) + len(user_prompt),
     )
-

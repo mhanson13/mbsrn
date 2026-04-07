@@ -63,7 +63,9 @@ def _preserve_module_state(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(main_module, "_SCHEMA_READINESS_LOGGED_REVISION", None)
 
 
-def test_schema_readiness_accepts_revision_0039(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_schema_readiness_accepts_revision_0039(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     fake_engine = _FakeEngine(rows=[("0039_competitor_domain_verification_status",)])
     monkeypatch.setattr(main_module, "engine", fake_engine)
     monkeypatch.setattr(main_module, "EXPECTED_ALEMBIC_HEAD", "0039_competitor_domain_verification_status")
@@ -82,7 +84,9 @@ def test_startup_connectivity_retries_for_cloudsql_proxy_localhost(
 ) -> None:
     fake_engine = _FakeEngine(fail_attempts=2)
     monkeypatch.setattr(main_module, "engine", fake_engine)
-    monkeypatch.setattr(main_module, "settings", SimpleNamespace(app_env="production", db_connection_mode="cloudsql_proxy"))
+    monkeypatch.setattr(
+        main_module, "settings", SimpleNamespace(app_env="production", db_connection_mode="cloudsql_proxy")
+    )
     monkeypatch.setattr(main_module, "DATABASE_TARGET_HOST", "127.0.0.1")
     monkeypatch.setattr(main_module, "_CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS", 3)
     monkeypatch.setattr(main_module.time, "sleep", lambda _seconds: None)
@@ -149,7 +153,10 @@ def test_startup_connectivity_logs_guard_before_production_localhost_fail_fast(
     ):
         main_module._ensure_database_connectivity()
 
-    assert "Production DB config regression detected host=localhost port=5432 app_env=production db_connection_mode=direct" in caplog.text
+    assert (
+        "Production DB config regression detected host=localhost port=5432 app_env=production db_connection_mode=direct"
+        in caplog.text
+    )
     assert "postgresql+psycopg://" not in caplog.text
 
 
@@ -159,7 +166,9 @@ def test_startup_connectivity_raises_after_retry_budget_exhausted(
 ) -> None:
     fake_engine = _FakeEngine(fail_attempts=10)
     monkeypatch.setattr(main_module, "engine", fake_engine)
-    monkeypatch.setattr(main_module, "settings", SimpleNamespace(app_env="production", db_connection_mode="cloudsql_proxy"))
+    monkeypatch.setattr(
+        main_module, "settings", SimpleNamespace(app_env="production", db_connection_mode="cloudsql_proxy")
+    )
     monkeypatch.setattr(main_module, "DATABASE_TARGET_HOST", "127.0.0.1")
     monkeypatch.setattr(main_module, "_CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS", 2)
     monkeypatch.setattr(main_module.time, "sleep", lambda _seconds: None)
@@ -172,7 +181,10 @@ def test_startup_connectivity_raises_after_retry_budget_exhausted(
         main_module._ensure_database_connectivity()
 
     assert fake_engine.connect_calls == 2
-    assert "Startup database connectivity check failed host=127.0.0.1 port=5432 app_env=production db_connection_mode=cloudsql_proxy attempt=2 max_attempts=2" in caplog.text
+    assert (
+        "Startup database connectivity check failed host=127.0.0.1 port=5432 app_env=production db_connection_mode=cloudsql_proxy attempt=2 max_attempts=2"
+        in caplog.text
+    )
     assert "postgresql+psycopg://" not in caplog.text
 
 
@@ -196,6 +208,9 @@ def test_startup_logs_schema_expectation(monkeypatch: pytest.MonkeyPatch, caplog
 
     main_module.on_startup()
 
-    assert "Startup schema readiness expectation expected_revision=0039_competitor_domain_verification_status" in caplog.text
+    assert (
+        "Startup schema readiness expectation expected_revision=0039_competitor_domain_verification_status"
+        in caplog.text
+    )
     assert "database_target_classification=loopback" in caplog.text
     assert "db_connection_mode=cloudsql_proxy" in caplog.text

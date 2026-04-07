@@ -474,9 +474,7 @@ def _resolve_connect_callback_return_base_url(
 def _preferred_operator_origin(*, settings: Settings) -> str | None:
     cors_origins = tuple(settings.api_cors_allowed_origins or ())
     non_loopback = (
-        origin
-        for origin in cors_origins
-        if (_normalize_origin(origin) and not _origin_is_loopback(origin))
+        origin for origin in cors_origins if (_normalize_origin(origin) and not _origin_is_loopback(origin))
     )
     first_non_loopback = next(non_loopback, None)
     if first_non_loopback:

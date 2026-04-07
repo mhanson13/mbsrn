@@ -51,4 +51,3 @@ def downgrade() -> None:
     op.drop_column("seo_sites", "ga4_property_id")
     op.drop_column("seo_sites", "ga4_account_id")
     op.drop_column("seo_sites", "ga4_onboarding_status")
-

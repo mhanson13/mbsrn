@@ -684,9 +684,7 @@ class SEOSiteService:
             else bool(search_console_property_url)
         )
         if search_console_enabled and not search_console_property_url:
-            raise SEOSiteValidationError(
-                "search_console_property_url is required when search_console_enabled is true"
-            )
+            raise SEOSiteValidationError("search_console_property_url is required when search_console_enabled is true")
         ga4_account_id = self._normalize_ga4_identifier(payload.ga4_account_id)
         ga4_property_id = self._normalize_ga4_identifier(payload.ga4_property_id)
         ga4_data_stream_id = self._normalize_ga4_identifier(payload.ga4_data_stream_id)
@@ -777,9 +775,7 @@ class SEOSiteService:
         elif property_updated:
             site.search_console_enabled = bool(site.search_console_property_url)
         if site.search_console_enabled and not site.search_console_property_url:
-            raise SEOSiteValidationError(
-                "search_console_property_url is required when search_console_enabled is true"
-            )
+            raise SEOSiteValidationError("search_console_property_url is required when search_console_enabled is true")
         ga4_fields_updated = False
         if "ga4_account_id" in changes:
             site.ga4_account_id = self._normalize_ga4_identifier(changes["ga4_account_id"])

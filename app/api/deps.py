@@ -965,7 +965,7 @@ def get_seo_recommendation_service(
     seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
     seo_action_chain_draft_repository: SEOActionChainDraftRepository = Depends(get_seo_action_chain_draft_repository),
     seo_recommendation_repository: SEORecommendationRepository = Depends(get_seo_recommendation_repository),
-    ) -> SEORecommendationService:
+) -> SEORecommendationService:
     return SEORecommendationService(
         session=db,
         business_repository=business_repository,

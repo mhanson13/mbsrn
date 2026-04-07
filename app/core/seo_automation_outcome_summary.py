@@ -143,9 +143,7 @@ def build_automation_run_outcome_summary(
     summary_segments: list[str] = [summary_title]
     if metric_parts:
         summary_segments.append(f"{', '.join(metric_parts)}.")
-    summary_segments.append(
-        f"{completed_count} completed, {skipped_count} skipped, {failed_count} failed."
-    )
+    summary_segments.append(f"{completed_count} completed, {skipped_count} skipped, {failed_count} failed.")
 
     failure_reason = None
     skip_reason = None

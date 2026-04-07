@@ -57,7 +57,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
     def __init__(self, *, fail_publish: bool = False, fail_deploy: bool = False) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
-        self.publish_calls: list[tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]] = []
+        self.publish_calls: list[
+            tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
+        ] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
 
     def publish_files(
@@ -1257,10 +1259,7 @@ def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -
         assert isinstance(payload.get("timestamp"), str)
         assert isinstance(payload.get("target"), dict)
         assert "failure_category" in payload
-    assert any(
-        payload.get("action") == "approve" and payload.get("status") == "requested"
-        for payload in payloads
-    )
+    assert any(payload.get("action") == "approve" and payload.get("status") == "requested" for payload in payloads)
     assert any(
         payload.get("action") == "approve"
         and payload.get("status") == "completed"

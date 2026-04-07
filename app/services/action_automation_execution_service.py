@@ -76,13 +76,9 @@ class ActionAutomationExecutionService:
             raise SEOActionAutomationExecutionNotFoundError("Action execution item not found")
 
         if not action_record.automation_ready:
-            raise SEOActionAutomationExecutionValidationError(
-                "Action execution item is not automation-ready"
-            )
+            raise SEOActionAutomationExecutionValidationError("Action execution item is not automation-ready")
         if action_record.automation_binding_state != "bound" or not action_record.bound_automation_id:
-            raise SEOActionAutomationExecutionValidationError(
-                "Action execution item is not bound to automation"
-            )
+            raise SEOActionAutomationExecutionValidationError("Action execution item is not bound to automation")
 
         draft_record = self.seo_action_chain_draft_repository.get_for_business_site_id(
             business_id=business_id,
@@ -232,4 +228,3 @@ class ActionAutomationExecutionService:
             automation_ready=bool(record.automation_ready),
             automation_template_key=record.automation_template_key,
         )
-

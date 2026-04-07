@@ -605,8 +605,10 @@ def _build_effectiveness_summary(
         return "Insufficient directional measurement data is available since this recommendation."
     has_traffic = traffic_direction != "unknown"
     has_search = search_direction != "unknown"
-    source_label = "Traffic and search visibility" if has_traffic and has_search else (
-        "Traffic" if has_traffic else "Search visibility"
+    source_label = (
+        "Traffic and search visibility"
+        if has_traffic and has_search
+        else ("Traffic" if has_traffic else "Search visibility")
     )
     if trend == "improving":
         if confidence == "high":
@@ -710,7 +712,9 @@ def _derive_effectiveness_context(
                 trend = "declining"
             else:
                 trend = "flat"
-            confidence = _rank_to_confidence(min(_confidence_rank(traffic_confidence), _confidence_rank(search_confidence)))
+            confidence = _rank_to_confidence(
+                min(_confidence_rank(traffic_confidence), _confidence_rank(search_confidence))
+            )
         elif traffic_direction == "flat" and search_direction in {"up", "down"}:
             trend = "improving" if search_direction == "up" else "declining"
             confidence = _rank_to_confidence(max(1, _confidence_rank(search_confidence) - 1))
@@ -902,17 +906,13 @@ def _build_recommendation_search_console_context_by_id(
     if search_console_status in {"not_configured", "unavailable"}:
         status_value = "not_configured" if search_console_status == "not_configured" else "unavailable"
         return {
-            recommendation.id: SEORecommendationSearchConsoleContextRead(
-                search_console_status=status_value
-            )
+            recommendation.id: SEORecommendationSearchConsoleContextRead(search_console_status=status_value)
             for recommendation in recommendations
         }
 
     if not search_console_site_summary.available or not search_console_site_summary.top_pages_summary:
         return {
-            recommendation.id: SEORecommendationSearchConsoleContextRead(
-                search_console_status="unavailable"
-            )
+            recommendation.id: SEORecommendationSearchConsoleContextRead(search_console_status="unavailable")
             for recommendation in recommendations
         }
 
@@ -3628,9 +3628,7 @@ def get_seo_recommendation_workspace_summary(
     competitor_section_freshness = _build_competitor_section_freshness(
         latest_competitor_run_status=(latest_competitor_run.status if latest_competitor_run is not None else None),
         latest_competitor_run_evaluated_at=(
-            latest_competitor_run.updated_at
-            if latest_competitor_run is not None
-            else None
+            latest_competitor_run.updated_at if latest_competitor_run is not None else None
         ),
         latest_competitor_outcome_summary=latest_competitor_outcome_summary,
         apply_outcome=apply_outcome,
@@ -4156,7 +4154,9 @@ def request_action_execution_item_automation_run(
     execution_item_id: str,
     tenant_context: TenantContext = Depends(get_tenant_context),
     seo_site_service: SEOSiteService = Depends(get_seo_site_service),
-    action_automation_execution_service: ActionAutomationExecutionService = Depends(get_action_automation_execution_service),
+    action_automation_execution_service: ActionAutomationExecutionService = Depends(
+        get_action_automation_execution_service
+    ),
 ) -> RequestedActionAutomationExecutionRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,

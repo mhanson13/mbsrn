@@ -560,9 +560,7 @@ def test_site_analytics_summary_enforces_tenant_scope(db_session, seeded_busines
     )
     site_id = _create_site(client, seeded_business.id, domain="analytics-scope.example")
 
-    cross_business_response = client.get(
-        f"/api/businesses/other-business/seo/sites/{site_id}/analytics/site-summary"
-    )
+    cross_business_response = client.get(f"/api/businesses/other-business/seo/sites/{site_id}/analytics/site-summary")
     assert cross_business_response.status_code == 404
 
 
@@ -580,9 +578,7 @@ def test_ga4_accessible_accounts_returns_account_summaries(db_session, seeded_bu
     )
     site_id = _create_site(client, seeded_business.id, domain="analytics-ga4-accounts.example")
 
-    response = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-accessible-accounts"
-    )
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-accessible-accounts")
     assert response.status_code == 200
     payload = response.json()
     assert payload["available"] is True
@@ -610,9 +606,7 @@ def test_ga4_accessible_accounts_degrades_cleanly_when_not_configured(db_session
     )
     site_id = _create_site(client, seeded_business.id, domain="analytics-ga4-disabled.example")
 
-    response = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-accessible-accounts"
-    )
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-accessible-accounts")
     assert response.status_code == 200
     payload = response.json()
     assert payload["available"] is False
@@ -639,9 +633,7 @@ def test_ga4_site_onboarding_status_reflects_site_configuration(db_session, seed
         ga4_measurement_id="g-test1234",
     )
 
-    response = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-onboarding-status"
-    )
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-onboarding-status")
     assert response.status_code == 200
     payload = response.json()
     assert payload["ga4_onboarding_status"] == "property_configured"
@@ -662,9 +654,7 @@ def test_ga4_site_onboarding_status_uses_account_available_when_discovered(db_se
     )
     site_id = _create_site(client, seeded_business.id, domain="analytics-ga4-account-available.example")
 
-    response = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-onboarding-status"
-    )
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/ga4-onboarding-status")
     assert response.status_code == 200
     payload = response.json()
     assert payload["ga4_onboarding_status"] == "account_available"

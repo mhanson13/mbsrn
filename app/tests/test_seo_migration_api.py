@@ -264,9 +264,7 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert summary_payload["source_snapshot"]["title"] == "Legacy Site"
     assert "Draft artifacts only" in summary_payload["draft_only_notice"]
 
-    prompt_preview_response = client.get(
-        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/prompt-preview"
-    )
+    prompt_preview_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/prompt-preview")
     assert prompt_preview_response.status_code == 200
     assert prompt_preview_response.json()["prompt_version"] == "seo-migration-v1"
 
@@ -316,15 +314,11 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert publish_history_response.status_code == 200
     assert publish_history_response.json()["total"] >= 1
 
-    deploy_history_response = client.get(
-        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy-history"
-    )
+    deploy_history_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy-history")
     assert deploy_history_response.status_code == 200
     assert deploy_history_response.json()["total"] >= 1
 
-    versions_response = client.get(
-        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions"
-    )
+    versions_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions")
     assert versions_response.status_code == 200
     assert versions_response.json()["total"] == 1
     assert versions_response.json()["items"][0]["id"] == artifact_id
@@ -604,9 +598,7 @@ def test_publish_failure_history_and_summary_include_failure_category(db_session
     assert "simulated publish failure" in str(publish_response.json().get("detail") or "").lower()
     assert "traceback" not in str(publish_response.json().get("detail") or "").lower()
 
-    history_response = client.get(
-        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish-history"
-    )
+    history_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish-history")
     assert history_response.status_code == 200
     items = history_response.json().get("items") or []
     assert items

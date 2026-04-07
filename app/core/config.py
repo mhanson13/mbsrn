@@ -466,30 +466,23 @@ def get_settings() -> Settings:
         ),
         migration_github_token=os.getenv("MIGRATION_GITHUB_TOKEN"),
         migration_github_api_base_url=(
-            os.getenv("MIGRATION_GITHUB_API_BASE_URL", "https://api.github.com").strip()
-            or "https://api.github.com"
+            os.getenv("MIGRATION_GITHUB_API_BASE_URL", "https://api.github.com").strip() or "https://api.github.com"
         ),
         migration_github_timeout_seconds=_env_int("MIGRATION_GITHUB_TIMEOUT_SECONDS", 15, min_value=1),
         migration_publish_commit_message_prefix=(
-            os.getenv("MIGRATION_PUBLISH_COMMIT_MESSAGE_PREFIX", "[MBSRN Migration]").strip()
-            or "[MBSRN Migration]"
+            os.getenv("MIGRATION_PUBLISH_COMMIT_MESSAGE_PREFIX", "[MBSRN Migration]").strip() or "[MBSRN Migration]"
         ),
         migration_publish_committer_name=(
-            os.getenv("MIGRATION_PUBLISH_COMMITTER_NAME", "MBSRN Migration Bot").strip()
-            or "MBSRN Migration Bot"
+            os.getenv("MIGRATION_PUBLISH_COMMITTER_NAME", "MBSRN Migration Bot").strip() or "MBSRN Migration Bot"
         ),
         migration_publish_committer_email=(
             os.getenv("MIGRATION_PUBLISH_COMMITTER_EMAIL", "migration-bot@mbsrn.local").strip()
             or "migration-bot@mbsrn.local"
         ),
         migration_deploy_default_workflow_id=(
-            os.getenv("MIGRATION_DEPLOY_DEFAULT_WORKFLOW_ID", "deploy-www-prod.yml").strip()
-            or "deploy-www-prod.yml"
+            os.getenv("MIGRATION_DEPLOY_DEFAULT_WORKFLOW_ID", "deploy-www-prod.yml").strip() or "deploy-www-prod.yml"
         ),
-        migration_deploy_default_ref=(
-            os.getenv("MIGRATION_DEPLOY_DEFAULT_REF", "main").strip()
-            or "main"
-        ),
+        migration_deploy_default_ref=(os.getenv("MIGRATION_DEPLOY_DEFAULT_REF", "main").strip() or "main"),
         openai_api_base_url=os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1").strip(),
         twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
         twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN"),

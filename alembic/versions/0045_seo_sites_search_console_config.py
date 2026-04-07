@@ -36,4 +36,3 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_column("seo_sites", "search_console_enabled")
     op.drop_column("seo_sites", "search_console_property_url")
-

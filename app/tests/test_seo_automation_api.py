@@ -410,10 +410,7 @@ def test_phase4_automation_comparison_skip_reason_is_explicit_when_snapshot_not_
     assert steps["competitor_snapshot_run"]["status"] == "completed"
     assert steps["comparison_run"]["status"] == "skipped"
     assert steps["competitor_summary"]["status"] == "skipped"
-    assert (
-        steps["comparison_run"]["reason_summary"]
-        == "Skipped because competitor snapshot output was not completed."
-    )
+    assert steps["comparison_run"]["reason_summary"] == "Skipped because competitor snapshot output was not completed."
     assert (
         steps["competitor_summary"]["reason_summary"]
         == "Skipped because competitor comparison output was not completed."

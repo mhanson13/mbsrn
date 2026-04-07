@@ -83,4 +83,3 @@ def downgrade() -> None:
     op.drop_column("seo_action_execution_items", "automation_bound_at")
     op.drop_column("seo_action_execution_items", "automation_binding_state")
     op.drop_column("seo_action_execution_items", "bound_automation_id")
-

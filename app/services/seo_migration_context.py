@@ -146,4 +146,3 @@ def _competitor_summary_payload(summary: SEOCompetitorComparisonSummary | None) 
         "prompt_version": summary.prompt_version,
         "created_at": summary.created_at.isoformat(),
     }
-

@@ -133,9 +133,7 @@ class SEOAutomationStepRead(BaseModel):
             if isinstance(metrics, dict):
                 payload["pages_analyzed_count"] = metrics.get("pages_analyzed_count")
                 payload["issues_found_count"] = metrics.get("issues_found_count")
-                payload["recommendations_generated_count"] = metrics.get(
-                    "recommendations_generated_count"
-                )
+                payload["recommendations_generated_count"] = metrics.get("recommendations_generated_count")
             payload["reason_summary"] = summarize_automation_step_reason(
                 step_name=str(payload.get("step_name") or ""),
                 status=str(payload.get("status") or ""),

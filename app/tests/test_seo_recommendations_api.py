@@ -1198,7 +1198,9 @@ def test_action_lineage_endpoint_hydrates_activated_action_consistently(db_sessi
     activated_action_id = activate.json()["activated_action_id"]
     assert activated_action_id is not None
 
-    lineage = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/lineage")
+    lineage = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/lineage"
+    )
     assert lineage.status_code == 200
     payload = lineage.json()
     assert payload["source_action_id"] == recommendation_id
@@ -1325,7 +1327,9 @@ def test_bind_automation_endpoint_persists_binding_and_hydrates_lineage(db_sessi
     assert bind_again.json()["automation_binding_state"] == "bound"
     assert bind_again.json()["bound_automation_id"] == automation_config.id
 
-    lineage = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/lineage")
+    lineage = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/lineage"
+    )
     assert lineage.status_code == 200
     activated_payload = lineage.json()["activated_actions"][0]
     assert activated_payload["id"] == activated_action_id
@@ -1523,7 +1527,9 @@ def test_run_automation_endpoint_updates_execution_state_and_hydrates_lineage(db
     run_count = db_session.query(SEOAutomationRun).filter(SEOAutomationRun.site_id == site_id).count()
     assert run_count == 1
 
-    lineage = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/lineage")
+    lineage = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/actions/{recommendation_id}/lineage"
+    )
     assert lineage.status_code == 200
     activated_payload = lineage.json()["activated_actions"][0]
     assert activated_payload["id"] == activated_action_id
@@ -1747,9 +1753,7 @@ def test_workspace_and_recommendation_reads_include_automation_execution_state(d
     )
     assert run_automation.status_code == 200
 
-    recommendations_response = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations"
-    )
+    recommendations_response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations")
     assert recommendations_response.status_code == 200
     recommendation_payload = next(
         item for item in recommendations_response.json()["items"] if item["id"] == recommendation_id
@@ -1771,9 +1775,7 @@ def test_workspace_and_recommendation_reads_include_automation_execution_state(d
     )
     assert workspace_summary.status_code == 200
     workspace_payload = next(
-        item
-        for item in workspace_summary.json()["recommendations"]["items"]
-        if item["id"] == recommendation_id
+        item for item in workspace_summary.json()["recommendations"]["items"] if item["id"] == recommendation_id
     )
     workspace_activated_payload = workspace_payload["action_lineage"]["activated_actions"][0]
     assert workspace_activated_payload["automation_execution_state"] == "running"
@@ -1835,9 +1837,7 @@ def test_recommendation_list_hydrates_action_lineage_when_available(db_session, 
     activated_action_id = activate.json()["activated_action_id"]
     assert activated_action_id is not None
 
-    recommendations_response = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations"
-    )
+    recommendations_response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations")
     assert recommendations_response.status_code == 200
     payload = recommendations_response.json()
     target = next(item for item in payload["items"] if item["id"] == recommendation_id)
@@ -1883,9 +1883,7 @@ def test_workspace_summary_hydrates_action_lineage_when_available(db_session, se
     )
     assert patch_accept.status_code == 200
 
-    summary = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary"
-    )
+    summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 200
     payload = summary.json()
     target = next(item for item in payload["recommendations"]["items"] if item["id"] == recommendation_id)
@@ -4114,7 +4112,13 @@ def test_recommendation_workspace_summary_includes_latest_apply_outcome(db_sessi
     assert isinstance(competitor_links, list)
     assert len(competitor_links) >= 1
     by_name = {item["competitor_name"]: item for item in competitor_links}
-    assert by_name["High Confidence Local Competitor"]["source_type"] in {"places", "search", "fallback", "synthetic", None}
+    assert by_name["High Confidence Local Competitor"]["source_type"] in {
+        "places",
+        "search",
+        "fallback",
+        "synthetic",
+        None,
+    }
     assert by_name["High Confidence Local Competitor"]["verification_status"] == "verified"
     assert by_name["High Confidence Local Competitor"]["trust_tier"] == "trusted_verified"
     assert by_name["Secondary Regional Competitor"]["verification_status"] == "unverified"

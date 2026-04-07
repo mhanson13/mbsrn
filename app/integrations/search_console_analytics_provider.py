@@ -152,8 +152,12 @@ class MockSearchConsoleAnalyticsProvider:
                 previous_clicks=max(0, previous_clicks // (index + 2)),
                 current_impressions=max(1, current_impressions // (index + 2)),
                 previous_impressions=max(0, previous_impressions // (index + 2)),
-                current_ctr=_safe_ctr(max(1, current_clicks // (index + 2)), max(1, current_impressions // (index + 2))),
-                previous_ctr=_safe_ctr(max(0, previous_clicks // (index + 2)), max(0, previous_impressions // (index + 2))),
+                current_ctr=_safe_ctr(
+                    max(1, current_clicks // (index + 2)), max(1, current_impressions // (index + 2))
+                ),
+                previous_ctr=_safe_ctr(
+                    max(0, previous_clicks // (index + 2)), max(0, previous_impressions // (index + 2))
+                ),
                 current_average_position=max(1.0, 8.5 + (index * 0.4)),
                 previous_average_position=max(1.0, 9.3 + (index * 0.4)),
             )
@@ -259,8 +263,12 @@ class GoogleSearchConsoleAPIClient:
         current_end = _days_ago_iso(0)
         previous_start = _days_ago_iso((bounded_days * 2) - 1)
         previous_end = _days_ago_iso(bounded_days)
-        current_period = self.fetch_window_metrics(site_property=site_property, start_date=current_start, end_date=current_end)
-        previous_period = self.fetch_window_metrics(site_property=site_property, start_date=previous_start, end_date=previous_end)
+        current_period = self.fetch_window_metrics(
+            site_property=site_property, start_date=current_start, end_date=current_end
+        )
+        previous_period = self.fetch_window_metrics(
+            site_property=site_property, start_date=previous_start, end_date=previous_end
+        )
         top_pages = self._fetch_top_pages(
             site_property=site_property,
             current_start=current_start,
@@ -316,7 +324,9 @@ class GoogleSearchConsoleAPIClient:
                 ctr=_safe_ctr(clicks, impressions),
                 average_position=average_position,
             )
-        rows = self._query(site_property=site_property, payload={"startDate": start_date, "endDate": end_date, "rowLimit": 1})
+        rows = self._query(
+            site_property=site_property, payload={"startDate": start_date, "endDate": end_date, "rowLimit": 1}
+        )
         row = rows[0] if rows else {}
         clicks = max(0, int(float(row.get("clicks", 0) or 0)))
         impressions = max(0, int(float(row.get("impressions", 0) or 0)))
@@ -340,7 +350,12 @@ class GoogleSearchConsoleAPIClient:
         if page_path:
             rows = self._query(
                 site_property=site_property,
-                payload={"startDate": start_date, "endDate": end_date, "dimensions": ["query", "page"], "rowLimit": max(50, bounded * 20)},
+                payload={
+                    "startDate": start_date,
+                    "endDate": end_date,
+                    "dimensions": ["query", "page"],
+                    "rowLimit": max(50, bounded * 20),
+                },
             )
             target_path = _normalize_page_path(page_path)
             aggregate: dict[str, tuple[int, int, float]] = {}
@@ -406,11 +421,21 @@ class GoogleSearchConsoleAPIClient:
     ) -> tuple[SearchConsoleTopPageMetrics, ...]:
         current_rows = self._query(
             site_property=site_property,
-            payload={"startDate": current_start, "endDate": current_end, "dimensions": ["page"], "rowLimit": top_pages_limit},
+            payload={
+                "startDate": current_start,
+                "endDate": current_end,
+                "dimensions": ["page"],
+                "rowLimit": top_pages_limit,
+            },
         )
         previous_rows = self._query(
             site_property=site_property,
-            payload={"startDate": previous_start, "endDate": previous_end, "dimensions": ["page"], "rowLimit": top_pages_limit},
+            payload={
+                "startDate": previous_start,
+                "endDate": previous_end,
+                "dimensions": ["page"],
+                "rowLimit": top_pages_limit,
+            },
         )
         prev_by_path: dict[str, dict[str, Any]] = {}
         for row in previous_rows:

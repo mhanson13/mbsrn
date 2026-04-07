@@ -94,7 +94,7 @@ _ANALYTICS_SCRIPT_PATTERN = re.compile(
 )
 _GA_MEASUREMENT_PATTERN = re.compile(r"\bG-[A-Z0-9]{4,}\b")
 _GA4_SCRIPT_TEMPLATE = (
-    "<script async src=\"https://www.googletagmanager.com/gtag/js?id={measurement_id}\"></script>\n"
+    '<script async src="https://www.googletagmanager.com/gtag/js?id={measurement_id}"></script>\n'
     "<script>\n"
     "  window.dataLayer = window.dataLayer || [];\n"
     "  function gtag(){{dataLayer.push(arguments);}}\n"
@@ -580,13 +580,10 @@ class SEOMigrationService:
                 duration_ms=self._duration_ms(started_at),
             )
             raise SEOMigrationValidationError(failure_message) from exc
-        if (
-            not dry_run
-            and _is_duplicate_publish_attempt(
-                history=workspace.publish_history_json,
-                artifact_version_id=artifact.id,
-                target=target,
-            )
+        if not dry_run and _is_duplicate_publish_attempt(
+            history=workspace.publish_history_json,
+            artifact_version_id=artifact.id,
+            target=target,
         ):
             failure_message = "This artifact version is already published to the configured GitHub target."
             self._log_control_plane_action(
@@ -604,9 +601,7 @@ class SEOMigrationService:
                 failure_reason=failure_message,
                 duration_ms=self._duration_ms(started_at),
             )
-            raise SEOMigrationValidationError(
-                failure_message
-            )
+            raise SEOMigrationValidationError(failure_message)
         effective_ga_measurement_id = _resolve_effective_ga_measurement_id(
             site=site,
             workspace=workspace,
@@ -883,16 +878,13 @@ class SEOMigrationService:
         )
         if effective_ga_measurement_id:
             deploy_inputs.setdefault("ga_measurement_id", effective_ga_measurement_id)
-        if (
-            not dry_run
-            and _is_duplicate_deploy_attempt(
-                history=workspace.deploy_history_json,
-                artifact_version_id=artifact.id,
-                target={
-                    **deploy_target,
-                    "inputs": deploy_inputs,
-                },
-            )
+        if not dry_run and _is_duplicate_deploy_attempt(
+            history=workspace.deploy_history_json,
+            artifact_version_id=artifact.id,
+            target={
+                **deploy_target,
+                "inputs": deploy_inputs,
+            },
         ):
             failure_message = "A deploy request for this artifact and target is already recorded."
             self._log_control_plane_action(
@@ -913,9 +905,7 @@ class SEOMigrationService:
                 failure_reason=failure_message,
                 duration_ms=self._duration_ms(started_at),
             )
-            raise SEOMigrationValidationError(
-                failure_message
-            )
+            raise SEOMigrationValidationError(failure_message)
 
         try:
             deploy_result = self.github_publisher.dispatch_deploy(
@@ -1335,7 +1325,9 @@ class SEOMigrationService:
             )
 
         latest_competitor_summary = None
-        comparison_runs = self.seo_competitor_repository.list_comparison_runs_for_business_site(site.business_id, site.id)
+        comparison_runs = self.seo_competitor_repository.list_comparison_runs_for_business_site(
+            site.business_id, site.id
+        )
         latest_completed_comparison_run = next((item for item in comparison_runs if item.status == "completed"), None)
         if latest_completed_comparison_run is not None:
             latest_competitor_summary = self.seo_competitor_summary_repository.get_latest_for_business_run(
@@ -1460,7 +1452,9 @@ class SEOMigrationService:
             return "config_missing"
         if any("invalid" in reason or "requires" in reason for reason in normalized_reasons):
             return "target_invalid"
-        if any("already" in reason and ("published" in reason or "recorded" in reason) for reason in normalized_reasons):
+        if any(
+            "already" in reason and ("published" in reason or "recorded" in reason) for reason in normalized_reasons
+        ):
             return "duplicate_request"
         if any(
             "not approved" in reason
@@ -1508,10 +1502,9 @@ class SEOMigrationService:
                     last_failure_category = category_value
                 else:
                     last_failure_category = "unknown_error"
-                last_failure_message = (
-                    _normalize_string(item.get("error_summary"), max_length=300)
-                    or _normalize_string(item.get("error"), max_length=300)
-                )
+                last_failure_message = _normalize_string(
+                    item.get("error_summary"), max_length=300
+                ) or _normalize_string(item.get("error"), max_length=300)
                 break
         return {
             "last_status": last_status,
@@ -1726,7 +1719,9 @@ class SEOMigrationService:
         payload = _try_parse_json_payload(raw_output)
         if payload is None:
             return None
-        strategy_summary = _normalize_string(payload.get("strategy_summary"), max_length=8000) or "Draft strategy summary."
+        strategy_summary = (
+            _normalize_string(payload.get("strategy_summary"), max_length=8000) or "Draft strategy summary."
+        )
         page_map = _coerce_object_list(payload.get("page_map"), max_items=24)
         homepage_structure = _coerce_object_list(payload.get("homepage_structure"), max_items=24)
         service_page_suggestions = _coerce_object_list(payload.get("service_page_suggestions"), max_items=24)
@@ -1782,13 +1777,9 @@ class SEOMigrationService:
             self.session.rollback()
             error_text = str(exc).lower()
             if "uq_seo_migration_workspaces_business_site" in error_text:
-                raise SEOMigrationValidationError(
-                    "Migration workspace already exists for this site."
-                ) from exc
+                raise SEOMigrationValidationError("Migration workspace already exists for this site.") from exc
             if "uq_seo_migration_artifact_versions_workspace_version" in error_text:
-                raise SEOMigrationValidationError(
-                    "Migration artifact version already exists."
-                ) from exc
+                raise SEOMigrationValidationError("Migration artifact version already exists.") from exc
             raise SEOMigrationValidationError("Migration data violated a database constraint.") from exc
 
 
@@ -1900,9 +1891,7 @@ def _resolve_publish_target(config: object) -> dict[str, object]:
     if branch and (not _VALID_BRANCH_OR_REF_PATTERN.fullmatch(branch) or ".." in branch):
         raise ValueError("Publish branch is invalid.")
     if artifact_root and (
-        not _VALID_REPO_ROOT_PATTERN.fullmatch(artifact_root)
-        or artifact_root.startswith("/")
-        or ".." in artifact_root
+        not _VALID_REPO_ROOT_PATTERN.fullmatch(artifact_root) or artifact_root.startswith("/") or ".." in artifact_root
     ):
         raise ValueError("Publish artifact_root is invalid.")
     if artifact_root and _has_reserved_git_segment(artifact_root):
@@ -2236,11 +2225,7 @@ def _normalize_analytics_placeholders(*, path: str, content: str) -> str:
         lower = normalized.lower()
         if "</head>" in lower:
             idx = lower.index("</head>")
-            normalized = (
-                normalized[:idx]
-                + "\n  <!-- ANALYTICS_PLACEHOLDER -->\n"
-                + normalized[idx:]
-            )
+            normalized = normalized[:idx] + "\n  <!-- ANALYTICS_PLACEHOLDER -->\n" + normalized[idx:]
     return normalized
 
 

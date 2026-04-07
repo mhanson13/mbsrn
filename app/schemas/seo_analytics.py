@@ -50,14 +50,17 @@ class SEOAnalyticsSiteSummaryRead(BaseModel):
     available: bool
     status: str
     ga4_status: Literal["not_configured", "configured", "connected", "error"] = "not_configured"
-    ga4_error_reason: Literal[
-        "not_configured",
-        "access_denied",
-        "property_not_found",
-        "invalid_property_format",
-        "no_data",
-        "unknown_error",
-    ] | None = None
+    ga4_error_reason: (
+        Literal[
+            "not_configured",
+            "access_denied",
+            "property_not_found",
+            "invalid_property_format",
+            "no_data",
+            "unknown_error",
+        ]
+        | None
+    ) = None
     ga4_last_successful_fetch_at: datetime | None = None
     ga4_last_data_timestamp: datetime | None = None
     ga4_data_freshness_status: Literal["fresh", "stale", "unknown"] = "unknown"
