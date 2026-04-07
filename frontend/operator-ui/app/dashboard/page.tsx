@@ -69,7 +69,7 @@ function buildPriorityCue(params: {
   if (!selectedSite) {
     return {
       title: "Select a site first",
-      reason: "Operator signals are scoped by site. Choose a site to continue.",
+      reason: "Pick one site so we can turn scattered signals into a clear, ordered action list.",
       actionLabel: "Open Sites",
       href: "/sites",
       badgeClass: "badge-warn",
@@ -79,7 +79,7 @@ function buildPriorityCue(params: {
   if (!selectedSite.last_audit_run_id) {
     return {
       title: "Run the first audit",
-      reason: "This site has no audit baseline yet, so recommendation quality is limited.",
+      reason: "This site has no audit baseline yet. Start here so recommendations are grounded in real site data.",
       actionLabel: "Open Workspace",
       href: `/sites/${selectedSite.id}`,
       badgeClass: "badge-warn",
@@ -129,7 +129,7 @@ function buildPriorityCue(params: {
 
   return {
     title: "No immediate action needed",
-    reason: "Signals look stable. Continue with routine review of recommendations and automation outcomes.",
+    reason: "Signals look stable. Keep momentum by reviewing fresh recommendations and routine automation outcomes.",
     actionLabel: "Open Workspace",
     href: `/sites/${selectedSite.id}`,
     badgeClass: "badge-muted",
@@ -232,7 +232,7 @@ export default function DashboardPage() {
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
             title="Dashboard"
-            subtitle="Business context is unavailable for this session."
+            subtitle="We could not load your business workspace context. Refresh or sign in again."
             headingLevel={1}
             variant="support"
           />
@@ -269,19 +269,19 @@ export default function DashboardPage() {
       label: "Latest audit",
       value: selectedSite
         ? `${selectedSite.last_audit_status || "unknown"} · ${formatDateTime(selectedSite.last_audit_completed_at)}`
-        : "No site selected",
+        : "No site selected yet - pick a site to load activity",
     },
     {
       label: "Latest automation",
       value: latestAutomation
         ? `${latestAutomation.status} · ${formatDateTime(latestAutomation.finished_at || latestAutomation.started_at)}`
-        : "No automation run recorded",
+        : "No automation run yet - start one from the Automation page",
     },
     {
       label: "Latest recommendation run",
       value: workspaceSummary?.latest_run
         ? `${workspaceSummary.latest_run.status} · ${formatDateTime(workspaceSummary.latest_run.completed_at)}`
-        : "No recommendation run recorded",
+        : "No recommendation run yet - generate one from Site Workspace",
     },
   ];
 
@@ -299,7 +299,7 @@ export default function DashboardPage() {
             <SummaryStatCard
               label="Tracked sites"
               value={context.sites.length}
-              detail={context.sites.length > 0 ? "Configured and available" : "No sites configured"}
+              detail={context.sites.length > 0 ? "Configured and available" : "Add your first site to start"}
               tone={context.sites.length > 0 ? "success" : "warning"}
               variant="elevated"
             />

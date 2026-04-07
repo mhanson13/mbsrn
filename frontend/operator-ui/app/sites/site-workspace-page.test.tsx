@@ -4628,6 +4628,94 @@ describe("site workspace timeline controls", () => {
     expect(ga4Card).not.toHaveTextContent("accounts discovered");
   });
 
+  it("renders setup checklist with deterministic done, next-step, and attention states", async () => {
+    seedRichWorkspaceData();
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        available: false,
+        status: "unavailable",
+        ga4_status: "error",
+        ga4_error_reason: "access_denied",
+        message: "Google Analytics data is temporarily unavailable.",
+        data_source: null,
+        site_metrics_summary: null,
+        top_pages_summary: [],
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const checklist = await screen.findByTestId("workspace-setup-checklist");
+    expect(within(checklist).getByText("Setup / What's next")).toBeInTheDocument();
+    expect(within(checklist).getByTestId("workspace-setup-item-site")).toHaveTextContent("Done");
+    expect(within(checklist).getByTestId("workspace-setup-item-audit")).toHaveTextContent("Done");
+    expect(within(checklist).getByTestId("workspace-setup-item-recommendations")).toHaveTextContent("Done");
+    expect(within(checklist).getByTestId("workspace-setup-item-competitors")).toHaveTextContent("Done");
+
+    const ga4Item = within(checklist).getByTestId("workspace-setup-item-ga4");
+    expect(ga4Item).toHaveTextContent("Next step");
+    expect(within(ga4Item).getByRole("link", { name: "Save GA4 property" })).toHaveAttribute(
+      "href",
+      "#workspace-ga4-connect-panel",
+    );
+
+    const searchItem = within(checklist).getByTestId("workspace-setup-item-search_console");
+    expect(searchItem).toHaveTextContent("Needs attention");
+    expect(within(searchItem).getByRole("link", { name: "Open Site Management" })).toHaveAttribute(
+      "href",
+      "/admin",
+    );
+  });
+
+  it("surfaces first-run checklist guidance when baseline setup is missing", async () => {
+    seedCompetitorProfileGenerationDefaults();
+    mockUseOperatorContext.mockReturnValue(
+      baseContext({
+        sites: [
+          buildSite({
+            last_audit_run_id: null,
+            last_audit_status: null,
+            last_audit_completed_at: null,
+          }),
+        ],
+      }),
+    );
+    mockFetchAuditRuns.mockResolvedValue({ items: [], total: 0 });
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        state: "no_runs",
+        latest_run: null,
+        latest_completed_run: null,
+        recommendations: { items: [], total: 0 },
+      }),
+    );
+    mockFetchRecommendations.mockResolvedValue({
+      items: [],
+      total: 0,
+      by_status: { open: 0, accepted: 0, dismissed: 0 },
+      by_priority_band: { critical: 0, high: 0, medium: 0, low: 0 },
+      filtered_summary: { total: 0, open: 0, accepted: 0, dismissed: 0, high_priority: 0 },
+    });
+    mockFetchRecommendationRuns.mockResolvedValue({ items: [], total: 0 });
+
+    render(<SiteWorkspacePage />);
+
+    const checklist = await screen.findByTestId("workspace-setup-checklist");
+    const auditItem = within(checklist).getByTestId("workspace-setup-item-audit");
+    expect(auditItem).toHaveTextContent("Next step");
+    expect(auditItem).toHaveTextContent("Run your first audit to establish a reliable baseline");
+    expect(within(auditItem).getByRole("link", { name: "Open Audit Runs" })).toHaveAttribute(
+      "href",
+      "/audits?site_id=site-1",
+    );
+
+    const recommendationItem = within(checklist).getByTestId("workspace-setup-item-recommendations");
+    expect(recommendationItem).toHaveTextContent("Needs attention");
+    expect(recommendationItem).toHaveTextContent(
+      "Generate recommendations to get a prioritized queue of next actions.",
+    );
+  });
+
   it("renders GA4 connection diagnostics and helper text in workspace snapshot", async () => {
     seedRichWorkspaceData();
     mockFetchSiteAnalyticsSummary.mockResolvedValue(
@@ -4795,7 +4883,7 @@ describe("site workspace timeline controls", () => {
         "Connected, awaiting data.",
       );
       expect(within(searchVisibilityCard).getByTestId("workspace-search-last-data-seen")).toHaveTextContent(
-        "Last data seen: No data observed yet",
+        "Last data seen: No data seen yet",
       );
       expect(within(searchVisibilityCard).getByTestId("workspace-search-last-data-seen")).toHaveAttribute(
         "title",
@@ -6519,7 +6607,7 @@ describe("site workspace timeline controls", () => {
 
     render(<SiteWorkspacePage />);
 
-    await screen.findByText("No recommendations yet. Generate recommendations to see next best actions for this site.");
+    await screen.findByText("No recommendations yet. Click Generate Recommendations to get your next prioritized actions.");
     await waitFor(() => {
       expect(screen.queryByText("Loading workspace data...")).not.toBeInTheDocument();
     });

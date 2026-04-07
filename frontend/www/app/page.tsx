@@ -31,17 +31,7 @@ export default function HomePage() {
     <div className="page-shell">
       <section className="hero hero-upgraded">
         <div className="hero-copy">
-          <div className="hero-logo">
-            <Image
-              src="/images/mbsrn-logo-small.jpg"
-              alt="My Business Sucks Right Now logo"
-              width={128}
-              height={128}
-              className="hero-logo-image"
-              priority
-            />
-            <p className="eyebrow">My Business Sucks Right Now (MBSRN)</p>
-          </div>
+          <p className="eyebrow">My Business Sucks Right Now (MBSRN)</p>
           <h1>My Business Sucks Right Now.</h1>
           <p className="hero-subheadline">But it doesn&apos;t have to stay that way.</p>
           <p className="lead">Turn scattered SEO chaos into clear next actions.</p>
@@ -59,34 +49,20 @@ export default function HomePage() {
             <Link href="/terms">Terms of Service</Link>
           </p>
         </div>
-        <div className="hero-panel hero-visual-panel">
-          <h2>Real operator chaos, not theory</h2>
-          <div className="hero-visual-grid" aria-label="Frustrated operators handling day-to-day chaos">
-            <article className="hero-visual-card">
-              <Image
-                src="/images/frust-cleaning-person.png"
-                alt="Cleaning operator overwhelmed by schedule changes"
-                width={1024}
-                height={1536}
-                className="hero-visual-image"
-                sizes="(max-width: 980px) 100vw, 260px"
-                priority
-              />
-            </article>
-            <article className="hero-visual-card">
-              <Image
-                src="/images/frust-plumber-person.png"
-                alt="Plumber operator dealing with a broken laptop in the field"
-                width={1024}
-                height={1536}
-                className="hero-visual-image"
-                sizes="(max-width: 980px) 100vw, 260px"
-                priority
-              />
-            </article>
+        <div className="hero-panel hero-brand-panel">
+          <div className="hero-brand-anchor">
+            <Image
+              src="/images/mbsrn-logo-small.jpg"
+              alt="My Business Sucks Right Now logo"
+              width={128}
+              height={128}
+              className="hero-logo-image"
+              priority
+            />
           </div>
-          <p className="hero-panel-note">
-            Most operators are already maxed out. SEO should reduce confusion, not add another fire.
+          <h2>My Business Starts Right Now.</h2>
+          <p className="hint muted">
+            Built for overloaded operators who need one clear next step, not another noisy dashboard.
           </p>
         </div>
       </section>
@@ -98,7 +74,30 @@ export default function HomePage() {
           <p>Your website? It&apos;s just another thing breaking.</p>
           <p>SEO tools don&apos;t help - they add noise.</p>
         </div>
+        <div className="story-support-card">
+          <p>Most operators are already maxed out. SEO should reduce confusion, not add another fire.</p>
+        </div>
         <div className="story-image-grid" aria-label="Examples of overloaded operators">
+          <article className="story-image-card">
+            <Image
+              src="/images/frust-cleaning-person.png"
+              alt="Cleaning operator overwhelmed by schedule changes"
+              width={1024}
+              height={1536}
+              className="story-image"
+              sizes="(max-width: 980px) 100vw, 280px"
+            />
+          </article>
+          <article className="story-image-card">
+            <Image
+              src="/images/frust-plumber-person.png"
+              alt="Plumber operator dealing with a broken laptop in the field"
+              width={1024}
+              height={1536}
+              className="story-image"
+              sizes="(max-width: 980px) 100vw, 280px"
+            />
+          </article>
           <article className="story-image-card">
             <Image
               src="/images/frust-foodservice-person.png"
@@ -106,7 +105,7 @@ export default function HomePage() {
               width={1024}
               height={1536}
               className="story-image"
-              sizes="(max-width: 980px) 100vw, 320px"
+              sizes="(max-width: 980px) 100vw, 280px"
             />
           </article>
           <article className="story-image-card">
@@ -116,7 +115,7 @@ export default function HomePage() {
               width={1024}
               height={1536}
               className="story-image"
-              sizes="(max-width: 980px) 100vw, 320px"
+              sizes="(max-width: 980px) 100vw, 280px"
             />
           </article>
           <article className="story-image-card">
@@ -126,7 +125,7 @@ export default function HomePage() {
               width={1024}
               height={1536}
               className="story-image"
-              sizes="(max-width: 980px) 100vw, 320px"
+              sizes="(max-width: 980px) 100vw, 280px"
             />
           </article>
         </div>

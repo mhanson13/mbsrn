@@ -261,6 +261,26 @@ function formatDateTime(value: string | null): string {
 type DataFreshnessStatus = "fresh" | "stale" | "unknown";
 type IntegrationRenderStatus = "connected" | "configured" | "not_configured" | "error";
 type IntegrationType = "ga4" | "search_console";
+type WorkspaceSetupChecklistStatus = "done" | "next_step" | "needs_attention";
+
+interface WorkspaceSetupChecklistSeed {
+  key: "site" | "audit" | "recommendations" | "competitors" | "ga4" | "search_console";
+  label: string;
+  done: boolean;
+  doneDetail: string;
+  pendingDetail: string;
+  actionHref?: string;
+  actionLabel?: string;
+}
+
+interface WorkspaceSetupChecklistItem {
+  key: WorkspaceSetupChecklistSeed["key"];
+  label: string;
+  status: WorkspaceSetupChecklistStatus;
+  detail: string;
+  actionHref: string | null;
+  actionLabel: string | null;
+}
 
 function formatRelativeTime(value: string | null): string {
   if (!value) {
@@ -361,6 +381,55 @@ function integrationSummaryTone(
     return "success";
   }
   return "neutral";
+}
+
+function workspaceSetupChecklistStatusLabel(status: WorkspaceSetupChecklistStatus): string {
+  if (status === "done") {
+    return "Done";
+  }
+  if (status === "next_step") {
+    return "Next step";
+  }
+  return "Needs attention";
+}
+
+function workspaceSetupChecklistStatusBadgeClass(status: WorkspaceSetupChecklistStatus): string {
+  if (status === "done") {
+    return "badge badge-success";
+  }
+  if (status === "next_step") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
+}
+
+function buildWorkspaceSetupChecklist(
+  seedItems: WorkspaceSetupChecklistSeed[],
+): WorkspaceSetupChecklistItem[] {
+  let nextStepAssigned = false;
+  return seedItems.map((item) => {
+    if (item.done) {
+      return {
+        key: item.key,
+        label: item.label,
+        status: "done",
+        detail: item.doneDetail,
+        actionHref: null,
+        actionLabel: null,
+      };
+    }
+
+    const status: WorkspaceSetupChecklistStatus = nextStepAssigned ? "needs_attention" : "next_step";
+    nextStepAssigned = true;
+    return {
+      key: item.key,
+      label: item.label,
+      status,
+      detail: item.pendingDetail,
+      actionHref: item.actionHref || null,
+      actionLabel: item.actionLabel || null,
+    };
+  });
 }
 
 function renderIntegrationStatus({
@@ -967,7 +1036,7 @@ function ga4DiagnosticReasonMessage(
     return null;
   }
   if (reason === "not_configured") {
-    return "GA4 is not configured yet. Add the site property ID and confirm workspace credentials are available.";
+    return "GA4 is not connected for this site yet. Add the GA4 property ID, then confirm data can be read.";
   }
   if (reason === "access_denied") {
     return "This property is not accessible. Ensure the service account has Viewer access.";
@@ -5696,16 +5765,16 @@ export default function SiteWorkspacePage() {
       return "This site is currently inactive.";
     }
     if (competitorSets.length === 0) {
-      return "No competitor sets are configured for this site yet.";
+      return "No competitor sets are configured yet. Add a competitor set to unlock comparison insights.";
     }
     if (competitorDomainCount === 0) {
-      return "Competitor sets exist, but no competitor domains are configured yet.";
+      return "Competitor sets exist, but no domains are configured yet. Add at least one real competitor domain.";
     }
     if (!latestSnapshotRun) {
-      return "Competitor domains exist, but no snapshot run has completed yet.";
+      return "Competitor domains are set, but no snapshot run has completed yet. Run a snapshot to build baseline data.";
     }
     if (!latestComparisonRun) {
-      return "Snapshot activity exists, but no comparison run is available yet.";
+      return "Snapshot data exists, but no comparison run is available yet. Run comparison to see where competitors are stronger.";
     }
     return "This site has competitor and recommendation activity ready for investigation.";
   }, [competitorDomainCount, competitorSets.length, latestComparisonRun, latestSnapshotRun, selectedSite]);
@@ -7408,7 +7477,7 @@ export default function SiteWorkspacePage() {
         }
         return `Automation status is ${latestAutomationRun.status}.`;
       })()
-    : "No automation lifecycle signal is available for this site yet.";
+    : "No automation lifecycle signal yet. Start one run to see step status and outcomes.";
   const latestAutomationActionState = deriveAutomationRunOperatorActionState({
     runStatus: latestAutomationRun?.status || null,
     hasRecommendationOutput: Boolean(latestAutomationRecommendationRunOutputId),
@@ -7446,7 +7515,7 @@ export default function SiteWorkspacePage() {
   const ga4LastSuccessfulFetchAt = siteAnalyticsSummary?.ga4_last_successful_fetch_at || null;
   const ga4LastDataSeenLabel = ga4LastDataTimestamp
     ? `${formatRelativeTime(ga4LastDataTimestamp)} (${formatDateTime(ga4LastDataTimestamp)})`
-    : "No data observed yet";
+    : "No data seen yet";
   const ga4LastSuccessfulSyncLabel = ga4LastSuccessfulFetchAt
     ? `${formatRelativeTime(ga4LastSuccessfulFetchAt)} (${formatDateTime(ga4LastSuccessfulFetchAt)})`
     : "No successful sync observed yet";
@@ -7549,7 +7618,7 @@ export default function SiteWorkspacePage() {
       + `avg position ${searchVisibilityMetricsSummary.average_position_current.toFixed(1)}`
     : searchConsoleSiteSummary?.message
       || searchConsoleSiteSummaryError
-      || "Search Console data is not available for this site yet.";
+      || "Search Console is not connected for this site yet. Add a property to view search visibility.";
   const searchConsoleTrendStatus: IntegrationRenderStatus = (() => {
     if (searchConsoleSiteSummary?.status === "ok") {
       return "connected";
@@ -7564,7 +7633,7 @@ export default function SiteWorkspacePage() {
   const searchConsoleLastSuccessfulFetchAt = searchConsoleSiteSummary?.sc_last_successful_fetch_at || null;
   const searchConsoleLastDataSeenLabel = searchConsoleLastDataTimestamp
     ? `${formatRelativeTime(searchConsoleLastDataTimestamp)} (${formatDateTime(searchConsoleLastDataTimestamp)})`
-    : "No data observed yet";
+    : "No data seen yet";
   const searchConsoleLastSuccessfulSyncLabel = searchConsoleLastSuccessfulFetchAt
     ? `${formatRelativeTime(searchConsoleLastSuccessfulFetchAt)} (${formatDateTime(searchConsoleLastSuccessfulFetchAt)})`
     : "No successful sync observed yet";
@@ -7672,6 +7741,77 @@ export default function SiteWorkspacePage() {
     && !context.error
     && siteId,
   );
+  const hasCompletedAudit = Boolean(latestCompletedAuditRun);
+  const hasRecommendationSignals = Boolean(latestRecommendationRun) || recommendationQueueSummary.total > 0;
+  const hasCompetitorSignals = activeCompetitorDomainCount > 0 || activeCompetitorSetCount > 0;
+  const hasGa4Configured = ga4ConnectivityStatus === "connected" || ga4ConnectivityStatus === "configured";
+  const hasSearchVisibilityConnected = searchConsoleTrendStatus === "connected";
+  const workspaceSetupChecklistSeedItems: WorkspaceSetupChecklistSeed[] = [
+    {
+      key: "site",
+      label: "Site context selected",
+      done: Boolean(selectedSite.is_active),
+      doneDetail: `${selectedSite.display_name} is active in this workspace.`,
+      pendingDetail: "This site is currently inactive. Reactivate it before running operator workflows.",
+      actionHref: "/admin",
+      actionLabel: "Open Site Management",
+    },
+    {
+      key: "audit",
+      label: "First audit baseline completed",
+      done: hasCompletedAudit,
+      doneDetail: `Latest completed audit: ${formatDateTime(latestCompletedAuditRun?.completed_at || compactAuditCompletedAt)}.`,
+      pendingDetail: "Run your first audit to establish a reliable baseline for recommendations.",
+      actionHref: `/audits?site_id=${encodeURIComponent(selectedSite.id)}`,
+      actionLabel: "Open Audit Runs",
+    },
+    {
+      key: "recommendations",
+      label: "Recommendations generated",
+      done: hasRecommendationSignals,
+      doneDetail: `${recommendationQueueSummary.open} open item${recommendationQueueSummary.open === 1 ? "" : "s"} across ${recommendationQueueSummary.total} recommendation${recommendationQueueSummary.total === 1 ? "" : "s"}.`,
+      pendingDetail: latestCompletedRecommendationsError
+        ? "Recommendation status is temporarily unavailable. Reload and confirm your latest run status."
+        : "Generate recommendations to get a prioritized queue of next actions.",
+      actionHref: `/recommendations?site_id=${encodeURIComponent(selectedSite.id)}`,
+      actionLabel: "Open Recommendation Queue",
+    },
+    {
+      key: "competitors",
+      label: "Competitor set configured",
+      done: hasCompetitorSignals,
+      doneDetail: `${activeCompetitorDomainCount} active competitor domain${activeCompetitorDomainCount === 1 ? "" : "s"} ready for comparison context.`,
+      pendingDetail: "Add competitor domains to improve gap analysis and recommendation confidence.",
+      actionHref: `/competitors?site_id=${encodeURIComponent(selectedSite.id)}`,
+      actionLabel: "Open Competitor Workspace",
+    },
+    {
+      key: "ga4",
+      label: "GA4 measurement connected",
+      done: hasGa4Configured,
+      doneDetail: ga4ConnectivityStatus === "connected"
+        ? "GA4 is connected and returning measurement signals."
+        : "GA4 property is configured and ready for measurement checks.",
+      pendingDetail: ga4ConnectivityStatus === "error"
+        ? (ga4DiagnosticReasonMessage(ga4ConnectivityReason)
+          || "GA4 connection failed. Verify property access and try again.")
+        : "Add this site’s GA4 property ID to enable traffic visibility context.",
+      actionHref: "#workspace-ga4-connect-panel",
+      actionLabel: "Save GA4 property",
+    },
+    {
+      key: "search_console",
+      label: "Search visibility connected",
+      done: hasSearchVisibilityConnected,
+      doneDetail: "Search Console visibility signals are available for this site.",
+      pendingDetail: searchConsoleSiteSummary?.message
+        || searchConsoleSiteSummaryError
+        || "Add a Search Console property in Site Management to unlock visibility context.",
+      actionHref: "/admin",
+      actionLabel: "Open Site Management",
+    },
+  ];
+  const workspaceSetupChecklistItems = buildWorkspaceSetupChecklist(workspaceSetupChecklistSeedItems);
 
   async function handleWorkspaceRecommendationDecision(
     recommendation: Recommendation,
@@ -7967,7 +8107,30 @@ export default function SiteWorkspacePage() {
             data-testid="workspace-summary-gbp"
           />
         </div>
-        <div className="panel panel-compact stack-tight" data-testid="workspace-ga4-connect-panel">
+        <div className="panel panel-compact stack-tight" data-testid="workspace-setup-checklist">
+          <div className="link-row">
+            <strong>Setup / What&apos;s next</strong>
+            <span className="hint muted">Read-only progression guide</span>
+          </div>
+          <span className="hint muted">
+            Confirm core setup signals here, then use the linked actions to clear blockers quickly.
+          </span>
+          <div className="stack-tight">
+            {workspaceSetupChecklistItems.map((item) => (
+              <div key={item.key} className="stack-tight" data-testid={`workspace-setup-item-${item.key}`}>
+                <div className="link-row">
+                  <span className={workspaceSetupChecklistStatusBadgeClass(item.status)}>
+                    {workspaceSetupChecklistStatusLabel(item.status)}
+                  </span>
+                  <strong>{item.label}</strong>
+                </div>
+                <span className="hint muted">{item.detail}</span>
+                {item.actionHref && item.actionLabel ? <Link href={item.actionHref}>{item.actionLabel}</Link> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div id="workspace-ga4-connect-panel" className="panel panel-compact stack-tight" data-testid="workspace-ga4-connect-panel">
           <div className="link-row">
             <strong>Connect GA4</strong>
             <span className={ga4ConnectivityBadgeClass} data-testid="workspace-ga4-connection-status">
@@ -8760,7 +8923,7 @@ export default function SiteWorkspacePage() {
         />
         {auditError ? <p className="hint error">{auditError}</p> : null}
         {auditRuns.length === 0 && !auditError ? (
-          <p className="hint muted">No audit runs have been recorded for this site yet.</p>
+          <p className="hint muted">No audit runs yet. Run your first audit to identify what needs attention first.</p>
         ) : (
           <div className="table-container">
             <table className="table table-dense">
@@ -8842,7 +9005,9 @@ export default function SiteWorkspacePage() {
           <Link href={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}>Open Competitor Surfaces</Link>
         </p>
         {competitorSets.length === 0 ? (
-          <p className="hint muted">No competitor sets are currently configured for this site.</p>
+          <p className="hint muted">
+            No competitor sets yet. Add one to compare your site against nearby businesses in your market.
+          </p>
         ) : (
           <>
             <div className="table-container">
@@ -8951,7 +9116,9 @@ export default function SiteWorkspacePage() {
               : `created ${formatDateTime(latestCompetitorProfileRun.created_at)}`}
           </p>
         ) : (
-          <p className="hint muted">No competitor profile generation runs have been created for this site yet.</p>
+          <p className="hint muted">
+            No competitor profile runs yet. Generate one to get review-ready competitor candidates.
+          </p>
         )}
         {latestCompetitorProfileRun ? (
           <p className="hint muted">
@@ -9840,7 +10007,9 @@ export default function SiteWorkspacePage() {
           <Link href="/recommendations">Open Recommendation Queue</Link>
         </p>
         {!queueError && (!queueResponse || queueResponse.items.length === 0) ? (
-          <p className="hint muted">No recommendations yet. Generate recommendations to see next best actions for this site.</p>
+          <p className="hint muted">
+            No recommendations yet. Click Generate Recommendations to get your next prioritized actions.
+          </p>
         ) : null}
         {queueResponse && queueResponse.items.length > 0 ? (
           <div className="stack-tight recommendation-workspace-list" data-testid="workspace-recommendation-queue-list">
@@ -9885,7 +10054,9 @@ export default function SiteWorkspacePage() {
           <p className="hint warning">{latestCompletedRecommendationsError}</p>
         ) : null}
         {recommendationWorkspaceSummaryState === "no_runs" && !latestCompletedRecommendationsError ? (
-          <p className="hint muted">No recommendation runs have been recorded for this site yet.</p>
+          <p className="hint muted">
+            No recommendation runs yet. Start one to generate a clear action list for this site.
+          </p>
         ) : null}
         {recommendationWorkspaceSummaryState === "no_completed_runs" && !latestCompletedRecommendationsError ? (
           <p className="hint muted">
@@ -9982,7 +10153,9 @@ export default function SiteWorkspacePage() {
               </div>
             ) : null}
             {!latestCompletedRecommendationsError && latestCompletedRecommendations.length === 0 ? (
-              <p className="hint muted">No recommendations yet. Generate recommendations to see next best actions for this site.</p>
+              <p className="hint muted">
+                No recommendations yet. Click Generate Recommendations to get your next prioritized actions.
+              </p>
             ) : null}
             {latestCompletedRecommendations.length > 0 ? (
               <div
@@ -10021,7 +10194,7 @@ export default function SiteWorkspacePage() {
                   </>
                 ) : (
                   <span className="hint muted">
-                    No recommendations are currently marked ready now. Review pending and informational items next.
+                    Nothing is marked Ready now yet. Start with pending items that already have clear next actions.
                   </span>
                 )}
               </div>

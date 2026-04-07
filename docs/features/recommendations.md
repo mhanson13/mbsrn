@@ -778,3 +778,48 @@ Expanded view (`Show details` / `Show implementation steps`) contains full suppo
 - implementation steps with before/after examples
 
 This is a presentation-only change: recommendation semantics, scoring, evidence derivation, and execution-readiness logic are unchanged.
+
+## First-Run and Low-Data Operator Guidance
+
+The site workspace and dashboard now use more operator-guided first-run wording for common low-data states.
+
+Primary intent:
+
+- explain what the current state means in practical terms
+- explain why it matters for recommendation quality
+- point to the next concrete action using existing workflows
+
+Examples of updated guidance:
+
+- no recommendations yet -> run recommendation generation for prioritized next actions
+- no audit baseline yet -> run the first audit before relying on recommendation quality
+- no competitor set/configured domains yet -> add competitor setup before expecting comparison insight
+
+This is a UI copy/clarity change only. Recommendation generation logic and prioritization semantics are unchanged.
+
+## Workspace Setup / Progression Checklist
+
+The site workspace now includes a compact read-only **Setup / What’s next** checklist to help first-run operators confirm what is configured, what is missing, and which action to take next.
+
+Checklist behavior:
+
+- built entirely from existing workspace signals (no onboarding persistence model)
+- each item is labeled as `Done`, `Next step`, or `Needs attention`
+- the first incomplete setup item is highlighted as `Next step`
+- remaining incomplete items are shown as `Needs attention`
+- links reuse existing operator actions/pages; no wizard and no new workflow engine
+
+Current checklist focus areas:
+
+- site context active
+- first audit baseline completed
+- recommendations generated
+- competitor set configured
+- GA4 measurement connected/configured
+- Search Console visibility connected
+
+Trust boundary:
+
+- this is guidance-only UI derived from current state
+- it does not create hidden completion state
+- it does not mark tasks complete outside actual underlying workflow outcomes
