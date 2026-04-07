@@ -73,15 +73,17 @@ def _build_success_assistant_payload(*, generated_files: list[dict[str, object]]
         "seo_meta_suggestions": {},
         "redirect_suggestions": [],
         "analytics_placeholders": [],
-        "generated_files": generated_files
-        if generated_files is not None
-        else [
-            {
-                "path": "index.html",
-                "media_type": "text/html",
-                "content": "<html><body>Draft</body></html>",
-            }
-        ],
+        "generated_files": (
+            generated_files
+            if generated_files is not None
+            else [
+                {
+                    "path": "index.html",
+                    "media_type": "text/html",
+                    "content": "<html><body>Draft</body></html>",
+                }
+            ]
+        ),
     }
 
 
@@ -101,6 +103,61 @@ def _build_chat_completion_response(content: str) -> str:
 
 def json_dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=True)
+
+
+def test_openai_migration_provider_compatibility_supported_for_chat_json_schema_profile() -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+
+    compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is True
+    assert compatibility.reason_code == "supported"
+    assert compatibility.provider_name == "openai"
+    assert compatibility.model_name == "gpt-5.1"
+    assert compatibility.endpoint_path == "/chat/completions"
+    assert compatibility.execution_mode == "full"
+    assert compatibility.web_search_enabled is False
+    assert compatibility.degraded_mode is False
+    assert compatibility.response_format_mode == "json_schema"
+
+
+def test_openai_migration_provider_compatibility_rejects_incompatible_model_configuration() -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="text-embedding-3-small",
+        timeout_seconds=5,
+    )
+
+    compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is False
+    assert compatibility.reason_code == "unsupported_model_configuration"
+    assert compatibility.retryable is False
+
+
+def test_openai_migration_provider_compatibility_rejects_degraded_mode(monkeypatch) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+
+    def _degraded_profile() -> dict[str, object]:
+        return {
+            "endpoint_path": "/chat/completions",
+            "execution_mode": "full",
+            "web_search_enabled": False,
+            "degraded_mode": True,
+            "response_format_mode": "json_schema",
+        }
+
+    monkeypatch.setattr(provider, "get_request_profile", _degraded_profile)
+    compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is False
+    assert compatibility.reason_code == "degraded_mode_not_allowed"
+    assert compatibility.retryable is False
 
 
 def test_openai_migration_provider_timeout_maps_to_retryable_timeout_reason(monkeypatch) -> None:
@@ -173,6 +230,52 @@ def test_openai_migration_provider_invalid_json_maps_to_malformed_response_reaso
     assert "could not be parsed" in error.safe_message.lower()
 
 
+def test_openai_migration_provider_request_logs_include_request_shape_metadata(monkeypatch, caplog) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+
+    def _return_invalid_json(request, timeout):  # noqa: ANN001
+        del request, timeout
+        return _FakeResponse("not-json")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _return_invalid_json)
+    with caplog.at_level("INFO"):
+        with pytest.raises(SEOMigrationArtifactProviderError):
+            provider.generate_artifacts(migration_context=_build_migration_context())
+
+    start_events = [
+        getattr(record, "json_fields", {})
+        for record in caplog.records
+        if isinstance(getattr(record, "json_fields", None), dict)
+        and getattr(record, "json_fields", {}).get("event") == "seo_migration_draft_provider_request_start"
+    ]
+    failure_events = [
+        getattr(record, "json_fields", {})
+        for record in caplog.records
+        if isinstance(getattr(record, "json_fields", None), dict)
+        and getattr(record, "json_fields", {}).get("event") == "seo_migration_draft_provider_request_failure"
+    ]
+    assert start_events
+    assert failure_events
+    start = start_events[-1]
+    assert start.get("endpoint_path") == "/chat/completions"
+    assert start.get("execution_mode") == "full"
+    assert start.get("web_search_enabled") is False
+    assert start.get("degraded_mode") is False
+    assert start.get("response_format_mode") == "json_schema"
+
+    failure = failure_events[-1]
+    assert failure.get("endpoint_path") == "/chat/completions"
+    assert failure.get("execution_mode") == "full"
+    assert failure.get("web_search_enabled") is False
+    assert failure.get("degraded_mode") is False
+    assert failure.get("response_format_mode") == "json_schema"
+    assert failure.get("failure_reason") == "malformed_response"
+
+
 def test_openai_migration_provider_parses_fenced_json_output(monkeypatch) -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",
@@ -189,7 +292,9 @@ def test_openai_migration_provider_parses_fenced_json_output(monkeypatch) -> Non
     output = provider.generate_artifacts(migration_context=_build_migration_context())
     assert output.generated_files
     assert output.generated_files[0].path == "index.html"
-    assert any("Recovered structured JSON from wrapped provider output." in warning for warning in output.parse_warnings)
+    assert any(
+        "Recovered structured JSON from wrapped provider output." in warning for warning in output.parse_warnings
+    )
 
 
 def test_openai_migration_provider_parses_json_with_leading_and_trailing_prose(monkeypatch) -> None:

@@ -10,6 +10,7 @@ from app.integrations.seo_migration_artifact_provider import (
     SEOMigrationArtifactGenerationProvider,
     SEOMigrationArtifactProviderError,
     SEOMigrationGeneratedFileOutput,
+    SEOMigrationProviderCompatibilityResult,
 )
 from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployResult,
@@ -64,6 +65,37 @@ class _ExplodingMigrationProvider(SEOMigrationArtifactGenerationProvider):
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         del migration_context
         raise RuntimeError("boom")
+
+
+class _TrackingMigrationProvider(SEOMigrationArtifactGenerationProvider):
+    def __init__(self, output: SEOMigrationArtifactGenerationOutput) -> None:
+        self.output = output
+        self.call_count = 0
+
+    def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
+        del migration_context
+        self.call_count += 1
+        return self.output
+
+
+class _CompatibilityTrackingMigrationProvider(SEOMigrationArtifactGenerationProvider):
+    def __init__(
+        self,
+        *,
+        compatibility: SEOMigrationProviderCompatibilityResult,
+        output: SEOMigrationArtifactGenerationOutput,
+    ) -> None:
+        self.compatibility = compatibility
+        self.output = output
+        self.call_count = 0
+
+    def evaluate_compatibility(self) -> SEOMigrationProviderCompatibilityResult:
+        return self.compatibility
+
+    def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
+        del migration_context
+        self.call_count += 1
+        return self.output
 
 
 class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
@@ -194,6 +226,97 @@ def _seed_workspace(service: SEOMigrationService, *, business_id: str, site_id: 
         deploy_config={"target_cluster": "gke-prod"},
         principal_id="principal-1",
     )
+    _mark_workspace_ingested(service, business_id=business_id, site_id=site_id)
+
+
+def _mark_workspace_ingested(service: SEOMigrationService, *, business_id: str, site_id: str) -> None:
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.source_site_status = "ingested"
+    workspace.imported_source_snapshot_json = {
+        "title": "Legacy Site",
+        "fetched_at": utc_now().isoformat(),
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+
+def _seed_reused_context_records(db_session, *, business_id: str, site_id: str) -> None:
+    now = utc_now()
+    audit_run = SEOAuditRun(
+        id="audit-run-readiness-1",
+        business_id=business_id,
+        site_id=site_id,
+        status="completed",
+        started_at=now,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    recommendation_run = SEORecommendationRun(
+        id="recommendation-run-readiness-1",
+        business_id=business_id,
+        site_id=site_id,
+        audit_run_id=audit_run.id,
+        comparison_run_id=None,
+        status="completed",
+        total_recommendations=1,
+        warning_recommendations=1,
+        started_at=now,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    recommendation = SEORecommendation(
+        id="recommendation-readiness-1",
+        business_id=business_id,
+        site_id=site_id,
+        recommendation_run_id=recommendation_run.id,
+        audit_run_id=audit_run.id,
+        comparison_run_id=None,
+        rule_key="readiness-rule",
+        category="SEO",
+        severity="WARNING",
+        title="Improve content specificity",
+        rationale="Legacy copy is too thin.",
+        priority_score=70,
+        priority_band="high",
+        effort_bucket="small",
+        status="open",
+    )
+    competitor_set = SEOCompetitorSet(
+        id="competitor-set-readiness-1",
+        business_id=business_id,
+        site_id=site_id,
+        name="Primary competitors",
+        is_active=True,
+        created_by_principal_id="principal-1",
+    )
+    snapshot_run = SEOCompetitorSnapshotRun(
+        id="snapshot-run-readiness-1",
+        business_id=business_id,
+        site_id=site_id,
+        competitor_set_id=competitor_set.id,
+        client_audit_run_id=audit_run.id,
+        status="completed",
+        pages_captured=3,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    comparison_run = SEOCompetitorComparisonRun(
+        id="comparison-run-readiness-1",
+        business_id=business_id,
+        site_id=site_id,
+        competitor_set_id=competitor_set.id,
+        snapshot_run_id=snapshot_run.id,
+        baseline_audit_run_id=audit_run.id,
+        status="completed",
+        total_findings=2,
+        warning_findings=2,
+        client_pages_analyzed=2,
+        competitor_pages_analyzed=3,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    db_session.add_all([audit_run, recommendation_run, recommendation, competitor_set, snapshot_run, comparison_run])
+    db_session.commit()
 
 
 def _build_publishable_output(*, index_content: str | None = None) -> SEOMigrationArtifactGenerationOutput:
@@ -328,6 +451,276 @@ def test_generate_artifacts_applies_guardrails_and_analytics_normalization(db_se
     assert any("invalid path" in warning for warning in warnings)
 
 
+def test_draft_generation_readiness_ready_with_all_core_and_reused_context_signals(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _mark_workspace_ingested(service, business_id=business_id, site_id=site_id)
+    _seed_reused_context_records(db_session, business_id=business_id, site_id=site_id)
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    readiness = (summary.context_summary or {}).get("draft_generation_readiness")
+    assert isinstance(readiness, dict)
+    assert readiness.get("status") == "ready"
+    assert readiness.get("hard_blocked") is False
+    assert readiness.get("score") == 100
+    assert readiness.get("summary") == "Ready to generate draft."
+    signals = readiness.get("signals")
+    assert isinstance(signals, dict)
+    assert signals.get("source_site_ingested") is True
+    assert signals.get("operator_requirements_present") is True
+    assert signals.get("enriched_content_present") is True
+    assert signals.get("audit_available") is True
+    assert signals.get("recommendations_available") is True
+    assert signals.get("competitors_available") is True
+    top_state = (summary.context_summary or {}).get("draft_generation_state")
+    assert isinstance(top_state, dict)
+    assert top_state.get("status") == "ready"
+    assert top_state.get("summary") == "Ready to generate draft."
+
+
+def test_draft_generation_readiness_missing_operator_requirements_is_blocking(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    service.create_or_update_workspace(
+        business_id=business_id,
+        site_id=site_id,
+        source_url="https://legacy.example/",
+        operator_requirements={},
+        enriched_content_notes={"replacement_summary": "Prepared content."},
+        principal_id="principal-1",
+    )
+    _mark_workspace_ingested(service, business_id=business_id, site_id=site_id)
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    readiness = (summary.context_summary or {}).get("draft_generation_readiness")
+    assert isinstance(readiness, dict)
+    assert readiness.get("status") == "not_ready"
+    assert readiness.get("hard_blocked") is True
+    reasons = readiness.get("reasons") or []
+    assert any(
+        isinstance(item, dict)
+        and item.get("code") == "operator_requirements_required"
+        and item.get("severity") == "blocking"
+        for item in reasons
+    )
+
+
+def test_draft_generation_readiness_missing_enriched_content_is_blocking(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    service.create_or_update_workspace(
+        business_id=business_id,
+        site_id=site_id,
+        source_url="https://legacy.example/",
+        operator_requirements={"business_objectives": ["Replace weak source pages"]},
+        enriched_content_notes={},
+        principal_id="principal-1",
+    )
+    _mark_workspace_ingested(service, business_id=business_id, site_id=site_id)
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    readiness = (summary.context_summary or {}).get("draft_generation_readiness")
+    assert isinstance(readiness, dict)
+    assert readiness.get("status") == "not_ready"
+    assert readiness.get("hard_blocked") is True
+    reasons = readiness.get("reasons") or []
+    assert any(
+        isinstance(item, dict)
+        and item.get("code") == "enriched_content_required"
+        and item.get("severity") == "blocking"
+        for item in reasons
+    )
+
+
+def test_draft_generation_readiness_missing_reused_context_is_warning_only(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _mark_workspace_ingested(service, business_id=business_id, site_id=site_id)
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    readiness = (summary.context_summary or {}).get("draft_generation_readiness")
+    assert isinstance(readiness, dict)
+    assert readiness.get("status") == "ready_with_warnings"
+    assert readiness.get("hard_blocked") is False
+    reasons = readiness.get("reasons") or []
+    warning_codes = {
+        item.get("code") for item in reasons if isinstance(item, dict) and item.get("severity") == "warning"
+    }
+    assert "audit_context_unavailable" in warning_codes
+    assert "recommendations_context_unavailable" in warning_codes
+    assert "competitors_context_unavailable" in warning_codes
+
+
+def test_generate_artifacts_is_blocked_by_readiness_before_provider_call(db_session) -> None:
+    tracking_provider = _TrackingMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, tracking_provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    service.create_or_update_workspace(
+        business_id=business_id,
+        site_id=site_id,
+        source_url="https://legacy.example/",
+        operator_requirements={},
+        enriched_content_notes={"replacement_summary": "Prepared content."},
+        principal_id="principal-1",
+    )
+    _mark_workspace_ingested(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError, match="Not ready yet"):
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    assert tracking_provider.call_count == 0
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    top_state = (summary.context_summary or {}).get("draft_generation_state")
+    assert isinstance(top_state, dict)
+    assert top_state.get("status") == "blocked_by_workspace"
+    assert "Not ready yet" in str(top_state.get("summary") or "")
+
+
+def test_draft_generation_readiness_emits_structured_log(db_session, caplog) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _mark_workspace_ingested(service, business_id=business_id, site_id=site_id)
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_readiness_evaluation"
+    ]
+    assert payloads
+    latest = payloads[-1]
+    assert latest.get("business_id") == business_id
+    assert latest.get("site_id") == site_id
+    assert latest.get("workspace_id")
+    assert latest.get("readiness_status") in {"ready", "ready_with_warnings", "not_ready"}
+    assert isinstance(latest.get("readiness_score"), int)
+    assert isinstance(latest.get("hard_blocked"), bool)
+    assert isinstance(latest.get("blocking_reason_codes"), list)
+    assert isinstance(latest.get("warning_reason_codes"), list)
+
+
+def test_generate_artifacts_is_blocked_by_provider_compatibility_before_provider_call(db_session) -> None:
+    provider = _CompatibilityTrackingMigrationProvider(
+        compatibility=SEOMigrationProviderCompatibilityResult(
+            supported=False,
+            reason_code="unsupported_model_configuration",
+            operator_message="This model/provider setup is not compatible with the current migration request settings.",
+            admin_summary="model_or_response_format_incompatible",
+            retryable=False,
+            provider_name="openai",
+            model_name="text-embedding-3-small",
+            endpoint_path="/chat/completions",
+            execution_mode="full",
+            web_search_enabled=False,
+            degraded_mode=False,
+            response_format_mode="json_schema",
+        ),
+        output=_build_publishable_output(),
+    )
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    error = exc_info.value
+    assert error.failure_category == "config_missing"
+    assert error.failure_reason == "unsupported_configuration"
+    assert error.error_code == "unsupported_model_configuration"
+    assert error.retryable is False
+    assert provider.call_count == 0
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    assert workspace.migration_status == "draft_generation_failed"
+    assert workspace.latest_generated_artifact_version_id
+    artifact = service.get_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=workspace.latest_generated_artifact_version_id or "",
+    )
+    assert artifact.status == "failed"
+    assert artifact.error_summary == (
+        "This model/provider setup is not compatible with the current migration request settings."
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("last_draft_failure_category") == "config_missing"
+    assert diagnostics.get("last_draft_failure_reason") == "unsupported_configuration"
+    assert diagnostics.get("last_draft_failure_code") == "unsupported_model_configuration"
+    compatibility = (summary.context_summary or {}).get("draft_provider_compatibility") or {}
+    assert compatibility.get("supported") is False
+    assert compatibility.get("reason_code") == "unsupported_model_configuration"
+    assert compatibility.get("execution_mode") == "full"
+    top_state = (summary.context_summary or {}).get("draft_generation_state") or {}
+    assert top_state.get("status") == "blocked_by_provider"
+    assert "not compatible" in str(top_state.get("summary") or "").lower()
+
+
+def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, caplog) -> None:
+    provider = _CompatibilityTrackingMigrationProvider(
+        compatibility=SEOMigrationProviderCompatibilityResult(
+            supported=True,
+            reason_code="supported",
+            operator_message="AI configuration is compatible with migration draft generation.",
+            admin_summary="openai_chat_json_schema_supported",
+            retryable=False,
+            provider_name="openai",
+            model_name="gpt-5.1",
+            endpoint_path="/chat/completions",
+            execution_mode="full",
+            web_search_enabled=False,
+            degraded_mode=False,
+            response_format_mode="json_schema",
+        ),
+        output=_build_publishable_output(),
+    )
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    compatibility = (summary.context_summary or {}).get("draft_provider_compatibility") or {}
+    assert compatibility.get("supported") is True
+    assert compatibility.get("reason_code") == "supported"
+    assert compatibility.get("provider_name") == "openai"
+    assert compatibility.get("model_name") == "gpt-5.1"
+    assert compatibility.get("endpoint_path") == "/chat/completions"
+    assert compatibility.get("response_format_mode") == "json_schema"
+
+    payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_provider_compatibility_evaluation"
+    ]
+    assert payloads
+    latest = payloads[-1]
+    assert latest.get("business_id") == business_id
+    assert latest.get("site_id") == site_id
+    assert latest.get("workspace_id")
+    assert latest.get("supported") is True
+    assert latest.get("reason_code") == "supported"
+    assert latest.get("endpoint_path") == "/chat/completions"
+    assert latest.get("execution_mode") == "full"
+    assert latest.get("web_search_enabled") is False
+    assert latest.get("degraded_mode") is False
+    assert latest.get("response_format_mode") == "json_schema"
+
+
 def test_generate_artifacts_salvages_partial_provider_output(db_session) -> None:
     provider_error = SEOMigrationArtifactProviderError(
         code="schema_validation",
@@ -371,6 +764,11 @@ def test_generate_artifacts_salvages_partial_provider_output(db_session) -> None
     warnings = artifact.parse_warnings_json or []
     assert any("Recovered partial provider output." in warning for warning in warnings)
     assert any("partially salvaged" in warning for warning in warnings)
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    top_state = (summary.context_summary or {}).get("draft_generation_state")
+    assert isinstance(top_state, dict)
+    assert top_state.get("status") == "generation_partial"
+    assert top_state.get("summary") == "Partial draft generated."
 
 
 def test_generate_artifacts_emits_contract_evaluation_log(db_session, caplog) -> None:
@@ -557,6 +955,33 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
     assert migration_diagnostics.get("last_draft_failure_message") == (
         "Migration draft generation timed out while calling the AI provider."
     )
+    top_state = summary.context_summary.get("draft_generation_state")
+    assert isinstance(top_state, dict)
+    assert top_state.get("status") == "generation_failed"
+    assert top_state.get("summary") == "Migration draft generation timed out while calling the AI provider."
+
+
+def test_generate_artifacts_success_state_overrides_stale_failure_messaging(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    assert artifact.status == "completed"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    migration_diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert migration_diagnostics.get("last_draft_generation_status") == "completed"
+    assert migration_diagnostics.get("last_draft_failure_category") is None
+    assert migration_diagnostics.get("last_draft_failure_message") is None
+    top_state = (summary.context_summary or {}).get("draft_generation_state")
+    assert isinstance(top_state, dict)
+    assert top_state.get("status") == "generation_succeeded"
+    assert top_state.get("summary") == "Draft generated successfully."
 
 
 def test_generate_artifacts_provider_reason_classification_uses_config_missing_for_configuration_failures(

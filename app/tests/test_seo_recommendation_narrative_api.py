@@ -421,7 +421,9 @@ def test_recommendation_narrative_manual_trigger_success_and_retrieval(db_sessio
     assert set(narrative["response_contract_summary"].keys()) == {"status", "summary", "retryable"}
     assert "reason_codes" not in narrative["response_contract_summary"]
     assert "warning_codes" not in narrative["response_contract_summary"]
-    if isinstance(narrative["sections_json"], dict) and isinstance(narrative["sections_json"].get("response_contract"), dict):
+    if isinstance(narrative["sections_json"], dict) and isinstance(
+        narrative["sections_json"].get("response_contract"), dict
+    ):
         section_contract = narrative["sections_json"]["response_contract"]
         assert "reason_codes" not in section_contract
         assert "warning_codes" not in section_contract

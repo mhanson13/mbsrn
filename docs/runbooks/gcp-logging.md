@@ -55,3 +55,39 @@ Useful fields:
 - `reason_codes`
 - `warning_codes`
 - scoped identifiers (`business_id`, `site_id`, run/workspace ids)
+
+## Migration Provider Compatibility Queries
+
+For migration draft preflight compatibility troubleshooting:
+
+- `jsonPayload.event="seo_migration_provider_compatibility_evaluation"`
+
+Useful fields:
+- `supported`
+- `reason_code`
+- `provider_name`
+- `model`
+- `endpoint_path`
+- `execution_mode`
+- `web_search_enabled`
+- `degraded_mode`
+- `response_format_mode`
+- scoped identifiers (`business_id`, `site_id`, `workspace_id`)
+
+Interpretation:
+- `supported=false` means migration draft generation is blocked before outbound provider invocation.
+- `reason_code` identifies the stable compatibility failure class (for example `unsupported_model_configuration`).
+
+## Migration State Coherence Quick Check
+
+When validating operator-visible migration state from backend payloads:
+
+1. Check `context_summary.draft_generation_state.status` for top-level state.
+2. Confirm it aligns with:
+   - `context_summary.draft_generation_readiness`
+   - `context_summary.draft_provider_compatibility`
+   - `context_summary.migration_diagnostics.last_draft_generation_status`
+3. Expected precedence:
+   - workspace blockers
+   - provider compatibility blockers
+   - latest persisted generation outcome (`failed` / `partial` / `completed`)

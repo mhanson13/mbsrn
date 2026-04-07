@@ -372,10 +372,7 @@ def evaluate_recommendation_narrative_response(
     if narrative is None:
         warnings.append("empty_recommendations")
     no_operator_guidance = (
-        normalized_next_actions_count <= 0
-        and summary_text is None
-        and rationale_text is None
-        and reference_count <= 0
+        normalized_next_actions_count <= 0 and summary_text is None and rationale_text is None and reference_count <= 0
     )
     if no_operator_guidance and (narrative is None or len(narrative) < _RECOMMENDATION_MIN_GUIDANCE_LEN):
         warnings.append("insufficient_operator_guidance")
@@ -466,20 +463,10 @@ def _build_operator_summary(
         return None
 
     reasons = _stable_codes(
-        [
-            str(value)
-            for value in (
-                evaluation.reasons if evaluation is not None else (reason_codes or ())
-            )
-        ]
+        [str(value) for value in (evaluation.reasons if evaluation is not None else (reason_codes or ()))]
     )
     warnings = _stable_codes(
-        [
-            str(value)
-            for value in (
-                evaluation.warnings if evaluation is not None else (warning_codes or ())
-            )
-        ]
+        [str(value) for value in (evaluation.warnings if evaluation is not None else (warning_codes or ()))]
     )
     primary_code = _pick_primary_operator_reason(
         scope=scope,
@@ -492,9 +479,7 @@ def _build_operator_summary(
         summary = _OPERATOR_REASON_SUMMARY_BY_SCOPE[scope].get(primary_code, summary)
 
     retryable_value = (
-        evaluation.retryable
-        if evaluation is not None and isinstance(evaluation.retryable, bool)
-        else retryable
+        evaluation.retryable if evaluation is not None and isinstance(evaluation.retryable, bool) else retryable
     )
     if not isinstance(retryable_value, bool):
         retryable_value = normalized_status in {"salvaged", "rejected"}

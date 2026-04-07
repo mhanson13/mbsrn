@@ -34,12 +34,13 @@ Primary workflow in site workspace `Migration` tab:
 1. Create/manage workspace and set `source_url`.
 2. Run bounded source ingest.
 3. Capture requirements and enriched replacement content.
-4. Generate and review draft artifacts.
-5. Approve an artifact version.
-6. Configure publish target and run publish dry-run.
-7. Publish approved artifact to target repository.
-8. Configure deploy target and run deploy dry-run.
-9. Submit explicit deploy request to GKE deployment workflow.
+4. Review preflight draft readiness (blocking vs warning-only signals).
+5. Generate and review draft artifacts.
+6. Approve an artifact version.
+7. Configure publish target and run publish dry-run.
+8. Publish approved artifact to target repository.
+9. Configure deploy target and run deploy dry-run.
+10. Submit explicit deploy request to GKE deployment workflow.
 
 Important operator cue:
 - GitHub publish is not production deployment.
@@ -59,6 +60,119 @@ Fallback rules:
 
 Operational note:
 - Reused context cards can show `Available` even when `existing_context_summaries.*` entries are null, because summaries are not the only source-of-truth signal for availability.
+
+## Draft Generation Preflight Readiness
+Migration summary payload now includes `context_summary.draft_generation_readiness` before draft generation.
+
+Payload shape:
+- `status`: `ready` | `ready_with_warnings` | `not_ready`
+- `score`: deterministic 0-100 readiness score
+- `hard_blocked`: true when generation must be blocked
+- `summary`: short operator-safe guidance
+- `reasons`: structured entries with `code`, `severity` (`blocking` or `warning`), and operator-safe `message`
+- `signals`:
+  - `source_site_ingested`
+  - `operator_requirements_present`
+  - `enriched_content_present`
+  - `audit_available`
+  - `recommendations_available`
+  - `competitors_available`
+  - `draft_provider_configured`
+
+Scoring weights:
+- source site ingested: +15
+- operator requirements present: +25
+- enriched content present: +25
+- audit available: +10
+- recommendations available: +10
+- competitors available: +10
+- completeness bonus (all above true): +5
+
+Decision behavior:
+- `not_ready` when one or more blocking signals are present
+- `ready` when no blockers and score >= 80
+- `ready_with_warnings` when no blockers and score < 80
+
+Blocking signals (generation disabled):
+- source ingest missing
+- operator requirements missing
+- enriched replacement content missing
+- known provider misconfiguration for draft generation
+
+Warning-only signals (generation still allowed):
+- missing audit/recommendation/competitor reused context
+- sparse enriched content
+
+Runtime behavior:
+- generate draft endpoint performs this preflight check first
+- if `hard_blocked=true`, provider is not called and API returns a sanitized validation error
+- readiness evaluations emit structured logs: `event=seo_migration_readiness_evaluation`
+
+## Draft Provider Compatibility Preflight
+Workspace readiness and provider compatibility are separate controls:
+- Workspace readiness answers: "Do we have enough migration inputs/context to proceed?"
+- Provider compatibility answers: "Does the currently configured AI provider/model/request shape support migration draft generation?"
+
+Compatibility is evaluated after readiness and before any outbound provider request.
+
+Compatibility payload (in `context_summary.draft_provider_compatibility`):
+- `supported`
+- `reason_code`
+- `operator_message`
+- `retryable`
+- `provider_name`
+- `model_name`
+- `endpoint_path`
+- `execution_mode`
+- `web_search_enabled`
+- `degraded_mode`
+- `response_format_mode`
+- `admin_summary` (sanitized short admin hint)
+
+Common compatibility reason codes:
+- `provider_not_configured`
+- `unsupported_model_configuration`
+- `unsupported_endpoint_mode`
+- `tools_required_but_unavailable`
+- `degraded_mode_not_allowed`
+- `unknown_provider_capability`
+
+Behavior:
+- if compatibility is unsupported, draft generation fails fast locally
+- outbound provider request is not attempted
+- failure is persisted using existing draft-failure diagnostics (`failure_category`, `failure_reason`, `error_code`, `retryable`, correlation id)
+- operator receives a concise sanitized message (for example, unsupported model/request-shape guidance)
+
+Structured logging:
+- compatibility evaluation emits `event=seo_migration_provider_compatibility_evaluation`
+- includes identifiers and request-shape metadata (`business_id`, `site_id`, `workspace_id`, `provider_name`, `model`, `endpoint_path`, `execution_mode`, `web_search_enabled`, `degraded_mode`, `response_format_mode`, `supported`, `reason_code`, `retryable`)
+
+## Unified Draft Generation State
+Migration summary now includes a compact derived top-level state in `context_summary.draft_generation_state` so operator status remains coherent across reloads:
+
+- `ready`
+- `ready_with_warnings`
+- `blocked_by_workspace`
+- `blocked_by_provider`
+- `generation_failed`
+- `generation_partial`
+- `generation_succeeded`
+
+Derivation order (deterministic):
+1. workspace readiness hard blockers -> `blocked_by_workspace`
+2. provider compatibility unsupported -> `blocked_by_provider`
+3. latest persisted draft generation outcome:
+   - `failed` -> `generation_failed`
+   - `partial` -> `generation_partial`
+   - `completed` -> `generation_succeeded`
+4. otherwise readiness status:
+   - `ready_with_warnings`
+   - `ready`
+
+Operational use:
+- this top-level state is presentation/control-plane summary only
+- readiness/compatibility/diagnostic detail payloads remain the source fields for root-cause analysis
+- generate action remains blocked for workspace blockers and provider incompatibility
 
 ## Source Ingest Limits and Safety
 Homepage ingest remains intentionally bounded:
@@ -321,27 +435,32 @@ Publish/deploy controls:
 
 ## Operator Runbook
 1. Confirm source ingest is complete and reviewed.
-2. Confirm enriched content/requirements override weak incumbent content where needed.
-3. Generate draft artifacts and review files.
-4. Approve the chosen artifact version.
-5. Save publish target config and run publish dry-run.
-6. Run publish (non-dry-run) after dry-run checks pass.
-7. Save deploy target config and run deploy dry-run.
-8. Submit deploy request.
-9. Validate deployment externally and coordinate DNS cutover separately.
+2. Confirm requirements and enriched content override weak incumbent content where needed.
+3. Review preflight readiness card.
+4. If `not_ready`, fix blocking reasons before generation.
+5. If `ready_with_warnings`, decide whether to proceed or improve warning signals first.
+6. Generate draft artifacts and review files.
+7. Approve the chosen artifact version.
+8. Save publish target config and run publish dry-run.
+9. Run publish (non-dry-run) after dry-run checks pass.
+10. Save deploy target config and run deploy dry-run.
+11. Submit deploy request.
+12. Validate deployment externally and coordinate DNS cutover separately.
 
 ## Controlled Production Exercise Checklist
 Use this checklist for a bounded real-world migration exercise:
 1. Confirm migration runtime config is present (`MIGRATION_GITHUB_TOKEN` and related `MIGRATION_*` values).
 2. Confirm publish target repo/branch/artifact-root is intentional for this site workspace.
-3. Confirm the selected artifact version is explicitly approved.
-4. Confirm analytics insertion mode (`publish_only` vs `publish_and_deploy`) and measurement id are intentional.
-5. Run publish, then verify summary/readiness state and latest publish history entry (`status`, target, commit identifiers).
-6. Run deploy, then verify summary/readiness state and latest deploy history entry (`status`, workflow/ref, dispatch timestamp).
-7. Confirm diagnostics fields report expected values after each action (`last_publish_status`, `last_publish_failure_category/message`, `last_deploy_status`, `last_deploy_failure_category/message`).
-8. Confirm traceability fields are present across logs/history (`business_id`, `site_id`, `workspace_id`, `artifact_version_id`, action/status, target summary, failure category, timestamp).
-9. Confirm DNS/A-record cutover remains manual and outside the app.
-10. Confirm rollback path: select prior stable artifact, re-approve, then explicitly re-publish and re-deploy.
+3. Confirm preflight readiness is `ready` or `ready_with_warnings` and `hard_blocked=false`.
+4. If warnings exist, confirm operator accepts quality tradeoff before generation.
+5. Confirm the selected artifact version is explicitly approved.
+6. Confirm analytics insertion mode (`publish_only` vs `publish_and_deploy`) and measurement id are intentional.
+7. Run publish, then verify summary/readiness state and latest publish history entry (`status`, target, commit identifiers).
+8. Run deploy, then verify summary/readiness state and latest deploy history entry (`status`, workflow/ref, dispatch timestamp).
+9. Confirm diagnostics fields report expected values after each action (`last_publish_status`, `last_publish_failure_category/message`, `last_deploy_status`, `last_deploy_failure_category/message`).
+10. Confirm traceability fields are present across logs/history (`business_id`, `site_id`, `workspace_id`, `artifact_version_id`, action/status, target summary, failure category, timestamp).
+11. Confirm DNS/A-record cutover remains manual and outside the app.
+12. Confirm rollback path: select prior stable artifact, re-approve, then explicitly re-publish and re-deploy.
 
 ## Troubleshooting and Rollback
 Publish failures:

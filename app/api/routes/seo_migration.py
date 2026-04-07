@@ -56,14 +56,11 @@ def _to_artifact_read(artifact) -> SEOMigrationArtifactVersionRead:  # noqa: ANN
 
 def _validation_error_detail(exc: SEOMigrationValidationError) -> str | dict[str, object]:
     detail = exc.to_error_detail()
-    if (
-        isinstance(detail, dict)
-        and (
-            detail.get("failure_category")
-            or detail.get("failure_reason")
-            or detail.get("error_code")
-            or detail.get("retryable") is not None
-        )
+    if isinstance(detail, dict) and (
+        detail.get("failure_category")
+        or detail.get("failure_reason")
+        or detail.get("error_code")
+        or detail.get("retryable") is not None
     ):
         return detail
     return str(exc)

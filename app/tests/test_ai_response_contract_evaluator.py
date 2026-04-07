@@ -183,7 +183,12 @@ def test_recommendation_contract_rejects_generic_filler_only_output() -> None:
         ),
         top_themes=[],
         raw_sections={"summary": None, "next_actions": [], "recommendation_references": []},
-        normalized_sections={"summary": None, "priority_rationale": None, "next_actions": [], "recommendation_references": []},
+        normalized_sections={
+            "summary": None,
+            "priority_rationale": None,
+            "next_actions": [],
+            "recommendation_references": [],
+        },
         expected_recommendation_count=2,
     )
     assert evaluation.status == "rejected"
@@ -223,7 +228,12 @@ def test_recommendation_operator_summary_uses_safe_rejection_message() -> None:
         ),
         top_themes=[],
         raw_sections={"summary": None, "next_actions": [], "recommendation_references": []},
-        normalized_sections={"summary": None, "priority_rationale": None, "next_actions": [], "recommendation_references": []},
+        normalized_sections={
+            "summary": None,
+            "priority_rationale": None,
+            "next_actions": [],
+            "recommendation_references": [],
+        },
         expected_recommendation_count=2,
     )
     summary = summarize_recommendation_response_contract(evaluation=evaluation)

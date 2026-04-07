@@ -426,10 +426,82 @@ export interface MigrationWorkspace {
   updated_at: string;
 }
 
+export interface MigrationDraftReadinessReason {
+  code: string;
+  severity: "warning" | "blocking";
+  message: string;
+}
+
+export interface MigrationDraftReadinessSignals {
+  source_site_ingested: boolean;
+  operator_requirements_present: boolean;
+  enriched_content_present: boolean;
+  audit_available: boolean;
+  recommendations_available: boolean;
+  competitors_available: boolean;
+  draft_provider_configured?: boolean;
+}
+
+export interface MigrationDraftReadiness {
+  status: "ready" | "ready_with_warnings" | "not_ready";
+  score: number;
+  hard_blocked: boolean;
+  summary: string;
+  reasons: MigrationDraftReadinessReason[];
+  signals: MigrationDraftReadinessSignals;
+}
+
+export interface MigrationDraftProviderCompatibility {
+  supported: boolean;
+  reason_code: string;
+  operator_message: string;
+  retryable: boolean;
+  provider_name: string;
+  model_name: string;
+  endpoint_path?: string | null;
+  execution_mode?: string | null;
+  web_search_enabled?: boolean;
+  degraded_mode?: boolean;
+  response_format_mode?: string | null;
+  admin_summary?: string | null;
+}
+
+export interface MigrationDraftGenerationState {
+  status:
+    | "ready"
+    | "ready_with_warnings"
+    | "blocked_by_workspace"
+    | "blocked_by_provider"
+    | "generation_failed"
+    | "generation_partial"
+    | "generation_succeeded";
+  summary: string;
+  readiness_status?: "ready" | "ready_with_warnings" | "not_ready" | string;
+  readiness_hard_blocked?: boolean;
+  provider_compatibility_supported?: boolean;
+  provider_compatibility_reason_code?: string;
+  latest_generation_status?: string | null;
+  latest_failure_category?: string | null;
+  latest_failure_reason?: string | null;
+  retryable?: boolean | null;
+}
+
+export interface MigrationContextSummary extends Record<string, unknown> {
+  has_source_snapshot?: boolean;
+  has_operator_requirements?: boolean;
+  has_enriched_content_notes?: boolean;
+  has_audit_summary?: boolean;
+  has_recommendation_summary?: boolean;
+  has_competitor_summary?: boolean;
+  draft_generation_readiness?: MigrationDraftReadiness;
+  draft_provider_compatibility?: MigrationDraftProviderCompatibility;
+  draft_generation_state?: MigrationDraftGenerationState;
+}
+
 export interface MigrationWorkspaceSummary {
   workspace: MigrationWorkspace;
   source_snapshot: MigrationSourceSnapshot | null;
-  context_summary: Record<string, unknown>;
+  context_summary: MigrationContextSummary;
   latest_artifact: MigrationArtifactVersion | null;
   publish_readiness: Record<string, unknown>;
   deploy_readiness: Record<string, unknown>;

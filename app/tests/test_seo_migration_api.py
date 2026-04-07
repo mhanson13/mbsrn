@@ -18,6 +18,7 @@ from app.integrations.seo_migration_artifact_provider import (
     SEOMigrationArtifactGenerationOutput,
     SEOMigrationArtifactGenerationProvider,
     SEOMigrationArtifactProviderError,
+    SEOMigrationProviderCompatibilityResult,
 )
 from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
@@ -142,6 +143,32 @@ class _RaisingMigrationArtifactProvider(SEOMigrationArtifactGenerationProvider):
         raise self.error
 
 
+class _IncompatibleMigrationArtifactProvider(SEOMigrationArtifactGenerationProvider):
+    def __init__(self) -> None:
+        self.generate_call_count = 0
+
+    def evaluate_compatibility(self) -> SEOMigrationProviderCompatibilityResult:
+        return SEOMigrationProviderCompatibilityResult(
+            supported=False,
+            reason_code="unsupported_model_configuration",
+            operator_message="This model/provider setup is not compatible with the current migration request settings.",
+            admin_summary="model_or_response_format_incompatible",
+            retryable=False,
+            provider_name="openai",
+            model_name="text-embedding-3-small",
+            endpoint_path="/chat/completions",
+            execution_mode="full",
+            web_search_enabled=False,
+            degraded_mode=False,
+            response_format_mode="json_schema",
+        )
+
+    def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
+        del migration_context
+        self.generate_call_count += 1
+        raise RuntimeError("provider call should be blocked by compatibility preflight")
+
+
 def _override_tenant_context(business_id: str):
     def _resolver() -> TenantContext:
         return TenantContext(
@@ -209,6 +236,34 @@ def _seed_business_and_site(db_session, *, business_id: str, site_id: str) -> No
     db_session.add(business)
     db_session.add(site)
     db_session.commit()
+
+
+def _prepare_workspace_for_draft_generation(client: TestClient, *, business_id: str, site_id: str) -> None:
+    ingest_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/source-ingest",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert ingest_response.status_code == 200
+    requirements_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/operator-requirements",
+        json={
+            "operator_requirements": {
+                "business_objectives": ["Replace weak legacy pages"],
+                "requested_pages": ["Homepage", "Services", "Contact"],
+            }
+        },
+    )
+    assert requirements_response.status_code == 200
+    enriched_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/enriched-content",
+        json={
+            "enriched_content_notes": {
+                "replacement_summary": "Prepared replacement copy set.",
+                "homepage_value_proposition": "Fast local fire protection service.",
+            }
+        },
+    )
+    assert enriched_response.status_code == 200
 
 
 def test_migration_api_happy_path_workflow(db_session) -> None:
@@ -303,6 +358,17 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     artifact_id = generated_artifact["id"]
     assert generated_artifact["version"] == 1
     assert generated_artifact["file_count"] >= 1
+
+    post_generate_summary = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert post_generate_summary.status_code == 200
+    post_generate_context = post_generate_summary.json().get("context_summary") or {}
+    post_generate_state = post_generate_context.get("draft_generation_state") or {}
+    assert post_generate_state.get("status") == "generation_succeeded"
+    assert post_generate_state.get("summary") == "Draft generated successfully."
+    post_generate_diagnostics = post_generate_context.get("migration_diagnostics") or {}
+    assert post_generate_diagnostics.get("last_draft_generation_status") == "completed"
+    assert post_generate_diagnostics.get("last_draft_failure_category") is None
+    assert post_generate_diagnostics.get("last_draft_failure_message") is None
 
     approve_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
@@ -400,6 +466,7 @@ def test_publish_requires_approved_artifact_version(db_session) -> None:
         },
     )
     assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
 
     generate_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
@@ -442,6 +509,7 @@ def test_publish_duplicate_returns_operator_usable_422(db_session) -> None:
         },
     )
     assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
 
     generate_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
@@ -512,6 +580,32 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_failure_message" in payload["deploy_readiness"]
     migration_diagnostics = payload.get("context_summary", {}).get("migration_diagnostics")
     assert isinstance(migration_diagnostics, dict)
+    draft_readiness = payload.get("context_summary", {}).get("draft_generation_readiness")
+    assert isinstance(draft_readiness, dict)
+    assert draft_readiness.get("status") in {"ready", "ready_with_warnings", "not_ready"}
+    assert isinstance(draft_readiness.get("score"), int)
+    assert isinstance(draft_readiness.get("hard_blocked"), bool)
+    assert isinstance(draft_readiness.get("summary"), str)
+    assert isinstance(draft_readiness.get("reasons"), list)
+    assert isinstance(draft_readiness.get("signals"), dict)
+    draft_provider_compatibility = payload.get("context_summary", {}).get("draft_provider_compatibility")
+    assert isinstance(draft_provider_compatibility, dict)
+    assert isinstance(draft_provider_compatibility.get("supported"), bool)
+    assert isinstance(draft_provider_compatibility.get("reason_code"), str)
+    assert isinstance(draft_provider_compatibility.get("operator_message"), str)
+    assert isinstance(draft_provider_compatibility.get("retryable"), bool)
+    draft_generation_state = payload.get("context_summary", {}).get("draft_generation_state")
+    assert isinstance(draft_generation_state, dict)
+    assert draft_generation_state.get("status") in {
+        "ready",
+        "ready_with_warnings",
+        "blocked_by_workspace",
+        "blocked_by_provider",
+        "generation_failed",
+        "generation_partial",
+        "generation_succeeded",
+    }
+    assert isinstance(draft_generation_state.get("summary"), str)
     assert "last_draft_generation_status" in migration_diagnostics
     assert "last_draft_failure_category" in migration_diagnostics
     assert "last_draft_failure_reason" in migration_diagnostics
@@ -520,10 +614,106 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_draft_failure_code" in migration_diagnostics
     assert "last_draft_failure_correlation_id" in migration_diagnostics
     assert "last_draft_failure_artifact_version_id" in migration_diagnostics
+    assert "draft_provider_compatibility_supported" in migration_diagnostics
+    assert "draft_provider_compatibility_reason_code" in migration_diagnostics
+    assert "draft_provider_compatibility_message" in migration_diagnostics
+    assert "draft_provider_compatibility_retryable" in migration_diagnostics
+    assert "draft_generation_state_status" in migration_diagnostics
+    assert "draft_generation_state_summary" in migration_diagnostics
     assert "last_publish_status" in migration_diagnostics
     assert "last_deploy_status" in migration_diagnostics
     assert isinstance(payload.get("publish_history"), list)
     assert isinstance(payload.get("deploy_history"), list)
+
+
+def test_generate_draft_is_blocked_when_readiness_has_blockers(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "enriched_content_notes": {
+                "replacement_summary": "Prepared replacement copy.",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    ingest_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/source-ingest",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert ingest_response.status_code == 200
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 422
+    detail = generate_response.json().get("detail") or {}
+    assert detail.get("message")
+    assert "not ready yet" in str(detail.get("message") or "").lower()
+    assert detail.get("error_code") == "operator_requirements_required"
+    assert detail.get("failure_category") == "unknown_error"
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    top_state = (summary_response.json().get("context_summary") or {}).get("draft_generation_state") or {}
+    assert top_state.get("status") == "blocked_by_workspace"
+    assert "not ready yet" in str(top_state.get("summary") or "").lower()
+
+
+def test_generate_draft_is_blocked_when_provider_compatibility_is_unsupported(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    incompatible_provider = _IncompatibleMigrationArtifactProvider()
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        artifact_provider=incompatible_provider,
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 422
+    detail = generate_response.json().get("detail") or {}
+    assert (
+        detail.get("message")
+        == "This model/provider setup is not compatible with the current migration request settings."
+    )
+    assert detail.get("failure_category") == "config_missing"
+    assert detail.get("failure_reason") == "unsupported_configuration"
+    assert detail.get("error_code") == "unsupported_model_configuration"
+    assert detail.get("retryable") is False
+    assert incompatible_provider.generate_call_count == 0
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    context_summary = summary_response.json().get("context_summary") or {}
+    diagnostics = context_summary.get("migration_diagnostics") or {}
+    assert diagnostics.get("last_draft_failure_category") == "config_missing"
+    assert diagnostics.get("last_draft_failure_reason") == "unsupported_configuration"
+    assert diagnostics.get("last_draft_failure_code") == "unsupported_model_configuration"
+    compatibility = context_summary.get("draft_provider_compatibility") or {}
+    assert compatibility.get("supported") is False
+    assert compatibility.get("reason_code") == "unsupported_model_configuration"
+    assert compatibility.get("response_format_mode") == "json_schema"
+    top_state = context_summary.get("draft_generation_state") or {}
+    assert top_state.get("status") == "blocked_by_provider"
+    assert "not compatible" in str(top_state.get("summary") or "").lower()
 
 
 def test_migration_summary_reused_context_reports_best_available_signals(db_session) -> None:
@@ -670,6 +860,7 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
         json={"source_url": "https://legacy.example"},
     )
     assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
 
     generate_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
@@ -702,10 +893,16 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert diagnostics.get("last_draft_generation_status") == "failed"
     assert diagnostics.get("last_draft_failure_category") == "provider_error"
     assert diagnostics.get("last_draft_failure_reason") == "timeout"
-    assert diagnostics.get("last_draft_failure_message") == "Migration draft generation timed out while calling the AI provider."
+    assert (
+        diagnostics.get("last_draft_failure_message")
+        == "Migration draft generation timed out while calling the AI provider."
+    )
     assert diagnostics.get("last_draft_failure_retryable") is True
     assert diagnostics.get("last_draft_failure_code") == "timeout"
     assert diagnostics.get("last_draft_failure_artifact_version_id") == versions[0].get("id")
+    top_state = summary_response.json().get("context_summary", {}).get("draft_generation_state") or {}
+    assert top_state.get("status") == "generation_failed"
+    assert top_state.get("summary") == "Migration draft generation timed out while calling the AI provider."
 
 
 def test_generate_draft_malformed_provider_output_returns_artifact_invalid(db_session) -> None:
@@ -733,6 +930,7 @@ def test_generate_draft_malformed_provider_output_returns_artifact_invalid(db_se
         json={"source_url": "https://legacy.example"},
     )
     assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
 
     generate_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
@@ -770,6 +968,7 @@ def test_generate_draft_provider_config_failure_returns_config_missing(db_sessio
         json={"source_url": "https://legacy.example"},
     )
     assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
 
     generate_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
@@ -797,6 +996,7 @@ def test_generate_draft_unknown_provider_exception_returns_stable_unknown_error(
         json={"source_url": "https://legacy.example"},
     )
     assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
 
     generate_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
@@ -836,6 +1036,7 @@ def test_publish_missing_runtime_config_surfaces_config_diagnostics(db_session) 
         },
     )
     assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
 
     generate_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
@@ -892,6 +1093,7 @@ def test_publish_failure_history_and_summary_include_failure_category(db_session
         },
     )
     assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
 
     generate_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
@@ -959,6 +1161,7 @@ def test_migration_summary_diagnostics_contract_tracks_publish_and_deploy_state_
         },
     )
     assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
 
     generate_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",

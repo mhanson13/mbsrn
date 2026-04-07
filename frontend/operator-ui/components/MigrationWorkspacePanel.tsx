@@ -111,6 +111,44 @@ type DraftGenerationFailureCategory =
   | "config_missing"
   | "unknown_error";
 
+type DraftReadinessStatus = "ready" | "ready_with_warnings" | "not_ready";
+
+interface DraftReadinessReason {
+  code: string;
+  severity: "warning" | "blocking";
+  message: string;
+}
+
+interface DraftReadinessEvaluation {
+  status: DraftReadinessStatus;
+  score: number;
+  hardBlocked: boolean;
+  summary: string;
+  reasons: DraftReadinessReason[];
+  signals: Record<string, boolean>;
+}
+
+interface DraftProviderCompatibilityEvaluation {
+  supported: boolean;
+  reasonCode: string;
+  operatorMessage: string;
+  retryable: boolean;
+}
+
+type DraftGenerationStateStatus =
+  | "ready"
+  | "ready_with_warnings"
+  | "blocked_by_workspace"
+  | "blocked_by_provider"
+  | "generation_failed"
+  | "generation_partial"
+  | "generation_succeeded";
+
+interface DraftGenerationStateEvaluation {
+  status: DraftGenerationStateStatus;
+  summary: string;
+}
+
 function toFailureCategoryLabel(value: string | null): string {
   if (!value) {
     return "unknown";
@@ -324,6 +362,313 @@ function stringifyInputsMap(value: unknown): string {
     .join("\n");
 }
 
+function parseDraftReadinessReason(value: unknown): DraftReadinessReason | null {
+  const record = asRecord(value);
+  const severityRaw = asString(record.severity).trim().toLowerCase();
+  const severity = severityRaw === "blocking" ? "blocking" : severityRaw === "warning" ? "warning" : null;
+  const message = asString(record.message).trim();
+  if (!severity || !message) {
+    return null;
+  }
+  return {
+    code: asString(record.code).trim(),
+    severity,
+    message,
+  };
+}
+
+function toDraftReadinessStatusLabel(value: DraftReadinessStatus): string {
+  if (value === "ready") {
+    return "Ready";
+  }
+  if (value === "ready_with_warnings") {
+    return "Ready with warnings";
+  }
+  return "Not ready";
+}
+
+function parseDraftReadiness(contextSummary: Record<string, unknown>): DraftReadinessEvaluation {
+  const readinessRecord = asRecord(contextSummary.draft_generation_readiness);
+  const readinessStatusRaw = asString(readinessRecord.status).trim().toLowerCase();
+  const readinessStatus: DraftReadinessStatus | null =
+    readinessStatusRaw === "ready" || readinessStatusRaw === "ready_with_warnings" || readinessStatusRaw === "not_ready"
+      ? readinessStatusRaw
+      : null;
+  const readinessScoreRaw = readinessRecord.score;
+  const readinessScore =
+    typeof readinessScoreRaw === "number" && Number.isFinite(readinessScoreRaw)
+      ? Math.max(0, Math.min(100, Math.round(readinessScoreRaw)))
+      : null;
+  const readinessHardBlockedRaw = readinessRecord.hard_blocked;
+  const readinessHardBlocked = typeof readinessHardBlockedRaw === "boolean" ? readinessHardBlockedRaw : null;
+  const readinessSummary = asString(readinessRecord.summary).trim();
+  const readinessSignalsRaw = asRecord(readinessRecord.signals);
+  const readinessReasonsRaw = Array.isArray(readinessRecord.reasons) ? readinessRecord.reasons : [];
+  const readinessReasons = readinessReasonsRaw
+    .map((reason) => parseDraftReadinessReason(reason))
+    .filter((reason): reason is DraftReadinessReason => reason !== null);
+
+  if (readinessStatus && readinessScore !== null && readinessHardBlocked !== null && readinessSummary) {
+    const signalMap: Record<string, boolean> = {};
+    for (const [key, value] of Object.entries(readinessSignalsRaw)) {
+      if (typeof value === "boolean") {
+        signalMap[key] = value;
+      }
+    }
+    return {
+      status: readinessStatus,
+      score: readinessScore,
+      hardBlocked: readinessHardBlocked,
+      summary: readinessSummary,
+      reasons: readinessReasons,
+      signals: signalMap,
+    };
+  }
+
+  const fallbackSignals = {
+    source_site_ingested: Boolean(contextSummary.has_source_snapshot),
+    operator_requirements_present: Boolean(contextSummary.has_operator_requirements),
+    enriched_content_present: Boolean(contextSummary.has_enriched_content_notes),
+    audit_available: Boolean(contextSummary.has_audit_summary),
+    recommendations_available: Boolean(contextSummary.has_recommendation_summary),
+    competitors_available: Boolean(contextSummary.has_competitor_summary),
+  };
+  const fallbackReasons: DraftReadinessReason[] = [];
+  if (!fallbackSignals.source_site_ingested) {
+    fallbackReasons.push({
+      code: "source_site_ingest_required",
+      severity: "blocking",
+      message: "Run source ingest to capture baseline source-site context.",
+    });
+  }
+  if (!fallbackSignals.operator_requirements_present) {
+    fallbackReasons.push({
+      code: "operator_requirements_required",
+      severity: "blocking",
+      message: "Add operator requirements before generating a draft.",
+    });
+  }
+  if (!fallbackSignals.enriched_content_present) {
+    fallbackReasons.push({
+      code: "enriched_content_required",
+      severity: "blocking",
+      message: "Add enriched replacement content notes before generating a draft.",
+    });
+  }
+  if (!fallbackSignals.audit_available) {
+    fallbackReasons.push({
+      code: "audit_context_unavailable",
+      severity: "warning",
+      message: "Audit context is not available; draft quality may be limited.",
+    });
+  }
+  if (!fallbackSignals.recommendations_available) {
+    fallbackReasons.push({
+      code: "recommendations_context_unavailable",
+      severity: "warning",
+      message: "Recommendation context is not available; draft quality may be limited.",
+    });
+  }
+  if (!fallbackSignals.competitors_available) {
+    fallbackReasons.push({
+      code: "competitors_context_unavailable",
+      severity: "warning",
+      message: "Competitor context is not available; draft quality may be limited.",
+    });
+  }
+  let fallbackScore = 0;
+  if (fallbackSignals.source_site_ingested) {
+    fallbackScore += 15;
+  }
+  if (fallbackSignals.operator_requirements_present) {
+    fallbackScore += 25;
+  }
+  if (fallbackSignals.enriched_content_present) {
+    fallbackScore += 25;
+  }
+  if (fallbackSignals.audit_available) {
+    fallbackScore += 10;
+  }
+  if (fallbackSignals.recommendations_available) {
+    fallbackScore += 10;
+  }
+  if (fallbackSignals.competitors_available) {
+    fallbackScore += 10;
+  }
+  if (
+    fallbackSignals.source_site_ingested &&
+    fallbackSignals.operator_requirements_present &&
+    fallbackSignals.enriched_content_present &&
+    fallbackSignals.audit_available &&
+    fallbackSignals.recommendations_available &&
+    fallbackSignals.competitors_available
+  ) {
+    fallbackScore += 5;
+  }
+  const fallbackHardBlocked = fallbackReasons.some((reason) => reason.severity === "blocking");
+  const fallbackStatus: DraftReadinessStatus = fallbackHardBlocked
+    ? "not_ready"
+    : fallbackScore >= 80
+      ? "ready"
+      : "ready_with_warnings";
+  const fallbackSummary =
+    fallbackStatus === "ready"
+      ? "Ready to generate draft."
+      : fallbackStatus === "ready_with_warnings"
+        ? "Ready, but draft quality may be limited."
+        : "Not ready yet — add enriched content and operator requirements first.";
+
+  return {
+    status: fallbackStatus,
+    score: Math.max(0, Math.min(100, fallbackScore)),
+    hardBlocked: fallbackHardBlocked,
+    summary: fallbackSummary,
+    reasons: fallbackReasons,
+    signals: fallbackSignals,
+  };
+}
+
+function parseDraftProviderCompatibility(
+  contextSummary: Record<string, unknown>,
+  migrationDiagnostics: Record<string, unknown>,
+): DraftProviderCompatibilityEvaluation {
+  const compatibilityRecord = asRecord(contextSummary.draft_provider_compatibility);
+  const supportedRaw = compatibilityRecord.supported;
+  const reasonCodeRaw = asString(compatibilityRecord.reason_code).trim();
+  const operatorMessageRaw = asString(compatibilityRecord.operator_message).trim();
+  const retryableRaw = compatibilityRecord.retryable;
+
+  const supportedFromDiagnostics = migrationDiagnostics.draft_provider_compatibility_supported;
+  const reasonCodeFromDiagnostics = asString(migrationDiagnostics.draft_provider_compatibility_reason_code).trim();
+  const messageFromDiagnostics = asString(migrationDiagnostics.draft_provider_compatibility_message).trim();
+  const retryableFromDiagnostics = migrationDiagnostics.draft_provider_compatibility_retryable;
+
+  const supported =
+    typeof supportedRaw === "boolean"
+      ? supportedRaw
+      : typeof supportedFromDiagnostics === "boolean"
+        ? supportedFromDiagnostics
+        : true;
+  const reasonCode =
+    reasonCodeRaw ||
+    reasonCodeFromDiagnostics ||
+    (supported ? "supported" : "unknown_provider_capability");
+  const operatorMessage =
+    operatorMessageRaw ||
+    messageFromDiagnostics ||
+    (supported
+      ? "AI configuration is compatible with migration draft generation."
+      : "The current AI configuration does not support migration draft generation.");
+  const retryable =
+    typeof retryableRaw === "boolean"
+      ? retryableRaw
+      : typeof retryableFromDiagnostics === "boolean"
+        ? retryableFromDiagnostics
+        : false;
+
+  return {
+    supported,
+    reasonCode,
+    operatorMessage,
+    retryable,
+  };
+}
+
+function toDraftGenerationStateLabel(value: DraftGenerationStateStatus): string {
+  if (value === "ready") {
+    return "Ready";
+  }
+  if (value === "ready_with_warnings") {
+    return "Ready with warnings";
+  }
+  if (value === "blocked_by_workspace") {
+    return "Blocked by workspace";
+  }
+  if (value === "blocked_by_provider") {
+    return "Blocked by provider";
+  }
+  if (value === "generation_failed") {
+    return "Generation failed";
+  }
+  if (value === "generation_partial") {
+    return "Partial draft";
+  }
+  return "Draft generated";
+}
+
+function parseDraftGenerationState(params: {
+  contextSummary: Record<string, unknown>;
+  draftReadiness: DraftReadinessEvaluation;
+  draftProviderCompatibility: DraftProviderCompatibilityEvaluation;
+  migrationDiagnostics: Record<string, unknown>;
+}): DraftGenerationStateEvaluation {
+  const { contextSummary, draftReadiness, draftProviderCompatibility, migrationDiagnostics } = params;
+  const stateRecord = asRecord(contextSummary.draft_generation_state);
+  const rawStatus = asString(stateRecord.status).trim().toLowerCase();
+  const rawSummary = asString(stateRecord.summary).trim();
+  if (
+    (rawStatus === "ready" ||
+      rawStatus === "ready_with_warnings" ||
+      rawStatus === "blocked_by_workspace" ||
+      rawStatus === "blocked_by_provider" ||
+      rawStatus === "generation_failed" ||
+      rawStatus === "generation_partial" ||
+      rawStatus === "generation_succeeded") &&
+    rawSummary
+  ) {
+    return {
+      status: rawStatus,
+      summary: rawSummary,
+    };
+  }
+
+  if (draftReadiness.hardBlocked) {
+    return {
+      status: "blocked_by_workspace",
+      summary: draftReadiness.summary || "Not ready yet — resolve blocking migration readiness issues.",
+    };
+  }
+  if (!draftProviderCompatibility.supported) {
+    return {
+      status: "blocked_by_provider",
+      summary:
+        draftProviderCompatibility.operatorMessage ||
+        "Blocked: provider configuration is not compatible with migration draft generation.",
+    };
+  }
+
+  const latestStatus = asString(migrationDiagnostics.last_draft_generation_status).trim().toLowerCase();
+  const latestFailureMessage = asString(migrationDiagnostics.last_draft_failure_message).trim();
+  if (latestStatus === "failed") {
+    return {
+      status: "generation_failed",
+      summary: latestFailureMessage || "Draft generation failed.",
+    };
+  }
+  if (latestStatus === "partial") {
+    return {
+      status: "generation_partial",
+      summary: "Partial draft generated.",
+    };
+  }
+  if (latestStatus === "completed") {
+    return {
+      status: "generation_succeeded",
+      summary: "Draft generated successfully.",
+    };
+  }
+  if (draftReadiness.status === "ready_with_warnings") {
+    return {
+      status: "ready_with_warnings",
+      summary: draftReadiness.summary || "Ready, but draft quality may be limited.",
+    };
+  }
+  return {
+    status: "ready",
+    summary: draftReadiness.summary || "Ready to generate draft.",
+  };
+}
+
 function parseGeneratedPaths(artifact: MigrationArtifactVersion | null): string[] {
   if (!artifact || !Array.isArray(artifact.generated_files_json)) {
     return [];
@@ -482,6 +827,29 @@ export function MigrationWorkspacePanel({
   const deployFailureMessage = asString(deployReadiness.last_failure_message) || null;
   const contextSummary = asRecord(summary?.context_summary);
   const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
+  const draftReadiness = parseDraftReadiness(contextSummary);
+  const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
+  const draftGenerationState = parseDraftGenerationState({
+    contextSummary,
+    draftReadiness,
+    draftProviderCompatibility,
+    migrationDiagnostics,
+  });
+  const draftGenerationStateLabel = toDraftGenerationStateLabel(draftGenerationState.status);
+  const draftReadinessStatusLabel = toDraftReadinessStatusLabel(draftReadiness.status);
+  const draftGenerationBlocked = draftReadiness.hardBlocked || !draftProviderCompatibility.supported;
+  const draftReadinessToneClass =
+    draftReadiness.status === "ready" ? "hint success" : draftReadiness.status === "ready_with_warnings" ? "hint warning" : "hint warning";
+  const draftGenerationStateToneClass =
+    draftGenerationState.status === "ready" || draftGenerationState.status === "generation_succeeded"
+      ? "hint success"
+      : draftGenerationState.status === "ready_with_warnings" || draftGenerationState.status === "generation_partial"
+        ? "hint warning"
+        : "hint warning";
+  const draftGenerationBlockedMessage = draftReadiness.hardBlocked
+    ? "Resolve blocking readiness items above before generating a draft."
+    : "Resolve provider compatibility issues before generating a draft.";
+  const draftProviderCompatibilityStatusLabel = draftProviderCompatibility.supported ? "Supported" : "Unsupported";
   const existingContextSummaries = asRecord(contextSummary.existing_context_summaries);
   const reusedContextSummary = asRecord(contextSummary.reused_context);
   const auditReusedContext = parseReusedContextEntry(reusedContextSummary.audit);
@@ -752,6 +1120,11 @@ export function MigrationWorkspacePanel({
   };
 
   const handleGenerateArtifacts = async (): Promise<void> => {
+    if (draftGenerationBlocked) {
+      setErrorHint(null);
+      setErrorMessage(draftGenerationState.summary || draftGenerationBlockedMessage);
+      return;
+    }
     setBusyAction("generate");
     setErrorMessage(null);
     setErrorHint(null);
@@ -904,6 +1277,12 @@ export function MigrationWorkspacePanel({
           override weak source material.
         </span>
         <span className="hint warning">GitHub publish does not equal production deployment. Deploy remains explicit.</span>
+      </div>
+
+      <div className="panel panel-compact stack-tight" data-testid="migration-current-state">
+        <strong>Current Migration State</strong>
+        <span className="hint">State: {draftGenerationStateLabel}</span>
+        <span className={draftGenerationStateToneClass}>{draftGenerationState.summary}</span>
       </div>
 
       {errorMessage ? <p className="hint warning">{errorMessage}</p> : null}
@@ -1060,14 +1439,37 @@ export function MigrationWorkspacePanel({
 
       <div className="panel stack">
         <h3>Draft Artifact Generation</h3>
+        <div className="panel panel-compact stack-tight" data-testid="migration-draft-readiness">
+          <strong>Preflight Readiness</strong>
+          <span className="hint">Status: {draftReadinessStatusLabel}</span>
+          <span className="hint">Readiness score: {draftReadiness.score}/100</span>
+          <span className={draftReadinessToneClass}>{draftReadiness.summary}</span>
+          {draftReadiness.reasons.length > 0 ? (
+            <ul>
+              {draftReadiness.reasons.slice(0, 6).map((reason) => (
+                <li key={`${reason.severity}-${reason.code || reason.message}`}>{reason.message}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+        <div className="panel panel-compact stack-tight" data-testid="migration-provider-compatibility">
+          <strong>Provider Compatibility</strong>
+          <span className="hint">Status: {draftProviderCompatibilityStatusLabel}</span>
+          <span className={draftProviderCompatibility.supported ? "hint success" : "hint warning"}>
+            {draftProviderCompatibility.operatorMessage}
+          </span>
+        </div>
         <button
           type="button"
           className="button button-primary"
           onClick={() => void handleGenerateArtifacts()}
-          disabled={busyAction === "generate" || busyAction === "load"}
+          disabled={busyAction === "generate" || busyAction === "load" || draftGenerationBlocked}
         >
           {busyAction === "generate" ? "Generating..." : "Generate Draft Mockup"}
         </button>
+        {draftGenerationBlocked ? (
+          <span className="hint warning">{draftGenerationBlockedMessage}</span>
+        ) : null}
       </div>
 
       <div className="panel stack">

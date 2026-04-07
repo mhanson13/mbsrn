@@ -692,6 +692,22 @@ function buildMigrationWorkspaceSummary(
       has_audit_summary: true,
       has_recommendation_summary: true,
       has_competitor_summary: true,
+      draft_generation_readiness: {
+        status: "ready",
+        score: 100,
+        hard_blocked: false,
+        summary: "Ready to generate draft.",
+        reasons: [],
+        signals: {
+          source_site_ingested: true,
+          operator_requirements_present: true,
+          enriched_content_present: true,
+          audit_available: true,
+          recommendations_available: true,
+          competitors_available: true,
+          draft_provider_configured: true,
+        },
+      },
       reused_context: {
         audit: {
           available: true,
@@ -2217,6 +2233,178 @@ describe("site workspace migration tab", () => {
     expect(screen.getByRole("button", { name: "Request GKE Deploy" })).toBeDisabled();
   });
 
+  it("renders ready draft preflight state and keeps generate enabled", async () => {
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    const readiness = await screen.findByTestId("migration-draft-readiness");
+    expect(readiness).toHaveTextContent("Status: Ready");
+    expect(readiness).toHaveTextContent("Readiness score: 100/100");
+    expect(readiness).toHaveTextContent("Ready to generate draft.");
+    const currentState = await screen.findByTestId("migration-current-state");
+    expect(currentState).toHaveTextContent("State: Ready");
+    expect(currentState).toHaveTextContent("Ready to generate draft.");
+    expect(screen.getByRole("button", { name: "Generate Draft Mockup" })).toBeEnabled();
+  });
+
+  it("renders warning draft preflight state and keeps generate enabled", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          draft_generation_readiness: {
+            status: "ready_with_warnings",
+            score: 65,
+            hard_blocked: false,
+            summary: "Ready, but draft quality may be limited.",
+            reasons: [
+              {
+                code: "audit_context_unavailable",
+                severity: "warning",
+                message: "Audit context is not available; draft quality may be limited.",
+              },
+            ],
+            signals: {
+              source_site_ingested: true,
+              operator_requirements_present: true,
+              enriched_content_present: true,
+              audit_available: false,
+              recommendations_available: true,
+              competitors_available: true,
+              draft_provider_configured: true,
+            },
+          },
+        },
+      }),
+    );
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    const readiness = await screen.findByTestId("migration-draft-readiness");
+    expect(readiness).toHaveTextContent("Status: Ready with warnings");
+    expect(readiness).toHaveTextContent("Readiness score: 65/100");
+    expect(readiness).toHaveTextContent("Ready, but draft quality may be limited.");
+    expect(readiness).toHaveTextContent("Audit context is not available; draft quality may be limited.");
+    const currentState = await screen.findByTestId("migration-current-state");
+    expect(currentState).toHaveTextContent("State: Ready with warnings");
+    expect(currentState).toHaveTextContent("Ready, but draft quality may be limited.");
+    expect(screen.getByRole("button", { name: "Generate Draft Mockup" })).toBeEnabled();
+  });
+
+  it("renders blocking draft preflight state and disables generation", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          draft_generation_readiness: {
+            status: "not_ready",
+            score: 40,
+            hard_blocked: true,
+            summary: "Not ready yet — add enriched content and operator requirements first.",
+            reasons: [
+              {
+                code: "operator_requirements_required",
+                severity: "blocking",
+                message: "Add operator requirements before generating a draft.",
+              },
+              {
+                code: "enriched_content_required",
+                severity: "blocking",
+                message: "Add enriched replacement content notes before generating a draft.",
+              },
+            ],
+            signals: {
+              source_site_ingested: true,
+              operator_requirements_present: false,
+              enriched_content_present: false,
+              audit_available: true,
+              recommendations_available: true,
+              competitors_available: true,
+              draft_provider_configured: true,
+            },
+          },
+        },
+      }),
+    );
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    const readiness = await screen.findByTestId("migration-draft-readiness");
+    expect(readiness).toHaveTextContent("Status: Not ready");
+    expect(readiness).toHaveTextContent("Not ready yet — add enriched content and operator requirements first.");
+    const currentState = await screen.findByTestId("migration-current-state");
+    expect(currentState).toHaveTextContent("State: Blocked by workspace");
+    expect(currentState).toHaveTextContent("Not ready yet — add enriched content and operator requirements first.");
+    expect(screen.getByRole("button", { name: "Generate Draft Mockup" })).toBeDisabled();
+    expect(screen.getByText("Resolve blocking readiness items above before generating a draft.")).toBeInTheDocument();
+  });
+
+  it("renders provider compatibility blocked state and disables generation", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          draft_generation_readiness: {
+            status: "ready",
+            score: 100,
+            hard_blocked: false,
+            summary: "Ready to generate draft.",
+            reasons: [],
+            signals: {
+              source_site_ingested: true,
+              operator_requirements_present: true,
+              enriched_content_present: true,
+              audit_available: true,
+              recommendations_available: true,
+              competitors_available: true,
+              draft_provider_configured: true,
+            },
+          },
+          draft_provider_compatibility: {
+            supported: false,
+            reason_code: "unsupported_model_configuration",
+            operator_message: "This model/provider setup is not compatible with the current migration request settings.",
+            retryable: false,
+            provider_name: "openai",
+            model_name: "text-embedding-3-small",
+            endpoint_path: "/chat/completions",
+            execution_mode: "full",
+            web_search_enabled: false,
+            degraded_mode: false,
+            response_format_mode: "json_schema",
+          },
+          draft_generation_state: {
+            status: "blocked_by_provider",
+            summary: "Blocked: provider configuration is not compatible with migration draft generation.",
+          },
+        },
+      }),
+    );
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    const currentState = await screen.findByTestId("migration-current-state");
+    expect(currentState).toHaveTextContent("State: Blocked by provider");
+    expect(currentState).toHaveTextContent(
+      "Blocked: provider configuration is not compatible with migration draft generation.",
+    );
+    const compatibility = await screen.findByTestId("migration-provider-compatibility");
+    expect(compatibility).toHaveTextContent("Status: Unsupported");
+    expect(compatibility).toHaveTextContent(
+      "This model/provider setup is not compatible with the current migration request settings.",
+    );
+    expect(screen.getByRole("button", { name: "Generate Draft Mockup" })).toBeDisabled();
+    expect(screen.getByText("Resolve provider compatibility issues before generating a draft.")).toBeInTheDocument();
+  });
+
   it("disables publish and deploy when selected artifact does not match readiness artifact id", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValue(
@@ -2350,6 +2538,19 @@ describe("site workspace migration tab", () => {
           latest_generated_artifact_version_number: partialArtifact.version,
         }),
         latest_artifact: partialArtifact,
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          migration_diagnostics: {
+            last_draft_generation_status: "partial",
+            last_draft_failure_category: null,
+            last_draft_failure_reason: null,
+            last_draft_failure_message: null,
+          },
+          draft_generation_state: {
+            status: "generation_partial",
+            summary: "Partial draft generated.",
+          },
+        },
       }),
     );
     mockFetchMigrationArtifactVersions.mockResolvedValue({
@@ -2363,6 +2564,9 @@ describe("site workspace migration tab", () => {
     expect(await screen.findByTestId("migration-partial-draft-indicator")).toHaveTextContent(
       "Partial draft generated.",
     );
+    const currentState = await screen.findByTestId("migration-current-state");
+    expect(currentState).toHaveTextContent("State: Partial draft");
+    expect(currentState).toHaveTextContent("Partial draft generated.");
   });
 
   it("saves publish/deploy target config and analytics rules", async () => {
@@ -2646,6 +2850,35 @@ describe("site workspace migration tab", () => {
     expect(screen.queryByText("Migration draft provider request failed.")).not.toBeInTheDocument();
     expect(await screen.findByTestId("migration-error-hint")).toHaveTextContent("This looks retryable.");
     expect(screen.getByTestId("migration-error-hint")).toHaveTextContent("Reference: draft-run-123.");
+  });
+
+  it("renders persisted generation failure state from summary after reload", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          migration_diagnostics: {
+            last_draft_generation_status: "failed",
+            last_draft_failure_category: "config_missing",
+            last_draft_failure_reason: "unsupported_configuration",
+            last_draft_failure_message: "Draft generation failed due to unsupported AI configuration.",
+            last_draft_failure_retryable: false,
+          },
+          draft_generation_state: {
+            status: "generation_failed",
+            summary: "Draft generation failed due to unsupported AI configuration.",
+          },
+        },
+      }),
+    );
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    const currentState = await screen.findByTestId("migration-current-state");
+    expect(currentState).toHaveTextContent("State: Generation failed");
+    expect(currentState).toHaveTextContent("Draft generation failed due to unsupported AI configuration.");
   });
 });
 

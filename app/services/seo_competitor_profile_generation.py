@@ -5067,14 +5067,10 @@ class SEOCompetitorProfileGenerationService:
         operator_summary = summarize_competitor_response_contract(
             status=self._clean_optional(str(raw_summary.get("status") or "")),
             reason_codes=(
-                raw_summary.get("reason_codes")
-                if isinstance(raw_summary.get("reason_codes"), list)
-                else None
+                raw_summary.get("reason_codes") if isinstance(raw_summary.get("reason_codes"), list) else None
             ),
             warning_codes=(
-                raw_summary.get("warning_codes")
-                if isinstance(raw_summary.get("warning_codes"), list)
-                else None
+                raw_summary.get("warning_codes") if isinstance(raw_summary.get("warning_codes"), list) else None
             ),
             retryable=raw_summary.get("retryable") if isinstance(raw_summary.get("retryable"), bool) else None,
         )

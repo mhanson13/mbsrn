@@ -36,6 +36,22 @@ _DRAFT_REASON_VALUES = {
     _DRAFT_REASON_VALIDATION_FAILED,
     _DRAFT_REASON_UNKNOWN,
 }
+_COMPAT_REASON_SUPPORTED = "supported"
+_COMPAT_REASON_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+_COMPAT_REASON_UNSUPPORTED_MODEL_CONFIGURATION = "unsupported_model_configuration"
+_COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE = "unsupported_endpoint_mode"
+_COMPAT_REASON_TOOLS_REQUIRED_BUT_UNAVAILABLE = "tools_required_but_unavailable"
+_COMPAT_REASON_DEGRADED_MODE_NOT_ALLOWED = "degraded_mode_not_allowed"
+_COMPAT_REASON_UNKNOWN_PROVIDER_CAPABILITY = "unknown_provider_capability"
+_COMPAT_REASON_VALUES = {
+    _COMPAT_REASON_SUPPORTED,
+    _COMPAT_REASON_PROVIDER_NOT_CONFIGURED,
+    _COMPAT_REASON_UNSUPPORTED_MODEL_CONFIGURATION,
+    _COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE,
+    _COMPAT_REASON_TOOLS_REQUIRED_BUT_UNAVAILABLE,
+    _COMPAT_REASON_DEGRADED_MODE_NOT_ALLOWED,
+    _COMPAT_REASON_UNKNOWN_PROVIDER_CAPABILITY,
+}
 _PROVIDER_LOG_EVENT_REQUEST_START = "seo_migration_draft_provider_request_start"
 _PROVIDER_LOG_EVENT_REQUEST_COMPLETE = "seo_migration_draft_provider_request_complete"
 _PROVIDER_LOG_EVENT_REQUEST_FAILURE = "seo_migration_draft_provider_request_failure"
@@ -114,6 +130,22 @@ class SEOMigrationArtifactProviderError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class SEOMigrationProviderCompatibilityResult:
+    supported: bool
+    reason_code: str
+    operator_message: str
+    admin_summary: str
+    retryable: bool
+    provider_name: str
+    model_name: str
+    endpoint_path: str | None = None
+    execution_mode: str | None = None
+    web_search_enabled: bool | None = None
+    degraded_mode: bool | None = None
+    response_format_mode: str | None = None
+
+
+@dataclass(frozen=True)
 class _StructuredPayloadRecoveryResult:
     payload: dict[str, object] | None
     reason: str | None
@@ -129,6 +161,42 @@ class _SalvagedMigrationOutput:
 
 
 class SEOMigrationArtifactGenerationProvider:
+    def get_request_profile(self) -> dict[str, object]:
+        return {
+            "endpoint_path": None,
+            "execution_mode": "full",
+            "web_search_enabled": False,
+            "degraded_mode": False,
+            "response_format_mode": None,
+        }
+
+    def evaluate_compatibility(self) -> SEOMigrationProviderCompatibilityResult:
+        provider_name = _clean_optional_value(getattr(self, "provider_name", None)) or "unknown"
+        model_name = _clean_optional_value(getattr(self, "model_name", None)) or "unknown"
+        request_profile = self.get_request_profile()
+        return SEOMigrationProviderCompatibilityResult(
+            supported=True,
+            reason_code=_COMPAT_REASON_SUPPORTED,
+            operator_message="AI configuration is compatible with migration draft generation.",
+            admin_summary="provider_declared_compatible",
+            retryable=False,
+            provider_name=provider_name,
+            model_name=model_name,
+            endpoint_path=_clean_optional_value(request_profile.get("endpoint_path")),
+            execution_mode=_clean_optional_value(request_profile.get("execution_mode")),
+            web_search_enabled=(
+                bool(request_profile.get("web_search_enabled"))
+                if isinstance(request_profile.get("web_search_enabled"), bool)
+                else None
+            ),
+            degraded_mode=(
+                bool(request_profile.get("degraded_mode"))
+                if isinstance(request_profile.get("degraded_mode"), bool)
+                else None
+            ),
+            response_format_mode=_clean_optional_value(request_profile.get("response_format_mode")),
+        )
+
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         raise NotImplementedError
 
@@ -146,6 +214,22 @@ class MisconfiguredSEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGe
         self.model_name = model_name
         self.prompt_version = prompt_version
         self.safe_message = safe_message
+
+    def evaluate_compatibility(self) -> SEOMigrationProviderCompatibilityResult:
+        return SEOMigrationProviderCompatibilityResult(
+            supported=False,
+            reason_code=_COMPAT_REASON_PROVIDER_NOT_CONFIGURED,
+            operator_message="The current AI configuration does not support migration draft generation.",
+            admin_summary=_clean_optional_value(self.safe_message) or "provider_misconfigured",
+            retryable=False,
+            provider_name=_clean_optional_value(self.provider_name) or "unknown",
+            model_name=_clean_optional_value(self.model_name) or "unknown",
+            endpoint_path=None,
+            execution_mode="full",
+            web_search_enabled=False,
+            degraded_mode=False,
+            response_format_mode=None,
+        )
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         del migration_context
@@ -171,6 +255,15 @@ class MockSEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGenerationP
         self.provider_name = provider_name
         self.model_name = model_name
         self.prompt_version = prompt_version
+
+    def get_request_profile(self) -> dict[str, object]:
+        return {
+            "endpoint_path": "mock://migration-draft",
+            "execution_mode": "full",
+            "web_search_enabled": False,
+            "degraded_mode": False,
+            "response_format_mode": "mock_schema",
+        }
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         site_snapshot = migration_context.get("site_snapshot")
@@ -322,6 +415,138 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         self.api_base_url = api_base_url.rstrip("/")
         self.prompt_version = prompt_version.strip() or SEO_MIGRATION_PROMPT_VERSION
         self.prompt_text_recommendations = prompt_text_recommendations or ""
+
+    def get_request_profile(self) -> dict[str, object]:
+        return {
+            "endpoint_path": "/chat/completions",
+            "execution_mode": "full",
+            "web_search_enabled": False,
+            "degraded_mode": False,
+            "response_format_mode": "json_schema",
+        }
+
+    def evaluate_compatibility(self) -> SEOMigrationProviderCompatibilityResult:
+        profile = self.get_request_profile()
+        endpoint_path = _clean_optional_value(profile.get("endpoint_path"))
+        execution_mode = _clean_optional_value(profile.get("execution_mode")) or "full"
+        web_search_enabled = bool(profile.get("web_search_enabled"))
+        degraded_mode = bool(profile.get("degraded_mode"))
+        response_format_mode = _clean_optional_value(profile.get("response_format_mode"))
+        provider_name = _clean_optional_value(self.provider_name) or "openai"
+        model_name = _clean_optional_value(self.model_name) or "unknown"
+
+        if not _clean_optional_value(self.api_key):
+            return SEOMigrationProviderCompatibilityResult(
+                supported=False,
+                reason_code=_COMPAT_REASON_PROVIDER_NOT_CONFIGURED,
+                operator_message="The current AI configuration does not support migration draft generation.",
+                admin_summary="openai_api_key_missing",
+                retryable=False,
+                provider_name=provider_name,
+                model_name=model_name,
+                endpoint_path=endpoint_path,
+                execution_mode=execution_mode,
+                web_search_enabled=web_search_enabled,
+                degraded_mode=degraded_mode,
+                response_format_mode=response_format_mode,
+            )
+        if endpoint_path != "/chat/completions" or execution_mode != "full":
+            return SEOMigrationProviderCompatibilityResult(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE,
+                operator_message=(
+                    "This model/provider setup is not compatible with the current migration request settings."
+                ),
+                admin_summary=f"endpoint_or_execution_mode_unsupported endpoint={endpoint_path} mode={execution_mode}",
+                retryable=False,
+                provider_name=provider_name,
+                model_name=model_name,
+                endpoint_path=endpoint_path,
+                execution_mode=execution_mode,
+                web_search_enabled=web_search_enabled,
+                degraded_mode=degraded_mode,
+                response_format_mode=response_format_mode,
+            )
+        if web_search_enabled:
+            return SEOMigrationProviderCompatibilityResult(
+                supported=False,
+                reason_code=_COMPAT_REASON_TOOLS_REQUIRED_BUT_UNAVAILABLE,
+                operator_message="Full AI capability is required for migration draft generation.",
+                admin_summary="migration_request_shape_requires_tools_but_provider_call_is_non_tool",
+                retryable=False,
+                provider_name=provider_name,
+                model_name=model_name,
+                endpoint_path=endpoint_path,
+                execution_mode=execution_mode,
+                web_search_enabled=web_search_enabled,
+                degraded_mode=degraded_mode,
+                response_format_mode=response_format_mode,
+            )
+        if degraded_mode:
+            return SEOMigrationProviderCompatibilityResult(
+                supported=False,
+                reason_code=_COMPAT_REASON_DEGRADED_MODE_NOT_ALLOWED,
+                operator_message="Full AI capability is required for migration draft generation.",
+                admin_summary="degraded_mode_not_allowed_for_migration",
+                retryable=False,
+                provider_name=provider_name,
+                model_name=model_name,
+                endpoint_path=endpoint_path,
+                execution_mode=execution_mode,
+                web_search_enabled=web_search_enabled,
+                degraded_mode=degraded_mode,
+                response_format_mode=response_format_mode,
+            )
+        if response_format_mode != "json_schema" or not self._model_supports_chat_json_schema(model_name):
+            return SEOMigrationProviderCompatibilityResult(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_MODEL_CONFIGURATION,
+                operator_message=(
+                    "This model/provider setup is not compatible with the current migration request settings."
+                ),
+                admin_summary=(
+                    f"model_or_response_format_incompatible model={model_name} response_format={response_format_mode}"
+                ),
+                retryable=False,
+                provider_name=provider_name,
+                model_name=model_name,
+                endpoint_path=endpoint_path,
+                execution_mode=execution_mode,
+                web_search_enabled=web_search_enabled,
+                degraded_mode=degraded_mode,
+                response_format_mode=response_format_mode,
+            )
+        return SEOMigrationProviderCompatibilityResult(
+            supported=True,
+            reason_code=_COMPAT_REASON_SUPPORTED,
+            operator_message="AI configuration is compatible with migration draft generation.",
+            admin_summary="openai_chat_json_schema_supported",
+            retryable=False,
+            provider_name=provider_name,
+            model_name=model_name,
+            endpoint_path=endpoint_path,
+            execution_mode=execution_mode,
+            web_search_enabled=web_search_enabled,
+            degraded_mode=degraded_mode,
+            response_format_mode=response_format_mode,
+        )
+
+    @staticmethod
+    def _model_supports_chat_json_schema(model_name: str) -> bool:
+        normalized = (model_name or "").strip().lower()
+        if not normalized:
+            return False
+        unsupported_tokens = (
+            "whisper",
+            "tts",
+            "embedding",
+            "moderation",
+            "realtime",
+            "audio",
+            "image",
+            "vision-preview",
+        )
+        return not any(token in normalized for token in unsupported_tokens)
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         request_context = self._build_request_context(migration_context)
@@ -485,7 +710,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         request_context: dict[str, object] | None = None,
     ) -> str:
         body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-        endpoint_path = "/chat/completions"
+        endpoint_path = _clean_optional_value((request_context or {}).get("endpoint_path")) or "/chat/completions"
         request = urllib.request.Request(
             url=f"{self.api_base_url}{endpoint_path}",
             data=body,
@@ -736,8 +961,14 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         recovery = self._recover_structured_payload(normalized)
         normalized_reason = self._normalize_malformed_output_reason(recovery.reason)
         if recovery.payload is None:
-            error_reason = _DRAFT_REASON_EMPTY_RESPONSE if normalized_reason == _MALFORMED_OUTPUT_REASON_EMPTY else reason
-            message = "Migration draft response did not include content." if error_reason == _DRAFT_REASON_EMPTY_RESPONSE else safe_message
+            error_reason = (
+                _DRAFT_REASON_EMPTY_RESPONSE if normalized_reason == _MALFORMED_OUTPUT_REASON_EMPTY else reason
+            )
+            message = (
+                "Migration draft response did not include content."
+                if error_reason == _DRAFT_REASON_EMPTY_RESPONSE
+                else safe_message
+            )
             raise self._provider_error(
                 code=error_reason,
                 reason=error_reason,
@@ -820,7 +1051,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         except (TypeError, ValueError, json.JSONDecodeError):
             return None
 
-    def _normalize_top_level_payload(self, parsed: object) -> tuple[dict[str, object] | None, str | None, tuple[str, ...]]:
+    def _normalize_top_level_payload(
+        self, parsed: object
+    ) -> tuple[dict[str, object] | None, str | None, tuple[str, ...]]:
         if isinstance(parsed, dict):
             return parsed, None, ()
         if isinstance(parsed, list):
@@ -1094,6 +1327,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         workspace_context = migration_context.get("migration_workspace")
         site_payload = site_snapshot if isinstance(site_snapshot, dict) else {}
         workspace_payload = workspace_context if isinstance(workspace_context, dict) else {}
+        request_profile = self.get_request_profile()
         return {
             "business_id": _clean_optional_value(site_payload.get("business_id")),
             "site_id": _clean_optional_value(site_payload.get("site_id")),
@@ -1101,6 +1335,19 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "provider_name": self.provider_name,
             "model": self.model_name,
             "prompt_version": self.prompt_version,
+            "endpoint_path": _clean_optional_value(request_profile.get("endpoint_path")),
+            "execution_mode": _clean_optional_value(request_profile.get("execution_mode")) or "full",
+            "web_search_enabled": (
+                bool(request_profile.get("web_search_enabled"))
+                if isinstance(request_profile.get("web_search_enabled"), bool)
+                else False
+            ),
+            "degraded_mode": (
+                bool(request_profile.get("degraded_mode"))
+                if isinstance(request_profile.get("degraded_mode"), bool)
+                else False
+            ),
+            "response_format_mode": _clean_optional_value(request_profile.get("response_format_mode")),
         }
 
     def _extract_response_correlation_id(self, headers: object) -> str | None:
@@ -1134,6 +1381,16 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "model": self.model_name,
                 "prompt_version": self.prompt_version,
                 "endpoint_path": endpoint_path,
+                "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
+                "web_search_enabled": (
+                    bool(context.get("web_search_enabled"))
+                    if isinstance(context.get("web_search_enabled"), bool)
+                    else False
+                ),
+                "degraded_mode": (
+                    bool(context.get("degraded_mode")) if isinstance(context.get("degraded_mode"), bool) else False
+                ),
+                "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "timeout_seconds": int(self.timeout_seconds),
             },
         )
@@ -1157,6 +1414,16 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "model": self.model_name,
                 "prompt_version": self.prompt_version,
                 "endpoint_path": endpoint_path,
+                "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
+                "web_search_enabled": (
+                    bool(context.get("web_search_enabled"))
+                    if isinstance(context.get("web_search_enabled"), bool)
+                    else False
+                ),
+                "degraded_mode": (
+                    bool(context.get("degraded_mode")) if isinstance(context.get("degraded_mode"), bool) else False
+                ),
+                "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "duration_ms": max(0, int(duration_ms)),
                 "correlation_id": _clean_optional_value(correlation_id),
             },
@@ -1189,6 +1456,17 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "workspace_id": _clean_optional_value(context.get("workspace_id")),
                 "model": self.model_name,
                 "prompt_version": self.prompt_version,
+                "endpoint_path": _clean_optional_value(context.get("endpoint_path")),
+                "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
+                "web_search_enabled": (
+                    bool(context.get("web_search_enabled"))
+                    if isinstance(context.get("web_search_enabled"), bool)
+                    else False
+                ),
+                "degraded_mode": (
+                    bool(context.get("degraded_mode")) if isinstance(context.get("degraded_mode"), bool) else False
+                ),
+                "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "failure_reason": normalized_reason,
                 "retryable": retryable,
                 "correlation_id": _clean_optional_value(correlation_id),

@@ -13,9 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
 from app.integrations.seo_migration_artifact_provider import (
+    MisconfiguredSEOMigrationArtifactGenerationProvider,
     SEOMigrationArtifactGenerationOutput,
     SEOMigrationArtifactGenerationProvider,
     SEOMigrationArtifactProviderError,
+    SEOMigrationProviderCompatibilityResult,
 )
 from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
@@ -130,6 +132,44 @@ _DRAFT_FAILURE_REASON_VALUES = {
 }
 _DRAFT_PROVIDER_LOG_EVENT = "seo_migration_draft_generation"
 _DRAFT_CONTRACT_EVALUATION_LOG_EVENT = "seo_migration_draft_contract_evaluation"
+_MIGRATION_READINESS_LOG_EVENT = "seo_migration_readiness_evaluation"
+_DRAFT_PROVIDER_COMPATIBILITY_LOG_EVENT = "seo_migration_provider_compatibility_evaluation"
+
+_DRAFT_PROVIDER_COMPAT_REASON_CODES = {
+    "supported",
+    "provider_not_configured",
+    "unsupported_model_configuration",
+    "unsupported_endpoint_mode",
+    "tools_required_but_unavailable",
+    "degraded_mode_not_allowed",
+    "unknown_provider_capability",
+}
+
+_DRAFT_READINESS_SCORE_SOURCE_SITE = 15
+_DRAFT_READINESS_SCORE_OPERATOR_REQUIREMENTS = 25
+_DRAFT_READINESS_SCORE_ENRICHED_CONTENT = 25
+_DRAFT_READINESS_SCORE_AUDIT = 10
+_DRAFT_READINESS_SCORE_RECOMMENDATIONS = 10
+_DRAFT_READINESS_SCORE_COMPETITORS = 10
+_DRAFT_READINESS_COMPLETENESS_BONUS = 5
+
+_DRAFT_READINESS_REASON_SOURCE_REQUIRED = "source_site_ingest_required"
+_DRAFT_READINESS_REASON_OPERATOR_REQUIRED = "operator_requirements_required"
+_DRAFT_READINESS_REASON_ENRICHED_REQUIRED = "enriched_content_required"
+_DRAFT_READINESS_REASON_PROVIDER_CONFIG_REQUIRED = "provider_config_missing"
+_DRAFT_READINESS_REASON_AUDIT_UNAVAILABLE = "audit_context_unavailable"
+_DRAFT_READINESS_REASON_RECOMMENDATIONS_UNAVAILABLE = "recommendations_context_unavailable"
+_DRAFT_READINESS_REASON_COMPETITORS_UNAVAILABLE = "competitors_context_unavailable"
+_DRAFT_READINESS_REASON_ENRICHED_SPARSE = "enriched_content_sparse"
+_DRAFT_GENERATION_STATE_VALUES = {
+    "ready",
+    "ready_with_warnings",
+    "blocked_by_workspace",
+    "blocked_by_provider",
+    "generation_failed",
+    "generation_partial",
+    "generation_succeeded",
+}
 
 
 class SEOMigrationNotFoundError(ValueError):
@@ -240,6 +280,20 @@ class SEOMigrationDraftFailure:
     correlation_id: str | None = None
 
 
+@dataclass(frozen=True)
+class SEOMigrationDraftReadinessReason:
+    code: str
+    severity: str
+    message: str
+
+    def to_payload(self) -> dict[str, str]:
+        return {
+            "code": self.code,
+            "severity": self.severity,
+            "message": self.message,
+        }
+
+
 class SEOMigrationService:
     def __init__(
         self,
@@ -279,6 +333,10 @@ class SEOMigrationService:
         self.ingest_service = ingest_service
         self.context_assembler = context_assembler
         self.artifact_provider = artifact_provider
+        self.draft_provider_configured = not isinstance(
+            artifact_provider,
+            MisconfiguredSEOMigrationArtifactGenerationProvider,
+        )
         if github_publisher is None:
             github_publisher = MisconfiguredSEOMigrationGitHubPublisher(
                 safe_message="GitHub migration publisher is not configured.",
@@ -1167,7 +1225,109 @@ class SEOMigrationService:
         draft_run_id = str(uuid4())
         workspace = self.get_workspace(business_id=business_id, site_id=site_id)
         site = self._require_site(business_id=business_id, site_id=site_id)
-        context_json, _ = self._assemble_context(site=site, workspace=workspace)
+        context_json, context_summary = self._assemble_context(site=site, workspace=workspace)
+        draft_readiness = self._build_draft_generation_readiness(
+            business_id=business_id,
+            site_id=site_id,
+            workspace=workspace,
+            context_summary=context_summary,
+            emit_log=True,
+        )
+        if bool(draft_readiness.get("hard_blocked")):
+            first_blocking_reason = next(
+                (
+                    item
+                    for item in draft_readiness.get("reasons", [])
+                    if isinstance(item, dict) and str(item.get("severity") or "").strip().lower() == "blocking"
+                ),
+                None,
+            )
+            blocking_code = (
+                _normalize_string(
+                    first_blocking_reason.get("code") if isinstance(first_blocking_reason, dict) else None,
+                    max_length=80,
+                )
+                or "draft_generation_blocked"
+            )
+            blocking_message = _normalize_string(
+                first_blocking_reason.get("message") if isinstance(first_blocking_reason, dict) else None,
+                max_length=200,
+            )
+            summary_message = (
+                _normalize_string(draft_readiness.get("summary"), max_length=280)
+                or "Not ready yet. Resolve blocking migration inputs before generating a draft."
+            )
+            message = summary_message
+            if blocking_message and blocking_message not in summary_message:
+                message = f"{summary_message} {blocking_message}"
+            failure_category = (
+                "config_missing"
+                if blocking_code == _DRAFT_READINESS_REASON_PROVIDER_CONFIG_REQUIRED
+                else "unknown_error"
+            )
+            failure_reason = "unsupported_configuration" if failure_category == "config_missing" else "unknown"
+            raise SEOMigrationValidationError(
+                message,
+                failure_category=failure_category,
+                failure_reason=failure_reason,
+                error_code=blocking_code,
+                retryable=False,
+                correlation_id=draft_run_id,
+                workspace_id=workspace.id,
+                provider_name=self.provider_name,
+                model_name=self.provider_model_name,
+                prompt_version=self.prompt_version,
+            )
+        provider_compatibility = self._evaluate_draft_provider_compatibility(
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            emit_log=True,
+        )
+        if not provider_compatibility.supported:
+            draft_failure = self._draft_failure_from_provider_compatibility(
+                compatibility=provider_compatibility,
+                prompt_version=self.prompt_version,
+                draft_run_id=draft_run_id,
+            )
+            failed_artifact = self._record_failed_draft_generation(
+                workspace=workspace,
+                site=site,
+                context_json=context_json,
+                draft_run_id=draft_run_id,
+                failure=draft_failure,
+                principal_id=principal_id,
+            )
+            self._log_draft_generation_event(
+                status="failed",
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace.id,
+                draft_run_id=draft_run_id,
+                artifact_version_id=failed_artifact.id,
+                artifact_version=failed_artifact.version,
+                provider_name=draft_failure.provider_name,
+                model_name=draft_failure.model_name,
+                prompt_version=draft_failure.prompt_version,
+                failure_category=draft_failure.failure_category,
+                failure_reason=draft_failure.failure_reason,
+                retryable=draft_failure.retryable,
+                correlation_id=draft_failure.correlation_id or failed_artifact.id,
+                duration_ms=self._duration_ms(started_at),
+            )
+            raise SEOMigrationValidationError(
+                draft_failure.message_for_operator,
+                failure_category=draft_failure.failure_category,
+                failure_reason=draft_failure.failure_reason,
+                error_code=draft_failure.error_code,
+                retryable=draft_failure.retryable,
+                correlation_id=draft_failure.correlation_id or failed_artifact.id,
+                workspace_id=workspace.id,
+                artifact_version_id=failed_artifact.id,
+                provider_name=draft_failure.provider_name,
+                model_name=draft_failure.model_name,
+                prompt_version=draft_failure.prompt_version,
+            )
         self._log_draft_generation_event(
             status="requested",
             business_id=business_id,
@@ -1303,9 +1463,7 @@ class SEOMigrationService:
 
         if draft_contract_evaluation.status == "rejected" or not normalized_files:
             reason_code = (
-                draft_contract_evaluation.reasons[0]
-                if draft_contract_evaluation.reasons
-                else "validation_failed"
+                draft_contract_evaluation.reasons[0] if draft_contract_evaluation.reasons else "validation_failed"
             )
             draft_failure = SEOMigrationDraftFailure(
                 failure_category="artifact_invalid",
@@ -1411,7 +1569,9 @@ class SEOMigrationService:
             provider_name=artifact.provider_name,
             model_name=artifact.model_name,
             prompt_version=artifact.prompt_version,
-            failure_category=(draft_failure.failure_category if draft_failure and generation_status == "partial" else None),
+            failure_category=(
+                draft_failure.failure_category if draft_failure and generation_status == "partial" else None
+            ),
             failure_reason=(draft_failure.failure_reason if draft_failure and generation_status == "partial" else None),
             retryable=(draft_failure.retryable if draft_failure and generation_status == "partial" else None),
             correlation_id=(draft_failure.correlation_id if draft_failure and generation_status == "partial" else None),
@@ -1512,6 +1672,24 @@ class SEOMigrationService:
             action="deploy",
         )
         draft_diagnostics = self._derive_draft_generation_diagnostics(artifact=latest_artifact)
+        draft_readiness = self._build_draft_generation_readiness(
+            business_id=business_id,
+            site_id=site_id,
+            workspace=workspace,
+            context_summary=context_summary,
+            emit_log=True,
+        )
+        draft_provider_compatibility = self._evaluate_draft_provider_compatibility(
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            emit_log=True,
+        )
+        draft_generation_state = self._build_draft_generation_state(
+            draft_readiness=draft_readiness,
+            draft_provider_compatibility=draft_provider_compatibility,
+            draft_diagnostics=draft_diagnostics,
+        )
         publish_readiness = {
             **publish_readiness,
             "last_status": publish_diagnostics.get("last_status"),
@@ -1541,7 +1719,18 @@ class SEOMigrationService:
                 "last_draft_failure_code": draft_diagnostics.get("last_failure_code"),
                 "last_draft_failure_correlation_id": draft_diagnostics.get("last_failure_correlation_id"),
                 "last_draft_failure_artifact_version_id": draft_diagnostics.get("last_failure_artifact_version_id"),
+                "draft_provider_compatibility_supported": bool(draft_provider_compatibility.supported),
+                "draft_provider_compatibility_reason_code": draft_provider_compatibility.reason_code,
+                "draft_provider_compatibility_message": draft_provider_compatibility.operator_message,
+                "draft_provider_compatibility_retryable": bool(draft_provider_compatibility.retryable),
+                "draft_generation_state_status": draft_generation_state.get("status"),
+                "draft_generation_state_summary": draft_generation_state.get("summary"),
             },
+            "draft_generation_readiness": draft_readiness,
+            "draft_provider_compatibility": self._serialize_draft_provider_compatibility(
+                compatibility=draft_provider_compatibility,
+            ),
+            "draft_generation_state": draft_generation_state,
         }
         return SEOMigrationWorkspaceSummary(
             workspace=workspace,
@@ -1554,7 +1743,9 @@ class SEOMigrationService:
             deploy_history=_normalize_history_list(workspace.deploy_history_json),
         )
 
-    def _derive_draft_generation_diagnostics(self, *, artifact: SEOMigrationArtifactVersion | None) -> dict[str, object]:
+    def _derive_draft_generation_diagnostics(
+        self, *, artifact: SEOMigrationArtifactVersion | None
+    ) -> dict[str, object]:
         if artifact is None:
             return {
                 "last_status": None,
@@ -1573,7 +1764,7 @@ class SEOMigrationService:
         status_value = _normalize_string(artifact.status, max_length=40)
         failure_category = _normalize_string(diagnostics_payload.get("failure_category"), max_length=40)
         if failure_category not in _MIGRATION_FAILURE_CATEGORY_VALUES:
-            failure_category = ("artifact_invalid" if status_value == "failed" else None)
+            failure_category = "artifact_invalid" if status_value == "failed" else None
         failure_reason = _normalize_string(diagnostics_payload.get("failure_reason"), max_length=80)
         if failure_reason not in _DRAFT_FAILURE_REASON_VALUES:
             failure_reason = None
@@ -1591,6 +1782,485 @@ class SEOMigrationService:
             "last_failure_correlation_id": correlation_id,
             "last_failure_artifact_version_id": artifact.id,
         }
+
+    def _build_draft_generation_state(
+        self,
+        *,
+        draft_readiness: dict[str, object],
+        draft_provider_compatibility: SEOMigrationProviderCompatibilityResult,
+        draft_diagnostics: dict[str, object],
+    ) -> dict[str, object]:
+        readiness_status = _normalize_string(draft_readiness.get("status"), max_length=40) or "not_ready"
+        readiness_summary = _normalize_string(draft_readiness.get("summary"), max_length=320)
+        readiness_hard_blocked = bool(draft_readiness.get("hard_blocked"))
+        latest_generation_status = _normalize_string(draft_diagnostics.get("last_status"), max_length=40)
+        latest_failure_message = _normalize_string(draft_diagnostics.get("last_failure_message"), max_length=320)
+        latest_failure_category = _normalize_string(draft_diagnostics.get("last_failure_category"), max_length=40)
+        latest_failure_reason = _normalize_string(draft_diagnostics.get("last_failure_reason"), max_length=80)
+        latest_failure_retryable = draft_diagnostics.get("last_failure_retryable")
+        retryable = latest_failure_retryable if isinstance(latest_failure_retryable, bool) else None
+        compatibility_supported = bool(draft_provider_compatibility.supported)
+        compatibility_reason_code = (
+            _normalize_string(draft_provider_compatibility.reason_code, max_length=80) or "unknown_provider_capability"
+        )
+        compatibility_message = _normalize_string(draft_provider_compatibility.operator_message, max_length=320)
+
+        status = "ready"
+        summary = "Ready to generate draft."
+        if readiness_hard_blocked:
+            status = "blocked_by_workspace"
+            summary = readiness_summary or "Not ready yet — resolve blocking migration readiness issues."
+        elif not compatibility_supported:
+            status = "blocked_by_provider"
+            summary = (
+                compatibility_message
+                or "Blocked: provider configuration is not compatible with migration draft generation."
+            )
+        elif latest_generation_status == "failed":
+            status = "generation_failed"
+            summary = latest_failure_message or "Draft generation failed."
+        elif latest_generation_status == "partial":
+            status = "generation_partial"
+            summary = "Partial draft generated."
+        elif latest_generation_status == "completed":
+            status = "generation_succeeded"
+            summary = "Draft generated successfully."
+        elif readiness_status == "ready_with_warnings":
+            status = "ready_with_warnings"
+            summary = readiness_summary or "Ready, but draft quality may be limited."
+        else:
+            status = "ready"
+            summary = readiness_summary or "Ready to generate draft."
+
+        if status not in _DRAFT_GENERATION_STATE_VALUES:
+            status = "ready"
+        return {
+            "status": status,
+            "summary": summary,
+            "readiness_status": readiness_status,
+            "readiness_hard_blocked": readiness_hard_blocked,
+            "provider_compatibility_supported": compatibility_supported,
+            "provider_compatibility_reason_code": compatibility_reason_code,
+            "latest_generation_status": latest_generation_status,
+            "latest_failure_category": latest_failure_category,
+            "latest_failure_reason": latest_failure_reason,
+            "retryable": retryable,
+        }
+
+    def _build_draft_generation_readiness(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace: SEOMigrationWorkspace,
+        context_summary: dict[str, object],
+        emit_log: bool,
+    ) -> dict[str, object]:
+        normalized_summary = _normalize_json_dict(context_summary)
+        reused_context = _normalize_json_dict(normalized_summary.get("reused_context"))
+        audit_context = _normalize_json_dict(reused_context.get("audit"))
+        recommendation_context = _normalize_json_dict(reused_context.get("recommendations"))
+        competitor_context = _normalize_json_dict(reused_context.get("competitors"))
+        has_source_snapshot = bool(normalized_summary.get("has_source_snapshot"))
+        has_operator_requirements = bool(normalized_summary.get("has_operator_requirements"))
+        has_enriched_notes = bool(normalized_summary.get("has_enriched_content_notes"))
+        signals = {
+            "source_site_ingested": has_source_snapshot
+            or str(workspace.source_site_status or "").strip() == "ingested",
+            "operator_requirements_present": has_operator_requirements,
+            "enriched_content_present": has_enriched_notes,
+            "audit_available": bool(normalized_summary.get("has_audit_summary"))
+            or bool(audit_context.get("available")),
+            "recommendations_available": bool(normalized_summary.get("has_recommendation_summary"))
+            or bool(recommendation_context.get("available")),
+            "competitors_available": bool(normalized_summary.get("has_competitor_summary"))
+            or bool(competitor_context.get("available")),
+            "draft_provider_configured": bool(self.draft_provider_configured),
+        }
+        blocking_reasons: list[SEOMigrationDraftReadinessReason] = []
+        warning_reasons: list[SEOMigrationDraftReadinessReason] = []
+
+        if not signals["source_site_ingested"]:
+            blocking_reasons.append(
+                SEOMigrationDraftReadinessReason(
+                    code=_DRAFT_READINESS_REASON_SOURCE_REQUIRED,
+                    severity="blocking",
+                    message="Run source ingest to capture baseline source-site context.",
+                )
+            )
+        if not signals["operator_requirements_present"]:
+            blocking_reasons.append(
+                SEOMigrationDraftReadinessReason(
+                    code=_DRAFT_READINESS_REASON_OPERATOR_REQUIRED,
+                    severity="blocking",
+                    message="Add operator requirements before generating a draft.",
+                )
+            )
+        if not signals["enriched_content_present"]:
+            blocking_reasons.append(
+                SEOMigrationDraftReadinessReason(
+                    code=_DRAFT_READINESS_REASON_ENRICHED_REQUIRED,
+                    severity="blocking",
+                    message="Add enriched replacement content notes before generating a draft.",
+                )
+            )
+        if not signals["draft_provider_configured"]:
+            blocking_reasons.append(
+                SEOMigrationDraftReadinessReason(
+                    code=_DRAFT_READINESS_REASON_PROVIDER_CONFIG_REQUIRED,
+                    severity="blocking",
+                    message="AI provider configuration is missing or invalid for migration draft generation.",
+                )
+            )
+
+        if not signals["audit_available"]:
+            warning_reasons.append(
+                SEOMigrationDraftReadinessReason(
+                    code=_DRAFT_READINESS_REASON_AUDIT_UNAVAILABLE,
+                    severity="warning",
+                    message="Audit context is not available; draft quality may be limited.",
+                )
+            )
+        if not signals["recommendations_available"]:
+            warning_reasons.append(
+                SEOMigrationDraftReadinessReason(
+                    code=_DRAFT_READINESS_REASON_RECOMMENDATIONS_UNAVAILABLE,
+                    severity="warning",
+                    message="Recommendation context is not available; draft quality may be limited.",
+                )
+            )
+        if not signals["competitors_available"]:
+            warning_reasons.append(
+                SEOMigrationDraftReadinessReason(
+                    code=_DRAFT_READINESS_REASON_COMPETITORS_UNAVAILABLE,
+                    severity="warning",
+                    message="Competitor context is not available; draft quality may be limited.",
+                )
+            )
+        if signals["enriched_content_present"] and self._is_sparse_enriched_content(
+            workspace.enriched_content_notes_json
+        ):
+            warning_reasons.append(
+                SEOMigrationDraftReadinessReason(
+                    code=_DRAFT_READINESS_REASON_ENRICHED_SPARSE,
+                    severity="warning",
+                    message="Enriched replacement content is sparse; add more detail for better draft quality.",
+                )
+            )
+
+        score = 0
+        if signals["source_site_ingested"]:
+            score += _DRAFT_READINESS_SCORE_SOURCE_SITE
+        if signals["operator_requirements_present"]:
+            score += _DRAFT_READINESS_SCORE_OPERATOR_REQUIREMENTS
+        if signals["enriched_content_present"]:
+            score += _DRAFT_READINESS_SCORE_ENRICHED_CONTENT
+        if signals["audit_available"]:
+            score += _DRAFT_READINESS_SCORE_AUDIT
+        if signals["recommendations_available"]:
+            score += _DRAFT_READINESS_SCORE_RECOMMENDATIONS
+        if signals["competitors_available"]:
+            score += _DRAFT_READINESS_SCORE_COMPETITORS
+        if (
+            signals["source_site_ingested"]
+            and signals["operator_requirements_present"]
+            and signals["enriched_content_present"]
+            and signals["audit_available"]
+            and signals["recommendations_available"]
+            and signals["competitors_available"]
+        ):
+            score += _DRAFT_READINESS_COMPLETENESS_BONUS
+        bounded_score = min(100, max(0, int(score)))
+        hard_blocked = bool(blocking_reasons)
+        if hard_blocked:
+            status = "not_ready"
+        elif bounded_score >= 80:
+            status = "ready"
+        else:
+            status = "ready_with_warnings"
+        reason_payload = [*blocking_reasons, *warning_reasons]
+        summary = self._build_draft_readiness_summary(
+            status=status,
+            blocking_codes=[item.code for item in blocking_reasons],
+        )
+        payload: dict[str, object] = {
+            "status": status,
+            "score": bounded_score,
+            "hard_blocked": hard_blocked,
+            "summary": summary,
+            "reasons": [item.to_payload() for item in reason_payload],
+            "signals": signals,
+        }
+        if emit_log:
+            self._log_draft_readiness_evaluation(
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace.id,
+                readiness_status=status,
+                readiness_score=bounded_score,
+                hard_blocked=hard_blocked,
+                blocking_reason_codes=[item.code for item in blocking_reasons],
+                warning_reason_codes=[item.code for item in warning_reasons],
+            )
+        return payload
+
+    @staticmethod
+    def _build_draft_readiness_summary(*, status: str, blocking_codes: list[str]) -> str:
+        if status == "ready":
+            return "Ready to generate draft."
+        if status == "ready_with_warnings":
+            return "Ready, but draft quality may be limited."
+        blocking = set(blocking_codes)
+        if (
+            _DRAFT_READINESS_REASON_OPERATOR_REQUIRED in blocking
+            and _DRAFT_READINESS_REASON_ENRICHED_REQUIRED in blocking
+        ):
+            return "Not ready yet — add operator requirements and enriched replacement content first."
+        if _DRAFT_READINESS_REASON_OPERATOR_REQUIRED in blocking:
+            return "Not ready yet — add operator requirements first."
+        if _DRAFT_READINESS_REASON_ENRICHED_REQUIRED in blocking:
+            return "Not ready yet — add enriched replacement content first."
+        if _DRAFT_READINESS_REASON_SOURCE_REQUIRED in blocking:
+            return "Not ready yet — run source ingest first."
+        if _DRAFT_READINESS_REASON_PROVIDER_CONFIG_REQUIRED in blocking:
+            return "Not ready yet — check AI provider configuration."
+        return "Not ready yet — resolve blocking migration readiness issues before generating a draft."
+
+    @staticmethod
+    def _is_sparse_enriched_content(value: object) -> bool:
+        payload = _normalize_json_dict(value)
+        if not payload:
+            return True
+        text_keys = (
+            "replacement_summary",
+            "homepage_value_proposition",
+            "about_business",
+            "additional_notes",
+        )
+        text_signal_count = 0
+        for key in text_keys:
+            text = _normalize_string(payload.get(key), max_length=8000)
+            if text and len(text) >= 40:
+                text_signal_count += 1
+        list_signal_count = 0
+        for key in ("service_highlights", "trust_signals", "faq_items"):
+            items = payload.get(key)
+            if isinstance(items, list) and any(_normalize_string(item, max_length=240) for item in items):
+                list_signal_count += 1
+        contact_overrides = _normalize_json_dict(payload.get("contact_overrides"))
+        aggregate_signal = text_signal_count + min(2, list_signal_count) + (1 if contact_overrides else 0)
+        return aggregate_signal < 2
+
+    def _log_draft_readiness_evaluation(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace_id: str | None,
+        readiness_status: str,
+        readiness_score: int,
+        hard_blocked: bool,
+        blocking_reason_codes: list[str],
+        warning_reason_codes: list[str],
+    ) -> None:
+        payload: dict[str, object] = {
+            "event": _MIGRATION_READINESS_LOG_EVENT,
+            "timestamp": utc_now().isoformat(),
+            "business_id": business_id,
+            "site_id": site_id,
+            "workspace_id": workspace_id,
+            "migration_workspace_id": workspace_id,
+            "readiness_status": _normalize_string(readiness_status, max_length=40),
+            "readiness_score": max(0, int(readiness_score)),
+            "hard_blocked": bool(hard_blocked),
+            "blocking_reason_codes": [item for item in blocking_reason_codes if item],
+            "warning_reason_codes": [item for item in warning_reason_codes if item],
+        }
+        level = logging.WARNING if hard_blocked else logging.INFO
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message=_MIGRATION_READINESS_LOG_EVENT,
+            level=level,
+        )
+
+    def _evaluate_draft_provider_compatibility(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace_id: str,
+        emit_log: bool,
+    ) -> SEOMigrationProviderCompatibilityResult:
+        compatibility_error_type: str | None = None
+        try:
+            raw_result = self.artifact_provider.evaluate_compatibility()
+        except Exception as exc:  # noqa: BLE001
+            compatibility_error_type = type(exc).__name__
+            raw_result = SEOMigrationProviderCompatibilityResult(
+                supported=False,
+                reason_code="unknown_provider_capability",
+                operator_message="The current AI configuration does not support migration draft generation.",
+                admin_summary="compatibility_evaluation_failed",
+                retryable=False,
+                provider_name=self.provider_name,
+                model_name=self.provider_model_name,
+                endpoint_path=None,
+                execution_mode="full",
+                web_search_enabled=False,
+                degraded_mode=False,
+                response_format_mode=None,
+            )
+        compatibility = self._normalize_draft_provider_compatibility_result(raw_result)
+        if emit_log:
+            self._log_draft_provider_compatibility_evaluation(
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace_id,
+                compatibility=compatibility,
+                error_type=compatibility_error_type,
+            )
+        return compatibility
+
+    def _normalize_draft_provider_compatibility_result(
+        self,
+        result: SEOMigrationProviderCompatibilityResult,
+    ) -> SEOMigrationProviderCompatibilityResult:
+        supported = bool(result.supported)
+        raw_reason_code = _normalize_string(result.reason_code, max_length=80)
+        if supported:
+            reason_code = "supported"
+        elif raw_reason_code in _DRAFT_PROVIDER_COMPAT_REASON_CODES:
+            reason_code = raw_reason_code
+        else:
+            reason_code = "unknown_provider_capability"
+        if reason_code == "supported" and not supported:
+            reason_code = "unknown_provider_capability"
+
+        provider_name = _normalize_string(result.provider_name, max_length=64) or self.provider_name
+        model_name = _normalize_string(result.model_name, max_length=128) or self.provider_model_name
+        endpoint_path = _normalize_string(result.endpoint_path, max_length=120)
+        execution_mode = _normalize_string(result.execution_mode, max_length=40) or "full"
+        response_format_mode = _normalize_string(result.response_format_mode, max_length=60)
+        web_search_enabled = result.web_search_enabled if isinstance(result.web_search_enabled, bool) else False
+        degraded_mode = result.degraded_mode if isinstance(result.degraded_mode, bool) else False
+        retryable = result.retryable if isinstance(result.retryable, bool) else False
+        operator_message = _normalize_string(result.operator_message, max_length=320)
+        if operator_message is None:
+            operator_message = self._default_draft_provider_compatibility_message(reason_code=reason_code)
+        admin_summary = _normalize_string(result.admin_summary, max_length=240) or reason_code
+        return SEOMigrationProviderCompatibilityResult(
+            supported=supported,
+            reason_code=reason_code,
+            operator_message=operator_message,
+            admin_summary=admin_summary,
+            retryable=retryable,
+            provider_name=provider_name,
+            model_name=model_name,
+            endpoint_path=endpoint_path,
+            execution_mode=execution_mode,
+            web_search_enabled=web_search_enabled,
+            degraded_mode=degraded_mode,
+            response_format_mode=response_format_mode,
+        )
+
+    @staticmethod
+    def _default_draft_provider_compatibility_message(*, reason_code: str) -> str:
+        if reason_code == "supported":
+            return "AI configuration is compatible with migration draft generation."
+        if reason_code == "provider_not_configured":
+            return "The current AI configuration does not support migration draft generation."
+        if reason_code in {"unsupported_model_configuration", "unsupported_endpoint_mode"}:
+            return "This model/provider setup is not compatible with the current migration request settings."
+        if reason_code in {"tools_required_but_unavailable", "degraded_mode_not_allowed"}:
+            return "Full AI capability is required for migration draft generation."
+        return "The current AI configuration does not support migration draft generation."
+
+    @staticmethod
+    def _serialize_draft_provider_compatibility(
+        *,
+        compatibility: SEOMigrationProviderCompatibilityResult,
+    ) -> dict[str, object]:
+        return {
+            "supported": bool(compatibility.supported),
+            "reason_code": compatibility.reason_code,
+            "operator_message": compatibility.operator_message,
+            "retryable": bool(compatibility.retryable),
+            "provider_name": compatibility.provider_name,
+            "model_name": compatibility.model_name,
+            "endpoint_path": compatibility.endpoint_path,
+            "execution_mode": compatibility.execution_mode,
+            "web_search_enabled": bool(compatibility.web_search_enabled),
+            "degraded_mode": bool(compatibility.degraded_mode),
+            "response_format_mode": compatibility.response_format_mode,
+            "admin_summary": compatibility.admin_summary,
+        }
+
+    def _log_draft_provider_compatibility_evaluation(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace_id: str,
+        compatibility: SEOMigrationProviderCompatibilityResult,
+        error_type: str | None = None,
+    ) -> None:
+        payload: dict[str, object] = {
+            "event": _DRAFT_PROVIDER_COMPATIBILITY_LOG_EVENT,
+            "timestamp": utc_now().isoformat(),
+            "business_id": business_id,
+            "site_id": site_id,
+            "workspace_id": workspace_id,
+            "migration_workspace_id": workspace_id,
+            "provider_name": compatibility.provider_name,
+            "model": compatibility.model_name,
+            "endpoint_path": compatibility.endpoint_path,
+            "execution_mode": compatibility.execution_mode,
+            "web_search_enabled": bool(compatibility.web_search_enabled),
+            "degraded_mode": bool(compatibility.degraded_mode),
+            "response_format_mode": compatibility.response_format_mode,
+            "supported": bool(compatibility.supported),
+            "reason_code": compatibility.reason_code,
+            "retryable": bool(compatibility.retryable),
+            "error_type": _normalize_string(error_type, max_length=80),
+        }
+        level = logging.INFO if compatibility.supported else logging.WARNING
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message=_DRAFT_PROVIDER_COMPATIBILITY_LOG_EVENT,
+            level=level,
+        )
+
+    def _draft_failure_from_provider_compatibility(
+        self,
+        *,
+        compatibility: SEOMigrationProviderCompatibilityResult,
+        prompt_version: str,
+        draft_run_id: str,
+    ) -> SEOMigrationDraftFailure:
+        reason_code = (
+            compatibility.reason_code
+            if compatibility.reason_code in _DRAFT_PROVIDER_COMPAT_REASON_CODES
+            else "unknown_provider_capability"
+        )
+        failure_category = "config_missing"
+        failure_reason = "unsupported_configuration"
+        if reason_code == "unknown_provider_capability":
+            failure_category = "unknown_error"
+            failure_reason = "unknown"
+        return SEOMigrationDraftFailure(
+            failure_category=failure_category,
+            failure_reason=failure_reason,
+            error_code=reason_code,
+            message_for_operator=(
+                _normalize_string(compatibility.operator_message, max_length=400)
+                or "The current AI configuration does not support migration draft generation."
+            ),
+            retryable=compatibility.retryable if isinstance(compatibility.retryable, bool) else False,
+            provider_name=_normalize_string(compatibility.provider_name, max_length=64) or self.provider_name,
+            model_name=_normalize_string(compatibility.model_name, max_length=128) or self.provider_model_name,
+            prompt_version=_normalize_string(prompt_version, max_length=64) or self.prompt_version,
+            correlation_id=_normalize_string(draft_run_id, max_length=120),
+        )
 
     def _record_failed_draft_generation(
         self,
@@ -1799,9 +2469,7 @@ class SEOMigrationService:
         )
         competitor_domains = self.seo_competitor_repository.list_domains_for_business_site(site.business_id, site.id)
         active_competitor_domains = [
-            item
-            for item in competitor_domains
-            if getattr(item, "is_active", None) is not False
+            item for item in competitor_domains if getattr(item, "is_active", None) is not False
         ]
 
         reused_context = self._build_reused_context_summary(
@@ -2023,12 +2691,8 @@ class SEOMigrationService:
             "provider_name": _normalize_string(provider_name, max_length=64),
             "model_name": _normalize_string(model_name, max_length=128),
             "prompt_version": _normalize_string(prompt_version, max_length=64),
-            "failure_category": (
-                failure_category if failure_category in _MIGRATION_FAILURE_CATEGORY_VALUES else None
-            ),
-            "failure_reason": (
-                failure_reason if failure_reason in _DRAFT_FAILURE_REASON_VALUES else None
-            ),
+            "failure_category": (failure_category if failure_category in _MIGRATION_FAILURE_CATEGORY_VALUES else None),
+            "failure_reason": (failure_reason if failure_reason in _DRAFT_FAILURE_REASON_VALUES else None),
             "retryable": retryable if isinstance(retryable, bool) else None,
             "correlation_id": _normalize_string(correlation_id, max_length=120),
             "duration_ms": max(0, int(duration_ms)) if duration_ms is not None else None,
@@ -2085,13 +2749,9 @@ class SEOMigrationService:
         elif evaluation.status == "salvaged":
             warnings.append("response_contract_status=salvaged")
         if evaluation.warnings:
-            warnings.append(
-                "response_contract_warning_codes=" + ",".join(sorted(evaluation.warnings))
-            )
+            warnings.append("response_contract_warning_codes=" + ",".join(sorted(evaluation.warnings)))
         if evaluation.dropped_item_count > 0:
-            warnings.append(
-                f"response_contract_dropped_item_count={max(0, int(evaluation.dropped_item_count))}"
-            )
+            warnings.append(f"response_contract_dropped_item_count={max(0, int(evaluation.dropped_item_count))}")
         return warnings
 
     @staticmethod
