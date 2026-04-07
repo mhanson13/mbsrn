@@ -44,6 +44,22 @@ Primary workflow in site workspace `Migration` tab:
 Important operator cue:
 - GitHub publish is not production deployment.
 
+## Reused Context Availability Semantics
+Migration reused-context cards use best-available signal, not strict completeness.
+
+Definition:
+- `Available` means usable site data exists for that context in current system records.
+- `Not yet available` means no usable signal was found.
+- Migration does not require migration-specific snapshots, approved artifacts, or perfect summary coverage before marking context available.
+
+Fallback rules:
+- Audit: available when any successful audit run exists (`latest_successful_run`).
+- Recommendations: available when generated recommendation content exists (latest generated recommendation records and/or completed recommendation runs).
+- Competitors: available when usable competitor run/domain signal exists (latest usable comparison run or active competitor domain candidates).
+
+Operational note:
+- Reused context cards can show `Available` even when `existing_context_summaries.*` entries are null, because summaries are not the only source-of-truth signal for availability.
+
 ## Source Ingest Limits and Safety
 Homepage ingest remains intentionally bounded:
 - HTTP(S) only
@@ -69,6 +85,69 @@ Guardrails:
 - rejection of backend/runtime/infra files
 - analytics snippet normalization to placeholders
 - partial salvage only for valid fragments
+- tolerant provider payload extraction supports:
+  - raw JSON
+  - markdown-fenced JSON
+  - JSON wrapped with leading/trailing prose
+- when a payload is partially malformed, valid generated file entries are retained and malformed entries are discarded
+
+### Draft Generation Failure Diagnostics
+Draft generation failures are normalized and surfaced as structured diagnostics (API + persisted migration state) instead of context-free provider errors.
+
+Failure categories:
+- `provider_error`
+- `artifact_invalid`
+- `config_missing`
+- `unknown_error`
+
+Failure reasons (machine-readable):
+- `timeout`
+- `authentication_failed`
+- `rate_limited`
+- `malformed_response`
+- `malformed_output`
+- `empty_response`
+- `unsupported_configuration`
+- `transport_error`
+- `validation_failed`
+- `unknown`
+
+Reason semantics:
+- `malformed_response`: provider envelope could not be parsed (for example non-JSON transport body).
+- `malformed_output`: assistant content payload was present but malformed/truncated/wrapped and required tolerant recovery handling.
+- `validation_failed`: payload parsed but failed structured validation and no salvageable artifact files remained.
+
+Operator-visible behavior:
+- API failure payload includes structured fields: `message`, `failure_category`, `failure_reason`, `error_code`, `retryable`, and correlation identifiers when available.
+- UI renders the sanitized backend message and a short hint (retryable/config/payload-validation) when determinable.
+- failed generation attempts persist as `failed` artifact versions, and summary diagnostics expose latest draft-generation failure fields for later review.
+
+Safety:
+- operator-visible payloads exclude raw provider bodies, raw prompts, stack traces, and secrets.
+- internal/provider diagnostics stay in structured logs only.
+
+### Post-Parse Response Contract Evaluation
+After provider parsing/salvage and static artifact path validation, migration draft output passes a deterministic response-contract evaluator before persistence.
+
+Evaluation statuses:
+- `accepted`: required artifact contract and minimum quality checks passed
+- `accepted_with_warnings`: usable output with bounded quality warnings
+- `salvaged`: usable output after dropping invalid/unsafe components
+- `rejected`: parseable output failed minimum operational contract checks
+
+Representative migration reason/warning codes:
+- `empty_artifact_package`
+- `missing_required_artifact_files`
+- `invalid_artifact_structure`
+- `insufficient_content_density`
+- `partial_artifact_only`
+
+Operator/API behavior:
+- only `accepted`, `accepted_with_warnings`, and `salvaged` draft outputs are persisted as successful draft versions
+- `rejected` outputs persist as failed draft generations with normalized failure fields
+- operator-visible errors stay sanitized; raw provider payloads and prompts remain hidden
+- operator UI surfaces a compact quality indicator for partial/salvaged output (`Partial draft generated.`)
+- internal reason/warning code arrays stay in logs/diagnostics, not operator-facing debug dumps
 
 ## Publish Workflow (GitHub)
 Publish target is site-scoped configuration:
@@ -193,12 +272,19 @@ Migration control-plane actions emit structured logs (`event=seo_migration_contr
 - publish requested/completed/failed
 - deploy requested/completed/failed
 
+Draft generation also emits structured logs:
+- service-level lifecycle (`event=seo_migration_draft_generation`) with requested/completed/partial/failed states
+- provider request lifecycle (`event=seo_migration_draft_provider_request_start|complete|failure`)
+- provider response parse lifecycle (`event=seo_migration_draft_provider_response_parse`)
+
 Logged fields are safe metadata only:
 - `business_id`, `site_id`, `workspace_id`
 - `artifact_version_id`, `artifact_version`
 - `action`, `status`, `dry_run`, `duration_ms`
 - sanitized target summary (repo/branch/root or workflow/ref)
 - `failure_category` and sanitized `failure_reason` on failures
+- draft-generation fields include `draft_run_id`, provider/model/prompt version, retryability, and correlation id when available
+- provider parse logs include `raw_length`, `parsed_candidate_count`, `salvaged_candidate_count`, and `malformed_output_reason` (when present)
 
 Not logged:
 - tokens/secrets

@@ -76,6 +76,11 @@ from app.services.seo_competitor_profile_prompt import (
     SEO_COMPETITOR_PROFILE_PROMPT_LABEL,
     build_seo_competitor_profile_prompt,
 )
+from app.services.ai_response_contract_evaluator import (
+    AIResponseContractEvaluation,
+    evaluate_competitor_generation_response,
+    summarize_competitor_response_contract,
+)
 from app.services.ai_prompt_settings import ResolvedAIPromptText, resolve_ai_prompt_text
 from app.services.seo_crawler import SEOCrawler
 
@@ -125,6 +130,8 @@ _SCHEMA_DIAGNOSTICS_SUMMARY_KEY = "schema_diagnostics_summary"
 _PROVIDER_ATTEMPTS_DEBUG_KEY = "provider_attempts_debug"
 _PROVIDER_ATTEMPT_COUNT_KEY = "provider_attempt_count"
 _PROVIDER_DEGRADED_RETRY_USED_KEY = "provider_degraded_retry_used"
+_RESPONSE_CONTRACT_SUMMARY_KEY = "response_contract_summary"
+_RESPONSE_CONTRACT_EVALUATION_EVENT = "competitor_response_contract_evaluation"
 _EXECUTION_MODES = {"fast_path", "full", "degraded", "fallback"}
 _EXECUTION_MODE_FAST_PATH = "fast_path"
 _EXECUTION_MODE_FULL = "full"
@@ -291,6 +298,7 @@ class SEOCompetitorProfileGenerationRunDetail:
     provider_degraded_retry_used: bool = False
     provider_attempts: list["SEOCompetitorProfileProviderAttemptDebug"] = field(default_factory=list)
     outcome_summary: "SEOCompetitorProfileOutcomeSummary | None" = None
+    response_contract_summary: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -690,6 +698,7 @@ class SEOCompetitorProfileGenerationService:
         failure_category: str | None = None
         raw_output: str | None = None
         draft_result: SEOCompetitorProfileDraftBuildResult | None = None
+        response_contract_evaluation: AIResponseContractEvaluation | None = None
         provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug] = []
 
         try:
@@ -758,6 +767,31 @@ class SEOCompetitorProfileGenerationService:
                 drafts=draft_result.drafts,
             )
             drafts = pre_insert_drafts
+            dropped_candidate_count = max(0, int(draft_result.raw_candidate_count) - int(len(drafts)))
+            removed_by_deduplication_count = max(
+                0,
+                int(draft_result.candidate_pipeline_summary.removed_by_deduplication_count)
+                + int(pre_insert_duplicate_count),
+            )
+            response_contract_evaluation = evaluate_competitor_generation_response(
+                raw_candidate_count=draft_result.raw_candidate_count,
+                persisted_draft_rows=drafts,
+                removed_by_deduplication_count=removed_by_deduplication_count,
+                rejected_candidate_count=dropped_candidate_count,
+            )
+            self._log_response_contract_evaluation(
+                business_id=business_id,
+                site_id=site_id,
+                run_id=run.id,
+                provider_name=provider_name,
+                model_name=model_name,
+                evaluation=response_contract_evaluation,
+                raw_candidate_count=draft_result.raw_candidate_count,
+            )
+            if response_contract_evaluation.status == "rejected":
+                raise SEOCompetitorProfileGenerationValidationError(
+                    self._response_contract_rejection_message(response_contract_evaluation)
+                )
             if not drafts and draft_result.raw_candidate_count > 0 and draft_result.forced_draft_count <= 0:
                 raise SEOCompetitorProfileGenerationValidationError(
                     "No viable competitor candidates were available for draft output"
@@ -787,6 +821,7 @@ class SEOCompetitorProfileGenerationService:
                 tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
                 candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
                 provider_attempts=provider_attempts,
+                response_contract_evaluation=response_contract_evaluation,
                 schema_had_repair_or_discard=(True if bool(output.had_schema_repair_or_discard) else None),
                 schema_invalid_candidate_count=(
                     max(0, int(output.schema_invalid_candidate_count))
@@ -898,6 +933,13 @@ class SEOCompetitorProfileGenerationService:
                 provider_degraded_retry_used=any(item.degraded_mode for item in provider_attempts),
                 provider_attempts=provider_attempts,
                 outcome_summary=outcome_summary,
+                response_contract_summary=(
+                    summarize_competitor_response_contract(
+                        evaluation=response_contract_evaluation,
+                    ).to_dict()
+                    if response_contract_evaluation is not None
+                    else None
+                ),
             )
         except SEOCompetitorProfileProviderError as exc:
             self.session.rollback()
@@ -922,6 +964,7 @@ class SEOCompetitorProfileGenerationService:
                 tuning_rejection_reason_counts={},
                 candidate_pipeline_summary=None,
                 provider_attempts=provider_attempts,
+                response_contract_evaluation=response_contract_evaluation,
             )
             self._mark_run_failed(
                 business_id=business_id,
@@ -946,6 +989,7 @@ class SEOCompetitorProfileGenerationService:
                     tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
                     candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
                     provider_attempts=provider_attempts,
+                    response_contract_evaluation=response_contract_evaluation,
                 )
             self._mark_run_failed(
                 business_id=business_id,
@@ -974,6 +1018,7 @@ class SEOCompetitorProfileGenerationService:
                     tuning_rejection_reason_counts=draft_result.tuning_rejection_reason_counts,
                     candidate_pipeline_summary=draft_result.candidate_pipeline_summary,
                     provider_attempts=provider_attempts,
+                    response_contract_evaluation=response_contract_evaluation,
                 )
             self._mark_run_failed(
                 business_id=business_id,
@@ -1015,6 +1060,7 @@ class SEOCompetitorProfileGenerationService:
                         draft_result.candidate_pipeline_summary if draft_result is not None else None
                     ),
                     provider_attempts=provider_attempts,
+                    response_contract_evaluation=response_contract_evaluation,
                 ),
                 raw_candidate_count=draft_result.raw_candidate_count if draft_result else None,
                 included_candidate_count=draft_result.included_candidate_count if draft_result else None,
@@ -1084,17 +1130,67 @@ class SEOCompetitorProfileGenerationService:
             draft_result=draft_result,
         )
 
+    def _log_response_contract_evaluation(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        run_id: str,
+        provider_name: str,
+        model_name: str,
+        evaluation: AIResponseContractEvaluation,
+        raw_candidate_count: int,
+    ) -> None:
+        payload: dict[str, object] = {
+            "event": _RESPONSE_CONTRACT_EVALUATION_EVENT,
+            "business_id": business_id,
+            "site_id": site_id,
+            "run_id": run_id,
+            "provider_name": self._clean_optional(provider_name),
+            "model_name": self._clean_optional(model_name),
+            "evaluation_status": evaluation.status,
+            "evaluation_score": max(0, int(evaluation.score)),
+            "reason_codes": list(evaluation.reasons),
+            "warning_codes": list(evaluation.warnings),
+            "raw_candidate_count": max(0, int(raw_candidate_count)),
+            "valid_item_count": max(0, int(evaluation.valid_item_count)),
+            "dropped_item_count": max(0, int(evaluation.dropped_item_count)),
+            "required_fields_present": bool(evaluation.required_fields_present),
+            "retryable": evaluation.retryable if isinstance(evaluation.retryable, bool) else None,
+        }
+        level = logging.INFO if evaluation.status != "rejected" else logging.WARNING
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message=_RESPONSE_CONTRACT_EVALUATION_EVENT,
+            level=level,
+        )
+
+    @staticmethod
+    def _response_contract_rejection_message(evaluation: AIResponseContractEvaluation) -> str:
+        primary_reason = evaluation.reasons[0] if evaluation.reasons else "validation_failed"
+        reason_to_message = {
+            "empty_candidate_list": "Competitor output did not include usable candidates.",
+            "missing_required_fields": "Competitor output was missing required candidate fields.",
+            "invalid_domain_shape": "Competitor output contained invalid or unsupported domains.",
+            "confidence_invalid": "Competitor output contained invalid confidence scoring data.",
+        }
+        return reason_to_message.get(
+            primary_reason,
+            "Competitor profile generation output did not satisfy quality contract requirements.",
+        )
+
     def _emit_structured_service_log(
         self,
         *,
         payload: dict[str, object],
         fallback_message: str,
+        level: int = logging.INFO,
     ) -> None:
         try:
             message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
             message = fallback_message
-        logger.info(message, extra={"json_fields": payload})
+        logger.log(level, message, extra={"json_fields": payload})
 
     def _build_candidate_rejection_reason_histogram(
         self,
@@ -1267,6 +1363,7 @@ class SEOCompetitorProfileGenerationService:
         provider_attempt_count, provider_degraded_retry_used, provider_attempts = (
             self._extract_provider_attempts_debug_from_raw_output(run.raw_output)
         )
+        response_contract_summary = self._extract_response_contract_summary_from_raw_output(run.raw_output)
         had_schema_repair_or_discard = self._extract_schema_repair_flag_from_raw_output(run.raw_output)
         if candidate_pipeline_summary is None:
             candidate_pipeline_summary = self._derive_candidate_pipeline_summary_from_run(run)
@@ -1288,6 +1385,7 @@ class SEOCompetitorProfileGenerationService:
             provider_degraded_retry_used=provider_degraded_retry_used,
             provider_attempts=provider_attempts,
             outcome_summary=outcome_summary,
+            response_contract_summary=response_contract_summary,
         )
 
     def build_prompt_preview(
@@ -4952,6 +5050,38 @@ class SEOCompetitorProfileGenerationService:
         invalid_field_type_count = max(0, self._coerce_int(raw_summary.get("invalid_field_type_count"), default=0))
         return bool(invalid_candidate_count > 0 or invalid_field_type_count > 0)
 
+    def _extract_response_contract_summary_from_raw_output(self, raw_output: str | None) -> dict[str, object] | None:
+        if not raw_output:
+            return None
+        try:
+            parsed = json.loads(raw_output)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(parsed, dict):
+            return None
+
+        raw_summary = parsed.get(_RESPONSE_CONTRACT_SUMMARY_KEY)
+        if not isinstance(raw_summary, dict):
+            return None
+
+        operator_summary = summarize_competitor_response_contract(
+            status=self._clean_optional(str(raw_summary.get("status") or "")),
+            reason_codes=(
+                raw_summary.get("reason_codes")
+                if isinstance(raw_summary.get("reason_codes"), list)
+                else None
+            ),
+            warning_codes=(
+                raw_summary.get("warning_codes")
+                if isinstance(raw_summary.get("warning_codes"), list)
+                else None
+            ),
+            retryable=raw_summary.get("retryable") if isinstance(raw_summary.get("retryable"), bool) else None,
+        )
+        if operator_summary is None:
+            return None
+        return operator_summary.to_dict()
+
     def _build_operator_outcome_summary(
         self,
         *,
@@ -5013,6 +5143,7 @@ class SEOCompetitorProfileGenerationService:
         tuning_rejection_reason_counts: dict[str, int],
         candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummary | None,
         provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug] | None = None,
+        response_contract_evaluation: AIResponseContractEvaluation | None = None,
         schema_had_repair_or_discard: bool | None = None,
         schema_invalid_candidate_count: int | None = None,
         schema_invalid_field_type_count: int | None = None,
@@ -5024,6 +5155,7 @@ class SEOCompetitorProfileGenerationService:
             and not any(value > 0 for value in tuning_rejection_reason_counts.values())
             and candidate_pipeline_summary is None
             and not serialized_provider_attempts
+            and response_contract_evaluation is None
             and schema_had_repair_or_discard is None
             and schema_invalid_candidate_count is None
             and schema_invalid_field_type_count is None
@@ -5103,6 +5235,21 @@ class SEOCompetitorProfileGenerationService:
                 "had_schema_repair_or_discard": bool(schema_had_repair_or_discard),
                 "invalid_candidate_count": max(0, self._coerce_int(schema_invalid_candidate_count, default=0)),
                 "invalid_field_type_count": max(0, self._coerce_int(schema_invalid_field_type_count, default=0)),
+            }
+        if response_contract_evaluation is not None:
+            parsed[_RESPONSE_CONTRACT_SUMMARY_KEY] = {
+                "status": response_contract_evaluation.status,
+                "score": max(0, int(response_contract_evaluation.score)),
+                "reason_codes": list(response_contract_evaluation.reasons),
+                "warning_codes": list(response_contract_evaluation.warnings),
+                "valid_item_count": max(0, int(response_contract_evaluation.valid_item_count)),
+                "dropped_item_count": max(0, int(response_contract_evaluation.dropped_item_count)),
+                "required_fields_present": bool(response_contract_evaluation.required_fields_present),
+                "retryable": (
+                    response_contract_evaluation.retryable
+                    if isinstance(response_contract_evaluation.retryable, bool)
+                    else None
+                ),
             }
         try:
             return json.dumps(parsed, ensure_ascii=True, sort_keys=True)

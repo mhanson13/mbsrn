@@ -105,6 +105,12 @@ type MigrationFailureCategory =
   | "deploy_error"
   | "unknown_error";
 
+type DraftGenerationFailureCategory =
+  | "provider_error"
+  | "artifact_invalid"
+  | "config_missing"
+  | "unknown_error";
+
 function toFailureCategoryLabel(value: string | null): string {
   if (!value) {
     return "unknown";
@@ -202,6 +208,58 @@ function formatActionFailureMessage(
   return message;
 }
 
+function parseDraftGenerationFailure(error: unknown): {
+  message: string;
+  hint: string | null;
+  correlationId: string | null;
+} {
+  let message = toErrorMessage(error, "Draft generation failed.");
+  let category: DraftGenerationFailureCategory = "unknown_error";
+  let reason = "";
+  let retryable: boolean | null = null;
+  let correlationId: string | null = null;
+  if (error instanceof ApiRequestError) {
+    const detail = asRecord(error.detail);
+    const detailMessage = asString(detail.message).trim();
+    if (detailMessage) {
+      message = detailMessage;
+    }
+    const categoryValue = asString(detail.failure_category).trim().toLowerCase();
+    if (
+      categoryValue === "provider_error" ||
+      categoryValue === "artifact_invalid" ||
+      categoryValue === "config_missing" ||
+      categoryValue === "unknown_error"
+    ) {
+      category = categoryValue;
+    }
+    reason = asString(detail.failure_reason).trim().toLowerCase();
+    retryable = typeof detail.retryable === "boolean" ? detail.retryable : null;
+    correlationId =
+      asStringOrNull(detail.correlation_id) ||
+      asStringOrNull(detail.artifact_version_id) ||
+      asStringOrNull(detail.workspace_id);
+  }
+  let hint: string | null = null;
+  if (category === "config_missing" || reason === "authentication_failed" || reason === "unsupported_configuration") {
+    hint = "Check AI provider configuration.";
+  } else if (
+    category === "artifact_invalid" ||
+    reason === "malformed_response" ||
+    reason === "empty_response" ||
+    reason === "validation_failed"
+  ) {
+    hint = "The provider returned an invalid draft payload.";
+  } else if (retryable) {
+    hint = "This looks retryable.";
+  }
+  return {
+    message,
+    hint,
+    correlationId,
+  };
+}
+
 function splitLines(value: string): string[] {
   return value
     .split(/\r?\n/)
@@ -280,6 +338,53 @@ function parseGeneratedPaths(artifact: MigrationArtifactVersion | null): string[
     .filter((path) => path.length > 0);
 }
 
+interface ReusedContextEntry {
+  available: boolean | null;
+  source: string | null;
+  timestamp: string | null;
+  count: number | null;
+}
+
+function parseReusedContextEntry(value: unknown): ReusedContextEntry {
+  const record = asRecord(value);
+  const available = typeof record.available === "boolean" ? record.available : null;
+  const source = asStringOrNull(record.source);
+  const timestamp = asStringOrNull(record.timestamp);
+  const count = typeof record.count === "number" && Number.isFinite(record.count) ? Math.max(0, Math.floor(record.count)) : null;
+  return {
+    available,
+    source,
+    timestamp,
+    count,
+  };
+}
+
+function formatContextTimestamp(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toLocaleString();
+}
+
+function resolveReusedContextLabel(params: {
+  entry: ReusedContextEntry;
+  legacyAvailable: boolean;
+}): string {
+  const available = params.entry.available === null ? params.legacyAvailable : params.entry.available;
+  if (!available) {
+    return "Not yet available";
+  }
+  const formattedTimestamp = formatContextTimestamp(params.entry.timestamp);
+  if (formattedTimestamp) {
+    return `Available (last run ${formattedTimestamp})`;
+  }
+  return "Available";
+}
+
 export function MigrationWorkspacePanel({
   token,
   businessId,
@@ -287,6 +392,7 @@ export function MigrationWorkspacePanel({
 }: MigrationWorkspacePanelProps): JSX.Element {
   const [busyAction, setBusyAction] = useState<BusyAction>("load");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorHint, setErrorHint] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const [summary, setSummary] = useState<MigrationWorkspaceSummary | null>(null);
@@ -374,7 +480,26 @@ export function MigrationWorkspacePanel({
   const deployFailureCategory = asString(deployReadiness.last_failure_category || deployReadiness.failure_category) || null;
   const publishFailureMessage = asString(publishReadiness.last_failure_message) || null;
   const deployFailureMessage = asString(deployReadiness.last_failure_message) || null;
-  const migrationDiagnostics = asRecord(asRecord(summary?.context_summary).migration_diagnostics);
+  const contextSummary = asRecord(summary?.context_summary);
+  const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
+  const existingContextSummaries = asRecord(contextSummary.existing_context_summaries);
+  const reusedContextSummary = asRecord(contextSummary.reused_context);
+  const auditReusedContext = parseReusedContextEntry(reusedContextSummary.audit);
+  const recommendationReusedContext = parseReusedContextEntry(reusedContextSummary.recommendations);
+  const competitorReusedContext = parseReusedContextEntry(reusedContextSummary.competitors);
+  const auditContextLabel = resolveReusedContextLabel({
+    entry: auditReusedContext,
+    legacyAvailable: Boolean(existingContextSummaries.audit_summary) || Boolean(contextSummary.has_audit_summary),
+  });
+  const recommendationContextLabel = resolveReusedContextLabel({
+    entry: recommendationReusedContext,
+    legacyAvailable:
+      Boolean(existingContextSummaries.recommendation_summary) || Boolean(contextSummary.has_recommendation_summary),
+  });
+  const competitorContextLabel = resolveReusedContextLabel({
+    entry: competitorReusedContext,
+    legacyAvailable: Boolean(existingContextSummaries.competitor_summary) || Boolean(contextSummary.has_competitor_summary),
+  });
 
   const hydrateFromSummary = useCallback((nextSummary: MigrationWorkspaceSummary) => {
     const workspace = nextSummary.workspace;
@@ -430,6 +555,7 @@ export function MigrationWorkspacePanel({
       setBusyAction("load");
       if (!options?.preserveErrorMessage) {
         setErrorMessage(null);
+        setErrorHint(null);
       }
       try {
         if (ensureWorkspace) {
@@ -453,6 +579,7 @@ export function MigrationWorkspacePanel({
           "";
         setSelectedArtifactVersionId((current) => current || fallbackArtifactId);
       } catch (error) {
+        setErrorHint(null);
         setErrorMessage(toErrorMessage(error, "Failed to load migration workspace."));
       } finally {
         setBusyAction(null);
@@ -468,6 +595,7 @@ export function MigrationWorkspacePanel({
   const handleIngestSource = async (): Promise<void> => {
     setBusyAction("ingest");
     setErrorMessage(null);
+    setErrorHint(null);
     setStatusMessage(null);
     try {
       const workspace = await ingestMigrationSource(token, businessId, siteId, {
@@ -477,6 +605,7 @@ export function MigrationWorkspacePanel({
       setStatusMessage("Source ingest completed.");
       await loadWorkspaceData(false);
     } catch (error) {
+      setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Source ingest failed."));
     } finally {
       setBusyAction(null);
@@ -496,6 +625,7 @@ export function MigrationWorkspacePanel({
     };
     setBusyAction("save_requirements");
     setErrorMessage(null);
+    setErrorHint(null);
     setStatusMessage(null);
     try {
       await updateMigrationRequirements(token, businessId, siteId, {
@@ -504,6 +634,7 @@ export function MigrationWorkspacePanel({
       setStatusMessage("Migration requirements saved.");
       await loadWorkspaceData(false);
     } catch (error) {
+      setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save migration requirements."));
     } finally {
       setBusyAction(null);
@@ -524,6 +655,7 @@ export function MigrationWorkspacePanel({
     };
     setBusyAction("save_enriched");
     setErrorMessage(null);
+    setErrorHint(null);
     setStatusMessage(null);
     try {
       await updateMigrationEnrichedContent(token, businessId, siteId, {
@@ -532,6 +664,7 @@ export function MigrationWorkspacePanel({
       setStatusMessage("Enriched replacement content saved.");
       await loadWorkspaceData(false);
     } catch (error) {
+      setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save enriched content."));
     } finally {
       setBusyAction(null);
@@ -549,6 +682,7 @@ export function MigrationWorkspacePanel({
     };
     setBusyAction("save_publish_config");
     setErrorMessage(null);
+    setErrorHint(null);
     setStatusMessage(null);
     try {
       await updateMigrationPublishConfig(token, businessId, siteId, {
@@ -557,6 +691,7 @@ export function MigrationWorkspacePanel({
       setStatusMessage("Publish target configuration saved.");
       await loadWorkspaceData(false);
     } catch (error) {
+      setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save publish target."));
     } finally {
       setBusyAction(null);
@@ -575,6 +710,7 @@ export function MigrationWorkspacePanel({
     };
     setBusyAction("save_deploy_config");
     setErrorMessage(null);
+    setErrorHint(null);
     setStatusMessage(null);
     try {
       await updateMigrationDeployConfig(token, businessId, siteId, {
@@ -583,6 +719,7 @@ export function MigrationWorkspacePanel({
       setStatusMessage("Deploy target configuration saved.");
       await loadWorkspaceData(false);
     } catch (error) {
+      setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save deploy target."));
     } finally {
       setBusyAction(null);
@@ -598,6 +735,7 @@ export function MigrationWorkspacePanel({
     };
     setBusyAction("save_analytics_config");
     setErrorMessage(null);
+    setErrorHint(null);
     setStatusMessage(null);
     try {
       await updateMigrationAnalyticsConfig(token, businessId, siteId, {
@@ -606,6 +744,7 @@ export function MigrationWorkspacePanel({
       setStatusMessage("Analytics insertion rules saved.");
       await loadWorkspaceData(false);
     } catch (error) {
+      setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save analytics rules."));
     } finally {
       setBusyAction(null);
@@ -615,6 +754,7 @@ export function MigrationWorkspacePanel({
   const handleGenerateArtifacts = async (): Promise<void> => {
     setBusyAction("generate");
     setErrorMessage(null);
+    setErrorHint(null);
     setStatusMessage(null);
     try {
       const artifact = await generateMigrationDraftArtifacts(token, businessId, siteId, {
@@ -624,7 +764,17 @@ export function MigrationWorkspacePanel({
       setStatusMessage("Draft migration artifacts generated for operator review.");
       await loadWorkspaceData(false);
     } catch (error) {
-      setErrorMessage(toErrorMessage(error, "Draft generation failed."));
+      const parsed = parseDraftGenerationFailure(error);
+      const hintParts: string[] = [];
+      if (parsed.hint) {
+        hintParts.push(parsed.hint);
+      }
+      if (parsed.correlationId) {
+        hintParts.push(`Reference: ${parsed.correlationId}.`);
+      }
+      setErrorHint(hintParts.join(" ") || null);
+      setErrorMessage(parsed.message);
+      await loadWorkspaceData(false, { preserveErrorMessage: true });
     } finally {
       setBusyAction(null);
     }
@@ -632,11 +782,13 @@ export function MigrationWorkspacePanel({
 
   const handleApproveSelectedArtifact = async (): Promise<void> => {
     if (!selectedArtifactVersionId) {
+      setErrorHint(null);
       setErrorMessage("Select an artifact version before approving.");
       return;
     }
     setBusyAction("approve");
     setErrorMessage(null);
+    setErrorHint(null);
     setStatusMessage(null);
     try {
       await approveMigrationArtifactVersion(token, businessId, siteId, selectedArtifactVersionId, {
@@ -647,6 +799,7 @@ export function MigrationWorkspacePanel({
     } catch (error) {
       const baseMessage = toErrorMessage(error, "Failed to approve artifact.");
       const category = parseFailureCategory(error, baseMessage, "approve");
+      setErrorHint(null);
       setErrorMessage(formatActionFailureMessage("approve", category, baseMessage));
     } finally {
       setBusyAction(null);
@@ -655,11 +808,13 @@ export function MigrationWorkspacePanel({
 
   const handlePublishSelectedArtifact = async (): Promise<void> => {
     if (!selectedArtifactVersionId) {
+      setErrorHint(null);
       setErrorMessage("Select an approved artifact version before publishing.");
       return;
     }
     setBusyAction("publish");
     setErrorMessage(null);
+    setErrorHint(null);
     setStatusMessage(null);
     try {
       await publishMigrationArtifactVersion(token, businessId, siteId, {
@@ -674,6 +829,7 @@ export function MigrationWorkspacePanel({
       const baseMessage = toErrorMessage(error, "Publish failed.");
       const category = parseFailureCategory(error, baseMessage, "publish");
       await loadWorkspaceData(false, { preserveErrorMessage: true });
+      setErrorHint(null);
       setErrorMessage(formatActionFailureMessage("publish", category, baseMessage));
     } finally {
       setBusyAction(null);
@@ -682,11 +838,13 @@ export function MigrationWorkspacePanel({
 
   const handleDeploySelectedArtifact = async (): Promise<void> => {
     if (!selectedArtifactVersionId) {
+      setErrorHint(null);
       setErrorMessage("Select an approved artifact version before deploy.");
       return;
     }
     setBusyAction("deploy");
     setErrorMessage(null);
+    setErrorHint(null);
     setStatusMessage(null);
     try {
       await deployMigrationArtifactVersion(token, businessId, siteId, {
@@ -699,6 +857,7 @@ export function MigrationWorkspacePanel({
       const baseMessage = toErrorMessage(error, "Deploy failed.");
       const category = parseFailureCategory(error, baseMessage, "deploy");
       await loadWorkspaceData(false, { preserveErrorMessage: true });
+      setErrorHint(null);
       setErrorMessage(formatActionFailureMessage("deploy", category, baseMessage));
     } finally {
       setBusyAction(null);
@@ -711,6 +870,7 @@ export function MigrationWorkspacePanel({
     }
     setSelectedFilePath(path);
     setErrorMessage(null);
+    setErrorHint(null);
     try {
       const preview = await fetchMigrationArtifactFilePreview(
         token,
@@ -724,6 +884,7 @@ export function MigrationWorkspacePanel({
     } catch (error) {
       setFilePreviewMediaType("text/plain");
       setFilePreviewContent("");
+      setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to load artifact file preview."));
     }
   };
@@ -746,6 +907,11 @@ export function MigrationWorkspacePanel({
       </div>
 
       {errorMessage ? <p className="hint warning">{errorMessage}</p> : null}
+      {errorMessage && errorHint ? (
+        <p className="hint muted" data-testid="migration-error-hint">
+          {errorHint}
+        </p>
+      ) : null}
       {statusMessage ? <p className="hint success">{statusMessage}</p> : null}
 
       <div className="panel stack">
@@ -874,30 +1040,20 @@ export function MigrationWorkspacePanel({
         </div>
       </div>
 
-      <div className="panel stack">
+      <div className="panel stack" data-testid="migration-reused-context">
         <h3>Reused MBSRN Context</h3>
         <div className="grid grid-3">
           <div className="panel panel-compact stack-tight">
             <strong>Audit</strong>
-            <span className="hint">
-              {asRecord(asRecord(summary?.context_summary).existing_context_summaries).audit_summary ? "Available" : "Missing"}
-            </span>
+            <span className="hint" data-testid="migration-reused-context-audit-status">{auditContextLabel}</span>
           </div>
           <div className="panel panel-compact stack-tight">
             <strong>Recommendations</strong>
-            <span className="hint">
-              {asRecord(asRecord(summary?.context_summary).existing_context_summaries).recommendation_summary
-                ? "Available"
-                : "Missing"}
-            </span>
+            <span className="hint" data-testid="migration-reused-context-recommendations-status">{recommendationContextLabel}</span>
           </div>
           <div className="panel panel-compact stack-tight">
             <strong>Competitors</strong>
-            <span className="hint">
-              {asRecord(asRecord(summary?.context_summary).existing_context_summaries).competitor_summary
-                ? "Available"
-                : "Missing"}
-            </span>
+            <span className="hint" data-testid="migration-reused-context-competitors-status">{competitorContextLabel}</span>
           </div>
         </div>
       </div>
@@ -939,6 +1095,11 @@ export function MigrationWorkspacePanel({
             <div className="panel panel-compact stack-tight">
               <strong>Strategy Summary</strong>
               <p>{selectedArtifact.strategy_summary || "No strategy summary provided."}</p>
+              {selectedArtifact.status === "partial" ? (
+                <span className="hint warning" data-testid="migration-partial-draft-indicator">
+                  Partial draft generated.
+                </span>
+              ) : null}
             </div>
             <div className="panel panel-compact stack-tight">
               <strong>Page Map</strong>
@@ -1112,8 +1273,17 @@ export function MigrationWorkspacePanel({
 
         <div className="panel panel-compact stack-tight" data-testid="migration-action-diagnostics">
           <strong>Action Diagnostics</strong>
+          <span className="hint">Last draft generation status: {asString(migrationDiagnostics.last_draft_generation_status) || "n/a"}</span>
           <span className="hint">Last publish status: {asString(migrationDiagnostics.last_publish_status) || "n/a"}</span>
           <span className="hint">Last deploy status: {asString(migrationDiagnostics.last_deploy_status) || "n/a"}</span>
+          {asString(migrationDiagnostics.last_draft_failure_category) ? (
+            <span className="hint warning">
+              Draft failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_draft_failure_category))}
+            </span>
+          ) : null}
+          {asString(migrationDiagnostics.last_draft_failure_message) ? (
+            <span className="hint warning">{asString(migrationDiagnostics.last_draft_failure_message)}</span>
+          ) : null}
           {asString(migrationDiagnostics.last_publish_failure_category) ? (
             <span className="hint warning">
               Publish failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_publish_failure_category))}

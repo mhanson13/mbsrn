@@ -13,6 +13,7 @@ SEORecommendationCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
 SEORecommendationSeverity = Literal["INFO", "WARNING", "CRITICAL"]
 SEORecommendationEffort = Literal["LOW", "MEDIUM", "HIGH"]
 SEORecommendationNarrativeStatus = Literal["completed", "failed"]
+SEOAIResponseContractStatus = Literal["accepted", "accepted_with_warnings", "salvaged", "rejected"]
 SEORecommendationWorkspaceSummaryState = Literal[
     "no_runs",
     "no_completed_runs",
@@ -4305,6 +4306,14 @@ class SEORecommendationPrioritizedReportRead(BaseModel):
     backlog: SEORecommendationListResponse
 
 
+class SEORecommendationResponseContractSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: SEOAIResponseContractStatus
+    summary: str = Field(min_length=1, max_length=220)
+    retryable: bool
+
+
 class SEORecommendationNarrativeRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -4317,6 +4326,7 @@ class SEORecommendationNarrativeRead(BaseModel):
     narrative_text: str | None
     top_themes_json: list[str] = Field(default_factory=list)
     sections_json: dict[str, object] | None
+    response_contract_summary: SEORecommendationResponseContractSummaryRead | None = None
     competitor_influence: "SEORecommendationCompetitorInfluenceRead | None" = None
     signal_summary: SEORecommendationSignalSummaryRead | None = None
     action_summary: SEORecommendationActionSummaryRead | None = None
@@ -4498,6 +4508,42 @@ class SEORecommendationNarrativeRead(BaseModel):
             )
         except Exception:  # noqa: BLE001
             self.action_summary = None
+        return self
+
+    @model_validator(mode="after")
+    def derive_response_contract_summary(self) -> "SEORecommendationNarrativeRead":
+        if self.response_contract_summary is not None:
+            return self
+        sections = self.sections_json if isinstance(self.sections_json, dict) else {}
+        raw_contract = sections.get("response_contract")
+        if not isinstance(raw_contract, dict):
+            return self
+        status = str(raw_contract.get("status") or "").strip().lower()
+        summary = str(raw_contract.get("summary") or "").strip()
+        if not summary:
+            default_summary_by_status = {
+                "accepted": "Recommendation narrative passed quality checks.",
+                "accepted_with_warnings": "Recommendations generated with quality warnings.",
+                "salvaged": "Partial recommendation narrative was salvaged.",
+                "rejected": "Recommendations were not usable for operator action.",
+            }
+            summary = default_summary_by_status.get(status, "")
+        try:
+            self.response_contract_summary = SEORecommendationResponseContractSummaryRead.model_validate(
+                {
+                    "status": status,
+                    "summary": summary,
+                    "retryable": bool(raw_contract.get("retryable")),
+                }
+            )
+            sanitized_sections = dict(sections)
+            sanitized_sections["response_contract"] = self.response_contract_summary.model_dump(mode="json")
+            self.sections_json = sanitized_sections
+        except Exception:  # noqa: BLE001
+            self.response_contract_summary = None
+            sanitized_sections = dict(sections)
+            sanitized_sections.pop("response_contract", None)
+            self.sections_json = sanitized_sections
         return self
 
     @staticmethod

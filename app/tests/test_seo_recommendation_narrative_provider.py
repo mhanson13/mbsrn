@@ -360,6 +360,155 @@ def test_openai_recommendation_narrative_provider_malformed_content_is_normalize
     assert exc_info.value.code == "invalid_output"
 
 
+def test_openai_recommendation_narrative_provider_parses_wrapped_json_content(monkeypatch) -> None:
+    wrapped_content = (
+        "Here is the narrative payload:\n"
+        "```json\n"
+        + json.dumps(
+            {
+                "narrative_text": "Wrapped payload narrative.",
+                "top_themes": ["theme one", "theme two"],
+                "sections": {
+                    "summary": "Wrapped summary",
+                    "priority_rationale": "Wrapped rationale",
+                    "next_actions": ["Action one"],
+                    "recommendation_references": ["rec-1"],
+                    "tuning_suggestions": [],
+                },
+            },
+            ensure_ascii=True,
+        )
+        + "\n```\n"
+        "Thanks."
+    )
+
+    def _wrapped_content_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        response = {
+            "model": "gpt-5.1",
+            "choices": [{"message": {"content": wrapped_content}}],
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _wrapped_content_urlopen)
+    provider = OpenAISEORecommendationNarrativeProvider(
+        api_key="sk-test",
+        model_name="gpt-5.1",
+    )
+    output = provider.generate_narrative(
+        run=_run(),
+        recommendations=_recommendations(),
+        by_status={"open": 1},
+        by_category={"SEO": 1},
+        by_severity={"WARNING": 1},
+        by_effort_bucket={"LOW": 1},
+        by_priority_band={"high": 1},
+        backlog=_recommendations(),
+        competitor_telemetry_summary=_competitor_telemetry(),
+        current_tuning_values=_current_tuning_values(),
+    )
+    assert output.narrative_text == "Wrapped payload narrative."
+    assert output.top_themes == ["theme one", "theme two"]
+
+
+def test_openai_recommendation_narrative_provider_salvages_partial_tuning_suggestions(monkeypatch) -> None:
+    def _partial_schema_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        response = {
+            "model": "gpt-5.1",
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "narrative_text": "Narrative with partial suggestion recovery.",
+                                "top_themes": ["theme"],
+                                "sections": {
+                                    "summary": "Summary",
+                                    "priority_rationale": "Rationale",
+                                    "next_actions": ["Action one"],
+                                    "recommendation_references": ["rec-1"],
+                                    "tuning_suggestions": [
+                                        {
+                                            "setting": "competitor_candidate_directory_penalty",
+                                            "current_value": 35,
+                                            "recommended_value": 30,
+                                            "reason": "Directory exclusions are elevated.",
+                                            "linked_recommendation_ids": ["rec-1"],
+                                            "confidence": "high",
+                                        },
+                                        {
+                                            "setting": "competitor_candidate_directory_penalty",
+                                            "current_value": 35,
+                                            "recommended_value": 30,
+                                            "reason": "Invalid because references are missing.",
+                                            "linked_recommendation_ids": [],
+                                            "confidence": "high",
+                                        },
+                                    ],
+                                },
+                            }
+                        )
+                    }
+                }
+            ],
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _partial_schema_urlopen)
+    provider = OpenAISEORecommendationNarrativeProvider(
+        api_key="sk-test",
+        model_name="gpt-5.1",
+    )
+    output = provider.generate_narrative(
+        run=_run(),
+        recommendations=_recommendations(),
+        by_status={"open": 1},
+        by_category={"SEO": 1},
+        by_severity={"WARNING": 1},
+        by_effort_bucket={"LOW": 1},
+        by_priority_band={"high": 1},
+        backlog=_recommendations(),
+        competitor_telemetry_summary=_competitor_telemetry(raw=12, excluded=4),
+        current_tuning_values=_current_tuning_values(),
+    )
+    assert output.sections is not None
+    assert len(output.sections["tuning_suggestions"]) == 1
+    assert output.sections["tuning_suggestions"][0]["setting"] == "competitor_candidate_directory_penalty"
+
+
+def test_openai_recommendation_narrative_provider_truncated_json_is_invalid_output(monkeypatch) -> None:
+    def _truncated_content_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        response = {
+            "model": "gpt-5.1",
+            "choices": [{"message": {"content": '{"narrative_text":"broken"'}}],
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _truncated_content_urlopen)
+    provider = OpenAISEORecommendationNarrativeProvider(
+        api_key="sk-test",
+        model_name="gpt-5.1",
+    )
+
+    with pytest.raises(SEORecommendationNarrativeProviderError) as exc_info:
+        provider.generate_narrative(
+            run=_run(),
+            recommendations=_recommendations(),
+            by_status={"open": 1},
+            by_category={"SEO": 1},
+            by_severity={"WARNING": 1},
+            by_effort_bucket={"LOW": 1},
+            by_priority_band={"high": 1},
+            backlog=_recommendations(),
+            competitor_telemetry_summary=_competitor_telemetry(),
+            current_tuning_values=_current_tuning_values(),
+        )
+
+    assert exc_info.value.code == "invalid_output"
+
+
 def test_openai_recommendation_narrative_provider_rejects_invalid_tuning_suggestion_references(monkeypatch) -> None:
     def _invalid_suggestions_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         del request, timeout

@@ -25,6 +25,7 @@ class SEOMigrationContextAssembler:
         latest_audit_summary: SEOAuditSummary | None,
         latest_recommendation_narrative: SEORecommendationNarrative | None,
         latest_competitor_summary: SEOCompetitorComparisonSummary | None,
+        reused_context: dict[str, object] | None = None,
     ) -> SEOMigrationContextAssemblyResult:
         location_context = build_location_context(site)
         business_context = build_site_business_context(
@@ -37,6 +38,7 @@ class SEOMigrationContextAssembler:
         operator_requirements = _normalize_dict(workspace.operator_requirements_json)
         enriched_notes = _normalize_dict(workspace.enriched_content_notes_json)
         business_facts_snapshot = _normalize_dict(workspace.brand_business_facts_snapshot_json)
+        reused_context_payload = _normalize_reused_context(reused_context)
 
         audit_summary_payload = _audit_summary_payload(latest_audit_summary)
         recommendation_summary_payload = _recommendation_summary_payload(latest_recommendation_narrative)
@@ -44,6 +46,7 @@ class SEOMigrationContextAssembler:
 
         context_json: dict[str, object] = {
             "site_snapshot": {
+                "business_id": site.business_id,
                 "site_id": site.id,
                 "display_name": site.display_name,
                 "base_url": site.base_url,
@@ -73,6 +76,7 @@ class SEOMigrationContextAssembler:
             "operator_requirements": operator_requirements,
             "enriched_content_notes": enriched_notes,
             "brand_business_facts_snapshot": business_facts_snapshot,
+            "reused_context": reused_context_payload,
             "existing_context_summaries": {
                 "audit_summary": audit_summary_payload,
                 "recommendation_summary": recommendation_summary_payload,
@@ -80,13 +84,17 @@ class SEOMigrationContextAssembler:
             },
         }
 
+        audit_available = _is_reused_context_available(reused_context_payload.get("audit"))
+        recommendation_available = _is_reused_context_available(reused_context_payload.get("recommendations"))
+        competitor_available = _is_reused_context_available(reused_context_payload.get("competitors"))
         context_summary = {
             "has_source_snapshot": bool(source_snapshot),
             "has_operator_requirements": bool(operator_requirements),
             "has_enriched_content_notes": bool(enriched_notes),
-            "has_audit_summary": audit_summary_payload is not None,
-            "has_recommendation_summary": recommendation_summary_payload is not None,
-            "has_competitor_summary": competitor_summary_payload is not None,
+            "has_audit_summary": audit_available or audit_summary_payload is not None,
+            "has_recommendation_summary": recommendation_available or recommendation_summary_payload is not None,
+            "has_competitor_summary": competitor_available or competitor_summary_payload is not None,
+            "reused_context": reused_context_payload,
         }
         return SEOMigrationContextAssemblyResult(
             context_json=context_json,
@@ -98,6 +106,49 @@ def _normalize_dict(value: object) -> dict[str, object]:
     if isinstance(value, dict):
         return {str(key): val for key, val in value.items()}
     return {}
+
+
+def _normalize_reused_context(value: object) -> dict[str, object]:
+    normalized = _normalize_dict(value)
+    return {
+        "audit": _normalize_reused_context_entry(normalized.get("audit")),
+        "recommendations": _normalize_reused_context_entry(normalized.get("recommendations")),
+        "competitors": _normalize_reused_context_entry(normalized.get("competitors")),
+    }
+
+
+def _normalize_reused_context_entry(value: object) -> dict[str, object]:
+    normalized = _normalize_dict(value)
+    available_raw = normalized.get("available")
+    available = available_raw if isinstance(available_raw, bool) else False
+    entry: dict[str, object] = {"available": available}
+    source = _normalize_optional_text(normalized.get("source"), max_length=80)
+    if source is not None:
+        entry["source"] = source
+    run_id = _normalize_optional_text(normalized.get("run_id"), max_length=64)
+    if run_id is not None:
+        entry["run_id"] = run_id
+    timestamp = _normalize_optional_text(normalized.get("timestamp"), max_length=80)
+    if timestamp is not None:
+        entry["timestamp"] = timestamp
+    count = normalized.get("count")
+    if isinstance(count, int) and count >= 0:
+        entry["count"] = count
+    return entry
+
+
+def _normalize_optional_text(value: object, *, max_length: int) -> str | None:
+    normalized = " ".join(str(value or "").split()).strip()
+    if not normalized:
+        return None
+    return normalized[:max_length]
+
+
+def _is_reused_context_available(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    available = value.get("available")
+    return bool(available) if isinstance(available, bool) else False
 
 
 def _audit_summary_payload(summary: SEOAuditSummary | None) -> dict[str, object] | None:

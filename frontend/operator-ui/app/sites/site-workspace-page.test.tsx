@@ -692,6 +692,28 @@ function buildMigrationWorkspaceSummary(
       has_audit_summary: true,
       has_recommendation_summary: true,
       has_competitor_summary: true,
+      reused_context: {
+        audit: {
+          available: true,
+          source: "latest_successful_run",
+          run_id: "audit-run-1",
+          timestamp: "2026-03-21T00:00:00Z",
+        },
+        recommendations: {
+          available: true,
+          source: "latest_generated",
+          run_id: "recommendation-run-1",
+          timestamp: "2026-03-21T00:01:00Z",
+          count: 1,
+        },
+        competitors: {
+          available: true,
+          source: "latest_run",
+          run_id: "comparison-run-1",
+          timestamp: "2026-03-21T00:02:00Z",
+          count: 1,
+        },
+      },
       existing_context_summaries: {
         audit_summary: { id: "audit-summary-1", overall_health_summary: "Audit summary context." },
         recommendation_summary: { id: "recommendation-summary-1", narrative_text: "Recommendation context." },
@@ -2130,6 +2152,60 @@ describe("site workspace migration tab", () => {
     expect(mockFetchMigrationArtifactVersions).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
   });
 
+  it("renders reused context availability from explicit backend signals", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          has_source_snapshot: true,
+          has_operator_requirements: true,
+          has_enriched_content_notes: true,
+          has_audit_summary: false,
+          has_recommendation_summary: false,
+          has_competitor_summary: false,
+          reused_context: {
+            audit: {
+              available: true,
+              source: "latest_successful_run",
+              run_id: "audit-run-9",
+              timestamp: "2026-03-21T00:00:00Z",
+            },
+            recommendations: {
+              available: true,
+              source: "latest_generated",
+              count: 2,
+            },
+            competitors: {
+              available: false,
+              source: "none",
+              count: 0,
+            },
+          },
+          existing_context_summaries: {
+            audit_summary: null,
+            recommendation_summary: null,
+            competitor_summary: null,
+          },
+        },
+      }),
+    );
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    const reusedContextPanel = await screen.findByTestId("migration-reused-context");
+    expect(within(reusedContextPanel).getByTestId("migration-reused-context-audit-status")).toHaveTextContent(
+      "Available (last run",
+    );
+    expect(
+      within(reusedContextPanel).getByTestId("migration-reused-context-recommendations-status"),
+    ).toHaveTextContent("Available");
+    expect(within(reusedContextPanel).getByTestId("migration-reused-context-competitors-status")).toHaveTextContent(
+      "Not yet available",
+    );
+    expect(within(reusedContextPanel).queryByText("Missing")).not.toBeInTheDocument();
+  });
+
   it("gates publish and deploy actions based on backend readiness", async () => {
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
@@ -2258,6 +2334,35 @@ describe("site workspace migration tab", () => {
       ),
     );
     expect(await screen.findByTestId("migration-file-preview")).toHaveTextContent("ANALYTICS_PLACEHOLDER");
+  });
+
+  it("shows a partial draft indicator when selected migration artifact is salvaged", async () => {
+    const user = userEvent.setup();
+    const partialArtifact = buildMigrationArtifactVersion({
+      id: "migration-artifact-partial",
+      version: 3,
+      status: "partial",
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: partialArtifact.id,
+          latest_generated_artifact_version_number: partialArtifact.version,
+        }),
+        latest_artifact: partialArtifact,
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValue({
+      items: [partialArtifact],
+      total: 1,
+    });
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    expect(await screen.findByTestId("migration-partial-draft-indicator")).toHaveTextContent(
+      "Partial draft generated.",
+    );
   });
 
   it("saves publish/deploy target config and analytics rules", async () => {
@@ -2513,6 +2618,34 @@ describe("site workspace migration tab", () => {
         "Publish blocked by runtime configuration. GitHub migration publisher is not configured.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("renders structured draft generation failure details with retry hint", async () => {
+    const user = userEvent.setup();
+    mockGenerateMigrationDraftArtifacts.mockRejectedValueOnce(
+      new ApiRequestError("Migration draft provider request failed.", {
+        status: 422,
+        detail: {
+          message: "Migration draft generation timed out while calling the AI provider.",
+          failure_category: "provider_error",
+          failure_reason: "timeout",
+          error_code: "timeout",
+          retryable: true,
+          correlation_id: "draft-run-123",
+        },
+      }),
+    );
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+    await user.click(screen.getByRole("button", { name: "Generate Draft Mockup" }));
+
+    expect(
+      await screen.findByText("Migration draft generation timed out while calling the AI provider."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Migration draft provider request failed.")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("migration-error-hint")).toHaveTextContent("This looks retryable.");
+    expect(screen.getByTestId("migration-error-hint")).toHaveTextContent("Reference: draft-run-123.");
   });
 });
 
@@ -4596,6 +4729,28 @@ describe("site workspace timeline controls", () => {
     expect(
       within(signalSummary).getByText("Signal check: site yes; competitors yes; references yes."),
     ).toBeInTheDocument();
+  });
+
+  it("renders recommendation narrative quality warning summary when contract status is not accepted", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        latest_narrative: buildRecommendationNarrative({
+          response_contract_summary: {
+            status: "accepted_with_warnings",
+            summary: "Recommendations lacked clear actionable steps.",
+            retryable: true,
+          },
+        }),
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const qualitySummary = await screen.findByTestId("recommendation-response-contract-summary");
+    expect(qualitySummary).toHaveTextContent(
+      "Quality gate: Accepted with warnings. Recommendations lacked clear actionable steps. This looks retryable.",
+    );
   });
 
   it("renders deterministic start-here-by-theme helper when provided", async () => {
@@ -8113,6 +8268,11 @@ describe("site workspace ai competitor profile drafts", () => {
         had_schema_repair_or_discard: false,
         used_google_places_seeds: true,
       },
+      response_contract_summary: {
+        status: "accepted_with_warnings",
+        summary: "Limited number of strong competitors identified.",
+        retryable: false,
+      },
     });
 
     render(<SiteWorkspacePage />);
@@ -8203,6 +8363,9 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(
       within(outcomeSummary).getByText("Some competitors were included under relaxed local-service matching rules."),
     ).toBeInTheDocument();
+    expect(within(outcomeSummary).getByTestId("competitor-response-contract-summary")).toHaveTextContent(
+      "Quality gate: Accepted with warnings. Results refined for quality. Limited number of strong competitors identified.",
+    );
     expect(within(outcomeSummary).getByText(/Only 1 valid competitor remained after filtering\./i)).toHaveTextContent(
       "strict validation filtered weak candidates",
     );

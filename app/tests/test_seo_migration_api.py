@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.core.time import utc_now
 from app.api.deps import (
     TenantContext,
     get_db,
@@ -12,7 +13,12 @@ from app.api.deps import (
     get_tenant_context,
 )
 from app.api.routes.seo_migration import router as seo_migration_router
-from app.integrations.seo_migration_artifact_provider import MockSEOMigrationArtifactGenerationProvider
+from app.integrations.seo_migration_artifact_provider import (
+    MockSEOMigrationArtifactGenerationProvider,
+    SEOMigrationArtifactGenerationOutput,
+    SEOMigrationArtifactGenerationProvider,
+    SEOMigrationArtifactProviderError,
+)
 from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubDeployResult,
@@ -24,6 +30,12 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublisherError,
 )
 from app.models.business import Business
+from app.models.seo_audit_run import SEOAuditRun
+from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
+from app.models.seo_competitor_set import SEOCompetitorSet
+from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
+from app.models.seo_recommendation import SEORecommendation
+from app.models.seo_recommendation_run import SEORecommendationRun
 from app.models.seo_site import SEOSite
 from app.services.seo_migration_ingest import (
     SEOMigrationIngestResult,
@@ -118,6 +130,18 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         )
 
 
+class _RaisingMigrationArtifactProvider(SEOMigrationArtifactGenerationProvider):
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.provider_name = "openai"
+        self.model_name = "gpt-4o-mini"
+        self.prompt_version = "seo-migration-v1"
+
+    def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
+        del migration_context
+        raise self.error
+
+
 def _override_tenant_context(business_id: str):
     def _resolver() -> TenantContext:
         return TenantContext(
@@ -134,6 +158,7 @@ def _make_client(
     *,
     business_id: str,
     github_publisher: SEOMigrationGitHubPublisher | None = None,
+    artifact_provider: SEOMigrationArtifactGenerationProvider | None = None,
 ) -> TestClient:
     app = FastAPI()
     app.include_router(seo_migration_router)
@@ -147,11 +172,12 @@ def _make_client(
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_tenant_context] = _override_tenant_context(business_id)
     app.dependency_overrides[get_seo_migration_ingest_service] = lambda: _StubMigrationIngestService()
-    app.dependency_overrides[get_seo_migration_artifact_provider] = lambda: MockSEOMigrationArtifactGenerationProvider(
+    resolved_provider = artifact_provider or MockSEOMigrationArtifactGenerationProvider(
         provider_name="mock",
         model_name="mock-seo-migration-v1",
         prompt_version="seo-migration-v1",
     )
+    app.dependency_overrides[get_seo_migration_artifact_provider] = lambda: resolved_provider
     if github_publisher is not None:
         app.dependency_overrides[get_seo_migration_github_publisher] = lambda: github_publisher
     return TestClient(app)
@@ -486,10 +512,303 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_failure_message" in payload["deploy_readiness"]
     migration_diagnostics = payload.get("context_summary", {}).get("migration_diagnostics")
     assert isinstance(migration_diagnostics, dict)
+    assert "last_draft_generation_status" in migration_diagnostics
+    assert "last_draft_failure_category" in migration_diagnostics
+    assert "last_draft_failure_reason" in migration_diagnostics
+    assert "last_draft_failure_message" in migration_diagnostics
+    assert "last_draft_failure_retryable" in migration_diagnostics
+    assert "last_draft_failure_code" in migration_diagnostics
+    assert "last_draft_failure_correlation_id" in migration_diagnostics
+    assert "last_draft_failure_artifact_version_id" in migration_diagnostics
     assert "last_publish_status" in migration_diagnostics
     assert "last_deploy_status" in migration_diagnostics
     assert isinstance(payload.get("publish_history"), list)
     assert isinstance(payload.get("deploy_history"), list)
+
+
+def test_migration_summary_reused_context_reports_best_available_signals(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    now = utc_now()
+    audit_run = SEOAuditRun(
+        id="audit-run-api-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        status="completed",
+        started_at=now,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    recommendation_run = SEORecommendationRun(
+        id="recommendation-run-api-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        audit_run_id=audit_run.id,
+        comparison_run_id=None,
+        status="completed",
+        total_recommendations=1,
+        warning_recommendations=1,
+        started_at=now,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    recommendation = SEORecommendation(
+        id="recommendation-api-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        recommendation_run_id=recommendation_run.id,
+        audit_run_id=audit_run.id,
+        comparison_run_id=None,
+        rule_key="api-migration-context-rule",
+        category="SEO",
+        severity="WARNING",
+        title="Improve service page specificity",
+        rationale="Legacy copy is too sparse for conversion.",
+        priority_score=65,
+        priority_band="high",
+        effort_bucket="small",
+        status="open",
+    )
+    competitor_set = SEOCompetitorSet(
+        id="competitor-set-api-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        name="Primary competitors",
+        is_active=True,
+        created_by_principal_id="principal-1",
+    )
+    snapshot_run = SEOCompetitorSnapshotRun(
+        id="snapshot-run-api-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        competitor_set_id=competitor_set.id,
+        client_audit_run_id=audit_run.id,
+        status="completed",
+        pages_captured=3,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    comparison_run = SEOCompetitorComparisonRun(
+        id="comparison-run-api-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        competitor_set_id=competitor_set.id,
+        snapshot_run_id=snapshot_run.id,
+        baseline_audit_run_id=audit_run.id,
+        status="completed",
+        total_findings=2,
+        warning_findings=2,
+        client_pages_analyzed=2,
+        competitor_pages_analyzed=3,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    db_session.add(audit_run)
+    db_session.add(recommendation_run)
+    db_session.add(recommendation)
+    db_session.add(competitor_set)
+    db_session.add(snapshot_run)
+    db_session.add(comparison_run)
+    db_session.commit()
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    context_summary = summary_response.json().get("context_summary") or {}
+    reused_context = context_summary.get("reused_context") or {}
+
+    audit = reused_context.get("audit") or {}
+    recommendations = reused_context.get("recommendations") or {}
+    competitors = reused_context.get("competitors") or {}
+
+    assert audit.get("available") is True
+    assert audit.get("source") == "latest_successful_run"
+    assert audit.get("run_id") == audit_run.id
+
+    assert recommendations.get("available") is True
+    assert recommendations.get("source") == "latest_generated"
+    assert recommendations.get("run_id") == recommendation_run.id
+    assert recommendations.get("count") == 1
+
+    assert competitors.get("available") is True
+    assert competitors.get("source") == "latest_run"
+    assert competitors.get("run_id") == comparison_run.id
+    assert competitors.get("count") == 2
+
+
+def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnostics(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        artifact_provider=_RaisingMigrationArtifactProvider(
+            SEOMigrationArtifactProviderError(
+                code="timeout",
+                reason="timeout",
+                safe_message="Migration draft generation timed out while calling the AI provider.",
+                provider_name="openai",
+                model_name="gpt-4o-mini",
+                prompt_version="seo-migration-v1",
+                retryable=True,
+                correlation_id="provider-timeout-1",
+            )
+        ),
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 422
+    detail = generate_response.json().get("detail") or {}
+    assert detail.get("message") == "Migration draft generation timed out while calling the AI provider."
+    assert detail.get("failure_category") == "provider_error"
+    assert detail.get("failure_reason") == "timeout"
+    assert detail.get("error_code") == "timeout"
+    assert detail.get("retryable") is True
+    assert detail.get("correlation_id") in {"provider-timeout-1"}
+    assert detail.get("workspace_id") == workspace_response.json()["id"]
+    assert isinstance(detail.get("artifact_version_id"), str)
+    assert detail.get("provider_name") == "openai"
+    assert detail.get("model_name") == "gpt-4o-mini"
+    assert detail.get("prompt_version") == "seo-migration-v1"
+
+    versions_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions")
+    assert versions_response.status_code == 200
+    versions = versions_response.json().get("items") or []
+    assert versions
+    assert versions[0].get("status") == "failed"
+    assert versions[0].get("error_summary") == "Migration draft generation timed out while calling the AI provider."
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    diagnostics = summary_response.json().get("context_summary", {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("last_draft_generation_status") == "failed"
+    assert diagnostics.get("last_draft_failure_category") == "provider_error"
+    assert diagnostics.get("last_draft_failure_reason") == "timeout"
+    assert diagnostics.get("last_draft_failure_message") == "Migration draft generation timed out while calling the AI provider."
+    assert diagnostics.get("last_draft_failure_retryable") is True
+    assert diagnostics.get("last_draft_failure_code") == "timeout"
+    assert diagnostics.get("last_draft_failure_artifact_version_id") == versions[0].get("id")
+
+
+def test_generate_draft_malformed_provider_output_returns_artifact_invalid(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        artifact_provider=_RaisingMigrationArtifactProvider(
+            SEOMigrationArtifactProviderError(
+                code="malformed_response",
+                reason="malformed_response",
+                safe_message="Migration draft returned malformed output.",
+                provider_name="openai",
+                model_name="gpt-4o-mini",
+                prompt_version="seo-migration-v1",
+                retryable=True,
+            )
+        ),
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 422
+    detail = generate_response.json().get("detail") or {}
+    assert detail.get("failure_category") == "artifact_invalid"
+    assert detail.get("failure_reason") == "malformed_response"
+    assert detail.get("retryable") is True
+
+
+def test_generate_draft_provider_config_failure_returns_config_missing(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        artifact_provider=_RaisingMigrationArtifactProvider(
+            SEOMigrationArtifactProviderError(
+                code="unsupported_configuration",
+                reason="unsupported_configuration",
+                safe_message="AI provider configuration is invalid for migration draft generation.",
+                provider_name="openai",
+                model_name="gpt-4o-mini",
+                prompt_version="seo-migration-v1",
+                retryable=False,
+            )
+        ),
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 422
+    detail = generate_response.json().get("detail") or {}
+    assert detail.get("failure_category") == "config_missing"
+    assert detail.get("failure_reason") == "unsupported_configuration"
+    assert detail.get("retryable") is False
+
+
+def test_generate_draft_unknown_provider_exception_returns_stable_unknown_error(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        artifact_provider=_RaisingMigrationArtifactProvider(RuntimeError("boom")),
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 422
+    detail = generate_response.json().get("detail") or {}
+    assert detail.get("message") == "Migration draft generation failed due to an unexpected provider error."
+    assert detail.get("failure_category") == "unknown_error"
+    assert detail.get("failure_reason") == "unknown"
+    assert detail.get("error_code") == "unknown"
+    assert "traceback" not in str(detail).lower()
 
 
 def test_publish_missing_runtime_config_surfaces_config_diagnostics(db_session) -> None:

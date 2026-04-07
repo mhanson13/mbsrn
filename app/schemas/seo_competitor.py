@@ -52,6 +52,7 @@ SEOCompetitorDraftProvenanceClassification = Literal["places_ai_enriched", "ai_o
 SEOCompetitorDraftConfidenceLevel = Literal["high", "medium", "low"]
 SEOCompetitorDraftSourceType = Literal["search", "places", "fallback", "synthetic"]
 SEOCompetitorDomainVerificationStatus = Literal["verified", "unverified"]
+SEOAIResponseContractStatus = Literal["accepted", "accepted_with_warnings", "salvaged", "rejected"]
 SEOSummaryStatus = Literal["completed", "failed"]
 SEOFindingCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
 SEOFindingSeverity = Literal["INFO", "WARNING", "CRITICAL"]
@@ -658,6 +659,7 @@ class SEOCompetitorProfileGenerationRunDetailRead(BaseModel):
     tuning_rejection_reason_counts: dict[SEOCompetitorProfileTuningExclusionReason, int] = Field(default_factory=dict)
     candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummaryRead | None = None
     outcome_summary: SEOCompetitorProfileOutcomeSummaryRead | None = None
+    response_contract_summary: "SEOAIResponseContractSummaryRead | None" = None
     provider_attempt_count: int = Field(default=0, ge=0)
     provider_degraded_retry_used: bool = False
     provider_attempts: list[SEOCompetitorProfileProviderAttemptRead] = Field(default_factory=list)
@@ -680,6 +682,14 @@ class SEOCompetitorProfileGenerationRunDetailRead(BaseModel):
             except (TypeError, ValueError):
                 normalized[reason] = 0
         return normalized  # type: ignore[return-value]
+
+
+class SEOAIResponseContractSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: SEOAIResponseContractStatus
+    summary: str = Field(min_length=1, max_length=220)
+    retryable: bool
 
 
 class SEOCompetitorProfileGenerationObservabilitySummaryRead(BaseModel):

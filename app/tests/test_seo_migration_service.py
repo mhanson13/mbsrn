@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from app.core.time import utc_now
 from app.integrations.seo_migration_artifact_provider import (
     SEOMigrationArtifactGenerationOutput,
     SEOMigrationArtifactGenerationProvider,
@@ -20,6 +21,12 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublisherError,
 )
 from app.models.business import Business
+from app.models.seo_audit_run import SEOAuditRun
+from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
+from app.models.seo_competitor_set import SEOCompetitorSet
+from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
+from app.models.seo_recommendation import SEORecommendation
+from app.models.seo_recommendation_run import SEORecommendationRun
 from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
@@ -51,6 +58,12 @@ class _RaisingMigrationProvider(SEOMigrationArtifactGenerationProvider):
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         del migration_context
         raise self.error
+
+
+class _ExplodingMigrationProvider(SEOMigrationArtifactGenerationProvider):
+    def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
+        del migration_context
+        raise RuntimeError("boom")
 
 
 class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
@@ -301,7 +314,7 @@ def test_generate_artifacts_applies_guardrails_and_analytics_normalization(db_se
         principal_id="principal-1",
     )
 
-    assert artifact.status == "completed"
+    assert artifact.status == "partial"
     assert artifact.file_count == 2
     files = artifact.generated_files_json or []
     paths = {str(item["path"]) for item in files if isinstance(item, dict)}
@@ -360,6 +373,101 @@ def test_generate_artifacts_salvages_partial_provider_output(db_session) -> None
     assert any("partially salvaged" in warning for warning in warnings)
 
 
+def test_generate_artifacts_emits_contract_evaluation_log(db_session, caplog) -> None:
+    output = SEOMigrationArtifactGenerationOutput(
+        strategy_summary="Contract-eval salvage strategy",
+        page_map=[],
+        homepage_structure=[],
+        service_page_suggestions=[],
+        cta_contact_structure={},
+        seo_meta_suggestions={},
+        redirect_suggestions=[],
+        analytics_placeholders=[],
+        generated_files=[
+            SEOMigrationGeneratedFileOutput(
+                path="index.html",
+                media_type="text/html",
+                content="<html><body><h1>Recovered Draft</h1></body></html>",
+            ),
+            SEOMigrationGeneratedFileOutput(
+                path="infra/deploy.yaml",
+                media_type="text/plain",
+                content="forbidden",
+            ),
+        ],
+        provider_name="mock",
+        model_name="mock-seo-migration-v1",
+        prompt_version="seo-migration-v1",
+    )
+    service = _build_service(db_session, _StaticMigrationProvider(output))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    assert artifact.status == "partial"
+
+    payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_draft_contract_evaluation"
+    ]
+    assert payloads
+    latest = payloads[-1]
+    assert latest.get("evaluation_status") == "salvaged"
+    assert latest.get("dropped_item_count") == 1
+    assert "partial_artifact_only" in (latest.get("warning_codes") or [])
+
+
+def test_generate_artifacts_salvages_wrapped_provider_output_payload(db_session) -> None:
+    wrapped_payload = (
+        "Here is the structured migration payload:\n"
+        "```json\n"
+        + json.dumps(
+            {
+                "strategy_summary": "Wrapped salvage strategy",
+                "generated_files": [
+                    {
+                        "path": "index.html",
+                        "media_type": "text/html",
+                        "content": "<html><body>Wrapped</body></html>",
+                    }
+                ],
+            },
+            ensure_ascii=True,
+        )
+        + "\n```\n"
+        "Done."
+    )
+    provider_error = SEOMigrationArtifactProviderError(
+        code="validation_failed",
+        reason="validation_failed",
+        safe_message="Provider returned invalid structured output.",
+        provider_name="openai",
+        model_name="gpt-5.1",
+        prompt_version="seo-migration-v1",
+        raw_output=wrapped_payload,
+    )
+    service = _build_service(db_session, _RaisingMigrationProvider(provider_error))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    assert artifact.status == "partial"
+    assert artifact.file_count == 1
+    assert (artifact.generated_files_json or [])[0]["path"] == "index.html"
+
+
 def test_generate_artifacts_rejects_when_no_valid_files_remain(db_session) -> None:
     output = SEOMigrationArtifactGenerationOutput(
         strategy_summary="No usable files",
@@ -385,12 +493,314 @@ def test_generate_artifacts_rejects_when_no_valid_files_remain(db_session) -> No
     business_id, site_id = _seed_business_and_site(db_session)
     _seed_workspace(service, business_id=business_id, site_id=site_id)
 
-    with pytest.raises(SEOMigrationValidationError, match="No valid static files were generated"):
+    with pytest.raises(
+        SEOMigrationValidationError,
+        match="Migration draft output did not include required static files.",
+    ):
         service.generate_draft_artifacts(
             business_id=business_id,
             site_id=site_id,
             principal_id="principal-1",
         )
+
+
+def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_session) -> None:
+    provider_error = SEOMigrationArtifactProviderError(
+        code="timeout",
+        reason="timeout",
+        safe_message="Migration draft generation timed out while calling the AI provider.",
+        provider_name="openai",
+        model_name="gpt-4o-mini",
+        prompt_version="seo-migration-v1",
+        retryable=True,
+        correlation_id="provider-timeout-1",
+    )
+    service = _build_service(db_session, _RaisingMigrationProvider(provider_error))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    error = exc_info.value
+    assert str(error) == "Migration draft generation timed out while calling the AI provider."
+    assert error.failure_category == "provider_error"
+    assert error.failure_reason == "timeout"
+    assert error.error_code == "timeout"
+    assert error.retryable is True
+    assert error.correlation_id == "provider-timeout-1"
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    assert workspace.migration_status == "draft_generation_failed"
+    assert workspace.latest_generated_artifact_version_id
+    assert workspace.latest_generated_artifact_version_number == 1
+    artifact = service.get_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=workspace.latest_generated_artifact_version_id or "",
+    )
+    assert artifact.status == "failed"
+    assert artifact.error_summary == "Migration draft generation timed out while calling the AI provider."
+    assert artifact.file_count == 0
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    migration_diagnostics = summary.context_summary.get("migration_diagnostics")
+    assert isinstance(migration_diagnostics, dict)
+    assert migration_diagnostics.get("last_draft_generation_status") == "failed"
+    assert migration_diagnostics.get("last_draft_failure_category") == "provider_error"
+    assert migration_diagnostics.get("last_draft_failure_reason") == "timeout"
+    assert migration_diagnostics.get("last_draft_failure_retryable") is True
+    assert migration_diagnostics.get("last_draft_failure_code") == "timeout"
+    assert migration_diagnostics.get("last_draft_failure_message") == (
+        "Migration draft generation timed out while calling the AI provider."
+    )
+
+
+def test_generate_artifacts_provider_reason_classification_uses_config_missing_for_configuration_failures(
+    db_session,
+) -> None:
+    provider_error = SEOMigrationArtifactProviderError(
+        code="unsupported_configuration",
+        reason="unsupported_configuration",
+        safe_message="AI provider configuration is invalid for migration draft generation.",
+        provider_name="openai",
+        model_name="gpt-4o-mini",
+        prompt_version="seo-migration-v1",
+        retryable=False,
+    )
+    service = _build_service(db_session, _RaisingMigrationProvider(provider_error))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    error = exc_info.value
+    assert error.failure_category == "config_missing"
+    assert error.failure_reason == "unsupported_configuration"
+    assert error.retryable is False
+
+
+def test_generate_artifacts_unknown_provider_exception_returns_stable_unknown_error(db_session) -> None:
+    service = _build_service(db_session, _ExplodingMigrationProvider())
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    error = exc_info.value
+    assert str(error) == "Migration draft generation failed due to an unexpected provider error."
+    assert error.failure_category == "unknown_error"
+    assert error.failure_reason == "unknown"
+    assert error.error_code == "unknown"
+    assert error.retryable is None
+
+
+def test_generate_artifacts_failure_emits_structured_draft_generation_logs(db_session, caplog) -> None:
+    provider_error = SEOMigrationArtifactProviderError(
+        code="timeout",
+        reason="timeout",
+        safe_message="Migration draft generation timed out while calling the AI provider.",
+        provider_name="openai",
+        model_name="gpt-4o-mini",
+        prompt_version="seo-migration-v1",
+        retryable=True,
+        correlation_id="provider-timeout-2",
+    )
+    service = _build_service(db_session, _RaisingMigrationProvider(provider_error))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    with pytest.raises(SEOMigrationValidationError):
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+
+    payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_draft_generation"
+    ]
+    assert payloads
+    assert any(
+        payload.get("status") == "requested"
+        and payload.get("business_id") == business_id
+        and payload.get("site_id") == site_id
+        and payload.get("workspace_id")
+        and payload.get("draft_run_id")
+        for payload in payloads
+    )
+    assert any(
+        payload.get("status") == "failed"
+        and payload.get("failure_category") == "provider_error"
+        and payload.get("failure_reason") == "timeout"
+        and payload.get("retryable") is True
+        and payload.get("artifact_version_id")
+        and isinstance(payload.get("duration_ms"), int)
+        for payload in payloads
+    )
+
+
+def test_workspace_summary_reused_context_uses_best_available_signals(db_session, caplog) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    now = utc_now()
+    audit_run = SEOAuditRun(
+        id="audit-run-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        status="completed",
+        started_at=now,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    service.seo_audit_repository.create_run(audit_run)
+
+    recommendation_run = SEORecommendationRun(
+        id="recommendation-run-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        audit_run_id=audit_run.id,
+        comparison_run_id=None,
+        status="completed",
+        total_recommendations=1,
+        critical_recommendations=0,
+        warning_recommendations=1,
+        info_recommendations=0,
+        started_at=now,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    service.seo_recommendation_repository.create_run(recommendation_run)
+    service.seo_recommendation_repository.add_recommendation(
+        SEORecommendation(
+            id="recommendation-context-1",
+            business_id=business_id,
+            site_id=site_id,
+            recommendation_run_id=recommendation_run.id,
+            audit_run_id=audit_run.id,
+            comparison_run_id=None,
+            rule_key="migration-context-rule",
+            category="SEO",
+            severity="WARNING",
+            title="Clarify homepage service copy",
+            rationale="Service details are sparse and repetitive.",
+            priority_score=70,
+            priority_band="high",
+            effort_bucket="small",
+            status="open",
+        )
+    )
+
+    competitor_set = SEOCompetitorSet(
+        id="competitor-set-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        name="Primary competitors",
+        is_active=True,
+        created_by_principal_id="principal-1",
+    )
+    service.seo_competitor_repository.create_set(competitor_set)
+    snapshot_run = SEOCompetitorSnapshotRun(
+        id="snapshot-run-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        competitor_set_id=competitor_set.id,
+        client_audit_run_id=audit_run.id,
+        status="completed",
+        pages_captured=3,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    service.seo_competitor_repository.create_snapshot_run(snapshot_run)
+    comparison_run = SEOCompetitorComparisonRun(
+        id="comparison-run-context-1",
+        business_id=business_id,
+        site_id=site_id,
+        competitor_set_id=competitor_set.id,
+        snapshot_run_id=snapshot_run.id,
+        baseline_audit_run_id=audit_run.id,
+        status="completed",
+        total_findings=2,
+        critical_findings=1,
+        warning_findings=1,
+        client_pages_analyzed=2,
+        competitor_pages_analyzed=3,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    service.seo_competitor_repository.create_comparison_run(comparison_run)
+    db_session.commit()
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+
+    reused_context = summary.context_summary.get("reused_context")
+    assert isinstance(reused_context, dict)
+
+    audit_context = reused_context.get("audit")
+    assert isinstance(audit_context, dict)
+    assert audit_context.get("available") is True
+    assert audit_context.get("source") == "latest_successful_run"
+    assert audit_context.get("run_id") == audit_run.id
+
+    recommendations_context = reused_context.get("recommendations")
+    assert isinstance(recommendations_context, dict)
+    assert recommendations_context.get("available") is True
+    assert recommendations_context.get("source") == "latest_generated"
+    assert recommendations_context.get("run_id") == recommendation_run.id
+    assert recommendations_context.get("count") == 1
+
+    competitors_context = reused_context.get("competitors")
+    assert isinstance(competitors_context, dict)
+    assert competitors_context.get("available") is True
+    assert competitors_context.get("source") == "latest_run"
+    assert competitors_context.get("run_id") == comparison_run.id
+    assert competitors_context.get("count") == 2
+
+    existing_context_summaries = summary.context_summary.get("existing_context_summaries")
+    assert isinstance(existing_context_summaries, dict)
+    assert existing_context_summaries.get("audit_summary") is None
+    assert existing_context_summaries.get("recommendation_summary") is None
+    assert existing_context_summaries.get("competitor_summary") is None
+
+    assert summary.context_summary.get("has_audit_summary") is True
+    assert summary.context_summary.get("has_recommendation_summary") is True
+    assert summary.context_summary.get("has_competitor_summary") is True
+
+    payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "migration_context_summary"
+    ]
+    assert payloads
+    latest_payload = payloads[-1]
+    assert latest_payload.get("site_id") == site_id
+    assert latest_payload.get("business_id") == business_id
+    assert latest_payload.get("workspace_id")
+    assert latest_payload.get("audit_available") is True
+    assert latest_payload.get("recommendation_available") is True
+    assert latest_payload.get("competitor_available") is True
+    assert latest_payload.get("audit_source") == "latest_successful_run"
+    assert latest_payload.get("recommendation_source") == "latest_generated"
+    assert latest_payload.get("competitor_source") == "latest_run"
 
 
 def test_publish_requires_approved_artifact(db_session) -> None:

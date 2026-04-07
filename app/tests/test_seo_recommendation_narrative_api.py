@@ -38,6 +38,7 @@ NARRATIVE_RESPONSE_KEYS = {
     "narrative_text",
     "top_themes_json",
     "sections_json",
+    "response_contract_summary",
     "competitor_influence",
     "signal_summary",
     "action_summary",
@@ -200,6 +201,27 @@ class _DuplicateActionRecommendationNarrativeProvider:
             },
             provider_name="dedupe-test-provider",
             model_name="dedupe-test-model",
+            prompt_version="seo-recommendation-narrative-v2",
+        )
+
+
+class _GenericFillerRecommendationNarrativeProvider:
+    def generate_narrative(self, **kwargs):  # noqa: ANN003, ANN201
+        del kwargs
+        return SEORecommendationNarrativeOutput(
+            narrative_text=(
+                "Improve SEO by following best practices and overall strategy to enhance visibility "
+                "and optimize performance for stronger rankings."
+            ),
+            top_themes=[],
+            sections={
+                "summary": None,
+                "priority_rationale": None,
+                "next_actions": [],
+                "recommendation_references": [],
+            },
+            provider_name="generic-test-provider",
+            model_name="generic-test-model",
             prompt_version="seo-recommendation-narrative-v2",
         )
 
@@ -395,6 +417,14 @@ def test_recommendation_narrative_manual_trigger_success_and_retrieval(db_sessio
     assert narrative["model_name"]
     assert narrative["prompt_version"]
     assert narrative["error_message"] is None
+    assert narrative["response_contract_summary"] is not None
+    assert set(narrative["response_contract_summary"].keys()) == {"status", "summary", "retryable"}
+    assert "reason_codes" not in narrative["response_contract_summary"]
+    assert "warning_codes" not in narrative["response_contract_summary"]
+    if isinstance(narrative["sections_json"], dict) and isinstance(narrative["sections_json"].get("response_contract"), dict):
+        section_contract = narrative["sections_json"]["response_contract"]
+        assert "reason_codes" not in section_contract
+        assert "warning_codes" not in section_contract
     assert narrative["competitor_influence"] is None
     assert narrative["signal_summary"] == {
         "support_level": "medium",
@@ -622,12 +652,63 @@ def test_recommendation_narrative_structured_output_failure_is_safe_and_auditabl
     assert narratives[0].model_name == "gpt-4o-mini"
     assert narratives[0].prompt_version == "seo-recommendation-narrative-v2"
     assert narratives[0].error_message == "Recommendation narrative returned invalid structured output."
+    assert narratives[0].sections_json == {
+        "failure_category": "validation_failed",
+        "failure_reason": "schema_validation",
+        "retryable": True,
+    }
 
     recs_after = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
     )
     assert recs_after.status_code == 200
     assert recs_after.json()["total"] >= 1
+
+
+def test_recommendation_narrative_contract_rejects_generic_filler_output(
+    db_session,
+    seeded_business,
+    caplog,
+) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_recommendation_narratives")
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        narrative_provider=_GenericFillerRecommendationNarrativeProvider(),
+    )
+    site_id, run_id = _create_completed_recommendation_run(client, db_session, seeded_business.id)
+
+    failed = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/narratives"
+    )
+    assert failed.status_code == 422
+    assert failed.json()["detail"] == "Recommendation narrative output was too generic to use safely."
+
+    narratives = (
+        db_session.query(SEORecommendationNarrative)
+        .filter(SEORecommendationNarrative.recommendation_run_id == run_id)
+        .order_by(SEORecommendationNarrative.version.asc())
+        .all()
+    )
+    assert len(narratives) == 1
+    assert narratives[0].status == "failed"
+    assert narratives[0].provider_name == "generic-test-provider"
+    assert narratives[0].sections_json == {
+        "failure_category": "validation_failed",
+        "failure_reason": "schema_validation",
+        "retryable": True,
+    }
+
+    evaluation_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_recommendation_response_contract_evaluation"
+    ]
+    assert evaluation_payloads
+    latest_payload = evaluation_payloads[-1]
+    assert latest_payload.get("evaluation_status") == "rejected"
+    assert "generic_content_heavy" in (latest_payload.get("reason_codes") or [])
 
 
 def test_recommendation_narrative_business_isolation_and_invalid_lineage(db_session, seeded_business) -> None:

@@ -2069,6 +2069,71 @@ def _structured_event_records(caplog) -> list[dict[str, object]]:  # noqa: ANN00
     return events
 
 
+def test_execute_run_emits_response_contract_evaluation_and_persists_summary(
+    db_session,
+    seeded_business,
+    caplog,
+) -> None:
+    caplog.set_level(logging.INFO)
+    deferred_executor = _DeferredRunExecutor()
+    provider = _DeterministicCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    created = _create_generation_run(client, seeded_business.id, site_id, candidate_count=1)
+    run_id = str(created["run"]["id"])
+
+    detail = _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+    assert detail is not None
+    assert detail.run.status == "completed"
+    assert detail.response_contract_summary is not None
+    assert detail.response_contract_summary["status"] == "salvaged"
+    assert detail.response_contract_summary["summary"] == "Limited number of strong competitors identified."
+    assert detail.response_contract_summary["retryable"] is True
+
+    events = _structured_event_records(caplog)
+    contract_events = [
+        item
+        for item in events
+        if item.get("event") == "competitor_response_contract_evaluation" and item.get("run_id") == run_id
+    ]
+    assert contract_events
+    contract_event = contract_events[-1]
+    assert contract_event["evaluation_status"] == "salvaged"
+    assert "low_usable_count" in contract_event["warning_codes"]
+
+    run_row = db_session.get(SEOCompetitorProfileGenerationRun, run_id)
+    assert run_row is not None
+    raw_payload = json.loads(str(run_row.raw_output))
+    summary = raw_payload.get("response_contract_summary")
+    assert isinstance(summary, dict)
+    assert summary.get("status") == "salvaged"
+    assert "low_usable_count" in summary.get("warning_codes", [])
+
+    detail_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["response_contract_summary"] == {
+        "status": "salvaged",
+        "summary": "Limited number of strong competitors identified.",
+        "retryable": True,
+    }
+    assert "reason_codes" not in detail_payload["response_contract_summary"]
+    assert "warning_codes" not in detail_payload["response_contract_summary"]
+
+
 def test_generate_endpoint_queues_run_and_schedules_executor(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(

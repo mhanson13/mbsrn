@@ -24,7 +24,18 @@ The site workspace now surfaces the latest completed recommendation run, determi
    - `POST /api/businesses/{business_id}/seo/sites/{site_id}/recommendation-runs/{recommendation_run_id}/narratives`
    - Prompt is built from persisted recommendation artifacts, recommendation rollups, competitor candidate telemetry rollups, current business tuning values, and bounded site/business context when available on run lineage (`run.site`).
    - Prompt also includes a bounded structured gap context extracted from deterministic recommendation evidence (`source_counts`, `finding_type_counts`, local/competitor/service-gap signals).
-   - Provider output is schema-validated before persistence.
+   - Provider output is schema-validated before persistence, with tolerant JSON extraction for wrapped/fenced payloads and bounded partial salvage of valid structured sections when possible.
+   - Parsed narrative output then passes deterministic response-contract scoring before persistence:
+     - `accepted`
+     - `accepted_with_warnings`
+     - `salvaged`
+     - `rejected`
+   - Operator-facing narrative payloads include a safe `response_contract_summary`:
+     - `status`
+     - `summary`
+     - `retryable`
+   - Raw reason/warning code arrays and scoring are not returned to operator UI payloads.
+   - Parseable but operationally weak outputs are rejected with safe failure diagnostics rather than persisted as successful narratives.
    - Structured narrative sections can include `tuning_suggestions` (max 4), each constrained to allowed setting keys, bounded integer values, and valid linked recommendation IDs.
 4. Narrative retrieval:
    - list/latest/by-id narrative endpoints return persisted narrative versions.
@@ -135,6 +146,7 @@ Prompt source observability:
 ## Operational Behavior
 - Narrative generation is versioned per recommendation run.
 - Provider failures persist a `failed` narrative version with safe `error_message`.
+- Failed narrative versions also persist bounded structured failure diagnostics in `sections_json` (`failure_category`, `failure_reason`, `retryable`) for operator/admin troubleshooting.
 - Failure isolation: recommendation run/recommendation records are not mutated by narrative failures.
 - Provider/model/prompt metadata is persisted for auditability.
 - Tuning suggestions are suppressed when competitor telemetry indicates a balanced candidate set (no excluded candidates in telemetry window).
@@ -144,8 +156,15 @@ Prompt source observability:
 
 ## Failure Modes
 - Timeout/provider request/auth/config/schema/parse failures are normalized to safe errors.
+- Response-contract rejections (post-parse quality gate) are normalized as structured-validation failures with stable reason codes such as:
+  - `empty_recommendations`
+  - `insufficient_operator_guidance`
+  - `generic_content_heavy`
+  - `missing_action_fields`
+  - `low_actionability`
 - API returns validation-safe failures (`422`) for narrative generation failures.
 - Existing deterministic recommendation artifacts remain available even if narrative generation fails.
+- `retryable=true` in response-contract summary means a rerun may produce better usable narrative quality; it does not auto-retry.
 
 ## Security Considerations
 - Raw provider credentials are not exposed in API responses.

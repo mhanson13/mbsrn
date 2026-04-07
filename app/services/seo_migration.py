@@ -37,6 +37,10 @@ from app.repositories.seo_migration_repository import SEOMigrationRepository
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
+from app.services.ai_response_contract_evaluator import (
+    AIResponseContractEvaluation,
+    evaluate_migration_artifact_response,
+)
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_ingest import SEOMigrationSourceIngestError, SEOMigrationSourceIngestService
 from app.services.seo_migration_prompt import SEO_MIGRATION_PROMPT_VERSION, build_seo_migration_prompt
@@ -112,6 +116,20 @@ _MIGRATION_FAILURE_CATEGORY_VALUES = {
     "deploy_error",
     "unknown_error",
 }
+_DRAFT_FAILURE_REASON_VALUES = {
+    "timeout",
+    "authentication_failed",
+    "rate_limited",
+    "malformed_response",
+    "malformed_output",
+    "empty_response",
+    "unsupported_configuration",
+    "transport_error",
+    "validation_failed",
+    "unknown",
+}
+_DRAFT_PROVIDER_LOG_EVENT = "seo_migration_draft_generation"
+_DRAFT_CONTRACT_EVALUATION_LOG_EVENT = "seo_migration_draft_contract_evaluation"
 
 
 class SEOMigrationNotFoundError(ValueError):
@@ -119,7 +137,56 @@ class SEOMigrationNotFoundError(ValueError):
 
 
 class SEOMigrationValidationError(ValueError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_category: str | None = None,
+        failure_reason: str | None = None,
+        error_code: str | None = None,
+        retryable: bool | None = None,
+        correlation_id: str | None = None,
+        workspace_id: str | None = None,
+        artifact_version_id: str | None = None,
+        provider_name: str | None = None,
+        model_name: str | None = None,
+        prompt_version: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.failure_category = _normalize_string(failure_category, max_length=40)
+        self.failure_reason = _normalize_string(failure_reason, max_length=80)
+        self.error_code = _normalize_string(error_code, max_length=80)
+        self.retryable = retryable if isinstance(retryable, bool) else None
+        self.correlation_id = _normalize_string(correlation_id, max_length=120)
+        self.workspace_id = _normalize_string(workspace_id, max_length=36)
+        self.artifact_version_id = _normalize_string(artifact_version_id, max_length=36)
+        self.provider_name = _normalize_string(provider_name, max_length=64)
+        self.model_name = _normalize_string(model_name, max_length=128)
+        self.prompt_version = _normalize_string(prompt_version, max_length=64)
+
+    def to_error_detail(self) -> dict[str, object]:
+        detail: dict[str, object] = {"message": str(self)}
+        if self.failure_category in _MIGRATION_FAILURE_CATEGORY_VALUES:
+            detail["failure_category"] = self.failure_category
+        if self.failure_reason in _DRAFT_FAILURE_REASON_VALUES:
+            detail["failure_reason"] = self.failure_reason
+        if self.error_code:
+            detail["error_code"] = self.error_code
+        if self.retryable is not None:
+            detail["retryable"] = self.retryable
+        if self.correlation_id:
+            detail["correlation_id"] = self.correlation_id
+        if self.workspace_id:
+            detail["workspace_id"] = self.workspace_id
+        if self.artifact_version_id:
+            detail["artifact_version_id"] = self.artifact_version_id
+        if self.provider_name:
+            detail["provider_name"] = self.provider_name
+        if self.model_name:
+            detail["model_name"] = self.model_name
+        if self.prompt_version:
+            detail["prompt_version"] = self.prompt_version
+        return detail
 
 
 @dataclass(frozen=True)
@@ -158,6 +225,19 @@ class SEOMigrationDeployActionResult:
     artifact: SEOMigrationArtifactVersion
     result: dict[str, object]
     readiness: dict[str, object]
+
+
+@dataclass(frozen=True)
+class SEOMigrationDraftFailure:
+    failure_category: str
+    failure_reason: str
+    error_code: str
+    message_for_operator: str
+    retryable: bool | None
+    provider_name: str
+    model_name: str
+    prompt_version: str
+    correlation_id: str | None = None
 
 
 class SEOMigrationService:
@@ -1083,39 +1163,201 @@ class SEOMigrationService:
         site_id: str,
         principal_id: str | None,
     ) -> SEOMigrationArtifactVersion:
+        started_at = time.monotonic()
+        draft_run_id = str(uuid4())
         workspace = self.get_workspace(business_id=business_id, site_id=site_id)
         site = self._require_site(business_id=business_id, site_id=site_id)
         context_json, _ = self._assemble_context(site=site, workspace=workspace)
+        self._log_draft_generation_event(
+            status="requested",
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            draft_run_id=draft_run_id,
+            provider_name=self.provider_name,
+            model_name=self.provider_model_name,
+            prompt_version=self.prompt_version,
+        )
 
         provider_output: SEOMigrationArtifactGenerationOutput | None = None
+        draft_failure: SEOMigrationDraftFailure | None = None
         parse_warnings: list[str] = []
         generation_status = "completed"
         generation_error_summary: str | None = None
         try:
             provider_output = self.artifact_provider.generate_artifacts(migration_context=context_json)
         except SEOMigrationArtifactProviderError as exc:
+            draft_failure = self._classify_draft_provider_failure(exc)
             salvaged_output = self._salvage_provider_error_output(exc)
             if salvaged_output is None:
-                workspace.migration_status = "draft_generation_failed"
-                workspace.updated_by_principal_id = principal_id
-                self._update_workspace_readiness_statuses(workspace=workspace, site=site)
-                self.seo_migration_repository.save_workspace(workspace)
-                self.session.commit()
-                raise SEOMigrationValidationError(exc.safe_message) from exc
+                failed_artifact = self._record_failed_draft_generation(
+                    workspace=workspace,
+                    site=site,
+                    context_json=context_json,
+                    draft_run_id=draft_run_id,
+                    failure=draft_failure,
+                    principal_id=principal_id,
+                )
+                self._log_draft_generation_event(
+                    status="failed",
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    draft_run_id=draft_run_id,
+                    artifact_version_id=failed_artifact.id,
+                    artifact_version=failed_artifact.version,
+                    provider_name=draft_failure.provider_name,
+                    model_name=draft_failure.model_name,
+                    prompt_version=draft_failure.prompt_version,
+                    failure_category=draft_failure.failure_category,
+                    failure_reason=draft_failure.failure_reason,
+                    retryable=draft_failure.retryable,
+                    correlation_id=draft_failure.correlation_id or failed_artifact.id,
+                    duration_ms=self._duration_ms(started_at),
+                )
+                raise SEOMigrationValidationError(
+                    draft_failure.message_for_operator,
+                    failure_category=draft_failure.failure_category,
+                    failure_reason=draft_failure.failure_reason,
+                    error_code=draft_failure.error_code,
+                    retryable=draft_failure.retryable,
+                    correlation_id=draft_failure.correlation_id or failed_artifact.id,
+                    workspace_id=workspace.id,
+                    artifact_version_id=failed_artifact.id,
+                    provider_name=draft_failure.provider_name,
+                    model_name=draft_failure.model_name,
+                    prompt_version=draft_failure.prompt_version,
+                ) from exc
             provider_output = salvaged_output
             generation_status = "partial"
-            generation_error_summary = exc.safe_message
+            generation_error_summary = draft_failure.message_for_operator
             parse_warnings.append("Provider response partially salvaged after schema failure.")
+        except Exception as exc:  # noqa: BLE001
+            draft_failure = self._unknown_draft_failure(
+                provider_name=self.provider_name,
+                model_name=self.provider_model_name,
+                prompt_version=self.prompt_version,
+            )
+            failed_artifact = self._record_failed_draft_generation(
+                workspace=workspace,
+                site=site,
+                context_json=context_json,
+                draft_run_id=draft_run_id,
+                failure=draft_failure,
+                principal_id=principal_id,
+            )
+            self._log_draft_generation_event(
+                status="failed",
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace.id,
+                draft_run_id=draft_run_id,
+                artifact_version_id=failed_artifact.id,
+                artifact_version=failed_artifact.version,
+                provider_name=draft_failure.provider_name,
+                model_name=draft_failure.model_name,
+                prompt_version=draft_failure.prompt_version,
+                failure_category=draft_failure.failure_category,
+                failure_reason=draft_failure.failure_reason,
+                retryable=draft_failure.retryable,
+                correlation_id=failed_artifact.id,
+                duration_ms=self._duration_ms(started_at),
+                error_type=type(exc).__name__,
+            )
+            raise SEOMigrationValidationError(
+                draft_failure.message_for_operator,
+                failure_category=draft_failure.failure_category,
+                failure_reason=draft_failure.failure_reason,
+                error_code=draft_failure.error_code,
+                retryable=draft_failure.retryable,
+                correlation_id=failed_artifact.id,
+                workspace_id=workspace.id,
+                artifact_version_id=failed_artifact.id,
+                provider_name=draft_failure.provider_name,
+                model_name=draft_failure.model_name,
+                prompt_version=draft_failure.prompt_version,
+            ) from exc
 
         normalized_files, file_warnings = self._validate_and_normalize_files(provider_output.generated_files)
         parse_warnings.extend(file_warnings)
-        if not normalized_files:
-            workspace.migration_status = "draft_generation_failed"
-            workspace.updated_by_principal_id = principal_id
-            self._update_workspace_readiness_statuses(workspace=workspace, site=site)
-            self.seo_migration_repository.save_workspace(workspace)
-            self.session.commit()
-            raise SEOMigrationValidationError("No valid static files were generated.")
+        draft_contract_evaluation = evaluate_migration_artifact_response(
+            strategy_summary=provider_output.strategy_summary,
+            generated_files=normalized_files,
+            raw_generated_file_count=max(0, int(len(provider_output.generated_files))),
+            page_map_count=max(0, int(len(provider_output.page_map))),
+        )
+        self._log_draft_contract_evaluation(
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            draft_run_id=draft_run_id,
+            provider_name=str(provider_output.provider_name or self.provider_name),
+            model_name=str(provider_output.model_name or self.provider_model_name),
+            evaluation=draft_contract_evaluation,
+        )
+        parse_warnings.extend(self._draft_contract_warnings(evaluation=draft_contract_evaluation))
+        if draft_contract_evaluation.status == "salvaged" and generation_status == "completed":
+            generation_status = "partial"
+            if generation_error_summary is None:
+                generation_error_summary = "Migration draft generated with partial contract salvage."
+
+        if draft_contract_evaluation.status == "rejected" or not normalized_files:
+            reason_code = (
+                draft_contract_evaluation.reasons[0]
+                if draft_contract_evaluation.reasons
+                else "validation_failed"
+            )
+            draft_failure = SEOMigrationDraftFailure(
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code=reason_code,
+                message_for_operator=self._draft_contract_rejection_message(
+                    evaluation=draft_contract_evaluation,
+                ),
+                retryable=draft_contract_evaluation.retryable,
+                provider_name=str(provider_output.provider_name or self.provider_name),
+                model_name=str(provider_output.model_name or self.provider_model_name),
+                prompt_version=str(provider_output.prompt_version or self.prompt_version),
+                correlation_id=draft_run_id,
+            )
+            failed_artifact = self._record_failed_draft_generation(
+                workspace=workspace,
+                site=site,
+                context_json=context_json,
+                draft_run_id=draft_run_id,
+                failure=draft_failure,
+                principal_id=principal_id,
+            )
+            self._log_draft_generation_event(
+                status="failed",
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace.id,
+                draft_run_id=draft_run_id,
+                artifact_version_id=failed_artifact.id,
+                artifact_version=failed_artifact.version,
+                provider_name=draft_failure.provider_name,
+                model_name=draft_failure.model_name,
+                prompt_version=draft_failure.prompt_version,
+                failure_category=draft_failure.failure_category,
+                failure_reason=draft_failure.failure_reason,
+                retryable=draft_failure.retryable,
+                correlation_id=failed_artifact.id,
+                duration_ms=self._duration_ms(started_at),
+            )
+            raise SEOMigrationValidationError(
+                draft_failure.message_for_operator,
+                failure_category=draft_failure.failure_category,
+                failure_reason=draft_failure.failure_reason,
+                error_code=draft_failure.error_code,
+                retryable=draft_failure.retryable,
+                correlation_id=failed_artifact.id,
+                workspace_id=workspace.id,
+                artifact_version_id=failed_artifact.id,
+                provider_name=draft_failure.provider_name,
+                model_name=draft_failure.model_name,
+                prompt_version=draft_failure.prompt_version,
+            )
 
         artifact_version_number = self.seo_migration_repository.next_artifact_version_number(workspace.id)
         total_bytes = sum(len(str(item["content"]).encode("utf-8")) for item in normalized_files)
@@ -1158,6 +1400,23 @@ class SEOMigrationService:
         self.seo_migration_repository.save_workspace(workspace)
         self.session.commit()
         self.session.refresh(artifact)
+        self._log_draft_generation_event(
+            status=generation_status,
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            draft_run_id=draft_run_id,
+            artifact_version_id=artifact.id,
+            artifact_version=artifact.version,
+            provider_name=artifact.provider_name,
+            model_name=artifact.model_name,
+            prompt_version=artifact.prompt_version,
+            failure_category=(draft_failure.failure_category if draft_failure and generation_status == "partial" else None),
+            failure_reason=(draft_failure.failure_reason if draft_failure and generation_status == "partial" else None),
+            retryable=(draft_failure.retryable if draft_failure and generation_status == "partial" else None),
+            correlation_id=(draft_failure.correlation_id if draft_failure and generation_status == "partial" else None),
+            duration_ms=self._duration_ms(started_at),
+        )
         return artifact
 
     def list_artifact_versions(self, *, business_id: str, site_id: str) -> list[SEOMigrationArtifactVersion]:
@@ -1252,6 +1511,7 @@ class SEOMigrationService:
             history=workspace.deploy_history_json,
             action="deploy",
         )
+        draft_diagnostics = self._derive_draft_generation_diagnostics(artifact=latest_artifact)
         publish_readiness = {
             **publish_readiness,
             "last_status": publish_diagnostics.get("last_status"),
@@ -1273,6 +1533,14 @@ class SEOMigrationService:
                 "last_deploy_status": deploy_diagnostics.get("last_status"),
                 "last_deploy_failure_category": deploy_diagnostics.get("last_failure_category"),
                 "last_deploy_failure_message": deploy_diagnostics.get("last_failure_message"),
+                "last_draft_generation_status": draft_diagnostics.get("last_status"),
+                "last_draft_failure_category": draft_diagnostics.get("last_failure_category"),
+                "last_draft_failure_reason": draft_diagnostics.get("last_failure_reason"),
+                "last_draft_failure_message": draft_diagnostics.get("last_failure_message"),
+                "last_draft_failure_retryable": draft_diagnostics.get("last_failure_retryable"),
+                "last_draft_failure_code": draft_diagnostics.get("last_failure_code"),
+                "last_draft_failure_correlation_id": draft_diagnostics.get("last_failure_correlation_id"),
+                "last_draft_failure_artifact_version_id": draft_diagnostics.get("last_failure_artifact_version_id"),
             },
         }
         return SEOMigrationWorkspaceSummary(
@@ -1285,6 +1553,185 @@ class SEOMigrationService:
             publish_history=_normalize_history_list(workspace.publish_history_json),
             deploy_history=_normalize_history_list(workspace.deploy_history_json),
         )
+
+    def _derive_draft_generation_diagnostics(self, *, artifact: SEOMigrationArtifactVersion | None) -> dict[str, object]:
+        if artifact is None:
+            return {
+                "last_status": None,
+                "last_failure_category": None,
+                "last_failure_reason": None,
+                "last_failure_message": None,
+                "last_failure_retryable": None,
+                "last_failure_code": None,
+                "last_failure_correlation_id": None,
+                "last_failure_artifact_version_id": None,
+            }
+
+        diagnostics_payload = {}
+        if isinstance(artifact.context_json, dict):
+            diagnostics_payload = _normalize_json_dict(artifact.context_json.get("draft_generation_failure"))
+        status_value = _normalize_string(artifact.status, max_length=40)
+        failure_category = _normalize_string(diagnostics_payload.get("failure_category"), max_length=40)
+        if failure_category not in _MIGRATION_FAILURE_CATEGORY_VALUES:
+            failure_category = ("artifact_invalid" if status_value == "failed" else None)
+        failure_reason = _normalize_string(diagnostics_payload.get("failure_reason"), max_length=80)
+        if failure_reason not in _DRAFT_FAILURE_REASON_VALUES:
+            failure_reason = None
+        failure_code = _normalize_string(diagnostics_payload.get("error_code"), max_length=80)
+        retryable = diagnostics_payload.get("retryable")
+        retryable_flag = retryable if isinstance(retryable, bool) else None
+        correlation_id = _normalize_string(diagnostics_payload.get("correlation_id"), max_length=120)
+        return {
+            "last_status": status_value,
+            "last_failure_category": failure_category,
+            "last_failure_reason": failure_reason,
+            "last_failure_message": _normalize_string(artifact.error_summary, max_length=400),
+            "last_failure_retryable": retryable_flag,
+            "last_failure_code": failure_code,
+            "last_failure_correlation_id": correlation_id,
+            "last_failure_artifact_version_id": artifact.id,
+        }
+
+    def _record_failed_draft_generation(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        site: SEOSite,
+        context_json: dict[str, object],
+        draft_run_id: str,
+        failure: SEOMigrationDraftFailure,
+        principal_id: str | None,
+    ) -> SEOMigrationArtifactVersion:
+        artifact_version_number = self.seo_migration_repository.next_artifact_version_number(workspace.id)
+        failure_context = self._build_draft_failure_context(
+            context_json=context_json,
+            draft_run_id=draft_run_id,
+            failure=failure,
+        )
+        artifact = SEOMigrationArtifactVersion(
+            id=str(uuid4()),
+            business_id=workspace.business_id,
+            site_id=workspace.site_id,
+            workspace_id=workspace.id,
+            version=artifact_version_number,
+            status="failed",
+            context_json=failure_context,
+            strategy_summary=None,
+            page_map_json=[],
+            homepage_structure_json=[],
+            service_page_suggestions_json=[],
+            cta_contact_structure_json={},
+            seo_meta_suggestions_json={},
+            redirect_suggestions_json=[],
+            analytics_placeholders_json=[],
+            generated_files_json=[],
+            file_count=0,
+            total_bytes=0,
+            provider_name=failure.provider_name,
+            model_name=failure.model_name,
+            prompt_version=failure.prompt_version,
+            parse_warnings_json=[
+                f"draft_generation_failure_reason={failure.failure_reason}",
+                f"draft_generation_failure_code={failure.error_code}",
+            ],
+            error_summary=failure.message_for_operator,
+            approval_status="pending",
+            publish_status="not_published",
+            deploy_status="not_deployed",
+            created_by_principal_id=principal_id,
+        )
+        self.seo_migration_repository.create_artifact_version(artifact)
+
+        workspace.latest_generated_artifact_version_id = artifact.id
+        workspace.latest_generated_artifact_version_number = artifact.version
+        workspace.migration_status = "draft_generation_failed"
+        workspace.updated_by_principal_id = principal_id
+        self._update_workspace_readiness_statuses(workspace=workspace, site=site)
+        self.seo_migration_repository.save_workspace(workspace)
+        self.session.commit()
+        self.session.refresh(artifact)
+        return artifact
+
+    def _build_draft_failure_context(
+        self,
+        *,
+        context_json: dict[str, object],
+        draft_run_id: str,
+        failure: SEOMigrationDraftFailure,
+    ) -> dict[str, object]:
+        payload = _normalize_json_dict(context_json)
+        payload["draft_generation_failure"] = {
+            "failure_category": failure.failure_category,
+            "failure_reason": failure.failure_reason,
+            "error_code": failure.error_code,
+            "message": failure.message_for_operator,
+            "retryable": failure.retryable,
+            "correlation_id": failure.correlation_id or draft_run_id,
+            "provider_name": failure.provider_name,
+            "model_name": failure.model_name,
+            "prompt_version": failure.prompt_version,
+            "recorded_at": utc_now().isoformat(),
+        }
+        return payload
+
+    def _classify_draft_provider_failure(self, error: SEOMigrationArtifactProviderError) -> SEOMigrationDraftFailure:
+        reason = self._normalize_draft_failure_reason(error.reason or error.code)
+        category = "provider_error"
+        retryable = error.retryable if isinstance(error.retryable, bool) else None
+        if reason in {"authentication_failed", "unsupported_configuration"}:
+            category = "config_missing"
+            if retryable is None:
+                retryable = False
+        elif reason in {"malformed_response", "malformed_output", "empty_response", "validation_failed"}:
+            category = "artifact_invalid"
+            if retryable is None:
+                retryable = True
+        elif reason == "unknown":
+            category = "unknown_error"
+        elif retryable is None:
+            retryable = reason in {"timeout", "rate_limited", "transport_error"}
+
+        normalized_code = _normalize_string(error.code, max_length=80) or reason
+        message = _normalize_string(error.safe_message, max_length=400) or "Migration draft provider request failed."
+        provider_name = _normalize_string(error.provider_name, max_length=64) or self.provider_name
+        model_name = _normalize_string(error.model_name, max_length=128) or self.provider_model_name
+        prompt_version = _normalize_string(error.prompt_version, max_length=64) or self.prompt_version
+        return SEOMigrationDraftFailure(
+            failure_category=category,
+            failure_reason=reason,
+            error_code=normalized_code,
+            message_for_operator=message,
+            retryable=retryable,
+            provider_name=provider_name,
+            model_name=model_name,
+            prompt_version=prompt_version,
+            correlation_id=_normalize_string(error.correlation_id, max_length=120),
+        )
+
+    @staticmethod
+    def _unknown_draft_failure(
+        *,
+        provider_name: str,
+        model_name: str,
+        prompt_version: str,
+    ) -> SEOMigrationDraftFailure:
+        return SEOMigrationDraftFailure(
+            failure_category="unknown_error",
+            failure_reason="unknown",
+            error_code="unknown",
+            message_for_operator="Migration draft generation failed due to an unexpected provider error.",
+            retryable=None,
+            provider_name=provider_name,
+            model_name=model_name,
+            prompt_version=prompt_version,
+        )
+
+    @staticmethod
+    def _normalize_draft_failure_reason(value: str | None) -> str:
+        normalized = _normalize_string(value, max_length=80) or "unknown"
+        if normalized not in _DRAFT_FAILURE_REASON_VALUES:
+            return "unknown"
+        return normalized
 
     def _require_business(self, business_id: str) -> None:
         if self.business_repository.get(business_id) is None:
@@ -1335,14 +1782,194 @@ class SEOMigrationService:
                 latest_completed_comparison_run.id,
             )
 
+        recommendation_page = self.seo_recommendation_repository.list_recommendations_page_for_business_site(
+            business_id=site.business_id,
+            site_id=site.id,
+            page=1,
+            page_size=1,
+            sort_by="created_at",
+            sort_order="desc",
+        )
+        latest_recommendation = recommendation_page.items[0] if recommendation_page.items else None
+        recommendation_count = max(0, int(recommendation_page.total))
+
+        latest_usable_comparison_run = next(
+            (item for item in comparison_runs if self._is_usable_comparison_run(item)),
+            None,
+        )
+        competitor_domains = self.seo_competitor_repository.list_domains_for_business_site(site.business_id, site.id)
+        active_competitor_domains = [
+            item
+            for item in competitor_domains
+            if getattr(item, "is_active", None) is not False
+        ]
+
+        reused_context = self._build_reused_context_summary(
+            latest_audit_run=latest_audit_run,
+            latest_completed_recommendation_run=latest_completed_recommendation_run,
+            latest_recommendation_narrative=latest_recommendation_narrative,
+            recommendation_count=recommendation_count,
+            latest_recommendation_created_at=(
+                latest_recommendation.created_at if latest_recommendation is not None else None
+            ),
+            latest_usable_comparison_run=latest_usable_comparison_run,
+            active_competitor_domain_count=len(active_competitor_domains),
+            latest_competitor_domain_created_at=(
+                active_competitor_domains[-1].created_at if active_competitor_domains else None
+            ),
+        )
+
         assembly = self.context_assembler.assemble(
             site=site,
             workspace=workspace,
             latest_audit_summary=latest_audit_summary,
             latest_recommendation_narrative=latest_recommendation_narrative,
             latest_competitor_summary=latest_competitor_summary,
+            reused_context=reused_context,
+        )
+        self._log_migration_context_summary(
+            business_id=site.business_id,
+            site_id=site.id,
+            workspace_id=workspace.id,
+            reused_context=reused_context,
         )
         return assembly.context_json, assembly.context_summary
+
+    @staticmethod
+    def _is_usable_comparison_run(run: object) -> bool:
+        status = _normalize_string(getattr(run, "status", None), max_length=32) or ""
+        if status == "completed":
+            return True
+        total_findings = max(0, int(getattr(run, "total_findings", 0) or 0))
+        competitor_pages = max(0, int(getattr(run, "competitor_pages_analyzed", 0) or 0))
+        client_pages = max(0, int(getattr(run, "client_pages_analyzed", 0) or 0))
+        return total_findings > 0 or competitor_pages > 0 or client_pages > 0
+
+    def _build_reused_context_summary(
+        self,
+        *,
+        latest_audit_run: object | None,
+        latest_completed_recommendation_run: object | None,
+        latest_recommendation_narrative: object | None,
+        recommendation_count: int,
+        latest_recommendation_created_at: object | None,
+        latest_usable_comparison_run: object | None,
+        active_competitor_domain_count: int,
+        latest_competitor_domain_created_at: object | None,
+    ) -> dict[str, object]:
+        audit_available = latest_audit_run is not None
+        audit_timestamp = self._format_timestamp(
+            getattr(latest_audit_run, "completed_at", None) or getattr(latest_audit_run, "created_at", None)
+        )
+        recommendation_narrative_available = bool(
+            _normalize_string(getattr(latest_recommendation_narrative, "narrative_text", None), max_length=120)
+        )
+        recommendation_available = (
+            recommendation_count > 0
+            or recommendation_narrative_available
+            or latest_completed_recommendation_run is not None
+        )
+        recommendation_timestamp = self._format_timestamp(
+            latest_recommendation_created_at
+            or getattr(latest_recommendation_narrative, "created_at", None)
+            or getattr(latest_completed_recommendation_run, "completed_at", None)
+            or getattr(latest_completed_recommendation_run, "created_at", None)
+        )
+        recommendation_total = (
+            recommendation_count
+            if recommendation_count > 0
+            else max(0, int(getattr(latest_completed_recommendation_run, "total_recommendations", 0) or 0))
+        )
+
+        competitor_available = latest_usable_comparison_run is not None or active_competitor_domain_count > 0
+        competitor_source = "latest_run" if latest_usable_comparison_run is not None else "active_domains"
+        competitor_timestamp = self._format_timestamp(
+            (
+                getattr(latest_usable_comparison_run, "completed_at", None)
+                or getattr(latest_usable_comparison_run, "created_at", None)
+            )
+            if latest_usable_comparison_run is not None
+            else latest_competitor_domain_created_at
+        )
+        competitor_count = (
+            max(0, int(getattr(latest_usable_comparison_run, "total_findings", 0) or 0))
+            if latest_usable_comparison_run is not None
+            else max(0, int(active_competitor_domain_count))
+        )
+
+        return {
+            "audit": {
+                "available": audit_available,
+                "source": "latest_successful_run" if audit_available else "none",
+                "run_id": getattr(latest_audit_run, "id", None) if audit_available else None,
+                "timestamp": audit_timestamp,
+            },
+            "recommendations": {
+                "available": recommendation_available,
+                "source": ("latest_generated" if recommendation_available else "none"),
+                "run_id": (
+                    getattr(latest_completed_recommendation_run, "id", None)
+                    if latest_completed_recommendation_run is not None
+                    else None
+                ),
+                "timestamp": recommendation_timestamp,
+                "count": recommendation_total,
+            },
+            "competitors": {
+                "available": competitor_available,
+                "source": competitor_source if competitor_available else "none",
+                "run_id": (
+                    getattr(latest_usable_comparison_run, "id", None)
+                    if latest_usable_comparison_run is not None
+                    else None
+                ),
+                "timestamp": competitor_timestamp,
+                "count": competitor_count,
+            },
+        }
+
+    @staticmethod
+    def _format_timestamp(value: object | None) -> str | None:
+        if value is None:
+            return None
+        iso = getattr(value, "isoformat", None)
+        if callable(iso):
+            try:
+                return str(iso())
+            except Exception:
+                return None
+        normalized = _normalize_string(value, max_length=80)
+        return normalized or None
+
+    def _log_migration_context_summary(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace_id: str | None,
+        reused_context: dict[str, object],
+    ) -> None:
+        audit = _normalize_json_dict(reused_context.get("audit"))
+        recommendations = _normalize_json_dict(reused_context.get("recommendations"))
+        competitors = _normalize_json_dict(reused_context.get("competitors"))
+        payload: dict[str, object] = {
+            "event": "migration_context_summary",
+            "timestamp": utc_now().isoformat(),
+            "business_id": business_id,
+            "site_id": site_id,
+            "workspace_id": workspace_id,
+            "audit_available": bool(audit.get("available")),
+            "recommendation_available": bool(recommendations.get("available")),
+            "competitor_available": bool(competitors.get("available")),
+            "audit_source": _normalize_string(audit.get("source"), max_length=80),
+            "recommendation_source": _normalize_string(recommendations.get("source"), max_length=80),
+            "competitor_source": _normalize_string(competitors.get("source"), max_length=80),
+        }
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message="migration_context_summary",
+            level=logging.INFO,
+        )
 
     def _build_brand_business_snapshot(self, site: SEOSite) -> dict[str, object]:
         host = (urlsplit(site.base_url).hostname or "").strip().lower()
@@ -1361,6 +1988,126 @@ class SEOMigrationService:
     @staticmethod
     def _duration_ms(started_at: float) -> int:
         return max(0, int((time.monotonic() - started_at) * 1000))
+
+    def _log_draft_generation_event(
+        self,
+        *,
+        status: str,
+        business_id: str,
+        site_id: str,
+        workspace_id: str,
+        draft_run_id: str,
+        artifact_version_id: str | None = None,
+        artifact_version: int | None = None,
+        provider_name: str | None = None,
+        model_name: str | None = None,
+        prompt_version: str | None = None,
+        failure_category: str | None = None,
+        failure_reason: str | None = None,
+        retryable: bool | None = None,
+        correlation_id: str | None = None,
+        duration_ms: int | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        normalized_status = _normalize_string(status, max_length=40) or "unknown"
+        payload: dict[str, object] = {
+            "event": _DRAFT_PROVIDER_LOG_EVENT,
+            "timestamp": utc_now().isoformat(),
+            "status": normalized_status,
+            "business_id": business_id,
+            "site_id": site_id,
+            "workspace_id": workspace_id,
+            "draft_run_id": draft_run_id,
+            "artifact_version_id": artifact_version_id,
+            "artifact_version": artifact_version,
+            "provider_name": _normalize_string(provider_name, max_length=64),
+            "model_name": _normalize_string(model_name, max_length=128),
+            "prompt_version": _normalize_string(prompt_version, max_length=64),
+            "failure_category": (
+                failure_category if failure_category in _MIGRATION_FAILURE_CATEGORY_VALUES else None
+            ),
+            "failure_reason": (
+                failure_reason if failure_reason in _DRAFT_FAILURE_REASON_VALUES else None
+            ),
+            "retryable": retryable if isinstance(retryable, bool) else None,
+            "correlation_id": _normalize_string(correlation_id, max_length=120),
+            "duration_ms": max(0, int(duration_ms)) if duration_ms is not None else None,
+            "error_type": _normalize_string(error_type, max_length=60),
+        }
+        level = logging.INFO if normalized_status not in {"failed", "error"} else logging.WARNING
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message=_DRAFT_PROVIDER_LOG_EVENT,
+            level=level,
+        )
+
+    def _log_draft_contract_evaluation(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace_id: str,
+        draft_run_id: str,
+        provider_name: str,
+        model_name: str,
+        evaluation: AIResponseContractEvaluation,
+    ) -> None:
+        payload: dict[str, object] = {
+            "event": _DRAFT_CONTRACT_EVALUATION_LOG_EVENT,
+            "timestamp": utc_now().isoformat(),
+            "business_id": business_id,
+            "site_id": site_id,
+            "workspace_id": workspace_id,
+            "draft_run_id": draft_run_id,
+            "provider_name": _normalize_string(provider_name, max_length=64),
+            "model_name": _normalize_string(model_name, max_length=128),
+            "evaluation_status": _normalize_string(evaluation.status, max_length=40),
+            "evaluation_score": max(0, int(evaluation.score)),
+            "reason_codes": list(evaluation.reasons),
+            "warning_codes": list(evaluation.warnings),
+            "valid_item_count": max(0, int(evaluation.valid_item_count)),
+            "dropped_item_count": max(0, int(evaluation.dropped_item_count)),
+            "required_fields_present": bool(evaluation.required_fields_present),
+            "retryable": evaluation.retryable if isinstance(evaluation.retryable, bool) else None,
+        }
+        level = logging.INFO if evaluation.status != "rejected" else logging.WARNING
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message=_DRAFT_CONTRACT_EVALUATION_LOG_EVENT,
+            level=level,
+        )
+
+    @staticmethod
+    def _draft_contract_warnings(*, evaluation: AIResponseContractEvaluation) -> list[str]:
+        warnings: list[str] = []
+        if evaluation.status == "accepted_with_warnings":
+            warnings.append("response_contract_status=accepted_with_warnings")
+        elif evaluation.status == "salvaged":
+            warnings.append("response_contract_status=salvaged")
+        if evaluation.warnings:
+            warnings.append(
+                "response_contract_warning_codes=" + ",".join(sorted(evaluation.warnings))
+            )
+        if evaluation.dropped_item_count > 0:
+            warnings.append(
+                f"response_contract_dropped_item_count={max(0, int(evaluation.dropped_item_count))}"
+            )
+        return warnings
+
+    @staticmethod
+    def _draft_contract_rejection_message(*, evaluation: AIResponseContractEvaluation) -> str:
+        primary_reason = evaluation.reasons[0] if evaluation.reasons else "validation_failed"
+        reason_to_message = {
+            "empty_artifact_package": "Migration draft output was empty and could not be used.",
+            "missing_required_artifact_files": "Migration draft output did not include required static files.",
+            "invalid_artifact_structure": "Migration draft output did not match required static artifact structure.",
+            "insufficient_content_density": "Migration draft output was too thin to proceed safely.",
+            "validation_failed": "Migration draft output did not satisfy quality contract requirements.",
+        }
+        return reason_to_message.get(
+            primary_reason,
+            "Migration draft output did not satisfy quality contract requirements.",
+        )
 
     @staticmethod
     def _emit_structured_service_log(
@@ -2263,19 +3010,89 @@ def _coerce_bool(value: object, *, default: bool) -> bool:
 
 
 def _try_parse_json_payload(raw_output: str) -> dict[str, object] | None:
-    try:
-        parsed = json.loads(raw_output)
-    except json.JSONDecodeError:
-        fenced_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_output, re.IGNORECASE)
-        if fenced_match is None:
-            return None
-        try:
-            parsed = json.loads(fenced_match.group(1))
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(parsed, dict):
+    normalized = raw_output.strip()
+    if not normalized:
         return None
-    return parsed
+    parsed = _try_parse_json_value(normalized)
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, list):
+        return {"generated_files": parsed}
+
+    fenced_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", normalized, re.IGNORECASE)
+    if fenced_match is not None:
+        fenced = fenced_match.group(1).strip()
+        parsed_fenced = _try_parse_json_value(fenced)
+        if isinstance(parsed_fenced, dict):
+            return parsed_fenced
+        if isinstance(parsed_fenced, list):
+            return {"generated_files": parsed_fenced}
+
+    fragment, _ = _extract_first_json_fragment(normalized)
+    if fragment is None:
+        return None
+    parsed_fragment = _try_parse_json_value(fragment)
+    if isinstance(parsed_fragment, dict):
+        return parsed_fragment
+    if isinstance(parsed_fragment, list):
+        return {"generated_files": parsed_fragment}
+    return None
+
+
+def _try_parse_json_value(raw_text: str) -> object | None:
+    try:
+        return json.loads(raw_text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _extract_first_json_fragment(raw_text: str) -> tuple[str | None, bool]:
+    candidates = [index for index, ch in enumerate(raw_text) if ch in "{["][:32]
+    partial = False
+    for start_index in candidates:
+        extracted, is_partial = _scan_balanced_json_fragment(raw_text, start_index=start_index)
+        if extracted is not None:
+            return extracted, False
+        if is_partial:
+            partial = True
+    return None, partial
+
+
+def _scan_balanced_json_fragment(raw_text: str, *, start_index: int) -> tuple[str | None, bool]:
+    if start_index < 0 or start_index >= len(raw_text):
+        return None, False
+    opening = raw_text[start_index]
+    if opening not in "{[":
+        return None, False
+    closing_for_opening = {"{": "}", "[": "]"}
+    stack: list[str] = [closing_for_opening[opening]]
+    in_string = False
+    escaped = False
+    for index in range(start_index + 1, len(raw_text)):
+        char = raw_text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char in "{[":
+            stack.append(closing_for_opening[char])
+            continue
+        if char in "}]":
+            if not stack or char != stack[-1]:
+                return None, False
+            stack.pop()
+            if not stack:
+                return raw_text[start_index : index + 1], False
+    return None, bool(stack)
 
 
 def _normalize_string(value: object, *, max_length: int) -> str | None:

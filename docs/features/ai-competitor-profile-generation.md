@@ -141,6 +141,37 @@ Bounded exclusion telemetry is persisted at run level for tuning:
    - highest `relevance_score`,
    - then stable lexical tie-breakers.
 
+### Post-Parse Response Contract Evaluation
+Before run success persistence, parsed candidate output passes a deterministic response-contract evaluator.
+
+Evaluation statuses:
+- `accepted`
+- `accepted_with_warnings`
+- `salvaged`
+- `rejected`
+
+Representative competitor reason/warning codes:
+- `empty_candidate_list`
+- `missing_required_fields`
+- `invalid_domain_shape`
+- `confidence_invalid`
+- `low_usable_count`
+- `duplicate_heavy_output`
+- `weak_reasoning_density`
+
+Behavior:
+- only `accepted`, `accepted_with_warnings`, and `salvaged` outputs can complete as successful runs
+- `rejected` parseable outputs are treated as safe failed runs (no misleading success persistence)
+- evaluation summary is logged as structured event (`event=competitor_response_contract_evaluation`) and stored in bounded run debug payload metadata
+- raw prompts, secrets, and full provider payloads are not logged to operator-facing surfaces
+
+Operator-facing contract summary:
+- run detail responses expose `response_contract_summary` with:
+  - `status` (`accepted` | `accepted_with_warnings` | `salvaged` | `rejected`)
+  - `summary` (short safe explanation)
+  - `retryable` (whether rerun is likely useful)
+- raw `reason_codes`, `warning_codes`, scoring, and full diagnostics remain internal/log-level only.
+
 ### Observability flow
 1. Run summary:
    - Service aggregates bounded-window status/failure/retry metrics.

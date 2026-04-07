@@ -876,6 +876,14 @@ export interface CompetitorRunOutcomeSummary {
   used_google_places_seeds: boolean;
 }
 
+export type AIResponseContractStatus = "accepted" | "accepted_with_warnings" | "salvaged" | "rejected";
+
+export interface OperatorResponseContractSummary {
+  status: AIResponseContractStatus;
+  summary: string;
+  retryable: boolean;
+}
+
 export interface CompetitorProfileGenerationRunDetailResponse {
   run: CompetitorProfileGenerationRun;
   drafts: CompetitorProfileDraft[];
@@ -887,6 +895,7 @@ export interface CompetitorProfileGenerationRunDetailResponse {
   tuning_rejection_reason_counts?: Partial<Record<CompetitorCandidateTuningExclusionReason, number>>;
   candidate_pipeline_summary?: CompetitorCandidatePipelineSummary | null;
   outcome_summary?: CompetitorRunOutcomeSummary | null;
+  response_contract_summary?: OperatorResponseContractSummary | null;
   provider_attempt_count?: number;
   provider_degraded_retry_used?: boolean;
   provider_attempts?: CompetitorProviderAttemptDebug[];
@@ -1154,6 +1163,7 @@ export interface RecommendationNarrative {
   narrative_text: string | null;
   top_themes_json: string[];
   sections_json: Record<string, unknown> | null;
+  response_contract_summary?: OperatorResponseContractSummary | null;
   provider_name: string;
   model_name: string;
   prompt_version: string;

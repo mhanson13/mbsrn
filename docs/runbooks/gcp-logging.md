@@ -37,3 +37,21 @@ If expected logs are missing:
 ## Guardrail
 
 Time constraints must be operator-visible. Hidden timestamp filtering should never be added.
+
+## AI Response-Contract Event Queries
+
+For post-provider quality-gate troubleshooting, query these structured events:
+
+- Migration draft artifacts:
+  - `jsonPayload.event="seo_migration_draft_contract_evaluation"`
+- Competitor generation:
+  - `jsonPayload.event="competitor_response_contract_evaluation"`
+- Recommendation narratives:
+  - `jsonPayload.event="seo_recommendation_response_contract_evaluation"`
+
+Useful fields:
+- `evaluation_status` (`accepted`, `accepted_with_warnings`, `salvaged`, `rejected`)
+- `evaluation_score`
+- `reason_codes`
+- `warning_codes`
+- scoped identifiers (`business_id`, `site_id`, run/workspace ids)

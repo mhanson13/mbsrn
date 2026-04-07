@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import logging
+import re
 import socket
 import urllib.error
 import urllib.request
@@ -219,15 +220,28 @@ class OpenAISEORecommendationNarrativeProvider:
             code=_PROVIDER_ERROR_INVALID_OUTPUT,
             safe_message="Recommendation narrative returned malformed output.",
             raw_output=assistant_content,
+            allow_recovery=True,
         )
         try:
             parsed = _OpenAIRecommendationNarrativeResponse.model_validate(structured_json)
         except ValidationError as exc:
-            raise self._provider_error(
-                code=_PROVIDER_ERROR_SCHEMA_VALIDATION,
-                safe_message="Recommendation narrative returned invalid structured output.",
-                raw_output=assistant_content,
-            ) from exc
+            salvaged = self._salvage_narrative_response(structured_json)
+            if salvaged is None:
+                raise self._provider_error(
+                    code=_PROVIDER_ERROR_SCHEMA_VALIDATION,
+                    safe_message="Recommendation narrative returned invalid structured output.",
+                    raw_output=assistant_content,
+                ) from exc
+            logger.info(
+                (
+                    "Recommendation narrative provider output partially salvaged "
+                    "provider_name=%s model_name=%s parsed_sections=%s"
+                ),
+                self.provider_name,
+                self.model_name,
+                "yes" if salvaged.sections is not None else "no",
+            )
+            parsed = salvaged
 
         model_name = _clean_optional_value(response_json.get("model")) or self.model_name
         allowed_ids = {_clean_optional_value(getattr(item, "id", None)) for item in recommendations}
@@ -403,15 +417,18 @@ class OpenAISEORecommendationNarrativeProvider:
         code: str,
         safe_message: str,
         raw_output: str | None = None,
+        allow_recovery: bool = False,
     ) -> dict[str, object]:
-        try:
-            parsed = json.loads(raw_json)
-        except json.JSONDecodeError as exc:
+        parsed = self._try_parse_json_value(raw_json)
+        if parsed is None and allow_recovery:
+            recovered = self._recover_json_object(raw_json)
+            parsed = recovered
+        if parsed is None:
             raise self._provider_error(
                 code=code,
                 safe_message=safe_message,
                 raw_output=raw_output or raw_json,
-            ) from exc
+            )
         if not isinstance(parsed, dict):
             raise self._provider_error(
                 code=code,
@@ -419,6 +436,163 @@ class OpenAISEORecommendationNarrativeProvider:
                 raw_output=raw_output or raw_json,
             )
         return parsed
+
+    def _try_parse_json_value(self, raw_text: str) -> object | None:
+        try:
+            return json.loads(raw_text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _recover_json_object(self, raw_text: str) -> dict[str, object] | None:
+        normalized = raw_text.strip()
+        if not normalized:
+            return None
+        fenced = self._extract_markdown_fenced_json(normalized)
+        if fenced is not None:
+            parsed = self._try_parse_json_value(fenced)
+            if isinstance(parsed, dict):
+                return parsed
+        fragment, _ = self._extract_first_json_fragment(normalized)
+        if fragment is None:
+            return None
+        parsed_fragment = self._try_parse_json_value(fragment)
+        if isinstance(parsed_fragment, dict):
+            return parsed_fragment
+        return None
+
+    def _extract_markdown_fenced_json(self, raw_text: str) -> str | None:
+        matches = re.findall(r"```(?:json)?\s*(.*?)```", raw_text, flags=re.IGNORECASE | re.DOTALL)
+        if not matches:
+            return None
+        return matches[0].strip()
+
+    def _extract_first_json_fragment(self, raw_text: str) -> tuple[str | None, bool]:
+        candidates = [index for index, ch in enumerate(raw_text) if ch in "{["][:32]
+        partial = False
+        for start_index in candidates:
+            extracted, is_partial = self._scan_balanced_json_fragment(raw_text, start_index=start_index)
+            if extracted is not None:
+                return extracted, False
+            if is_partial:
+                partial = True
+        return None, partial
+
+    def _scan_balanced_json_fragment(self, raw_text: str, *, start_index: int) -> tuple[str | None, bool]:
+        if start_index < 0 or start_index >= len(raw_text):
+            return None, False
+        opening = raw_text[start_index]
+        if opening not in "{[":
+            return None, False
+        closing_for_opening = {"{": "}", "[": "]"}
+        stack: list[str] = [closing_for_opening[opening]]
+        in_string = False
+        escaped = False
+        for index in range(start_index + 1, len(raw_text)):
+            char = raw_text[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\":
+                    escaped = True
+                    continue
+                if char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+                continue
+            if char in "{[":
+                stack.append(closing_for_opening[char])
+                continue
+            if char in "}]":
+                if not stack or char != stack[-1]:
+                    return None, False
+                stack.pop()
+                if not stack:
+                    return raw_text[start_index : index + 1], False
+        return None, bool(stack)
+
+    def _salvage_narrative_response(self, payload: dict[str, object]) -> _OpenAIRecommendationNarrativeResponse | None:
+        narrative_text = _clean_optional_value(payload.get("narrative_text"))
+        if narrative_text is None:
+            narrative_text = _clean_optional_value(payload.get("narrative"))
+        if narrative_text is None:
+            return None
+
+        raw_themes = payload.get("top_themes")
+        top_themes: list[str] = []
+        if isinstance(raw_themes, list):
+            for item in raw_themes:
+                normalized = _clean_optional_value(item)
+                if normalized:
+                    top_themes.append(normalized)
+                if len(top_themes) >= _MAX_THEMES:
+                    break
+        elif raw_themes is not None:
+            normalized_theme = _clean_optional_value(raw_themes)
+            if normalized_theme:
+                top_themes.append(normalized_theme)
+
+        sections_payload = payload.get("sections")
+        normalized_sections: dict[str, object] | None = None
+        if isinstance(sections_payload, dict):
+            next_actions = self._coerce_text_list(
+                sections_payload.get("next_actions"),
+                max_items=_MAX_NEXT_ACTIONS,
+            )
+            recommendation_references = self._coerce_text_list(
+                sections_payload.get("recommendation_references"),
+                max_items=_MAX_RECOMMENDATION_REFERENCES,
+            )
+            tuning_suggestions: list[dict[str, object]] = []
+            raw_tuning = sections_payload.get("tuning_suggestions")
+            raw_tuning_count = 0
+            if isinstance(raw_tuning, list):
+                raw_tuning_count = len(raw_tuning)
+                for suggestion in raw_tuning:
+                    if not isinstance(suggestion, dict):
+                        continue
+                    try:
+                        normalized_suggestion = _OpenAIRecommendationNarrativeTuningSuggestion.model_validate(
+                            suggestion
+                        )
+                    except ValidationError:
+                        continue
+                    tuning_suggestions.append(normalized_suggestion.model_dump(mode="json"))
+                    if len(tuning_suggestions) >= _MAX_TUNING_SUGGESTIONS:
+                        break
+            if raw_tuning_count > 0 and not tuning_suggestions:
+                return None
+            normalized_sections = {
+                "summary": _clean_optional_value(sections_payload.get("summary")),
+                "priority_rationale": _clean_optional_value(sections_payload.get("priority_rationale")),
+                "next_actions": next_actions,
+                "recommendation_references": recommendation_references,
+                "tuning_suggestions": tuning_suggestions,
+            }
+        normalized_payload: dict[str, object] = {
+            "narrative_text": narrative_text,
+            "top_themes": top_themes,
+            "sections": normalized_sections,
+        }
+        try:
+            return _OpenAIRecommendationNarrativeResponse.model_validate(normalized_payload)
+        except ValidationError:
+            return None
+
+    def _coerce_text_list(self, value: object, *, max_items: int) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[str] = []
+        for item in value:
+            text = _clean_optional_value(item)
+            if text is None:
+                continue
+            normalized.append(text)
+            if len(normalized) >= max_items:
+                break
+        return normalized
 
     def _normalize_narrative_text(self, value: str) -> str:
         normalized = _clean_optional_value(value) or "No narrative text returned."

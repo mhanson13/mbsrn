@@ -98,6 +98,7 @@ import type {
   RecommendationRun,
   RecommendationTuningSuggestion,
   RecommendationWorkspaceSummaryResponse,
+  OperatorResponseContractSummary,
   SearchConsoleSiteSummaryResponse,
   SiteAnalyticsSummaryResponse,
   SEOAuditRun,
@@ -809,6 +810,52 @@ function competitorOutcomeHintClass(level: CompetitorRunOutcomeSummary["status_l
     return "hint warning";
   }
   return "hint muted";
+}
+
+function normalizeOperatorResponseContractSummary(value: unknown): OperatorResponseContractSummary | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  const status = typeof candidate.status === "string" ? candidate.status.trim().toLowerCase() : "";
+  if (status !== "accepted" && status !== "accepted_with_warnings" && status !== "salvaged" && status !== "rejected") {
+    return null;
+  }
+  const summary = typeof candidate.summary === "string" ? candidate.summary.trim() : "";
+  if (!summary) {
+    return null;
+  }
+  return {
+    status,
+    summary,
+    retryable: typeof candidate.retryable === "boolean" ? candidate.retryable : false,
+  };
+}
+
+function responseContractSummaryHintClass(summary: OperatorResponseContractSummary | null): string {
+  if (!summary) {
+    return "hint muted";
+  }
+  if (summary.status === "rejected") {
+    return "hint error";
+  }
+  if (summary.status === "accepted_with_warnings" || summary.status === "salvaged") {
+    return "hint warning";
+  }
+  return "hint muted";
+}
+
+function formatResponseContractStatus(status: OperatorResponseContractSummary["status"]): string {
+  if (status === "accepted_with_warnings") {
+    return "Accepted with warnings";
+  }
+  if (status === "salvaged") {
+    return "Salvaged";
+  }
+  if (status === "rejected") {
+    return "Rejected";
+  }
+  return "Accepted";
 }
 
 function formatCompetitorDraftProvenanceLabel(
@@ -4745,6 +4792,8 @@ export default function SiteWorkspacePage() {
   const [competitorCandidatePipelineSummary, setCompetitorCandidatePipelineSummary] =
     useState<CompetitorCandidatePipelineSummary | null>(null);
   const [competitorOutcomeSummary, setCompetitorOutcomeSummary] = useState<CompetitorRunOutcomeSummary | null>(null);
+  const [competitorResponseContractSummary, setCompetitorResponseContractSummary] =
+    useState<OperatorResponseContractSummary | null>(null);
   const [competitorProfileLoading, setCompetitorProfileLoading] = useState(false);
   const [competitorProfileError, setCompetitorProfileError] = useState<string | null>(null);
   const [competitorProfileSummaryError, setCompetitorProfileSummaryError] = useState<string | null>(null);
@@ -5355,6 +5404,10 @@ export default function SiteWorkspacePage() {
 
   const narrativeSignalSummary = useMemo(
     () => normalizeNarrativeSignalSummary(latestCompletedRecommendationNarrative),
+    [latestCompletedRecommendationNarrative],
+  );
+  const narrativeResponseContractSummary = useMemo(
+    () => normalizeOperatorResponseContractSummary(latestCompletedRecommendationNarrative?.response_contract_summary),
     [latestCompletedRecommendationNarrative],
   );
 
@@ -6148,6 +6201,9 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
       setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
       setCompetitorOutcomeSummary(detail.outcome_summary || null);
+      setCompetitorResponseContractSummary(
+        normalizeOperatorResponseContractSummary(detail.response_contract_summary),
+      );
       const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
       setCompetitorProfileActionMessage(
         terminalMessage ||
@@ -6209,6 +6265,9 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
       setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
       setCompetitorOutcomeSummary(detail.outcome_summary || null);
+      setCompetitorResponseContractSummary(
+        normalizeOperatorResponseContractSummary(detail.response_contract_summary),
+      );
       const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
       setCompetitorProfileActionMessage(
         terminalMessage ||
@@ -6641,6 +6700,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderDegradedRetryUsed(false);
       setCompetitorProviderAttempts([]);
       setCompetitorOutcomeSummary(null);
+      setCompetitorResponseContractSummary(null);
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
       setCompetitorProfileSummaryError(null);
@@ -6719,6 +6779,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderDegradedRetryUsed(false);
       setCompetitorProviderAttempts([]);
       setCompetitorOutcomeSummary(null);
+      setCompetitorResponseContractSummary(null);
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
       setCompetitorProfileSummaryError(null);
@@ -6800,6 +6861,7 @@ export default function SiteWorkspacePage() {
       setCompetitorProviderDegradedRetryUsed(false);
       setCompetitorProviderAttempts([]);
       setCompetitorOutcomeSummary(null);
+      setCompetitorResponseContractSummary(null);
 
       const [
         auditResult,
@@ -7134,6 +7196,9 @@ export default function SiteWorkspacePage() {
             setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
             setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
             setCompetitorOutcomeSummary(detail.outcome_summary || null);
+            setCompetitorResponseContractSummary(
+              normalizeOperatorResponseContractSummary(detail.response_contract_summary),
+            );
             setCompetitorProfileError(null);
           } catch (error) {
             if (cancelled) {
@@ -7151,6 +7216,7 @@ export default function SiteWorkspacePage() {
             setCompetitorProviderDegradedRetryUsed(false);
             setCompetitorProviderAttempts([]);
             setCompetitorOutcomeSummary(null);
+            setCompetitorResponseContractSummary(null);
             setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", error));
           } finally {
             if (!cancelled) {
@@ -7170,6 +7236,7 @@ export default function SiteWorkspacePage() {
           setCompetitorProviderDegradedRetryUsed(false);
           setCompetitorProviderAttempts([]);
           setCompetitorOutcomeSummary(null);
+          setCompetitorResponseContractSummary(null);
           setCompetitorProfileLoading(false);
         }
       } else {
@@ -7188,6 +7255,7 @@ export default function SiteWorkspacePage() {
         setCompetitorProviderDegradedRetryUsed(false);
         setCompetitorProviderAttempts([]);
         setCompetitorOutcomeSummary(null);
+        setCompetitorResponseContractSummary(null);
         setCompetitorProfileLoading(false);
         setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", competitorProfileRunsResult.reason));
       }
@@ -7313,6 +7381,9 @@ export default function SiteWorkspacePage() {
         setCompetitorProviderDegradedRetryUsed(Boolean(detail.provider_degraded_retry_used));
         setCompetitorProviderAttempts(normalizeCompetitorProviderAttempts(detail.provider_attempts));
         setCompetitorOutcomeSummary(detail.outcome_summary || null);
+        setCompetitorResponseContractSummary(
+          normalizeOperatorResponseContractSummary(detail.response_contract_summary),
+        );
         setCompetitorProfileError(null);
         if (isCompetitorProfileRunTerminalStatus(detail.run.status)) {
           const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
@@ -7338,6 +7409,7 @@ export default function SiteWorkspacePage() {
         setCompetitorProviderDegradedRetryUsed(false);
         setCompetitorProviderAttempts([]);
         setCompetitorOutcomeSummary(null);
+        setCompetitorResponseContractSummary(null);
         setCompetitorProfilePolling(false);
         setCompetitorProfilePollingTargetRunId(null);
       } finally {
@@ -9181,6 +9253,20 @@ export default function SiteWorkspacePage() {
                 <strong>Outcome:</strong> {formatCompetitorOutcomeStatusLevel(competitorOutcomeSummary.status_level)}
                 {competitorOutcomeSummary.used_synthetic_fallback ? " (synthetic fallback)" : ""}.{" "}
                 {competitorOutcomeSummary.message}
+              </p>
+            ) : null}
+            {competitorResponseContractSummary ? (
+              <p
+                className={responseContractSummaryHintClass(competitorResponseContractSummary)}
+                data-testid="competitor-response-contract-summary"
+              >
+                <strong>Quality gate:</strong> {formatResponseContractStatus(competitorResponseContractSummary.status)}.{" "}
+                {competitorResponseContractSummary.status !== "accepted" &&
+                (competitorResponseContractSummary.status === "accepted_with_warnings" ||
+                  competitorResponseContractSummary.status === "salvaged")
+                  ? "Results refined for quality. "
+                  : ""}
+                {competitorResponseContractSummary.summary}
               </p>
             ) : null}
             {competitorOutcomeSummary?.used_timeout_recovery ? (
@@ -11399,6 +11485,19 @@ export default function SiteWorkspacePage() {
                     Open latest narrative
                   </Link>
                 </p>
+                {narrativeResponseContractSummary ? (
+                  <p
+                    className={responseContractSummaryHintClass(narrativeResponseContractSummary)}
+                    data-testid="recommendation-response-contract-summary"
+                  >
+                    <strong>Quality gate:</strong> {formatResponseContractStatus(narrativeResponseContractSummary.status)}.{" "}
+                    {narrativeResponseContractSummary.summary}
+                    {narrativeResponseContractSummary.retryable &&
+                    narrativeResponseContractSummary.status !== "accepted"
+                      ? " This looks retryable."
+                      : ""}
+                  </p>
+                ) : null}
                 {narrativeActionSummary ? (
                   <div className="panel panel-compact stack" data-testid="narrative-action-summary">
                     <span className="hint muted">Next best move</span>

@@ -54,6 +54,21 @@ def _to_artifact_read(artifact) -> SEOMigrationArtifactVersionRead:  # noqa: ANN
     return SEOMigrationArtifactVersionRead.model_validate(artifact)
 
 
+def _validation_error_detail(exc: SEOMigrationValidationError) -> str | dict[str, object]:
+    detail = exc.to_error_detail()
+    if (
+        isinstance(detail, dict)
+        and (
+            detail.get("failure_category")
+            or detail.get("failure_reason")
+            or detail.get("error_code")
+            or detail.get("retryable") is not None
+        )
+    ):
+        return detail
+    return str(exc)
+
+
 @router.put("/sites/{site_id}/migration/workspace", response_model=SEOMigrationWorkspaceRead)
 def upsert_seo_migration_workspace(
     business_id: str,
@@ -364,7 +379,10 @@ def generate_seo_migration_draft_artifacts(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOMigrationValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=_validation_error_detail(exc),
+        ) from exc
     return _to_artifact_read(artifact)
 
 

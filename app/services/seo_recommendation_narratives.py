@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import timedelta
+import json
 import logging
 from uuid import uuid4
 
@@ -21,6 +22,11 @@ from app.repositories.seo_competitor_profile_generation_repository import (
 )
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
+from app.services.ai_response_contract_evaluator import (
+    AIResponseContractEvaluation,
+    evaluate_recommendation_narrative_response,
+    summarize_recommendation_response_contract,
+)
 from app.services.competitors.normalizer import normalize_competitor_response
 from app.services.ai_prompt_settings import ResolvedAIPromptText, resolve_ai_prompt_text
 from app.services.seo_competitor_profile_candidate_quality import (
@@ -66,6 +72,7 @@ _COMPETITOR_INFLUENCE_SUMMARY_MAX_CHARS = 260
 _NARRATIVE_NEXT_ACTIONS_LIMIT = 10
 _NARRATIVE_NEXT_ACTION_MAX_LENGTH = 220
 _NARRATIVE_RECOMMENDATION_REFERENCE_LIMIT = 25
+_RECOMMENDATION_RESPONSE_CONTRACT_EVENT = "seo_recommendation_response_contract_evaluation"
 SEO_RECOMMENDATION_PROMPT_LABEL = "resolved recommendation prompt"
 _TUNING_SETTINGS_BOUNDS: dict[str, tuple[int, int]] = {
     "competitor_candidate_min_relevance_score": (MIN_RELEVANCE_SCORE_MIN, MIN_RELEVANCE_SCORE_MAX),
@@ -205,9 +212,37 @@ class SEORecommendationNarrativeService:
                 next_action_max_length=_NARRATIVE_NEXT_ACTION_MAX_LENGTH,
                 recommendation_reference_limit=_NARRATIVE_RECOMMENDATION_REFERENCE_LIMIT,
             )
+            response_contract_evaluation = evaluate_recommendation_narrative_response(
+                narrative_text=output.narrative_text,
+                top_themes=list(output.top_themes),
+                raw_sections=output.sections if isinstance(output.sections, dict) else None,
+                normalized_sections=normalized_sections,
+                expected_recommendation_count=len(recommendations),
+            )
+            self._log_response_contract_evaluation(
+                business_id=business_id,
+                site_id=site_id,
+                recommendation_run_id=recommendation_run_id,
+                provider_name=output.provider_name,
+                model_name=output.model_name,
+                evaluation=response_contract_evaluation,
+            )
+            if response_contract_evaluation.status == "rejected":
+                raise SEORecommendationNarrativeProviderError(
+                    code="schema_validation",
+                    safe_message=self._response_contract_rejection_message(response_contract_evaluation),
+                    provider_name=output.provider_name,
+                    model_name=output.model_name,
+                    prompt_version=output.prompt_version,
+                    raw_output=None,
+                )
             sections_json = self._augment_sections_with_competitor_influence(
                 sections=normalized_sections,
                 competitor_context=competitor_context,
+            )
+            sections_json = self._augment_sections_with_response_contract(
+                sections=sections_json,
+                evaluation=response_contract_evaluation,
             )
             narrative = SEORecommendationNarrative(
                 id=str(uuid4()),
@@ -249,7 +284,7 @@ class SEORecommendationNarrativeService:
                 status="failed",
                 narrative_text=None,
                 top_themes_json=[],
-                sections_json=None,
+                sections_json=self._failure_sections_payload_from_provider_error(exc),
                 provider_name=exc.provider_name,
                 model_name=exc.model_name,
                 prompt_version=exc.prompt_version,
@@ -568,6 +603,102 @@ class SEORecommendationNarrativeService:
             or SEO_RECOMMENDATION_NARRATIVE_PROMPT_VERSION
         )
         return provider_name, model_name, prompt_version
+
+    def _log_response_contract_evaluation(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        recommendation_run_id: str,
+        provider_name: str,
+        model_name: str,
+        evaluation: AIResponseContractEvaluation,
+    ) -> None:
+        payload: dict[str, object] = {
+            "event": _RECOMMENDATION_RESPONSE_CONTRACT_EVENT,
+            "business_id": business_id,
+            "site_id": site_id,
+            "recommendation_run_id": recommendation_run_id,
+            "provider_name": str(provider_name or "").strip() or None,
+            "model_name": str(model_name or "").strip() or None,
+            "evaluation_status": evaluation.status,
+            "evaluation_score": max(0, int(evaluation.score)),
+            "reason_codes": list(evaluation.reasons),
+            "warning_codes": list(evaluation.warnings),
+            "valid_item_count": max(0, int(evaluation.valid_item_count)),
+            "dropped_item_count": max(0, int(evaluation.dropped_item_count)),
+            "required_fields_present": bool(evaluation.required_fields_present),
+            "retryable": evaluation.retryable if isinstance(evaluation.retryable, bool) else None,
+        }
+        level = logging.WARNING if evaluation.status == "rejected" else logging.INFO
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message=_RECOMMENDATION_RESPONSE_CONTRACT_EVENT,
+            level=level,
+        )
+
+    @staticmethod
+    def _response_contract_rejection_message(evaluation: AIResponseContractEvaluation) -> str:
+        primary_reason = evaluation.reasons[0] if evaluation.reasons else "validation_failed"
+        reason_to_message = {
+            "empty_recommendations": "Recommendation narrative output was empty and could not be used.",
+            "insufficient_operator_guidance": "Recommendation narrative output did not include actionable operator guidance.",
+            "generic_content_heavy": "Recommendation narrative output was too generic to use safely.",
+        }
+        return reason_to_message.get(
+            primary_reason,
+            "Recommendation narrative output did not satisfy quality contract requirements.",
+        )
+
+    @staticmethod
+    def _augment_sections_with_response_contract(
+        *,
+        sections: dict[str, object] | None,
+        evaluation: AIResponseContractEvaluation,
+    ) -> dict[str, object]:
+        merged = dict(sections or {})
+        operator_summary = summarize_recommendation_response_contract(evaluation=evaluation)
+        if operator_summary is not None:
+            merged["response_contract"] = operator_summary.to_dict()
+        else:
+            merged["response_contract"] = {
+                "status": evaluation.status,
+                "summary": "Recommendation narrative quality checks completed.",
+                "retryable": False,
+            }
+        return merged
+
+    def _failure_sections_payload_from_provider_error(
+        self,
+        error: SEORecommendationNarrativeProviderError,
+    ) -> dict[str, object]:
+        code = str(error.code or "").strip() or "provider_request"
+        failure_category = {
+            "provider_auth_config": "config_missing",
+            "timeout": "provider_error",
+            "provider_request": "provider_error",
+            "invalid_output": "malformed_output",
+            "schema_validation": "validation_failed",
+            "parsing_error": "malformed_output",
+        }.get(code, "provider_error")
+        return {
+            "failure_category": failure_category,
+            "failure_reason": code,
+            "retryable": code not in {"provider_auth_config"},
+        }
+
+    @staticmethod
+    def _emit_structured_service_log(
+        *,
+        payload: dict[str, object],
+        fallback_message: str,
+        level: int = logging.INFO,
+    ) -> None:
+        try:
+            message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+        except (TypeError, ValueError):
+            message = fallback_message
+        logger.log(level, message, extra={"json_fields": payload})
 
     def _provider_prompt_text_recommendations(self) -> str:
         # Resolver fallback must use the immutable configured baseline captured in
