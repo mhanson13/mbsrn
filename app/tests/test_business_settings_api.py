@@ -90,6 +90,7 @@ def test_get_business_settings_endpoint(db_session, seeded_business) -> None:
     assert payload["competitor_candidate_local_alignment_bonus"] == 10
     assert payload["competitor_primary_timeout_seconds"] is None
     assert payload["competitor_degraded_timeout_seconds"] is None
+    assert payload["migration_draft_timeout_seconds"] is None
     assert payload["ai_prompt_text_competitor"] is None
     assert payload["ai_prompt_text_recommendations"] is None
     assert payload["default_ai_model"] is None
@@ -110,6 +111,7 @@ def test_patch_business_settings_valid_partial_update_succeeds(db_session, seede
             "competitor_candidate_local_alignment_bonus": 14,
             "competitor_primary_timeout_seconds": 45,
             "competitor_degraded_timeout_seconds": 25,
+            "migration_draft_timeout_seconds": 180,
         },
     )
 
@@ -124,6 +126,7 @@ def test_patch_business_settings_valid_partial_update_succeeds(db_session, seede
     assert payload["competitor_candidate_local_alignment_bonus"] == 14
     assert payload["competitor_primary_timeout_seconds"] == 45
     assert payload["competitor_degraded_timeout_seconds"] == 25
+    assert payload["migration_draft_timeout_seconds"] == 180
     assert payload["sms_enabled"] is True
 
 
@@ -177,6 +180,30 @@ def test_patch_business_settings_accepts_and_clears_default_ai_model(db_session,
     assert clear_response.status_code == 200
     clear_payload = clear_response.json()
     assert clear_payload["default_ai_model"] is None
+
+
+def test_patch_business_settings_accepts_and_clears_migration_draft_timeout_seconds(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    save_response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "migration_draft_timeout_seconds": 180,
+        },
+    )
+    assert save_response.status_code == 200
+    save_payload = save_response.json()
+    assert save_payload["migration_draft_timeout_seconds"] == 180
+
+    clear_response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "migration_draft_timeout_seconds": None,
+        },
+    )
+    assert clear_response.status_code == 200
+    clear_payload = clear_response.json()
+    assert clear_payload["migration_draft_timeout_seconds"] is None
 
 
 def test_patch_business_settings_normalizes_email_and_phone(db_session, seeded_business) -> None:
@@ -524,6 +551,18 @@ def test_patch_business_settings_can_clear_competitor_timeout_values(db_session,
     payload = response.json()
     assert payload["competitor_primary_timeout_seconds"] is None
     assert payload["competitor_degraded_timeout_seconds"] is None
+
+
+def test_patch_business_settings_rejects_migration_draft_timeout_out_of_range(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={"migration_draft_timeout_seconds": 901},
+    )
+
+    assert response.status_code == 422
+    assert _detail_contains_field(response.json()["detail"], "migration_draft_timeout_seconds")
 
 
 def test_patch_business_settings_links_matching_tuning_preview_event(db_session, seeded_business) -> None:

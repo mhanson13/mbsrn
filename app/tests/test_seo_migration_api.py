@@ -606,6 +606,8 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "model_used" in ai_execution
     assert "endpoint_path" in ai_execution
     assert "request_body_mode" in ai_execution
+    assert "timeout_seconds" in ai_execution
+    assert "timeout_source" in ai_execution
     draft_generation_state = payload.get("context_summary", {}).get("draft_generation_state")
     assert isinstance(draft_generation_state, dict)
     assert draft_generation_state.get("status") in {
@@ -631,6 +633,10 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_draft_failure_model_requested" in migration_diagnostics
     assert "last_draft_failure_model_resolved" in migration_diagnostics
     assert "last_draft_failure_model_used" in migration_diagnostics
+    assert "last_draft_failure_timeout_seconds" in migration_diagnostics
+    assert "last_draft_failure_timeout_source" in migration_diagnostics
+    assert "draft_timeout_seconds" in migration_diagnostics
+    assert "draft_timeout_source" in migration_diagnostics
     assert "draft_provider_compatibility_supported" in migration_diagnostics
     assert "draft_provider_compatibility_reason_code" in migration_diagnostics
     assert "draft_provider_compatibility_message" in migration_diagnostics
@@ -904,7 +910,7 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert generate_response.status_code == 422
     detail = generate_response.json().get("detail") or {}
     assert detail.get("message") == "Migration draft generation timed out while calling the AI provider."
-    assert detail.get("failure_category") == "provider_error"
+    assert detail.get("failure_category") == "config_missing"
     assert detail.get("failure_reason") == "timeout"
     assert detail.get("error_code") == "timeout"
     assert detail.get("retryable") is True
@@ -914,6 +920,8 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert detail.get("provider_name") == "openai"
     assert detail.get("model_name") == "gpt-4o-mini"
     assert detail.get("prompt_version") == "seo-migration-v1"
+    assert detail.get("timeout_seconds") == 120
+    assert detail.get("timeout_source") == "default"
 
     versions_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions")
     assert versions_response.status_code == 200
@@ -926,7 +934,7 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert summary_response.status_code == 200
     diagnostics = summary_response.json().get("context_summary", {}).get("migration_diagnostics") or {}
     assert diagnostics.get("last_draft_generation_status") == "failed"
-    assert diagnostics.get("last_draft_failure_category") == "provider_error"
+    assert diagnostics.get("last_draft_failure_category") == "config_missing"
     assert diagnostics.get("last_draft_failure_reason") == "timeout"
     assert (
         diagnostics.get("last_draft_failure_message")
@@ -939,10 +947,16 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert diagnostics.get("last_draft_failure_model_requested") is None
     assert diagnostics.get("last_draft_failure_model_resolved") == "gpt-4o-mini"
     assert diagnostics.get("last_draft_failure_model_used") == "gpt-4o-mini"
+    assert diagnostics.get("last_draft_failure_timeout_seconds") == 120
+    assert diagnostics.get("last_draft_failure_timeout_source") == "default"
+    assert diagnostics.get("draft_timeout_seconds") == 120
+    assert diagnostics.get("draft_timeout_source") == "default"
     ai_execution = summary_response.json().get("context_summary", {}).get("ai_execution") or {}
     assert ai_execution.get("model_requested") is None
     assert ai_execution.get("model_resolved") == "gpt-4o-mini"
     assert ai_execution.get("model_used") == "gpt-4o-mini"
+    assert ai_execution.get("timeout_seconds") == 120
+    assert ai_execution.get("timeout_source") == "default"
     assert "raw_output" not in ai_execution
     top_state = summary_response.json().get("context_summary", {}).get("draft_generation_state") or {}
     assert top_state.get("status") == "generation_failed"

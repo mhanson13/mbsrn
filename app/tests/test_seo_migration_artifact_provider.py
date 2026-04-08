@@ -297,6 +297,8 @@ def test_openai_migration_provider_request_logs_include_request_shape_metadata(m
     assert start.get("degraded_mode") is False
     assert start.get("response_format_mode") == "json_schema"
     assert start.get("request_body_mode") == "responses_text_format_json_schema"
+    assert start.get("timeout_seconds") == 5
+    assert start.get("timeout_source") == "default"
 
     failure = failure_events[-1]
     assert failure.get("endpoint_path") == "/responses"
@@ -306,6 +308,8 @@ def test_openai_migration_provider_request_logs_include_request_shape_metadata(m
     assert failure.get("response_format_mode") == "json_schema"
     assert failure.get("request_body_mode") == "responses_text_format_json_schema"
     assert failure.get("failure_reason") == "malformed_response"
+    assert failure.get("timeout_seconds") == 5
+    assert failure.get("timeout_source") == "default"
 
 
 def test_openai_migration_provider_parses_fenced_json_output(monkeypatch) -> None:

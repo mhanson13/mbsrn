@@ -41,6 +41,9 @@ import {
   CRAWL_PAGE_LIMIT_MIN,
   DEFAULT_COMPETITOR_TIMEOUT_SECONDS,
   DEFAULT_CRAWL_PAGE_LIMIT,
+  DEFAULT_MIGRATION_DRAFT_TIMEOUT_SECONDS,
+  MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX,
+  MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN,
   NOTIFICATION_EMAIL_REGEX,
   NOTIFICATION_PHONE_E164_REGEX,
 } from "../../lib/validation/constants";
@@ -434,6 +437,12 @@ function safePromptSettingsUpdateErrorMessage(error: unknown): string {
       return "Business settings were not found in this tenant scope.";
     }
     if (error.status === 422) {
+      if (apiErrorMessageContains(error, "migration_draft_timeout_seconds")) {
+        return (
+          "Migration draft timeout must be blank or an integer between " +
+          `${MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN} and ${MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX}.`
+        );
+      }
       return "Unable to save AI prompt overrides. Keep each prompt under 20,000 characters.";
     }
   }
@@ -633,6 +642,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [competitorPromptOverrideInput, setCompetitorPromptOverrideInput] = useState("");
   const [recommendationsPromptOverrideInput, setRecommendationsPromptOverrideInput] = useState("");
   const [defaultAiModelInput, setDefaultAiModelInput] = useState("");
+  const [migrationDraftTimeoutInput, setMigrationDraftTimeoutInput] = useState("");
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
   const [promptOverrideMessage, setPromptOverrideMessage] = useState<string | null>(null);
   const [promptOverrideError, setPromptOverrideError] = useState<string | null>(null);
@@ -796,6 +806,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         setCompetitorPromptOverrideInput(settings.ai_prompt_text_competitor || "");
         setRecommendationsPromptOverrideInput(settings.ai_prompt_text_recommendations || "");
         setDefaultAiModelInput(settings.default_ai_model || "");
+        setMigrationDraftTimeoutInput(timeoutSettingToInput(settings.migration_draft_timeout_seconds ?? null));
       } catch (err) {
         if (!cancelled) {
           setBusinessSettingsLoadError(safeBusinessSettingsErrorMessage(err));
@@ -1108,18 +1119,34 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     setCandidateQualityMessage(null);
     setCompetitorTimeoutMessage(null);
 
+    const migrationDraftTimeout = parseOptionalBoundedInteger(migrationDraftTimeoutInput, {
+      min: MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN,
+      max: MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX,
+    });
+    if (migrationDraftTimeout === "invalid") {
+      setPromptOverrideError(
+        (
+          "Migration draft timeout must be blank or an integer between " +
+          `${MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN} and ${MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX}.`
+        ),
+      );
+      return;
+    }
+
     setPromptOverrideSubmitting(true);
     try {
       const updated = await updateBusinessSettings(context.token, context.businessId, {
         ai_prompt_text_competitor: normalizePromptOverrideInput(competitorPromptOverrideInput),
         ai_prompt_text_recommendations: normalizePromptOverrideInput(recommendationsPromptOverrideInput),
         default_ai_model: normalizeDefaultModelInput(defaultAiModelInput),
+        migration_draft_timeout_seconds: migrationDraftTimeout,
       });
       setBusinessSettings(updated);
       setCompetitorPromptOverrideInput(updated.ai_prompt_text_competitor || "");
       setRecommendationsPromptOverrideInput(updated.ai_prompt_text_recommendations || "");
       setDefaultAiModelInput(updated.default_ai_model || "");
-      setPromptOverrideMessage("AI prompt/default model settings updated.");
+      setMigrationDraftTimeoutInput(timeoutSettingToInput(updated.migration_draft_timeout_seconds ?? null));
+      setPromptOverrideMessage("AI prompt/default model/timeout settings updated.");
     } catch (err) {
       setPromptOverrideError(safePromptSettingsUpdateErrorMessage(err));
     } finally {
@@ -1143,6 +1170,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       setCompetitorPromptOverrideInput(updated.ai_prompt_text_competitor || "");
       setRecommendationsPromptOverrideInput(updated.ai_prompt_text_recommendations || "");
       setDefaultAiModelInput(updated.default_ai_model || "");
+      setMigrationDraftTimeoutInput(timeoutSettingToInput(updated.migration_draft_timeout_seconds ?? null));
       setPromptOverrideMessage("AI prompt overrides cleared. Deployment fallback/default is now active.");
     } catch (err) {
       setPromptOverrideError(safePromptSettingsUpdateErrorMessage(err));
@@ -1973,6 +2001,26 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 ? "Business admin override"
                 : "Deployment/default fallback"}
             </strong>
+          </p>
+
+          <label htmlFor="migration-draft-timeout-seconds">Migration Draft Timeout (seconds)</label>
+          <input
+            id="migration-draft-timeout-seconds"
+            type="number"
+            min={MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN}
+            max={MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX}
+            step={1}
+            value={migrationDraftTimeoutInput}
+            onChange={(event) => setMigrationDraftTimeoutInput(event.target.value)}
+            disabled={businessSettingsLoading || promptOverrideSubmitting}
+            placeholder={String(DEFAULT_MIGRATION_DRAFT_TIMEOUT_SECONDS)}
+          />
+          <p className="hint muted">
+            Maximum time allowed for AI draft generation. Larger drafts may take 60-120 seconds or more.
+          </p>
+          <p className="hint muted">
+            Allowed range: {MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN}-{MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX} seconds. Leave
+            blank to use the default ({DEFAULT_MIGRATION_DRAFT_TIMEOUT_SECONDS}s).
           </p>
 
             <div className="form-actions">

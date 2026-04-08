@@ -28,6 +28,7 @@ class BusinessSettingsRead(BaseModel):
     competitor_candidate_local_alignment_bonus: int
     competitor_primary_timeout_seconds: int | None
     competitor_degraded_timeout_seconds: int | None
+    migration_draft_timeout_seconds: int | None
     ai_prompt_text_competitor: str | None
     ai_prompt_text_recommendations: str | None
     default_ai_model: str | None
@@ -50,6 +51,7 @@ class BusinessSettingsUpdateRequest(BaseModel):
     competitor_candidate_local_alignment_bonus: int | None = Field(default=None, ge=0, le=50)
     competitor_primary_timeout_seconds: int | None = Field(default=None, ge=10, le=90)
     competitor_degraded_timeout_seconds: int | None = Field(default=None, ge=10, le=90)
+    migration_draft_timeout_seconds: int | None = Field(default=None, ge=30, le=900)
     ai_prompt_text_competitor: str | None = Field(
         default=None,
         max_length=20000,

@@ -80,6 +80,21 @@ class _TrackingMigrationProvider(SEOMigrationArtifactGenerationProvider):
         return self.output
 
 
+class _TimeoutCaptureMigrationProvider(SEOMigrationArtifactGenerationProvider):
+    def __init__(self, output: SEOMigrationArtifactGenerationOutput) -> None:
+        self.output = output
+        self.timeout_seconds = 1
+        self.timeout_source = "default"
+        self.observed_timeout_seconds: int | None = None
+        self.observed_timeout_source: str | None = None
+
+    def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
+        del migration_context
+        self.observed_timeout_seconds = int(self.timeout_seconds)
+        self.observed_timeout_source = str(self.timeout_source)
+        return self.output
+
+
 class _CompatibilityTrackingMigrationProvider(SEOMigrationArtifactGenerationProvider):
     def __init__(
         self,
@@ -797,6 +812,58 @@ def test_migration_model_resolution_uses_env_default_when_business_default_missi
     assert provider.model_name == "gpt-env-default"
 
 
+def test_generate_artifacts_uses_default_migration_timeout_when_admin_setting_is_unset(db_session) -> None:
+    provider = _TimeoutCaptureMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    assert artifact.status == "completed"
+    assert provider.observed_timeout_seconds == 120
+    assert provider.observed_timeout_source == "default"
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("draft_timeout_seconds") == 120
+    assert diagnostics.get("draft_timeout_source") == "default"
+    ai_execution = (summary.context_summary or {}).get("ai_execution") or {}
+    assert ai_execution.get("timeout_seconds") == 120
+    assert ai_execution.get("timeout_source") == "default"
+
+
+def test_generate_artifacts_uses_admin_configured_migration_timeout(db_session) -> None:
+    provider = _TimeoutCaptureMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    business = db_session.get(Business, business_id)
+    assert business is not None
+    business.migration_draft_timeout_seconds = 180
+    db_session.commit()
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    assert artifact.status == "completed"
+    assert provider.observed_timeout_seconds == 180
+    assert provider.observed_timeout_source == "admin"
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("draft_timeout_seconds") == 180
+    assert diagnostics.get("draft_timeout_source") == "admin"
+    ai_execution = (summary.context_summary or {}).get("ai_execution") or {}
+    assert ai_execution.get("timeout_seconds") == 180
+    assert ai_execution.get("timeout_source") == "admin"
+
+
 def test_generate_artifacts_blocks_unsupported_shape_when_admin_default_model_is_incompatible(
     db_session,
     monkeypatch,
@@ -949,6 +1016,8 @@ def test_generate_artifacts_allows_supported_openai_gpt_5_1_shape_and_calls_prov
     assert ai_execution.get("model_used") == "gpt-5.1"
     assert ai_execution.get("endpoint_path") == "/responses"
     assert ai_execution.get("request_body_mode") == "responses_text_format_json_schema"
+    assert ai_execution.get("timeout_seconds") == 120
+    assert ai_execution.get("timeout_source") == "default"
 
 
 def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, caplog) -> None:
@@ -1006,6 +1075,8 @@ def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, ca
     assert latest.get("degraded_mode") is False
     assert latest.get("response_format_mode") == "json_schema"
     assert latest.get("request_body_mode") == "responses_text_format_json_schema"
+    assert latest.get("timeout_seconds") == 120
+    assert latest.get("timeout_source") == "default"
     assert latest.get("decision") == "allowed"
 
 
@@ -1213,11 +1284,13 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
         )
     error = exc_info.value
     assert str(error) == "Migration draft generation timed out while calling the AI provider."
-    assert error.failure_category == "provider_error"
+    assert error.failure_category == "config_missing"
     assert error.failure_reason == "timeout"
     assert error.error_code == "timeout"
     assert error.retryable is True
     assert error.correlation_id == "provider-timeout-1"
+    assert error.timeout_seconds == 120
+    assert error.timeout_source == "default"
 
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     assert workspace.migration_status == "draft_generation_failed"
@@ -1236,11 +1309,15 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
     migration_diagnostics = summary.context_summary.get("migration_diagnostics")
     assert isinstance(migration_diagnostics, dict)
     assert migration_diagnostics.get("last_draft_generation_status") == "failed"
-    assert migration_diagnostics.get("last_draft_failure_category") == "provider_error"
+    assert migration_diagnostics.get("last_draft_failure_category") == "config_missing"
     assert migration_diagnostics.get("last_draft_failure_reason") == "timeout"
     assert migration_diagnostics.get("last_draft_failure_retryable") is True
     assert migration_diagnostics.get("last_draft_failure_code") == "timeout"
     assert migration_diagnostics.get("last_draft_failure_source") == "remote_provider"
+    assert migration_diagnostics.get("last_draft_failure_timeout_seconds") == 120
+    assert migration_diagnostics.get("last_draft_failure_timeout_source") == "default"
+    assert migration_diagnostics.get("draft_timeout_seconds") == 120
+    assert migration_diagnostics.get("draft_timeout_source") == "default"
     assert migration_diagnostics.get("last_draft_failure_model_requested") is None
     assert migration_diagnostics.get("last_draft_failure_model_resolved") == "mock-seo-migration-v1"
     assert migration_diagnostics.get("last_draft_failure_model_used") == "gpt-4o-mini"
@@ -1252,6 +1329,8 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
     assert ai_execution.get("model_requested") is None
     assert ai_execution.get("model_resolved") == "mock-seo-migration-v1"
     assert ai_execution.get("model_used") == "gpt-4o-mini"
+    assert ai_execution.get("timeout_seconds") == 120
+    assert ai_execution.get("timeout_source") == "default"
     top_state = summary.context_summary.get("draft_generation_state")
     assert isinstance(top_state, dict)
     assert top_state.get("status") == "generation_failed"
@@ -1368,9 +1447,11 @@ def test_generate_artifacts_failure_emits_structured_draft_generation_logs(db_se
     )
     assert any(
         payload.get("status") == "failed"
-        and payload.get("failure_category") == "provider_error"
+        and payload.get("failure_category") == "config_missing"
         and payload.get("failure_reason") == "timeout"
         and payload.get("retryable") is True
+        and payload.get("timeout_seconds") == 120
+        and payload.get("timeout_source") == "default"
         and payload.get("artifact_version_id")
         and isinstance(payload.get("duration_ms"), int)
         for payload in payloads

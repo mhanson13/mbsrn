@@ -136,6 +136,9 @@ _DRAFT_PROVIDER_LOG_EVENT = "seo_migration_draft_generation"
 _DRAFT_CONTRACT_EVALUATION_LOG_EVENT = "seo_migration_draft_contract_evaluation"
 _MIGRATION_READINESS_LOG_EVENT = "seo_migration_readiness_evaluation"
 _DRAFT_PROVIDER_COMPATIBILITY_LOG_EVENT = "seo_migration_provider_compatibility_evaluation"
+_MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS = 120
+_MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS = 30
+_MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS = 900
 
 _DRAFT_PROVIDER_COMPAT_REASON_CODES = {
     "supported",
@@ -194,6 +197,8 @@ class SEOMigrationValidationError(ValueError):
         provider_name: str | None = None,
         model_name: str | None = None,
         prompt_version: str | None = None,
+        timeout_seconds: int | None = None,
+        timeout_source: str | None = None,
     ) -> None:
         super().__init__(message)
         self.failure_category = _normalize_string(failure_category, max_length=40)
@@ -206,6 +211,12 @@ class SEOMigrationValidationError(ValueError):
         self.provider_name = _normalize_string(provider_name, max_length=64)
         self.model_name = _normalize_string(model_name, max_length=128)
         self.prompt_version = _normalize_string(prompt_version, max_length=64)
+        self.timeout_seconds = max(1, int(timeout_seconds)) if isinstance(timeout_seconds, int) else None
+        normalized_timeout_source = _normalize_string(timeout_source, max_length=20)
+        if normalized_timeout_source in {"admin", "default"}:
+            self.timeout_source = normalized_timeout_source
+        else:
+            self.timeout_source = None
 
     def to_error_detail(self) -> dict[str, object]:
         detail: dict[str, object] = {"message": str(self)}
@@ -229,6 +240,10 @@ class SEOMigrationValidationError(ValueError):
             detail["model_name"] = self.model_name
         if self.prompt_version:
             detail["prompt_version"] = self.prompt_version
+        if self.timeout_seconds is not None:
+            detail["timeout_seconds"] = self.timeout_seconds
+        if self.timeout_source:
+            detail["timeout_source"] = self.timeout_source
         return detail
 
 
@@ -364,6 +379,8 @@ class SEOMigrationService:
         self.publish_commit_message_prefix = publish_commit_message_prefix.strip() or "[MBSRN Migration]"
         self.deploy_default_workflow_id = deploy_default_workflow_id.strip() or "deploy-www-prod.yml"
         self.deploy_default_ref = deploy_default_ref.strip() or "main"
+        self._resolved_migration_draft_timeout_seconds = _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS
+        self._resolved_migration_draft_timeout_source = "default"
 
     def create_or_update_workspace(
         self,
@@ -1238,6 +1255,12 @@ class SEOMigrationService:
         site = self._require_site(business_id=business_id, site_id=site_id)
         model_requested: str | None = None
         model_resolved = _normalize_string(self.provider_model_name, max_length=128)
+        draft_timeout_seconds = max(1, int(self._resolved_migration_draft_timeout_seconds))
+        draft_timeout_source = (
+            self._resolved_migration_draft_timeout_source
+            if self._resolved_migration_draft_timeout_source in {"admin", "default"}
+            else "default"
+        )
         context_json, context_summary = self._assemble_context(site=site, workspace=workspace)
         draft_readiness = self._build_draft_generation_readiness(
             business_id=business_id,
@@ -1290,6 +1313,8 @@ class SEOMigrationService:
                 provider_name=self.provider_name,
                 model_name=model_resolved or self.provider_model_name,
                 prompt_version=self.prompt_version,
+                timeout_seconds=draft_timeout_seconds,
+                timeout_source=draft_timeout_source,
             )
         provider_compatibility = self._evaluate_draft_provider_compatibility(
             business_id=business_id,
@@ -1320,6 +1345,8 @@ class SEOMigrationService:
                 model_resolved=model_resolved,
                 model_used=draft_failure.model_name,
                 failure_source="local_preflight",
+                timeout_seconds=draft_timeout_seconds,
+                timeout_source=draft_timeout_source,
             )
             self._log_draft_generation_event(
                 status="failed",
@@ -1346,6 +1373,8 @@ class SEOMigrationService:
                 request_body_mode=draft_failure.request_body_mode,
                 compatibility_decision="blocked_local_preflight",
                 failure_source="local_preflight",
+                timeout_seconds=draft_timeout_seconds,
+                timeout_source=draft_timeout_source,
             )
             raise SEOMigrationValidationError(
                 draft_failure.message_for_operator,
@@ -1359,6 +1388,8 @@ class SEOMigrationService:
                 provider_name=draft_failure.provider_name,
                 model_name=draft_failure.model_name,
                 prompt_version=draft_failure.prompt_version,
+                timeout_seconds=draft_timeout_seconds,
+                timeout_source=draft_timeout_source,
             )
         self._log_draft_generation_event(
             status="requested",
@@ -1373,6 +1404,8 @@ class SEOMigrationService:
             model_resolved=model_resolved,
             model_used=model_resolved,
             compatibility_decision="allowed",
+            timeout_seconds=draft_timeout_seconds,
+            timeout_source=draft_timeout_source,
         )
 
         provider_output: SEOMigrationArtifactGenerationOutput | None = None
@@ -1397,6 +1430,8 @@ class SEOMigrationService:
                     model_resolved=model_resolved,
                     model_used=draft_failure.model_name,
                     failure_source="remote_provider",
+                    timeout_seconds=draft_timeout_seconds,
+                    timeout_source=draft_timeout_source,
                 )
                 self._log_draft_generation_event(
                     status="failed",
@@ -1423,6 +1458,8 @@ class SEOMigrationService:
                     request_body_mode=draft_failure.request_body_mode,
                     compatibility_decision="allowed",
                     failure_source="remote_provider",
+                    timeout_seconds=draft_timeout_seconds,
+                    timeout_source=draft_timeout_source,
                 )
                 raise SEOMigrationValidationError(
                     draft_failure.message_for_operator,
@@ -1436,6 +1473,8 @@ class SEOMigrationService:
                     provider_name=draft_failure.provider_name,
                     model_name=draft_failure.model_name,
                     prompt_version=draft_failure.prompt_version,
+                    timeout_seconds=draft_timeout_seconds,
+                    timeout_source=draft_timeout_source,
                 ) from exc
             provider_output = salvaged_output
             generation_status = "partial"
@@ -1458,6 +1497,8 @@ class SEOMigrationService:
                 model_resolved=model_resolved,
                 model_used=draft_failure.model_name,
                 failure_source="unknown",
+                timeout_seconds=draft_timeout_seconds,
+                timeout_source=draft_timeout_source,
             )
             self._log_draft_generation_event(
                 status="failed",
@@ -1481,6 +1522,8 @@ class SEOMigrationService:
                 model_used=draft_failure.model_name,
                 compatibility_decision="allowed",
                 failure_source="unknown",
+                timeout_seconds=draft_timeout_seconds,
+                timeout_source=draft_timeout_source,
             )
             raise SEOMigrationValidationError(
                 draft_failure.message_for_operator,
@@ -1494,6 +1537,8 @@ class SEOMigrationService:
                 provider_name=draft_failure.provider_name,
                 model_name=draft_failure.model_name,
                 prompt_version=draft_failure.prompt_version,
+                timeout_seconds=draft_timeout_seconds,
+                timeout_source=draft_timeout_source,
             ) from exc
 
         normalized_files, file_warnings = self._validate_and_normalize_files(provider_output.generated_files)
@@ -1547,6 +1592,8 @@ class SEOMigrationService:
                 model_resolved=model_resolved,
                 model_used=draft_failure.model_name,
                 failure_source="local_validation",
+                timeout_seconds=draft_timeout_seconds,
+                timeout_source=draft_timeout_source,
             )
             self._log_draft_generation_event(
                 status="failed",
@@ -1569,6 +1616,8 @@ class SEOMigrationService:
                 model_used=draft_failure.model_name,
                 compatibility_decision="allowed",
                 failure_source="local_validation",
+                timeout_seconds=draft_timeout_seconds,
+                timeout_source=draft_timeout_source,
             )
             raise SEOMigrationValidationError(
                 draft_failure.message_for_operator,
@@ -1582,6 +1631,8 @@ class SEOMigrationService:
                 provider_name=draft_failure.provider_name,
                 model_name=draft_failure.model_name,
                 prompt_version=draft_failure.prompt_version,
+                timeout_seconds=draft_timeout_seconds,
+                timeout_source=draft_timeout_source,
             )
 
         artifact_version_number = self.seo_migration_repository.next_artifact_version_number(workspace.id)
@@ -1614,6 +1665,8 @@ class SEOMigrationService:
             ),
             compatibility_decision="allowed",
             failure_source=("remote_provider" if draft_failure and generation_status == "partial" else None),
+            timeout_seconds=draft_timeout_seconds,
+            timeout_source=draft_timeout_source,
         )
         artifact = SEOMigrationArtifactVersion(
             id=str(uuid4()),
@@ -1840,11 +1893,19 @@ class SEOMigrationService:
                 "last_draft_failure_model_requested": draft_diagnostics.get("last_failure_model_requested"),
                 "last_draft_failure_model_resolved": draft_diagnostics.get("last_failure_model_resolved"),
                 "last_draft_failure_model_used": draft_diagnostics.get("last_failure_model_used"),
+                "last_draft_failure_timeout_seconds": draft_diagnostics.get("last_failure_timeout_seconds"),
+                "last_draft_failure_timeout_source": draft_diagnostics.get("last_failure_timeout_source"),
                 "draft_model_requested": None,
                 "draft_model_resolved": _normalize_string(self.provider_model_name, max_length=128),
                 "draft_model_used": _normalize_string(
                     latest_artifact.model_name if latest_artifact is not None else None,
                     max_length=128,
+                ),
+                "draft_timeout_seconds": max(1, int(self._resolved_migration_draft_timeout_seconds)),
+                "draft_timeout_source": (
+                    self._resolved_migration_draft_timeout_source
+                    if self._resolved_migration_draft_timeout_source in {"admin", "default"}
+                    else "default"
                 ),
                 "draft_provider_compatibility_supported": bool(draft_provider_compatibility.supported),
                 "draft_provider_compatibility_reason_code": draft_provider_compatibility.reason_code,
@@ -1899,6 +1960,8 @@ class SEOMigrationService:
                 "last_failure_model_requested": None,
                 "last_failure_model_resolved": None,
                 "last_failure_model_used": None,
+                "last_failure_timeout_seconds": None,
+                "last_failure_timeout_source": None,
             }
 
         diagnostics_payload = {}
@@ -1925,6 +1988,15 @@ class SEOMigrationService:
         model_requested = _normalize_string(diagnostics_payload.get("model_requested"), max_length=128)
         model_resolved = _normalize_string(diagnostics_payload.get("model_resolved"), max_length=128)
         model_used = _normalize_string(diagnostics_payload.get("model_used"), max_length=128)
+        timeout_seconds_raw = diagnostics_payload.get("timeout_seconds")
+        timeout_seconds = (
+            max(1, int(timeout_seconds_raw))
+            if isinstance(timeout_seconds_raw, int)
+            else None
+        )
+        timeout_source = _normalize_string(diagnostics_payload.get("timeout_source"), max_length=20)
+        if timeout_source not in {"admin", "default"}:
+            timeout_source = None
         return {
             "last_status": status_value,
             "last_failure_category": failure_category,
@@ -1942,6 +2014,8 @@ class SEOMigrationService:
             "last_failure_model_requested": model_requested,
             "last_failure_model_resolved": model_resolved,
             "last_failure_model_used": model_used,
+            "last_failure_timeout_seconds": timeout_seconds,
+            "last_failure_timeout_source": timeout_source,
         }
 
     def _build_draft_generation_state(
@@ -2032,12 +2106,27 @@ class SEOMigrationService:
         request_body_mode = _normalize_string(execution_payload.get("request_body_mode"), max_length=80)
         if request_body_mode is None:
             request_body_mode = _normalize_string(draft_provider_compatibility.request_body_mode, max_length=80)
+        timeout_seconds_raw = execution_payload.get("timeout_seconds")
+        timeout_seconds = (
+            max(1, int(timeout_seconds_raw))
+            if isinstance(timeout_seconds_raw, int)
+            else max(1, int(self._resolved_migration_draft_timeout_seconds))
+        )
+        timeout_source = _normalize_string(execution_payload.get("timeout_source"), max_length=20)
+        if timeout_source not in {"admin", "default"}:
+            timeout_source = (
+                self._resolved_migration_draft_timeout_source
+                if self._resolved_migration_draft_timeout_source in {"admin", "default"}
+                else "default"
+            )
         return {
             "model_requested": model_requested,
             "model_resolved": model_resolved,
             "model_used": model_used,
             "endpoint_path": endpoint_path,
             "request_body_mode": request_body_mode,
+            "timeout_seconds": timeout_seconds,
+            "timeout_source": timeout_source,
         }
 
     def _build_draft_generation_readiness(
@@ -2435,6 +2524,12 @@ class SEOMigrationService:
                 compatibility.model_name if compatibility.supported else model_resolved,
                 max_length=128,
             ),
+            "timeout_seconds": max(1, int(self._resolved_migration_draft_timeout_seconds)),
+            "timeout_source": (
+                self._resolved_migration_draft_timeout_source
+                if self._resolved_migration_draft_timeout_source in {"admin", "default"}
+                else "default"
+            ),
             "error_type": _normalize_string(error_type, max_length=80),
         }
         level = logging.INFO if compatibility.supported else logging.WARNING
@@ -2494,6 +2589,8 @@ class SEOMigrationService:
         model_resolved: str | None = None,
         model_used: str | None = None,
         failure_source: str | None = None,
+        timeout_seconds: int | None = None,
+        timeout_source: str | None = None,
     ) -> SEOMigrationArtifactVersion:
         artifact_version_number = self.seo_migration_repository.next_artifact_version_number(workspace.id)
         failure_context = self._build_draft_failure_context(
@@ -2504,6 +2601,8 @@ class SEOMigrationService:
             model_resolved=model_resolved,
             model_used=model_used,
             failure_source=failure_source,
+            timeout_seconds=timeout_seconds,
+            timeout_source=timeout_source,
         )
         artifact = SEOMigrationArtifactVersion(
             id=str(uuid4()),
@@ -2559,11 +2658,25 @@ class SEOMigrationService:
         model_resolved: str | None = None,
         model_used: str | None = None,
         failure_source: str | None = None,
+        timeout_seconds: int | None = None,
+        timeout_source: str | None = None,
     ) -> dict[str, object]:
         normalized_failure_source = _normalize_string(failure_source, max_length=40)
         if normalized_failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
             normalized_failure_source = None
         compatibility_decision = "blocked_local_preflight" if normalized_failure_source == "local_preflight" else "allowed"
+        resolved_timeout_seconds = (
+            max(1, int(timeout_seconds))
+            if isinstance(timeout_seconds, int)
+            else max(1, int(self._resolved_migration_draft_timeout_seconds))
+        )
+        normalized_timeout_source = _normalize_string(timeout_source, max_length=20)
+        if normalized_timeout_source not in {"admin", "default"}:
+            normalized_timeout_source = (
+                self._resolved_migration_draft_timeout_source
+                if self._resolved_migration_draft_timeout_source in {"admin", "default"}
+                else "default"
+            )
         payload = self._build_draft_execution_context(
             context_json=context_json,
             model_requested=model_requested,
@@ -2575,6 +2688,8 @@ class SEOMigrationService:
             request_body_mode=failure.request_body_mode,
             compatibility_decision=compatibility_decision,
             failure_source=normalized_failure_source,
+            timeout_seconds=resolved_timeout_seconds,
+            timeout_source=normalized_timeout_source,
         )
         payload["draft_generation_failure"] = {
             "failure_category": failure.failure_category,
@@ -2595,6 +2710,8 @@ class SEOMigrationService:
             "model_requested": _normalize_string(model_requested, max_length=128),
             "model_resolved": _normalize_string(model_resolved, max_length=128),
             "model_used": _normalize_string(model_used, max_length=128),
+            "timeout_seconds": resolved_timeout_seconds,
+            "timeout_source": normalized_timeout_source,
             "recorded_at": utc_now().isoformat(),
         }
         return payload
@@ -2612,6 +2729,8 @@ class SEOMigrationService:
         request_body_mode: str | None,
         compatibility_decision: str | None,
         failure_source: str | None,
+        timeout_seconds: int | None,
+        timeout_source: str | None,
     ) -> dict[str, object]:
         normalized_failure_source = _normalize_string(failure_source, max_length=40)
         if normalized_failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
@@ -2619,6 +2738,10 @@ class SEOMigrationService:
         normalized_compatibility_decision = _normalize_string(compatibility_decision, max_length=40)
         if normalized_compatibility_decision not in {"allowed", "blocked_local_preflight"}:
             normalized_compatibility_decision = None
+        normalized_timeout_source = _normalize_string(timeout_source, max_length=20)
+        if normalized_timeout_source not in {"admin", "default"}:
+            normalized_timeout_source = None
+        normalized_timeout_seconds = max(1, int(timeout_seconds)) if isinstance(timeout_seconds, int) else None
         payload = _normalize_json_dict(context_json)
         payload["draft_generation_execution"] = {
             "model_requested": _normalize_string(model_requested, max_length=128),
@@ -2630,6 +2753,8 @@ class SEOMigrationService:
             "request_body_mode": _normalize_string(request_body_mode, max_length=80),
             "compatibility_decision": normalized_compatibility_decision,
             "failure_source": normalized_failure_source,
+            "timeout_seconds": normalized_timeout_seconds,
+            "timeout_source": normalized_timeout_source,
             "recorded_at": utc_now().isoformat(),
         }
         return payload
@@ -2639,7 +2764,10 @@ class SEOMigrationService:
         category = "provider_error"
         retryable = error.retryable if isinstance(error.retryable, bool) else None
         details = error.internal_details or {}
-        if reason in {"authentication_failed", "unsupported_configuration"}:
+        if reason == "timeout":
+            category = "config_missing"
+            retryable = True
+        elif reason in {"authentication_failed", "unsupported_configuration"}:
             category = "config_missing"
             if retryable is None:
                 retryable = False
@@ -2711,6 +2839,19 @@ class SEOMigrationService:
         )
         return resolved.model_name
 
+    def _resolve_migration_draft_timeout_seconds(self, business: Business) -> tuple[int, str]:
+        configured_timeout = getattr(business, "migration_draft_timeout_seconds", None)
+        try:
+            parsed_timeout = int(configured_timeout) if configured_timeout is not None else None
+        except (TypeError, ValueError):
+            parsed_timeout = None
+        if (
+            parsed_timeout is not None
+            and _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS <= parsed_timeout <= _MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS
+        ):
+            return parsed_timeout, "admin"
+        return _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS, "default"
+
     def _apply_resolved_migration_model_settings(
         self,
         business: Business,
@@ -2721,6 +2862,18 @@ class SEOMigrationService:
         self.provider_model_name = model_name
         if hasattr(self.artifact_provider, "model_name"):
             setattr(self.artifact_provider, "model_name", model_name)
+        timeout_seconds, timeout_source = self._resolve_migration_draft_timeout_seconds(business)
+        self._resolved_migration_draft_timeout_seconds = timeout_seconds
+        self._resolved_migration_draft_timeout_source = timeout_source
+        if hasattr(self.artifact_provider, "timeout_seconds"):
+            try:
+                setattr(self.artifact_provider, "timeout_seconds", max(1, int(timeout_seconds)))
+            except (TypeError, ValueError):
+                setattr(self.artifact_provider, "timeout_seconds", _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS)
+        try:
+            setattr(self.artifact_provider, "timeout_source", timeout_source)
+        except Exception:  # noqa: BLE001
+            pass
         return model_name
 
     def _require_business(self, business_id: str) -> Business:
@@ -3008,6 +3161,8 @@ class SEOMigrationService:
         request_body_mode: str | None = None,
         compatibility_decision: str | None = None,
         failure_source: str | None = None,
+        timeout_seconds: int | None = None,
+        timeout_source: str | None = None,
     ) -> None:
         normalized_status = _normalize_string(status, max_length=40) or "unknown"
         normalized_failure_source = _normalize_string(failure_source, max_length=40)
@@ -3016,6 +3171,18 @@ class SEOMigrationService:
         normalized_compatibility_decision = _normalize_string(compatibility_decision, max_length=40)
         if normalized_compatibility_decision not in {"allowed", "blocked_local_preflight"}:
             normalized_compatibility_decision = None
+        normalized_timeout_source = _normalize_string(timeout_source, max_length=20)
+        if normalized_timeout_source not in {"admin", "default"}:
+            normalized_timeout_source = (
+                self._resolved_migration_draft_timeout_source
+                if self._resolved_migration_draft_timeout_source in {"admin", "default"}
+                else "default"
+            )
+        normalized_timeout_seconds = (
+            max(1, int(timeout_seconds))
+            if isinstance(timeout_seconds, int)
+            else max(1, int(self._resolved_migration_draft_timeout_seconds))
+        )
         payload: dict[str, object] = {
             "event": _DRAFT_PROVIDER_LOG_EVENT,
             "timestamp": utc_now().isoformat(),
@@ -3044,6 +3211,8 @@ class SEOMigrationService:
             "request_body_mode": _normalize_string(request_body_mode, max_length=80),
             "compatibility_decision": normalized_compatibility_decision,
             "failure_source": normalized_failure_source,
+            "timeout_seconds": normalized_timeout_seconds,
+            "timeout_source": normalized_timeout_source,
         }
         level = logging.INFO if normalized_status not in {"failed", "error"} else logging.WARNING
         self._emit_structured_service_log(

@@ -225,6 +225,7 @@ function buildBusinessSettings(overrides: Partial<BusinessSettings> = {}): Busin
     competitor_candidate_local_alignment_bonus: 10,
     competitor_primary_timeout_seconds: null,
     competitor_degraded_timeout_seconds: null,
+    migration_draft_timeout_seconds: null,
     ai_prompt_text_competitor: null,
     ai_prompt_text_recommendations: null,
     default_ai_model: null,
@@ -2265,6 +2266,7 @@ describe("site workspace migration tab", () => {
     expect(await screen.findByTestId("migration-ai-request-profile")).toHaveTextContent(
       "Request profile: /responses (responses_text_format_json_schema)",
     );
+    expect(screen.queryByTestId("migration-draft-timeout")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Generate Draft Mockup" })).toBeEnabled();
   });
 
@@ -2907,6 +2909,8 @@ describe("site workspace migration tab", () => {
             last_draft_failure_model_used: "gpt-5.1",
             last_draft_failure_endpoint_path: "/responses",
             last_draft_failure_request_body_mode: "responses_text_format_json_schema",
+            last_draft_failure_timeout_seconds: 180,
+            last_draft_failure_timeout_source: "admin",
           },
           draft_generation_state: {
             status: "generation_failed",
@@ -2926,6 +2930,7 @@ describe("site workspace migration tab", () => {
     expect(await screen.findByTestId("migration-ai-request-profile")).toHaveTextContent(
       "Request profile: /responses (responses_text_format_json_schema)",
     );
+    expect(await screen.findByTestId("migration-draft-timeout")).toHaveTextContent("Timeout: 180 seconds (admin)");
     expect(await screen.findByTestId("migration-draft-failure-source")).toHaveTextContent(
       "Failure source: AI provider rejected request",
     );

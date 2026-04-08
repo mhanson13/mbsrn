@@ -185,6 +185,8 @@ Migration summary now includes a compact execution slice in `context_summary.ai_
 - `model_used`
 - `endpoint_path`
 - `request_body_mode`
+- `timeout_seconds`
+- `timeout_source` (`admin` or `default`)
 
 Field meanings:
 - `model_requested`: explicit model override requested by workflow input (null when not used).
@@ -195,6 +197,36 @@ Field meanings:
 Failure-source visibility:
 - `context_summary.migration_diagnostics.last_draft_failure_source=local_preflight` means generation was blocked before provider invocation.
 - `context_summary.migration_diagnostics.last_draft_failure_source=remote_provider` means the outbound request was attempted and rejected remotely.
+
+## AI Draft Generation Timeout
+Migration draft generation timeout is admin-configurable through business settings:
+- setting key: `migration_draft_timeout_seconds`
+- allowed range: 30-900 seconds
+- default fallback when unset: 120 seconds
+
+Operational guidance:
+- typical range: 60-300 seconds
+- larger draft payloads may require 300+ seconds
+- prefer reducing generated output size/verbosity when possible instead of only increasing timeout
+
+Resolution precedence for timeout:
+1. business admin setting (`migration_draft_timeout_seconds`)
+2. migration default fallback (`120`)
+
+Diagnostics surfaces:
+- `context_summary.migration_diagnostics.draft_timeout_seconds`
+- `context_summary.migration_diagnostics.draft_timeout_source`
+- `context_summary.migration_diagnostics.last_draft_failure_timeout_seconds`
+- `context_summary.migration_diagnostics.last_draft_failure_timeout_source`
+- `context_summary.ai_execution.timeout_seconds`
+- `context_summary.ai_execution.timeout_source`
+
+Timeout failure behavior:
+- category remains `config_missing` for draft-timeout contract compatibility
+- `failure_reason=timeout`
+- `last_draft_failure_source=remote_provider`
+- `retryable=true`
+- operator message remains sanitized (no raw provider payloads)
 
 ## Unified Draft Generation State
 Migration summary now includes a compact derived top-level state in `context_summary.draft_generation_state` so operator status remains coherent across reloads:

@@ -31,6 +31,8 @@ _COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MIN = 0
 _COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MAX = 50
 _COMPETITOR_TIMEOUT_SECONDS_MIN = 10
 _COMPETITOR_TIMEOUT_SECONDS_MAX = 90
+_MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN = 30
+_MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX = 900
 _NOTIFICATION_SETTING_FIELDS = {
     "notification_phone",
     "notification_email",
@@ -48,6 +50,9 @@ _COMPETITOR_CANDIDATE_SETTING_FIELDS = {
 _COMPETITOR_TIMEOUT_SETTING_FIELDS = {
     "competitor_primary_timeout_seconds",
     "competitor_degraded_timeout_seconds",
+}
+_MIGRATION_DRAFT_TIMEOUT_SETTING_FIELDS = {
+    "migration_draft_timeout_seconds",
 }
 _COMPETITOR_PREVIEW_MATCH_LOOKBACK_DAYS = 14
 
@@ -260,6 +265,10 @@ class BusinessSettingsService:
                 "competitor_degraded_timeout_seconds",
                 business.competitor_degraded_timeout_seconds,
             ),
+            "migration_draft_timeout_seconds": updates.get(
+                "migration_draft_timeout_seconds",
+                business.migration_draft_timeout_seconds,
+            ),
             "ai_prompt_text_competitor": updates.get(
                 "ai_prompt_text_competitor",
                 business.ai_prompt_text_competitor,
@@ -284,6 +293,8 @@ class BusinessSettingsService:
             self._validate_competitor_candidate_quality_settings(effective)
         if _COMPETITOR_TIMEOUT_SETTING_FIELDS.intersection(updates.keys()):
             self._validate_competitor_timeout_settings(effective)
+        if _MIGRATION_DRAFT_TIMEOUT_SETTING_FIELDS.intersection(updates.keys()):
+            self._validate_migration_draft_timeout_settings(effective)
 
     def _validate_notification_settings(self, effective: dict) -> None:
         sms_enabled = bool(effective["sms_enabled"])
@@ -396,6 +407,28 @@ class BusinessSettingsService:
                 (
                     f"{field_name} must be between "
                     f"{_COMPETITOR_TIMEOUT_SECONDS_MIN} and {_COMPETITOR_TIMEOUT_SECONDS_MAX}."
+                )
+            )
+
+    def _validate_migration_draft_timeout_settings(self, effective: dict) -> None:
+        self._validate_optional_migration_draft_timeout_field(
+            effective=effective,
+            field_name="migration_draft_timeout_seconds",
+        )
+
+    def _validate_optional_migration_draft_timeout_field(self, *, effective: dict, field_name: str) -> None:
+        raw_value = effective.get(field_name)
+        if raw_value is None:
+            return
+        timeout_seconds = int(raw_value)
+        if (
+            timeout_seconds < _MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN
+            or timeout_seconds > _MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX
+        ):
+            raise BusinessSettingsValidationError(
+                (
+                    f"{field_name} must be between "
+                    f"{_MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN} and {_MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX}."
                 )
             )
 

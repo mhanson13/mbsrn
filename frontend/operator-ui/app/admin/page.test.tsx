@@ -87,6 +87,7 @@ describe("admin route", () => {
       competitor_candidate_local_alignment_bonus: 10,
       competitor_primary_timeout_seconds: null,
       competitor_degraded_timeout_seconds: null,
+      migration_draft_timeout_seconds: null,
       ai_prompt_text_competitor: null,
       ai_prompt_text_recommendations: null,
       default_ai_model: null,
@@ -110,6 +111,7 @@ describe("admin route", () => {
       competitor_candidate_local_alignment_bonus: 10,
       competitor_primary_timeout_seconds: null,
       competitor_degraded_timeout_seconds: null,
+      migration_draft_timeout_seconds: null,
       ai_prompt_text_competitor: null,
       ai_prompt_text_recommendations: null,
       default_ai_model: null,
@@ -185,6 +187,7 @@ describe("admin route", () => {
     expect(screen.queryByRole("button", { name: "Create User" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create and Link Identity" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Default AI model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Migration Draft Timeout (seconds)")).toBeInTheDocument();
     expect(screen.getByText("Platform operations tools for diagnostics, site maintenance, and safe configuration updates.")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Property" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Enabled" })).toBeInTheDocument();
@@ -243,7 +246,7 @@ describe("admin route", () => {
     expect(screen.getByText("Use sc-domain:example.com or https://example.com.")).toBeInTheDocument();
   });
 
-  it("loads and saves business default AI model in admin settings", async () => {
+  it("loads and saves business default AI model and migration timeout in admin settings", async () => {
     mockFetchBusinessSettings.mockResolvedValueOnce({
       id: "biz-1",
       name: "Biz",
@@ -260,6 +263,7 @@ describe("admin route", () => {
       competitor_candidate_local_alignment_bonus: 10,
       competitor_primary_timeout_seconds: null,
       competitor_degraded_timeout_seconds: null,
+      migration_draft_timeout_seconds: 180,
       ai_prompt_text_competitor: null,
       ai_prompt_text_recommendations: null,
       default_ai_model: "gpt-4.1-mini",
@@ -283,6 +287,7 @@ describe("admin route", () => {
       competitor_candidate_local_alignment_bonus: 10,
       competitor_primary_timeout_seconds: null,
       competitor_degraded_timeout_seconds: null,
+      migration_draft_timeout_seconds: 240,
       ai_prompt_text_competitor: null,
       ai_prompt_text_recommendations: null,
       default_ai_model: "gpt-4o-mini",
@@ -304,8 +309,11 @@ describe("admin route", () => {
 
     const defaultModelInput = await screen.findByLabelText("Default AI model");
     expect(defaultModelInput).toHaveValue("gpt-4.1-mini");
+    const migrationTimeoutInput = screen.getByLabelText("Migration Draft Timeout (seconds)");
+    expect(migrationTimeoutInput).toHaveValue(180);
 
     fireEvent.change(defaultModelInput, { target: { value: "gpt-4o-mini" } });
+    fireEvent.change(migrationTimeoutInput, { target: { value: "240" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Prompt Overrides" }));
 
     await waitFor(() => {
@@ -313,8 +321,10 @@ describe("admin route", () => {
     });
     expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).toMatchObject({
       default_ai_model: "gpt-4o-mini",
+      migration_draft_timeout_seconds: 240,
     });
     expect(await screen.findByLabelText("Default AI model")).toHaveValue("gpt-4o-mini");
+    expect(screen.getByLabelText("Migration Draft Timeout (seconds)")).toHaveValue(240);
   });
 
   it("keeps /users as a compatibility route", async () => {

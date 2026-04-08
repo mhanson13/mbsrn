@@ -86,6 +86,7 @@ export interface BusinessSettings {
   competitor_candidate_local_alignment_bonus: number;
   competitor_primary_timeout_seconds: number | null;
   competitor_degraded_timeout_seconds: number | null;
+  migration_draft_timeout_seconds?: number | null;
   ai_prompt_text_competitor: string | null;
   ai_prompt_text_recommendations: string | null;
   default_ai_model: string | null;
@@ -108,6 +109,7 @@ export interface BusinessSettingsUpdateRequest {
   competitor_candidate_local_alignment_bonus?: number;
   competitor_primary_timeout_seconds?: number | null;
   competitor_degraded_timeout_seconds?: number | null;
+  migration_draft_timeout_seconds?: number | null;
   ai_prompt_text_competitor?: string | null;
   ai_prompt_text_recommendations?: string | null;
   default_ai_model?: string | null;
@@ -475,6 +477,8 @@ export interface MigrationAIExecutionSummary {
   model_used?: string | null;
   endpoint_path?: string | null;
   request_body_mode?: string | null;
+  timeout_seconds?: number | null;
+  timeout_source?: "admin" | "default" | string | null;
 }
 
 export interface MigrationDraftGenerationState {

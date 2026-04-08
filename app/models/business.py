@@ -29,6 +29,7 @@ class Business(Base):
     competitor_candidate_local_alignment_bonus: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     competitor_primary_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     competitor_degraded_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    migration_draft_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Business-scoped prompt override values. Runtime prompt resolution remains:
     # business override -> deployment env fallback -> default.
     ai_prompt_text_competitor: Mapped[str | None] = mapped_column(Text, nullable=True)

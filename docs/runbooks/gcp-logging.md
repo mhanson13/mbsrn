@@ -107,11 +107,33 @@ For API/UI correlation, also inspect migration summary payload fields:
 - `context_summary.ai_execution.model_used`
 - `context_summary.ai_execution.endpoint_path`
 - `context_summary.ai_execution.request_body_mode`
+- `context_summary.ai_execution.timeout_seconds`
+- `context_summary.ai_execution.timeout_source`
 - `context_summary.migration_diagnostics.last_draft_failure_source`
 
 Operator wording mapping:
 - `last_draft_failure_source=local_preflight` -> "Blocked before provider call"
 - `last_draft_failure_source=remote_provider` -> "AI provider rejected request"
+
+## Migration Timeout Troubleshooting
+
+To isolate migration draft timeout failures, query:
+
+- `jsonPayload.event="seo_migration_draft_generation" jsonPayload.failure_reason="timeout"`
+- `jsonPayload.event="seo_migration_draft_provider_request_failure" jsonPayload.failure_reason="timeout"`
+
+Useful fields:
+- `timeout_seconds`
+- `timeout_source`
+- `failure_reason`
+- `failure_source`
+- `retryable`
+- scoped identifiers (`business_id`, `site_id`, `workspace_id`, `draft_run_id`)
+
+Interpretation:
+- `failure_reason=timeout` with `failure_source=remote_provider` means the provider call exceeded the configured timeout.
+- timeout failures currently retain `failure_category=config_missing` for migration draft error-contract compatibility.
+- compare `timeout_seconds` and `timeout_source` to verify whether admin override or default timeout was active.
 
 ## Migration State Coherence Quick Check
 

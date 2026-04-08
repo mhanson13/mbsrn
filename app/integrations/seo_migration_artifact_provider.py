@@ -503,7 +503,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         *,
         api_key: str,
         model_name: str,
-        timeout_seconds: int = 30,
+        timeout_seconds: int = 120,
         api_base_url: str = "https://api.openai.com/v1",
         prompt_version: str = SEO_MIGRATION_PROMPT_VERSION,
         prompt_text_recommendations: str = "",
@@ -514,6 +514,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         self.api_key = normalized_key
         self.model_name = model_name.strip() or "gpt-4o-mini"
         self.timeout_seconds = max(1, int(timeout_seconds))
+        self.timeout_source = "default"
         self.api_base_url = api_base_url.rstrip("/")
         self.prompt_version = prompt_version.strip() or SEO_MIGRATION_PROMPT_VERSION
         self.prompt_text_recommendations = prompt_text_recommendations or ""
@@ -1947,6 +1948,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "timeout_seconds": int(self.timeout_seconds),
+                "timeout_source": _clean_optional_value(getattr(self, "timeout_source", None)) or "default",
             },
         )
 
@@ -1982,6 +1984,8 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "duration_ms": max(0, int(duration_ms)),
                 "correlation_id": _clean_optional_value(correlation_id),
+                "timeout_seconds": int(self.timeout_seconds),
+                "timeout_source": _clean_optional_value(getattr(self, "timeout_source", None)) or "default",
             },
         )
 
@@ -2030,6 +2034,8 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "correlation_id": _clean_optional_value(correlation_id),
                 "duration_ms": (max(0, int(duration_ms)) if duration_ms is not None else None),
                 "http_status": (int(http_status) if http_status is not None else None),
+                "timeout_seconds": int(self.timeout_seconds),
+                "timeout_source": _clean_optional_value(getattr(self, "timeout_source", None)) or "default",
                 "parsed_candidate_count": self._coerce_optional_non_negative_int(parsed_candidate_count),
                 "salvaged_candidate_count": self._coerce_optional_non_negative_int(salvaged_candidate_count),
                 "malformed_output_reason": self._normalize_malformed_output_reason(malformed_output_reason),

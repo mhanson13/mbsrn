@@ -1138,9 +1138,10 @@ describe("admin page compatibility route", () => {
         ai_prompt_text_competitor: "Prefer local and substitutable competitors.",
         ai_prompt_text_recommendations: "Prioritize specific next-step recommendations.",
         default_ai_model: null,
+        migration_draft_timeout_seconds: null,
       }),
     );
-    await screen.findByText("AI prompt/default model settings updated.");
+    await screen.findByText("AI prompt/default model/timeout settings updated.");
   });
 
   it("clears AI prompt overrides back to deployment/default fallback", async () => {

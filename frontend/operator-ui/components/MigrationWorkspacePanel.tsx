@@ -155,6 +155,8 @@ interface DraftAIExecutionSummary {
   modelUsed: string | null;
   endpointPath: string | null;
   requestBodyMode: string | null;
+  timeoutSeconds: number | null;
+  timeoutSource: "admin" | "default" | null;
 }
 
 function toFailureCategoryLabel(value: string | null): string {
@@ -264,6 +266,7 @@ function parseDraftGenerationFailure(error: unknown): {
   let reason = "";
   let retryable: boolean | null = null;
   let correlationId: string | null = null;
+  let timeoutSeconds: number | null = null;
   if (error instanceof ApiRequestError) {
     const detail = asRecord(error.detail);
     const detailMessage = asString(detail.message).trim();
@@ -281,13 +284,18 @@ function parseDraftGenerationFailure(error: unknown): {
     }
     reason = asString(detail.failure_reason).trim().toLowerCase();
     retryable = typeof detail.retryable === "boolean" ? detail.retryable : null;
+    timeoutSeconds = typeof detail.timeout_seconds === "number" ? Math.max(1, Math.round(detail.timeout_seconds)) : null;
     correlationId =
       asStringOrNull(detail.correlation_id) ||
       asStringOrNull(detail.artifact_version_id) ||
       asStringOrNull(detail.workspace_id);
   }
   let hint: string | null = null;
-  if (category === "config_missing" || reason === "authentication_failed" || reason === "unsupported_configuration") {
+  if (reason === "timeout" && timeoutSeconds !== null) {
+    hint = `Draft generation timed out after ${timeoutSeconds} seconds.`;
+  } else if (reason === "timeout" && retryable) {
+    hint = "This looks retryable.";
+  } else if (category === "config_missing" || reason === "authentication_failed" || reason === "unsupported_configuration") {
     hint = "Check AI provider configuration.";
   } else if (
     category === "artifact_invalid" ||
@@ -704,12 +712,32 @@ function parseDraftAIExecutionSummary(
     asStringOrNull(aiExecutionRecord.request_body_mode) ||
     asStringOrNull(migrationDiagnostics.last_draft_failure_request_body_mode) ||
     asStringOrNull(migrationDiagnostics.draft_provider_compatibility_request_body_mode);
+  const timeoutFromExecution =
+    typeof aiExecutionRecord.timeout_seconds === "number" && Number.isFinite(aiExecutionRecord.timeout_seconds)
+      ? Math.max(1, Math.round(aiExecutionRecord.timeout_seconds))
+      : null;
+  const timeoutFromDiagnostics =
+    typeof migrationDiagnostics.last_draft_failure_timeout_seconds === "number" &&
+    Number.isFinite(migrationDiagnostics.last_draft_failure_timeout_seconds)
+      ? Math.max(1, Math.round(migrationDiagnostics.last_draft_failure_timeout_seconds))
+      : typeof migrationDiagnostics.draft_timeout_seconds === "number" &&
+          Number.isFinite(migrationDiagnostics.draft_timeout_seconds)
+        ? Math.max(1, Math.round(migrationDiagnostics.draft_timeout_seconds))
+        : null;
+  const timeoutSeconds = timeoutFromExecution ?? timeoutFromDiagnostics;
+  const timeoutSourceRaw =
+    asStringOrNull(aiExecutionRecord.timeout_source) ||
+    asStringOrNull(migrationDiagnostics.last_draft_failure_timeout_source) ||
+    asStringOrNull(migrationDiagnostics.draft_timeout_source);
+  const timeoutSource = timeoutSourceRaw === "admin" || timeoutSourceRaw === "default" ? timeoutSourceRaw : null;
   return {
     modelRequested,
     modelResolved,
     modelUsed,
     endpointPath,
     requestBodyMode,
+    timeoutSeconds,
+    timeoutSource,
   };
 }
 
@@ -905,6 +933,11 @@ export function MigrationWorkspacePanel({
         draftAIExecution.requestBodyMode ? ` (${draftAIExecution.requestBodyMode})` : ""
       }`
     : "n/a";
+  const showDraftTimeout = busyAction === "generate" || draftGenerationState.status === "generation_failed";
+  const draftTimeoutLabel =
+    typeof draftAIExecution.timeoutSeconds === "number"
+      ? `${Math.max(1, Math.round(draftAIExecution.timeoutSeconds))} seconds`
+      : "n/a";
   const draftGenerationStateLabel = toDraftGenerationStateLabel(draftGenerationState.status);
   const draftReadinessStatusLabel = toDraftReadinessStatusLabel(draftReadiness.status);
   const draftGenerationBlocked = draftReadiness.hardBlocked || !draftProviderCompatibility.supported;
@@ -1359,6 +1392,12 @@ export function MigrationWorkspacePanel({
         <span className="hint" data-testid="migration-ai-request-profile">
           Request profile: {requestProfileLabel}
         </span>
+        {showDraftTimeout ? (
+          <span className="hint" data-testid="migration-draft-timeout">
+            Timeout: {draftTimeoutLabel}
+            {draftAIExecution.timeoutSource ? ` (${draftAIExecution.timeoutSource})` : ""}
+          </span>
+        ) : null}
         {draftFailureSourceLabel ? (
           <span className="hint warning" data-testid="migration-draft-failure-source">
             Failure source: {draftFailureSourceLabel}
