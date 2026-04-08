@@ -24,6 +24,7 @@ _DRAFT_REASON_UNSUPPORTED_CONFIGURATION = "unsupported_configuration"
 _DRAFT_REASON_TRANSPORT_ERROR = "transport_error"
 _DRAFT_REASON_VALIDATION_FAILED = "validation_failed"
 _DRAFT_REASON_UNKNOWN = "unknown"
+_DRAFT_ERROR_CODE_UNSUPPORTED_REQUEST_SHAPE_INPUT_NON_STRING = "unsupported_request_shape_input_non_string"
 _DRAFT_REASON_VALUES = {
     _DRAFT_REASON_TIMEOUT,
     _DRAFT_REASON_AUTHENTICATION_FAILED,
@@ -799,24 +800,25 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     f"model={shape.model_name} request_body_mode={shape.request_body_mode}"
                 ),
             )
-        messages = payload.get("input")
-        if not isinstance(messages, list) or len(messages) < 2:
+        input_payload = payload.get("input")
+        if not isinstance(input_payload, str):
             return _MigrationRequestShapeCompatibilityDecision(
                 supported=False,
                 reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
                 admin_summary=(
-                    "responses_request_body_invalid_input "
-                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                    "responses_request_body_input_non_string "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path} "
+                    f"input_type={type(input_payload).__name__}"
                 ),
             )
-        if not self._messages_include_system_and_user(messages):
+        if not input_payload.strip():
             return _MigrationRequestShapeCompatibilityDecision(
                 supported=False,
                 reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
                 admin_summary=(
-                    "responses_request_body_missing_roles "
+                    "responses_request_body_input_empty "
                     f"model={shape.model_name} endpoint={shape.endpoint_path}"
                 ),
             )
@@ -1088,6 +1090,11 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         )
         started_at = time.perf_counter()
         try:
+            self._validate_runtime_request_payload_shape(
+                payload=payload,
+                request_context=request_context,
+                request_fingerprint=request_fingerprint,
+            )
             raw_response = self._request_completion(
                 payload,
                 request_context=request_context,
@@ -1427,10 +1434,10 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         del request_body_mode
         return {
             "model": self.model_name,
-            "input": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            "input": self._build_responses_input_text(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            ),
             "text": {
                 "format": {
                     "type": "json_schema",
@@ -1440,6 +1447,68 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 }
             },
         }
+
+    @staticmethod
+    def _build_responses_input_text(*, system_prompt: str, user_prompt: str) -> str:
+        normalized_system = str(system_prompt or "").strip()
+        normalized_user = str(user_prompt or "").strip()
+        sections: list[str] = []
+        if normalized_system:
+            sections.append(f"System Instructions:\n{normalized_system}")
+        if normalized_user:
+            sections.append(f"User Request:\n{normalized_user}")
+        combined = "\n\n".join(section for section in sections if section).strip()
+        if combined:
+            return combined
+        fallback = "\n\n".join(part for part in (normalized_system, normalized_user) if part).strip()
+        if fallback:
+            return fallback
+        return "Generate migration draft artifacts as structured JSON output."
+
+    def _validate_runtime_request_payload_shape(
+        self,
+        *,
+        payload: dict[str, object],
+        request_context: dict[str, object] | None,
+        request_fingerprint: dict[str, object] | None,
+    ) -> None:
+        context = request_context or {}
+        endpoint_path = _clean_optional_value(context.get("endpoint_path"))
+        response_format_mode = _clean_optional_value(context.get("response_format_mode"))
+        request_body_mode = _clean_optional_value(context.get("request_body_mode"))
+        if endpoint_path != _MIGRATION_COMPAT_ENDPOINT_RESPONSES:
+            return
+        if response_format_mode != _MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA:
+            return
+        if request_body_mode != _MIGRATION_REQUEST_BODY_MODE_RESPONSES_TEXT_FORMAT_JSON_SCHEMA:
+            return
+
+        input_payload = payload.get("input")
+        if isinstance(input_payload, str) and input_payload.strip():
+            return
+
+        reason_code = _DRAFT_ERROR_CODE_UNSUPPORTED_REQUEST_SHAPE_INPUT_NON_STRING
+        request_shape_details = self._request_shape_details(request_context=request_context)
+        input_mode = _clean_optional_value((request_fingerprint or {}).get("input_mode"))
+        self._log_provider_request_failure(
+            request_context=request_context,
+            reason=_DRAFT_REASON_UNSUPPORTED_CONFIGURATION,
+            retryable=False,
+            request_fingerprint=request_fingerprint,
+            failure_source="local_preflight",
+        )
+        raise self._provider_error(
+            code=reason_code,
+            reason=_DRAFT_REASON_UNSUPPORTED_CONFIGURATION,
+            safe_message="AI provider configuration is invalid for migration draft generation.",
+            retryable=False,
+            internal_details={
+                "request_failure_logged": True,
+                "compatibility_reason_code": _COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                "input_mode": input_mode,
+                **request_shape_details,
+            },
+        )
 
     def _build_chat_completions_request_payload(
         self,
@@ -2246,6 +2315,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         request_context: dict[str, object] | None,
         reason: str | None,
         retryable: bool | None,
+        failure_source: str = "remote_provider",
         correlation_id: str | None = None,
         duration_ms: int | None = None,
         http_status: int | None = None,
@@ -2259,6 +2329,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         normalized_reason = _clean_optional_value((reason or "").strip().lower()) or _DRAFT_REASON_UNKNOWN
         if normalized_reason not in _DRAFT_REASON_VALUES:
             normalized_reason = _DRAFT_REASON_UNKNOWN
+        normalized_failure_source = _clean_optional_value(failure_source) or "remote_provider"
+        if normalized_failure_source not in {"remote_provider", "local_preflight"}:
+            normalized_failure_source = "remote_provider"
         self._emit_structured_provider_log(
             level=logging.WARNING,
             event=_PROVIDER_LOG_EVENT_REQUEST_FAILURE,
@@ -2281,7 +2354,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "failure_reason": normalized_reason,
-                "failure_source": "remote_provider",
+                "failure_source": normalized_failure_source,
                 "retryable": retryable,
                 "correlation_id": _clean_optional_value(correlation_id),
                 "duration_ms": (max(0, int(duration_ms)) if duration_ms is not None else None),

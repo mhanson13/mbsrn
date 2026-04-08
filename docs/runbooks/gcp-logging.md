@@ -104,7 +104,9 @@ Current migration request-shape examples:
 - supported: `gpt-5.1*` + `/responses` + `full` + `json_schema` + `responses_text_format_json_schema`
 - blocked locally: `gpt-5.1*` + `/chat/completions` + `full` + `json_schema` + `chat_json_schema`
 - blocked locally: fallback chat/json_schema shapes unless explicitly allowlisted
+- blocked locally: `/responses` + `responses_text_format_json_schema` when request `input` is array/object instead of string
 - contract drift indicator: `request_fingerprint_schema_object_nodes_non_false_additional_properties>0` indicates schema strictness drift versus the known-good migration `/responses` contract.
+- contract drift indicator: `request_fingerprint_input_mode!=string` indicates invalid migration `/responses` input transport shape.
 
 ## Local Block vs Remote Rejection
 

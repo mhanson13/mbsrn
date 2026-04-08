@@ -258,9 +258,10 @@ def test_openai_migration_provider_responses_payload_matches_known_good_contract
     assert "tools" not in captured_payload
 
     input_payload = captured_payload.get("input")
-    assert isinstance(input_payload, list)
-    assert len(input_payload) >= 2
-    assert {item.get("role") for item in input_payload if isinstance(item, dict)}.issuperset({"system", "user"})
+    assert isinstance(input_payload, str)
+    assert input_payload.strip()
+    assert "System Instructions:" in input_payload
+    assert "User Request:" in input_payload
 
     text_payload = captured_payload.get("text")
     assert isinstance(text_payload, dict)
@@ -332,6 +333,65 @@ def test_openai_migration_provider_compatibility_rejects_responses_schema_with_n
     assert compatibility.supported is False
     assert compatibility.reason_code == "unsupported_request_shape"
     assert "responses_request_body_schema_additional_properties_not_false" in str(compatibility.admin_summary or "")
+
+
+def test_openai_migration_provider_compatibility_rejects_responses_non_string_input(monkeypatch) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    original_builder = provider._build_request_payload
+
+    def _build_array_input_payload(**kwargs):  # noqa: ANN001
+        payload = original_builder(**kwargs)
+        payload["input"] = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "user"},
+        ]
+        return payload
+
+    monkeypatch.setattr(provider, "_build_request_payload", _build_array_input_payload)
+    compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is False
+    assert compatibility.reason_code == "unsupported_request_shape"
+    assert "responses_request_body_input_non_string" in str(compatibility.admin_summary or "")
+
+
+def test_openai_migration_provider_runtime_blocks_non_string_input_before_provider_call(monkeypatch) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    original_builder = provider._build_request_payload
+    urlopen_called = False
+
+    def _build_array_input_payload(**kwargs):  # noqa: ANN001
+        payload = original_builder(**kwargs)
+        payload["input"] = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "user"},
+        ]
+        return payload
+
+    def _capture_request(request, timeout):  # noqa: ANN001
+        del request, timeout
+        nonlocal urlopen_called
+        urlopen_called = True
+        return _FakeResponse(_build_responses_api_response(json_dumps(_build_success_assistant_payload())))
+
+    monkeypatch.setattr(provider, "_build_request_payload", _build_array_input_payload)
+    monkeypatch.setattr(urllib.request, "urlopen", _capture_request)
+
+    with pytest.raises(SEOMigrationArtifactProviderError) as exc_info:
+        provider.generate_artifacts(migration_context=_build_migration_context())
+
+    error = exc_info.value
+    assert error.reason == "unsupported_configuration"
+    assert error.code == "unsupported_request_shape_input_non_string"
+    assert error.retryable is False
+    assert urlopen_called is False
 
 
 def test_openai_migration_provider_timeout_maps_to_retryable_timeout_reason(monkeypatch) -> None:
@@ -452,7 +512,7 @@ def test_openai_migration_provider_request_logs_include_request_shape_metadata(m
     assert start.get("request_fingerprint_strict_enabled") is True
     assert start.get("request_fingerprint_top_level_keys") == ["input", "model", "text"]
     assert start.get("request_fingerprint_text_format_keys") == ["name", "schema", "strict", "type"]
-    assert start.get("request_fingerprint_input_mode") == "array"
+    assert start.get("request_fingerprint_input_mode") == "string"
     assert start.get("request_fingerprint_contains_tools") is False
     assert start.get("request_fingerprint_contains_response_format_legacy") is False
     assert start.get("request_fingerprint_contains_messages_legacy") is False

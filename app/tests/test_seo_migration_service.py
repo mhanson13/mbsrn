@@ -963,7 +963,9 @@ def test_generate_artifacts_allows_supported_openai_gpt_5_1_shape_and_calls_prov
         outbound_call_count["count"] += 1
         body = json.loads(request.data.decode("utf-8"))
         assert body.get("model") == "gpt-5.1"
-        assert isinstance(body.get("input"), list)
+        assert isinstance(body.get("input"), str)
+        assert "System Instructions:" in str(body.get("input"))
+        assert "User Request:" in str(body.get("input"))
         assert isinstance((body.get("text") or {}).get("format"), dict)
         return _FakeResponse(
             json.dumps(

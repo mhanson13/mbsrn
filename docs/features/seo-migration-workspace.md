@@ -159,6 +159,7 @@ Known supported request shape (current allowlist example):
 
 Migration `/responses` request contract is now locked to a known-good structured-output shape:
 - top-level keys: `model`, `input`, `text`
+- `input` must be a single non-empty string (not array/object/message-style input)
 - no legacy chat keys in `/responses` payloads (`messages`, `response_format`)
 - `text.format.type=json_schema`
 - `text.format.name=seo_migration_artifact_response`
@@ -202,6 +203,7 @@ Structured logging:
   - `request_fingerprint_contains_messages_legacy`
   - `request_fingerprint_schema_object_nodes_total`
   - `request_fingerprint_schema_object_nodes_non_false_additional_properties`
+  - for supported migration `/responses` requests, `request_fingerprint_input_mode=string` is required
 
 ## Draft AI Execution Visibility
 Migration summary now includes a compact execution slice in `context_summary.ai_execution`:
