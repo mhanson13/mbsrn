@@ -165,6 +165,7 @@ Migration `/responses` request contract is now locked to a known-good structured
 - `text.format.name=seo_migration_artifact_response`
 - `text.format.strict=true`
 - migration schema object nodes require `additionalProperties=false`
+- migration strict-schema object nodes require full `required` coverage for declared properties (optional fields are represented with nullable types rather than omitted `required` entries)
 
 Known unsupported request shapes (blocked locally):
 - `model=gpt-5.1*` with `endpoint_path=/chat/completions`, `execution_mode=full`, `response_format_mode=json_schema`, and `request_body_mode=chat_json_schema` is treated as `unsupported_request_shape`.
@@ -195,15 +196,25 @@ Structured logging:
   - `request_fingerprint_schema_name`
   - `request_fingerprint_strict_enabled`
   - `request_fingerprint_top_level_keys`
+  - `request_fingerprint_text_top_level_keys`
   - `request_fingerprint_text_format_keys`
   - `request_fingerprint_schema_top_level_keys`
   - `request_fingerprint_input_mode`
+  - `request_fingerprint_input_length_chars`
+  - `request_fingerprint_has_null_optional_fields`
+  - `request_fingerprint_has_extra_request_options`
   - `request_fingerprint_contains_tools`
   - `request_fingerprint_contains_response_format_legacy`
   - `request_fingerprint_contains_messages_legacy`
   - `request_fingerprint_schema_object_nodes_total`
   - `request_fingerprint_schema_object_nodes_non_false_additional_properties`
+  - `request_fingerprint_schema_object_nodes_missing_required`
   - for supported migration `/responses` requests, `request_fingerprint_input_mode=string` is required
+  - for supported migration `/responses` requests, `request_fingerprint_has_extra_request_options=false` and `request_fingerprint_has_null_optional_fields=false` are expected
+
+Payload drift debugging:
+- use provider redacted payload snapshot helpers to compare the app-emitted payload shape to the known-good curl contract without exposing raw prompt text
+- compare fingerprint + snapshot together when diagnosing remote `unsupported_configuration` responses
 
 ## Draft AI Execution Visibility
 Migration summary now includes a compact execution slice in `context_summary.ai_execution`:

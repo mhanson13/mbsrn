@@ -865,7 +865,11 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 ),
             )
         schema_payload = format_payload.get("schema") if isinstance(format_payload, dict) else None
-        object_nodes_total, object_nodes_non_false = self._count_schema_object_nodes(schema_payload)
+        (
+            object_nodes_total,
+            object_nodes_non_false,
+            object_nodes_missing_required,
+        ) = self._count_schema_object_nodes(schema_payload)
         if object_nodes_total <= 0 or object_nodes_non_false > 0:
             return _MigrationRequestShapeCompatibilityDecision(
                 supported=False,
@@ -875,6 +879,18 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     "responses_request_body_schema_additional_properties_not_false "
                     f"model={shape.model_name} endpoint={shape.endpoint_path} "
                     f"object_nodes_total={object_nodes_total} object_nodes_non_false={object_nodes_non_false}"
+                ),
+            )
+        if object_nodes_missing_required > 0:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "responses_request_body_schema_required_fields_incomplete "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path} "
+                    f"object_nodes_total={object_nodes_total} "
+                    f"object_nodes_missing_required={object_nodes_missing_required}"
                 ),
             )
         return _MigrationRequestShapeCompatibilityDecision(
@@ -1034,9 +1050,10 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         return bool(name) and isinstance(strict_value, bool) and strict_value and isinstance(schema, dict)
 
     @classmethod
-    def _count_schema_object_nodes(cls, schema_payload: object) -> tuple[int, int]:
+    def _count_schema_object_nodes(cls, schema_payload: object) -> tuple[int, int, int]:
         object_nodes_total = 0
         object_nodes_non_false = 0
+        object_nodes_missing_required = 0
         stack: list[object] = [schema_payload]
         while stack:
             candidate = stack.pop()
@@ -1050,6 +1067,16 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 object_nodes_total += 1
                 if candidate.get("additionalProperties") is not False:
                     object_nodes_non_false += 1
+                properties = candidate.get("properties")
+                if isinstance(properties, dict) and properties:
+                    property_keys = {str(key) for key in properties.keys()}
+                    required_raw = candidate.get("required")
+                    if not isinstance(required_raw, list):
+                        object_nodes_missing_required += 1
+                    else:
+                        required_keys = {str(item) for item in required_raw if isinstance(item, str)}
+                        if required_keys != property_keys:
+                            object_nodes_missing_required += 1
 
             properties = candidate.get("properties")
             if isinstance(properties, dict):
@@ -1070,7 +1097,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             if isinstance(additional_properties, dict):
                 stack.append(additional_properties)
 
-        return object_nodes_total, object_nodes_non_false
+        return object_nodes_total, object_nodes_non_false, object_nodes_missing_required
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         request_context = self._build_request_context(migration_context)
@@ -1424,6 +1451,21 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             request_body_mode=request_body_mode,
         )
 
+    def build_redacted_request_snapshot(
+        self,
+        *,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        return self._redact_request_payload(payload=payload)
+
+    def serialize_redacted_request_snapshot(
+        self,
+        *,
+        payload: dict[str, object],
+    ) -> str:
+        snapshot = self.build_redacted_request_snapshot(payload=payload)
+        return json.dumps(snapshot, ensure_ascii=True, sort_keys=True)
+
     def _build_responses_request_payload(
         self,
         *,
@@ -1534,6 +1576,58 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 },
             },
         }
+
+    def _redact_request_payload(self, *, payload: object) -> object:
+        if isinstance(payload, dict):
+            redacted: dict[str, object] = {}
+            for key, value in payload.items():
+                if key == "input":
+                    redacted[key] = self._redact_request_input_value(value)
+                    continue
+                if key == "messages":
+                    redacted[key] = self._redact_legacy_messages_value(value)
+                    continue
+                redacted[key] = self._redact_request_payload(payload=value)
+            return redacted
+        if isinstance(payload, list):
+            return [self._redact_request_payload(payload=item) for item in payload]
+        return payload
+
+    def _redact_request_input_value(self, value: object) -> object:
+        if isinstance(value, str):
+            return f"<redacted_string:{len(value)} chars>"
+        if isinstance(value, list):
+            return [self._redact_request_payload(payload=item) for item in value]
+        if isinstance(value, dict):
+            return self._redact_request_payload(payload=value)
+        return value
+
+    def _redact_legacy_messages_value(self, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        redacted_messages: list[object] = []
+        for item in value:
+            if not isinstance(item, dict):
+                redacted_messages.append(item)
+                continue
+            message_payload = dict(item)
+            content = message_payload.get("content")
+            if isinstance(content, str):
+                message_payload["content"] = f"<redacted_string:{len(content)} chars>"
+            elif isinstance(content, list):
+                redacted_parts: list[object] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        redacted_parts.append(part)
+                        continue
+                    part_payload = dict(part)
+                    text = part_payload.get("text")
+                    if isinstance(text, str):
+                        part_payload["text"] = f"<redacted_string:{len(text)} chars>"
+                    redacted_parts.append(part_payload)
+                message_payload["content"] = redacted_parts
+            redacted_messages.append(message_payload)
+        return redacted_messages
 
     def _extract_assistant_content(self, response_json: dict[str, object]) -> str:
         choices = response_json.get("choices")
@@ -2111,10 +2205,12 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             else None
         )
         input_mode: str | None = None
+        input_length_chars: int | None = None
         if "input" in payload:
             input_value = payload.get("input")
             if isinstance(input_value, str):
                 input_mode = "string"
+                input_length_chars = max(0, len(input_value))
             elif isinstance(input_value, list):
                 input_mode = "array"
             elif isinstance(input_value, dict):
@@ -2126,11 +2222,21 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         elif "messages" in payload:
             legacy_messages = payload.get("messages")
             input_mode = "legacy_messages_array" if isinstance(legacy_messages, list) else "legacy_messages_non_array"
+        endpoint_path = _clean_optional_value(context.get("endpoint_path"))
+        has_extra_request_options = self._has_extra_request_options(
+            endpoint_path=endpoint_path,
+            payload=payload,
+        )
+        has_null_optional_fields = self._payload_contains_null(payload)
 
-        object_nodes_total, object_nodes_non_false = self._count_schema_object_nodes(schema_payload)
+        (
+            object_nodes_total,
+            object_nodes_non_false,
+            object_nodes_missing_required,
+        ) = self._count_schema_object_nodes(schema_payload)
         return {
             "model": _clean_optional_value(payload.get("model")),
-            "endpoint_path": _clean_optional_value(context.get("endpoint_path")),
+            "endpoint_path": endpoint_path,
             "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
             "has_text_format": isinstance(text_format_payload, dict),
             "text_format_type": (
@@ -2141,6 +2247,11 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "schema_name": schema_name,
             "strict_enabled": strict_enabled_raw if isinstance(strict_enabled_raw, bool) else None,
             "top_level_keys": top_level_keys,
+            "text_top_level_keys": (
+                sorted(str(key) for key in text_payload.keys())
+                if isinstance(text_payload, dict)
+                else []
+            ),
             "text_format_keys": (
                 sorted(str(key) for key in text_format_payload.keys())
                 if isinstance(text_format_payload, dict)
@@ -2155,9 +2266,42 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "contains_tools": "tools" in payload,
             "contains_response_format_legacy": "response_format" in payload,
             "contains_messages_legacy": "messages" in payload,
+            "has_null_optional_fields": has_null_optional_fields,
+            "has_extra_request_options": has_extra_request_options,
+            "input_length_chars": input_length_chars,
             "schema_object_nodes_total": object_nodes_total,
             "schema_object_nodes_non_false_additional_properties": object_nodes_non_false,
+            "schema_object_nodes_missing_required": object_nodes_missing_required,
         }
+
+    @staticmethod
+    def _payload_contains_null(payload: object) -> bool:
+        if payload is None:
+            return True
+        if isinstance(payload, dict):
+            for value in payload.values():
+                if OpenAISEOMigrationArtifactGenerationProvider._payload_contains_null(value):
+                    return True
+            return False
+        if isinstance(payload, list):
+            for item in payload:
+                if OpenAISEOMigrationArtifactGenerationProvider._payload_contains_null(item):
+                    return True
+            return False
+        return False
+
+    @staticmethod
+    def _has_extra_request_options(*, endpoint_path: str | None, payload: dict[str, object]) -> bool:
+        if endpoint_path == _MIGRATION_COMPAT_ENDPOINT_RESPONSES:
+            allowed_keys = {"model", "input", "text"}
+        elif endpoint_path == _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS:
+            allowed_keys = {"model", "temperature", "messages", "response_format"}
+        else:
+            return False
+        for key in payload.keys():
+            if str(key) not in allowed_keys:
+                return True
+        return False
 
     def _request_fingerprint_log_fields(self, request_fingerprint: dict[str, object] | None) -> dict[str, object]:
         fingerprint = request_fingerprint or {}
@@ -2180,6 +2324,11 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "request_fingerprint_top_level_keys": (
                 [str(item) for item in fingerprint.get("top_level_keys", []) if isinstance(item, str)]
                 if isinstance(fingerprint.get("top_level_keys"), list)
+                else []
+            ),
+            "request_fingerprint_text_top_level_keys": (
+                [str(item) for item in fingerprint.get("text_top_level_keys", []) if isinstance(item, str)]
+                if isinstance(fingerprint.get("text_top_level_keys"), list)
                 else []
             ),
             "request_fingerprint_text_format_keys": (
@@ -2208,11 +2357,27 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 if isinstance(fingerprint.get("contains_messages_legacy"), bool)
                 else None
             ),
+            "request_fingerprint_has_null_optional_fields": (
+                bool(fingerprint.get("has_null_optional_fields"))
+                if isinstance(fingerprint.get("has_null_optional_fields"), bool)
+                else None
+            ),
+            "request_fingerprint_has_extra_request_options": (
+                bool(fingerprint.get("has_extra_request_options"))
+                if isinstance(fingerprint.get("has_extra_request_options"), bool)
+                else None
+            ),
+            "request_fingerprint_input_length_chars": self._coerce_optional_non_negative_int(
+                fingerprint.get("input_length_chars"),
+            ),
             "request_fingerprint_schema_object_nodes_total": self._coerce_optional_non_negative_int(
                 fingerprint.get("schema_object_nodes_total"),
             ),
             "request_fingerprint_schema_object_nodes_non_false_additional_properties": self._coerce_optional_non_negative_int(
                 fingerprint.get("schema_object_nodes_non_false_additional_properties"),
+            ),
+            "request_fingerprint_schema_object_nodes_missing_required": self._coerce_optional_non_negative_int(
+                fingerprint.get("schema_object_nodes_missing_required"),
             ),
         }
 
@@ -2515,6 +2680,15 @@ def _build_migration_json_schema() -> dict[str, object]:
     cta_contact_structure_schema: dict[str, object] = {
         "type": "object",
         "additionalProperties": False,
+        "required": [
+            "primary_cta",
+            "secondary_cta",
+            "contact_fields",
+            "contact_phone",
+            "contact_email",
+            "service_area_note",
+            "availability_note",
+        ],
         "properties": {
             "primary_cta": {"type": "string"},
             "secondary_cta": {"type": ["string", "null"]},
@@ -2528,6 +2702,14 @@ def _build_migration_json_schema() -> dict[str, object]:
     seo_meta_suggestions_schema: dict[str, object] = {
         "type": "object",
         "additionalProperties": False,
+        "required": [
+            "homepage_title",
+            "homepage_meta_description",
+            "focus_keywords",
+            "canonical_url",
+            "og_title",
+            "og_description",
+        ],
         "properties": {
             "homepage_title": {"type": "string"},
             "homepage_meta_description": {"type": "string"},

@@ -125,6 +125,14 @@ def _known_good_responses_contract_baseline() -> dict[str, object]:
     }
 
 
+def _known_good_responses_snapshot_baseline() -> dict[str, object]:
+    return {
+        "top_level_keys": ["input", "model", "text"],
+        "text_top_level_keys": ["format"],
+        "text_format_keys": ["name", "schema", "strict", "type"],
+    }
+
+
 def _count_non_false_additional_properties(schema_payload: object) -> int:
     count = 0
     stack: list[object] = [schema_payload]
@@ -138,6 +146,46 @@ def _count_non_false_additional_properties(schema_payload: object) -> int:
         )
         if is_object_node and candidate.get("additionalProperties") is not False:
             count += 1
+        properties = candidate.get("properties")
+        if isinstance(properties, dict):
+            stack.extend(properties.values())
+        items = candidate.get("items")
+        if isinstance(items, dict):
+            stack.append(items)
+        elif isinstance(items, list):
+            stack.extend(items)
+        for key in ("anyOf", "allOf", "oneOf", "prefixItems"):
+            nested = candidate.get(key)
+            if isinstance(nested, list):
+                stack.extend(nested)
+        additional_properties = candidate.get("additionalProperties")
+        if isinstance(additional_properties, dict):
+            stack.append(additional_properties)
+    return count
+
+
+def _count_object_nodes_missing_full_required(schema_payload: object) -> int:
+    count = 0
+    stack: list[object] = [schema_payload]
+    while stack:
+        candidate = stack.pop()
+        if not isinstance(candidate, dict):
+            continue
+        candidate_type = candidate.get("type")
+        is_object_node = candidate_type == "object" or (
+            isinstance(candidate_type, list) and "object" in candidate_type
+        )
+        if is_object_node:
+            properties = candidate.get("properties")
+            if isinstance(properties, dict) and properties:
+                required_raw = candidate.get("required")
+                if not isinstance(required_raw, list):
+                    count += 1
+                else:
+                    required_set = {str(item) for item in required_raw if isinstance(item, str)}
+                    properties_set = {str(key) for key in properties.keys()}
+                    if required_set != properties_set:
+                        count += 1
         properties = candidate.get("properties")
         if isinstance(properties, dict):
             stack.extend(properties.values())
@@ -273,6 +321,24 @@ def test_openai_migration_provider_responses_payload_matches_known_good_contract
     schema_payload = format_payload.get("schema")
     assert isinstance(schema_payload, dict)
     assert _count_non_false_additional_properties(schema_payload) == 0
+    assert _count_object_nodes_missing_full_required(schema_payload) == 0
+
+    redacted_snapshot = provider.build_redacted_request_snapshot(payload=captured_payload)
+    serialized_snapshot = provider.serialize_redacted_request_snapshot(payload=captured_payload)
+    assert isinstance(serialized_snapshot, str) and serialized_snapshot
+    snapshot_baseline = _known_good_responses_snapshot_baseline()
+    assert sorted(redacted_snapshot.keys()) == snapshot_baseline["top_level_keys"]
+    text_snapshot = redacted_snapshot.get("text")
+    assert isinstance(text_snapshot, dict)
+    assert sorted(text_snapshot.keys()) == snapshot_baseline["text_top_level_keys"]
+    format_snapshot = text_snapshot.get("format")
+    assert isinstance(format_snapshot, dict)
+    assert sorted(format_snapshot.keys()) == snapshot_baseline["text_format_keys"]
+    redacted_input = redacted_snapshot.get("input")
+    assert isinstance(redacted_input, str)
+    assert redacted_input.startswith("<redacted_string:")
+    assert "System Instructions:" not in redacted_input
+    assert "User Request:" not in redacted_input
 
 
 def test_openai_migration_provider_compatibility_rejects_responses_payload_with_legacy_response_format(
@@ -333,6 +399,38 @@ def test_openai_migration_provider_compatibility_rejects_responses_schema_with_n
     assert compatibility.supported is False
     assert compatibility.reason_code == "unsupported_request_shape"
     assert "responses_request_body_schema_additional_properties_not_false" in str(compatibility.admin_summary or "")
+
+
+def test_openai_migration_provider_compatibility_rejects_responses_schema_with_incomplete_required_fields(
+    monkeypatch,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    original_builder = provider._build_request_payload
+
+    def _build_incomplete_required_payload(**kwargs):  # noqa: ANN001
+        payload = original_builder(**kwargs)
+        text_payload = payload.get("text")
+        if isinstance(text_payload, dict):
+            format_payload = text_payload.get("format")
+            if isinstance(format_payload, dict):
+                schema_payload = format_payload.get("schema")
+                if isinstance(schema_payload, dict):
+                    properties = schema_payload.get("properties")
+                    if isinstance(properties, dict):
+                        cta_schema = properties.get("cta_contact_structure")
+                        if isinstance(cta_schema, dict):
+                            cta_schema.pop("required", None)
+        return payload
+
+    monkeypatch.setattr(provider, "_build_request_payload", _build_incomplete_required_payload)
+    compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is False
+    assert compatibility.reason_code == "unsupported_request_shape"
+    assert "responses_request_body_schema_required_fields_incomplete" in str(compatibility.admin_summary or "")
 
 
 def test_openai_migration_provider_compatibility_rejects_responses_non_string_input(monkeypatch) -> None:
@@ -511,12 +609,17 @@ def test_openai_migration_provider_request_logs_include_request_shape_metadata(m
     assert start.get("request_fingerprint_schema_name") == "seo_migration_artifact_response"
     assert start.get("request_fingerprint_strict_enabled") is True
     assert start.get("request_fingerprint_top_level_keys") == ["input", "model", "text"]
+    assert start.get("request_fingerprint_text_top_level_keys") == ["format"]
     assert start.get("request_fingerprint_text_format_keys") == ["name", "schema", "strict", "type"]
     assert start.get("request_fingerprint_input_mode") == "string"
+    assert start.get("request_fingerprint_input_length_chars") > 0
+    assert start.get("request_fingerprint_has_null_optional_fields") is False
+    assert start.get("request_fingerprint_has_extra_request_options") is False
     assert start.get("request_fingerprint_contains_tools") is False
     assert start.get("request_fingerprint_contains_response_format_legacy") is False
     assert start.get("request_fingerprint_contains_messages_legacy") is False
     assert start.get("request_fingerprint_schema_object_nodes_non_false_additional_properties") == 0
+    assert start.get("request_fingerprint_schema_object_nodes_missing_required") == 0
     assert "system_prompt" not in start
     assert "user_prompt" not in start
     assert "raw_payload" not in start
@@ -533,8 +636,13 @@ def test_openai_migration_provider_request_logs_include_request_shape_metadata(m
     assert failure.get("timeout_source") == "default"
     assert failure.get("request_fingerprint_model") == "gpt-5.1"
     assert failure.get("request_fingerprint_top_level_keys") == ["input", "model", "text"]
+    assert failure.get("request_fingerprint_text_top_level_keys") == ["format"]
+    assert failure.get("request_fingerprint_input_length_chars") > 0
+    assert failure.get("request_fingerprint_has_null_optional_fields") is False
+    assert failure.get("request_fingerprint_has_extra_request_options") is False
     assert failure.get("request_fingerprint_contains_response_format_legacy") is False
     assert failure.get("request_fingerprint_contains_messages_legacy") is False
+    assert failure.get("request_fingerprint_schema_object_nodes_missing_required") == 0
     assert "system_prompt" not in failure
     assert "user_prompt" not in failure
     assert "raw_payload" not in failure

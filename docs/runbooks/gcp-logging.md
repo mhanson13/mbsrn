@@ -83,14 +83,19 @@ Useful fields:
   - `request_fingerprint_schema_name`
   - `request_fingerprint_strict_enabled`
   - `request_fingerprint_top_level_keys`
+  - `request_fingerprint_text_top_level_keys`
   - `request_fingerprint_text_format_keys`
   - `request_fingerprint_schema_top_level_keys`
   - `request_fingerprint_input_mode`
+  - `request_fingerprint_input_length_chars`
+  - `request_fingerprint_has_null_optional_fields`
+  - `request_fingerprint_has_extra_request_options`
   - `request_fingerprint_contains_tools`
   - `request_fingerprint_contains_response_format_legacy`
   - `request_fingerprint_contains_messages_legacy`
   - `request_fingerprint_schema_object_nodes_total`
   - `request_fingerprint_schema_object_nodes_non_false_additional_properties`
+  - `request_fingerprint_schema_object_nodes_missing_required`
 - scoped identifiers (`business_id`, `site_id`, `workspace_id`)
 
 Interpretation:
@@ -107,6 +112,9 @@ Current migration request-shape examples:
 - blocked locally: `/responses` + `responses_text_format_json_schema` when request `input` is array/object instead of string
 - contract drift indicator: `request_fingerprint_schema_object_nodes_non_false_additional_properties>0` indicates schema strictness drift versus the known-good migration `/responses` contract.
 - contract drift indicator: `request_fingerprint_input_mode!=string` indicates invalid migration `/responses` input transport shape.
+- contract drift indicator: `request_fingerprint_schema_object_nodes_missing_required>0` indicates strict-schema object required coverage drift.
+- contract drift indicator: `request_fingerprint_has_extra_request_options=true` indicates unexpected top-level request options were added.
+- contract drift indicator: `request_fingerprint_has_null_optional_fields=true` indicates null-valued request fields leaked into payload.
 
 ## Local Block vs Remote Rejection
 
@@ -170,6 +178,7 @@ Interpretation:
 - timeout failures currently retain `failure_category=config_missing` for migration draft error-contract compatibility.
 - compare `timeout_seconds` and `timeout_source` to verify whether admin override or default timeout was active.
 - if timeout settings are sane but remote `unsupported_configuration` occurs quickly, compare request fingerprint fields first; contract drift is usually visible in top-level/text-format/schema fingerprint fields before model/latency tuning.
+- for field-by-field drift checks, use the migration provider redacted payload snapshot helper in tests/debug tooling and compare against the known-good curl contract shape (input text remains redacted by design).
 
 ## Migration State Coherence Quick Check
 
