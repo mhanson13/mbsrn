@@ -227,6 +227,7 @@ function buildBusinessSettings(overrides: Partial<BusinessSettings> = {}): Busin
     competitor_degraded_timeout_seconds: null,
     ai_prompt_text_competitor: null,
     ai_prompt_text_recommendations: null,
+    default_ai_model: null,
     timezone: "America/Denver",
     created_at: "2026-03-20T00:00:00Z",
     updated_at: "2026-03-21T00:00:00Z",

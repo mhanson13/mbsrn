@@ -196,6 +196,7 @@ def _build_service(
     provider: SEOMigrationArtifactGenerationProvider,
     *,
     github_publisher: SEOMigrationGitHubPublisher | None = None,
+    env_default_model_name: str | None = None,
 ) -> SEOMigrationService:
     return SEOMigrationService(
         session=db_session,
@@ -214,6 +215,7 @@ def _build_service(
         github_publisher=github_publisher,
         provider_name="mock",
         provider_model_name="mock-seo-migration-v1",
+        env_default_model_name=env_default_model_name,
     )
 
 
@@ -745,6 +747,93 @@ def test_generate_artifacts_blocks_known_unsupported_openai_request_shape_before
         and record.__dict__["json_fields"].get("event") == "seo_migration_draft_provider_request_start"
     ]
     assert request_start_logs == []
+
+
+def test_migration_model_resolution_prefers_business_default_over_env_default(db_session) -> None:
+    provider = _TrackingMigrationProvider(_build_publishable_output())
+    provider.model_name = "mock-provider-fallback"
+    service = _build_service(
+        db_session,
+        provider,
+        env_default_model_name="gpt-env-default",
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    business = db_session.get(Business, business_id)
+    assert business is not None
+    business.default_ai_model = "gpt-admin-default"
+    db_session.commit()
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    preview = service.get_prompt_preview(business_id=business_id, site_id=site_id)
+
+    assert preview.model_name == "gpt-admin-default"
+    assert provider.model_name == "gpt-admin-default"
+
+
+def test_migration_model_resolution_uses_env_default_when_business_default_missing(db_session) -> None:
+    provider = _TrackingMigrationProvider(_build_publishable_output())
+    provider.model_name = "mock-provider-fallback"
+    service = _build_service(
+        db_session,
+        provider,
+        env_default_model_name="gpt-env-default",
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    preview = service.get_prompt_preview(business_id=business_id, site_id=site_id)
+
+    assert preview.model_name == "gpt-env-default"
+    assert provider.model_name == "gpt-env-default"
+
+
+def test_generate_artifacts_blocks_unsupported_shape_when_admin_default_model_is_incompatible(
+    db_session,
+    monkeypatch,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-4o-mini",
+        timeout_seconds=5,
+    )
+    service = _build_service(
+        db_session,
+        provider,
+        env_default_model_name="gpt-4o-mini",
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    business = db_session.get(Business, business_id)
+    assert business is not None
+    business.default_ai_model = "gpt-5.1"
+    db_session.commit()
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    outbound_call_count = {"count": 0}
+
+    def _unexpected_urlopen(request, timeout):  # noqa: ANN001
+        del request, timeout
+        outbound_call_count["count"] += 1
+        raise AssertionError("migration draft generation should be blocked before provider call")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _unexpected_urlopen)
+
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    error = exc_info.value
+    assert error.failure_category == "config_missing"
+    assert error.failure_reason == "unsupported_configuration"
+    assert error.error_code == "unsupported_request_shape"
+    assert outbound_call_count["count"] == 0
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    compatibility = (summary.context_summary or {}).get("draft_provider_compatibility") or {}
+    assert compatibility.get("supported") is False
+    assert compatibility.get("reason_code") == "unsupported_request_shape"
+    assert compatibility.get("model_name") == "gpt-5.1"
 
 
 def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, caplog) -> None:

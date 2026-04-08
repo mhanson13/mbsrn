@@ -600,6 +600,7 @@ def get_seo_competitor_profile_generation_run_executor(
                 google_places_seed_client=google_places_seed_client,
                 google_places_seed_max_candidates=settings.google_places_seed_max_candidates,
                 google_places_seed_query_limit=settings.google_places_seed_query_limit,
+                env_default_model_name=settings.ai_model_name,
             )
             service.execute_queued_run(
                 business_id=business_id,
@@ -928,6 +929,7 @@ def get_seo_competitor_profile_generation_service(
         google_places_seed_client=google_places_seed_client,
         google_places_seed_max_candidates=settings.google_places_seed_max_candidates,
         google_places_seed_query_limit=settings.google_places_seed_query_limit,
+        env_default_model_name=settings.ai_model_name,
         retention_policy=SEOCompetitorProfileRetentionPolicy(
             raw_output_retention_days=settings.seo_competitor_profile_raw_output_retention_days,
             run_retention_days=settings.seo_competitor_profile_run_retention_days,
@@ -1042,6 +1044,7 @@ def get_seo_recommendation_narrative_service(
     ),
     provider: SEORecommendationNarrativeProvider = Depends(get_seo_recommendation_narrative_provider),
 ) -> SEORecommendationNarrativeService:
+    settings = get_settings()
     return SEORecommendationNarrativeService(
         session=db,
         business_repository=business_repository,
@@ -1049,6 +1052,7 @@ def get_seo_recommendation_narrative_service(
         seo_recommendation_narrative_repository=seo_recommendation_narrative_repository,
         seo_competitor_profile_generation_repository=seo_competitor_profile_generation_repository,
         provider=provider,
+        env_default_model_name=settings.ai_model_name,
     )
 
 
@@ -1091,6 +1095,7 @@ def get_seo_migration_service(
         github_publisher=github_publisher,
         provider_name=provider_name,
         provider_model_name=provider_model_name,
+        env_default_model_name=settings.ai_model_name,
         prompt_version=prompt_version,
         prompt_text_recommendations=settings.ai_prompt_text_recommendations,
         publish_commit_message_prefix=settings.migration_publish_commit_message_prefix,

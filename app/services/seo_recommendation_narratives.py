@@ -28,6 +28,7 @@ from app.services.ai_response_contract_evaluator import (
     summarize_recommendation_response_contract,
 )
 from app.services.competitors.normalizer import normalize_competitor_response
+from app.services.ai_model_settings import resolve_ai_model_name
 from app.services.ai_prompt_settings import ResolvedAIPromptText, resolve_ai_prompt_text
 from app.services.seo_competitor_profile_candidate_quality import (
     BIG_BOX_PENALTY_MAX,
@@ -135,6 +136,7 @@ class SEORecommendationNarrativeService:
         seo_recommendation_narrative_repository: SEORecommendationNarrativeRepository,
         seo_competitor_profile_generation_repository: SEOCompetitorProfileGenerationRepository,
         provider: SEORecommendationNarrativeProvider,
+        env_default_model_name: str | None = None,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
@@ -150,6 +152,8 @@ class SEORecommendationNarrativeService:
             configured_prompt_text = getattr(self.provider, "prompt_text_recommendation", "")
         self._configured_prompt_text_recommendations = str(configured_prompt_text or "").strip()
         self._configured_prompt_legacy_config_used = bool(getattr(self.provider, "legacy_config_used", False))
+        self._configured_provider_model_name = str(getattr(self.provider, "model_name", "") or "").strip() or None
+        self._env_default_model_name = str(env_default_model_name or "").strip() or None
 
     def summarize_run(
         self,
@@ -555,6 +559,7 @@ class SEORecommendationNarrativeService:
         business = self.business_repository.get(business_id)
         if business is None:
             raise SEORecommendationNarrativeNotFoundError("Business not found")
+        self._apply_resolved_recommendation_model_settings(business)
         return business
 
     def _summarize(
@@ -709,6 +714,30 @@ class SEORecommendationNarrativeService:
         # Keep legacy fallback attribution aligned to the immutable configured
         # baseline captured at service construction time.
         return self._configured_prompt_legacy_config_used
+
+    def _provider_model_fallback_name(self) -> str | None:
+        current = str(getattr(self.provider, "model_name", "") or "").strip() or None
+        return current or self._configured_provider_model_name
+
+    def _resolve_recommendation_model_name(self, business: Business, *, requested_model_name: str | None = None) -> str:
+        resolved = resolve_ai_model_name(
+            requested_model_name=requested_model_name,
+            admin_default_model_name=getattr(business, "default_ai_model", None),
+            env_default_model_name=self._env_default_model_name,
+            provider_fallback_model_name=self._provider_model_fallback_name(),
+        )
+        return resolved.model_name
+
+    def _apply_resolved_recommendation_model_settings(
+        self,
+        business: Business,
+        *,
+        requested_model_name: str | None = None,
+    ) -> str:
+        model_name = self._resolve_recommendation_model_name(business, requested_model_name=requested_model_name)
+        if hasattr(self.provider, "model_name"):
+            setattr(self.provider, "model_name", model_name)
+        return model_name
 
     def _resolve_recommendation_prompt_settings(self, business: Business) -> ResolvedAIPromptText:
         return resolve_ai_prompt_text(

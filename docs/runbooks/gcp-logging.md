@@ -80,6 +80,7 @@ Interpretation:
 - `reason_code` identifies the stable compatibility failure class (for example `unsupported_model_configuration`).
 - inspect `model`, `endpoint_path`, `execution_mode`, and `response_format_mode` together as the effective request-shape key.
 - for summary payload troubleshooting, also inspect `context_summary.migration_diagnostics.draft_provider_compatibility_admin_summary` for sanitized matrix decision detail.
+- model resolution precedence for compatibility checks is: explicit/requested -> business admin default (`default_ai_model`) -> env fallback (`AI_MODEL_NAME`) -> provider fallback.
 
 ## Local Block vs Remote Rejection
 

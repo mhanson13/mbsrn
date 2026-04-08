@@ -322,6 +322,12 @@ Operator-facing contract summary:
 
 These AI runtime settings are shared with recommendation narrative generation (`docs/features/seo-recommendations-ai-assist.md`) so provider/model behavior stays consistent across bounded SEO.ai AI surfaces.
 
+Runtime model resolution precedence:
+1. explicit/requested model (when provided by the current run path)
+2. business admin default model (`businesses.default_ai_model`, managed from Admin settings)
+3. deployment env default (`AI_MODEL_NAME`)
+4. provider/runtime fallback
+
 Prompt behavior notes:
 - dynamic location/industry context comes from persisted site fields (not runtime retrieval);
 - recommendation text is optional, additive, and bounded;

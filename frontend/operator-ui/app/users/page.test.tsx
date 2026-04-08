@@ -137,6 +137,7 @@ function buildBusinessSettings(overrides: Partial<BusinessSettings> = {}): Busin
     competitor_degraded_timeout_seconds: null,
     ai_prompt_text_competitor: null,
     ai_prompt_text_recommendations: null,
+    default_ai_model: null,
     timezone: "America/Denver",
     created_at: "2026-03-20T00:00:00Z",
     updated_at: "2026-03-20T00:00:00Z",
@@ -1136,9 +1137,10 @@ describe("admin page compatibility route", () => {
       expect(mockUpdateBusinessSettings).toHaveBeenCalledWith("token-1", "biz-1", {
         ai_prompt_text_competitor: "Prefer local and substitutable competitors.",
         ai_prompt_text_recommendations: "Prioritize specific next-step recommendations.",
+        default_ai_model: null,
       }),
     );
-    await screen.findByText("AI prompt overrides updated.");
+    await screen.findByText("AI prompt/default model settings updated.");
   });
 
   it("clears AI prompt overrides back to deployment/default fallback", async () => {
@@ -1171,7 +1173,7 @@ describe("admin page compatibility route", () => {
       }),
     );
     await screen.findByText("AI prompt overrides cleared. Deployment fallback/default is now active.");
-    expect(screen.getAllByText("Deployment/default fallback")).toHaveLength(2);
+    expect(screen.getAllByText("Deployment/default fallback")).toHaveLength(3);
   });
 
   it("renders admin site edit and permanent delete controls", async () => {

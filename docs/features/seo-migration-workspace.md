@@ -120,6 +120,15 @@ Compatibility decisions are now request-shape matrix driven (migration-specific)
 - execution mode
 - response format mode
 
+Resolved migration model precedence before compatibility evaluation and provider invocation:
+1. explicit/requested model (when provided by current workflow)
+2. business admin default (`businesses.default_ai_model`)
+3. deployment env default (`AI_MODEL_NAME`)
+4. provider/runtime fallback
+
+Operational implication:
+- changing the admin default model can immediately change compatibility outcomes for migration draft generation without changing provider routing.
+
 Compatibility payload (in `context_summary.draft_provider_compatibility`):
 - `supported`
 - `reason_code`

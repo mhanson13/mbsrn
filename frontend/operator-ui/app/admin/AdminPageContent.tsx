@@ -553,6 +553,14 @@ function normalizePromptOverrideInput(value: string): string | null {
   return normalized;
 }
 
+function normalizeDefaultModelInput(value: string): string | null {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized;
+}
+
 function formatIdentityLabel(identity: PrincipalIdentity): string {
   return identity.email || `${identity.provider}:${identity.provider_subject}`;
 }
@@ -624,6 +632,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [competitorTimeoutError, setCompetitorTimeoutError] = useState<string | null>(null);
   const [competitorPromptOverrideInput, setCompetitorPromptOverrideInput] = useState("");
   const [recommendationsPromptOverrideInput, setRecommendationsPromptOverrideInput] = useState("");
+  const [defaultAiModelInput, setDefaultAiModelInput] = useState("");
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
   const [promptOverrideMessage, setPromptOverrideMessage] = useState<string | null>(null);
   const [promptOverrideError, setPromptOverrideError] = useState<string | null>(null);
@@ -786,6 +795,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         setCompetitorDegradedTimeoutInput(timeoutSettingToInput(settings.competitor_degraded_timeout_seconds));
         setCompetitorPromptOverrideInput(settings.ai_prompt_text_competitor || "");
         setRecommendationsPromptOverrideInput(settings.ai_prompt_text_recommendations || "");
+        setDefaultAiModelInput(settings.default_ai_model || "");
       } catch (err) {
         if (!cancelled) {
           setBusinessSettingsLoadError(safeBusinessSettingsErrorMessage(err));
@@ -1103,11 +1113,13 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       const updated = await updateBusinessSettings(context.token, context.businessId, {
         ai_prompt_text_competitor: normalizePromptOverrideInput(competitorPromptOverrideInput),
         ai_prompt_text_recommendations: normalizePromptOverrideInput(recommendationsPromptOverrideInput),
+        default_ai_model: normalizeDefaultModelInput(defaultAiModelInput),
       });
       setBusinessSettings(updated);
       setCompetitorPromptOverrideInput(updated.ai_prompt_text_competitor || "");
       setRecommendationsPromptOverrideInput(updated.ai_prompt_text_recommendations || "");
-      setPromptOverrideMessage("AI prompt overrides updated.");
+      setDefaultAiModelInput(updated.default_ai_model || "");
+      setPromptOverrideMessage("AI prompt/default model settings updated.");
     } catch (err) {
       setPromptOverrideError(safePromptSettingsUpdateErrorMessage(err));
     } finally {
@@ -1130,6 +1142,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       setBusinessSettings(updated);
       setCompetitorPromptOverrideInput(updated.ai_prompt_text_competitor || "");
       setRecommendationsPromptOverrideInput(updated.ai_prompt_text_recommendations || "");
+      setDefaultAiModelInput(updated.default_ai_model || "");
       setPromptOverrideMessage("AI prompt overrides cleared. Deployment fallback/default is now active.");
     } catch (err) {
       setPromptOverrideError(safePromptSettingsUpdateErrorMessage(err));
@@ -1935,6 +1948,28 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             Current source:{" "}
             <strong>
               {businessSettings?.ai_prompt_text_recommendations
+                ? "Business admin override"
+                : "Deployment/default fallback"}
+            </strong>
+          </p>
+
+          <label htmlFor="default-ai-model">Default AI model</label>
+          <input
+            id="default-ai-model"
+            type="text"
+            value={defaultAiModelInput}
+            onChange={(event) => setDefaultAiModelInput(event.target.value)}
+            disabled={businessSettingsLoading || promptOverrideSubmitting}
+            placeholder="gpt-4o-mini"
+          />
+          <p className="hint muted">
+            Used when no per-run model override is provided. Resolution order: explicit request, business admin
+            default, deployment env default, provider fallback.
+          </p>
+          <p className="hint muted">
+            Current source:{" "}
+            <strong>
+              {businessSettings?.default_ai_model
                 ? "Business admin override"
                 : "Deployment/default fallback"}
             </strong>

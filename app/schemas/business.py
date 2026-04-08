@@ -30,6 +30,7 @@ class BusinessSettingsRead(BaseModel):
     competitor_degraded_timeout_seconds: int | None
     ai_prompt_text_competitor: str | None
     ai_prompt_text_recommendations: str | None
+    default_ai_model: str | None
     timezone: str
     created_at: datetime
     updated_at: datetime
@@ -63,6 +64,14 @@ class BusinessSettingsUpdateRequest(BaseModel):
         description=(
             "Business-scoped recommendation prompt override. Blank/whitespace values are treated "
             "as unset and fall back to deployment/default prompt configuration."
+        ),
+    )
+    default_ai_model: str | None = Field(
+        default=None,
+        max_length=128,
+        description=(
+            "Business-scoped default AI model. Blank/whitespace values are treated as unset and "
+            "fall back to deployment/default model configuration."
         ),
     )
     competitor_tuning_preview_event_id: str | None = Field(default=None, min_length=1, max_length=36)
@@ -113,7 +122,7 @@ class BusinessSettingsUpdateRequest(BaseModel):
     def normalize_preview_event_id(cls, value: str | None) -> str | None:
         return _clean_optional_text(value)
 
-    @field_validator("ai_prompt_text_competitor", "ai_prompt_text_recommendations", mode="before")
+    @field_validator("ai_prompt_text_competitor", "ai_prompt_text_recommendations", "default_ai_model", mode="before")
     @classmethod
     def normalize_ai_prompt_text_overrides(cls, value: str | None) -> str | None:
         return _clean_optional_text(value)

@@ -92,6 +92,7 @@ def test_get_business_settings_endpoint(db_session, seeded_business) -> None:
     assert payload["competitor_degraded_timeout_seconds"] is None
     assert payload["ai_prompt_text_competitor"] is None
     assert payload["ai_prompt_text_recommendations"] is None
+    assert payload["default_ai_model"] is None
 
 
 def test_patch_business_settings_valid_partial_update_succeeds(db_session, seeded_business) -> None:
@@ -152,6 +153,30 @@ def test_patch_business_settings_accepts_and_clears_ai_prompt_text_overrides(db_
     clear_payload = clear_response.json()
     assert clear_payload["ai_prompt_text_competitor"] is None
     assert clear_payload["ai_prompt_text_recommendations"] is None
+
+
+def test_patch_business_settings_accepts_and_clears_default_ai_model(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    save_response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "default_ai_model": "  gpt-4.1-mini  ",
+        },
+    )
+    assert save_response.status_code == 200
+    save_payload = save_response.json()
+    assert save_payload["default_ai_model"] == "gpt-4.1-mini"
+
+    clear_response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "default_ai_model": " \n\t ",
+        },
+    )
+    assert clear_response.status_code == 200
+    clear_payload = clear_response.json()
+    assert clear_payload["default_ai_model"] is None
 
 
 def test_patch_business_settings_normalizes_email_and_phone(db_session, seeded_business) -> None:

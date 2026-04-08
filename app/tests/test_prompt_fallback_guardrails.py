@@ -67,6 +67,27 @@ def test_competitor_prompt_fallback_resolution_uses_immutable_snapshot_not_mutab
     assert resolved.prompt_source == "env"
 
 
+def test_competitor_model_resolution_prefers_business_default_over_env_default(
+    db_session,
+    seeded_business,
+) -> None:
+    provider = _MutablePromptProvider()
+    provider.model_name = "gpt-env-default"
+    seeded_business.default_ai_model = "gpt-admin-default"
+    service = SEOCompetitorProfileGenerationService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_site_repository=SEOSiteRepository(db_session),
+        seo_competitor_repository=SEOCompetitorRepository(db_session),
+        seo_competitor_profile_generation_repository=SEOCompetitorProfileGenerationRepository(db_session),
+        provider=provider,
+        env_default_model_name="gpt-env-default",
+    )
+
+    service._require_business(seeded_business.id)
+    assert provider.model_name == "gpt-admin-default"
+
+
 def test_recommendation_prompt_fallback_resolution_uses_immutable_snapshot_not_mutable_provider(
     db_session,
     seeded_business,
@@ -89,6 +110,48 @@ def test_recommendation_prompt_fallback_resolution_uses_immutable_snapshot_not_m
     resolved = service._resolve_recommendation_prompt_settings(seeded_business)
     assert resolved.prompt_text == "Configured recommendation fallback prompt."
     assert resolved.prompt_source == "env"
+
+
+def test_recommendation_model_resolution_prefers_business_default_over_env_default(
+    db_session,
+    seeded_business,
+) -> None:
+    provider = _MutablePromptProvider()
+    provider.model_name = "gpt-env-default"
+    seeded_business.default_ai_model = "gpt-admin-default"
+    service = SEORecommendationNarrativeService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_recommendation_repository=SEORecommendationRepository(db_session),
+        seo_recommendation_narrative_repository=SEORecommendationNarrativeRepository(db_session),
+        seo_competitor_profile_generation_repository=SEOCompetitorProfileGenerationRepository(db_session),
+        provider=provider,
+        env_default_model_name="gpt-env-default",
+    )
+
+    service._require_business(seeded_business.id)
+    assert provider.model_name == "gpt-admin-default"
+
+
+def test_recommendation_model_resolution_uses_env_default_when_business_default_missing(
+    db_session,
+    seeded_business,
+) -> None:
+    provider = _MutablePromptProvider()
+    provider.model_name = "gpt-provider-fallback"
+    seeded_business.default_ai_model = None
+    service = SEORecommendationNarrativeService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_recommendation_repository=SEORecommendationRepository(db_session),
+        seo_recommendation_narrative_repository=SEORecommendationNarrativeRepository(db_session),
+        seo_competitor_profile_generation_repository=SEOCompetitorProfileGenerationRepository(db_session),
+        provider=provider,
+        env_default_model_name="gpt-env-default",
+    )
+
+    service._require_business(seeded_business.id)
+    assert provider.model_name == "gpt-env-default"
 
 
 def test_competitor_prompt_apply_resolution_uses_normalized_admin_override_for_execution(

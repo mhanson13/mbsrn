@@ -88,6 +88,7 @@ export interface BusinessSettings {
   competitor_degraded_timeout_seconds: number | null;
   ai_prompt_text_competitor: string | null;
   ai_prompt_text_recommendations: string | null;
+  default_ai_model: string | null;
   timezone: string;
   created_at: string;
   updated_at: string;
@@ -109,6 +110,7 @@ export interface BusinessSettingsUpdateRequest {
   competitor_degraded_timeout_seconds?: number | null;
   ai_prompt_text_competitor?: string | null;
   ai_prompt_text_recommendations?: string | null;
+  default_ai_model?: string | null;
   competitor_tuning_preview_event_id?: string;
   timezone?: string | null;
 }

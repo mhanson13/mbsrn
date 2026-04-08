@@ -82,6 +82,7 @@ from app.services.ai_response_contract_evaluator import (
     summarize_competitor_response_contract,
 )
 from app.services.ai_prompt_settings import ResolvedAIPromptText, resolve_ai_prompt_text
+from app.services.ai_model_settings import resolve_ai_model_name
 from app.services.seo_crawler import SEOCrawler
 
 
@@ -518,6 +519,7 @@ class SEOCompetitorProfileGenerationService:
         google_places_seed_client: GooglePlacesSeedDiscoveryClient | None = None,
         google_places_seed_max_candidates: int = _GOOGLE_PLACES_SEED_MAX_CANDIDATES,
         google_places_seed_query_limit: int = _GOOGLE_PLACES_SEED_QUERY_LIMIT,
+        env_default_model_name: str | None = None,
         retention_policy: SEOCompetitorProfileRetentionPolicy = SEOCompetitorProfileRetentionPolicy(),
         observability_lookback_days: int = DEFAULT_OBSERVABILITY_LOOKBACK_DAYS,
     ) -> None:
@@ -536,6 +538,10 @@ class SEOCompetitorProfileGenerationService:
             configured_prompt_text = getattr(self.provider, "prompt_text_recommendation", "")
         self._configured_prompt_text_competitor = self._clean_optional(str(configured_prompt_text or "")) or ""
         self._configured_prompt_legacy_config_used = bool(getattr(self.provider, "legacy_config_used", False))
+        self._configured_provider_model_name = (
+            self._clean_optional(str(getattr(self.provider, "model_name", "") or "")) or None
+        )
+        self._env_default_model_name = self._clean_optional(env_default_model_name)
         self.candidate_domain_probe = candidate_domain_probe
         self.google_places_seed_client = google_places_seed_client
         self.google_places_seed_max_candidates = max(
@@ -3228,6 +3234,7 @@ class SEOCompetitorProfileGenerationService:
         business = self.business_repository.get(business_id)
         if business is None:
             raise SEOCompetitorProfileGenerationNotFoundError("Business not found")
+        self._apply_resolved_competitor_model_settings(business)
         return business
 
     def _resolve_candidate_quality_tuning(self, *, business_id: str) -> CompetitorCandidateQualityTuning:
@@ -3383,6 +3390,30 @@ class SEOCompetitorProfileGenerationService:
     def _default_provider_name(self) -> str:
         provider_name = self._clean_optional(str(getattr(self.provider, "provider_name", "") or ""))
         return provider_name or "pending"
+
+    def _provider_model_fallback_name(self) -> str | None:
+        current = self._clean_optional(str(getattr(self.provider, "model_name", "") or ""))
+        return current or self._configured_provider_model_name
+
+    def _resolve_competitor_model_name(self, business: Business, *, requested_model_name: str | None = None) -> str:
+        resolved = resolve_ai_model_name(
+            requested_model_name=requested_model_name,
+            admin_default_model_name=getattr(business, "default_ai_model", None),
+            env_default_model_name=self._env_default_model_name,
+            provider_fallback_model_name=self._provider_model_fallback_name(),
+        )
+        return resolved.model_name
+
+    def _apply_resolved_competitor_model_settings(
+        self,
+        business: Business,
+        *,
+        requested_model_name: str | None = None,
+    ) -> str:
+        model_name = self._resolve_competitor_model_name(business, requested_model_name=requested_model_name)
+        if hasattr(self.provider, "model_name"):
+            setattr(self.provider, "model_name", model_name)
+        return model_name
 
     def _default_model_name(self) -> str:
         model_name = self._clean_optional(str(getattr(self.provider, "model_name", "") or ""))

@@ -33,6 +33,10 @@ class Business(Base):
     # business override -> deployment env fallback -> default.
     ai_prompt_text_competitor: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_prompt_text_recommendations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Optional business-scoped default model override used when no explicit
+    # per-run model is requested. Runtime resolution remains:
+    # explicit -> business override -> deployment env fallback -> provider/default.
+    default_ai_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False

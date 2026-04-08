@@ -268,6 +268,10 @@ class BusinessSettingsService:
                 "ai_prompt_text_recommendations",
                 business.ai_prompt_text_recommendations,
             ),
+            "default_ai_model": updates.get(
+                "default_ai_model",
+                business.default_ai_model,
+            ),
             "timezone": updates.get("timezone", business.timezone),
         }
 

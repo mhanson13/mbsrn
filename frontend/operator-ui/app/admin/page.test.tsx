@@ -32,6 +32,7 @@ const mockUseAuth = jest.fn();
 const mockFetchPrincipals = jest.fn();
 const mockFetchPrincipalIdentities = jest.fn();
 const mockFetchBusinessSettings = jest.fn();
+const mockUpdateBusinessSettings = jest.fn();
 
 jest.mock("../../components/useOperatorContext", () => ({
   useOperatorContext: () => mockUseOperatorContext(),
@@ -59,7 +60,7 @@ jest.mock("../../lib/api/client", () => ({
   deleteAdminSite: jest.fn(),
   queryGcpLogs: jest.fn(),
   updateAdminSite: jest.fn(),
-  updateBusinessSettings: jest.fn(),
+  updateBusinessSettings: (...args: unknown[]) => mockUpdateBusinessSettings(...args),
   fetchPrincipalIdentities: (...args: unknown[]) => mockFetchPrincipalIdentities(...args),
   fetchPrincipals: (...args: unknown[]) => mockFetchPrincipals(...args),
   fetchBusinessSettings: (...args: unknown[]) => mockFetchBusinessSettings(...args),
@@ -67,6 +68,7 @@ jest.mock("../../lib/api/client", () => ({
 
 describe("admin route", () => {
   beforeEach(() => {
+    mockUpdateBusinessSettings.mockReset();
     mockFetchPrincipals.mockResolvedValue({ items: [], total: 0 });
     mockFetchPrincipalIdentities.mockResolvedValue({ items: [], total: 0 });
     mockFetchBusinessSettings.mockResolvedValue({
@@ -87,6 +89,30 @@ describe("admin route", () => {
       competitor_degraded_timeout_seconds: null,
       ai_prompt_text_competitor: null,
       ai_prompt_text_recommendations: null,
+      default_ai_model: null,
+      timezone: "UTC",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockUpdateBusinessSettings.mockResolvedValue({
+      id: "biz-1",
+      name: "Biz",
+      notification_phone: null,
+      notification_email: null,
+      sms_enabled: false,
+      email_enabled: false,
+      customer_auto_ack_enabled: false,
+      contractor_alerts_enabled: false,
+      seo_audit_crawl_max_pages: 200,
+      competitor_candidate_min_relevance_score: 30,
+      competitor_candidate_big_box_penalty: 20,
+      competitor_candidate_directory_penalty: 20,
+      competitor_candidate_local_alignment_bonus: 10,
+      competitor_primary_timeout_seconds: null,
+      competitor_degraded_timeout_seconds: null,
+      ai_prompt_text_competitor: null,
+      ai_prompt_text_recommendations: null,
+      default_ai_model: null,
       timezone: "UTC",
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
@@ -158,6 +184,7 @@ describe("admin route", () => {
     expect(screen.queryByRole("heading", { name: "User ID Management" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create User" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create and Link Identity" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Default AI model")).toBeInTheDocument();
     expect(screen.getByText("Platform operations tools for diagnostics, site maintenance, and safe configuration updates.")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Property" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Enabled" })).toBeInTheDocument();
@@ -214,6 +241,80 @@ describe("admin route", () => {
     fireEvent.change(propertyInput, { target: { value: "example.com" } });
 
     expect(screen.getByText("Use sc-domain:example.com or https://example.com.")).toBeInTheDocument();
+  });
+
+  it("loads and saves business default AI model in admin settings", async () => {
+    mockFetchBusinessSettings.mockResolvedValueOnce({
+      id: "biz-1",
+      name: "Biz",
+      notification_phone: null,
+      notification_email: null,
+      sms_enabled: false,
+      email_enabled: false,
+      customer_auto_ack_enabled: false,
+      contractor_alerts_enabled: false,
+      seo_audit_crawl_max_pages: 200,
+      competitor_candidate_min_relevance_score: 30,
+      competitor_candidate_big_box_penalty: 20,
+      competitor_candidate_directory_penalty: 20,
+      competitor_candidate_local_alignment_bonus: 10,
+      competitor_primary_timeout_seconds: null,
+      competitor_degraded_timeout_seconds: null,
+      ai_prompt_text_competitor: null,
+      ai_prompt_text_recommendations: null,
+      default_ai_model: "gpt-4.1-mini",
+      timezone: "UTC",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockUpdateBusinessSettings.mockResolvedValueOnce({
+      id: "biz-1",
+      name: "Biz",
+      notification_phone: null,
+      notification_email: null,
+      sms_enabled: false,
+      email_enabled: false,
+      customer_auto_ack_enabled: false,
+      contractor_alerts_enabled: false,
+      seo_audit_crawl_max_pages: 200,
+      competitor_candidate_min_relevance_score: 30,
+      competitor_candidate_big_box_penalty: 20,
+      competitor_candidate_directory_penalty: 20,
+      competitor_candidate_local_alignment_bonus: 10,
+      competitor_primary_timeout_seconds: null,
+      competitor_degraded_timeout_seconds: null,
+      ai_prompt_text_competitor: null,
+      ai_prompt_text_recommendations: null,
+      default_ai_model: "gpt-4o-mini",
+      timezone: "UTC",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-model-1",
+        display_name: "Admin Model",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    const defaultModelInput = await screen.findByLabelText("Default AI model");
+    expect(defaultModelInput).toHaveValue("gpt-4.1-mini");
+
+    fireEvent.change(defaultModelInput, { target: { value: "gpt-4o-mini" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Prompt Overrides" }));
+
+    await waitFor(() => {
+      expect(mockUpdateBusinessSettings).toHaveBeenCalled();
+    });
+    expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).toMatchObject({
+      default_ai_model: "gpt-4o-mini",
+    });
+    expect(await screen.findByLabelText("Default AI model")).toHaveValue("gpt-4o-mini");
   });
 
   it("keeps /users as a compatibility route", async () => {

@@ -123,6 +123,12 @@ AI narrative provider wiring uses existing AI runtime settings:
 - `AI_PROMPT_TEXT_RECOMMENDATION` (deprecated legacy fallback used only when split prompt vars are unset/blank)
 - `OPENAI_API_BASE_URL` (default `https://api.openai.com/v1`)
 
+Runtime model resolution precedence:
+1. explicit/requested model (when provided by the current run path)
+2. business admin default model (`businesses.default_ai_model`, managed from Admin settings)
+3. deployment env default (`AI_MODEL_NAME`)
+4. provider/runtime fallback
+
 Behavior:
 - `openai` + valid key -> real provider.
 - `openai` + missing key in local/test/dev -> mock fallback for local workflows/tests.

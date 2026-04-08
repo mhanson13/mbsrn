@@ -117,6 +117,7 @@ describe("user management route", () => {
       competitor_degraded_timeout_seconds: null,
       ai_prompt_text_competitor: null,
       ai_prompt_text_recommendations: null,
+      default_ai_model: null,
       timezone: "UTC",
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",

@@ -27,6 +27,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
 )
+from app.models.business import Business
 from app.models.seo_migration_artifact_version import SEOMigrationArtifactVersion
 from app.models.seo_migration_workspace import SEOMigrationWorkspace
 from app.models.seo_site import SEOSite
@@ -43,6 +44,7 @@ from app.services.ai_response_contract_evaluator import (
     AIResponseContractEvaluation,
     evaluate_migration_artifact_response,
 )
+from app.services.ai_model_settings import resolve_ai_model_name
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_ingest import SEOMigrationSourceIngestError, SEOMigrationSourceIngestService
 from app.services.seo_migration_prompt import SEO_MIGRATION_PROMPT_VERSION, build_seo_migration_prompt
@@ -319,6 +321,7 @@ class SEOMigrationService:
         github_publisher: SEOMigrationGitHubPublisher | None = None,
         provider_name: str,
         provider_model_name: str,
+        env_default_model_name: str | None = None,
         prompt_version: str = SEO_MIGRATION_PROMPT_VERSION,
         prompt_text_recommendations: str = "",
         publish_commit_message_prefix: str = "[MBSRN Migration]",
@@ -353,6 +356,8 @@ class SEOMigrationService:
         )
         self.provider_name = provider_name
         self.provider_model_name = provider_model_name
+        self._configured_provider_model_name = _normalize_string(provider_model_name, max_length=128)
+        self._env_default_model_name = _normalize_string(env_default_model_name, max_length=128)
         self.prompt_version = prompt_version
         self.prompt_text_recommendations = prompt_text_recommendations
         self.publish_commit_message_prefix = publish_commit_message_prefix.strip() or "[MBSRN Migration]"
@@ -2437,9 +2442,37 @@ class SEOMigrationService:
             return "unknown"
         return normalized
 
-    def _require_business(self, business_id: str) -> None:
-        if self.business_repository.get(business_id) is None:
+    def _provider_model_fallback_name(self) -> str | None:
+        runtime_provider_model = _normalize_string(getattr(self.artifact_provider, "model_name", None), max_length=128)
+        return runtime_provider_model or self._configured_provider_model_name
+
+    def _resolve_migration_model_name(self, business: Business, *, requested_model_name: str | None = None) -> str:
+        resolved = resolve_ai_model_name(
+            requested_model_name=requested_model_name,
+            admin_default_model_name=getattr(business, "default_ai_model", None),
+            env_default_model_name=self._env_default_model_name,
+            provider_fallback_model_name=self._provider_model_fallback_name(),
+        )
+        return resolved.model_name
+
+    def _apply_resolved_migration_model_settings(
+        self,
+        business: Business,
+        *,
+        requested_model_name: str | None = None,
+    ) -> str:
+        model_name = self._resolve_migration_model_name(business, requested_model_name=requested_model_name)
+        self.provider_model_name = model_name
+        if hasattr(self.artifact_provider, "model_name"):
+            setattr(self.artifact_provider, "model_name", model_name)
+        return model_name
+
+    def _require_business(self, business_id: str) -> Business:
+        business = self.business_repository.get(business_id)
+        if business is None:
             raise SEOMigrationNotFoundError("Business not found")
+        self._apply_resolved_migration_model_settings(business)
+        return business
 
     def _require_site(self, *, business_id: str, site_id: str) -> SEOSite:
         self._require_business(business_id)
