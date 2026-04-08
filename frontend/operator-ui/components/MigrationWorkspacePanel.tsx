@@ -633,7 +633,7 @@ function parseDraftGenerationState(params: {
       status: "blocked_by_provider",
       summary:
         draftProviderCompatibility.operatorMessage ||
-        "Blocked: provider configuration is not compatible with migration draft generation.",
+        "Blocked: current AI model/configuration is not compatible with migration draft generation.",
     };
   }
 

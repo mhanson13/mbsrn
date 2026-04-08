@@ -114,6 +114,11 @@ Workspace readiness and provider compatibility are separate controls:
 - Provider compatibility answers: "Does the currently configured AI provider/model/request shape support migration draft generation?"
 
 Compatibility is evaluated after readiness and before any outbound provider request.
+Compatibility decisions are now request-shape matrix driven (migration-specific), using:
+- model family/pattern
+- endpoint path
+- execution mode
+- response format mode
 
 Compatibility payload (in `context_summary.draft_provider_compatibility`):
 - `supported`
@@ -142,6 +147,11 @@ Known unsupported request shape (blocked locally):
 - `model=gpt-5.1` with `endpoint_path=/chat/completions` and `response_format_mode=json_schema` is treated as `unsupported_request_shape`.
 - Migration draft generation is blocked by compatibility preflight before any outbound provider request.
 
+Known supported request shape (current allowlist example):
+- `model=gpt-4o-mini` with `endpoint_path=/chat/completions`, `execution_mode=full`, and `response_format_mode=json_schema`.
+
+Unknown/unlisted model/request-shape combinations default to local block (`unsupported_model_configuration`) so parseable-but-unsupported shapes do not reach provider execution.
+
 Behavior:
 - if compatibility is unsupported, draft generation fails fast locally
 - outbound provider request is not attempted
@@ -151,6 +161,7 @@ Behavior:
 Structured logging:
 - compatibility evaluation emits `event=seo_migration_provider_compatibility_evaluation`
 - includes identifiers and request-shape metadata (`business_id`, `site_id`, `workspace_id`, `provider_name`, `model`, `endpoint_path`, `execution_mode`, `web_search_enabled`, `degraded_mode`, `response_format_mode`, `supported`, `reason_code`, `retryable`)
+- migration summary diagnostics also expose `draft_provider_compatibility_admin_summary` (sanitized admin hint from compatibility decision) for operator/admin troubleshooting
 - compatibility logs include `decision`:
   - `blocked_local_preflight` for local preflight block
   - `allowed` when the request shape is compatible

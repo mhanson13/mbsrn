@@ -54,6 +54,14 @@ _COMPAT_REASON_VALUES = {
     _COMPAT_REASON_DEGRADED_MODE_NOT_ALLOWED,
     _COMPAT_REASON_UNKNOWN_PROVIDER_CAPABILITY,
 }
+_COMPAT_OPERATOR_MESSAGE_SUPPORTED = "AI configuration is compatible with migration draft generation."
+_COMPAT_OPERATOR_MESSAGE_NOT_CONFIGURED = "The current AI configuration does not support migration draft generation."
+_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS = "This model/provider setup is not compatible with the current migration request settings."
+_COMPAT_OPERATOR_MESSAGE_REQUEST_SHAPE = "Current AI model/configuration is not compatible with migration draft generation."
+_COMPAT_OPERATOR_MESSAGE_FULL_CAPABILITY_REQUIRED = "Full AI capability is required for migration draft generation."
+_MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS = "/chat/completions"
+_MIGRATION_COMPAT_EXECUTION_MODE_FULL = "full"
+_MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA = "json_schema"
 _PROVIDER_LOG_EVENT_REQUEST_START = "seo_migration_draft_provider_request_start"
 _PROVIDER_LOG_EVENT_REQUEST_COMPLETE = "seo_migration_draft_provider_request_complete"
 _PROVIDER_LOG_EVENT_REQUEST_FAILURE = "seo_migration_draft_provider_request_failure"
@@ -145,6 +153,72 @@ class SEOMigrationProviderCompatibilityResult:
     web_search_enabled: bool | None = None
     degraded_mode: bool | None = None
     response_format_mode: str | None = None
+
+
+@dataclass(frozen=True)
+class _MigrationRequestShape:
+    model_name: str
+    endpoint_path: str
+    execution_mode: str
+    response_format_mode: str
+
+
+@dataclass(frozen=True)
+class _MigrationRequestShapeCompatibilityDecision:
+    supported: bool
+    reason_code: str
+    operator_message: str
+    admin_summary: str
+
+
+@dataclass(frozen=True)
+class _MigrationRequestShapeMatrixRule:
+    rule_id: str
+    model_prefixes: tuple[str, ...]
+    supported: bool
+    reason_code: str
+    operator_message: str
+
+    def matches(self, *, shape: _MigrationRequestShape) -> bool:
+        if shape.endpoint_path != _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS:
+            return False
+        if shape.execution_mode != _MIGRATION_COMPAT_EXECUTION_MODE_FULL:
+            return False
+        if shape.response_format_mode != _MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA:
+            return False
+        return any(
+            shape.model_name == prefix or shape.model_name.startswith(f"{prefix}-")
+            for prefix in self.model_prefixes
+        )
+
+    def to_decision(self, *, shape: _MigrationRequestShape) -> _MigrationRequestShapeCompatibilityDecision:
+        return _MigrationRequestShapeCompatibilityDecision(
+            supported=self.supported,
+            reason_code=self.reason_code,
+            operator_message=self.operator_message,
+            admin_summary=(
+                f"{self.rule_id} reason={self.reason_code} model={shape.model_name} endpoint={shape.endpoint_path} "
+                f"mode={shape.execution_mode} response_format={shape.response_format_mode}"
+            ),
+        )
+
+
+_MIGRATION_REQUEST_SHAPE_COMPATIBILITY_MATRIX = (
+    _MigrationRequestShapeMatrixRule(
+        rule_id="blocked_gpt_5_1_chat_json_schema",
+        model_prefixes=("gpt-5.1",),
+        supported=False,
+        reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+        operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SHAPE,
+    ),
+    _MigrationRequestShapeMatrixRule(
+        rule_id="supported_gpt_4o_mini_chat_json_schema",
+        model_prefixes=("gpt-4o-mini",),
+        supported=True,
+        reason_code=_COMPAT_REASON_SUPPORTED,
+        operator_message=_COMPAT_OPERATOR_MESSAGE_SUPPORTED,
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -430,7 +504,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
     def evaluate_compatibility(self) -> SEOMigrationProviderCompatibilityResult:
         profile = self.get_request_profile()
         endpoint_path = _clean_optional_value(profile.get("endpoint_path"))
-        execution_mode = _clean_optional_value(profile.get("execution_mode")) or "full"
+        execution_mode = _clean_optional_value(profile.get("execution_mode")) or _MIGRATION_COMPAT_EXECUTION_MODE_FULL
         web_search_enabled = bool(profile.get("web_search_enabled"))
         degraded_mode = bool(profile.get("degraded_mode"))
         response_format_mode = _clean_optional_value(profile.get("response_format_mode"))
@@ -441,25 +515,8 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             return SEOMigrationProviderCompatibilityResult(
                 supported=False,
                 reason_code=_COMPAT_REASON_PROVIDER_NOT_CONFIGURED,
-                operator_message="The current AI configuration does not support migration draft generation.",
+                operator_message=_COMPAT_OPERATOR_MESSAGE_NOT_CONFIGURED,
                 admin_summary="openai_api_key_missing",
-                retryable=False,
-                provider_name=provider_name,
-                model_name=model_name,
-                endpoint_path=endpoint_path,
-                execution_mode=execution_mode,
-                web_search_enabled=web_search_enabled,
-                degraded_mode=degraded_mode,
-                response_format_mode=response_format_mode,
-            )
-        if endpoint_path != "/chat/completions" or execution_mode != "full":
-            return SEOMigrationProviderCompatibilityResult(
-                supported=False,
-                reason_code=_COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE,
-                operator_message=(
-                    "This model/provider setup is not compatible with the current migration request settings."
-                ),
-                admin_summary=f"endpoint_or_execution_mode_unsupported endpoint={endpoint_path} mode={execution_mode}",
                 retryable=False,
                 provider_name=provider_name,
                 model_name=model_name,
@@ -473,7 +530,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             return SEOMigrationProviderCompatibilityResult(
                 supported=False,
                 reason_code=_COMPAT_REASON_TOOLS_REQUIRED_BUT_UNAVAILABLE,
-                operator_message="Full AI capability is required for migration draft generation.",
+                operator_message=_COMPAT_OPERATOR_MESSAGE_FULL_CAPABILITY_REQUIRED,
                 admin_summary="migration_request_shape_requires_tools_but_provider_call_is_non_tool",
                 retryable=False,
                 provider_name=provider_name,
@@ -488,7 +545,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             return SEOMigrationProviderCompatibilityResult(
                 supported=False,
                 reason_code=_COMPAT_REASON_DEGRADED_MODE_NOT_ALLOWED,
-                operator_message="Full AI capability is required for migration draft generation.",
+                operator_message=_COMPAT_OPERATOR_MESSAGE_FULL_CAPABILITY_REQUIRED,
                 admin_summary="degraded_mode_not_allowed_for_migration",
                 retryable=False,
                 provider_name=provider_name,
@@ -499,56 +556,18 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 degraded_mode=degraded_mode,
                 response_format_mode=response_format_mode,
             )
-        if self._is_known_unsupported_request_shape(
+
+        request_shape_decision = self._evaluate_request_shape_compatibility(
             model_name=model_name,
             endpoint_path=endpoint_path,
             execution_mode=execution_mode,
             response_format_mode=response_format_mode,
-        ):
-            return SEOMigrationProviderCompatibilityResult(
-                supported=False,
-                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
-                operator_message=(
-                    "This model/provider setup is not compatible with the current migration request settings."
-                ),
-                admin_summary=(
-                    "unsupported_request_shape "
-                    f"model={model_name} endpoint={endpoint_path} mode={execution_mode} "
-                    f"response_format={response_format_mode}"
-                ),
-                retryable=False,
-                provider_name=provider_name,
-                model_name=model_name,
-                endpoint_path=endpoint_path,
-                execution_mode=execution_mode,
-                web_search_enabled=web_search_enabled,
-                degraded_mode=degraded_mode,
-                response_format_mode=response_format_mode,
-            )
-        if response_format_mode != "json_schema" or not self._model_supports_chat_json_schema(model_name):
-            return SEOMigrationProviderCompatibilityResult(
-                supported=False,
-                reason_code=_COMPAT_REASON_UNSUPPORTED_MODEL_CONFIGURATION,
-                operator_message=(
-                    "This model/provider setup is not compatible with the current migration request settings."
-                ),
-                admin_summary=(
-                    f"model_or_response_format_incompatible model={model_name} response_format={response_format_mode}"
-                ),
-                retryable=False,
-                provider_name=provider_name,
-                model_name=model_name,
-                endpoint_path=endpoint_path,
-                execution_mode=execution_mode,
-                web_search_enabled=web_search_enabled,
-                degraded_mode=degraded_mode,
-                response_format_mode=response_format_mode,
-            )
+        )
         return SEOMigrationProviderCompatibilityResult(
-            supported=True,
-            reason_code=_COMPAT_REASON_SUPPORTED,
-            operator_message="AI configuration is compatible with migration draft generation.",
-            admin_summary="openai_chat_json_schema_supported",
+            supported=request_shape_decision.supported,
+            reason_code=request_shape_decision.reason_code,
+            operator_message=request_shape_decision.operator_message,
+            admin_summary=request_shape_decision.admin_summary,
             retryable=False,
             provider_name=provider_name,
             model_name=model_name,
@@ -559,47 +578,73 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             response_format_mode=response_format_mode,
         )
 
-    @staticmethod
-    def _is_known_unsupported_request_shape(
+    def _evaluate_request_shape_compatibility(
+        self,
         *,
         model_name: str,
         endpoint_path: str | None,
         execution_mode: str | None,
         response_format_mode: str | None,
-    ) -> bool:
-        normalized_model = (model_name or "").strip().lower()
-        normalized_endpoint = (endpoint_path or "").strip().lower()
-        normalized_execution_mode = (execution_mode or "").strip().lower()
-        normalized_response_format_mode = (response_format_mode or "").strip().lower()
-        return (
-            OpenAISEOMigrationArtifactGenerationProvider._is_gpt_5_1_family(normalized_model)
-            and normalized_endpoint == "/chat/completions"
-            and normalized_execution_mode == "full"
-            and normalized_response_format_mode == "json_schema"
+    ) -> _MigrationRequestShapeCompatibilityDecision:
+        shape = self._build_migration_request_shape(
+            model_name=model_name,
+            endpoint_path=endpoint_path,
+            execution_mode=execution_mode,
+            response_format_mode=response_format_mode,
+        )
+        if (
+            shape.endpoint_path != _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS
+            or shape.execution_mode != _MIGRATION_COMPAT_EXECUTION_MODE_FULL
+        ):
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "endpoint_or_execution_mode_unsupported "
+                    f"endpoint={shape.endpoint_path} mode={shape.execution_mode}"
+                ),
+            )
+        if shape.response_format_mode != _MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_MODEL_CONFIGURATION,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "response_format_mode_unsupported "
+                    f"model={shape.model_name} response_format={shape.response_format_mode}"
+                ),
+            )
+
+        for rule in _MIGRATION_REQUEST_SHAPE_COMPATIBILITY_MATRIX:
+            if rule.matches(shape=shape):
+                return rule.to_decision(shape=shape)
+
+        return _MigrationRequestShapeCompatibilityDecision(
+            supported=False,
+            reason_code=_COMPAT_REASON_UNSUPPORTED_MODEL_CONFIGURATION,
+            operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+            admin_summary=(
+                "request_shape_model_not_allowlisted "
+                f"model={shape.model_name} endpoint={shape.endpoint_path} "
+                f"mode={shape.execution_mode} response_format={shape.response_format_mode}"
+            ),
         )
 
     @staticmethod
-    def _is_gpt_5_1_family(normalized_model_name: str) -> bool:
-        if not normalized_model_name:
-            return False
-        return normalized_model_name == "gpt-5.1" or normalized_model_name.startswith("gpt-5.1-")
-
-    @staticmethod
-    def _model_supports_chat_json_schema(model_name: str) -> bool:
-        normalized = (model_name or "").strip().lower()
-        if not normalized:
-            return False
-        unsupported_tokens = (
-            "whisper",
-            "tts",
-            "embedding",
-            "moderation",
-            "realtime",
-            "audio",
-            "image",
-            "vision-preview",
+    def _build_migration_request_shape(
+        *,
+        model_name: str,
+        endpoint_path: str | None,
+        execution_mode: str | None,
+        response_format_mode: str | None,
+    ) -> _MigrationRequestShape:
+        return _MigrationRequestShape(
+            model_name=(model_name or "").strip().lower() or "unknown",
+            endpoint_path=(endpoint_path or "").strip().lower(),
+            execution_mode=(execution_mode or "").strip().lower() or _MIGRATION_COMPAT_EXECUTION_MODE_FULL,
+            response_format_mode=(response_format_mode or "").strip().lower(),
         )
-        return not any(token in normalized for token in unsupported_tokens)
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         request_context = self._build_request_context(migration_context)

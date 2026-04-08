@@ -716,6 +716,7 @@ def test_generate_artifacts_blocks_known_unsupported_openai_request_shape_before
     assert diagnostics.get("last_draft_failure_endpoint_path") == "/chat/completions"
     assert diagnostics.get("last_draft_failure_execution_mode") == "full"
     assert diagnostics.get("last_draft_failure_response_format_mode") == "json_schema"
+    assert "unsupported_request_shape" in str(diagnostics.get("draft_provider_compatibility_admin_summary") or "")
     compatibility = (summary.context_summary or {}).get("draft_provider_compatibility") or {}
     assert compatibility.get("supported") is False
     assert compatibility.get("reason_code") == "unsupported_request_shape"
@@ -777,6 +778,8 @@ def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, ca
     assert compatibility.get("model_name") == "gpt-5.1"
     assert compatibility.get("endpoint_path") == "/chat/completions"
     assert compatibility.get("response_format_mode") == "json_schema"
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("draft_provider_compatibility_admin_summary") == "openai_chat_json_schema_supported"
 
     payloads = [
         record.__dict__.get("json_fields")

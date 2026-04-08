@@ -1738,6 +1738,7 @@ class SEOMigrationService:
                 "draft_provider_compatibility_endpoint_path": draft_provider_compatibility.endpoint_path,
                 "draft_provider_compatibility_execution_mode": draft_provider_compatibility.execution_mode,
                 "draft_provider_compatibility_response_format_mode": draft_provider_compatibility.response_format_mode,
+                "draft_provider_compatibility_admin_summary": draft_provider_compatibility.admin_summary,
                 "draft_generation_state_status": draft_generation_state.get("status"),
                 "draft_generation_state_summary": draft_generation_state.get("summary"),
             },
@@ -1838,7 +1839,7 @@ class SEOMigrationService:
             status = "blocked_by_provider"
             summary = (
                 compatibility_message
-                or "Blocked: provider configuration is not compatible with migration draft generation."
+                or "Blocked: current AI model/configuration is not compatible with migration draft generation."
             )
         elif latest_generation_status == "failed":
             status = "generation_failed"

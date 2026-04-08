@@ -78,6 +78,8 @@ Useful fields:
 Interpretation:
 - `supported=false` with `decision=blocked_local_preflight` means migration draft generation was blocked locally before outbound provider invocation.
 - `reason_code` identifies the stable compatibility failure class (for example `unsupported_model_configuration`).
+- inspect `model`, `endpoint_path`, `execution_mode`, and `response_format_mode` together as the effective request-shape key.
+- for summary payload troubleshooting, also inspect `context_summary.migration_diagnostics.draft_provider_compatibility_admin_summary` for sanitized matrix decision detail.
 
 ## Local Block vs Remote Rejection
 

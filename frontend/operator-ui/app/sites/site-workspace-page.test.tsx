@@ -2382,7 +2382,7 @@ describe("site workspace migration tab", () => {
           },
           draft_generation_state: {
             status: "blocked_by_provider",
-            summary: "Blocked: provider configuration is not compatible with migration draft generation.",
+            summary: "Blocked: current AI model/configuration is not compatible with migration draft generation.",
           },
         },
       }),
@@ -2394,7 +2394,7 @@ describe("site workspace migration tab", () => {
     const currentState = await screen.findByTestId("migration-current-state");
     expect(currentState).toHaveTextContent("State: Blocked by provider");
     expect(currentState).toHaveTextContent(
-      "Blocked: provider configuration is not compatible with migration draft generation.",
+      "Blocked: current AI model/configuration is not compatible with migration draft generation.",
     );
     const compatibility = await screen.findByTestId("migration-provider-compatibility");
     expect(compatibility).toHaveTextContent("Status: Unsupported");

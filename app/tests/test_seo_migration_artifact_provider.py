@@ -155,6 +155,7 @@ def test_openai_migration_provider_compatibility_rejects_incompatible_model_conf
     assert compatibility.supported is False
     assert compatibility.reason_code == "unsupported_model_configuration"
     assert compatibility.retryable is False
+    assert "request_shape_model_not_allowlisted" in str(compatibility.admin_summary or "")
 
 
 def test_openai_migration_provider_compatibility_rejects_degraded_mode(monkeypatch) -> None:

@@ -621,6 +621,7 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "draft_provider_compatibility_reason_code" in migration_diagnostics
     assert "draft_provider_compatibility_message" in migration_diagnostics
     assert "draft_provider_compatibility_retryable" in migration_diagnostics
+    assert "draft_provider_compatibility_admin_summary" in migration_diagnostics
     assert "draft_generation_state_status" in migration_diagnostics
     assert "draft_generation_state_summary" in migration_diagnostics
     assert "last_publish_status" in migration_diagnostics
@@ -713,6 +714,7 @@ def test_generate_draft_is_blocked_when_provider_compatibility_is_unsupported(db
     assert diagnostics.get("last_draft_failure_endpoint_path") == "/chat/completions"
     assert diagnostics.get("last_draft_failure_execution_mode") == "full"
     assert diagnostics.get("last_draft_failure_response_format_mode") == "json_schema"
+    assert "unsupported_request_shape" in str(diagnostics.get("draft_provider_compatibility_admin_summary") or "")
     compatibility = context_summary.get("draft_provider_compatibility") or {}
     assert compatibility.get("supported") is False
     assert compatibility.get("reason_code") == "unsupported_request_shape"
