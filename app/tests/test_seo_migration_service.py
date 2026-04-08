@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import urllib.request
 
 import pytest
 
 from app.core.time import utc_now
 from app.integrations.seo_migration_artifact_provider import (
+    OpenAISEOMigrationArtifactGenerationProvider,
     SEOMigrationArtifactGenerationOutput,
     SEOMigrationArtifactGenerationProvider,
     SEOMigrationArtifactProviderError,
@@ -669,6 +671,81 @@ def test_generate_artifacts_is_blocked_by_provider_compatibility_before_provider
     assert "not compatible" in str(top_state.get("summary") or "").lower()
 
 
+def test_generate_artifacts_blocks_known_unsupported_openai_request_shape_before_provider_call(
+    db_session,
+    monkeypatch,
+    caplog,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    outbound_call_count = {"count": 0}
+
+    def _unexpected_urlopen(request, timeout):  # noqa: ANN001
+        del request, timeout
+        outbound_call_count["count"] += 1
+        raise AssertionError("migration draft generation should be blocked before provider call")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _unexpected_urlopen)
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    caplog.set_level("INFO", logger="app.integrations.seo_migration_artifact_provider")
+
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    error = exc_info.value
+    assert error.failure_category == "config_missing"
+    assert error.failure_reason == "unsupported_configuration"
+    assert error.error_code == "unsupported_request_shape"
+    assert error.retryable is False
+    assert outbound_call_count["count"] == 0
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("last_draft_failure_reason") == "unsupported_configuration"
+    assert diagnostics.get("last_draft_failure_code") == "unsupported_request_shape"
+    assert diagnostics.get("last_draft_failure_endpoint_path") == "/chat/completions"
+    assert diagnostics.get("last_draft_failure_execution_mode") == "full"
+    assert diagnostics.get("last_draft_failure_response_format_mode") == "json_schema"
+    compatibility = (summary.context_summary or {}).get("draft_provider_compatibility") or {}
+    assert compatibility.get("supported") is False
+    assert compatibility.get("reason_code") == "unsupported_request_shape"
+    assert compatibility.get("model_name") == "gpt-5.1"
+    assert compatibility.get("endpoint_path") == "/chat/completions"
+    assert compatibility.get("response_format_mode") == "json_schema"
+    top_state = (summary.context_summary or {}).get("draft_generation_state") or {}
+    assert top_state.get("status") == "blocked_by_provider"
+
+    compatibility_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_provider_compatibility_evaluation"
+    ]
+    assert compatibility_logs
+    latest_compatibility_log = compatibility_logs[-1]
+    assert latest_compatibility_log.get("supported") is False
+    assert latest_compatibility_log.get("reason_code") == "unsupported_request_shape"
+    assert latest_compatibility_log.get("decision") == "blocked_local_preflight"
+
+    request_start_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_draft_provider_request_start"
+    ]
+    assert request_start_logs == []
+
+
 def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, caplog) -> None:
     provider = _CompatibilityTrackingMigrationProvider(
         compatibility=SEOMigrationProviderCompatibilityResult(
@@ -719,6 +796,7 @@ def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, ca
     assert latest.get("web_search_enabled") is False
     assert latest.get("degraded_mode") is False
     assert latest.get("response_format_mode") == "json_schema"
+    assert latest.get("decision") == "allowed"
 
 
 def test_generate_artifacts_salvages_partial_provider_output(db_session) -> None:

@@ -65,6 +65,7 @@ For migration draft preflight compatibility troubleshooting:
 Useful fields:
 - `supported`
 - `reason_code`
+- `decision`
 - `provider_name`
 - `model`
 - `endpoint_path`
@@ -75,8 +76,21 @@ Useful fields:
 - scoped identifiers (`business_id`, `site_id`, `workspace_id`)
 
 Interpretation:
-- `supported=false` means migration draft generation is blocked before outbound provider invocation.
+- `supported=false` with `decision=blocked_local_preflight` means migration draft generation was blocked locally before outbound provider invocation.
 - `reason_code` identifies the stable compatibility failure class (for example `unsupported_model_configuration`).
+
+## Local Block vs Remote Rejection
+
+Use these events together:
+
+- Local compatibility block:
+  - `jsonPayload.event="seo_migration_provider_compatibility_evaluation"`
+  - `jsonPayload.supported=false`
+  - `jsonPayload.decision="blocked_local_preflight"`
+- Remote provider rejection:
+  - `jsonPayload.event="seo_migration_draft_provider_request_failure"`
+  - `jsonPayload.failure_source="remote_provider"`
+  - inspect `jsonPayload.http_status` and `jsonPayload.failure_reason`
 
 ## Migration State Coherence Quick Check
 

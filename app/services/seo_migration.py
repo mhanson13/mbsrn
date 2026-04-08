@@ -139,6 +139,7 @@ _DRAFT_PROVIDER_COMPAT_REASON_CODES = {
     "supported",
     "provider_not_configured",
     "unsupported_model_configuration",
+    "unsupported_request_shape",
     "unsupported_endpoint_mode",
     "tools_required_but_unavailable",
     "degraded_mode_not_allowed",
@@ -278,6 +279,10 @@ class SEOMigrationDraftFailure:
     model_name: str
     prompt_version: str
     correlation_id: str | None = None
+    endpoint_path: str | None = None
+    execution_mode: str | None = None
+    response_format_mode: str | None = None
+    compatibility_reason_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1719,10 +1724,20 @@ class SEOMigrationService:
                 "last_draft_failure_code": draft_diagnostics.get("last_failure_code"),
                 "last_draft_failure_correlation_id": draft_diagnostics.get("last_failure_correlation_id"),
                 "last_draft_failure_artifact_version_id": draft_diagnostics.get("last_failure_artifact_version_id"),
+                "last_draft_failure_endpoint_path": draft_diagnostics.get("last_failure_endpoint_path"),
+                "last_draft_failure_execution_mode": draft_diagnostics.get("last_failure_execution_mode"),
+                "last_draft_failure_response_format_mode": draft_diagnostics.get(
+                    "last_failure_response_format_mode"
+                ),
                 "draft_provider_compatibility_supported": bool(draft_provider_compatibility.supported),
                 "draft_provider_compatibility_reason_code": draft_provider_compatibility.reason_code,
                 "draft_provider_compatibility_message": draft_provider_compatibility.operator_message,
                 "draft_provider_compatibility_retryable": bool(draft_provider_compatibility.retryable),
+                "draft_provider_compatibility_provider_name": draft_provider_compatibility.provider_name,
+                "draft_provider_compatibility_model_name": draft_provider_compatibility.model_name,
+                "draft_provider_compatibility_endpoint_path": draft_provider_compatibility.endpoint_path,
+                "draft_provider_compatibility_execution_mode": draft_provider_compatibility.execution_mode,
+                "draft_provider_compatibility_response_format_mode": draft_provider_compatibility.response_format_mode,
                 "draft_generation_state_status": draft_generation_state.get("status"),
                 "draft_generation_state_summary": draft_generation_state.get("summary"),
             },
@@ -1756,6 +1771,9 @@ class SEOMigrationService:
                 "last_failure_code": None,
                 "last_failure_correlation_id": None,
                 "last_failure_artifact_version_id": None,
+                "last_failure_endpoint_path": None,
+                "last_failure_execution_mode": None,
+                "last_failure_response_format_mode": None,
             }
 
         diagnostics_payload = {}
@@ -1772,6 +1790,9 @@ class SEOMigrationService:
         retryable = diagnostics_payload.get("retryable")
         retryable_flag = retryable if isinstance(retryable, bool) else None
         correlation_id = _normalize_string(diagnostics_payload.get("correlation_id"), max_length=120)
+        endpoint_path = _normalize_string(diagnostics_payload.get("endpoint_path"), max_length=120)
+        execution_mode = _normalize_string(diagnostics_payload.get("execution_mode"), max_length=40)
+        response_format_mode = _normalize_string(diagnostics_payload.get("response_format_mode"), max_length=60)
         return {
             "last_status": status_value,
             "last_failure_category": failure_category,
@@ -1781,6 +1802,9 @@ class SEOMigrationService:
             "last_failure_code": failure_code,
             "last_failure_correlation_id": correlation_id,
             "last_failure_artifact_version_id": artifact.id,
+            "last_failure_endpoint_path": endpoint_path,
+            "last_failure_execution_mode": execution_mode,
+            "last_failure_response_format_mode": response_format_mode,
         }
 
     def _build_draft_generation_state(
@@ -2169,7 +2193,7 @@ class SEOMigrationService:
             return "AI configuration is compatible with migration draft generation."
         if reason_code == "provider_not_configured":
             return "The current AI configuration does not support migration draft generation."
-        if reason_code in {"unsupported_model_configuration", "unsupported_endpoint_mode"}:
+        if reason_code in {"unsupported_model_configuration", "unsupported_request_shape", "unsupported_endpoint_mode"}:
             return "This model/provider setup is not compatible with the current migration request settings."
         if reason_code in {"tools_required_but_unavailable", "degraded_mode_not_allowed"}:
             return "Full AI capability is required for migration draft generation."
@@ -2221,6 +2245,7 @@ class SEOMigrationService:
             "supported": bool(compatibility.supported),
             "reason_code": compatibility.reason_code,
             "retryable": bool(compatibility.retryable),
+            "decision": ("allowed" if compatibility.supported else "blocked_local_preflight"),
             "error_type": _normalize_string(error_type, max_length=80),
         }
         level = logging.INFO if compatibility.supported else logging.WARNING
@@ -2260,6 +2285,10 @@ class SEOMigrationService:
             model_name=_normalize_string(compatibility.model_name, max_length=128) or self.provider_model_name,
             prompt_version=_normalize_string(prompt_version, max_length=64) or self.prompt_version,
             correlation_id=_normalize_string(draft_run_id, max_length=120),
+            endpoint_path=_normalize_string(compatibility.endpoint_path, max_length=120),
+            execution_mode=_normalize_string(compatibility.execution_mode, max_length=40),
+            response_format_mode=_normalize_string(compatibility.response_format_mode, max_length=60),
+            compatibility_reason_code=reason_code,
         )
 
     def _record_failed_draft_generation(
@@ -2340,6 +2369,10 @@ class SEOMigrationService:
             "provider_name": failure.provider_name,
             "model_name": failure.model_name,
             "prompt_version": failure.prompt_version,
+            "endpoint_path": _normalize_string(failure.endpoint_path, max_length=120),
+            "execution_mode": _normalize_string(failure.execution_mode, max_length=40),
+            "response_format_mode": _normalize_string(failure.response_format_mode, max_length=60),
+            "compatibility_reason_code": _normalize_string(failure.compatibility_reason_code, max_length=80),
             "recorded_at": utc_now().isoformat(),
         }
         return payload

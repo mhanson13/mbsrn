@@ -39,6 +39,7 @@ _DRAFT_REASON_VALUES = {
 _COMPAT_REASON_SUPPORTED = "supported"
 _COMPAT_REASON_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
 _COMPAT_REASON_UNSUPPORTED_MODEL_CONFIGURATION = "unsupported_model_configuration"
+_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE = "unsupported_request_shape"
 _COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE = "unsupported_endpoint_mode"
 _COMPAT_REASON_TOOLS_REQUIRED_BUT_UNAVAILABLE = "tools_required_but_unavailable"
 _COMPAT_REASON_DEGRADED_MODE_NOT_ALLOWED = "degraded_mode_not_allowed"
@@ -47,6 +48,7 @@ _COMPAT_REASON_VALUES = {
     _COMPAT_REASON_SUPPORTED,
     _COMPAT_REASON_PROVIDER_NOT_CONFIGURED,
     _COMPAT_REASON_UNSUPPORTED_MODEL_CONFIGURATION,
+    _COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
     _COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE,
     _COMPAT_REASON_TOOLS_REQUIRED_BUT_UNAVAILABLE,
     _COMPAT_REASON_DEGRADED_MODE_NOT_ALLOWED,
@@ -497,6 +499,32 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 degraded_mode=degraded_mode,
                 response_format_mode=response_format_mode,
             )
+        if self._is_known_unsupported_request_shape(
+            model_name=model_name,
+            endpoint_path=endpoint_path,
+            execution_mode=execution_mode,
+            response_format_mode=response_format_mode,
+        ):
+            return SEOMigrationProviderCompatibilityResult(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=(
+                    "This model/provider setup is not compatible with the current migration request settings."
+                ),
+                admin_summary=(
+                    "unsupported_request_shape "
+                    f"model={model_name} endpoint={endpoint_path} mode={execution_mode} "
+                    f"response_format={response_format_mode}"
+                ),
+                retryable=False,
+                provider_name=provider_name,
+                model_name=model_name,
+                endpoint_path=endpoint_path,
+                execution_mode=execution_mode,
+                web_search_enabled=web_search_enabled,
+                degraded_mode=degraded_mode,
+                response_format_mode=response_format_mode,
+            )
         if response_format_mode != "json_schema" or not self._model_supports_chat_json_schema(model_name):
             return SEOMigrationProviderCompatibilityResult(
                 supported=False,
@@ -530,6 +558,31 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             degraded_mode=degraded_mode,
             response_format_mode=response_format_mode,
         )
+
+    @staticmethod
+    def _is_known_unsupported_request_shape(
+        *,
+        model_name: str,
+        endpoint_path: str | None,
+        execution_mode: str | None,
+        response_format_mode: str | None,
+    ) -> bool:
+        normalized_model = (model_name or "").strip().lower()
+        normalized_endpoint = (endpoint_path or "").strip().lower()
+        normalized_execution_mode = (execution_mode or "").strip().lower()
+        normalized_response_format_mode = (response_format_mode or "").strip().lower()
+        return (
+            OpenAISEOMigrationArtifactGenerationProvider._is_gpt_5_1_family(normalized_model)
+            and normalized_endpoint == "/chat/completions"
+            and normalized_execution_mode == "full"
+            and normalized_response_format_mode == "json_schema"
+        )
+
+    @staticmethod
+    def _is_gpt_5_1_family(normalized_model_name: str) -> bool:
+        if not normalized_model_name:
+            return False
+        return normalized_model_name == "gpt-5.1" or normalized_model_name.startswith("gpt-5.1-")
 
     @staticmethod
     def _model_supports_chat_json_schema(model_name: str) -> bool:
@@ -1468,6 +1521,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 ),
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "failure_reason": normalized_reason,
+                "failure_source": "remote_provider",
                 "retryable": retryable,
                 "correlation_id": _clean_optional_value(correlation_id),
                 "duration_ms": (max(0, int(duration_ms)) if duration_ms is not None else None),

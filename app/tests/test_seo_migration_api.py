@@ -150,12 +150,15 @@ class _IncompatibleMigrationArtifactProvider(SEOMigrationArtifactGenerationProvi
     def evaluate_compatibility(self) -> SEOMigrationProviderCompatibilityResult:
         return SEOMigrationProviderCompatibilityResult(
             supported=False,
-            reason_code="unsupported_model_configuration",
+            reason_code="unsupported_request_shape",
             operator_message="This model/provider setup is not compatible with the current migration request settings.",
-            admin_summary="model_or_response_format_incompatible",
+            admin_summary=(
+                "unsupported_request_shape "
+                "model=gpt-5.1 endpoint=/chat/completions mode=full response_format=json_schema"
+            ),
             retryable=False,
             provider_name="openai",
-            model_name="text-embedding-3-small",
+            model_name="gpt-5.1",
             endpoint_path="/chat/completions",
             execution_mode="full",
             web_search_enabled=False,
@@ -696,7 +699,7 @@ def test_generate_draft_is_blocked_when_provider_compatibility_is_unsupported(db
     )
     assert detail.get("failure_category") == "config_missing"
     assert detail.get("failure_reason") == "unsupported_configuration"
-    assert detail.get("error_code") == "unsupported_model_configuration"
+    assert detail.get("error_code") == "unsupported_request_shape"
     assert detail.get("retryable") is False
     assert incompatible_provider.generate_call_count == 0
 
@@ -706,10 +709,13 @@ def test_generate_draft_is_blocked_when_provider_compatibility_is_unsupported(db
     diagnostics = context_summary.get("migration_diagnostics") or {}
     assert diagnostics.get("last_draft_failure_category") == "config_missing"
     assert diagnostics.get("last_draft_failure_reason") == "unsupported_configuration"
-    assert diagnostics.get("last_draft_failure_code") == "unsupported_model_configuration"
+    assert diagnostics.get("last_draft_failure_code") == "unsupported_request_shape"
+    assert diagnostics.get("last_draft_failure_endpoint_path") == "/chat/completions"
+    assert diagnostics.get("last_draft_failure_execution_mode") == "full"
+    assert diagnostics.get("last_draft_failure_response_format_mode") == "json_schema"
     compatibility = context_summary.get("draft_provider_compatibility") or {}
     assert compatibility.get("supported") is False
-    assert compatibility.get("reason_code") == "unsupported_model_configuration"
+    assert compatibility.get("reason_code") == "unsupported_request_shape"
     assert compatibility.get("response_format_mode") == "json_schema"
     top_state = context_summary.get("draft_generation_state") or {}
     assert top_state.get("status") == "blocked_by_provider"

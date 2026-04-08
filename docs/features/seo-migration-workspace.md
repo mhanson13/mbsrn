@@ -132,10 +132,15 @@ Compatibility payload (in `context_summary.draft_provider_compatibility`):
 Common compatibility reason codes:
 - `provider_not_configured`
 - `unsupported_model_configuration`
+- `unsupported_request_shape`
 - `unsupported_endpoint_mode`
 - `tools_required_but_unavailable`
 - `degraded_mode_not_allowed`
 - `unknown_provider_capability`
+
+Known unsupported request shape (blocked locally):
+- `model=gpt-5.1` with `endpoint_path=/chat/completions` and `response_format_mode=json_schema` is treated as `unsupported_request_shape`.
+- Migration draft generation is blocked by compatibility preflight before any outbound provider request.
 
 Behavior:
 - if compatibility is unsupported, draft generation fails fast locally
@@ -146,6 +151,10 @@ Behavior:
 Structured logging:
 - compatibility evaluation emits `event=seo_migration_provider_compatibility_evaluation`
 - includes identifiers and request-shape metadata (`business_id`, `site_id`, `workspace_id`, `provider_name`, `model`, `endpoint_path`, `execution_mode`, `web_search_enabled`, `degraded_mode`, `response_format_mode`, `supported`, `reason_code`, `retryable`)
+- compatibility logs include `decision`:
+  - `blocked_local_preflight` for local preflight block
+  - `allowed` when the request shape is compatible
+- remote provider rejections use provider request-failure logs (`event=seo_migration_draft_provider_request_failure`) with `failure_source=remote_provider`
 
 ## Unified Draft Generation State
 Migration summary now includes a compact derived top-level state in `context_summary.draft_generation_state` so operator status remains coherent across reloads:

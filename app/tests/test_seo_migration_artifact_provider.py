@@ -105,7 +105,7 @@ def json_dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
-def test_openai_migration_provider_compatibility_supported_for_chat_json_schema_profile() -> None:
+def test_openai_migration_provider_compatibility_rejects_known_unsupported_request_shape_for_gpt_5_1() -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",
         model_name="gpt-5.1",
@@ -113,10 +113,30 @@ def test_openai_migration_provider_compatibility_supported_for_chat_json_schema_
     )
 
     compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is False
+    assert compatibility.reason_code == "unsupported_request_shape"
+    assert compatibility.provider_name == "openai"
+    assert compatibility.model_name == "gpt-5.1"
+    assert compatibility.endpoint_path == "/chat/completions"
+    assert compatibility.execution_mode == "full"
+    assert compatibility.web_search_enabled is False
+    assert compatibility.degraded_mode is False
+    assert compatibility.response_format_mode == "json_schema"
+    assert "unsupported_request_shape" in str(compatibility.admin_summary or "")
+
+
+def test_openai_migration_provider_compatibility_supports_chat_json_schema_for_gpt_4o_mini() -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-4o-mini",
+        timeout_seconds=5,
+    )
+
+    compatibility = provider.evaluate_compatibility()
     assert compatibility.supported is True
     assert compatibility.reason_code == "supported"
     assert compatibility.provider_name == "openai"
-    assert compatibility.model_name == "gpt-5.1"
+    assert compatibility.model_name == "gpt-4o-mini"
     assert compatibility.endpoint_path == "/chat/completions"
     assert compatibility.execution_mode == "full"
     assert compatibility.web_search_enabled is False
@@ -140,7 +160,7 @@ def test_openai_migration_provider_compatibility_rejects_incompatible_model_conf
 def test_openai_migration_provider_compatibility_rejects_degraded_mode(monkeypatch) -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",
-        model_name="gpt-5.1",
+        model_name="gpt-4o-mini",
         timeout_seconds=5,
     )
 
