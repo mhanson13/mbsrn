@@ -119,6 +119,7 @@ Compatibility decisions are now request-shape matrix driven (migration-specific)
 - endpoint path
 - execution mode
 - response format mode
+- request body construction mode
 
 Resolved migration model precedence before compatibility evaluation and provider invocation:
 1. explicit/requested model (when provided by current workflow)
@@ -141,6 +142,7 @@ Compatibility payload (in `context_summary.draft_provider_compatibility`):
 - `web_search_enabled`
 - `degraded_mode`
 - `response_format_mode`
+- `request_body_mode`
 - `admin_summary` (sanitized short admin hint)
 
 Common compatibility reason codes:
@@ -152,12 +154,12 @@ Common compatibility reason codes:
 - `degraded_mode_not_allowed`
 - `unknown_provider_capability`
 
-Known unsupported request shape (blocked locally):
-- `model=gpt-5.1` with `endpoint_path=/chat/completions` and `response_format_mode=json_schema` is treated as `unsupported_request_shape`.
-- Migration draft generation is blocked by compatibility preflight before any outbound provider request.
-
 Known supported request shape (current allowlist example):
-- `model=gpt-4o-mini` with `endpoint_path=/chat/completions`, `execution_mode=full`, and `response_format_mode=json_schema`.
+- `model=gpt-5.1*` with `endpoint_path=/responses`, `execution_mode=full`, `response_format_mode=json_schema`, and `request_body_mode=responses_text_format_json_schema`.
+
+Known unsupported request shapes (blocked locally):
+- `model=gpt-5.1*` with `endpoint_path=/chat/completions`, `execution_mode=full`, `response_format_mode=json_schema`, and `request_body_mode=chat_json_schema` is treated as `unsupported_request_shape`.
+- fallback/default model paths (for example `gpt-4o-mini` using migration chat/json_schema request construction) are blocked unless that exact request shape is explicitly allowlisted and validated.
 
 Unknown/unlisted model/request-shape combinations default to local block (`unsupported_model_configuration`) so parseable-but-unsupported shapes do not reach provider execution.
 
@@ -169,12 +171,30 @@ Behavior:
 
 Structured logging:
 - compatibility evaluation emits `event=seo_migration_provider_compatibility_evaluation`
-- includes identifiers and request-shape metadata (`business_id`, `site_id`, `workspace_id`, `provider_name`, `model`, `endpoint_path`, `execution_mode`, `web_search_enabled`, `degraded_mode`, `response_format_mode`, `supported`, `reason_code`, `retryable`)
+- includes identifiers and request-shape metadata (`business_id`, `site_id`, `workspace_id`, `provider_name`, `model`, `endpoint_path`, `execution_mode`, `web_search_enabled`, `degraded_mode`, `response_format_mode`, `request_body_mode`, `supported`, `reason_code`, `retryable`)
 - migration summary diagnostics also expose `draft_provider_compatibility_admin_summary` (sanitized admin hint from compatibility decision) for operator/admin troubleshooting
 - compatibility logs include `decision`:
   - `blocked_local_preflight` for local preflight block
   - `allowed` when the request shape is compatible
 - remote provider rejections use provider request-failure logs (`event=seo_migration_draft_provider_request_failure`) with `failure_source=remote_provider`
+
+## Draft AI Execution Visibility
+Migration summary now includes a compact execution slice in `context_summary.ai_execution`:
+- `model_requested`
+- `model_resolved`
+- `model_used`
+- `endpoint_path`
+- `request_body_mode`
+
+Field meanings:
+- `model_requested`: explicit model override requested by workflow input (null when not used).
+- `model_resolved`: model chosen after precedence resolution.
+- `model_used`: model reported by the execution attempt/output.
+- `request_body_mode`: sanitized request-construction profile key (for example `responses_text_format_json_schema`).
+
+Failure-source visibility:
+- `context_summary.migration_diagnostics.last_draft_failure_source=local_preflight` means generation was blocked before provider invocation.
+- `context_summary.migration_diagnostics.last_draft_failure_source=remote_provider` means the outbound request was attempted and rejected remotely.
 
 ## Unified Draft Generation State
 Migration summary now includes a compact derived top-level state in `context_summary.draft_generation_state` so operator status remains coherent across reloads:
@@ -427,6 +447,7 @@ Logged fields are safe metadata only:
 - sanitized target summary (repo/branch/root or workflow/ref)
 - `failure_category` and sanitized `failure_reason` on failures
 - draft-generation fields include `draft_run_id`, provider/model/prompt version, retryability, and correlation id when available
+- draft-generation fields include `model_requested`, `model_resolved`, `model_used`, request-shape metadata (`endpoint_path`, `execution_mode`, `response_format_mode`, `request_body_mode`), and `failure_source` (`local_preflight` vs `remote_provider`) for request-path traceability
 - provider parse logs include `raw_length`, `parsed_candidate_count`, `salvaged_candidate_count`, and `malformed_output_reason` (when present)
 
 Not logged:

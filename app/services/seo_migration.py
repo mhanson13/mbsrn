@@ -284,6 +284,7 @@ class SEOMigrationDraftFailure:
     endpoint_path: str | None = None
     execution_mode: str | None = None
     response_format_mode: str | None = None
+    request_body_mode: str | None = None
     compatibility_reason_code: str | None = None
 
 
@@ -1235,6 +1236,8 @@ class SEOMigrationService:
         draft_run_id = str(uuid4())
         workspace = self.get_workspace(business_id=business_id, site_id=site_id)
         site = self._require_site(business_id=business_id, site_id=site_id)
+        model_requested: str | None = None
+        model_resolved = _normalize_string(self.provider_model_name, max_length=128)
         context_json, context_summary = self._assemble_context(site=site, workspace=workspace)
         draft_readiness = self._build_draft_generation_readiness(
             business_id=business_id,
@@ -1285,7 +1288,7 @@ class SEOMigrationService:
                 correlation_id=draft_run_id,
                 workspace_id=workspace.id,
                 provider_name=self.provider_name,
-                model_name=self.provider_model_name,
+                model_name=model_resolved or self.provider_model_name,
                 prompt_version=self.prompt_version,
             )
         provider_compatibility = self._evaluate_draft_provider_compatibility(
@@ -1293,7 +1296,13 @@ class SEOMigrationService:
             site_id=site_id,
             workspace_id=workspace.id,
             emit_log=True,
+            model_requested=model_requested,
+            model_resolved=model_resolved,
         )
+        draft_endpoint_path = _normalize_string(provider_compatibility.endpoint_path, max_length=120)
+        draft_execution_mode = _normalize_string(provider_compatibility.execution_mode, max_length=40)
+        draft_response_format_mode = _normalize_string(provider_compatibility.response_format_mode, max_length=60)
+        draft_request_body_mode = _normalize_string(provider_compatibility.request_body_mode, max_length=80)
         if not provider_compatibility.supported:
             draft_failure = self._draft_failure_from_provider_compatibility(
                 compatibility=provider_compatibility,
@@ -1307,6 +1316,10 @@ class SEOMigrationService:
                 draft_run_id=draft_run_id,
                 failure=draft_failure,
                 principal_id=principal_id,
+                model_requested=model_requested,
+                model_resolved=model_resolved,
+                model_used=draft_failure.model_name,
+                failure_source="local_preflight",
             )
             self._log_draft_generation_event(
                 status="failed",
@@ -1324,6 +1337,15 @@ class SEOMigrationService:
                 retryable=draft_failure.retryable,
                 correlation_id=draft_failure.correlation_id or failed_artifact.id,
                 duration_ms=self._duration_ms(started_at),
+                model_requested=model_requested,
+                model_resolved=model_resolved,
+                model_used=draft_failure.model_name,
+                endpoint_path=draft_failure.endpoint_path,
+                execution_mode=draft_failure.execution_mode,
+                response_format_mode=draft_failure.response_format_mode,
+                request_body_mode=draft_failure.request_body_mode,
+                compatibility_decision="blocked_local_preflight",
+                failure_source="local_preflight",
             )
             raise SEOMigrationValidationError(
                 draft_failure.message_for_operator,
@@ -1347,6 +1369,10 @@ class SEOMigrationService:
             provider_name=self.provider_name,
             model_name=self.provider_model_name,
             prompt_version=self.prompt_version,
+            model_requested=model_requested,
+            model_resolved=model_resolved,
+            model_used=model_resolved,
+            compatibility_decision="allowed",
         )
 
         provider_output: SEOMigrationArtifactGenerationOutput | None = None
@@ -1367,6 +1393,10 @@ class SEOMigrationService:
                     draft_run_id=draft_run_id,
                     failure=draft_failure,
                     principal_id=principal_id,
+                    model_requested=model_requested,
+                    model_resolved=model_resolved,
+                    model_used=draft_failure.model_name,
+                    failure_source="remote_provider",
                 )
                 self._log_draft_generation_event(
                     status="failed",
@@ -1384,6 +1414,15 @@ class SEOMigrationService:
                     retryable=draft_failure.retryable,
                     correlation_id=draft_failure.correlation_id or failed_artifact.id,
                     duration_ms=self._duration_ms(started_at),
+                    model_requested=model_requested,
+                    model_resolved=model_resolved,
+                    model_used=draft_failure.model_name,
+                    endpoint_path=draft_failure.endpoint_path,
+                    execution_mode=draft_failure.execution_mode,
+                    response_format_mode=draft_failure.response_format_mode,
+                    request_body_mode=draft_failure.request_body_mode,
+                    compatibility_decision="allowed",
+                    failure_source="remote_provider",
                 )
                 raise SEOMigrationValidationError(
                     draft_failure.message_for_operator,
@@ -1415,6 +1454,10 @@ class SEOMigrationService:
                 draft_run_id=draft_run_id,
                 failure=draft_failure,
                 principal_id=principal_id,
+                model_requested=model_requested,
+                model_resolved=model_resolved,
+                model_used=draft_failure.model_name,
+                failure_source="unknown",
             )
             self._log_draft_generation_event(
                 status="failed",
@@ -1433,6 +1476,11 @@ class SEOMigrationService:
                 correlation_id=failed_artifact.id,
                 duration_ms=self._duration_ms(started_at),
                 error_type=type(exc).__name__,
+                model_requested=model_requested,
+                model_resolved=model_resolved,
+                model_used=draft_failure.model_name,
+                compatibility_decision="allowed",
+                failure_source="unknown",
             )
             raise SEOMigrationValidationError(
                 draft_failure.message_for_operator,
@@ -1495,6 +1543,10 @@ class SEOMigrationService:
                 draft_run_id=draft_run_id,
                 failure=draft_failure,
                 principal_id=principal_id,
+                model_requested=model_requested,
+                model_resolved=model_resolved,
+                model_used=draft_failure.model_name,
+                failure_source="local_validation",
             )
             self._log_draft_generation_event(
                 status="failed",
@@ -1512,6 +1564,11 @@ class SEOMigrationService:
                 retryable=draft_failure.retryable,
                 correlation_id=failed_artifact.id,
                 duration_ms=self._duration_ms(started_at),
+                model_requested=model_requested,
+                model_resolved=model_resolved,
+                model_used=draft_failure.model_name,
+                compatibility_decision="allowed",
+                failure_source="local_validation",
             )
             raise SEOMigrationValidationError(
                 draft_failure.message_for_operator,
@@ -1529,6 +1586,35 @@ class SEOMigrationService:
 
         artifact_version_number = self.seo_migration_repository.next_artifact_version_number(workspace.id)
         total_bytes = sum(len(str(item["content"]).encode("utf-8")) for item in normalized_files)
+        artifact_model_used = _normalize_string(provider_output.model_name, max_length=128) or model_resolved
+        artifact_context_json = self._build_draft_execution_context(
+            context_json=context_json,
+            model_requested=model_requested,
+            model_resolved=model_resolved,
+            model_used=artifact_model_used,
+            endpoint_path=(
+                draft_failure.endpoint_path
+                if draft_failure and generation_status == "partial"
+                else draft_endpoint_path
+            ),
+            execution_mode=(
+                draft_failure.execution_mode
+                if draft_failure and generation_status == "partial"
+                else draft_execution_mode
+            ),
+            response_format_mode=(
+                draft_failure.response_format_mode
+                if draft_failure and generation_status == "partial"
+                else draft_response_format_mode
+            ),
+            request_body_mode=(
+                draft_failure.request_body_mode
+                if draft_failure and generation_status == "partial"
+                else draft_request_body_mode
+            ),
+            compatibility_decision="allowed",
+            failure_source=("remote_provider" if draft_failure and generation_status == "partial" else None),
+        )
         artifact = SEOMigrationArtifactVersion(
             id=str(uuid4()),
             business_id=business_id,
@@ -1536,7 +1622,7 @@ class SEOMigrationService:
             workspace_id=workspace.id,
             version=artifact_version_number,
             status=generation_status,
-            context_json=context_json,
+            context_json=artifact_context_json,
             strategy_summary=provider_output.strategy_summary,
             page_map_json=_normalize_json_list(provider_output.page_map),
             homepage_structure_json=_normalize_json_list(provider_output.homepage_structure),
@@ -1586,6 +1672,17 @@ class SEOMigrationService:
             retryable=(draft_failure.retryable if draft_failure and generation_status == "partial" else None),
             correlation_id=(draft_failure.correlation_id if draft_failure and generation_status == "partial" else None),
             duration_ms=self._duration_ms(started_at),
+            model_requested=model_requested,
+            model_resolved=model_resolved,
+            model_used=artifact.model_name,
+            endpoint_path=(draft_failure.endpoint_path if draft_failure and generation_status == "partial" else None),
+            execution_mode=(draft_failure.execution_mode if draft_failure and generation_status == "partial" else None),
+            response_format_mode=(
+                draft_failure.response_format_mode if draft_failure and generation_status == "partial" else None
+            ),
+            request_body_mode=(draft_failure.request_body_mode if draft_failure and generation_status == "partial" else None),
+            compatibility_decision="allowed",
+            failure_source=("remote_provider" if draft_failure and generation_status == "partial" else None),
         )
         return artifact
 
@@ -1695,6 +1792,10 @@ class SEOMigrationService:
             workspace_id=workspace.id,
             emit_log=True,
         )
+        ai_execution_summary = self._derive_draft_ai_execution_summary(
+            artifact=latest_artifact,
+            draft_provider_compatibility=draft_provider_compatibility,
+        )
         draft_generation_state = self._build_draft_generation_state(
             draft_readiness=draft_readiness,
             draft_provider_compatibility=draft_provider_compatibility,
@@ -1729,10 +1830,21 @@ class SEOMigrationService:
                 "last_draft_failure_code": draft_diagnostics.get("last_failure_code"),
                 "last_draft_failure_correlation_id": draft_diagnostics.get("last_failure_correlation_id"),
                 "last_draft_failure_artifact_version_id": draft_diagnostics.get("last_failure_artifact_version_id"),
+                "last_draft_failure_source": draft_diagnostics.get("last_failure_source"),
                 "last_draft_failure_endpoint_path": draft_diagnostics.get("last_failure_endpoint_path"),
                 "last_draft_failure_execution_mode": draft_diagnostics.get("last_failure_execution_mode"),
                 "last_draft_failure_response_format_mode": draft_diagnostics.get(
                     "last_failure_response_format_mode"
+                ),
+                "last_draft_failure_request_body_mode": draft_diagnostics.get("last_failure_request_body_mode"),
+                "last_draft_failure_model_requested": draft_diagnostics.get("last_failure_model_requested"),
+                "last_draft_failure_model_resolved": draft_diagnostics.get("last_failure_model_resolved"),
+                "last_draft_failure_model_used": draft_diagnostics.get("last_failure_model_used"),
+                "draft_model_requested": None,
+                "draft_model_resolved": _normalize_string(self.provider_model_name, max_length=128),
+                "draft_model_used": _normalize_string(
+                    latest_artifact.model_name if latest_artifact is not None else None,
+                    max_length=128,
                 ),
                 "draft_provider_compatibility_supported": bool(draft_provider_compatibility.supported),
                 "draft_provider_compatibility_reason_code": draft_provider_compatibility.reason_code,
@@ -1743,10 +1855,12 @@ class SEOMigrationService:
                 "draft_provider_compatibility_endpoint_path": draft_provider_compatibility.endpoint_path,
                 "draft_provider_compatibility_execution_mode": draft_provider_compatibility.execution_mode,
                 "draft_provider_compatibility_response_format_mode": draft_provider_compatibility.response_format_mode,
+                "draft_provider_compatibility_request_body_mode": draft_provider_compatibility.request_body_mode,
                 "draft_provider_compatibility_admin_summary": draft_provider_compatibility.admin_summary,
                 "draft_generation_state_status": draft_generation_state.get("status"),
                 "draft_generation_state_summary": draft_generation_state.get("summary"),
             },
+            "ai_execution": ai_execution_summary,
             "draft_generation_readiness": draft_readiness,
             "draft_provider_compatibility": self._serialize_draft_provider_compatibility(
                 compatibility=draft_provider_compatibility,
@@ -1777,9 +1891,14 @@ class SEOMigrationService:
                 "last_failure_code": None,
                 "last_failure_correlation_id": None,
                 "last_failure_artifact_version_id": None,
+                "last_failure_source": None,
                 "last_failure_endpoint_path": None,
                 "last_failure_execution_mode": None,
                 "last_failure_response_format_mode": None,
+                "last_failure_request_body_mode": None,
+                "last_failure_model_requested": None,
+                "last_failure_model_resolved": None,
+                "last_failure_model_used": None,
             }
 
         diagnostics_payload = {}
@@ -1796,9 +1915,16 @@ class SEOMigrationService:
         retryable = diagnostics_payload.get("retryable")
         retryable_flag = retryable if isinstance(retryable, bool) else None
         correlation_id = _normalize_string(diagnostics_payload.get("correlation_id"), max_length=120)
+        failure_source = _normalize_string(diagnostics_payload.get("failure_source"), max_length=40)
+        if failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
+            failure_source = None
         endpoint_path = _normalize_string(diagnostics_payload.get("endpoint_path"), max_length=120)
         execution_mode = _normalize_string(diagnostics_payload.get("execution_mode"), max_length=40)
         response_format_mode = _normalize_string(diagnostics_payload.get("response_format_mode"), max_length=60)
+        request_body_mode = _normalize_string(diagnostics_payload.get("request_body_mode"), max_length=80)
+        model_requested = _normalize_string(diagnostics_payload.get("model_requested"), max_length=128)
+        model_resolved = _normalize_string(diagnostics_payload.get("model_resolved"), max_length=128)
+        model_used = _normalize_string(diagnostics_payload.get("model_used"), max_length=128)
         return {
             "last_status": status_value,
             "last_failure_category": failure_category,
@@ -1808,9 +1934,14 @@ class SEOMigrationService:
             "last_failure_code": failure_code,
             "last_failure_correlation_id": correlation_id,
             "last_failure_artifact_version_id": artifact.id,
+            "last_failure_source": failure_source,
             "last_failure_endpoint_path": endpoint_path,
             "last_failure_execution_mode": execution_mode,
             "last_failure_response_format_mode": response_format_mode,
+            "last_failure_request_body_mode": request_body_mode,
+            "last_failure_model_requested": model_requested,
+            "last_failure_model_resolved": model_resolved,
+            "last_failure_model_used": model_used,
         }
 
     def _build_draft_generation_state(
@@ -1875,6 +2006,38 @@ class SEOMigrationService:
             "latest_failure_category": latest_failure_category,
             "latest_failure_reason": latest_failure_reason,
             "retryable": retryable,
+        }
+
+    def _derive_draft_ai_execution_summary(
+        self,
+        *,
+        artifact: SEOMigrationArtifactVersion | None,
+        draft_provider_compatibility: SEOMigrationProviderCompatibilityResult,
+    ) -> dict[str, object]:
+        execution_payload: dict[str, object] = {}
+        if artifact is not None and isinstance(artifact.context_json, dict):
+            execution_payload = _normalize_json_dict(artifact.context_json.get("draft_generation_execution"))
+        model_requested = _normalize_string(execution_payload.get("model_requested"), max_length=128)
+        model_resolved = _normalize_string(execution_payload.get("model_resolved"), max_length=128)
+        if model_resolved is None:
+            model_resolved = _normalize_string(self.provider_model_name, max_length=128)
+        model_used = _normalize_string(execution_payload.get("model_used"), max_length=128)
+        if model_used is None and artifact is not None:
+            model_used = _normalize_string(artifact.model_name, max_length=128)
+        if model_used is None:
+            model_used = _normalize_string(draft_provider_compatibility.model_name, max_length=128)
+        endpoint_path = _normalize_string(execution_payload.get("endpoint_path"), max_length=120)
+        if endpoint_path is None:
+            endpoint_path = _normalize_string(draft_provider_compatibility.endpoint_path, max_length=120)
+        request_body_mode = _normalize_string(execution_payload.get("request_body_mode"), max_length=80)
+        if request_body_mode is None:
+            request_body_mode = _normalize_string(draft_provider_compatibility.request_body_mode, max_length=80)
+        return {
+            "model_requested": model_requested,
+            "model_resolved": model_resolved,
+            "model_used": model_used,
+            "endpoint_path": endpoint_path,
+            "request_body_mode": request_body_mode,
         }
 
     def _build_draft_generation_readiness(
@@ -2120,6 +2283,8 @@ class SEOMigrationService:
         site_id: str,
         workspace_id: str,
         emit_log: bool,
+        model_requested: str | None = None,
+        model_resolved: str | None = None,
     ) -> SEOMigrationProviderCompatibilityResult:
         compatibility_error_type: str | None = None
         try:
@@ -2139,6 +2304,7 @@ class SEOMigrationService:
                 web_search_enabled=False,
                 degraded_mode=False,
                 response_format_mode=None,
+                request_body_mode=None,
             )
         compatibility = self._normalize_draft_provider_compatibility_result(raw_result)
         if emit_log:
@@ -2148,6 +2314,8 @@ class SEOMigrationService:
                 workspace_id=workspace_id,
                 compatibility=compatibility,
                 error_type=compatibility_error_type,
+                model_requested=model_requested,
+                model_resolved=model_resolved,
             )
         return compatibility
 
@@ -2171,6 +2339,7 @@ class SEOMigrationService:
         endpoint_path = _normalize_string(result.endpoint_path, max_length=120)
         execution_mode = _normalize_string(result.execution_mode, max_length=40) or "full"
         response_format_mode = _normalize_string(result.response_format_mode, max_length=60)
+        request_body_mode = _normalize_string(result.request_body_mode, max_length=80)
         web_search_enabled = result.web_search_enabled if isinstance(result.web_search_enabled, bool) else False
         degraded_mode = result.degraded_mode if isinstance(result.degraded_mode, bool) else False
         retryable = result.retryable if isinstance(result.retryable, bool) else False
@@ -2191,6 +2360,7 @@ class SEOMigrationService:
             web_search_enabled=web_search_enabled,
             degraded_mode=degraded_mode,
             response_format_mode=response_format_mode,
+            request_body_mode=request_body_mode,
         )
 
     @staticmethod
@@ -2222,6 +2392,7 @@ class SEOMigrationService:
             "web_search_enabled": bool(compatibility.web_search_enabled),
             "degraded_mode": bool(compatibility.degraded_mode),
             "response_format_mode": compatibility.response_format_mode,
+            "request_body_mode": compatibility.request_body_mode,
             "admin_summary": compatibility.admin_summary,
         }
 
@@ -2233,7 +2404,10 @@ class SEOMigrationService:
         workspace_id: str,
         compatibility: SEOMigrationProviderCompatibilityResult,
         error_type: str | None = None,
+        model_requested: str | None = None,
+        model_resolved: str | None = None,
     ) -> None:
+        compatibility_decision = "allowed" if compatibility.supported else "blocked_local_preflight"
         payload: dict[str, object] = {
             "event": _DRAFT_PROVIDER_COMPATIBILITY_LOG_EVENT,
             "timestamp": utc_now().isoformat(),
@@ -2248,10 +2422,19 @@ class SEOMigrationService:
             "web_search_enabled": bool(compatibility.web_search_enabled),
             "degraded_mode": bool(compatibility.degraded_mode),
             "response_format_mode": compatibility.response_format_mode,
+            "request_body_mode": compatibility.request_body_mode,
             "supported": bool(compatibility.supported),
             "reason_code": compatibility.reason_code,
             "retryable": bool(compatibility.retryable),
-            "decision": ("allowed" if compatibility.supported else "blocked_local_preflight"),
+            "decision": compatibility_decision,
+            "compatibility_decision": compatibility_decision,
+            "failure_source": (None if compatibility.supported else "local_preflight"),
+            "model_requested": _normalize_string(model_requested, max_length=128),
+            "model_resolved": _normalize_string(model_resolved, max_length=128),
+            "model_used": _normalize_string(
+                compatibility.model_name if compatibility.supported else model_resolved,
+                max_length=128,
+            ),
             "error_type": _normalize_string(error_type, max_length=80),
         }
         level = logging.INFO if compatibility.supported else logging.WARNING
@@ -2294,6 +2477,7 @@ class SEOMigrationService:
             endpoint_path=_normalize_string(compatibility.endpoint_path, max_length=120),
             execution_mode=_normalize_string(compatibility.execution_mode, max_length=40),
             response_format_mode=_normalize_string(compatibility.response_format_mode, max_length=60),
+            request_body_mode=_normalize_string(compatibility.request_body_mode, max_length=80),
             compatibility_reason_code=reason_code,
         )
 
@@ -2306,12 +2490,20 @@ class SEOMigrationService:
         draft_run_id: str,
         failure: SEOMigrationDraftFailure,
         principal_id: str | None,
+        model_requested: str | None = None,
+        model_resolved: str | None = None,
+        model_used: str | None = None,
+        failure_source: str | None = None,
     ) -> SEOMigrationArtifactVersion:
         artifact_version_number = self.seo_migration_repository.next_artifact_version_number(workspace.id)
         failure_context = self._build_draft_failure_context(
             context_json=context_json,
             draft_run_id=draft_run_id,
             failure=failure,
+            model_requested=model_requested,
+            model_resolved=model_resolved,
+            model_used=model_used,
+            failure_source=failure_source,
         )
         artifact = SEOMigrationArtifactVersion(
             id=str(uuid4()),
@@ -2363,14 +2555,34 @@ class SEOMigrationService:
         context_json: dict[str, object],
         draft_run_id: str,
         failure: SEOMigrationDraftFailure,
+        model_requested: str | None = None,
+        model_resolved: str | None = None,
+        model_used: str | None = None,
+        failure_source: str | None = None,
     ) -> dict[str, object]:
-        payload = _normalize_json_dict(context_json)
+        normalized_failure_source = _normalize_string(failure_source, max_length=40)
+        if normalized_failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
+            normalized_failure_source = None
+        compatibility_decision = "blocked_local_preflight" if normalized_failure_source == "local_preflight" else "allowed"
+        payload = self._build_draft_execution_context(
+            context_json=context_json,
+            model_requested=model_requested,
+            model_resolved=model_resolved,
+            model_used=model_used,
+            endpoint_path=failure.endpoint_path,
+            execution_mode=failure.execution_mode,
+            response_format_mode=failure.response_format_mode,
+            request_body_mode=failure.request_body_mode,
+            compatibility_decision=compatibility_decision,
+            failure_source=normalized_failure_source,
+        )
         payload["draft_generation_failure"] = {
             "failure_category": failure.failure_category,
             "failure_reason": failure.failure_reason,
             "error_code": failure.error_code,
             "message": failure.message_for_operator,
             "retryable": failure.retryable,
+            "failure_source": normalized_failure_source,
             "correlation_id": failure.correlation_id or draft_run_id,
             "provider_name": failure.provider_name,
             "model_name": failure.model_name,
@@ -2378,7 +2590,46 @@ class SEOMigrationService:
             "endpoint_path": _normalize_string(failure.endpoint_path, max_length=120),
             "execution_mode": _normalize_string(failure.execution_mode, max_length=40),
             "response_format_mode": _normalize_string(failure.response_format_mode, max_length=60),
+            "request_body_mode": _normalize_string(failure.request_body_mode, max_length=80),
             "compatibility_reason_code": _normalize_string(failure.compatibility_reason_code, max_length=80),
+            "model_requested": _normalize_string(model_requested, max_length=128),
+            "model_resolved": _normalize_string(model_resolved, max_length=128),
+            "model_used": _normalize_string(model_used, max_length=128),
+            "recorded_at": utc_now().isoformat(),
+        }
+        return payload
+
+    @staticmethod
+    def _build_draft_execution_context(
+        *,
+        context_json: dict[str, object],
+        model_requested: str | None,
+        model_resolved: str | None,
+        model_used: str | None,
+        endpoint_path: str | None,
+        execution_mode: str | None,
+        response_format_mode: str | None,
+        request_body_mode: str | None,
+        compatibility_decision: str | None,
+        failure_source: str | None,
+    ) -> dict[str, object]:
+        normalized_failure_source = _normalize_string(failure_source, max_length=40)
+        if normalized_failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
+            normalized_failure_source = None
+        normalized_compatibility_decision = _normalize_string(compatibility_decision, max_length=40)
+        if normalized_compatibility_decision not in {"allowed", "blocked_local_preflight"}:
+            normalized_compatibility_decision = None
+        payload = _normalize_json_dict(context_json)
+        payload["draft_generation_execution"] = {
+            "model_requested": _normalize_string(model_requested, max_length=128),
+            "model_resolved": _normalize_string(model_resolved, max_length=128),
+            "model_used": _normalize_string(model_used, max_length=128),
+            "endpoint_path": _normalize_string(endpoint_path, max_length=120),
+            "execution_mode": _normalize_string(execution_mode, max_length=40),
+            "response_format_mode": _normalize_string(response_format_mode, max_length=60),
+            "request_body_mode": _normalize_string(request_body_mode, max_length=80),
+            "compatibility_decision": normalized_compatibility_decision,
+            "failure_source": normalized_failure_source,
             "recorded_at": utc_now().isoformat(),
         }
         return payload
@@ -2387,6 +2638,7 @@ class SEOMigrationService:
         reason = self._normalize_draft_failure_reason(error.reason or error.code)
         category = "provider_error"
         retryable = error.retryable if isinstance(error.retryable, bool) else None
+        details = error.internal_details or {}
         if reason in {"authentication_failed", "unsupported_configuration"}:
             category = "config_missing"
             if retryable is None:
@@ -2415,6 +2667,10 @@ class SEOMigrationService:
             model_name=model_name,
             prompt_version=prompt_version,
             correlation_id=_normalize_string(error.correlation_id, max_length=120),
+            endpoint_path=_normalize_string(details.get("endpoint_path"), max_length=120),
+            execution_mode=_normalize_string(details.get("execution_mode"), max_length=40),
+            response_format_mode=_normalize_string(details.get("response_format_mode"), max_length=60),
+            request_body_mode=_normalize_string(details.get("request_body_mode"), max_length=80),
         )
 
     @staticmethod
@@ -2743,8 +2999,23 @@ class SEOMigrationService:
         correlation_id: str | None = None,
         duration_ms: int | None = None,
         error_type: str | None = None,
+        model_requested: str | None = None,
+        model_resolved: str | None = None,
+        model_used: str | None = None,
+        endpoint_path: str | None = None,
+        execution_mode: str | None = None,
+        response_format_mode: str | None = None,
+        request_body_mode: str | None = None,
+        compatibility_decision: str | None = None,
+        failure_source: str | None = None,
     ) -> None:
         normalized_status = _normalize_string(status, max_length=40) or "unknown"
+        normalized_failure_source = _normalize_string(failure_source, max_length=40)
+        if normalized_failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
+            normalized_failure_source = None
+        normalized_compatibility_decision = _normalize_string(compatibility_decision, max_length=40)
+        if normalized_compatibility_decision not in {"allowed", "blocked_local_preflight"}:
+            normalized_compatibility_decision = None
         payload: dict[str, object] = {
             "event": _DRAFT_PROVIDER_LOG_EVENT,
             "timestamp": utc_now().isoformat(),
@@ -2764,6 +3035,15 @@ class SEOMigrationService:
             "correlation_id": _normalize_string(correlation_id, max_length=120),
             "duration_ms": max(0, int(duration_ms)) if duration_ms is not None else None,
             "error_type": _normalize_string(error_type, max_length=60),
+            "model_requested": _normalize_string(model_requested, max_length=128),
+            "model_resolved": _normalize_string(model_resolved, max_length=128),
+            "model_used": _normalize_string(model_used, max_length=128),
+            "endpoint_path": _normalize_string(endpoint_path, max_length=120),
+            "execution_mode": _normalize_string(execution_mode, max_length=40),
+            "response_format_mode": _normalize_string(response_format_mode, max_length=60),
+            "request_body_mode": _normalize_string(request_body_mode, max_length=80),
+            "compatibility_decision": normalized_compatibility_decision,
+            "failure_source": normalized_failure_source,
         }
         level = logging.INFO if normalized_status not in {"failed", "error"} else logging.WARNING
         self._emit_structured_service_log(

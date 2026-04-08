@@ -465,7 +465,16 @@ export interface MigrationDraftProviderCompatibility {
   web_search_enabled?: boolean;
   degraded_mode?: boolean;
   response_format_mode?: string | null;
+  request_body_mode?: string | null;
   admin_summary?: string | null;
+}
+
+export interface MigrationAIExecutionSummary {
+  model_requested?: string | null;
+  model_resolved?: string | null;
+  model_used?: string | null;
+  endpoint_path?: string | null;
+  request_body_mode?: string | null;
 }
 
 export interface MigrationDraftGenerationState {
@@ -495,6 +504,7 @@ export interface MigrationContextSummary extends Record<string, unknown> {
   has_audit_summary?: boolean;
   has_recommendation_summary?: boolean;
   has_competitor_summary?: boolean;
+  ai_execution?: MigrationAIExecutionSummary;
   draft_generation_readiness?: MigrationDraftReadiness;
   draft_provider_compatibility?: MigrationDraftProviderCompatibility;
   draft_generation_state?: MigrationDraftGenerationState;

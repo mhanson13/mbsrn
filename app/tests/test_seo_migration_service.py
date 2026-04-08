@@ -673,14 +673,14 @@ def test_generate_artifacts_is_blocked_by_provider_compatibility_before_provider
     assert "not compatible" in str(top_state.get("summary") or "").lower()
 
 
-def test_generate_artifacts_blocks_known_unsupported_openai_request_shape_before_provider_call(
+def test_generate_artifacts_blocks_known_unsupported_openai_fallback_request_shape_before_provider_call(
     db_session,
     monkeypatch,
     caplog,
 ) -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",
-        model_name="gpt-5.1",
+        model_name="gpt-4o-mini",
         timeout_seconds=5,
     )
     service = _build_service(db_session, provider)
@@ -718,11 +718,21 @@ def test_generate_artifacts_blocks_known_unsupported_openai_request_shape_before
     assert diagnostics.get("last_draft_failure_endpoint_path") == "/chat/completions"
     assert diagnostics.get("last_draft_failure_execution_mode") == "full"
     assert diagnostics.get("last_draft_failure_response_format_mode") == "json_schema"
+    assert diagnostics.get("last_draft_failure_source") == "local_preflight"
+    assert diagnostics.get("last_draft_failure_model_requested") is None
+    assert diagnostics.get("last_draft_failure_model_resolved") == "gpt-4o-mini"
+    assert diagnostics.get("last_draft_failure_model_used") == "gpt-4o-mini"
     assert "unsupported_request_shape" in str(diagnostics.get("draft_provider_compatibility_admin_summary") or "")
+    ai_execution = (summary.context_summary or {}).get("ai_execution") or {}
+    assert ai_execution.get("model_requested") is None
+    assert ai_execution.get("model_resolved") == "gpt-4o-mini"
+    assert ai_execution.get("model_used") == "gpt-4o-mini"
+    assert ai_execution.get("endpoint_path") == "/chat/completions"
+    assert ai_execution.get("request_body_mode") == "chat_json_schema"
     compatibility = (summary.context_summary or {}).get("draft_provider_compatibility") or {}
     assert compatibility.get("supported") is False
     assert compatibility.get("reason_code") == "unsupported_request_shape"
-    assert compatibility.get("model_name") == "gpt-5.1"
+    assert compatibility.get("model_name") == "gpt-4o-mini"
     assert compatibility.get("endpoint_path") == "/chat/completions"
     assert compatibility.get("response_format_mode") == "json_schema"
     top_state = (summary.context_summary or {}).get("draft_generation_state") or {}
@@ -793,18 +803,18 @@ def test_generate_artifacts_blocks_unsupported_shape_when_admin_default_model_is
 ) -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",
-        model_name="gpt-4o-mini",
+        model_name="gpt-5.1",
         timeout_seconds=5,
     )
     service = _build_service(
         db_session,
         provider,
-        env_default_model_name="gpt-4o-mini",
+        env_default_model_name="gpt-5.1",
     )
     business_id, site_id = _seed_business_and_site(db_session)
     business = db_session.get(Business, business_id)
     assert business is not None
-    business.default_ai_model = "gpt-5.1"
+    business.default_ai_model = "gpt-4o-mini"
     db_session.commit()
     _seed_workspace(service, business_id=business_id, site_id=site_id)
 
@@ -833,7 +843,112 @@ def test_generate_artifacts_blocks_unsupported_shape_when_admin_default_model_is
     compatibility = (summary.context_summary or {}).get("draft_provider_compatibility") or {}
     assert compatibility.get("supported") is False
     assert compatibility.get("reason_code") == "unsupported_request_shape"
+    assert compatibility.get("model_name") == "gpt-4o-mini"
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("last_draft_failure_source") == "local_preflight"
+    assert diagnostics.get("last_draft_failure_model_requested") is None
+    assert diagnostics.get("last_draft_failure_model_resolved") == "gpt-4o-mini"
+    assert diagnostics.get("last_draft_failure_model_used") == "gpt-4o-mini"
+
+
+def test_generate_artifacts_allows_supported_openai_gpt_5_1_shape_and_calls_provider(
+    db_session,
+    monkeypatch,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    service = _build_service(
+        db_session,
+        provider,
+        env_default_model_name="gpt-5.1",
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    outbound_call_count = {"count": 0}
+
+    class _FakeResponse:
+        def __init__(self, body: str) -> None:
+            self._body = body.encode("utf-8")
+            self.headers: dict[str, str] = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def _valid_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        outbound_call_count["count"] += 1
+        body = json.loads(request.data.decode("utf-8"))
+        assert body.get("model") == "gpt-5.1"
+        assert isinstance(body.get("input"), list)
+        assert isinstance((body.get("text") or {}).get("format"), dict)
+        return _FakeResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5.1",
+                    "output_text": json.dumps(
+                        {
+                            "strategy_summary": "Draft strategy",
+                            "page_map": [{"path": "/", "title": "Home"}],
+                            "homepage_structure": [],
+                            "service_page_suggestions": [],
+                            "cta_contact_structure": {},
+                            "seo_meta_suggestions": {},
+                            "redirect_suggestions": [],
+                            "analytics_placeholders": [],
+                            "generated_files": [
+                                {
+                                    "path": "index.html",
+                                    "media_type": "text/html",
+                                    "content": "<html><body>Draft</body></html>",
+                                }
+                            ],
+                        },
+                        ensure_ascii=True,
+                    ),
+                },
+                ensure_ascii=True,
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    assert outbound_call_count["count"] == 1
+    assert artifact.status == "completed"
+    assert artifact.model_name == "gpt-5.1"
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    compatibility = (summary.context_summary or {}).get("draft_provider_compatibility") or {}
+    assert compatibility.get("supported") is True
     assert compatibility.get("model_name") == "gpt-5.1"
+    assert compatibility.get("endpoint_path") == "/responses"
+    assert compatibility.get("response_format_mode") == "json_schema"
+    assert compatibility.get("request_body_mode") == "responses_text_format_json_schema"
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("draft_model_requested") is None
+    assert diagnostics.get("draft_model_resolved") == "gpt-5.1"
+    assert diagnostics.get("draft_model_used") == "gpt-5.1"
+    ai_execution = (summary.context_summary or {}).get("ai_execution") or {}
+    assert ai_execution.get("model_requested") is None
+    assert ai_execution.get("model_resolved") == "gpt-5.1"
+    assert ai_execution.get("model_used") == "gpt-5.1"
+    assert ai_execution.get("endpoint_path") == "/responses"
+    assert ai_execution.get("request_body_mode") == "responses_text_format_json_schema"
 
 
 def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, caplog) -> None:
@@ -842,15 +957,16 @@ def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, ca
             supported=True,
             reason_code="supported",
             operator_message="AI configuration is compatible with migration draft generation.",
-            admin_summary="openai_chat_json_schema_supported",
+            admin_summary="openai_responses_json_schema_supported",
             retryable=False,
             provider_name="openai",
             model_name="gpt-5.1",
-            endpoint_path="/chat/completions",
+            endpoint_path="/responses",
             execution_mode="full",
             web_search_enabled=False,
             degraded_mode=False,
             response_format_mode="json_schema",
+            request_body_mode="responses_text_format_json_schema",
         ),
         output=_build_publishable_output(),
     )
@@ -865,10 +981,11 @@ def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, ca
     assert compatibility.get("reason_code") == "supported"
     assert compatibility.get("provider_name") == "openai"
     assert compatibility.get("model_name") == "gpt-5.1"
-    assert compatibility.get("endpoint_path") == "/chat/completions"
+    assert compatibility.get("endpoint_path") == "/responses"
     assert compatibility.get("response_format_mode") == "json_schema"
+    assert compatibility.get("request_body_mode") == "responses_text_format_json_schema"
     diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
-    assert diagnostics.get("draft_provider_compatibility_admin_summary") == "openai_chat_json_schema_supported"
+    assert diagnostics.get("draft_provider_compatibility_admin_summary") == "openai_responses_json_schema_supported"
 
     payloads = [
         record.__dict__.get("json_fields")
@@ -883,11 +1000,12 @@ def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, ca
     assert latest.get("workspace_id")
     assert latest.get("supported") is True
     assert latest.get("reason_code") == "supported"
-    assert latest.get("endpoint_path") == "/chat/completions"
+    assert latest.get("endpoint_path") == "/responses"
     assert latest.get("execution_mode") == "full"
     assert latest.get("web_search_enabled") is False
     assert latest.get("degraded_mode") is False
     assert latest.get("response_format_mode") == "json_schema"
+    assert latest.get("request_body_mode") == "responses_text_format_json_schema"
     assert latest.get("decision") == "allowed"
 
 
@@ -1122,9 +1240,18 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
     assert migration_diagnostics.get("last_draft_failure_reason") == "timeout"
     assert migration_diagnostics.get("last_draft_failure_retryable") is True
     assert migration_diagnostics.get("last_draft_failure_code") == "timeout"
+    assert migration_diagnostics.get("last_draft_failure_source") == "remote_provider"
+    assert migration_diagnostics.get("last_draft_failure_model_requested") is None
+    assert migration_diagnostics.get("last_draft_failure_model_resolved") == "mock-seo-migration-v1"
+    assert migration_diagnostics.get("last_draft_failure_model_used") == "gpt-4o-mini"
     assert migration_diagnostics.get("last_draft_failure_message") == (
         "Migration draft generation timed out while calling the AI provider."
     )
+    ai_execution = summary.context_summary.get("ai_execution")
+    assert isinstance(ai_execution, dict)
+    assert ai_execution.get("model_requested") is None
+    assert ai_execution.get("model_resolved") == "mock-seo-migration-v1"
+    assert ai_execution.get("model_used") == "gpt-4o-mini"
     top_state = summary.context_summary.get("draft_generation_state")
     assert isinstance(top_state, dict)
     assert top_state.get("status") == "generation_failed"

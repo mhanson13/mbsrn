@@ -2236,6 +2236,20 @@ describe("site workspace migration tab", () => {
 
   it("renders ready draft preflight state and keeps generate enabled", async () => {
     const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          ai_execution: {
+            model_requested: null,
+            model_resolved: "gpt-5.1",
+            model_used: "gpt-5.1",
+            endpoint_path: "/responses",
+            request_body_mode: "responses_text_format_json_schema",
+          },
+        },
+      }),
+    );
     render(<SiteWorkspacePage />);
 
     await switchToMigrationTab(user);
@@ -2247,6 +2261,10 @@ describe("site workspace migration tab", () => {
     const currentState = await screen.findByTestId("migration-current-state");
     expect(currentState).toHaveTextContent("State: Ready");
     expect(currentState).toHaveTextContent("Ready to generate draft.");
+    expect(await screen.findByTestId("migration-ai-model-used")).toHaveTextContent("Generated using: gpt-5.1");
+    expect(await screen.findByTestId("migration-ai-request-profile")).toHaveTextContent(
+      "Request profile: /responses (responses_text_format_json_schema)",
+    );
     expect(screen.getByRole("button", { name: "Generate Draft Mockup" })).toBeEnabled();
   });
 
@@ -2381,6 +2399,16 @@ describe("site workspace migration tab", () => {
             degraded_mode: false,
             response_format_mode: "json_schema",
           },
+          ai_execution: {
+            model_requested: null,
+            model_resolved: "text-embedding-3-small",
+            model_used: null,
+            endpoint_path: "/chat/completions",
+            request_body_mode: "chat_json_schema",
+          },
+          migration_diagnostics: {
+            last_draft_failure_source: "local_preflight",
+          },
           draft_generation_state: {
             status: "blocked_by_provider",
             summary: "Blocked: current AI model/configuration is not compatible with migration draft generation.",
@@ -2401,6 +2429,15 @@ describe("site workspace migration tab", () => {
     expect(compatibility).toHaveTextContent("Status: Unsupported");
     expect(compatibility).toHaveTextContent(
       "This model/provider setup is not compatible with the current migration request settings.",
+    );
+    expect(await screen.findByTestId("migration-ai-model-used")).toHaveTextContent(
+      "Generated using: text-embedding-3-small",
+    );
+    expect(await screen.findByTestId("migration-ai-request-profile")).toHaveTextContent(
+      "Request profile: /chat/completions",
+    );
+    expect(await screen.findByTestId("migration-draft-failure-source")).toHaveTextContent(
+      "Failure source: Blocked before provider call",
     );
     expect(screen.getByRole("button", { name: "Generate Draft Mockup" })).toBeDisabled();
     expect(screen.getByText("Resolve provider compatibility issues before generating a draft.")).toBeInTheDocument();
@@ -2865,6 +2902,11 @@ describe("site workspace migration tab", () => {
             last_draft_failure_reason: "unsupported_configuration",
             last_draft_failure_message: "Draft generation failed due to unsupported AI configuration.",
             last_draft_failure_retryable: false,
+            last_draft_failure_source: "remote_provider",
+            last_draft_failure_model_resolved: "gpt-5.1",
+            last_draft_failure_model_used: "gpt-5.1",
+            last_draft_failure_endpoint_path: "/responses",
+            last_draft_failure_request_body_mode: "responses_text_format_json_schema",
           },
           draft_generation_state: {
             status: "generation_failed",
@@ -2880,6 +2922,13 @@ describe("site workspace migration tab", () => {
     const currentState = await screen.findByTestId("migration-current-state");
     expect(currentState).toHaveTextContent("State: Generation failed");
     expect(currentState).toHaveTextContent("Draft generation failed due to unsupported AI configuration.");
+    expect(await screen.findByTestId("migration-ai-model-used")).toHaveTextContent("Generated using: gpt-5.1");
+    expect(await screen.findByTestId("migration-ai-request-profile")).toHaveTextContent(
+      "Request profile: /responses (responses_text_format_json_schema)",
+    );
+    expect(await screen.findByTestId("migration-draft-failure-source")).toHaveTextContent(
+      "Failure source: AI provider rejected request",
+    );
   });
 });
 

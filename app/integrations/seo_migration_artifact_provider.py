@@ -60,8 +60,11 @@ _COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS = "This model/provider setup is not co
 _COMPAT_OPERATOR_MESSAGE_REQUEST_SHAPE = "Current AI model/configuration is not compatible with migration draft generation."
 _COMPAT_OPERATOR_MESSAGE_FULL_CAPABILITY_REQUIRED = "Full AI capability is required for migration draft generation."
 _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS = "/chat/completions"
+_MIGRATION_COMPAT_ENDPOINT_RESPONSES = "/responses"
 _MIGRATION_COMPAT_EXECUTION_MODE_FULL = "full"
 _MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA = "json_schema"
+_MIGRATION_REQUEST_BODY_MODE_CHAT_JSON_SCHEMA = "chat_json_schema"
+_MIGRATION_REQUEST_BODY_MODE_RESPONSES_TEXT_FORMAT_JSON_SCHEMA = "responses_text_format_json_schema"
 _PROVIDER_LOG_EVENT_REQUEST_START = "seo_migration_draft_provider_request_start"
 _PROVIDER_LOG_EVENT_REQUEST_COMPLETE = "seo_migration_draft_provider_request_complete"
 _PROVIDER_LOG_EVENT_REQUEST_FAILURE = "seo_migration_draft_provider_request_failure"
@@ -153,6 +156,7 @@ class SEOMigrationProviderCompatibilityResult:
     web_search_enabled: bool | None = None
     degraded_mode: bool | None = None
     response_format_mode: str | None = None
+    request_body_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -161,6 +165,7 @@ class _MigrationRequestShape:
     endpoint_path: str
     execution_mode: str
     response_format_mode: str
+    request_body_mode: str
 
 
 @dataclass(frozen=True)
@@ -174,18 +179,26 @@ class _MigrationRequestShapeCompatibilityDecision:
 @dataclass(frozen=True)
 class _MigrationRequestShapeMatrixRule:
     rule_id: str
+    endpoint_path: str
+    execution_mode: str
+    response_format_mode: str
+    request_body_mode: str
     model_prefixes: tuple[str, ...]
     supported: bool
     reason_code: str
     operator_message: str
 
     def matches(self, *, shape: _MigrationRequestShape) -> bool:
-        if shape.endpoint_path != _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS:
+        if shape.endpoint_path != self.endpoint_path:
             return False
-        if shape.execution_mode != _MIGRATION_COMPAT_EXECUTION_MODE_FULL:
+        if shape.execution_mode != self.execution_mode:
             return False
-        if shape.response_format_mode != _MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA:
+        if shape.response_format_mode != self.response_format_mode:
             return False
+        if shape.request_body_mode != self.request_body_mode:
+            return False
+        if not self.model_prefixes:
+            return True
         return any(
             shape.model_name == prefix or shape.model_name.startswith(f"{prefix}-")
             for prefix in self.model_prefixes
@@ -198,25 +211,34 @@ class _MigrationRequestShapeMatrixRule:
             operator_message=self.operator_message,
             admin_summary=(
                 f"{self.rule_id} reason={self.reason_code} model={shape.model_name} endpoint={shape.endpoint_path} "
-                f"mode={shape.execution_mode} response_format={shape.response_format_mode}"
+                f"mode={shape.execution_mode} response_format={shape.response_format_mode} "
+                f"request_body_mode={shape.request_body_mode}"
             ),
         )
 
 
 _MIGRATION_REQUEST_SHAPE_COMPATIBILITY_MATRIX = (
     _MigrationRequestShapeMatrixRule(
-        rule_id="blocked_gpt_5_1_chat_json_schema",
+        rule_id="supported_gpt_5_1_responses_json_schema",
+        endpoint_path=_MIGRATION_COMPAT_ENDPOINT_RESPONSES,
+        execution_mode=_MIGRATION_COMPAT_EXECUTION_MODE_FULL,
+        response_format_mode=_MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA,
+        request_body_mode=_MIGRATION_REQUEST_BODY_MODE_RESPONSES_TEXT_FORMAT_JSON_SCHEMA,
         model_prefixes=("gpt-5.1",),
-        supported=False,
-        reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
-        operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SHAPE,
-    ),
-    _MigrationRequestShapeMatrixRule(
-        rule_id="supported_gpt_4o_mini_chat_json_schema",
-        model_prefixes=("gpt-4o-mini",),
         supported=True,
         reason_code=_COMPAT_REASON_SUPPORTED,
         operator_message=_COMPAT_OPERATOR_MESSAGE_SUPPORTED,
+    ),
+    _MigrationRequestShapeMatrixRule(
+        rule_id="blocked_chat_completions_json_schema_for_migration",
+        endpoint_path=_MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS,
+        execution_mode=_MIGRATION_COMPAT_EXECUTION_MODE_FULL,
+        response_format_mode=_MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA,
+        request_body_mode=_MIGRATION_REQUEST_BODY_MODE_CHAT_JSON_SCHEMA,
+        model_prefixes=("gpt",),
+        supported=False,
+        reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+        operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SHAPE,
     ),
 )
 
@@ -244,6 +266,7 @@ class SEOMigrationArtifactGenerationProvider:
             "web_search_enabled": False,
             "degraded_mode": False,
             "response_format_mode": None,
+            "request_body_mode": None,
         }
 
     def evaluate_compatibility(self) -> SEOMigrationProviderCompatibilityResult:
@@ -271,6 +294,7 @@ class SEOMigrationArtifactGenerationProvider:
                 else None
             ),
             response_format_mode=_clean_optional_value(request_profile.get("response_format_mode")),
+            request_body_mode=_clean_optional_value(request_profile.get("request_body_mode")),
         )
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
@@ -305,6 +329,7 @@ class MisconfiguredSEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGe
             web_search_enabled=False,
             degraded_mode=False,
             response_format_mode=None,
+            request_body_mode=None,
         )
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
@@ -339,6 +364,7 @@ class MockSEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGenerationP
             "web_search_enabled": False,
             "degraded_mode": False,
             "response_format_mode": "mock_schema",
+            "request_body_mode": "mock_schema_payload",
         }
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
@@ -493,12 +519,16 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         self.prompt_text_recommendations = prompt_text_recommendations or ""
 
     def get_request_profile(self) -> dict[str, object]:
+        shape = self._resolve_request_shape_for_model(
+            model_name=_clean_optional_value(self.model_name) or "unknown",
+        )
         return {
-            "endpoint_path": "/chat/completions",
-            "execution_mode": "full",
+            "endpoint_path": shape.endpoint_path,
+            "execution_mode": shape.execution_mode,
             "web_search_enabled": False,
             "degraded_mode": False,
-            "response_format_mode": "json_schema",
+            "response_format_mode": shape.response_format_mode,
+            "request_body_mode": shape.request_body_mode,
         }
 
     def evaluate_compatibility(self) -> SEOMigrationProviderCompatibilityResult:
@@ -508,6 +538,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         web_search_enabled = bool(profile.get("web_search_enabled"))
         degraded_mode = bool(profile.get("degraded_mode"))
         response_format_mode = _clean_optional_value(profile.get("response_format_mode"))
+        request_body_mode = _clean_optional_value(profile.get("request_body_mode"))
         provider_name = _clean_optional_value(self.provider_name) or "openai"
         model_name = _clean_optional_value(self.model_name) or "unknown"
 
@@ -525,6 +556,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 web_search_enabled=web_search_enabled,
                 degraded_mode=degraded_mode,
                 response_format_mode=response_format_mode,
+                request_body_mode=request_body_mode,
             )
         if web_search_enabled:
             return SEOMigrationProviderCompatibilityResult(
@@ -540,6 +572,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 web_search_enabled=web_search_enabled,
                 degraded_mode=degraded_mode,
                 response_format_mode=response_format_mode,
+                request_body_mode=request_body_mode,
             )
         if degraded_mode:
             return SEOMigrationProviderCompatibilityResult(
@@ -555,6 +588,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 web_search_enabled=web_search_enabled,
                 degraded_mode=degraded_mode,
                 response_format_mode=response_format_mode,
+                request_body_mode=request_body_mode,
             )
 
         request_shape_decision = self._evaluate_request_shape_compatibility(
@@ -562,12 +596,36 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             endpoint_path=endpoint_path,
             execution_mode=execution_mode,
             response_format_mode=response_format_mode,
+            request_body_mode=request_body_mode,
+        )
+        if not request_shape_decision.supported:
+            return SEOMigrationProviderCompatibilityResult(
+                supported=False,
+                reason_code=request_shape_decision.reason_code,
+                operator_message=request_shape_decision.operator_message,
+                admin_summary=request_shape_decision.admin_summary,
+                retryable=False,
+                provider_name=provider_name,
+                model_name=model_name,
+                endpoint_path=endpoint_path,
+                execution_mode=execution_mode,
+                web_search_enabled=web_search_enabled,
+                degraded_mode=degraded_mode,
+                response_format_mode=response_format_mode,
+                request_body_mode=request_body_mode,
+            )
+        request_body_decision = self._evaluate_request_body_compatibility(
+            model_name=model_name,
+            endpoint_path=endpoint_path,
+            execution_mode=execution_mode,
+            response_format_mode=response_format_mode,
+            request_body_mode=request_body_mode,
         )
         return SEOMigrationProviderCompatibilityResult(
-            supported=request_shape_decision.supported,
-            reason_code=request_shape_decision.reason_code,
-            operator_message=request_shape_decision.operator_message,
-            admin_summary=request_shape_decision.admin_summary,
+            supported=request_body_decision.supported,
+            reason_code=request_body_decision.reason_code,
+            operator_message=request_body_decision.operator_message,
+            admin_summary=request_body_decision.admin_summary,
             retryable=False,
             provider_name=provider_name,
             model_name=model_name,
@@ -576,6 +634,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             web_search_enabled=web_search_enabled,
             degraded_mode=degraded_mode,
             response_format_mode=response_format_mode,
+            request_body_mode=request_body_mode,
         )
 
     def _evaluate_request_shape_compatibility(
@@ -585,24 +644,36 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         endpoint_path: str | None,
         execution_mode: str | None,
         response_format_mode: str | None,
+        request_body_mode: str | None,
     ) -> _MigrationRequestShapeCompatibilityDecision:
         shape = self._build_migration_request_shape(
             model_name=model_name,
             endpoint_path=endpoint_path,
             execution_mode=execution_mode,
             response_format_mode=response_format_mode,
+            request_body_mode=request_body_mode,
         )
-        if (
-            shape.endpoint_path != _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS
-            or shape.execution_mode != _MIGRATION_COMPAT_EXECUTION_MODE_FULL
-        ):
+        if shape.execution_mode != _MIGRATION_COMPAT_EXECUTION_MODE_FULL:
             return _MigrationRequestShapeCompatibilityDecision(
                 supported=False,
                 reason_code=_COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE,
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
                 admin_summary=(
-                    "endpoint_or_execution_mode_unsupported "
-                    f"endpoint={shape.endpoint_path} mode={shape.execution_mode}"
+                    "execution_mode_unsupported "
+                    f"model={shape.model_name} mode={shape.execution_mode}"
+                ),
+            )
+        if shape.endpoint_path not in {
+            _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS,
+            _MIGRATION_COMPAT_ENDPOINT_RESPONSES,
+        }:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "endpoint_path_unsupported "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
                 ),
             )
         if shape.response_format_mode != _MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA:
@@ -612,7 +683,22 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
                 admin_summary=(
                     "response_format_mode_unsupported "
-                    f"model={shape.model_name} response_format={shape.response_format_mode}"
+                    f"model={shape.model_name} response_format={shape.response_format_mode} "
+                    f"request_body_mode={shape.request_body_mode}"
+                ),
+            )
+        if shape.request_body_mode not in {
+            _MIGRATION_REQUEST_BODY_MODE_CHAT_JSON_SCHEMA,
+            _MIGRATION_REQUEST_BODY_MODE_RESPONSES_TEXT_FORMAT_JSON_SCHEMA,
+        }:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "request_body_mode_unsupported "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path} "
+                    f"request_body_mode={shape.request_body_mode}"
                 ),
             )
 
@@ -620,14 +706,201 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             if rule.matches(shape=shape):
                 return rule.to_decision(shape=shape)
 
+        if not shape.model_name.startswith("gpt-"):
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_MODEL_CONFIGURATION,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "request_shape_model_family_unsupported "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path} "
+                    f"mode={shape.execution_mode} response_format={shape.response_format_mode} "
+                    f"request_body_mode={shape.request_body_mode}"
+                ),
+            )
+
         return _MigrationRequestShapeCompatibilityDecision(
             supported=False,
-            reason_code=_COMPAT_REASON_UNSUPPORTED_MODEL_CONFIGURATION,
+            reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
             operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
             admin_summary=(
-                "request_shape_model_not_allowlisted "
+                "request_shape_not_allowlisted "
                 f"model={shape.model_name} endpoint={shape.endpoint_path} "
-                f"mode={shape.execution_mode} response_format={shape.response_format_mode}"
+                f"mode={shape.execution_mode} response_format={shape.response_format_mode} "
+                f"request_body_mode={shape.request_body_mode}"
+            ),
+        )
+
+    def _evaluate_request_body_compatibility(
+        self,
+        *,
+        model_name: str,
+        endpoint_path: str | None,
+        execution_mode: str | None,
+        response_format_mode: str | None,
+        request_body_mode: str | None,
+    ) -> _MigrationRequestShapeCompatibilityDecision:
+        shape = self._build_migration_request_shape(
+            model_name=model_name,
+            endpoint_path=endpoint_path,
+            execution_mode=execution_mode,
+            response_format_mode=response_format_mode,
+            request_body_mode=request_body_mode,
+        )
+        payload = self._build_request_payload(
+            system_prompt="migration_preflight_system_prompt",
+            user_prompt="migration_preflight_user_prompt",
+            request_profile={
+                "endpoint_path": shape.endpoint_path,
+                "execution_mode": shape.execution_mode,
+                "response_format_mode": shape.response_format_mode,
+                "request_body_mode": shape.request_body_mode,
+            },
+        )
+        payload_model = _clean_optional_value(payload.get("model"))
+        if payload_model is None:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "request_body_missing_model "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path} request_body_mode={shape.request_body_mode}"
+                ),
+            )
+        if shape.endpoint_path == _MIGRATION_COMPAT_ENDPOINT_RESPONSES:
+            return self._validate_responses_request_body(shape=shape, payload=payload)
+        if shape.endpoint_path == _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS:
+            return self._validate_chat_request_body(shape=shape, payload=payload)
+        return _MigrationRequestShapeCompatibilityDecision(
+            supported=False,
+            reason_code=_COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE,
+            operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+            admin_summary=(
+                "request_body_endpoint_unknown "
+                f"model={shape.model_name} endpoint={shape.endpoint_path} request_body_mode={shape.request_body_mode}"
+            ),
+        )
+
+    def _validate_responses_request_body(
+        self,
+        *,
+        shape: _MigrationRequestShape,
+        payload: dict[str, object],
+    ) -> _MigrationRequestShapeCompatibilityDecision:
+        if shape.request_body_mode != _MIGRATION_REQUEST_BODY_MODE_RESPONSES_TEXT_FORMAT_JSON_SCHEMA:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "responses_request_body_mode_mismatch "
+                    f"model={shape.model_name} request_body_mode={shape.request_body_mode}"
+                ),
+            )
+        messages = payload.get("input")
+        if not isinstance(messages, list) or len(messages) < 2:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "responses_request_body_invalid_input "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                ),
+            )
+        if not self._messages_include_system_and_user(messages):
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "responses_request_body_missing_roles "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                ),
+            )
+        text_payload = payload.get("text")
+        format_payload = text_payload.get("format") if isinstance(text_payload, dict) else None
+        if not self._is_json_schema_format_payload(format_payload):
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "responses_request_body_json_schema_invalid "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                ),
+            )
+        return _MigrationRequestShapeCompatibilityDecision(
+            supported=True,
+            reason_code=_COMPAT_REASON_SUPPORTED,
+            operator_message=_COMPAT_OPERATOR_MESSAGE_SUPPORTED,
+            admin_summary=(
+                "request_body_validated "
+                f"model={shape.model_name} endpoint={shape.endpoint_path} "
+                f"mode={shape.execution_mode} response_format={shape.response_format_mode} "
+                f"request_body_mode={shape.request_body_mode}"
+            ),
+        )
+
+    def _validate_chat_request_body(
+        self,
+        *,
+        shape: _MigrationRequestShape,
+        payload: dict[str, object],
+    ) -> _MigrationRequestShapeCompatibilityDecision:
+        if shape.request_body_mode != _MIGRATION_REQUEST_BODY_MODE_CHAT_JSON_SCHEMA:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "chat_request_body_mode_mismatch "
+                    f"model={shape.model_name} request_body_mode={shape.request_body_mode}"
+                ),
+            )
+        messages = payload.get("messages")
+        if not isinstance(messages, list) or len(messages) < 2:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "chat_request_body_invalid_messages "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                ),
+            )
+        if not self._messages_include_system_and_user(messages):
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "chat_request_body_missing_roles "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                ),
+            )
+        format_payload = payload.get("response_format")
+        json_schema_payload = format_payload.get("json_schema") if isinstance(format_payload, dict) else None
+        if not self._is_chat_json_schema_payload(format_payload, json_schema_payload):
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "chat_request_body_json_schema_invalid "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                ),
+            )
+        return _MigrationRequestShapeCompatibilityDecision(
+            supported=True,
+            reason_code=_COMPAT_REASON_SUPPORTED,
+            operator_message=_COMPAT_OPERATOR_MESSAGE_SUPPORTED,
+            admin_summary=(
+                "request_body_validated "
+                f"model={shape.model_name} endpoint={shape.endpoint_path} "
+                f"mode={shape.execution_mode} response_format={shape.response_format_mode} "
+                f"request_body_mode={shape.request_body_mode}"
             ),
         )
 
@@ -638,13 +911,81 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         endpoint_path: str | None,
         execution_mode: str | None,
         response_format_mode: str | None,
+        request_body_mode: str | None,
     ) -> _MigrationRequestShape:
         return _MigrationRequestShape(
             model_name=(model_name or "").strip().lower() or "unknown",
             endpoint_path=(endpoint_path or "").strip().lower(),
             execution_mode=(execution_mode or "").strip().lower() or _MIGRATION_COMPAT_EXECUTION_MODE_FULL,
             response_format_mode=(response_format_mode or "").strip().lower(),
+            request_body_mode=(request_body_mode or "").strip().lower(),
         )
+
+    @staticmethod
+    def _resolve_request_shape_for_model(*, model_name: str) -> _MigrationRequestShape:
+        normalized_model = (model_name or "").strip().lower() or "unknown"
+        if normalized_model == "gpt-5.1" or normalized_model.startswith("gpt-5.1-"):
+            return _MigrationRequestShape(
+                model_name=normalized_model,
+                endpoint_path=_MIGRATION_COMPAT_ENDPOINT_RESPONSES,
+                execution_mode=_MIGRATION_COMPAT_EXECUTION_MODE_FULL,
+                response_format_mode=_MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA,
+                request_body_mode=_MIGRATION_REQUEST_BODY_MODE_RESPONSES_TEXT_FORMAT_JSON_SCHEMA,
+            )
+        return _MigrationRequestShape(
+            model_name=normalized_model,
+            endpoint_path=_MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS,
+            execution_mode=_MIGRATION_COMPAT_EXECUTION_MODE_FULL,
+            response_format_mode=_MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA,
+            request_body_mode=_MIGRATION_REQUEST_BODY_MODE_CHAT_JSON_SCHEMA,
+        )
+
+    @staticmethod
+    def _messages_include_system_and_user(messages: list[object]) -> bool:
+        roles_seen: set[str] = set()
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            role = _clean_optional_value(item.get("role"))
+            content = item.get("content")
+            if role is None:
+                continue
+            if isinstance(content, str) and content.strip():
+                roles_seen.add(role)
+                continue
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    text = part.get("text")
+                    if isinstance(text, str) and text.strip():
+                        roles_seen.add(role)
+                        break
+        return "system" in roles_seen and "user" in roles_seen
+
+    @staticmethod
+    def _is_json_schema_format_payload(payload: object) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if _clean_optional_value(payload.get("type")) != "json_schema":
+            return False
+        schema_name = _clean_optional_value(payload.get("name"))
+        strict_value = payload.get("strict")
+        schema_payload = payload.get("schema")
+        return bool(schema_name) and isinstance(strict_value, bool) and strict_value and isinstance(schema_payload, dict)
+
+    @staticmethod
+    def _is_chat_json_schema_payload(format_payload: object, schema_payload: object) -> bool:
+        if not isinstance(format_payload, dict):
+            return False
+        if _clean_optional_value(format_payload.get("type")) != "json_schema":
+            return False
+        if not isinstance(schema_payload, dict):
+            return False
+        name = _clean_optional_value(schema_payload.get("name"))
+        strict_value = schema_payload.get("strict")
+        schema = schema_payload.get("schema")
+        return bool(name) and isinstance(strict_value, bool) and strict_value and isinstance(schema, dict)
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         request_context = self._build_request_context(migration_context)
@@ -656,6 +997,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         payload = self._build_request_payload(
             system_prompt=prompt.system_prompt,
             user_prompt=prompt.user_prompt,
+            request_profile=request_context,
         )
         started_at = time.perf_counter()
         try:
@@ -668,7 +1010,11 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 reason=_DRAFT_REASON_MALFORMED_RESPONSE,
                 safe_message="Migration draft response could not be parsed.",
             )
-            assistant_content = self._extract_assistant_content(response_json)
+            endpoint_path = _clean_optional_value((request_context or {}).get("endpoint_path"))
+            if endpoint_path == _MIGRATION_COMPAT_ENDPOINT_RESPONSES:
+                assistant_content = self._extract_assistant_content_from_responses(response_json)
+            else:
+                assistant_content = self._extract_assistant_content(response_json)
             raw_length = max(0, len(assistant_content))
             structured_json, parse_warnings, malformed_output_reason = self._parse_structured_json_output(
                 assistant_content,
@@ -809,6 +1155,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
     ) -> str:
         body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
         endpoint_path = _clean_optional_value((request_context or {}).get("endpoint_path")) or "/chat/completions"
+        request_shape_details = self._request_shape_details(request_context=request_context)
         request = urllib.request.Request(
             url=f"{self.api_base_url}{endpoint_path}",
             data=body,
@@ -873,6 +1220,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 internal_details={
                     "request_failure_logged": True,
                     "http_status": int(exc.code),
+                    **request_shape_details,
                 },
             ) from exc
         except (TimeoutError, socket.timeout) as exc:
@@ -888,7 +1236,10 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 reason=_DRAFT_REASON_TIMEOUT,
                 safe_message="Migration draft generation timed out while calling the AI provider.",
                 retryable=True,
-                internal_details={"request_failure_logged": True},
+                internal_details={
+                    "request_failure_logged": True,
+                    **request_shape_details,
+                },
             ) from exc
         except urllib.error.URLError as exc:
             duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
@@ -904,7 +1255,10 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     reason=_DRAFT_REASON_TIMEOUT,
                     safe_message="Migration draft generation timed out while calling the AI provider.",
                     retryable=True,
-                    internal_details={"request_failure_logged": True},
+                    internal_details={
+                        "request_failure_logged": True,
+                        **request_shape_details,
+                    },
                 ) from exc
             self._log_provider_request_failure(
                 request_context=request_context,
@@ -917,7 +1271,10 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 reason=_DRAFT_REASON_TRANSPORT_ERROR,
                 safe_message="Migration draft generation failed while communicating with the AI provider.",
                 retryable=True,
-                internal_details={"request_failure_logged": True},
+                internal_details={
+                    "request_failure_logged": True,
+                    **request_shape_details,
+                },
             ) from exc
         except Exception as exc:
             duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
@@ -932,10 +1289,66 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 reason=_DRAFT_REASON_UNKNOWN,
                 safe_message="Migration draft generation failed due to an unexpected AI provider error.",
                 retryable=None,
-                internal_details={"request_failure_logged": True},
+                internal_details={
+                    "request_failure_logged": True,
+                    **request_shape_details,
+                },
             ) from exc
 
-    def _build_request_payload(self, *, system_prompt: str, user_prompt: str) -> dict[str, object]:
+    def _build_request_payload(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        request_profile: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        profile = request_profile or self.get_request_profile()
+        endpoint_path = _clean_optional_value(profile.get("endpoint_path")) or _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS
+        request_body_mode = _clean_optional_value(profile.get("request_body_mode"))
+        if endpoint_path == _MIGRATION_COMPAT_ENDPOINT_RESPONSES:
+            return self._build_responses_request_payload(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                request_body_mode=request_body_mode,
+            )
+        return self._build_chat_completions_request_payload(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            request_body_mode=request_body_mode,
+        )
+
+    def _build_responses_request_payload(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        request_body_mode: str | None,
+    ) -> dict[str, object]:
+        del request_body_mode
+        return {
+            "model": self.model_name,
+            "input": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "seo_migration_artifact_response",
+                    "strict": True,
+                    "schema": _build_migration_json_schema(),
+                }
+            },
+        }
+
+    def _build_chat_completions_request_payload(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        request_body_mode: str | None,
+    ) -> dict[str, object]:
+        del request_body_mode
         return {
             "model": self.model_name,
             "temperature": 0,
@@ -996,6 +1409,38 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     parts.append(text.strip())
             if parts:
                 return "\n".join(parts)
+        raise self._provider_error(
+            code=_DRAFT_REASON_EMPTY_RESPONSE,
+            reason=_DRAFT_REASON_EMPTY_RESPONSE,
+            safe_message="Migration draft response did not include content.",
+            retryable=True,
+            raw_output=json.dumps(response_json, ensure_ascii=True, sort_keys=True),
+        )
+
+    def _extract_assistant_content_from_responses(self, response_json: dict[str, object]) -> str:
+        output_text = response_json.get("output_text")
+        if isinstance(output_text, str):
+            normalized = output_text.strip()
+            if normalized:
+                return normalized
+
+        output = response_json.get("output")
+        if isinstance(output, list):
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if not isinstance(content, list):
+                    continue
+                parts: list[str] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    text = part.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                if parts:
+                    return "\n".join(parts)
         raise self._provider_error(
             code=_DRAFT_REASON_EMPTY_RESPONSE,
             reason=_DRAFT_REASON_EMPTY_RESPONSE,
@@ -1446,6 +1891,17 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 else False
             ),
             "response_format_mode": _clean_optional_value(request_profile.get("response_format_mode")),
+            "request_body_mode": _clean_optional_value(request_profile.get("request_body_mode")),
+        }
+
+    @staticmethod
+    def _request_shape_details(*, request_context: dict[str, object] | None) -> dict[str, object]:
+        context = request_context or {}
+        return {
+            "endpoint_path": _clean_optional_value(context.get("endpoint_path")),
+            "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
+            "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
+            "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
         }
 
     def _extract_response_correlation_id(self, headers: object) -> str | None:
@@ -1489,6 +1945,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     bool(context.get("degraded_mode")) if isinstance(context.get("degraded_mode"), bool) else False
                 ),
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
+                "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "timeout_seconds": int(self.timeout_seconds),
             },
         )
@@ -1522,6 +1979,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     bool(context.get("degraded_mode")) if isinstance(context.get("degraded_mode"), bool) else False
                 ),
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
+                "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "duration_ms": max(0, int(duration_ms)),
                 "correlation_id": _clean_optional_value(correlation_id),
             },
@@ -1565,6 +2023,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     bool(context.get("degraded_mode")) if isinstance(context.get("degraded_mode"), bool) else False
                 ),
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
+                "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "failure_reason": normalized_reason,
                 "failure_source": "remote_provider",
                 "retryable": retryable,
@@ -1601,6 +2060,10 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "model": self.model_name,
                 "prompt_version": self.prompt_version,
                 "status": normalized_status,
+                "endpoint_path": _clean_optional_value(context.get("endpoint_path")),
+                "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
+                "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
+                "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "raw_length": max(0, int(raw_length)),
                 "parsed_candidate_count": max(0, int(parsed_candidate_count)),
                 "salvaged_candidate_count": max(0, int(salvaged_candidate_count)),

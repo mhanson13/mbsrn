@@ -101,11 +101,19 @@ def _build_chat_completion_response(content: str) -> str:
     return json_dumps(payload)
 
 
+def _build_responses_api_response(content: str) -> str:
+    payload = {
+        "model": "gpt-5.1",
+        "output_text": content,
+    }
+    return json_dumps(payload)
+
+
 def json_dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
-def test_openai_migration_provider_compatibility_rejects_known_unsupported_request_shape_for_gpt_5_1() -> None:
+def test_openai_migration_provider_compatibility_supports_known_responses_json_schema_shape_for_gpt_5_1() -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",
         model_name="gpt-5.1",
@@ -113,19 +121,19 @@ def test_openai_migration_provider_compatibility_rejects_known_unsupported_reque
     )
 
     compatibility = provider.evaluate_compatibility()
-    assert compatibility.supported is False
-    assert compatibility.reason_code == "unsupported_request_shape"
+    assert compatibility.supported is True
+    assert compatibility.reason_code == "supported"
     assert compatibility.provider_name == "openai"
     assert compatibility.model_name == "gpt-5.1"
-    assert compatibility.endpoint_path == "/chat/completions"
+    assert compatibility.endpoint_path == "/responses"
     assert compatibility.execution_mode == "full"
     assert compatibility.web_search_enabled is False
     assert compatibility.degraded_mode is False
     assert compatibility.response_format_mode == "json_schema"
-    assert "unsupported_request_shape" in str(compatibility.admin_summary or "")
+    assert compatibility.request_body_mode == "responses_text_format_json_schema"
 
 
-def test_openai_migration_provider_compatibility_supports_chat_json_schema_for_gpt_4o_mini() -> None:
+def test_openai_migration_provider_compatibility_rejects_chat_json_schema_shape_for_gpt_4o_mini() -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",
         model_name="gpt-4o-mini",
@@ -133,8 +141,8 @@ def test_openai_migration_provider_compatibility_supports_chat_json_schema_for_g
     )
 
     compatibility = provider.evaluate_compatibility()
-    assert compatibility.supported is True
-    assert compatibility.reason_code == "supported"
+    assert compatibility.supported is False
+    assert compatibility.reason_code == "unsupported_request_shape"
     assert compatibility.provider_name == "openai"
     assert compatibility.model_name == "gpt-4o-mini"
     assert compatibility.endpoint_path == "/chat/completions"
@@ -142,6 +150,7 @@ def test_openai_migration_provider_compatibility_supports_chat_json_schema_for_g
     assert compatibility.web_search_enabled is False
     assert compatibility.degraded_mode is False
     assert compatibility.response_format_mode == "json_schema"
+    assert compatibility.request_body_mode == "chat_json_schema"
 
 
 def test_openai_migration_provider_compatibility_rejects_incompatible_model_configuration() -> None:
@@ -155,7 +164,7 @@ def test_openai_migration_provider_compatibility_rejects_incompatible_model_conf
     assert compatibility.supported is False
     assert compatibility.reason_code == "unsupported_model_configuration"
     assert compatibility.retryable is False
-    assert "request_shape_model_not_allowlisted" in str(compatibility.admin_summary or "")
+    assert "request_shape_model_family_unsupported" in str(compatibility.admin_summary or "")
 
 
 def test_openai_migration_provider_compatibility_rejects_degraded_mode(monkeypatch) -> None:
@@ -282,18 +291,20 @@ def test_openai_migration_provider_request_logs_include_request_shape_metadata(m
     assert start_events
     assert failure_events
     start = start_events[-1]
-    assert start.get("endpoint_path") == "/chat/completions"
+    assert start.get("endpoint_path") == "/responses"
     assert start.get("execution_mode") == "full"
     assert start.get("web_search_enabled") is False
     assert start.get("degraded_mode") is False
     assert start.get("response_format_mode") == "json_schema"
+    assert start.get("request_body_mode") == "responses_text_format_json_schema"
 
     failure = failure_events[-1]
-    assert failure.get("endpoint_path") == "/chat/completions"
+    assert failure.get("endpoint_path") == "/responses"
     assert failure.get("execution_mode") == "full"
     assert failure.get("web_search_enabled") is False
     assert failure.get("degraded_mode") is False
     assert failure.get("response_format_mode") == "json_schema"
+    assert failure.get("request_body_mode") == "responses_text_format_json_schema"
     assert failure.get("failure_reason") == "malformed_response"
 
 
@@ -307,7 +318,7 @@ def test_openai_migration_provider_parses_fenced_json_output(monkeypatch) -> Non
 
     def _return_wrapped_payload(request, timeout):  # noqa: ANN001
         del request, timeout
-        return _FakeResponse(_build_chat_completion_response(fenced_content))
+        return _FakeResponse(_build_responses_api_response(fenced_content))
 
     monkeypatch.setattr(urllib.request, "urlopen", _return_wrapped_payload)
     output = provider.generate_artifacts(migration_context=_build_migration_context())
@@ -328,7 +339,7 @@ def test_openai_migration_provider_parses_json_with_leading_and_trailing_prose(m
 
     def _return_wrapped_payload(request, timeout):  # noqa: ANN001
         del request, timeout
-        return _FakeResponse(_build_chat_completion_response(prose_wrapped))
+        return _FakeResponse(_build_responses_api_response(prose_wrapped))
 
     monkeypatch.setattr(urllib.request, "urlopen", _return_wrapped_payload)
     output = provider.generate_artifacts(migration_context=_build_migration_context())
@@ -366,7 +377,7 @@ def test_openai_migration_provider_salvages_partial_generated_files_on_schema_fa
 
     def _return_payload(request, timeout):  # noqa: ANN001
         del request, timeout
-        return _FakeResponse(_build_chat_completion_response(json_dumps(malformed_payload)))
+        return _FakeResponse(_build_responses_api_response(json_dumps(malformed_payload)))
 
     monkeypatch.setattr(urllib.request, "urlopen", _return_payload)
     output = provider.generate_artifacts(migration_context=_build_migration_context())
@@ -385,7 +396,7 @@ def test_openai_migration_provider_truncated_json_maps_to_malformed_output_reaso
 
     def _return_truncated_payload(request, timeout):  # noqa: ANN001
         del request, timeout
-        return _FakeResponse(_build_chat_completion_response(truncated))
+        return _FakeResponse(_build_responses_api_response(truncated))
 
     monkeypatch.setattr(urllib.request, "urlopen", _return_truncated_payload)
     with pytest.raises(SEOMigrationArtifactProviderError) as exc_info:
@@ -403,7 +414,7 @@ def test_openai_migration_provider_empty_assistant_content_maps_to_empty_respons
 
     def _return_empty_content(request, timeout):  # noqa: ANN001
         del request, timeout
-        return _FakeResponse(_build_chat_completion_response("   "))
+        return _FakeResponse(_build_responses_api_response("   "))
 
     monkeypatch.setattr(urllib.request, "urlopen", _return_empty_content)
     with pytest.raises(SEOMigrationArtifactProviderError) as exc_info:
@@ -436,7 +447,7 @@ def test_openai_migration_provider_logs_parse_metrics_for_partial_recovery(monke
 
     def _return_payload(request, timeout):  # noqa: ANN001
         del request, timeout
-        return _FakeResponse(_build_chat_completion_response(json_dumps(malformed_payload)))
+        return _FakeResponse(_build_responses_api_response(json_dumps(malformed_payload)))
 
     monkeypatch.setattr(urllib.request, "urlopen", _return_payload)
     with caplog.at_level("INFO"):

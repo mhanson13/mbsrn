@@ -73,14 +73,20 @@ Useful fields:
 - `web_search_enabled`
 - `degraded_mode`
 - `response_format_mode`
+- `request_body_mode`
 - scoped identifiers (`business_id`, `site_id`, `workspace_id`)
 
 Interpretation:
 - `supported=false` with `decision=blocked_local_preflight` means migration draft generation was blocked locally before outbound provider invocation.
 - `reason_code` identifies the stable compatibility failure class (for example `unsupported_model_configuration`).
-- inspect `model`, `endpoint_path`, `execution_mode`, and `response_format_mode` together as the effective request-shape key.
+- inspect `model`, `endpoint_path`, `execution_mode`, `response_format_mode`, and `request_body_mode` together as the effective request-shape key.
 - for summary payload troubleshooting, also inspect `context_summary.migration_diagnostics.draft_provider_compatibility_admin_summary` for sanitized matrix decision detail.
 - model resolution precedence for compatibility checks is: explicit/requested -> business admin default (`default_ai_model`) -> env fallback (`AI_MODEL_NAME`) -> provider fallback.
+
+Current migration request-shape examples:
+- supported: `gpt-5.1*` + `/responses` + `full` + `json_schema` + `responses_text_format_json_schema`
+- blocked locally: `gpt-5.1*` + `/chat/completions` + `full` + `json_schema` + `chat_json_schema`
+- blocked locally: fallback chat/json_schema shapes unless explicitly allowlisted
 
 ## Local Block vs Remote Rejection
 
@@ -94,6 +100,18 @@ Use these events together:
   - `jsonPayload.event="seo_migration_draft_provider_request_failure"`
   - `jsonPayload.failure_source="remote_provider"`
   - inspect `jsonPayload.http_status` and `jsonPayload.failure_reason`
+
+For API/UI correlation, also inspect migration summary payload fields:
+- `context_summary.ai_execution.model_requested`
+- `context_summary.ai_execution.model_resolved`
+- `context_summary.ai_execution.model_used`
+- `context_summary.ai_execution.endpoint_path`
+- `context_summary.ai_execution.request_body_mode`
+- `context_summary.migration_diagnostics.last_draft_failure_source`
+
+Operator wording mapping:
+- `last_draft_failure_source=local_preflight` -> "Blocked before provider call"
+- `last_draft_failure_source=remote_provider` -> "AI provider rejected request"
 
 ## Migration State Coherence Quick Check
 

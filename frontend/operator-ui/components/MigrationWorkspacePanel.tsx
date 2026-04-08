@@ -149,6 +149,14 @@ interface DraftGenerationStateEvaluation {
   summary: string;
 }
 
+interface DraftAIExecutionSummary {
+  modelRequested: string | null;
+  modelResolved: string | null;
+  modelUsed: string | null;
+  endpointPath: string | null;
+  requestBodyMode: string | null;
+}
+
 function toFailureCategoryLabel(value: string | null): string {
   if (!value) {
     return "unknown";
@@ -669,6 +677,59 @@ function parseDraftGenerationState(params: {
   };
 }
 
+function parseDraftAIExecutionSummary(
+  contextSummary: Record<string, unknown>,
+  migrationDiagnostics: Record<string, unknown>,
+): DraftAIExecutionSummary {
+  const aiExecutionRecord = asRecord(contextSummary.ai_execution);
+  const modelRequested =
+    asStringOrNull(aiExecutionRecord.model_requested) ||
+    asStringOrNull(migrationDiagnostics.last_draft_failure_model_requested) ||
+    asStringOrNull(migrationDiagnostics.draft_model_requested);
+  const modelResolved =
+    asStringOrNull(aiExecutionRecord.model_resolved) ||
+    asStringOrNull(migrationDiagnostics.last_draft_failure_model_resolved) ||
+    asStringOrNull(migrationDiagnostics.draft_model_resolved) ||
+    asStringOrNull(migrationDiagnostics.draft_provider_compatibility_model_name);
+  const modelUsed =
+    asStringOrNull(aiExecutionRecord.model_used) ||
+    asStringOrNull(migrationDiagnostics.last_draft_failure_model_used) ||
+    asStringOrNull(migrationDiagnostics.draft_model_used) ||
+    asStringOrNull(migrationDiagnostics.draft_provider_compatibility_model_name);
+  const endpointPath =
+    asStringOrNull(aiExecutionRecord.endpoint_path) ||
+    asStringOrNull(migrationDiagnostics.last_draft_failure_endpoint_path) ||
+    asStringOrNull(migrationDiagnostics.draft_provider_compatibility_endpoint_path);
+  const requestBodyMode =
+    asStringOrNull(aiExecutionRecord.request_body_mode) ||
+    asStringOrNull(migrationDiagnostics.last_draft_failure_request_body_mode) ||
+    asStringOrNull(migrationDiagnostics.draft_provider_compatibility_request_body_mode);
+  return {
+    modelRequested,
+    modelResolved,
+    modelUsed,
+    endpointPath,
+    requestBodyMode,
+  };
+}
+
+function toDraftFailureSourceLabel(value: string | null): string | null {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "local_preflight") {
+    return "Blocked before provider call";
+  }
+  if (normalized === "remote_provider") {
+    return "AI provider rejected request";
+  }
+  if (normalized === "local_validation") {
+    return "Rejected by local validation";
+  }
+  if (normalized === "unknown") {
+    return "Unexpected execution failure";
+  }
+  return null;
+}
+
 function parseGeneratedPaths(artifact: MigrationArtifactVersion | null): string[] {
   if (!artifact || !Array.isArray(artifact.generated_files_json)) {
     return [];
@@ -835,6 +896,15 @@ export function MigrationWorkspacePanel({
     draftProviderCompatibility,
     migrationDiagnostics,
   });
+  const draftAIExecution = parseDraftAIExecutionSummary(contextSummary, migrationDiagnostics);
+  const draftFailureSourceLabel = toDraftFailureSourceLabel(
+    asStringOrNull(migrationDiagnostics.last_draft_failure_source),
+  );
+  const requestProfileLabel = draftAIExecution.endpointPath
+    ? `${draftAIExecution.endpointPath}${
+        draftAIExecution.requestBodyMode ? ` (${draftAIExecution.requestBodyMode})` : ""
+      }`
+    : "n/a";
   const draftGenerationStateLabel = toDraftGenerationStateLabel(draftGenerationState.status);
   const draftReadinessStatusLabel = toDraftReadinessStatusLabel(draftReadiness.status);
   const draftGenerationBlocked = draftReadiness.hardBlocked || !draftProviderCompatibility.supported;
@@ -1283,6 +1353,17 @@ export function MigrationWorkspacePanel({
         <strong>Current Migration State</strong>
         <span className="hint">State: {draftGenerationStateLabel}</span>
         <span className={draftGenerationStateToneClass}>{draftGenerationState.summary}</span>
+        <span className="hint" data-testid="migration-ai-model-used">
+          Generated using: {draftAIExecution.modelUsed || draftAIExecution.modelResolved || "n/a"}
+        </span>
+        <span className="hint" data-testid="migration-ai-request-profile">
+          Request profile: {requestProfileLabel}
+        </span>
+        {draftFailureSourceLabel ? (
+          <span className="hint warning" data-testid="migration-draft-failure-source">
+            Failure source: {draftFailureSourceLabel}
+          </span>
+        ) : null}
       </div>
 
       {errorMessage ? <p className="hint warning">{errorMessage}</p> : null}
@@ -1685,6 +1766,9 @@ export function MigrationWorkspacePanel({
           ) : null}
           {asString(migrationDiagnostics.last_draft_failure_message) ? (
             <span className="hint warning">{asString(migrationDiagnostics.last_draft_failure_message)}</span>
+          ) : null}
+          {draftFailureSourceLabel ? (
+            <span className="hint warning">Draft failure source: {draftFailureSourceLabel}</span>
           ) : null}
           {asString(migrationDiagnostics.last_publish_failure_category) ? (
             <span className="hint warning">

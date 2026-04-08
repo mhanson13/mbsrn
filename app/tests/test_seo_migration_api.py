@@ -154,16 +154,18 @@ class _IncompatibleMigrationArtifactProvider(SEOMigrationArtifactGenerationProvi
             operator_message="This model/provider setup is not compatible with the current migration request settings.",
             admin_summary=(
                 "unsupported_request_shape "
-                "model=gpt-5.1 endpoint=/chat/completions mode=full response_format=json_schema"
+                "model=gpt-4o-mini endpoint=/chat/completions mode=full response_format=json_schema "
+                "request_body_mode=chat_json_schema"
             ),
             retryable=False,
             provider_name="openai",
-            model_name="gpt-5.1",
+            model_name="gpt-4o-mini",
             endpoint_path="/chat/completions",
             execution_mode="full",
             web_search_enabled=False,
             degraded_mode=False,
             response_format_mode="json_schema",
+            request_body_mode="chat_json_schema",
         )
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
@@ -597,6 +599,13 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert isinstance(draft_provider_compatibility.get("reason_code"), str)
     assert isinstance(draft_provider_compatibility.get("operator_message"), str)
     assert isinstance(draft_provider_compatibility.get("retryable"), bool)
+    ai_execution = payload.get("context_summary", {}).get("ai_execution")
+    assert isinstance(ai_execution, dict)
+    assert "model_requested" in ai_execution
+    assert "model_resolved" in ai_execution
+    assert "model_used" in ai_execution
+    assert "endpoint_path" in ai_execution
+    assert "request_body_mode" in ai_execution
     draft_generation_state = payload.get("context_summary", {}).get("draft_generation_state")
     assert isinstance(draft_generation_state, dict)
     assert draft_generation_state.get("status") in {
@@ -617,11 +626,17 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_draft_failure_code" in migration_diagnostics
     assert "last_draft_failure_correlation_id" in migration_diagnostics
     assert "last_draft_failure_artifact_version_id" in migration_diagnostics
+    assert "last_draft_failure_source" in migration_diagnostics
+    assert "last_draft_failure_request_body_mode" in migration_diagnostics
+    assert "last_draft_failure_model_requested" in migration_diagnostics
+    assert "last_draft_failure_model_resolved" in migration_diagnostics
+    assert "last_draft_failure_model_used" in migration_diagnostics
     assert "draft_provider_compatibility_supported" in migration_diagnostics
     assert "draft_provider_compatibility_reason_code" in migration_diagnostics
     assert "draft_provider_compatibility_message" in migration_diagnostics
     assert "draft_provider_compatibility_retryable" in migration_diagnostics
     assert "draft_provider_compatibility_admin_summary" in migration_diagnostics
+    assert "draft_provider_compatibility_request_body_mode" in migration_diagnostics
     assert "draft_generation_state_status" in migration_diagnostics
     assert "draft_generation_state_summary" in migration_diagnostics
     assert "last_publish_status" in migration_diagnostics
@@ -711,14 +726,26 @@ def test_generate_draft_is_blocked_when_provider_compatibility_is_unsupported(db
     assert diagnostics.get("last_draft_failure_category") == "config_missing"
     assert diagnostics.get("last_draft_failure_reason") == "unsupported_configuration"
     assert diagnostics.get("last_draft_failure_code") == "unsupported_request_shape"
+    assert diagnostics.get("last_draft_failure_source") == "local_preflight"
     assert diagnostics.get("last_draft_failure_endpoint_path") == "/chat/completions"
     assert diagnostics.get("last_draft_failure_execution_mode") == "full"
     assert diagnostics.get("last_draft_failure_response_format_mode") == "json_schema"
+    assert diagnostics.get("last_draft_failure_request_body_mode") == "chat_json_schema"
+    assert diagnostics.get("last_draft_failure_model_requested") is None
+    assert diagnostics.get("last_draft_failure_model_resolved") == "gpt-4o-mini"
+    assert diagnostics.get("last_draft_failure_model_used") == "gpt-4o-mini"
     assert "unsupported_request_shape" in str(diagnostics.get("draft_provider_compatibility_admin_summary") or "")
+    ai_execution = context_summary.get("ai_execution") or {}
+    assert ai_execution.get("model_requested") is None
+    assert ai_execution.get("model_resolved") == "gpt-4o-mini"
+    assert ai_execution.get("model_used") == "gpt-4o-mini"
+    assert ai_execution.get("endpoint_path") == "/chat/completions"
+    assert ai_execution.get("request_body_mode") == "chat_json_schema"
     compatibility = context_summary.get("draft_provider_compatibility") or {}
     assert compatibility.get("supported") is False
     assert compatibility.get("reason_code") == "unsupported_request_shape"
     assert compatibility.get("response_format_mode") == "json_schema"
+    assert compatibility.get("request_body_mode") == "chat_json_schema"
     top_state = context_summary.get("draft_generation_state") or {}
     assert top_state.get("status") == "blocked_by_provider"
     assert "not compatible" in str(top_state.get("summary") or "").lower()
@@ -908,6 +935,15 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert diagnostics.get("last_draft_failure_retryable") is True
     assert diagnostics.get("last_draft_failure_code") == "timeout"
     assert diagnostics.get("last_draft_failure_artifact_version_id") == versions[0].get("id")
+    assert diagnostics.get("last_draft_failure_source") == "remote_provider"
+    assert diagnostics.get("last_draft_failure_model_requested") is None
+    assert diagnostics.get("last_draft_failure_model_resolved") == "gpt-4o-mini"
+    assert diagnostics.get("last_draft_failure_model_used") == "gpt-4o-mini"
+    ai_execution = summary_response.json().get("context_summary", {}).get("ai_execution") or {}
+    assert ai_execution.get("model_requested") is None
+    assert ai_execution.get("model_resolved") == "gpt-4o-mini"
+    assert ai_execution.get("model_used") == "gpt-4o-mini"
+    assert "raw_output" not in ai_execution
     top_state = summary_response.json().get("context_summary", {}).get("draft_generation_state") or {}
     assert top_state.get("status") == "generation_failed"
     assert top_state.get("summary") == "Migration draft generation timed out while calling the AI provider."
