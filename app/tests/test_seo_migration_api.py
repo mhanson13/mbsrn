@@ -606,6 +606,12 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "model_used" in ai_execution
     assert "endpoint_path" in ai_execution
     assert "request_body_mode" in ai_execution
+    assert "compatibility_decision" in ai_execution
+    assert "request_contract_status" in ai_execution
+    assert "provider_execution_status" in ai_execution
+    assert "artifact_status" in ai_execution
+    assert "artifact_result" in ai_execution
+    assert "duration_ms" in ai_execution
     assert "timeout_seconds" in ai_execution
     assert "timeout_source" in ai_execution
     draft_generation_state = payload.get("context_summary", {}).get("draft_generation_state")
@@ -635,6 +641,11 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_draft_failure_model_used" in migration_diagnostics
     assert "last_draft_failure_timeout_seconds" in migration_diagnostics
     assert "last_draft_failure_timeout_source" in migration_diagnostics
+    assert "last_draft_execution_duration_ms" in migration_diagnostics
+    assert "last_draft_request_contract_status" in migration_diagnostics
+    assert "last_draft_provider_execution_status" in migration_diagnostics
+    assert "last_draft_artifact_status" in migration_diagnostics
+    assert "last_draft_artifact_result" in migration_diagnostics
     assert "draft_timeout_seconds" in migration_diagnostics
     assert "draft_timeout_source" in migration_diagnostics
     assert "draft_provider_compatibility_supported" in migration_diagnostics
@@ -747,6 +758,12 @@ def test_generate_draft_is_blocked_when_provider_compatibility_is_unsupported(db
     assert ai_execution.get("model_used") == "gpt-4o-mini"
     assert ai_execution.get("endpoint_path") == "/chat/completions"
     assert ai_execution.get("request_body_mode") == "chat_json_schema"
+    assert ai_execution.get("compatibility_decision") == "blocked_local_preflight"
+    assert ai_execution.get("request_contract_status") == "blocked"
+    assert ai_execution.get("provider_execution_status") == "not_called"
+    assert ai_execution.get("artifact_status") == "failed"
+    assert ai_execution.get("artifact_result") == "failed"
+    assert isinstance(ai_execution.get("duration_ms"), int)
     compatibility = context_summary.get("draft_provider_compatibility") or {}
     assert compatibility.get("supported") is False
     assert compatibility.get("reason_code") == "unsupported_request_shape"
@@ -955,6 +972,11 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert ai_execution.get("model_requested") is None
     assert ai_execution.get("model_resolved") == "gpt-4o-mini"
     assert ai_execution.get("model_used") == "gpt-4o-mini"
+    assert ai_execution.get("request_contract_status") == "rejected"
+    assert ai_execution.get("provider_execution_status") == "rejected"
+    assert ai_execution.get("artifact_status") == "failed"
+    assert ai_execution.get("artifact_result") == "failed"
+    assert isinstance(ai_execution.get("duration_ms"), int)
     assert ai_execution.get("timeout_seconds") == 120
     assert ai_execution.get("timeout_source") == "default"
     assert "raw_output" not in ai_execution

@@ -74,6 +74,23 @@ Useful fields:
 - `degraded_mode`
 - `response_format_mode`
 - `request_body_mode`
+- request fingerprint fields:
+  - `request_fingerprint_model`
+  - `request_fingerprint_endpoint_path`
+  - `request_fingerprint_request_body_mode`
+  - `request_fingerprint_has_text_format`
+  - `request_fingerprint_text_format_type`
+  - `request_fingerprint_schema_name`
+  - `request_fingerprint_strict_enabled`
+  - `request_fingerprint_top_level_keys`
+  - `request_fingerprint_text_format_keys`
+  - `request_fingerprint_schema_top_level_keys`
+  - `request_fingerprint_input_mode`
+  - `request_fingerprint_contains_tools`
+  - `request_fingerprint_contains_response_format_legacy`
+  - `request_fingerprint_contains_messages_legacy`
+  - `request_fingerprint_schema_object_nodes_total`
+  - `request_fingerprint_schema_object_nodes_non_false_additional_properties`
 - scoped identifiers (`business_id`, `site_id`, `workspace_id`)
 
 Interpretation:
@@ -87,6 +104,7 @@ Current migration request-shape examples:
 - supported: `gpt-5.1*` + `/responses` + `full` + `json_schema` + `responses_text_format_json_schema`
 - blocked locally: `gpt-5.1*` + `/chat/completions` + `full` + `json_schema` + `chat_json_schema`
 - blocked locally: fallback chat/json_schema shapes unless explicitly allowlisted
+- contract drift indicator: `request_fingerprint_schema_object_nodes_non_false_additional_properties>0` indicates schema strictness drift versus the known-good migration `/responses` contract.
 
 ## Local Block vs Remote Rejection
 
@@ -107,6 +125,12 @@ For API/UI correlation, also inspect migration summary payload fields:
 - `context_summary.ai_execution.model_used`
 - `context_summary.ai_execution.endpoint_path`
 - `context_summary.ai_execution.request_body_mode`
+- `context_summary.ai_execution.compatibility_decision`
+- `context_summary.ai_execution.request_contract_status`
+- `context_summary.ai_execution.provider_execution_status`
+- `context_summary.ai_execution.artifact_status`
+- `context_summary.ai_execution.artifact_result`
+- `context_summary.ai_execution.duration_ms`
 - `context_summary.ai_execution.timeout_seconds`
 - `context_summary.ai_execution.timeout_source`
 - `context_summary.migration_diagnostics.last_draft_failure_source`
@@ -114,6 +138,15 @@ For API/UI correlation, also inspect migration summary payload fields:
 Operator wording mapping:
 - `last_draft_failure_source=local_preflight` -> "Blocked before provider call"
 - `last_draft_failure_source=remote_provider` -> "AI provider rejected request"
+
+Success-path validation quick check:
+1. Confirm compatibility evaluation log shows `supported=true` and `decision=allowed`.
+2. Confirm provider request lifecycle logs include start and complete events (no failure event for the same `draft_run_id`).
+3. Confirm summary `context_summary.ai_execution` reports:
+   - `request_contract_status=accepted`
+   - `provider_execution_status=accepted`
+   - `artifact_result=succeeded`
+   - non-null `duration_ms`
 
 ## Migration Timeout Troubleshooting
 
@@ -134,6 +167,7 @@ Interpretation:
 - `failure_reason=timeout` with `failure_source=remote_provider` means the provider call exceeded the configured timeout.
 - timeout failures currently retain `failure_category=config_missing` for migration draft error-contract compatibility.
 - compare `timeout_seconds` and `timeout_source` to verify whether admin override or default timeout was active.
+- if timeout settings are sane but remote `unsupported_configuration` occurs quickly, compare request fingerprint fields first; contract drift is usually visible in top-level/text-format/schema fingerprint fields before model/latency tuning.
 
 ## Migration State Coherence Quick Check
 

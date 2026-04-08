@@ -2247,6 +2247,12 @@ describe("site workspace migration tab", () => {
             model_used: "gpt-5.1",
             endpoint_path: "/responses",
             request_body_mode: "responses_text_format_json_schema",
+            compatibility_decision: "allowed",
+            request_contract_status: "accepted",
+            provider_execution_status: "accepted",
+            artifact_status: "completed",
+            artifact_result: "succeeded",
+            duration_ms: 84000,
           },
         },
       }),
@@ -2262,10 +2268,18 @@ describe("site workspace migration tab", () => {
     const currentState = await screen.findByTestId("migration-current-state");
     expect(currentState).toHaveTextContent("State: Ready");
     expect(currentState).toHaveTextContent("Ready to generate draft.");
+    expect(await screen.findByTestId("migration-ai-execution-summary")).toHaveTextContent(
+      "AI execution: gpt-5.1 via /responses",
+    );
     expect(await screen.findByTestId("migration-ai-model-used")).toHaveTextContent("Generated using: gpt-5.1");
     expect(await screen.findByTestId("migration-ai-request-profile")).toHaveTextContent(
       "Request profile: /responses (responses_text_format_json_schema)",
     );
+    expect(await screen.findByTestId("migration-request-contract-status")).toHaveTextContent(
+      "Request contract: Accepted end-to-end",
+    );
+    expect(await screen.findByTestId("migration-artifact-result")).toHaveTextContent("Artifact result: succeeded");
+    expect(await screen.findByTestId("migration-ai-duration")).toHaveTextContent("Duration: 84000 ms");
     expect(screen.queryByTestId("migration-draft-timeout")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Generate Draft Mockup" })).toBeEnabled();
   });
@@ -2407,6 +2421,12 @@ describe("site workspace migration tab", () => {
             model_used: null,
             endpoint_path: "/chat/completions",
             request_body_mode: "chat_json_schema",
+            compatibility_decision: "blocked_local_preflight",
+            request_contract_status: "blocked",
+            provider_execution_status: "not_called",
+            artifact_status: "failed",
+            artifact_result: "failed",
+            duration_ms: 181,
           },
           migration_diagnostics: {
             last_draft_failure_source: "local_preflight",
@@ -2438,6 +2458,11 @@ describe("site workspace migration tab", () => {
     expect(await screen.findByTestId("migration-ai-request-profile")).toHaveTextContent(
       "Request profile: /chat/completions",
     );
+    expect(await screen.findByTestId("migration-request-contract-status")).toHaveTextContent(
+      "Request contract: Blocked before provider call",
+    );
+    expect(await screen.findByTestId("migration-artifact-result")).toHaveTextContent("Artifact result: failed");
+    expect(await screen.findByTestId("migration-ai-duration")).toHaveTextContent("Duration: 181 ms");
     expect(await screen.findByTestId("migration-draft-failure-source")).toHaveTextContent(
       "Failure source: Blocked before provider call",
     );
@@ -2912,6 +2937,22 @@ describe("site workspace migration tab", () => {
             last_draft_failure_timeout_seconds: 180,
             last_draft_failure_timeout_source: "admin",
           },
+          ai_execution: {
+            model_requested: null,
+            model_resolved: "gpt-5.1",
+            model_used: "gpt-5.1",
+            endpoint_path: "/responses",
+            request_body_mode: "responses_text_format_json_schema",
+            compatibility_decision: "allowed",
+            failure_source: "remote_provider",
+            request_contract_status: "rejected",
+            provider_execution_status: "rejected",
+            artifact_status: "failed",
+            artifact_result: "failed",
+            duration_ms: 236,
+            timeout_seconds: 180,
+            timeout_source: "admin",
+          },
           draft_generation_state: {
             status: "generation_failed",
             summary: "Draft generation failed due to unsupported AI configuration.",
@@ -2930,6 +2971,11 @@ describe("site workspace migration tab", () => {
     expect(await screen.findByTestId("migration-ai-request-profile")).toHaveTextContent(
       "Request profile: /responses (responses_text_format_json_schema)",
     );
+    expect(await screen.findByTestId("migration-request-contract-status")).toHaveTextContent(
+      "Request contract: Rejected",
+    );
+    expect(await screen.findByTestId("migration-artifact-result")).toHaveTextContent("Artifact result: failed");
+    expect(await screen.findByTestId("migration-ai-duration")).toHaveTextContent("Duration: 236 ms");
     expect(await screen.findByTestId("migration-draft-timeout")).toHaveTextContent("Timeout: 180 seconds (admin)");
     expect(await screen.findByTestId("migration-draft-failure-source")).toHaveTextContent(
       "Failure source: AI provider rejected request",

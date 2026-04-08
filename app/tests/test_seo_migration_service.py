@@ -744,6 +744,12 @@ def test_generate_artifacts_blocks_known_unsupported_openai_fallback_request_sha
     assert ai_execution.get("model_used") == "gpt-4o-mini"
     assert ai_execution.get("endpoint_path") == "/chat/completions"
     assert ai_execution.get("request_body_mode") == "chat_json_schema"
+    assert ai_execution.get("compatibility_decision") == "blocked_local_preflight"
+    assert ai_execution.get("request_contract_status") == "blocked"
+    assert ai_execution.get("provider_execution_status") == "not_called"
+    assert ai_execution.get("artifact_status") == "failed"
+    assert ai_execution.get("artifact_result") == "failed"
+    assert isinstance(ai_execution.get("duration_ms"), int)
     compatibility = (summary.context_summary or {}).get("draft_provider_compatibility") or {}
     assert compatibility.get("supported") is False
     assert compatibility.get("reason_code") == "unsupported_request_shape"
@@ -1016,8 +1022,19 @@ def test_generate_artifacts_allows_supported_openai_gpt_5_1_shape_and_calls_prov
     assert ai_execution.get("model_used") == "gpt-5.1"
     assert ai_execution.get("endpoint_path") == "/responses"
     assert ai_execution.get("request_body_mode") == "responses_text_format_json_schema"
+    assert ai_execution.get("compatibility_decision") == "allowed"
+    assert ai_execution.get("request_contract_status") == "accepted"
+    assert ai_execution.get("provider_execution_status") == "accepted"
+    assert ai_execution.get("artifact_status") == "completed"
+    assert ai_execution.get("artifact_result") == "succeeded"
+    assert isinstance(ai_execution.get("duration_ms"), int)
     assert ai_execution.get("timeout_seconds") == 120
     assert ai_execution.get("timeout_source") == "default"
+    assert diagnostics.get("last_draft_request_contract_status") == "accepted"
+    assert diagnostics.get("last_draft_provider_execution_status") == "accepted"
+    assert diagnostics.get("last_draft_artifact_status") == "completed"
+    assert diagnostics.get("last_draft_artifact_result") == "succeeded"
+    assert isinstance(diagnostics.get("last_draft_execution_duration_ms"), int)
 
 
 def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, caplog) -> None:
@@ -1329,6 +1346,11 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
     assert ai_execution.get("model_requested") is None
     assert ai_execution.get("model_resolved") == "mock-seo-migration-v1"
     assert ai_execution.get("model_used") == "gpt-4o-mini"
+    assert ai_execution.get("request_contract_status") == "rejected"
+    assert ai_execution.get("provider_execution_status") == "rejected"
+    assert ai_execution.get("artifact_status") == "failed"
+    assert ai_execution.get("artifact_result") == "failed"
+    assert isinstance(ai_execution.get("duration_ms"), int)
     assert ai_execution.get("timeout_seconds") == 120
     assert ai_execution.get("timeout_source") == "default"
     top_state = summary.context_summary.get("draft_generation_state")

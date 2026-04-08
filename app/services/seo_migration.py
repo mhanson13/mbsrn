@@ -1345,6 +1345,7 @@ class SEOMigrationService:
                 model_resolved=model_resolved,
                 model_used=draft_failure.model_name,
                 failure_source="local_preflight",
+                duration_ms=self._duration_ms(started_at),
                 timeout_seconds=draft_timeout_seconds,
                 timeout_source=draft_timeout_source,
             )
@@ -1430,6 +1431,7 @@ class SEOMigrationService:
                     model_resolved=model_resolved,
                     model_used=draft_failure.model_name,
                     failure_source="remote_provider",
+                    duration_ms=self._duration_ms(started_at),
                     timeout_seconds=draft_timeout_seconds,
                     timeout_source=draft_timeout_source,
                 )
@@ -1497,6 +1499,7 @@ class SEOMigrationService:
                 model_resolved=model_resolved,
                 model_used=draft_failure.model_name,
                 failure_source="unknown",
+                duration_ms=self._duration_ms(started_at),
                 timeout_seconds=draft_timeout_seconds,
                 timeout_source=draft_timeout_source,
             )
@@ -1592,6 +1595,7 @@ class SEOMigrationService:
                 model_resolved=model_resolved,
                 model_used=draft_failure.model_name,
                 failure_source="local_validation",
+                duration_ms=self._duration_ms(started_at),
                 timeout_seconds=draft_timeout_seconds,
                 timeout_source=draft_timeout_source,
             )
@@ -1638,6 +1642,7 @@ class SEOMigrationService:
         artifact_version_number = self.seo_migration_repository.next_artifact_version_number(workspace.id)
         total_bytes = sum(len(str(item["content"]).encode("utf-8")) for item in normalized_files)
         artifact_model_used = _normalize_string(provider_output.model_name, max_length=128) or model_resolved
+        generation_duration_ms = self._duration_ms(started_at)
         artifact_context_json = self._build_draft_execution_context(
             context_json=context_json,
             model_requested=model_requested,
@@ -1665,6 +1670,8 @@ class SEOMigrationService:
             ),
             compatibility_decision="allowed",
             failure_source=("remote_provider" if draft_failure and generation_status == "partial" else None),
+            artifact_status=generation_status,
+            duration_ms=generation_duration_ms,
             timeout_seconds=draft_timeout_seconds,
             timeout_source=draft_timeout_source,
         )
@@ -1895,6 +1902,11 @@ class SEOMigrationService:
                 "last_draft_failure_model_used": draft_diagnostics.get("last_failure_model_used"),
                 "last_draft_failure_timeout_seconds": draft_diagnostics.get("last_failure_timeout_seconds"),
                 "last_draft_failure_timeout_source": draft_diagnostics.get("last_failure_timeout_source"),
+                "last_draft_execution_duration_ms": ai_execution_summary.get("duration_ms"),
+                "last_draft_request_contract_status": ai_execution_summary.get("request_contract_status"),
+                "last_draft_provider_execution_status": ai_execution_summary.get("provider_execution_status"),
+                "last_draft_artifact_status": ai_execution_summary.get("artifact_status"),
+                "last_draft_artifact_result": ai_execution_summary.get("artifact_result"),
                 "draft_model_requested": None,
                 "draft_model_resolved": _normalize_string(self.provider_model_name, max_length=128),
                 "draft_model_used": _normalize_string(
@@ -2106,6 +2118,36 @@ class SEOMigrationService:
         request_body_mode = _normalize_string(execution_payload.get("request_body_mode"), max_length=80)
         if request_body_mode is None:
             request_body_mode = _normalize_string(draft_provider_compatibility.request_body_mode, max_length=80)
+        compatibility_decision = _normalize_string(execution_payload.get("compatibility_decision"), max_length=40)
+        if compatibility_decision not in {"allowed", "blocked_local_preflight"}:
+            compatibility_decision = "allowed" if draft_provider_compatibility.supported else "blocked_local_preflight"
+        failure_source = _normalize_string(execution_payload.get("failure_source"), max_length=40)
+        if failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
+            failure_source = None
+        artifact_status = _normalize_string(execution_payload.get("artifact_status"), max_length=40)
+        if artifact_status not in {"completed", "partial", "failed"}:
+            artifact_status = _normalize_string(artifact.status, max_length=40) if artifact is not None else None
+        if artifact_status not in {"completed", "partial", "failed"}:
+            artifact_status = None
+        artifact_result = _normalize_string(execution_payload.get("artifact_result"), max_length=40)
+        if artifact_result not in {"succeeded", "partial", "failed"}:
+            artifact_result = self._artifact_result_from_status(artifact_status)
+        duration_ms_raw = execution_payload.get("duration_ms")
+        duration_ms = max(0, int(duration_ms_raw)) if isinstance(duration_ms_raw, int) else None
+        request_contract_status = _normalize_string(execution_payload.get("request_contract_status"), max_length=60)
+        if request_contract_status not in {"accepted", "accepted_with_warnings", "blocked", "rejected"}:
+            request_contract_status = self._derive_request_contract_status(
+                compatibility_decision=compatibility_decision,
+                failure_source=failure_source,
+                artifact_status=artifact_status,
+            )
+        provider_execution_status = _normalize_string(execution_payload.get("provider_execution_status"), max_length=40)
+        if provider_execution_status not in {"accepted", "rejected", "not_called", "unknown"}:
+            provider_execution_status = self._derive_provider_execution_status(
+                compatibility_decision=compatibility_decision,
+                failure_source=failure_source,
+                artifact_status=artifact_status,
+            )
         timeout_seconds_raw = execution_payload.get("timeout_seconds")
         timeout_seconds = (
             max(1, int(timeout_seconds_raw))
@@ -2125,6 +2167,13 @@ class SEOMigrationService:
             "model_used": model_used,
             "endpoint_path": endpoint_path,
             "request_body_mode": request_body_mode,
+            "compatibility_decision": compatibility_decision,
+            "failure_source": failure_source,
+            "request_contract_status": request_contract_status,
+            "provider_execution_status": provider_execution_status,
+            "artifact_status": artifact_status,
+            "artifact_result": artifact_result,
+            "duration_ms": duration_ms,
             "timeout_seconds": timeout_seconds,
             "timeout_source": timeout_source,
         }
@@ -2589,6 +2638,7 @@ class SEOMigrationService:
         model_resolved: str | None = None,
         model_used: str | None = None,
         failure_source: str | None = None,
+        duration_ms: int | None = None,
         timeout_seconds: int | None = None,
         timeout_source: str | None = None,
     ) -> SEOMigrationArtifactVersion:
@@ -2601,6 +2651,7 @@ class SEOMigrationService:
             model_resolved=model_resolved,
             model_used=model_used,
             failure_source=failure_source,
+            duration_ms=duration_ms,
             timeout_seconds=timeout_seconds,
             timeout_source=timeout_source,
         )
@@ -2658,6 +2709,7 @@ class SEOMigrationService:
         model_resolved: str | None = None,
         model_used: str | None = None,
         failure_source: str | None = None,
+        duration_ms: int | None = None,
         timeout_seconds: int | None = None,
         timeout_source: str | None = None,
     ) -> dict[str, object]:
@@ -2688,6 +2740,8 @@ class SEOMigrationService:
             request_body_mode=failure.request_body_mode,
             compatibility_decision=compatibility_decision,
             failure_source=normalized_failure_source,
+            artifact_status="failed",
+            duration_ms=duration_ms,
             timeout_seconds=resolved_timeout_seconds,
             timeout_source=normalized_timeout_source,
         )
@@ -2729,8 +2783,10 @@ class SEOMigrationService:
         request_body_mode: str | None,
         compatibility_decision: str | None,
         failure_source: str | None,
-        timeout_seconds: int | None,
-        timeout_source: str | None,
+        artifact_status: str | None = None,
+        duration_ms: int | None = None,
+        timeout_seconds: int | None = None,
+        timeout_source: str | None = None,
     ) -> dict[str, object]:
         normalized_failure_source = _normalize_string(failure_source, max_length=40)
         if normalized_failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
@@ -2738,10 +2794,25 @@ class SEOMigrationService:
         normalized_compatibility_decision = _normalize_string(compatibility_decision, max_length=40)
         if normalized_compatibility_decision not in {"allowed", "blocked_local_preflight"}:
             normalized_compatibility_decision = None
+        normalized_artifact_status = _normalize_string(artifact_status, max_length=40)
+        if normalized_artifact_status not in {"completed", "partial", "failed"}:
+            normalized_artifact_status = None
         normalized_timeout_source = _normalize_string(timeout_source, max_length=20)
         if normalized_timeout_source not in {"admin", "default"}:
             normalized_timeout_source = None
         normalized_timeout_seconds = max(1, int(timeout_seconds)) if isinstance(timeout_seconds, int) else None
+        normalized_duration_ms = max(0, int(duration_ms)) if isinstance(duration_ms, int) else None
+        artifact_result = SEOMigrationService._artifact_result_from_status(normalized_artifact_status)
+        request_contract_status = SEOMigrationService._derive_request_contract_status(
+            compatibility_decision=normalized_compatibility_decision,
+            failure_source=normalized_failure_source,
+            artifact_status=normalized_artifact_status,
+        )
+        provider_execution_status = SEOMigrationService._derive_provider_execution_status(
+            compatibility_decision=normalized_compatibility_decision,
+            failure_source=normalized_failure_source,
+            artifact_status=normalized_artifact_status,
+        )
         payload = _normalize_json_dict(context_json)
         payload["draft_generation_execution"] = {
             "model_requested": _normalize_string(model_requested, max_length=128),
@@ -2753,11 +2824,66 @@ class SEOMigrationService:
             "request_body_mode": _normalize_string(request_body_mode, max_length=80),
             "compatibility_decision": normalized_compatibility_decision,
             "failure_source": normalized_failure_source,
+            "request_contract_status": request_contract_status,
+            "provider_execution_status": provider_execution_status,
+            "artifact_status": normalized_artifact_status,
+            "artifact_result": artifact_result,
+            "duration_ms": normalized_duration_ms,
             "timeout_seconds": normalized_timeout_seconds,
             "timeout_source": normalized_timeout_source,
             "recorded_at": utc_now().isoformat(),
         }
         return payload
+
+    @staticmethod
+    def _artifact_result_from_status(status: str | None) -> str | None:
+        if status == "completed":
+            return "succeeded"
+        if status == "partial":
+            return "partial"
+        if status == "failed":
+            return "failed"
+        return None
+
+    @staticmethod
+    def _derive_request_contract_status(
+        *,
+        compatibility_decision: str | None,
+        failure_source: str | None,
+        artifact_status: str | None,
+    ) -> str | None:
+        if compatibility_decision == "blocked_local_preflight":
+            return "blocked"
+        if artifact_status == "completed":
+            return "accepted"
+        if artifact_status == "partial":
+            return "accepted_with_warnings"
+        if artifact_status == "failed":
+            if failure_source in {"remote_provider", "local_validation", "unknown"}:
+                return "rejected"
+            return "rejected"
+        return None
+
+    @staticmethod
+    def _derive_provider_execution_status(
+        *,
+        compatibility_decision: str | None,
+        failure_source: str | None,
+        artifact_status: str | None,
+    ) -> str | None:
+        if compatibility_decision == "blocked_local_preflight":
+            return "not_called"
+        if artifact_status in {"completed", "partial"}:
+            return "accepted"
+        if artifact_status == "failed":
+            if failure_source == "remote_provider":
+                return "rejected"
+            if failure_source == "local_validation":
+                return "accepted"
+            if failure_source == "unknown":
+                return "unknown"
+            return "unknown"
+        return None
 
     def _classify_draft_provider_failure(self, error: SEOMigrationArtifactProviderError) -> SEOMigrationDraftFailure:
         reason = self._normalize_draft_failure_reason(error.reason or error.code)

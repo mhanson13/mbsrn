@@ -157,6 +157,14 @@ Common compatibility reason codes:
 Known supported request shape (current allowlist example):
 - `model=gpt-5.1*` with `endpoint_path=/responses`, `execution_mode=full`, `response_format_mode=json_schema`, and `request_body_mode=responses_text_format_json_schema`.
 
+Migration `/responses` request contract is now locked to a known-good structured-output shape:
+- top-level keys: `model`, `input`, `text`
+- no legacy chat keys in `/responses` payloads (`messages`, `response_format`)
+- `text.format.type=json_schema`
+- `text.format.name=seo_migration_artifact_response`
+- `text.format.strict=true`
+- migration schema object nodes require `additionalProperties=false`
+
 Known unsupported request shapes (blocked locally):
 - `model=gpt-5.1*` with `endpoint_path=/chat/completions`, `execution_mode=full`, `response_format_mode=json_schema`, and `request_body_mode=chat_json_schema` is treated as `unsupported_request_shape`.
 - fallback/default model paths (for example `gpt-4o-mini` using migration chat/json_schema request construction) are blocked unless that exact request shape is explicitly allowlisted and validated.
@@ -177,6 +185,23 @@ Structured logging:
   - `blocked_local_preflight` for local preflight block
   - `allowed` when the request shape is compatible
 - remote provider rejections use provider request-failure logs (`event=seo_migration_draft_provider_request_failure`) with `failure_source=remote_provider`
+- provider request start/failure logs include a sanitized request-contract fingerprint:
+  - `request_fingerprint_model`
+  - `request_fingerprint_endpoint_path`
+  - `request_fingerprint_request_body_mode`
+  - `request_fingerprint_has_text_format`
+  - `request_fingerprint_text_format_type`
+  - `request_fingerprint_schema_name`
+  - `request_fingerprint_strict_enabled`
+  - `request_fingerprint_top_level_keys`
+  - `request_fingerprint_text_format_keys`
+  - `request_fingerprint_schema_top_level_keys`
+  - `request_fingerprint_input_mode`
+  - `request_fingerprint_contains_tools`
+  - `request_fingerprint_contains_response_format_legacy`
+  - `request_fingerprint_contains_messages_legacy`
+  - `request_fingerprint_schema_object_nodes_total`
+  - `request_fingerprint_schema_object_nodes_non_false_additional_properties`
 
 ## Draft AI Execution Visibility
 Migration summary now includes a compact execution slice in `context_summary.ai_execution`:
@@ -185,6 +210,12 @@ Migration summary now includes a compact execution slice in `context_summary.ai_
 - `model_used`
 - `endpoint_path`
 - `request_body_mode`
+- `compatibility_decision`
+- `request_contract_status`
+- `provider_execution_status`
+- `artifact_status`
+- `artifact_result`
+- `duration_ms`
 - `timeout_seconds`
 - `timeout_source` (`admin` or `default`)
 
@@ -193,10 +224,19 @@ Field meanings:
 - `model_resolved`: model chosen after precedence resolution.
 - `model_used`: model reported by the execution attempt/output.
 - `request_body_mode`: sanitized request-construction profile key (for example `responses_text_format_json_schema`).
+- `compatibility_decision`: whether the request shape was allowed or locally blocked (`allowed` or `blocked_local_preflight`).
+- `request_contract_status`: compact contract outcome (`accepted`, `accepted_with_warnings`, `blocked`, `rejected`).
+- `provider_execution_status`: provider call outcome (`accepted`, `rejected`, `not_called`, `unknown`).
+- `artifact_status` / `artifact_result`: persisted artifact outcome for latest draft generation (`completed`/`succeeded`, `partial`, `failed`).
+- `duration_ms`: end-to-end draft generation duration for the recorded execution.
 
 Failure-source visibility:
 - `context_summary.migration_diagnostics.last_draft_failure_source=local_preflight` means generation was blocked before provider invocation.
 - `context_summary.migration_diagnostics.last_draft_failure_source=remote_provider` means the outbound request was attempted and rejected remotely.
+
+Success-path contract verification:
+- `request_contract_status=accepted` and `provider_execution_status=accepted` with `artifact_result=succeeded` indicates the request contract was allowed locally, accepted by provider, and completed successfully.
+- `request_contract_status=accepted_with_warnings` indicates partial/salvaged completion.
 
 ## AI Draft Generation Timeout
 Migration draft generation timeout is admin-configurable through business settings:
@@ -540,9 +580,10 @@ Use this checklist for a bounded real-world migration exercise:
 7. Run publish, then verify summary/readiness state and latest publish history entry (`status`, target, commit identifiers).
 8. Run deploy, then verify summary/readiness state and latest deploy history entry (`status`, workflow/ref, dispatch timestamp).
 9. Confirm diagnostics fields report expected values after each action (`last_publish_status`, `last_publish_failure_category/message`, `last_deploy_status`, `last_deploy_failure_category/message`).
-10. Confirm traceability fields are present across logs/history (`business_id`, `site_id`, `workspace_id`, `artifact_version_id`, action/status, target summary, failure category, timestamp).
-11. Confirm DNS/A-record cutover remains manual and outside the app.
-12. Confirm rollback path: select prior stable artifact, re-approve, then explicitly re-publish and re-deploy.
+10. For migration draft generation, confirm `context_summary.ai_execution.request_contract_status`, `provider_execution_status`, `artifact_result`, and `duration_ms` align with the expected run outcome.
+11. Confirm traceability fields are present across logs/history (`business_id`, `site_id`, `workspace_id`, `artifact_version_id`, action/status, target summary, failure category, timestamp).
+12. Confirm DNS/A-record cutover remains manual and outside the app.
+13. Confirm rollback path: select prior stable artifact, re-approve, then explicitly re-publish and re-deploy.
 
 ## Troubleshooting and Rollback
 Publish failures:

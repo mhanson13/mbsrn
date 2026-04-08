@@ -477,6 +477,13 @@ export interface MigrationAIExecutionSummary {
   model_used?: string | null;
   endpoint_path?: string | null;
   request_body_mode?: string | null;
+  compatibility_decision?: "allowed" | "blocked_local_preflight" | string | null;
+  failure_source?: "local_preflight" | "remote_provider" | "local_validation" | "unknown" | string | null;
+  request_contract_status?: "accepted" | "accepted_with_warnings" | "blocked" | "rejected" | string | null;
+  provider_execution_status?: "accepted" | "rejected" | "not_called" | "unknown" | string | null;
+  artifact_status?: "completed" | "partial" | "failed" | string | null;
+  artifact_result?: "succeeded" | "partial" | "failed" | string | null;
+  duration_ms?: number | null;
   timeout_seconds?: number | null;
   timeout_source?: "admin" | "default" | string | null;
 }

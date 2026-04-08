@@ -155,6 +155,13 @@ interface DraftAIExecutionSummary {
   modelUsed: string | null;
   endpointPath: string | null;
   requestBodyMode: string | null;
+  compatibilityDecision: string | null;
+  failureSource: string | null;
+  requestContractStatus: string | null;
+  providerExecutionStatus: string | null;
+  artifactStatus: string | null;
+  artifactResult: string | null;
+  durationMs: number | null;
   timeoutSeconds: number | null;
   timeoutSource: "admin" | "default" | null;
 }
@@ -712,6 +719,16 @@ function parseDraftAIExecutionSummary(
     asStringOrNull(aiExecutionRecord.request_body_mode) ||
     asStringOrNull(migrationDiagnostics.last_draft_failure_request_body_mode) ||
     asStringOrNull(migrationDiagnostics.draft_provider_compatibility_request_body_mode);
+  const compatibilityDecision = asStringOrNull(aiExecutionRecord.compatibility_decision);
+  const failureSource = asStringOrNull(aiExecutionRecord.failure_source);
+  const requestContractStatus = asStringOrNull(aiExecutionRecord.request_contract_status);
+  const providerExecutionStatus = asStringOrNull(aiExecutionRecord.provider_execution_status);
+  const artifactStatus = asStringOrNull(aiExecutionRecord.artifact_status);
+  const artifactResult = asStringOrNull(aiExecutionRecord.artifact_result);
+  const durationMs =
+    typeof aiExecutionRecord.duration_ms === "number" && Number.isFinite(aiExecutionRecord.duration_ms)
+      ? Math.max(0, Math.round(aiExecutionRecord.duration_ms))
+      : null;
   const timeoutFromExecution =
     typeof aiExecutionRecord.timeout_seconds === "number" && Number.isFinite(aiExecutionRecord.timeout_seconds)
       ? Math.max(1, Math.round(aiExecutionRecord.timeout_seconds))
@@ -736,6 +753,13 @@ function parseDraftAIExecutionSummary(
     modelUsed,
     endpointPath,
     requestBodyMode,
+    compatibilityDecision,
+    failureSource,
+    requestContractStatus,
+    providerExecutionStatus,
+    artifactStatus,
+    artifactResult,
+    durationMs,
     timeoutSeconds,
     timeoutSource,
   };
@@ -754,6 +778,23 @@ function toDraftFailureSourceLabel(value: string | null): string | null {
   }
   if (normalized === "unknown") {
     return "Unexpected execution failure";
+  }
+  return null;
+}
+
+function toRequestContractStatusLabel(value: string | null): string | null {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "accepted") {
+    return "Accepted end-to-end";
+  }
+  if (normalized === "accepted_with_warnings") {
+    return "Accepted with warnings";
+  }
+  if (normalized === "blocked") {
+    return "Blocked before provider call";
+  }
+  if (normalized === "rejected") {
+    return "Rejected";
   }
   return null;
 }
@@ -926,8 +967,21 @@ export function MigrationWorkspacePanel({
   });
   const draftAIExecution = parseDraftAIExecutionSummary(contextSummary, migrationDiagnostics);
   const draftFailureSourceLabel = toDraftFailureSourceLabel(
-    asStringOrNull(migrationDiagnostics.last_draft_failure_source),
+    asStringOrNull(migrationDiagnostics.last_draft_failure_source) || draftAIExecution.failureSource,
   );
+  const requestContractStatusLabel = toRequestContractStatusLabel(draftAIExecution.requestContractStatus);
+  const aiExecutionSummaryLabel = `${
+    draftAIExecution.modelUsed || draftAIExecution.modelResolved || "n/a"
+  } via ${draftAIExecution.endpointPath || "n/a"}`;
+  const artifactResultLabel =
+    draftAIExecution.artifactResult ||
+    (draftAIExecution.artifactStatus === "completed"
+      ? "succeeded"
+      : draftAIExecution.artifactStatus === "partial"
+        ? "partial"
+        : draftAIExecution.artifactStatus === "failed"
+          ? "failed"
+          : null);
   const requestProfileLabel = draftAIExecution.endpointPath
     ? `${draftAIExecution.endpointPath}${
         draftAIExecution.requestBodyMode ? ` (${draftAIExecution.requestBodyMode})` : ""
@@ -938,6 +992,8 @@ export function MigrationWorkspacePanel({
     typeof draftAIExecution.timeoutSeconds === "number"
       ? `${Math.max(1, Math.round(draftAIExecution.timeoutSeconds))} seconds`
       : "n/a";
+  const draftDurationLabel =
+    typeof draftAIExecution.durationMs === "number" ? `${Math.max(0, Math.round(draftAIExecution.durationMs))} ms` : null;
   const draftGenerationStateLabel = toDraftGenerationStateLabel(draftGenerationState.status);
   const draftReadinessStatusLabel = toDraftReadinessStatusLabel(draftReadiness.status);
   const draftGenerationBlocked = draftReadiness.hardBlocked || !draftProviderCompatibility.supported;
@@ -1386,12 +1442,30 @@ export function MigrationWorkspacePanel({
         <strong>Current Migration State</strong>
         <span className="hint">State: {draftGenerationStateLabel}</span>
         <span className={draftGenerationStateToneClass}>{draftGenerationState.summary}</span>
+        <span className="hint" data-testid="migration-ai-execution-summary">
+          AI execution: {aiExecutionSummaryLabel}
+        </span>
         <span className="hint" data-testid="migration-ai-model-used">
           Generated using: {draftAIExecution.modelUsed || draftAIExecution.modelResolved || "n/a"}
         </span>
         <span className="hint" data-testid="migration-ai-request-profile">
           Request profile: {requestProfileLabel}
         </span>
+        {requestContractStatusLabel ? (
+          <span className="hint" data-testid="migration-request-contract-status">
+            Request contract: {requestContractStatusLabel}
+          </span>
+        ) : null}
+        {artifactResultLabel ? (
+          <span className="hint" data-testid="migration-artifact-result">
+            Artifact result: {artifactResultLabel}
+          </span>
+        ) : null}
+        {draftDurationLabel ? (
+          <span className="hint" data-testid="migration-ai-duration">
+            Duration: {draftDurationLabel}
+          </span>
+        ) : null}
         {showDraftTimeout ? (
           <span className="hint" data-testid="migration-draft-timeout">
             Timeout: {draftTimeoutLabel}

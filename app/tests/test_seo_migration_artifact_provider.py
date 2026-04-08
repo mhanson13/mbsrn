@@ -113,6 +113,49 @@ def json_dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
+def _known_good_responses_contract_baseline() -> dict[str, object]:
+    return {
+        "model": "gpt-5.1",
+        "endpoint_path": "/responses",
+        "request_body_mode": "responses_text_format_json_schema",
+        "top_level_keys": ["input", "model", "text"],
+        "schema_name": "seo_migration_artifact_response",
+        "text_format_type": "json_schema",
+        "strict_enabled": True,
+    }
+
+
+def _count_non_false_additional_properties(schema_payload: object) -> int:
+    count = 0
+    stack: list[object] = [schema_payload]
+    while stack:
+        candidate = stack.pop()
+        if not isinstance(candidate, dict):
+            continue
+        candidate_type = candidate.get("type")
+        is_object_node = candidate_type == "object" or (
+            isinstance(candidate_type, list) and "object" in candidate_type
+        )
+        if is_object_node and candidate.get("additionalProperties") is not False:
+            count += 1
+        properties = candidate.get("properties")
+        if isinstance(properties, dict):
+            stack.extend(properties.values())
+        items = candidate.get("items")
+        if isinstance(items, dict):
+            stack.append(items)
+        elif isinstance(items, list):
+            stack.extend(items)
+        for key in ("anyOf", "allOf", "oneOf", "prefixItems"):
+            nested = candidate.get(key)
+            if isinstance(nested, list):
+                stack.extend(nested)
+        additional_properties = candidate.get("additionalProperties")
+        if isinstance(additional_properties, dict):
+            stack.append(additional_properties)
+    return count
+
+
 def test_openai_migration_provider_compatibility_supports_known_responses_json_schema_shape_for_gpt_5_1() -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",
@@ -188,6 +231,107 @@ def test_openai_migration_provider_compatibility_rejects_degraded_mode(monkeypat
     assert compatibility.supported is False
     assert compatibility.reason_code == "degraded_mode_not_allowed"
     assert compatibility.retryable is False
+
+
+def test_openai_migration_provider_responses_payload_matches_known_good_contract(monkeypatch) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    captured_payload: dict[str, object] = {}
+
+    def _capture_request(request, timeout):  # noqa: ANN001
+        del timeout
+        captured_payload.update(json.loads(request.data.decode("utf-8")))
+        return _FakeResponse(_build_responses_api_response(json_dumps(_build_success_assistant_payload())))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _capture_request)
+    output = provider.generate_artifacts(migration_context=_build_migration_context())
+    assert output.generated_files
+
+    baseline = _known_good_responses_contract_baseline()
+    assert captured_payload.get("model") == baseline["model"]
+    assert sorted(captured_payload.keys()) == baseline["top_level_keys"]
+    assert "messages" not in captured_payload
+    assert "response_format" not in captured_payload
+    assert "tools" not in captured_payload
+
+    input_payload = captured_payload.get("input")
+    assert isinstance(input_payload, list)
+    assert len(input_payload) >= 2
+    assert {item.get("role") for item in input_payload if isinstance(item, dict)}.issuperset({"system", "user"})
+
+    text_payload = captured_payload.get("text")
+    assert isinstance(text_payload, dict)
+    format_payload = text_payload.get("format")
+    assert isinstance(format_payload, dict)
+    assert format_payload.get("type") == baseline["text_format_type"]
+    assert format_payload.get("name") == baseline["schema_name"]
+    assert format_payload.get("strict") is baseline["strict_enabled"]
+    schema_payload = format_payload.get("schema")
+    assert isinstance(schema_payload, dict)
+    assert _count_non_false_additional_properties(schema_payload) == 0
+
+
+def test_openai_migration_provider_compatibility_rejects_responses_payload_with_legacy_response_format(
+    monkeypatch,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    original_builder = provider._build_request_payload
+
+    def _build_mixed_payload(**kwargs):  # noqa: ANN001
+        payload = original_builder(**kwargs)
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "legacy",
+                "strict": True,
+                "schema": {"type": "object", "additionalProperties": False, "properties": {}},
+            },
+        }
+        return payload
+
+    monkeypatch.setattr(provider, "_build_request_payload", _build_mixed_payload)
+    compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is False
+    assert compatibility.reason_code == "unsupported_request_shape"
+    assert "responses_request_body_contains_legacy_response_format" in str(compatibility.admin_summary or "")
+
+
+def test_openai_migration_provider_compatibility_rejects_responses_schema_with_non_false_additional_properties(
+    monkeypatch,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    original_builder = provider._build_request_payload
+
+    def _build_invalid_schema_payload(**kwargs):  # noqa: ANN001
+        payload = original_builder(**kwargs)
+        text_payload = payload.get("text")
+        if isinstance(text_payload, dict):
+            format_payload = text_payload.get("format")
+            if isinstance(format_payload, dict):
+                schema_payload = format_payload.get("schema")
+                if isinstance(schema_payload, dict):
+                    schema_payload["properties"] = {
+                        **(schema_payload.get("properties") if isinstance(schema_payload.get("properties"), dict) else {}),
+                        "cta_contact_structure": {"type": "object", "additionalProperties": True},
+                    }
+        return payload
+
+    monkeypatch.setattr(provider, "_build_request_payload", _build_invalid_schema_payload)
+    compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is False
+    assert compatibility.reason_code == "unsupported_request_shape"
+    assert "responses_request_body_schema_additional_properties_not_false" in str(compatibility.admin_summary or "")
 
 
 def test_openai_migration_provider_timeout_maps_to_retryable_timeout_reason(monkeypatch) -> None:
@@ -299,6 +443,23 @@ def test_openai_migration_provider_request_logs_include_request_shape_metadata(m
     assert start.get("request_body_mode") == "responses_text_format_json_schema"
     assert start.get("timeout_seconds") == 5
     assert start.get("timeout_source") == "default"
+    assert start.get("request_fingerprint_model") == "gpt-5.1"
+    assert start.get("request_fingerprint_endpoint_path") == "/responses"
+    assert start.get("request_fingerprint_request_body_mode") == "responses_text_format_json_schema"
+    assert start.get("request_fingerprint_has_text_format") is True
+    assert start.get("request_fingerprint_text_format_type") == "json_schema"
+    assert start.get("request_fingerprint_schema_name") == "seo_migration_artifact_response"
+    assert start.get("request_fingerprint_strict_enabled") is True
+    assert start.get("request_fingerprint_top_level_keys") == ["input", "model", "text"]
+    assert start.get("request_fingerprint_text_format_keys") == ["name", "schema", "strict", "type"]
+    assert start.get("request_fingerprint_input_mode") == "array"
+    assert start.get("request_fingerprint_contains_tools") is False
+    assert start.get("request_fingerprint_contains_response_format_legacy") is False
+    assert start.get("request_fingerprint_contains_messages_legacy") is False
+    assert start.get("request_fingerprint_schema_object_nodes_non_false_additional_properties") == 0
+    assert "system_prompt" not in start
+    assert "user_prompt" not in start
+    assert "raw_payload" not in start
 
     failure = failure_events[-1]
     assert failure.get("endpoint_path") == "/responses"
@@ -310,6 +471,13 @@ def test_openai_migration_provider_request_logs_include_request_shape_metadata(m
     assert failure.get("failure_reason") == "malformed_response"
     assert failure.get("timeout_seconds") == 5
     assert failure.get("timeout_source") == "default"
+    assert failure.get("request_fingerprint_model") == "gpt-5.1"
+    assert failure.get("request_fingerprint_top_level_keys") == ["input", "model", "text"]
+    assert failure.get("request_fingerprint_contains_response_format_legacy") is False
+    assert failure.get("request_fingerprint_contains_messages_legacy") is False
+    assert "system_prompt" not in failure
+    assert "user_prompt" not in failure
+    assert "raw_payload" not in failure
 
 
 def test_openai_migration_provider_parses_fenced_json_output(monkeypatch) -> None:
