@@ -468,6 +468,14 @@ def test_generate_artifacts_applies_guardrails_and_analytics_normalization(db_se
     warnings = artifact.parse_warnings_json or []
     assert any("forbidden generated path" in warning for warning in warnings)
     assert any("invalid path" in warning for warning in warnings)
+    quality = artifact.artifact_quality_evaluation_json
+    assert isinstance(quality, dict)
+    assert artifact.artifact_quality_evaluation == quality
+    assert quality.get("quality_status") in {"medium", "low", "high"}
+    assert isinstance(quality.get("operator_summary"), str)
+    signals = quality.get("signals")
+    assert isinstance(signals, dict)
+    assert signals.get("required_files_present") is True
 
 
 def test_draft_generation_readiness_ready_with_all_core_and_reused_context_signals(db_session) -> None:

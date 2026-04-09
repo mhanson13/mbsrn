@@ -597,6 +597,18 @@ function buildMigrationWorkspace(overrides: Partial<MigrationWorkspace> = {}): M
 function buildMigrationArtifactVersion(
   overrides: Partial<MigrationArtifactVersion> = {},
 ): MigrationArtifactVersion {
+  const artifactQualityEvaluation = {
+    quality_status: "high",
+    operator_summary: "High quality draft: core sections and grounding signals are present.",
+    issues: [],
+    signals: {
+      has_business_name: true,
+      has_location: true,
+      has_service_mentions: true,
+      placeholder_detected: false,
+      missing_sections: [],
+    },
+  };
   return {
     id: "migration-artifact-1",
     business_id: "biz-1",
@@ -626,6 +638,8 @@ function buildMigrationArtifactVersion(
         size_bytes: 20,
       },
     ],
+    artifact_quality_evaluation: artifactQualityEvaluation,
+    artifact_quality_evaluation_json: artifactQualityEvaluation,
     file_count: 2,
     total_bytes: 98,
     provider_name: "mock",
@@ -2632,6 +2646,50 @@ describe("site workspace migration tab", () => {
     const currentState = await screen.findByTestId("migration-current-state");
     expect(currentState).toHaveTextContent("State: Partial draft");
     expect(currentState).toHaveTextContent("Partial draft generated.");
+  });
+
+  it("renders artifact quality summary for selected migration artifact", async () => {
+    const user = userEvent.setup();
+    const mediumQualityEvaluation = {
+      quality_status: "medium",
+      operator_summary: "Medium quality draft: review missing contact section before approval.",
+      issues: [
+        { type: "content_completeness", description: "Missing expected sections: contact." },
+        { type: "grounding_quality", description: "Location context is missing from generated HTML content." },
+      ],
+    };
+    const qualityArtifact = buildMigrationArtifactVersion({
+      id: "migration-artifact-quality",
+      version: 4,
+      artifact_quality_evaluation: mediumQualityEvaluation,
+      artifact_quality_evaluation_json: mediumQualityEvaluation,
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: qualityArtifact.id,
+          latest_generated_artifact_version_number: qualityArtifact.version,
+        }),
+        latest_artifact: qualityArtifact,
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValue({
+      items: [qualityArtifact],
+      total: 1,
+    });
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    const qualitySummary = await screen.findByTestId("migration-artifact-quality-summary");
+    expect(qualitySummary).toHaveTextContent("Artifact Quality Summary");
+    expect(await screen.findByTestId("migration-artifact-quality-status")).toHaveTextContent("Quality: Medium");
+    expect(qualitySummary).toHaveTextContent(
+      "Medium quality draft: review missing contact section before approval.",
+    );
+    expect(await screen.findByTestId("migration-artifact-quality-issues")).toHaveTextContent(
+      "Missing expected sections: contact.",
+    );
   });
 
   it("saves publish/deploy target config and analytics rules", async () => {

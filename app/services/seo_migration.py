@@ -46,6 +46,7 @@ from app.services.ai_response_contract_evaluator import (
 )
 from app.services.ai_model_settings import resolve_ai_model_name
 from app.services.seo_migration_context import SEOMigrationContextAssembler
+from app.services.seo_migration_artifact_quality import evaluate_migration_artifact_quality
 from app.services.seo_migration_ingest import SEOMigrationSourceIngestError, SEOMigrationSourceIngestService
 from app.services.seo_migration_prompt import SEO_MIGRATION_PROMPT_VERSION, build_seo_migration_prompt
 
@@ -1643,6 +1644,19 @@ class SEOMigrationService:
         total_bytes = sum(len(str(item["content"]).encode("utf-8")) for item in normalized_files)
         artifact_model_used = _normalize_string(provider_output.model_name, max_length=128) or model_resolved
         generation_duration_ms = self._duration_ms(started_at)
+        artifact_quality_evaluation = evaluate_migration_artifact_quality(
+            {
+                "generated_files": normalized_files,
+                "page_map": _normalize_json_list(provider_output.page_map),
+                "strategy_summary": _normalize_string(provider_output.strategy_summary, max_length=8000),
+                "business_name": _normalize_string(site.display_name, max_length=255),
+                "location_hints": self._build_artifact_quality_location_hints(site=site),
+                "expected_service_terms": self._build_artifact_quality_service_terms(
+                    workspace=workspace,
+                    context_json=context_json,
+                ),
+            }
+        )
         artifact_context_json = self._build_draft_execution_context(
             context_json=context_json,
             model_requested=model_requested,
@@ -1692,6 +1706,7 @@ class SEOMigrationService:
             redirect_suggestions_json=_normalize_json_list(provider_output.redirect_suggestions),
             analytics_placeholders_json=_normalize_json_list(provider_output.analytics_placeholders),
             generated_files_json=normalized_files,
+            artifact_quality_evaluation_json=_normalize_json_dict(artifact_quality_evaluation),
             file_count=len(normalized_files),
             total_bytes=total_bytes,
             provider_name=provider_output.provider_name,
@@ -2672,6 +2687,7 @@ class SEOMigrationService:
             redirect_suggestions_json=[],
             analytics_placeholders_json=[],
             generated_files_json=[],
+            artifact_quality_evaluation_json=None,
             file_count=0,
             total_bytes=0,
             provider_name=failure.provider_name,
@@ -3708,6 +3724,84 @@ class SEOMigrationService:
             "last_published_artifact_version_id": workspace.last_published_artifact_version_id,
             "last_published_artifact_version_number": workspace.last_published_artifact_version_number,
         }
+
+    def _build_artifact_quality_location_hints(self, *, site: SEOSite) -> list[str]:
+        hints: list[str] = []
+        seen: set[str] = set()
+
+        primary_location = _normalize_string(site.primary_location, max_length=255)
+        if primary_location:
+            lowered = primary_location.lower()
+            if lowered not in seen:
+                seen.add(lowered)
+                hints.append(primary_location)
+
+        service_areas = site.service_areas_json if isinstance(site.service_areas_json, list) else []
+        for item in service_areas[:8]:
+            normalized = _normalize_string(item, max_length=120)
+            if not normalized:
+                continue
+            lowered = normalized.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            hints.append(normalized)
+
+        return hints
+
+    def _build_artifact_quality_service_terms(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        context_json: dict[str, object],
+    ) -> list[str]:
+        terms: list[str] = []
+        seen: set[str] = set()
+
+        def _add_term(value: object, *, max_length: int = 120) -> None:
+            normalized = _normalize_string(value, max_length=max_length)
+            if normalized is None:
+                return
+            lowered = normalized.lower()
+            if lowered in seen:
+                return
+            seen.add(lowered)
+            terms.append(normalized)
+
+        enriched = _normalize_json_dict(workspace.enriched_content_notes_json)
+        raw_service_highlights = enriched.get("service_highlights")
+        if isinstance(raw_service_highlights, list):
+            for item in raw_service_highlights[:12]:
+                if isinstance(item, dict):
+                    _add_term(item.get("name"), max_length=120)
+                    _add_term(item.get("title"), max_length=120)
+                else:
+                    _add_term(item, max_length=120)
+
+        requirements = _normalize_json_dict(workspace.operator_requirements_json)
+        raw_must_include = requirements.get("must_include")
+        if isinstance(raw_must_include, list):
+            for item in raw_must_include[:12]:
+                if isinstance(item, dict):
+                    _add_term(item.get("value"), max_length=120)
+                    _add_term(item.get("name"), max_length=120)
+                else:
+                    _add_term(item, max_length=120)
+
+        source_snapshot = _normalize_json_dict(context_json.get("source_snapshot"))
+        raw_service_blocks = source_snapshot.get("service_blocks")
+        if isinstance(raw_service_blocks, list):
+            for item in raw_service_blocks[:12]:
+                if isinstance(item, dict):
+                    _add_term(item.get("title"), max_length=120)
+                    _add_term(item.get("text"), max_length=120)
+                else:
+                    _add_term(item, max_length=120)
+
+        if not terms:
+            _add_term("services")
+
+        return terms
 
     def _validate_and_normalize_files(
         self,

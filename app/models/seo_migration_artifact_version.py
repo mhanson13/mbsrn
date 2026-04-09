@@ -52,6 +52,7 @@ class SEOMigrationArtifactVersion(Base):
     redirect_suggestions_json: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True)
     analytics_placeholders_json: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True)
     generated_files_json: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True)
+    artifact_quality_evaluation_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     provider_name: Mapped[str] = mapped_column(String(64), nullable=False, default="mock")
@@ -81,3 +82,10 @@ class SEOMigrationArtifactVersion(Base):
 
     workspace = relationship("SEOMigrationWorkspace")
     site = relationship("SEOSite")
+
+    @property
+    def artifact_quality_evaluation(self) -> dict[str, object] | None:
+        value = self.artifact_quality_evaluation_json
+        if isinstance(value, dict):
+            return value
+        return None

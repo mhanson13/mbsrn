@@ -363,6 +363,14 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     artifact_id = generated_artifact["id"]
     assert generated_artifact["version"] == 1
     assert generated_artifact["file_count"] >= 1
+    assert isinstance(generated_artifact.get("artifact_quality_evaluation"), dict)
+    assert isinstance(generated_artifact.get("artifact_quality_evaluation_json"), dict)
+    quality_payload = generated_artifact["artifact_quality_evaluation"]
+    assert quality_payload.get("quality_status") in {
+        "high",
+        "medium",
+        "low",
+    }
 
     post_generate_summary = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
     assert post_generate_summary.status_code == 200
@@ -425,6 +433,8 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     )
     assert version_response.status_code == 200
     assert version_response.json()["id"] == artifact_id
+    assert isinstance(version_response.json().get("artifact_quality_evaluation"), dict)
+    assert isinstance(version_response.json().get("artifact_quality_evaluation_json"), dict)
 
     file_preview_response = client.get(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/file-preview",

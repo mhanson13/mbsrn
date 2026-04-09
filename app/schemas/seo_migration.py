@@ -319,6 +319,8 @@ class SEOMigrationArtifactVersionRead(BaseModel):
     redirect_suggestions_json: list[dict[str, object]] | None = None
     analytics_placeholders_json: list[dict[str, object]] | None = None
     generated_files_json: list[dict[str, object]] | None = None
+    artifact_quality_evaluation: dict[str, object] | None = None
+    artifact_quality_evaluation_json: dict[str, object] | None = None
     file_count: int
     total_bytes: int
     provider_name: str

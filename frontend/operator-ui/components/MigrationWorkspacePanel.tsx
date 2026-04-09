@@ -166,6 +166,19 @@ interface DraftAIExecutionSummary {
   timeoutSource: "admin" | "default" | null;
 }
 
+type ArtifactQualityStatus = "high" | "medium" | "low";
+
+interface ArtifactQualityIssue {
+  type: string;
+  description: string;
+}
+
+interface ArtifactQualitySummary {
+  qualityStatus: ArtifactQualityStatus;
+  operatorSummary: string;
+  issues: ArtifactQualityIssue[];
+}
+
 function toFailureCategoryLabel(value: string | null): string {
   if (!value) {
     return "unknown";
@@ -813,6 +826,69 @@ function parseGeneratedPaths(artifact: MigrationArtifactVersion | null): string[
     .filter((path) => path.length > 0);
 }
 
+function parseArtifactQualitySummary(artifact: MigrationArtifactVersion | null): ArtifactQualitySummary | null {
+  if (!artifact) {
+    return null;
+  }
+  const evaluation = asRecord(artifact.artifact_quality_evaluation ?? artifact.artifact_quality_evaluation_json);
+  const qualityRaw = asString(evaluation.quality_status).trim().toLowerCase();
+  const qualityStatus: ArtifactQualityStatus | null =
+    qualityRaw === "high" || qualityRaw === "medium" || qualityRaw === "low" ? qualityRaw : null;
+  if (!qualityStatus) {
+    return null;
+  }
+
+  const operatorSummaryRaw = asString(evaluation.operator_summary).trim();
+  const issuesRaw = Array.isArray(evaluation.issues) ? evaluation.issues : [];
+  const issues: ArtifactQualityIssue[] = issuesRaw
+    .map((item) => {
+      const record = asRecord(item);
+      const description = asString(record.description).trim();
+      if (!description) {
+        return null;
+      }
+      return {
+        type: asString(record.type).trim(),
+        description,
+      };
+    })
+    .filter((item): item is ArtifactQualityIssue => item !== null);
+
+  const operatorSummary =
+    operatorSummaryRaw ||
+    (qualityStatus === "high"
+      ? "High quality draft: core sections and grounding signals are present."
+      : qualityStatus === "medium"
+        ? "Medium quality draft: review quality issues before approval."
+        : "Low quality draft: resolve quality issues before approval.");
+
+  return {
+    qualityStatus,
+    operatorSummary,
+    issues,
+  };
+}
+
+function artifactQualityStatusLabel(value: ArtifactQualityStatus): string {
+  if (value === "high") {
+    return "High";
+  }
+  if (value === "medium") {
+    return "Medium";
+  }
+  return "Low";
+}
+
+function artifactQualityBadgeClass(value: ArtifactQualityStatus): string {
+  if (value === "high") {
+    return "badge badge-success";
+  }
+  if (value === "medium") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
+}
+
 interface ReusedContextEntry {
   available: boolean | null;
   source: string | null;
@@ -1422,6 +1498,7 @@ export function MigrationWorkspacePanel({
   };
 
   const filePaths = useMemo(() => parseGeneratedPaths(selectedArtifact), [selectedArtifact]);
+  const artifactQualitySummary = parseArtifactQualitySummary(selectedArtifact);
 
   if (busyAction === "load" && !summary) {
     return <p className="hint muted">Loading migration workspace...</p>;
@@ -1696,6 +1773,31 @@ export function MigrationWorkspacePanel({
                   Partial draft generated.
                 </span>
               ) : null}
+            </div>
+            <div className="panel panel-compact stack-tight" data-testid="migration-artifact-quality-summary">
+              <strong>Artifact Quality Summary</strong>
+              {artifactQualitySummary ? (
+                <>
+                  <span
+                    className={artifactQualityBadgeClass(artifactQualitySummary.qualityStatus)}
+                    data-testid="migration-artifact-quality-status"
+                  >
+                    Quality: {artifactQualityStatusLabel(artifactQualitySummary.qualityStatus)}
+                  </span>
+                  <span className="hint">{artifactQualitySummary.operatorSummary}</span>
+                  {artifactQualitySummary.issues.length > 0 ? (
+                    <ul data-testid="migration-artifact-quality-issues">
+                      {artifactQualitySummary.issues.slice(0, 8).map((issue, index) => (
+                        <li key={`artifact-quality-${index}-${issue.type}`}>{issue.description}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="hint muted">No quality issues detected.</span>
+                  )}
+                </>
+              ) : (
+                <span className="hint muted">No artifact quality evaluation available.</span>
+              )}
             </div>
             <div className="panel panel-compact stack-tight">
               <strong>Page Map</strong>

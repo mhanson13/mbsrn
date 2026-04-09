@@ -356,6 +356,8 @@ export interface MigrationArtifactVersion {
   redirect_suggestions_json: Array<Record<string, unknown>> | null;
   analytics_placeholders_json: Array<Record<string, unknown>> | null;
   generated_files_json: Array<Record<string, unknown>> | null;
+  artifact_quality_evaluation?: Record<string, unknown> | null;
+  artifact_quality_evaluation_json: Record<string, unknown> | null;
   file_count: number;
   total_bytes: number;
   provider_name: string;

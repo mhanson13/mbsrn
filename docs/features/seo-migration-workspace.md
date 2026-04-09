@@ -367,6 +367,49 @@ Guardrails:
   - JSON wrapped with leading/trailing prose
 - when a payload is partially malformed, valid generated file entries are retained and malformed entries are discarded
 
+## Artifact Quality Evaluation (Advisory)
+After draft artifact generation completes, migration now runs a deterministic, non-AI artifact quality evaluator before persistence.
+
+Purpose:
+- give operators a fast, structured quality readout before approval
+- surface obvious completeness/grounding/generic-content gaps
+- preserve deterministic behavior (no extra provider calls)
+
+Stored field:
+- `seo_migration_artifact_versions.artifact_quality_evaluation_json`
+
+API exposure:
+- `artifact_quality_evaluation` is included in artifact version payloads (list/get/latest summary artifact)
+- `artifact_quality_evaluation_json` is also returned for backward compatibility with existing clients
+
+Evaluation output shape:
+- `quality_status`: `high` | `medium` | `low`
+- `issues`: list of `{type, description}` entries
+- `signals`: deterministic booleans/lists (for example business/location/service signal presence, placeholder detection, missing sections)
+- `operator_summary`: short human-readable summary
+
+What is evaluated:
+- content completeness:
+  - required artifact file presence (`index.html`)
+  - missing expected sections (services/contact)
+- generic/placeholder detection:
+  - known placeholder phrases (for example "Lorem ipsum", "Your business here", "We are a leading provider")
+  - empty heading tags
+  - repeated generic paragraph blocks
+- business grounding signals:
+  - business name present in generated HTML
+  - location context present in generated HTML
+  - expected service terms present in generated HTML
+- structural sanity:
+  - index HTML size bounds
+  - generated HTML page count breadth
+  - obvious near-duplicate page content
+
+Operator guidance:
+- this quality summary is advisory only in current phase
+- approval, publish, and deploy gates are unchanged
+- operators should treat `medium`/`low` as a review signal to improve draft artifacts before approval
+
 ### Draft Generation Failure Diagnostics
 Draft generation failures are normalized and surfaced as structured diagnostics (API + persisted migration state) instead of context-free provider errors.
 
