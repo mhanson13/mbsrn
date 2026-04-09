@@ -1,5 +1,45 @@
 # Recommendations Feature Notes
 
+## Site Operator + Recommendation Detail Journey Consistency (Frontend)
+
+A bounded operator-journey pass aligned site-level recommendation flows across:
+
+- `frontend/operator-ui/app/sites/[site_id]/page.tsx`
+- `frontend/operator-ui/app/recommendations/[id]/page.tsx`
+- `frontend/operator-ui/app/recommendations/runs/[run_id]/page.tsx`
+- `frontend/operator-ui/app/recommendations/runs/[run_id]/narratives/page.tsx`
+- `frontend/operator-ui/app/recommendations/runs/[run_id]/narratives/[narrative_id]/page.tsx`
+
+### What changed
+
+- Site operator page content tabs were clarified to:
+  - `Operator Focus`
+  - `Recommendations`
+  - `Migration`
+  - `Activity`
+- `Operator Focus` was reframed as summary/next-step context (not the primary recommendation execution workflow).
+- Migration was promoted with explicit first-class framing and direct open action in the focus surface.
+- Competitor context was reframed as supporting context and visually de-emphasized relative to recommendation and migration execution domains.
+- Recommendation detail/run/narrative pages were aligned to the shared page composition rhythm using:
+  - `OperatorPageHero`
+  - `OperatorPageSectionStack`
+  - `WorkspaceActionBar`
+  - `WorkspaceMessageStack`
+  - `WorkspaceEmptyStateCard`
+  - `WorkspaceTableShell`
+
+### Operator-visible result
+
+- Clearer top-level path: site operator decisions -> recommendation workflow -> recommendation run/narrative detail.
+- More consistent hero/summary/action/support-state structure across recommendation detail routes.
+- Better distinction between primary decision/action areas and secondary diagnostics/detail blocks.
+
+### Boundary
+
+- TailAdmin was used as visual inspiration only.
+- No recommendation generation, run, narrative, polling, or mutation workflow semantics changed.
+- No backend/API/provider behavior changed.
+
 ## Recommendations Page Decision Support (Frontend)
 
 The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) now uses the standardized operator page composition and workspace primitives to make triage decisions clearer at the top of the page.

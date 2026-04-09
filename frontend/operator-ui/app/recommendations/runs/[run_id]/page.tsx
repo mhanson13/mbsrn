@@ -8,10 +8,18 @@ import { ActionControls } from "../../../../components/action-execution/ActionCo
 import { OutputReview } from "../../../../components/action-execution/OutputReview";
 import { PageContainer } from "../../../../components/layout/PageContainer";
 import { DetailFocusPanel, type DetailFocusFact } from "../../../../components/layout/DetailFocusPanel";
+import {
+  OperatorPageHero,
+  OperatorPageSectionStack,
+} from "../../../../components/layout/OperatorPageSurface";
 import { SectionCard } from "../../../../components/layout/SectionCard";
 import { SectionHeader } from "../../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../../components/layout/SummaryStatCard";
 import { WorkflowContextPanel } from "../../../../components/layout/WorkflowContextPanel";
+import { WorkspaceActionBar } from "../../../../components/layout/WorkspaceActionBar";
+import { WorkspaceEmptyStateCard } from "../../../../components/layout/WorkspaceEmptyStateCard";
+import { WorkspaceMessageStack } from "../../../../components/layout/WorkspaceMessageStack";
+import { WorkspaceTableShell } from "../../../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -1470,35 +1478,35 @@ export default function RecommendationRunDetailPage() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div" variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Run Detail"
             subtitle="Loading recommendation run detail for the selected business context."
             headingLevel={1}
             variant="support"
           />
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div" variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Run Detail"
             subtitle="Unable to load tenant context. Refresh and sign in again."
             headingLevel={1}
             variant="support"
           />
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
   if (!recommendationRunId) {
     return (
       <PageContainer>
-        <SectionCard variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Run Detail"
             subtitle="Recommendation run identifier is missing."
@@ -1506,35 +1514,30 @@ export default function RecommendationRunDetailPage() {
             variant="support"
           />
           <p><Link href={backToRecommendationsHref}>Back to Recommendations</Link></p>
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
 
   return (
     <PageContainer>
-      <div className="role-dashboard-landing">
-        <SectionCard
-          variant="primary"
-          className="role-dashboard-hero"
-          data-testid="recommendation-run-detail-hero"
-        >
-          <SectionHeader
-            title="Recommendation Run Detail"
-            subtitle="Inspect recommendation reasoning lineage, generated narrative context, and run-level output health."
-            headingLevel={1}
-            variant="hero"
-            meta={(
-              <span className="hint muted">
-                Recommendation run: <code>{recommendationRunId}</code>
-              </span>
-            )}
-            actions={<Link href={backToRecommendationsHref}>Back to Recommendations</Link>}
-          />
-          <div
-            className="workspace-summary-strip role-summary-strip"
-            data-testid="recommendation-run-detail-summary-strip"
-          >
+      <OperatorPageHero
+        title="Recommendation Run Detail"
+        subtitle="Inspect recommendation reasoning lineage, generated narrative context, and run-level output health."
+        headingLevel={1}
+        data-testid="recommendation-run-detail-hero"
+        meta={(
+          <span className="hint muted">
+            Recommendation run: <code>{recommendationRunId}</code>
+          </span>
+        )}
+        actions={(
+          <WorkspaceActionBar variant="secondary">
+            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
+          </WorkspaceActionBar>
+        )}
+        summary={(
+          <div data-testid="recommendation-run-detail-summary-strip">
             <SummaryStatCard
               label="Run status"
               value={run?.status || "Loading"}
@@ -1584,45 +1587,48 @@ export default function RecommendationRunDetailPage() {
               variant="elevated"
             />
           </div>
-          {run ? (
-            <ActionControls
-              controls={recommendationRunActionControls}
-              resolveHref={(control) =>
-                resolveRecommendationRunControlHref({
-                  control,
-                  run,
-                  topRecommendation,
-                  narrativeHistoryHref: recommendationRunNarrativeHistoryHref,
-                  latestNarrativeDetailHref,
-                  backToRecommendationsHref,
-                })}
-              data-testid="recommendation-run-action-controls"
-            />
-          ) : null}
-          {run && recommendationRunActionExecutionItem ? (
-            <OutputReview
-              item={recommendationRunActionExecutionItem}
-              stateLabel={recommendationRunActionPresentation?.label || runActionState.label}
-              stateBadgeClass={recommendationRunActionPresentation?.badgeClass || runActionState.badgeClass}
-              outcome={recommendationRunActionPresentation?.outcome || runActionState.outcome}
-              nextStep={recommendationRunActionPresentation?.nextStep || runActionState.nextStep}
-              onDecision={handleRunLevelDecision}
-              onBindAutomation={handleRecommendationRunAutomationBinding}
-              onRunAutomation={handleRecommendationRunAutomationExecution}
-              bindAutomationTargetId={recommendationRunAutomationBindingTargetId}
-              bindAutomationPendingByActionId={automationBindingPendingByActionId}
-              bindAutomationErrorByActionId={automationBindingErrorByActionId}
-              runAutomationPendingByActionId={automationRunPendingByActionId}
-              runAutomationErrorByActionId={automationRunErrorByActionId}
-              resolveOutputHref={(outputId) => {
-                if (outputId && outputId === run.id) {
-                  return recommendationRunNarrativeHistoryHref;
-                }
-                return latestNarrativeDetailHref || recommendationRunNarrativeHistoryHref;
-              }}
-              data-testid="recommendation-run-output-review"
-            />
-          ) : null}
+        )}
+      >
+        {run ? (
+          <ActionControls
+            controls={recommendationRunActionControls}
+            resolveHref={(control) =>
+              resolveRecommendationRunControlHref({
+                control,
+                run,
+                topRecommendation,
+                narrativeHistoryHref: recommendationRunNarrativeHistoryHref,
+                latestNarrativeDetailHref,
+                backToRecommendationsHref,
+              })}
+            data-testid="recommendation-run-action-controls"
+          />
+        ) : null}
+        {run && recommendationRunActionExecutionItem ? (
+          <OutputReview
+            item={recommendationRunActionExecutionItem}
+            stateLabel={recommendationRunActionPresentation?.label || runActionState.label}
+            stateBadgeClass={recommendationRunActionPresentation?.badgeClass || runActionState.badgeClass}
+            outcome={recommendationRunActionPresentation?.outcome || runActionState.outcome}
+            nextStep={recommendationRunActionPresentation?.nextStep || runActionState.nextStep}
+            onDecision={handleRunLevelDecision}
+            onBindAutomation={handleRecommendationRunAutomationBinding}
+            onRunAutomation={handleRecommendationRunAutomationExecution}
+            bindAutomationTargetId={recommendationRunAutomationBindingTargetId}
+            bindAutomationPendingByActionId={automationBindingPendingByActionId}
+            bindAutomationErrorByActionId={automationBindingErrorByActionId}
+            runAutomationPendingByActionId={automationRunPendingByActionId}
+            runAutomationErrorByActionId={automationRunErrorByActionId}
+            resolveOutputHref={(outputId) => {
+              if (outputId && outputId === run.id) {
+                return recommendationRunNarrativeHistoryHref;
+              }
+              return latestNarrativeDetailHref || recommendationRunNarrativeHistoryHref;
+            }}
+            data-testid="recommendation-run-output-review"
+          />
+        ) : null}
+        <WorkspaceMessageStack>
           {executionPollingActive ? (
             <p className="hint muted" data-testid="recommendation-run-execution-polling-status">
               Automation execution is in progress. Status refreshes automatically every few seconds.
@@ -1638,8 +1644,8 @@ export default function RecommendationRunDetailPage() {
             <p className="hint warning">Recommendation run not found or not accessible in your tenant scope.</p>
           ) : null}
           {!loading && error ? <p className="hint error">{error}</p> : null}
-        </SectionCard>
-      </div>
+        </WorkspaceMessageStack>
+      </OperatorPageHero>
 
       {!loading && !notFound && !error && run ? (
         <WorkflowContextPanel
@@ -1662,7 +1668,7 @@ export default function RecommendationRunDetailPage() {
       ) : null}
 
       {!loading && !notFound && !error && run ? (
-        <>
+        <OperatorPageSectionStack>
           {relatedError ? (
             <SectionCard variant="support" className="role-surface-support">
               <p className="hint warning">{relatedError}</p>
@@ -1690,7 +1696,7 @@ export default function RecommendationRunDetailPage() {
 
           <SectionCard variant="summary" className="role-surface-support">
             <h2>Recommendation Metrics</h2>
-            <div className="table-container table-container-compact">
+            <WorkspaceTableShell compact>
               <table className="table">
                 <tbody>
                   <tr>
@@ -1711,14 +1717,14 @@ export default function RecommendationRunDetailPage() {
                   </tr>
                 </tbody>
               </table>
-            </div>
+            </WorkspaceTableShell>
             <div className="metrics-grid">
               <div className="panel stack panel-compact">
                 <h3>By Category</h3>
                 {recommendationsByCategory.length === 0 ? (
                   <p className="hint muted">No category rollups are available.</p>
                 ) : (
-                  <div className="table-container table-container-compact">
+                  <WorkspaceTableShell compact>
                     <table className="table">
                       <tbody>
                         {recommendationsByCategory.map(([key, value]) => (
@@ -1729,7 +1735,7 @@ export default function RecommendationRunDetailPage() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                  </WorkspaceTableShell>
                 )}
               </div>
               <div className="panel stack panel-compact">
@@ -1737,7 +1743,7 @@ export default function RecommendationRunDetailPage() {
                 {recommendationsBySeverity.length === 0 ? (
                   <p className="hint muted">No severity rollups are available.</p>
                 ) : (
-                  <div className="table-container table-container-compact">
+                  <WorkspaceTableShell compact>
                     <table className="table">
                       <tbody>
                         {recommendationsBySeverity.map(([key, value]) => (
@@ -1748,7 +1754,7 @@ export default function RecommendationRunDetailPage() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                  </WorkspaceTableShell>
                 )}
               </div>
               <div className="panel stack panel-compact">
@@ -1756,7 +1762,7 @@ export default function RecommendationRunDetailPage() {
                 {recommendationsByEffort.length === 0 ? (
                   <p className="hint muted">No effort rollups are available.</p>
                 ) : (
-                  <div className="table-container table-container-compact">
+                  <WorkspaceTableShell compact>
                     <table className="table">
                       <tbody>
                         {recommendationsByEffort.map(([key, value]) => (
@@ -1767,7 +1773,7 @@ export default function RecommendationRunDetailPage() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                  </WorkspaceTableShell>
                 )}
               </div>
               <div className="panel stack panel-compact">
@@ -1775,7 +1781,7 @@ export default function RecommendationRunDetailPage() {
                 {recommendationsByStatus.length === 0 ? (
                   <p className="hint muted">No status breakdown is available.</p>
                 ) : (
-                  <div className="table-container table-container-compact">
+                  <WorkspaceTableShell compact>
                     <table className="table">
                       <tbody>
                         {recommendationsByStatus.map(([key, value]) => (
@@ -1786,7 +1792,7 @@ export default function RecommendationRunDetailPage() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                  </WorkspaceTableShell>
                 )}
               </div>
             </div>
@@ -1878,7 +1884,7 @@ export default function RecommendationRunDetailPage() {
               <p className="hint muted">No recommendations were returned for this recommendation run.</p>
             ) : (
               <>
-                <div className="table-container">
+                <WorkspaceTableShell>
                   <table className="table">
                     <thead>
                       <tr>
@@ -1988,7 +1994,7 @@ export default function RecommendationRunDetailPage() {
                       })}
                     </tbody>
                   </table>
-                </div>
+                </WorkspaceTableShell>
                 {(report?.recommendations.total || 0) > recommendations.length ? (
                   <p className="hint muted">
                     Showing the top {recommendations.length} recommendations by priority out of {report?.recommendations.total || 0}.
@@ -1997,7 +2003,7 @@ export default function RecommendationRunDetailPage() {
               </>
             )}
           </SectionCard>
-        </>
+        </OperatorPageSectionStack>
       ) : null}
     </PageContainer>
   );

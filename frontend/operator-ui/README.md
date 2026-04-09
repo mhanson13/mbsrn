@@ -20,6 +20,8 @@ This app uses Next.js `output: "standalone"`.
 
 - `sharp` must remain installed in `dependencies` (not `devDependencies`) for image optimization in standalone runtime mode.
 - The standalone build output (`.next/standalone`) includes traced runtime `node_modules` used by `server.js`; runtime images should copy that output directly.
+- Branding and other static assets live under `frontend/operator-ui/public/` and are referenced by root-relative URLs (for example `/images/mbsrn-logo.jpg`).
+- Standalone runtime images must copy both `.next/static` and `public/`; otherwise static image URLs can return HTML fallback responses instead of `image/*`.
 
 Authentication flow:
 

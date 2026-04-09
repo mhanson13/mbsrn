@@ -8,6 +8,7 @@ import { ActionControls } from "../../../components/action-execution/ActionContr
 import { MigrationWorkspacePanel } from "../../../components/MigrationWorkspacePanel";
 import { OutputReview } from "../../../components/action-execution/OutputReview";
 import { PageContainer } from "../../../components/layout/PageContainer";
+import { WorkspaceActionBar } from "../../../components/layout/WorkspaceActionBar";
 import { SectionHeader } from "../../../components/layout/SectionHeader";
 import { SectionCard } from "../../../components/layout/SectionCard";
 import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
@@ -6816,8 +6817,9 @@ export default function SiteWorkspacePage() {
   const showSummaryTab = activeWorkspaceContentTab === "summary";
   const showRecommendationsTab = activeWorkspaceContentTab === "recommendations";
   const showMigrationTab = activeWorkspaceContentTab === "migration";
-  const showRecommendationSections = showSummaryTab || showRecommendationsTab;
   const showActivityTab = activeWorkspaceContentTab === "activity";
+  const showSupportingContextSections = showSummaryTab || showActivityTab;
+  const showRecommendationSections = showSummaryTab || showRecommendationsTab;
   const latestAuditRun = auditRuns[0] || null;
   const compactAuditStatus = latestAuditRun?.status || selectedSite.last_audit_status || "No audit run yet";
   const compactAuditCompletedAt = latestAuditRun?.completed_at || selectedSite.last_audit_completed_at;
@@ -8057,7 +8059,7 @@ export default function SiteWorkspacePage() {
             aria-controls="workspace-content-summary-panel"
             onClick={() => setActiveWorkspaceContentTab("summary")}
           >
-            Summary
+            Operator Focus
           </button>
           <button
             type="button"
@@ -8074,19 +8076,6 @@ export default function SiteWorkspacePage() {
           </button>
           <button
             type="button"
-            id="workspace-content-tab-activity"
-            role="tab"
-            className={`button button-secondary workspace-subtab-button ${
-              activeWorkspaceContentTab === "activity" ? "workspace-subtab-button-active" : ""
-            }`}
-            aria-selected={activeWorkspaceContentTab === "activity"}
-            aria-controls="workspace-content-activity-panel"
-            onClick={() => setActiveWorkspaceContentTab("activity")}
-          >
-            Activity
-          </button>
-          <button
-            type="button"
             id="workspace-content-tab-migration"
             role="tab"
             className={`button button-secondary workspace-subtab-button ${
@@ -8098,15 +8087,29 @@ export default function SiteWorkspacePage() {
           >
             Migration
           </button>
+          <button
+            type="button"
+            id="workspace-content-tab-activity"
+            role="tab"
+            className={`button button-secondary workspace-subtab-button ${
+              activeWorkspaceContentTab === "activity" ? "workspace-subtab-button-active" : ""
+            }`}
+            aria-selected={activeWorkspaceContentTab === "activity"}
+            aria-controls="workspace-content-activity-panel"
+            onClick={() => setActiveWorkspaceContentTab("activity")}
+          >
+            Activity
+          </button>
         </div>
         <p className="hint muted">
-          {activeWorkspaceContentTab === "activity"
-            ? "Activity keeps full timeline and run-history tables separated from decision surfaces."
-            : activeWorkspaceContentTab === "migration"
-              ? "Migration is a controlled draft workflow for replacing weak incumbent sites with reviewable static artifacts."
-            : activeWorkspaceContentTab === "recommendations"
-              ? "Recommendations keeps recommendation queue and run narratives front and center."
-              : "Summary keeps top operator actions and compact status signals in front."}
+          {activeWorkspaceContentTab === "migration"
+            ? "Migration is first-class and uses a controlled draft workflow before publish/deploy."
+            : activeWorkspaceContentTab === "activity"
+              ? "Activity keeps timeline and full history tables separated from decision-first workflow surfaces."
+              : activeWorkspaceContentTab === "recommendations"
+                ? "Recommendations is the primary execution workflow for queue review, runs, and narratives."
+                : "Operator Focus keeps next-step decisions and supporting context visible before workflow execution."
+          }
         </p>
       </SectionCard>
 
@@ -8119,10 +8122,26 @@ export default function SiteWorkspacePage() {
           data-testid="workspace-summary-tab-panel"
         >
           <SectionHeader
-            title="Summary Signals"
-            subtitle="Compact audit and competitor readiness context while you work recommendations."
+            title="Operator Focus and Supporting Context"
+            subtitle="Decision-first view with recommendation execution signals, migration access, and supporting context."
             headingLevel={2}
           />
+          <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="workspace-migration-priority-callout">
+            <span className="hint muted">Migration workflow</span>
+            <strong>Migration is a first-class operator workflow for replacement-site drafts.</strong>
+            <span className="hint muted">
+              Use migration when replacement-site strategy and draft artifacts need review before publish/deploy.
+            </span>
+            <WorkspaceActionBar variant="primary">
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => setActiveWorkspaceContentTab("migration")}
+              >
+                Open Migration Workflow
+              </button>
+            </WorkspaceActionBar>
+          </div>
           <div className="workspace-summary-strip" data-testid="workspace-operational-summary">
             <SummaryStatCard
               label="Last audit"
@@ -8684,6 +8703,15 @@ export default function SiteWorkspacePage() {
       </>
       ) : null}
 
+      {showSupportingContextSections ? (
+      <>
+      <SectionCard className="operator-shell-section operator-shell-secondary-zone">
+        <SectionHeader
+          title="Supporting Context"
+          subtitle="Competitor readiness and profile generation context support recommendation and migration decisions."
+          headingLevel={2}
+        />
+      </SectionCard>
       <AICompetitorProfilesPanel
         loadingWorkspace={loadingWorkspace}
         generationInFlight={generationInFlight}
@@ -9554,9 +9582,28 @@ export default function SiteWorkspacePage() {
           </div>
         ) : null}
       </AICompetitorProfilesPanel>
+      </>
+      ) : null}
 
       {showRecommendationSections ? (
       <>
+      <SectionCard
+        className="operator-shell-section operator-shell-secondary-zone"
+        role={showRecommendationsTab ? "tabpanel" : undefined}
+        id="workspace-content-recommendations-panel"
+        aria-labelledby={showRecommendationsTab ? "workspace-content-tab-recommendations" : undefined}
+        data-testid="workspace-recommendations-domain-panel"
+      >
+        <SectionHeader
+          title="Recommendations Workflow"
+          subtitle={
+            showRecommendationsTab
+              ? "Primary execution surface for recommendation queue, runs, narratives, and apply decisions."
+              : "Recommendation workflow preview stays visible here so operator focus decisions map directly to execution."
+          }
+          headingLevel={2}
+        />
+      </SectionCard>
       <RecommendationQueuePanel
         loadingWorkspace={loadingWorkspace}
         recommendationGenerationInFlight={recommendationGenerationInFlight}

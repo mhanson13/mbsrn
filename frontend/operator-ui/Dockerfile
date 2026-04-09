@@ -23,6 +23,8 @@ ENV PORT=8080
 
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+# Next standalone runtime still serves public assets (for example /images/mbsrn-logo.jpg) from /app/public.
+COPY --from=builder /app/public ./public
 
 EXPOSE 8080
 

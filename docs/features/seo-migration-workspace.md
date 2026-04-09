@@ -71,6 +71,16 @@ No workflow changes:
 - backend/API behavior and gating are unchanged
 - artifact quality remains advisory only
 
+Site operator page information architecture update:
+- the site operator route now separates domains with explicit content tabs:
+  - `Operator Focus`
+  - `Recommendations`
+  - `Migration`
+  - `Activity`
+- migration is explicitly promoted as a first-class workflow in operator focus with a direct action to open the migration tab
+- competitor/profile context is presented as supporting context instead of co-equal primary workflow content
+- this is presentation and information-hierarchy only; migration workflow semantics are unchanged
+
 Second-pass polish refinements:
 - summary band cards now use consistent label/value hierarchy and spacing, with a stronger visual emphasis on `Next action`
 - section rhythm was tightened with compact subtitles and clearer spacing between major migration sections

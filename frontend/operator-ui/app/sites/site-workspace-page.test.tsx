@@ -3090,7 +3090,7 @@ describe("site workspace timeline controls", () => {
     const user = userEvent.setup();
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("tab", { name: "Summary" });
+    await screen.findByRole("tab", { name: "Operator Focus" });
     expect(screen.queryByRole("heading", { name: "Site Activity Timeline" })).not.toBeInTheDocument();
 
     await switchToActivityTab(user);
@@ -3101,11 +3101,13 @@ describe("site workspace timeline controls", () => {
     seedRichWorkspaceData();
     render(<SiteWorkspacePage />);
 
-    await screen.findByRole("tab", { name: "Summary" });
+    await screen.findByRole("tab", { name: "Operator Focus" });
     expect(screen.queryByRole("heading", { name: "Recent Audit Runs" })).not.toBeInTheDocument();
     expect(screen.getByTestId("workspace-operational-summary")).toBeInTheDocument();
     expect(screen.getByTestId("summary-audit-status")).toBeInTheDocument();
     expect(screen.getByTestId("summary-audit-metrics")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-migration-priority-callout")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Migration Workflow" })).toBeInTheDocument();
     expect(screen.getByTestId("workspace-summary-automation")).toBeInTheDocument();
     expect(screen.getByTestId("workspace-automation-status-summary")).toBeInTheDocument();
     expect(screen.getByText("Automation status and outcomes")).toBeInTheDocument();

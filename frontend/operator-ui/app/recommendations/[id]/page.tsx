@@ -6,10 +6,17 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../components/layout/PageContainer";
 import { DetailFocusPanel, type DetailFocusFact } from "../../../components/layout/DetailFocusPanel";
+import {
+  OperatorPageHero,
+  OperatorPageSectionStack,
+} from "../../../components/layout/OperatorPageSurface";
 import { SectionCard } from "../../../components/layout/SectionCard";
 import { SectionHeader } from "../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
 import { WorkflowContextPanel } from "../../../components/layout/WorkflowContextPanel";
+import { WorkspaceActionBar } from "../../../components/layout/WorkspaceActionBar";
+import { WorkspaceEmptyStateCard } from "../../../components/layout/WorkspaceEmptyStateCard";
+import { WorkspaceMessageStack } from "../../../components/layout/WorkspaceMessageStack";
 import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -711,35 +718,35 @@ export default function RecommendationDetailPage() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div" variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Detail"
             subtitle="Loading recommendation detail for the selected business context."
             headingLevel={1}
             variant="support"
           />
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div" variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Detail"
             subtitle="Unable to load tenant context. Refresh and sign in again."
             headingLevel={1}
             variant="support"
           />
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
   if (!recommendationId) {
     return (
       <PageContainer>
-        <SectionCard variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Detail"
             subtitle="Recommendation identifier is missing."
@@ -747,26 +754,28 @@ export default function RecommendationDetailPage() {
             variant="support"
           />
           <p><Link href={backToRecommendationsHref}>Back to Recommendations</Link></p>
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
 
   return (
     <PageContainer>
-      <div className="role-dashboard-landing">
-        <SectionCard variant="primary" className="role-dashboard-hero">
-          <SectionHeader
-            title="Recommendation Detail"
-            subtitle="Review recommendation context, update decision status, and track linked lineage."
-            headingLevel={1}
-            variant="hero"
-            meta={(
-              <span className="hint muted">Recommendation: <code>{recommendationId}</code></span>
-            )}
-            actions={<Link href={backToRecommendationsHref}>Back to Recommendations</Link>}
-          />
-          <div className="workspace-summary-strip role-summary-strip">
+      <OperatorPageHero
+        title="Recommendation Detail"
+        subtitle="Review recommendation context, update decision status, and track linked lineage."
+        headingLevel={1}
+        data-testid="recommendation-detail-hero"
+        meta={(
+          <span className="hint muted">Recommendation: <code>{recommendationId}</code></span>
+        )}
+        actions={(
+          <WorkspaceActionBar variant="secondary">
+            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
+          </WorkspaceActionBar>
+        )}
+        summary={(
+          <>
             <SummaryStatCard
               label="Status"
               value={recommendation?.status || "Loading"}
@@ -788,7 +797,10 @@ export default function RecommendationDetailPage() {
               tone="neutral"
               variant="elevated"
             />
-          </div>
+          </>
+        )}
+      >
+        <WorkspaceMessageStack>
           {resolvedSiteId ? (
             <p className="hint muted">Resolved site: <code>{resolvedSiteId}</code></p>
           ) : null}
@@ -797,8 +809,8 @@ export default function RecommendationDetailPage() {
             <p className="hint warning">Recommendation not found or not accessible in your tenant scope.</p>
           ) : null}
           {!loading && error ? <p className="hint error">{error}</p> : null}
-        </SectionCard>
-      </div>
+        </WorkspaceMessageStack>
+      </OperatorPageHero>
 
       {!loading && !notFound && !error && recommendation ? (
         <WorkflowContextPanel
@@ -821,7 +833,7 @@ export default function RecommendationDetailPage() {
       ) : null}
 
       {!loading && !notFound && !error && recommendation ? (
-        <>
+        <OperatorPageSectionStack>
           <SectionCard variant="summary" className="role-surface-support">
             <h2>Recommendation Context</h2>
             <p>{recommendation.title}</p>
@@ -840,7 +852,7 @@ export default function RecommendationDetailPage() {
 
           <SectionCard variant="emphasis" className="role-surface-support" id="recommendation-actions">
             <h2>Actions</h2>
-            <div className="row-wrap-tight">
+            <WorkspaceActionBar variant="primary" className="row-wrap-tight">
               <button
                 className="primary"
                 type="button"
@@ -860,7 +872,7 @@ export default function RecommendationDetailPage() {
               >
                 {actionLoading && actionTarget === "dismissed" ? "Saving..." : "Dismiss"}
               </button>
-            </div>
+            </WorkspaceActionBar>
             <label htmlFor="recommendation-note">Operator Note</label>
             <textarea
               id="recommendation-note"
@@ -871,7 +883,7 @@ export default function RecommendationDetailPage() {
               maxLength={2000}
               disabled={actionLoading}
             />
-            <div className="row-space-between">
+            <WorkspaceActionBar variant="secondary" className="row-space-between">
               <small className="hint muted">{noteDraft.length}/2000 characters</small>
               <button
                 type="button"
@@ -882,7 +894,7 @@ export default function RecommendationDetailPage() {
               >
                 {actionLoading && actionTarget === null ? "Saving..." : "Save Note"}
               </button>
-            </div>
+            </WorkspaceActionBar>
             {actionSuccess ? <p className="hint">{actionSuccess}</p> : null}
             {actionError ? <p className="hint error">{actionError}</p> : null}
           </SectionCard>
@@ -933,7 +945,7 @@ export default function RecommendationDetailPage() {
             <p>Created: {formatDateTime(recommendation.created_at)}</p>
             <p>Updated: {formatDateTime(recommendation.updated_at)}</p>
           </SectionCard>
-        </>
+        </OperatorPageSectionStack>
       ) : null}
     </PageContainer>
   );

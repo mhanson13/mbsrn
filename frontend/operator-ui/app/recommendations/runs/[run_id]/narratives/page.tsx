@@ -5,10 +5,18 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../../../components/layout/PageContainer";
+import {
+  OperatorPageHero,
+  OperatorPageSectionStack,
+} from "../../../../../components/layout/OperatorPageSurface";
 import { SectionCard } from "../../../../../components/layout/SectionCard";
 import { SectionHeader } from "../../../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../../../components/layout/SummaryStatCard";
 import { WorkflowContextPanel } from "../../../../../components/layout/WorkflowContextPanel";
+import { WorkspaceActionBar } from "../../../../../components/layout/WorkspaceActionBar";
+import { WorkspaceEmptyStateCard } from "../../../../../components/layout/WorkspaceEmptyStateCard";
+import { WorkspaceMessageStack } from "../../../../../components/layout/WorkspaceMessageStack";
+import { WorkspaceTableShell } from "../../../../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -727,35 +735,35 @@ export default function RecommendationRunNarrativeHistoryPage() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div" variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Narrative History"
             subtitle="Loading recommendation narrative history for the selected run."
             headingLevel={1}
             variant="support"
           />
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div" variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Narrative History"
             subtitle="Unable to load tenant context. Refresh and sign in again."
             headingLevel={1}
             variant="support"
           />
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
   if (!recommendationRunId) {
     return (
       <PageContainer>
-        <SectionCard variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Narrative History"
             subtitle="Recommendation run identifier is missing."
@@ -763,40 +771,31 @@ export default function RecommendationRunNarrativeHistoryPage() {
             variant="support"
           />
           <p><Link href={backToRecommendationsHref}>Back to Recommendations</Link></p>
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
 
   return (
     <PageContainer>
-      <div className="role-dashboard-landing">
-        <SectionCard
-          variant="primary"
-          className="role-dashboard-hero"
-          data-testid="recommendation-narrative-history-hero"
-        >
-          <SectionHeader
-            title="Recommendation Narrative History"
-            subtitle="Review version-to-version recommendation narratives and compare reasoning changes before applying actions."
-            headingLevel={1}
-            variant="hero"
-            meta={(
-              <span className="hint muted">
-                Recommendation run: <code>{recommendationRunId}</code>
-              </span>
-            )}
-            actions={(
-              <div className="row-wrap-tight">
-                <Link href={parentRunHref}>Back to Recommendation Run</Link>
-                <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-              </div>
-            )}
-          />
-          <div
-            className="workspace-summary-strip role-summary-strip"
-            data-testid="recommendation-narrative-history-summary-strip"
-          >
+      <OperatorPageHero
+        title="Recommendation Narrative History"
+        subtitle="Review version-to-version recommendation narratives and compare reasoning changes before applying actions."
+        headingLevel={1}
+        data-testid="recommendation-narrative-history-hero"
+        meta={(
+          <span className="hint muted">
+            Recommendation run: <code>{recommendationRunId}</code>
+          </span>
+        )}
+        actions={(
+          <WorkspaceActionBar variant="secondary" className="row-wrap-tight">
+            <Link href={parentRunHref}>Back to Recommendation Run</Link>
+            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
+          </WorkspaceActionBar>
+        )}
+        summary={(
+          <div data-testid="recommendation-narrative-history-summary-strip">
             <SummaryStatCard
               label="Run status"
               value={run?.status || "Loading"}
@@ -826,6 +825,9 @@ export default function RecommendationRunNarrativeHistoryPage() {
               variant="elevated"
             />
           </div>
+        )}
+      >
+        <WorkspaceMessageStack>
           {resolvedSiteId ? (
             <p className="hint muted">
               Resolved site: <code>{resolvedSiteId}</code>
@@ -836,8 +838,8 @@ export default function RecommendationRunNarrativeHistoryPage() {
             <p className="hint warning">Recommendation run narrative history not found or not accessible in your tenant scope.</p>
           ) : null}
           {!loading && error ? <p className="hint error">{error}</p> : null}
-        </SectionCard>
-      </div>
+        </WorkspaceMessageStack>
+      </OperatorPageHero>
 
       {!loading && !notFound && !error && run ? (
         <WorkflowContextPanel
@@ -849,7 +851,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
       ) : null}
 
       {!loading && !notFound && !error && run ? (
-        <>
+        <OperatorPageSectionStack>
           <SectionCard variant="summary" className="role-surface-support">
             <h2>Run Context</h2>
             <p>
@@ -913,7 +915,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
                 No recommendation narrative versions have been generated for this run yet.
               </p>
             ) : (
-              <div className="table-container">
+              <WorkspaceTableShell>
                 <table className="table">
                   <thead>
                     <tr>
@@ -953,7 +955,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </WorkspaceTableShell>
             )}
           </SectionCard>
 
@@ -1105,7 +1107,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
                         {narrativeComparison.section_entries.length === 0 ? (
                           <p className="hint muted">No structured section differences were detected.</p>
                         ) : (
-                          <div className="table-container">
+                          <WorkspaceTableShell>
                             <table className="table">
                               <thead>
                                 <tr>
@@ -1137,7 +1139,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
                                 ))}
                               </tbody>
                             </table>
-                          </div>
+                          </WorkspaceTableShell>
                         )}
                       </div>
                     ) : (
@@ -1186,7 +1188,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
               <p className="hint muted">No produced recommendations are available for this run.</p>
             ) : (
               <>
-                <div className="table-container">
+                <WorkspaceTableShell>
                   <table className="table">
                     <thead>
                       <tr>
@@ -1217,7 +1219,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </WorkspaceTableShell>
                 {(report?.recommendations.total || 0) > producedRecommendations.length ? (
                   <p className="hint muted">
                     Showing the top {producedRecommendations.length} recommendations by priority out of{" "}
@@ -1227,7 +1229,7 @@ export default function RecommendationRunNarrativeHistoryPage() {
               </>
             )}
           </SectionCard>
-        </>
+        </OperatorPageSectionStack>
       ) : null}
     </PageContainer>
   );

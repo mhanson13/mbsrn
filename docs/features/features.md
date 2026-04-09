@@ -241,6 +241,27 @@ It transforms a business's website and market context into structured insights a
 
 ---
 
+## 13. Site Operator Journey and Recommendation Detail Consistency
+
+### What it does
+- Restructures the site operator route into clearer domain surfaces:
+  - `Operator Focus`
+  - `Recommendations`
+  - `Migration`
+  - `Activity`
+- Promotes migration as a first-class operator workflow area on the site route.
+- Aligns recommendation detail/run/narrative pages to the same page-composition rhythm used on top-level operator routes.
+
+### Key capability
+- Operators get a more predictable decision-first path from site-level triage to recommendation detail execution context.
+- Shared page/workspace primitives now cover both list and detail recommendation flows.
+- TailAdmin inspiration is visual only; implementation remains MBSRN-native.
+
+### Operator value
+> "I can move from site-level decisions to recommendation detail review without relearning the page structure on every route."
+
+---
+
 ## Summary
 
 MBSRN transforms a small business from:

@@ -6,10 +6,18 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../../../../components/layout/PageContainer";
 import { DetailFocusPanel } from "../../../../../../components/layout/DetailFocusPanel";
+import {
+  OperatorPageHero,
+  OperatorPageSectionStack,
+} from "../../../../../../components/layout/OperatorPageSurface";
 import { SectionCard } from "../../../../../../components/layout/SectionCard";
 import { SectionHeader } from "../../../../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../../../../components/layout/SummaryStatCard";
 import { WorkflowContextPanel } from "../../../../../../components/layout/WorkflowContextPanel";
+import { WorkspaceActionBar } from "../../../../../../components/layout/WorkspaceActionBar";
+import { WorkspaceEmptyStateCard } from "../../../../../../components/layout/WorkspaceEmptyStateCard";
+import { WorkspaceMessageStack } from "../../../../../../components/layout/WorkspaceMessageStack";
+import { WorkspaceTableShell } from "../../../../../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../../../../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -421,35 +429,35 @@ export default function RecommendationNarrativeDetailPage() {
   if (context.loading) {
     return (
       <PageContainer>
-        <SectionCard as="div" variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Narrative Detail"
             subtitle="Loading recommendation narrative detail for the selected run."
             headingLevel={1}
             variant="support"
           />
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
   if (context.error) {
     return (
       <PageContainer>
-        <SectionCard as="div" variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Narrative Detail"
             subtitle="Unable to load tenant context. Refresh and sign in again."
             headingLevel={1}
             variant="support"
           />
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
   if (!recommendationRunId || !narrativeId) {
     return (
       <PageContainer>
-        <SectionCard variant="support" className="role-surface-support">
+        <WorkspaceEmptyStateCard>
           <SectionHeader
             title="Recommendation Narrative Detail"
             subtitle="Recommendation run or narrative identifier is missing."
@@ -457,41 +465,32 @@ export default function RecommendationNarrativeDetailPage() {
             variant="support"
           />
           <p><Link href={backToRecommendationsHref}>Back to Recommendations</Link></p>
-        </SectionCard>
+        </WorkspaceEmptyStateCard>
       </PageContainer>
     );
   }
 
   return (
     <PageContainer>
-      <div className="role-dashboard-landing">
-        <SectionCard
-          variant="primary"
-          className="role-dashboard-hero"
-          data-testid="recommendation-narrative-detail-hero"
-        >
-          <SectionHeader
-            title="Recommendation Narrative Detail"
-            subtitle="Inspect this narrative version’s context, themes, structured sections, and recommendation linkage."
-            headingLevel={1}
-            variant="hero"
-            meta={(
-              <span className="hint muted">
-                Narrative: <code>{narrativeId}</code>
-              </span>
-            )}
-            actions={(
-              <div className="row-wrap-tight">
-                <Link href={narrativeHistoryHref}>Back to Narrative History</Link>
-                <Link href={parentRunHref}>Back to Recommendation Run</Link>
-                <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-              </div>
-            )}
-          />
-          <div
-            className="workspace-summary-strip role-summary-strip"
-            data-testid="recommendation-narrative-detail-summary-strip"
-          >
+      <OperatorPageHero
+        title="Recommendation Narrative Detail"
+        subtitle="Inspect this narrative version’s context, themes, structured sections, and recommendation linkage."
+        headingLevel={1}
+        data-testid="recommendation-narrative-detail-hero"
+        meta={(
+          <span className="hint muted">
+            Narrative: <code>{narrativeId}</code>
+          </span>
+        )}
+        actions={(
+          <WorkspaceActionBar variant="secondary" className="row-wrap-tight">
+            <Link href={narrativeHistoryHref}>Back to Narrative History</Link>
+            <Link href={parentRunHref}>Back to Recommendation Run</Link>
+            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
+          </WorkspaceActionBar>
+        )}
+        summary={(
+          <div data-testid="recommendation-narrative-detail-summary-strip">
             <SummaryStatCard
               label="Narrative status"
               value={narrative?.status || "Loading"}
@@ -521,6 +520,9 @@ export default function RecommendationNarrativeDetailPage() {
               variant="elevated"
             />
           </div>
+        )}
+      >
+        <WorkspaceMessageStack>
           {resolvedSiteId ? (
             <p className="hint muted">
               Recommendation run: <code>{recommendationRunId}</code> • Resolved site: <code>{resolvedSiteId}</code>
@@ -531,8 +533,8 @@ export default function RecommendationNarrativeDetailPage() {
             <p className="hint warning">Recommendation narrative not found or not accessible in your tenant scope.</p>
           ) : null}
           {!loading && error ? <p className="hint error">{error}</p> : null}
-        </SectionCard>
-      </div>
+        </WorkspaceMessageStack>
+      </OperatorPageHero>
 
       {!loading && !notFound && !error && run && narrative ? (
         <WorkflowContextPanel
@@ -553,7 +555,7 @@ export default function RecommendationNarrativeDetailPage() {
       ) : null}
 
       {!loading && !notFound && !error && run && narrative ? (
-        <>
+        <OperatorPageSectionStack>
           <SectionCard variant="summary" className="role-surface-support">
             <h2>Narrative Metadata</h2>
             <p>Version: {narrative.version}</p>
@@ -628,7 +630,7 @@ export default function RecommendationNarrativeDetailPage() {
               <p className="hint muted">No produced recommendations are available for this run.</p>
             ) : (
               <>
-                <div className="table-container">
+                <WorkspaceTableShell>
                   <table className="table">
                     <thead>
                       <tr>
@@ -659,7 +661,7 @@ export default function RecommendationNarrativeDetailPage() {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </WorkspaceTableShell>
                 {(report?.recommendations.total || 0) > producedRecommendations.length ? (
                   <p className="hint muted">
                     Showing the top {producedRecommendations.length} recommendations by priority out of{" "}
@@ -669,7 +671,7 @@ export default function RecommendationNarrativeDetailPage() {
               </>
             )}
           </SectionCard>
-        </>
+        </OperatorPageSectionStack>
       ) : null}
     </PageContainer>
   );
