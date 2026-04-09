@@ -7,6 +7,11 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { ActionControls } from "../../../components/action-execution/ActionControls";
 import { MigrationWorkspacePanel } from "../../../components/MigrationWorkspacePanel";
 import { OutputReview } from "../../../components/action-execution/OutputReview";
+import {
+  OperatorPageHero,
+  OperatorPageSectionStack,
+} from "../../../components/layout/OperatorPageSurface";
+import { OperatorRouteSupportState } from "../../../components/layout/OperatorRouteSupportState";
 import { PageContainer } from "../../../components/layout/PageContainer";
 import { WorkspaceActionBar } from "../../../components/layout/WorkspaceActionBar";
 import { SectionHeader } from "../../../components/layout/SectionHeader";
@@ -6775,42 +6780,38 @@ export default function SiteWorkspacePage() {
 
   if (context.loading) {
     return (
-      <PageContainer width="full" density="compact">
-        <SectionCard as="div">Loading site workspace...</SectionCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Site SEO Workspace"
+        subtitle="Loading site workspace..."
+      />
     );
   }
   if (context.error) {
     return (
-      <PageContainer width="full" density="compact">
-        <SectionCard as="div">Unable to load tenant context. Refresh and sign in again.</SectionCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Site SEO Workspace"
+        subtitle="Unable to load tenant context. Refresh and sign in again."
+      />
     );
   }
   if (!siteId) {
     return (
-      <PageContainer width="full" density="compact">
-        <SectionCard>
-          <h1>Site SEO Workspace</h1>
-          <p className="hint warning">Site identifier is missing.</p>
-          <p>
-            <Link href="/sites">Back to Sites</Link>
-          </p>
-        </SectionCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Site SEO Workspace"
+        subtitle="Site identifier is missing."
+        backHref="/sites"
+        backLabel="Back to Sites"
+      />
     );
   }
   if (notFound || !selectedSite) {
     return (
-      <PageContainer width="full" density="compact">
-        <SectionCard>
-          <p>
-            <Link href="/sites">Back to Sites</Link>
-          </p>
-          <h1>Site SEO Workspace</h1>
-          <p className="hint warning">This site was not found or is not accessible in your tenant scope.</p>
-        </SectionCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Site SEO Workspace"
+        subtitle="This site was not found or is not accessible in your tenant scope."
+        backHref="/sites"
+        backLabel="Back to Sites"
+      />
     );
   }
 
@@ -6818,6 +6819,21 @@ export default function SiteWorkspacePage() {
   const showRecommendationsTab = activeWorkspaceContentTab === "recommendations";
   const showMigrationTab = activeWorkspaceContentTab === "migration";
   const showActivityTab = activeWorkspaceContentTab === "activity";
+  const activeWorkspaceViewLabel = showSummaryTab
+    ? "Operator Focus"
+    : showRecommendationsTab
+      ? "Recommendations"
+      : showMigrationTab
+        ? "Migration"
+        : "Activity";
+  const operatorPrimaryActionTone: "neutral" | "success" | "warning" | "danger" =
+    operatorPrimaryAction.urgencyBadgeClass.includes("critical")
+      ? "danger"
+      : operatorPrimaryAction.urgencyBadgeClass.includes("warn")
+        ? "warning"
+        : operatorPrimaryAction.urgencyBadgeClass.includes("success")
+          ? "success"
+          : "neutral";
   const showSupportingContextSections = showSummaryTab || showActivityTab;
   const showRecommendationSections = showSummaryTab || showRecommendationsTab;
   const latestAuditRun = auditRuns[0] || null;
@@ -7637,46 +7653,147 @@ export default function SiteWorkspacePage() {
 
   return (
     <PageContainer width="full" density="compact">
-      <div className="workspace-dashboard-landing">
-        <SectionCard className="workspace-shell-overview workspace-shell-overview-hero" variant="support">
-          <div className="workspace-section-header workspace-section-header-compact">
-            <div className="workspace-section-header-main">
-              <p>
-                <Link href="/sites">Back to Sites</Link>
-              </p>
-              <h1>Site SEO Workspace</h1>
-              <p className="hint muted workspace-section-subtitle">
-                Site: <strong>{selectedSite.display_name}</strong>
-              </p>
-              <div className="workspace-section-meta">
-                <span className="hint muted">Business ID: <code>{selectedSite.business_id}</code></span>
-                <span className="hint muted">Site ID: <code>{selectedSite.id}</code></span>
-                <span className="hint muted">Domain: {selectedSite.normalized_domain}</span>
-                <span className="hint muted">Base URL: {selectedSite.base_url}</span>
-                <span className="hint muted">Active: {selectedSite.is_active ? "yes" : "no"}</span>
-                <span className="hint muted">Primary: {selectedSite.is_primary ? "yes" : "no"}</span>
-                <span className="hint muted">
-                  Last audit: {selectedSite.last_audit_status || "-"} ({formatDateTime(selectedSite.last_audit_completed_at)})
-                </span>
-                <span className="hint muted">
-                  Operator context:{" "}
-                  {context.selectedSiteId === selectedSite.id
-                    ? "currently selected"
-                    : "page-scoped to this site"}
-                </span>
-              </div>
-            </div>
-            <div className="workspace-section-actions">
-              <div className="toolbar-row toolbar-row-links">
-                <Link href="/audits">Audit Runs</Link>
-                <Link href={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}>Competitor Workspace</Link>
-                <Link href="/recommendations">Recommendation Queue</Link>
-              </div>
-            </div>
+      <OperatorPageHero
+        title="Site SEO Workspace"
+        subtitle="Decision-first control surface for recommendations, migration workflow, and supporting site context."
+        headingLevel={1}
+        className="site-workspace-hero"
+        data-testid="site-workspace-hero"
+        meta={(
+          <div className="workspace-section-meta site-workspace-hero-meta">
+            <span className="hint muted">Site: <strong>{selectedSite.display_name}</strong></span>
+            <span className="hint muted">Domain: {selectedSite.normalized_domain}</span>
+            <span className="hint muted">Base URL: {selectedSite.base_url}</span>
+            <span className="hint muted">Business ID: <code>{selectedSite.business_id}</code></span>
+            <span className="hint muted">Site ID: <code>{selectedSite.id}</code></span>
+            <span className="hint muted">Active: {selectedSite.is_active ? "yes" : "no"}</span>
+            <span className="hint muted">Primary: {selectedSite.is_primary ? "yes" : "no"}</span>
+            <span className="hint muted">
+              Last audit: {selectedSite.last_audit_status || "-"} ({formatDateTime(selectedSite.last_audit_completed_at)})
+            </span>
+            <span className="hint muted">
+              Operator context:{" "}
+              {context.selectedSiteId === selectedSite.id
+                ? "currently selected"
+                : "page-scoped to this site"}
+            </span>
           </div>
-          {loadingWorkspace ? <p className="hint muted">Loading workspace data...</p> : null}
-        </SectionCard>
+        )}
+        actions={(
+          <WorkspaceActionBar variant="secondary" className="site-workspace-hero-links">
+            <Link href="/sites">Back to Sites</Link>
+            <Link href="/audits">Audit Runs</Link>
+            <Link href={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}>Competitor Workspace</Link>
+            <Link href="/recommendations">Recommendation Queue</Link>
+          </WorkspaceActionBar>
+        )}
+        summary={(
+          <>
+            <SummaryStatCard
+              label="What matters now"
+              value={operatorPrimaryAction.urgencyLabel}
+              detail={operatorPrimaryAction.title}
+              tone={operatorPrimaryActionTone}
+              variant="elevated"
+              data-testid="workspace-hero-summary-focus"
+            />
+            <SummaryStatCard
+              label="Recommendations"
+              value={recommendationSectionFreshness?.stateLabel || "No queue state yet"}
+              detail={`${recommendationQueueSummary.open} open of ${recommendationQueueSummary.total}`}
+              tone={recommendationSummaryTone}
+              variant="elevated"
+              data-testid="workspace-hero-summary-recommendations"
+            />
+            <SummaryStatCard
+              label="Migration workflow"
+              value={showMigrationTab ? "In focus" : "Ready"}
+              detail="Draft-first workflow before publish/deploy"
+              tone={showMigrationTab ? "success" : "neutral"}
+              variant="elevated"
+              data-testid="workspace-hero-summary-migration"
+            />
+            <SummaryStatCard
+              label="Supporting context"
+              value={competitorSectionFreshness?.stateLabel || "No run state yet"}
+              detail={workspaceReadinessMessage}
+              tone={competitorSummaryTone}
+              variant="elevated"
+              data-testid="workspace-hero-summary-supporting-context"
+            />
+          </>
+        )}
+      >
+        <div className="site-workspace-hero-control-grid" data-testid="site-workspace-control-grid">
+          <div className="panel panel-compact stack-tight site-workspace-hero-control-card site-workspace-hero-control-card-primary">
+            <span className="hint muted">Primary operator action</span>
+            <div className="link-row operator-focus-status-row">
+              <span
+                className={operatorPrimaryAction.urgencyBadgeClass}
+                data-testid="workspace-hero-primary-urgency"
+              >
+                {operatorPrimaryAction.urgencyLabel}
+              </span>
+              {recommendationSectionFreshness?.refreshExpected || competitorSectionFreshness?.refreshExpected ? (
+                <span className="badge badge-warn">Refresh expected</span>
+              ) : null}
+            </div>
+            <strong>{operatorPrimaryAction.title}</strong>
+            <span className="hint">{operatorPrimaryAction.reason}</span>
+            {operatorPrimaryAction.contextHint ? (
+              <span className="hint muted">{operatorPrimaryAction.contextHint}</span>
+            ) : null}
+            <WorkspaceActionBar variant="primary">
+              {operatorPrimaryAction.actionKind === "navigate" ? (
+                <Link
+                  href={operatorPrimaryAction.actionHref}
+                  className="button button-primary"
+                  data-testid="workspace-hero-primary-action-link"
+                >
+                  {operatorPrimaryAction.actionLabel}
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  className="button button-primary"
+                  data-testid="workspace-hero-primary-action-button"
+                  onClick={() => {
+                    if (operatorPrimaryAction.actionTargetId) {
+                      focusActionTarget(operatorPrimaryAction.actionTargetId);
+                    }
+                  }}
+                >
+                  {operatorPrimaryAction.actionLabel}
+                </button>
+              )}
+            </WorkspaceActionBar>
+            {latestWorkflowChangeNote ? <span className="hint muted">{latestWorkflowChangeNote}</span> : null}
+          </div>
+          <div
+            className="panel panel-compact stack-tight site-workspace-hero-control-card site-workspace-hero-control-card-migration"
+            data-testid="workspace-hero-migration-callout"
+          >
+            <span className="hint muted">Migration workflow</span>
+            <strong>Replacement-site drafts are first-class in this workspace.</strong>
+            <span className="hint">
+              Review and approve migration artifacts before explicit publish or deploy actions.
+            </span>
+            <WorkspaceActionBar variant="secondary">
+              <button
+                type="button"
+                className="button button-secondary button-inline"
+                onClick={() => setActiveWorkspaceContentTab("migration")}
+                data-testid="workspace-hero-open-migration-button"
+              >
+                Open Migration Workflow
+              </button>
+            </WorkspaceActionBar>
+          </div>
+        </div>
+        {loadingWorkspace ? <p className="hint muted">Loading workspace data...</p> : null}
+      </OperatorPageHero>
 
+      <OperatorPageSectionStack className="site-workspace-top-stack">
       <SectionCard className="operator-shell-summary-panel" variant="summary">
         <SectionHeader
           title="Workspace Snapshot"
@@ -8044,10 +8161,10 @@ export default function SiteWorkspacePage() {
           </div>
         </div>
         </SectionCard>
-      </div>
+      </OperatorPageSectionStack>
 
-      <SectionCard className="operator-shell-section operator-shell-secondary-zone workspace-content-tab-shell">
-        <div className="workspace-subtabs" role="tablist" aria-label="Workspace content views">
+      <SectionCard className="operator-shell-section operator-shell-secondary-zone workspace-content-tab-shell site-workspace-tab-shell">
+        <div className="workspace-subtabs site-workspace-subtabs" role="tablist" aria-label="Workspace content views">
           <button
             type="button"
             id="workspace-content-tab-summary"
@@ -8111,6 +8228,34 @@ export default function SiteWorkspacePage() {
                 : "Operator Focus keeps next-step decisions and supporting context visible before workflow execution."
           }
         </p>
+        <div className="site-workspace-tab-meta" data-testid="workspace-content-tab-meta">
+          <WorkspaceActionBar variant="secondary" className="row-wrap-tight">
+            <span className="badge badge-muted">Active view: {activeWorkspaceViewLabel}</span>
+            <span className={operatorPrimaryAction.urgencyBadgeClass}>
+              Next action: {operatorPrimaryAction.urgencyLabel}
+            </span>
+            {!showMigrationTab ? (
+              <button
+                type="button"
+                className="button button-secondary button-inline"
+                onClick={() => setActiveWorkspaceContentTab("migration")}
+                data-testid="workspace-open-migration-shortcut"
+              >
+                Open Migration Workflow
+              </button>
+            ) : null}
+            {!showRecommendationsTab ? (
+              <button
+                type="button"
+                className="button button-tertiary button-inline"
+                onClick={() => setActiveWorkspaceContentTab("recommendations")}
+                data-testid="workspace-open-recommendations-shortcut"
+              >
+                Open Recommendations Workflow
+              </button>
+            ) : null}
+          </WorkspaceActionBar>
+        </div>
       </SectionCard>
 
       {showSummaryTab ? (
@@ -8280,7 +8425,8 @@ export default function SiteWorkspacePage() {
 
       {showMigrationTab ? (
         <SectionCard
-          className="operator-shell-section operator-shell-secondary-zone"
+          className="operator-shell-section operator-shell-primary-zone site-workspace-migration-zone"
+          variant="primary"
           role="tabpanel"
           id="workspace-content-migration-panel"
           aria-labelledby="workspace-content-tab-migration"
@@ -9588,7 +9734,8 @@ export default function SiteWorkspacePage() {
       {showRecommendationSections ? (
       <>
       <SectionCard
-        className="operator-shell-section operator-shell-secondary-zone"
+        className="operator-shell-section operator-shell-primary-zone site-workspace-recommendations-zone"
+        variant="primary"
         role={showRecommendationsTab ? "tabpanel" : undefined}
         id="workspace-content-recommendations-panel"
         aria-labelledby={showRecommendationsTab ? "workspace-content-tab-recommendations" : undefined}

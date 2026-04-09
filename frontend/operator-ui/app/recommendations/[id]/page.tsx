@@ -6,16 +6,15 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../components/layout/PageContainer";
 import { DetailFocusPanel, type DetailFocusFact } from "../../../components/layout/DetailFocusPanel";
+import { OperatorRouteSupportState } from "../../../components/layout/OperatorRouteSupportState";
 import {
   OperatorPageHero,
   OperatorPageSectionStack,
 } from "../../../components/layout/OperatorPageSurface";
 import { SectionCard } from "../../../components/layout/SectionCard";
-import { SectionHeader } from "../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
 import { WorkflowContextPanel } from "../../../components/layout/WorkflowContextPanel";
 import { WorkspaceActionBar } from "../../../components/layout/WorkspaceActionBar";
-import { WorkspaceEmptyStateCard } from "../../../components/layout/WorkspaceEmptyStateCard";
 import { WorkspaceMessageStack } from "../../../components/layout/WorkspaceMessageStack";
 import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
@@ -717,45 +716,28 @@ export default function RecommendationDetailPage() {
 
   if (context.loading) {
     return (
-      <PageContainer>
-        <WorkspaceEmptyStateCard>
-          <SectionHeader
-            title="Recommendation Detail"
-            subtitle="Loading recommendation detail for the selected business context."
-            headingLevel={1}
-            variant="support"
-          />
-        </WorkspaceEmptyStateCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Recommendation Detail"
+        subtitle="Loading recommendation detail for the selected business context."
+      />
     );
   }
   if (context.error) {
     return (
-      <PageContainer>
-        <WorkspaceEmptyStateCard>
-          <SectionHeader
-            title="Recommendation Detail"
-            subtitle="Unable to load tenant context. Refresh and sign in again."
-            headingLevel={1}
-            variant="support"
-          />
-        </WorkspaceEmptyStateCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Recommendation Detail"
+        subtitle="Unable to load tenant context. Refresh and sign in again."
+      />
     );
   }
   if (!recommendationId) {
     return (
-      <PageContainer>
-        <WorkspaceEmptyStateCard>
-          <SectionHeader
-            title="Recommendation Detail"
-            subtitle="Recommendation identifier is missing."
-            headingLevel={1}
-            variant="support"
-          />
-          <p><Link href={backToRecommendationsHref}>Back to Recommendations</Link></p>
-        </WorkspaceEmptyStateCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Recommendation Detail"
+        subtitle="Recommendation identifier is missing."
+        backHref={backToRecommendationsHref}
+        backLabel="Back to Recommendations"
+      />
     );
   }
 

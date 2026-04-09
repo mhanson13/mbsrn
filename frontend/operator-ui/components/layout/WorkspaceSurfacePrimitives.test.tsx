@@ -1,10 +1,24 @@
 import { render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 
 import { WorkspaceActionBar } from "./WorkspaceActionBar";
 import { WorkspaceEmptyStateCard } from "./WorkspaceEmptyStateCard";
 import { WorkspaceMessageStack } from "./WorkspaceMessageStack";
 import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "./WorkspaceMetadataGrid";
 import { WorkspaceTableShell } from "./WorkspaceTableShell";
+import { OperatorRouteSupportState } from "./OperatorRouteSupportState";
+
+jest.mock("next/link", () => {
+  return function MockLink({
+    href,
+    children,
+  }: {
+    href: string;
+    children: ReactNode;
+  }) {
+    return <a href={href}>{children}</a>;
+  };
+});
 
 describe("workspace surface primitives", () => {
   it("renders action bar variants", () => {
@@ -69,5 +83,22 @@ describe("workspace surface primitives", () => {
     expect(screen.getByText("Model")).toHaveClass("workspace-metadata-label");
     expect(screen.getByTestId("table-shell")).toHaveClass("table-container");
     expect(screen.getByTestId("table-shell")).toHaveClass("workspace-table-shell");
+  });
+
+  it("renders route support state with optional back link", () => {
+    render(
+      <OperatorRouteSupportState
+        title="Recommendation Run Detail"
+        subtitle="Recommendation run identifier is missing."
+        backHref="/recommendations"
+        backLabel="Back to Recommendations"
+        data-testid="route-support-state"
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Recommendation Run Detail" })).toBeInTheDocument();
+    expect(screen.getByText("Recommendation run identifier is missing.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to Recommendations" })).toHaveAttribute("href", "/recommendations");
+    expect(screen.getByTestId("route-support-state")).toHaveClass("workspace-empty-state");
   });
 });

@@ -5,16 +5,15 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../../../components/layout/PageContainer";
+import { OperatorRouteSupportState } from "../../../../../components/layout/OperatorRouteSupportState";
 import {
   OperatorPageHero,
   OperatorPageSectionStack,
 } from "../../../../../components/layout/OperatorPageSurface";
 import { SectionCard } from "../../../../../components/layout/SectionCard";
-import { SectionHeader } from "../../../../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../../../../components/layout/SummaryStatCard";
 import { WorkflowContextPanel } from "../../../../../components/layout/WorkflowContextPanel";
 import { WorkspaceActionBar } from "../../../../../components/layout/WorkspaceActionBar";
-import { WorkspaceEmptyStateCard } from "../../../../../components/layout/WorkspaceEmptyStateCard";
 import { WorkspaceMessageStack } from "../../../../../components/layout/WorkspaceMessageStack";
 import { WorkspaceTableShell } from "../../../../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../../../../components/useOperatorContext";
@@ -734,45 +733,28 @@ export default function RecommendationRunNarrativeHistoryPage() {
 
   if (context.loading) {
     return (
-      <PageContainer>
-        <WorkspaceEmptyStateCard>
-          <SectionHeader
-            title="Recommendation Narrative History"
-            subtitle="Loading recommendation narrative history for the selected run."
-            headingLevel={1}
-            variant="support"
-          />
-        </WorkspaceEmptyStateCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Recommendation Narrative History"
+        subtitle="Loading recommendation narrative history for the selected run."
+      />
     );
   }
   if (context.error) {
     return (
-      <PageContainer>
-        <WorkspaceEmptyStateCard>
-          <SectionHeader
-            title="Recommendation Narrative History"
-            subtitle="Unable to load tenant context. Refresh and sign in again."
-            headingLevel={1}
-            variant="support"
-          />
-        </WorkspaceEmptyStateCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Recommendation Narrative History"
+        subtitle="Unable to load tenant context. Refresh and sign in again."
+      />
     );
   }
   if (!recommendationRunId) {
     return (
-      <PageContainer>
-        <WorkspaceEmptyStateCard>
-          <SectionHeader
-            title="Recommendation Narrative History"
-            subtitle="Recommendation run identifier is missing."
-            headingLevel={1}
-            variant="support"
-          />
-          <p><Link href={backToRecommendationsHref}>Back to Recommendations</Link></p>
-        </WorkspaceEmptyStateCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Recommendation Narrative History"
+        subtitle="Recommendation run identifier is missing."
+        backHref={backToRecommendationsHref}
+        backLabel="Back to Recommendations"
+      />
     );
   }
 

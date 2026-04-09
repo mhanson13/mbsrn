@@ -78,6 +78,8 @@ Site operator page information architecture update:
   - `Migration`
   - `Activity`
 - migration is explicitly promoted as a first-class workflow in operator focus with a direct action to open the migration tab
+- the site route now starts with a decision-first control surface (`OperatorPageHero`) that keeps migration visibility and migration-open actions near the top of the page
+- workflow tab metadata now includes quick-open shortcuts so migration stays discoverable from any active workspace lane
 - competitor/profile context is presented as supporting context instead of co-equal primary workflow content
 - this is presentation and information-hierarchy only; migration workflow semantics are unchanged
 

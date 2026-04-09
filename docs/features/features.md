@@ -262,6 +262,27 @@ It transforms a business's website and market context into structured insights a
 
 ---
 
+## 14. Site Operator Workspace Modernization (Decision-First Control Surface)
+
+### What it does
+- Upgrades `/sites/[site_id]` with a stronger workspace control surface using existing MBSRN-native primitives.
+- Promotes migration and recommendation execution as first-class workflow lanes near the top of the route.
+- Clarifies page scan order as:
+  - top control surface (status + next action)
+  - operational snapshot + operator focus
+  - workflow tabs
+  - domain execution/detail sections
+
+### Key capability
+- Reuses shared primitives (`OperatorPageHero`, `OperatorPageSectionStack`, `WorkspaceActionBar`, `OperatorRouteSupportState`) instead of page-local framing patterns.
+- Improves action prominence, containment, and scanability without changing workflow semantics.
+- TailAdmin remains inspiration-only; implementation stays within internal MBSRN CSS/components.
+
+### Operator value
+> "I can immediately see what matters now, what to do next, and where migration and recommendations stand."
+
+---
+
 ## Summary
 
 MBSRN transforms a small business from:

@@ -3102,12 +3102,16 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("tab", { name: "Operator Focus" });
+    expect(screen.getByTestId("site-workspace-hero")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-hero-migration-callout")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-content-tab-meta")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Recent Audit Runs" })).not.toBeInTheDocument();
     expect(screen.getByTestId("workspace-operational-summary")).toBeInTheDocument();
     expect(screen.getByTestId("summary-audit-status")).toBeInTheDocument();
     expect(screen.getByTestId("summary-audit-metrics")).toBeInTheDocument();
-    expect(screen.getByTestId("workspace-migration-priority-callout")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Migration Workflow" })).toBeInTheDocument();
+    const migrationPriorityCallout = screen.getByTestId("workspace-migration-priority-callout");
+    expect(migrationPriorityCallout).toBeInTheDocument();
+    expect(within(migrationPriorityCallout).getByRole("button", { name: "Open Migration Workflow" })).toBeInTheDocument();
     expect(screen.getByTestId("workspace-summary-automation")).toBeInTheDocument();
     expect(screen.getByTestId("workspace-automation-status-summary")).toBeInTheDocument();
     expect(screen.getByText("Automation status and outcomes")).toBeInTheDocument();
@@ -3122,6 +3126,22 @@ describe("site workspace timeline controls", () => {
       "This automation analyzes your site and generates recommendations. It does not make changes to your website.",
     );
     expect(await screen.findByText("Review recommendation run output")).toBeInTheDocument();
+  });
+
+  it("supports content-tab workflow shortcuts from the tab meta action row", async () => {
+    seedRichWorkspaceData();
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+
+    const migrationShortcut = await screen.findByTestId("workspace-open-migration-shortcut");
+    await user.click(migrationShortcut);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Migration" })).toHaveAttribute("aria-selected", "true"));
+
+    const recommendationsShortcut = await screen.findByTestId("workspace-open-recommendations-shortcut");
+    await user.click(recommendationsShortcut);
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Recommendations" })).toHaveAttribute("aria-selected", "true"),
+    );
   });
 
   it("shows full audit history tables in activity tab", async () => {

@@ -69,6 +69,19 @@ The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) 
 
 This is a presentation-only improvement. Recommendation generation, queue mutation semantics, polling behavior, and backend/API workflow contracts are unchanged.
 
+## Site Workspace Recommendation Presentation Expectations
+
+The site operator route (`/sites/[site_id]`) now frames recommendation execution as a distinct operational lane:
+
+- top-level hero/control surface communicates current urgency and recommended next action
+- recommendation execution remains in the dedicated `Recommendations` workflow section/tab
+- supporting context (competitor/trust/activity) remains visible but visually secondary to recommendation execution
+- quick tab-lane shortcuts are available to move directly between recommendation and migration workflows
+
+This is still presentation-only:
+- recommendation generation, run/narrative behavior, action semantics, and polling contracts are unchanged.
+- no backend/provider/API behavior changed.
+
 ## Action Control Layer (Frontend)
 
 The operator UI now derives a compact, deterministic **Action Control Layer** from existing recommendation and automation read-model data.

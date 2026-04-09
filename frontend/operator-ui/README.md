@@ -33,3 +33,22 @@ Authentication flow:
    - refresh token in memory only for the active browser session
 5. UI uses bearer access token for business-scoped API calls.
 6. Sign out calls `POST /api/auth/logout` and clears local session state.
+
+## Shared workspace/page composition primitives
+
+Operator-facing routes should prefer shared presentational primitives over page-local framing:
+
+- `OperatorPageHero`
+- `OperatorPageSectionStack`
+- `WorkspaceActionBar`
+- `OperatorRouteSupportState`
+
+Usage guidance:
+- use `OperatorPageHero` for route-level control surfaces (title, summary strip, key actions, next-step visibility)
+- use `OperatorPageSectionStack` to enforce consistent section rhythm after hero surfaces
+- use `WorkspaceActionBar` to separate primary vs secondary action groups
+- use `OperatorRouteSupportState` for loading/error/missing-id support states on detail/workspace routes
+
+Role-aware boundary:
+- these primitives are shared presentation scaffolding for Operator/Admin/User-adapted pages.
+- keep business/workflow semantics in route/domain logic; primitives remain presentational.
