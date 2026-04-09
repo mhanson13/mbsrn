@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import { ActionControls } from "../../../components/action-execution/ActionControls";
 import { MigrationWorkspacePanel } from "../../../components/MigrationWorkspacePanel";
@@ -25,6 +25,16 @@ import {
   type RecommendationDetailClarityView,
   type RecommendationWorkspaceItemViewModel,
 } from "../../../components/sites/workspace/RecommendationWorkspaceItemCard";
+import {
+  buildAutomationPageHref,
+  buildComparisonRunHref,
+  buildCompetitorSetHref,
+  buildNarrativeDetailHref,
+  buildNarrativeHistoryHref,
+  buildRecommendationDetailHref,
+  buildRecommendationRunHref,
+  buildSnapshotRunHref,
+} from "../../../components/sites/workspace/workspaceHrefBuilders";
 import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
   acceptCompetitorProfileDraft,
@@ -138,6 +148,7 @@ const MAX_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
 const MAX_TUNING_REJECTED_CANDIDATE_DEBUG_ROWS = 8;
 const MAX_PROVIDER_ATTEMPT_DEBUG_ROWS = 2;
 const HIDE_SYNTHETIC_DEFAULT_NON_SYNTHETIC_THRESHOLD = 5;
+const WORKSPACE_REFRESH_POLL_INTERVAL_MS = 4000;
 const ZIP_PROMPT_SESSION_KEY_PREFIX = "workspace:zip-prompt-dismissed";
 const SEARCH_ESCALATION_NOTE =
   "Expanded search was used after the initial pass returned no usable competitors.";
@@ -4301,58 +4312,6 @@ function recommendationSourceType(item: Recommendation): string {
   return "unknown";
 }
 
-function buildCompetitorSetHref(setId: string, siteId: string): string {
-  const params = new URLSearchParams();
-  params.set("site_id", siteId);
-  return `/competitors/${setId}?${params.toString()}`;
-}
-
-function buildComparisonRunHref(comparisonRunId: string, siteId: string, setId?: string): string {
-  const params = new URLSearchParams();
-  params.set("site_id", siteId);
-  if (setId) {
-    params.set("set_id", setId);
-  }
-  return `/competitors/comparison-runs/${comparisonRunId}?${params.toString()}`;
-}
-
-function buildSnapshotRunHref(snapshotRunId: string, siteId: string, setId: string): string {
-  const params = new URLSearchParams();
-  params.set("site_id", siteId);
-  params.set("set_id", setId);
-  return `/competitors/snapshot-runs/${snapshotRunId}?${params.toString()}`;
-}
-
-function buildRecommendationDetailHref(recommendationId: string, siteId: string): string {
-  const params = new URLSearchParams();
-  params.set("site_id", siteId);
-  return `/recommendations/${recommendationId}?${params.toString()}`;
-}
-
-function buildRecommendationRunHref(recommendationRunId: string, siteId: string): string {
-  const params = new URLSearchParams();
-  params.set("site_id", siteId);
-  return `/recommendations/runs/${recommendationRunId}?${params.toString()}`;
-}
-
-function buildNarrativeHistoryHref(recommendationRunId: string, siteId: string): string {
-  const params = new URLSearchParams();
-  params.set("site_id", siteId);
-  return `/recommendations/runs/${recommendationRunId}/narratives?${params.toString()}`;
-}
-
-function buildNarrativeDetailHref(recommendationRunId: string, narrativeId: string, siteId: string): string {
-  const params = new URLSearchParams();
-  params.set("site_id", siteId);
-  return `/recommendations/runs/${recommendationRunId}/narratives/${narrativeId}?${params.toString()}`;
-}
-
-function buildAutomationPageHref(siteId: string): string {
-  const params = new URLSearchParams();
-  params.set("site_id", siteId);
-  return `/automation?${params.toString()}`;
-}
-
 function deriveRecommendationTrustTier(
   recommendation: Recommendation,
 ): ActionExecutionItem["trustTier"] {
@@ -5506,6 +5465,144 @@ export default function SiteWorkspacePage() {
     return suggestion.current_value;
   }
 
+  const resetRecommendationQueueActionState = useCallback((includeAutomationActionDecisions = false): void => {
+    setRecommendationActionDecisionByItemId({});
+    setRecommendationActionDecisionSavingByItemId({});
+    setRecommendationActionDecisionErrorByItemId({});
+    setAutomationBindingPendingByActionId({});
+    setAutomationBindingErrorByActionId({});
+    setAutomationRunPendingByActionId({});
+    setAutomationRunErrorByActionId({});
+    if (includeAutomationActionDecisions) {
+      setAutomationActionDecisionByItemId({});
+    }
+  }, []);
+
+  const resetWorkspaceSignalsState = useCallback((options?: {
+    clearGoogleBusinessProfile?: boolean;
+    clearPerformanceSignals?: boolean;
+  }): void => {
+    if (options?.clearGoogleBusinessProfile) {
+      setGoogleBusinessProfileConnection(null);
+      setGoogleBusinessProfileConnectionError(null);
+    }
+    if (options?.clearPerformanceSignals) {
+      setSiteAnalyticsSummary(null);
+      setSiteAnalyticsError(null);
+      setGa4OnboardingStatus(null);
+      setGa4OnboardingError(null);
+      setSearchConsoleSiteSummary(null);
+      setSearchConsoleSiteSummaryError(null);
+    }
+  }, []);
+
+  const resetRecommendationDomainState = useCallback((options?: {
+    clearQueueResponse?: boolean;
+    clearQueueError?: boolean;
+    clearQueueActionState?: boolean;
+    includeAutomationActionDecisions?: boolean;
+    clearRecommendationRuns?: boolean;
+    clearRecommendationRunError?: boolean;
+    clearGenerationState?: boolean;
+    clearNarrativeLookup?: boolean;
+    clearWorkspaceSummaryState?: boolean;
+    clearWorkspaceSummaryError?: string | null;
+    clearTuningSettings?: boolean;
+    clearPromptPreviews?: boolean;
+    clearAutomationRuns?: boolean;
+  }): void => {
+    if (options?.clearQueueResponse) {
+      setQueueResponse(null);
+    }
+    if (options?.clearQueueError) {
+      setQueueError(null);
+    }
+    if (options?.clearQueueActionState) {
+      resetRecommendationQueueActionState(Boolean(options.includeAutomationActionDecisions));
+    }
+    if (options?.clearRecommendationRuns) {
+      setRecommendationRuns([]);
+    }
+    if (options?.clearRecommendationRunError) {
+      setRecommendationRunError(null);
+    }
+    if (options?.clearGenerationState) {
+      setRecommendationGenerationInFlight(false);
+      setRecommendationGenerationMessage(null);
+      setRecommendationGenerationError(null);
+    }
+    if (options?.clearNarrativeLookup) {
+      setLatestNarrativesByRunId({});
+      setNarrativeLookupError(null);
+    }
+    if (options?.clearWorkspaceSummaryState) {
+      setRecommendationWorkspaceSummaryState(null);
+      setLatestCompletedRecommendationRun(null);
+      setLatestCompletedRecommendations([]);
+      setLatestCompletedRecommendationNarrative(null);
+      setLatestCompletedTuningSuggestions([]);
+      setLatestRecommendationApplyOutcome(null);
+      setLatestWorkspaceTrustSummary(null);
+      setLatestCompetitorSectionFreshness(null);
+      setLatestRecommendationSectionFreshness(null);
+      setLatestCompetitorContextHealth(null);
+      setLatestRecommendationEEATGapSummary(null);
+      setLatestRecommendationAnalysisFreshness(null);
+      setLatestRecommendationOrderingExplanation(null);
+      setLatestRecommendationStartHere(null);
+      setLatestRecommendationGroupedRecommendations([]);
+      setSiteLocationContext(null);
+      setSitePrimaryLocation(null);
+      setSitePrimaryBusinessZip(null);
+      setSiteLocationContextStrength("unknown");
+      setSiteLocationContextSource(null);
+      setShowZipCaptureModal(false);
+      setZipCaptureInput("");
+      setZipCaptureSaving(false);
+      setZipCaptureError(null);
+      setTuningPreviewByKey({});
+      setTuningPreviewErrorByKey({});
+      setTuningPreviewLoadingKey(null);
+      if (options?.clearTuningSettings) {
+        setTuningSettings(null);
+      }
+      setTuningApplyMessage(null);
+      setTuningApplyErrorByKey({});
+      setTuningApplyLoadingKey(null);
+      setAiActionFocusedTargetId(null);
+      setPendingAiApplyAttributionByPreviewKey({});
+      setRecentTuningChanges([]);
+      if (options?.clearPromptPreviews) {
+        setLatestCompetitorPromptPreview(null);
+        setLatestRecommendationPromptPreview(null);
+        setPromptPreviewCopyFeedbackByType({ competitor: null, recommendation: null });
+      }
+      if (typeof options?.clearWorkspaceSummaryError === "string") {
+        setLatestCompletedRecommendationsError(options.clearWorkspaceSummaryError);
+      } else {
+        setLatestCompletedRecommendationsError(null);
+      }
+    }
+    if (options?.clearAutomationRuns) {
+      setAutomationRuns([]);
+      setAutomationRunError(null);
+    }
+  }, [resetRecommendationQueueActionState]);
+
+  const resetCompetitorDomainState = useCallback((): void => {
+    setRejectedCompetitorCandidateCount(0);
+    setRejectedCompetitorCandidates([]);
+    setTuningRejectedCompetitorCandidateCount(0);
+    setTuningRejectedCompetitorCandidates([]);
+    setTuningRejectionReasonCounts({});
+    setCompetitorCandidatePipelineSummary(null);
+    setCompetitorProviderAttemptCount(0);
+    setCompetitorProviderDegradedRetryUsed(false);
+    setCompetitorProviderAttempts([]);
+    setCompetitorOutcomeSummary(null);
+    setCompetitorResponseContractSummary(null);
+  }, []);
+
   function applyWorkspaceSummary(summary: RecommendationWorkspaceSummaryResponse): void {
     setRecommendationWorkspaceSummaryState(summary.state);
     setLatestCompletedRecommendationRun(summary.latest_completed_run);
@@ -6516,6 +6613,7 @@ export default function SiteWorkspacePage() {
     selectedSite,
   ]);
 
+  // Primary workspace orchestrator: loads all surface data and resets container state on tenant/site changes.
   useEffect(() => {
     if (context.loading || context.error || !siteId) {
       setLoadingWorkspace(false);
@@ -6526,76 +6624,26 @@ export default function SiteWorkspacePage() {
       setSnapshotRuns([]);
       setComparisonRuns([]);
       setCompetitorError(null);
-      setGoogleBusinessProfileConnection(null);
-      setGoogleBusinessProfileConnectionError(null);
-      setQueueResponse(null);
-      setQueueError(null);
-      setRecommendationActionDecisionByItemId({});
-      setRecommendationActionDecisionSavingByItemId({});
-      setRecommendationActionDecisionErrorByItemId({});
-      setAutomationBindingPendingByActionId({});
-      setAutomationBindingErrorByActionId({});
-      setAutomationRunPendingByActionId({});
-      setAutomationRunErrorByActionId({});
-      setAutomationActionDecisionByItemId({});
-      setRecommendationRuns([]);
-      setRecommendationRunError(null);
-      setRecommendationGenerationInFlight(false);
-      setRecommendationGenerationMessage(null);
-      setRecommendationGenerationError(null);
-      setLatestNarrativesByRunId({});
-      setNarrativeLookupError(null);
-      setLatestCompletedRecommendationRun(null);
-      setLatestCompletedRecommendations([]);
-      setLatestCompletedRecommendationNarrative(null);
-      setLatestCompletedTuningSuggestions([]);
-      setLatestRecommendationApplyOutcome(null);
-      setLatestWorkspaceTrustSummary(null);
-      setLatestCompetitorSectionFreshness(null);
-      setLatestRecommendationSectionFreshness(null);
-      setLatestCompetitorContextHealth(null);
-      setLatestRecommendationEEATGapSummary(null);
-      setLatestRecommendationAnalysisFreshness(null);
-      setLatestRecommendationOrderingExplanation(null);
-      setLatestRecommendationStartHere(null);
-      setLatestRecommendationGroupedRecommendations([]);
-      setSiteLocationContext(null);
-      setSitePrimaryLocation(null);
-      setSitePrimaryBusinessZip(null);
-      setSiteLocationContextStrength("unknown");
-      setSiteLocationContextSource(null);
-      setShowZipCaptureModal(false);
-      setZipCaptureInput("");
-      setZipCaptureSaving(false);
-      setZipCaptureError(null);
-      setRecommendationWorkspaceSummaryState(null);
-      setLatestCompletedRecommendationsError(null);
-      setTuningPreviewByKey({});
-      setTuningPreviewErrorByKey({});
-      setTuningPreviewLoadingKey(null);
-      setTuningSettings(null);
-      setTuningApplyMessage(null);
-      setTuningApplyErrorByKey({});
-      setTuningApplyLoadingKey(null);
-      setAiActionFocusedTargetId(null);
-      setPendingAiApplyAttributionByPreviewKey({});
-      setRecentTuningChanges([]);
+      resetWorkspaceSignalsState({ clearGoogleBusinessProfile: true });
+      resetRecommendationDomainState({
+        clearQueueResponse: true,
+        clearQueueError: true,
+        clearQueueActionState: true,
+        includeAutomationActionDecisions: true,
+        clearRecommendationRuns: true,
+        clearRecommendationRunError: true,
+        clearGenerationState: true,
+        clearNarrativeLookup: true,
+        clearWorkspaceSummaryState: true,
+        clearWorkspaceSummaryError: null,
+        clearTuningSettings: true,
+      });
       setCompetitorProfileGenerationRuns([]);
       setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
       setCompetitorProfileDrafts([]);
       setConfirmSyntheticAcceptByDraftId({});
-      setRejectedCompetitorCandidateCount(0);
-      setRejectedCompetitorCandidates([]);
-      setTuningRejectedCompetitorCandidateCount(0);
-      setTuningRejectedCompetitorCandidates([]);
-      setTuningRejectionReasonCounts({});
-      setCompetitorCandidatePipelineSummary(null);
-      setCompetitorProviderAttemptCount(0);
-      setCompetitorProviderDegradedRetryUsed(false);
-      setCompetitorProviderAttempts([]);
-      setCompetitorOutcomeSummary(null);
-      setCompetitorResponseContractSummary(null);
+      resetCompetitorDomainState();
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
       setCompetitorProfileSummaryError(null);
@@ -6617,72 +6665,28 @@ export default function SiteWorkspacePage() {
     if (!selectedSite) {
       setNotFound(true);
       setLoadingWorkspace(false);
-      setRecommendationRuns([]);
-      setRecommendationRunError(null);
-      setRecommendationGenerationInFlight(false);
-      setRecommendationGenerationMessage(null);
-      setRecommendationGenerationError(null);
-      setLatestNarrativesByRunId({});
-      setNarrativeLookupError(null);
-      setLatestCompletedRecommendationRun(null);
-      setLatestCompletedRecommendations([]);
-      setLatestCompletedRecommendationNarrative(null);
-      setLatestCompletedTuningSuggestions([]);
-      setLatestRecommendationApplyOutcome(null);
-      setLatestWorkspaceTrustSummary(null);
-      setLatestCompetitorSectionFreshness(null);
-      setLatestRecommendationSectionFreshness(null);
-      setLatestCompetitorContextHealth(null);
-      setLatestRecommendationEEATGapSummary(null);
-      setLatestRecommendationAnalysisFreshness(null);
-      setLatestRecommendationOrderingExplanation(null);
-      setLatestRecommendationStartHere(null);
-      setLatestRecommendationGroupedRecommendations([]);
-      setSiteLocationContext(null);
-      setSitePrimaryLocation(null);
-      setSitePrimaryBusinessZip(null);
-      setSiteLocationContextStrength("unknown");
-      setSiteLocationContextSource(null);
-      setShowZipCaptureModal(false);
-      setZipCaptureInput("");
-      setZipCaptureSaving(false);
-      setZipCaptureError(null);
-      setRecommendationWorkspaceSummaryState(null);
-      setLatestCompletedRecommendationsError(null);
-      setTuningPreviewByKey({});
-      setTuningPreviewErrorByKey({});
-      setTuningPreviewLoadingKey(null);
-      setTuningSettings(null);
-      setTuningApplyMessage(null);
-      setTuningApplyErrorByKey({});
-      setTuningApplyLoadingKey(null);
-      setAiActionFocusedTargetId(null);
-      setPendingAiApplyAttributionByPreviewKey({});
-      setRecentTuningChanges([]);
+      resetRecommendationDomainState({
+        clearRecommendationRuns: true,
+        clearRecommendationRunError: true,
+        clearGenerationState: true,
+        clearNarrativeLookup: true,
+        clearWorkspaceSummaryState: true,
+        clearWorkspaceSummaryError: null,
+        clearTuningSettings: true,
+        clearAutomationRuns: true,
+      });
       setCompetitorProfileGenerationRuns([]);
       setCompetitorProfileSummary(null);
       setLatestCompetitorProfileRunId(null);
       setCompetitorProfileDrafts([]);
       setConfirmSyntheticAcceptByDraftId({});
-      setRejectedCompetitorCandidateCount(0);
-      setRejectedCompetitorCandidates([]);
-      setTuningRejectedCompetitorCandidateCount(0);
-      setTuningRejectedCompetitorCandidates([]);
-      setTuningRejectionReasonCounts({});
-      setCompetitorCandidatePipelineSummary(null);
-      setCompetitorProviderAttemptCount(0);
-      setCompetitorProviderDegradedRetryUsed(false);
-      setCompetitorProviderAttempts([]);
-      setCompetitorOutcomeSummary(null);
-      setCompetitorResponseContractSummary(null);
+      resetCompetitorDomainState();
       setCompetitorProfileLoading(false);
       setCompetitorProfileError(null);
       setCompetitorProfileSummaryError(null);
       setRetryInFlight(false);
       setCompetitorProfilePolling(false);
       setCompetitorProfilePollingTargetRunId(null);
-      setAutomationRuns([]);
-      setAutomationRunError(null);
       return;
     }
 
@@ -6693,70 +6697,26 @@ export default function SiteWorkspacePage() {
       setNotFound(false);
       setAuditError(null);
       setCompetitorError(null);
-      setGoogleBusinessProfileConnection(null);
-      setGoogleBusinessProfileConnectionError(null);
+      resetWorkspaceSignalsState({
+        clearGoogleBusinessProfile: true,
+        clearPerformanceSignals: true,
+      });
       setQueueError(null);
       setRecommendationRunError(null);
       setAutomationRuns([]);
       setAutomationRunError(null);
       setNarrativeLookupError(null);
-      setLatestCompletedRecommendationRun(null);
-      setLatestCompletedRecommendations([]);
-      setLatestCompletedRecommendationNarrative(null);
-      setLatestCompletedTuningSuggestions([]);
-      setLatestRecommendationApplyOutcome(null);
-      setLatestWorkspaceTrustSummary(null);
-      setLatestCompetitorSectionFreshness(null);
-      setLatestRecommendationSectionFreshness(null);
-      setLatestCompetitorContextHealth(null);
-      setLatestRecommendationEEATGapSummary(null);
-      setLatestRecommendationAnalysisFreshness(null);
-      setLatestRecommendationOrderingExplanation(null);
-      setLatestRecommendationStartHere(null);
-      setLatestRecommendationGroupedRecommendations([]);
-      setSiteLocationContext(null);
-      setSitePrimaryLocation(null);
-      setSitePrimaryBusinessZip(null);
-      setSiteLocationContextStrength("unknown");
-      setSiteLocationContextSource(null);
-      setShowZipCaptureModal(false);
-      setZipCaptureInput("");
-      setZipCaptureSaving(false);
-      setZipCaptureError(null);
-      setRecommendationWorkspaceSummaryState(null);
-      setLatestCompletedRecommendationsError(null);
-      setTuningPreviewByKey({});
-      setTuningPreviewErrorByKey({});
-      setTuningPreviewLoadingKey(null);
-      setTuningSettings(null);
-      setTuningApplyMessage(null);
-      setTuningApplyErrorByKey({});
-      setTuningApplyLoadingKey(null);
-      setAiActionFocusedTargetId(null);
-      setPendingAiApplyAttributionByPreviewKey({});
-      setRecentTuningChanges([]);
-      setSiteAnalyticsSummary(null);
-      setSiteAnalyticsError(null);
-      setGa4OnboardingStatus(null);
-      setGa4OnboardingError(null);
-      setSearchConsoleSiteSummary(null);
-      setSearchConsoleSiteSummaryError(null);
+      resetRecommendationDomainState({
+        clearWorkspaceSummaryState: true,
+        clearWorkspaceSummaryError: null,
+        clearTuningSettings: true,
+      });
       setCompetitorProfilePollingTargetRunId(null);
       setCompetitorProfilePolling(false);
       setCompetitorProfileSummaryError(null);
       setCompetitorProfileActionError(null);
       setCompetitorProfileActionMessage(null);
-      setRejectedCompetitorCandidateCount(0);
-      setRejectedCompetitorCandidates([]);
-      setTuningRejectedCompetitorCandidateCount(0);
-      setTuningRejectedCompetitorCandidates([]);
-      setTuningRejectionReasonCounts({});
-      setCompetitorCandidatePipelineSummary(null);
-      setCompetitorProviderAttemptCount(0);
-      setCompetitorProviderDegradedRetryUsed(false);
-      setCompetitorProviderAttempts([]);
-      setCompetitorOutcomeSummary(null);
-      setCompetitorResponseContractSummary(null);
+      resetCompetitorDomainState();
 
       const [
         auditResult,
@@ -6884,22 +6844,10 @@ export default function SiteWorkspacePage() {
 
       if (queueResult.status === "fulfilled") {
         setQueueResponse(queueResult.value);
-        setRecommendationActionDecisionByItemId({});
-        setRecommendationActionDecisionSavingByItemId({});
-        setRecommendationActionDecisionErrorByItemId({});
-        setAutomationBindingPendingByActionId({});
-        setAutomationBindingErrorByActionId({});
-        setAutomationRunPendingByActionId({});
-        setAutomationRunErrorByActionId({});
+        resetRecommendationQueueActionState();
       } else {
         setQueueResponse(null);
-        setRecommendationActionDecisionByItemId({});
-        setRecommendationActionDecisionSavingByItemId({});
-        setRecommendationActionDecisionErrorByItemId({});
-        setAutomationBindingPendingByActionId({});
-        setAutomationBindingErrorByActionId({});
-        setAutomationRunPendingByActionId({});
-        setAutomationRunErrorByActionId({});
+        resetRecommendationQueueActionState();
         setQueueError(safeSectionErrorMessage("recommendation queue", queueResult.reason));
       }
 
@@ -6971,36 +6919,14 @@ export default function SiteWorkspacePage() {
       if (recommendationWorkspaceSummaryResult.status === "fulfilled") {
         applyWorkspaceSummary(recommendationWorkspaceSummaryResult.value);
       } else {
-        setRecommendationWorkspaceSummaryState(null);
-        setLatestCompletedRecommendationRun(null);
-        setLatestCompletedRecommendations([]);
-        setLatestCompletedRecommendationNarrative(null);
-        setLatestCompletedTuningSuggestions([]);
-        setLatestRecommendationApplyOutcome(null);
-        setLatestWorkspaceTrustSummary(null);
-        setLatestCompetitorSectionFreshness(null);
-        setLatestRecommendationSectionFreshness(null);
-        setLatestCompetitorContextHealth(null);
-        setLatestRecommendationEEATGapSummary(null);
-        setLatestRecommendationAnalysisFreshness(null);
-        setLatestRecommendationOrderingExplanation(null);
-        setLatestRecommendationStartHere(null);
-        setLatestRecommendationGroupedRecommendations([]);
-        setSiteLocationContext(null);
-        setSitePrimaryLocation(null);
-        setSitePrimaryBusinessZip(null);
-        setSiteLocationContextStrength("unknown");
-        setSiteLocationContextSource(null);
-        setShowZipCaptureModal(false);
-        setZipCaptureInput("");
-        setZipCaptureSaving(false);
-        setZipCaptureError(null);
-        setLatestCompetitorPromptPreview(null);
-        setLatestRecommendationPromptPreview(null);
-        setPromptPreviewCopyFeedbackByType({ competitor: null, recommendation: null });
-        setLatestCompletedRecommendationsError(
-          safeSectionErrorMessage("recommendation workspace summary", recommendationWorkspaceSummaryResult.reason),
-        );
+        resetRecommendationDomainState({
+          clearWorkspaceSummaryState: true,
+          clearWorkspaceSummaryError: safeSectionErrorMessage(
+            "recommendation workspace summary",
+            recommendationWorkspaceSummaryResult.reason,
+          ),
+          clearPromptPreviews: true,
+        });
       }
 
       if (businessSettingsResult.status === "fulfilled") {
@@ -7101,17 +7027,7 @@ export default function SiteWorkspacePage() {
             }
             setCompetitorProfileDrafts([]);
             setConfirmSyntheticAcceptByDraftId({});
-            setRejectedCompetitorCandidateCount(0);
-            setRejectedCompetitorCandidates([]);
-            setTuningRejectedCompetitorCandidateCount(0);
-            setTuningRejectedCompetitorCandidates([]);
-            setTuningRejectionReasonCounts({});
-            setCompetitorCandidatePipelineSummary(null);
-            setCompetitorProviderAttemptCount(0);
-            setCompetitorProviderDegradedRetryUsed(false);
-            setCompetitorProviderAttempts([]);
-            setCompetitorOutcomeSummary(null);
-            setCompetitorResponseContractSummary(null);
+            resetCompetitorDomainState();
             setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", error));
           } finally {
             if (!cancelled) {
@@ -7121,17 +7037,7 @@ export default function SiteWorkspacePage() {
         } else {
           setCompetitorProfileDrafts([]);
           setConfirmSyntheticAcceptByDraftId({});
-          setRejectedCompetitorCandidateCount(0);
-          setRejectedCompetitorCandidates([]);
-          setTuningRejectedCompetitorCandidateCount(0);
-          setTuningRejectedCompetitorCandidates([]);
-          setTuningRejectionReasonCounts({});
-          setCompetitorCandidatePipelineSummary(null);
-          setCompetitorProviderAttemptCount(0);
-          setCompetitorProviderDegradedRetryUsed(false);
-          setCompetitorProviderAttempts([]);
-          setCompetitorOutcomeSummary(null);
-          setCompetitorResponseContractSummary(null);
+          resetCompetitorDomainState();
           setCompetitorProfileLoading(false);
         }
       } else {
@@ -7140,17 +7046,7 @@ export default function SiteWorkspacePage() {
         setCompetitorProfilePollingTargetRunId(null);
         setCompetitorProfileDrafts([]);
         setConfirmSyntheticAcceptByDraftId({});
-        setRejectedCompetitorCandidateCount(0);
-        setRejectedCompetitorCandidates([]);
-        setTuningRejectedCompetitorCandidateCount(0);
-        setTuningRejectedCompetitorCandidates([]);
-        setTuningRejectionReasonCounts({});
-        setCompetitorCandidatePipelineSummary(null);
-        setCompetitorProviderAttemptCount(0);
-        setCompetitorProviderDegradedRetryUsed(false);
-        setCompetitorProviderAttempts([]);
-        setCompetitorOutcomeSummary(null);
-        setCompetitorResponseContractSummary(null);
+        resetCompetitorDomainState();
         setCompetitorProfileLoading(false);
         setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", competitorProfileRunsResult.reason));
       }
@@ -7173,11 +7069,16 @@ export default function SiteWorkspacePage() {
     context.error,
     context.loading,
     context.token,
+    resetCompetitorDomainState,
+    resetRecommendationDomainState,
+    resetRecommendationQueueActionState,
+    resetWorkspaceSignalsState,
     siteId,
     selectedSite,
     workspaceRefreshNonce,
   ]);
 
+  // Competitor profile poll loop for queued/running profile-generation runs.
   useEffect(() => {
     if (
       !context.token ||
@@ -7294,17 +7195,7 @@ export default function SiteWorkspacePage() {
           return;
         }
         setCompetitorProfileError(safeSectionErrorMessage("AI competitor profiles", error));
-        setRejectedCompetitorCandidateCount(0);
-        setRejectedCompetitorCandidates([]);
-        setTuningRejectedCompetitorCandidateCount(0);
-        setTuningRejectedCompetitorCandidates([]);
-        setTuningRejectionReasonCounts({});
-        setCompetitorCandidatePipelineSummary(null);
-        setCompetitorProviderAttemptCount(0);
-        setCompetitorProviderDegradedRetryUsed(false);
-        setCompetitorProviderAttempts([]);
-        setCompetitorOutcomeSummary(null);
-        setCompetitorResponseContractSummary(null);
+        resetCompetitorDomainState();
         setCompetitorProfilePolling(false);
         setCompetitorProfilePollingTargetRunId(null);
       } finally {
@@ -7328,9 +7219,11 @@ export default function SiteWorkspacePage() {
     context.businessId,
     context.token,
     competitorProfilePollingTargetRunId,
+    resetCompetitorDomainState,
     siteId,
   ]);
 
+  // Workspace heartbeat refresh while recommendation lineage or automation runs are in flight.
   useEffect(() => {
     const hasInFlightLineage = (queueResponse?.items || []).some((item) =>
       hasInFlightLineageExecution(item.action_lineage || null),
@@ -7351,7 +7244,7 @@ export default function SiteWorkspacePage() {
 
     const intervalId = window.setInterval(() => {
       setWorkspaceRefreshNonce((current) => current + 1);
-    }, 4000);
+    }, WORKSPACE_REFRESH_POLL_INTERVAL_MS);
 
     return () => {
       window.clearInterval(intervalId);
