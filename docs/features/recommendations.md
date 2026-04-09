@@ -1,5 +1,34 @@
 # Recommendations Feature Notes
 
+## Recommendations Page Decision Support (Frontend)
+
+The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) now uses the standardized operator page composition and workspace primitives to make triage decisions clearer at the top of the page.
+
+### Composition and primitives used
+
+- `OperatorPageHero`
+- `OperatorPageSectionStack`
+- `WorkspaceActionBar`
+- `WorkspaceMessageStack`
+- `WorkspaceEmptyStateCard`
+- `WorkspaceTableShell`
+- `WorkspaceMetadataGrid`
+
+### Operator-visible improvements
+
+- A top decision-support layer now answers:
+  - what matters most right now
+  - what to do next
+  - current queue posture/filter scope
+- Primary actions are grouped near the hero (`Open top ready recommendation`, `Refresh Queue`, `Open Site Workspace`).
+- Queue support states (loading/error/progress/polling) are standardized in a compact message stack.
+- Quick-scan and table framing now use consistent empty-state/table-shell treatment.
+- Outcome snapshot details remain available but are positioned as secondary detail below the main queue work zone.
+
+### Workflow boundary
+
+This is a presentation-only improvement. Recommendation generation, queue mutation semantics, polling behavior, and backend/API workflow contracts are unchanged.
+
 ## Action Control Layer (Frontend)
 
 The operator UI now derives a compact, deterministic **Action Control Layer** from existing recommendation and automation read-model data.

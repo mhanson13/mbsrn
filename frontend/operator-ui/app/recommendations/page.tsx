@@ -9,9 +9,18 @@ import { OutputReview } from "../../components/action-execution/OutputReview";
 import { DetailFocusPanel, type DetailFocusFact } from "../../components/layout/DetailFocusPanel";
 import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { PageContainer } from "../../components/layout/PageContainer";
+import {
+  OperatorPageHero,
+  OperatorPageSectionStack,
+} from "../../components/layout/OperatorPageSurface";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkspaceActionBar } from "../../components/layout/WorkspaceActionBar";
+import { WorkspaceEmptyStateCard } from "../../components/layout/WorkspaceEmptyStateCard";
+import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
+import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "../../components/layout/WorkspaceMetadataGrid";
+import { WorkspaceTableShell } from "../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -2799,15 +2808,13 @@ function RecommendationsPageContent() {
       width="full"
       density="compact"
     >
-      <div className="role-dashboard-landing">
-        <SectionCard variant="primary" className="role-dashboard-hero">
-          <SectionHeader
-            title="Recommendation Workflow"
-            subtitle="Review priorities, update recommendation status, and keep action flow moving."
-            headingLevel={1}
-            variant="hero"
-          />
-          <div className="workspace-summary-strip role-summary-strip">
+      <OperatorPageHero
+        title="Recommendation Workflow"
+        subtitle="Review priorities, update recommendation status, and keep action flow moving."
+        headingLevel={1}
+        data-testid="recommendations-page-hero"
+        summary={(
+          <div data-testid="recommendations-summary-strip">
             <SummaryStatCard
               label="Filtered recommendations"
               value={queueSummary.total}
@@ -2837,19 +2844,61 @@ function RecommendationsPageContent() {
               variant="elevated"
             />
           </div>
-        </SectionCard>
-      </div>
+        )}
+      >
+        <WorkspaceMetadataGrid data-testid="recommendations-decision-support-grid">
+          <WorkspaceMetadataItem label="What matters now">
+            <p className="hint muted">{recommendationQueueTakeaway}</p>
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Do this next">
+            <p className="hint muted">
+              <span className="text-strong">
+                {recommendationQueueNextStep ? `${recommendationQueueNextStep.label}.` : "Review recommendation queue state."}
+              </span>{" "}
+              {recommendationQueueNextStep?.note || "Queue context is still settling."}
+            </p>
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Current queue posture">
+            <p className="hint muted">
+              {queueSummary.open > 0
+                ? "Ready-now recommendations require operator review."
+                : queueSummary.accepted > 0
+                  ? "Applied recommendations should be monitored for visibility changes."
+                  : "No immediate recommendation action is required in this view."}
+            </p>
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Filter scope">
+            <p className="hint muted">
+              {hasActiveFilters
+                ? "Filtered recommendation subset is active."
+                : "Viewing all recommendation statuses."}
+            </p>
+          </WorkspaceMetadataItem>
+        </WorkspaceMetadataGrid>
+        <WorkspaceActionBar variant="primary" data-testid="recommendations-page-primary-actions">
+          {recommendationQueueNextStep ? (
+            <Link href={recommendationQueueNextStep.href} className="button button-primary">
+              {recommendationQueueNextStep.label}
+            </Link>
+          ) : null}
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => setBulkRefreshNonce((currentValue) => currentValue + 1)}
+            disabled={loadingItems}
+          >
+            Refresh Queue
+          </button>
+          {context.selectedSiteId ? (
+            <Link href={`/sites/${context.selectedSiteId}`} className="button button-tertiary">
+              Open Site Workspace
+            </Link>
+          ) : null}
+        </WorkspaceActionBar>
+      </OperatorPageHero>
 
-      <DetailFocusPanel
-        data-testid="recommendation-queue-outcome-focus"
-        title="Recommendation outcome snapshot"
-        takeaway={recommendationQueueTakeaway}
-        nextStep={recommendationQueueNextStep}
-        facts={recommendationQueueFacts}
-        detailHint="Queue controls and recommendation details below show action history, rationale, and lineage."
-      />
-
-      <SectionCard variant="summary" className="role-surface-support">
+      <OperatorPageSectionStack>
+        <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader
           title="Recommendation queue"
           subtitle="Filter, sort, batch update, and open recommendation details."
@@ -2993,7 +3042,9 @@ function RecommendationsPageContent() {
             Summary-first cards show what each recommendation is, its current readiness, and the best next action.
           </p>
           {recommendationQuickScanItems.length === 0 && !loadingItems ? (
-            <p className="hint muted">No recommendation items available for quick scan.</p>
+            <WorkspaceEmptyStateCard compact={true}>
+              <p className="hint muted">No recommendation items available for quick scan.</p>
+            </WorkspaceEmptyStateCard>
           ) : null}
           {recommendationQuickScanItems.length > 0 ? (
             <div className="operational-item-list">
@@ -3272,7 +3323,11 @@ function RecommendationsPageContent() {
           ) : null}
         </div>
 
-        <div className="row-wrap-end">
+        <WorkspaceActionBar
+          variant="secondary"
+          className="row-wrap-end"
+          data-testid="recommendations-pagination-actions"
+        >
           <div className="stack-tight min-width-140">
           <label htmlFor="recommendation-page-size">Results per page</label>
           <select
@@ -3312,25 +3367,38 @@ function RecommendationsPageContent() {
           <span className="hint muted push-right">
           Showing {firstVisiblePosition}-{lastVisiblePosition} of {resolvedTotalRecommendations}
           </span>
-        </div>
+        </WorkspaceActionBar>
 
-        {loadingItems ? <p className="hint muted">Loading recommendations...</p> : null}
-        {itemsError ? <p className="hint error">{itemsError}</p> : null}
-        {bulkActionSuccess ? <p className="hint">{bulkActionSuccess}</p> : null}
-        {showInlineBulkActionError ? <p className="hint error">{bulkActionError}</p> : null}
-        {bulkActionProgress ? (
-          <p className="hint muted" data-testid="bulk-action-progress">
-            Processing {bulkActionProgress.processed}/{bulkActionProgress.total} • {bulkActionProgress.succeeded} succeeded •{" "}
-            {bulkActionProgress.failed} failed
-          </p>
-        ) : null}
-        {executionPollingActive ? (
-          <p className="hint muted" data-testid="recommendation-execution-polling-status">
-            Automation execution is in progress. Status refreshes automatically every few seconds.
-          </p>
-        ) : null}
+        {loadingItems
+          || itemsError
+          || bulkActionSuccess
+          || showInlineBulkActionError
+          || Boolean(bulkActionProgress)
+          || executionPollingActive ? (
+            <WorkspaceMessageStack data-testid="recommendations-page-message-stack">
+              {loadingItems ? <p className="hint muted">Loading recommendations...</p> : null}
+              {itemsError ? <p className="hint error">{itemsError}</p> : null}
+              {bulkActionSuccess ? <p className="hint">{bulkActionSuccess}</p> : null}
+              {showInlineBulkActionError ? <p className="hint error">{bulkActionError}</p> : null}
+              {bulkActionProgress ? (
+                <p className="hint muted" data-testid="bulk-action-progress">
+                  Processing {bulkActionProgress.processed}/{bulkActionProgress.total} • {bulkActionProgress.succeeded} succeeded •{" "}
+                  {bulkActionProgress.failed} failed
+                </p>
+              ) : null}
+              {executionPollingActive ? (
+                <p className="hint muted" data-testid="recommendation-execution-polling-status">
+                  Automation execution is in progress. Status refreshes automatically every few seconds.
+                </p>
+              ) : null}
+            </WorkspaceMessageStack>
+            ) : null}
 
-        <div className="row-wrap-tight">
+        <WorkspaceActionBar
+          variant="primary"
+          className="row-wrap-tight"
+          data-testid="recommendations-bulk-actions"
+        >
           <button
             type="button"
             className="button button-primary"
@@ -3352,9 +3420,9 @@ function RecommendationsPageContent() {
             {bulkActionInFlight === "dismissed" ? "Applying..." : "Dismiss Selected"}
           </button>
           <span className="hint muted">{selectedCount} selected on this page</span>
-        </div>
+        </WorkspaceActionBar>
 
-        <div className="table-container">
+        <WorkspaceTableShell data-testid="recommendations-table-shell">
           <table className="table table-dense recommendations-table">
             <thead>
               <tr>
@@ -3765,8 +3833,18 @@ function RecommendationsPageContent() {
               ) : null}
             </tbody>
           </table>
-        </div>
+        </WorkspaceTableShell>
       </SectionCard>
+
+        <DetailFocusPanel
+          data-testid="recommendation-queue-outcome-focus"
+          title="Recommendation outcome snapshot"
+          takeaway={recommendationQueueTakeaway}
+          nextStep={recommendationQueueNextStep}
+          facts={recommendationQueueFacts}
+          detailHint="Queue controls and recommendation details below show action history, rationale, and lineage."
+        />
+      </OperatorPageSectionStack>
     </PageContainer>
   );
 }

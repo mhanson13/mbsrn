@@ -270,6 +270,19 @@ describe("recommendations queue optimistic workflows", () => {
     expect(headerCells).not.toContain("Business");
     expect(headerCells).not.toContain("Site");
     expect(document.querySelector(".page-container-width-full")).toBeTruthy();
+    expect(screen.getByTestId("recommendations-page-hero")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendations-summary-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendations-decision-support-grid")).toBeInTheDocument();
+    expect(screen.getByText("What matters now")).toBeInTheDocument();
+    expect(screen.getByText("Do this next")).toBeInTheDocument();
+    const heroActions = screen.getByTestId("recommendations-page-primary-actions");
+    expect(within(heroActions).getByRole("link", { name: "Open top ready recommendation" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/recommendations/rec-1"),
+    );
+    expect(within(heroActions).getByRole("button", { name: "Refresh Queue" })).toBeInTheDocument();
+    expect(screen.getByTestId("recommendations-bulk-actions")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendations-table-shell")).toBeInTheDocument();
     expect(screen.getByTestId("recommendation-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-1");
     expect(quickScanItem).toHaveTextContent("Recommendation-only review");
