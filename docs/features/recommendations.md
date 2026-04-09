@@ -61,9 +61,13 @@ The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) 
   - what to do next
   - current queue posture/filter scope
 - Primary actions are grouped near the hero (`Open top ready recommendation`, `Refresh Queue`, `Open Site Workspace`).
-- Queue support states (loading/error/progress/polling) are standardized in a compact message stack.
-- Quick-scan and table framing now use consistent empty-state/table-shell treatment.
-- Outcome snapshot details remain available but are positioned as secondary detail below the main queue work zone.
+- Queue control surfaces are separated into explicit sections:
+  - `Queue controls` (presets, filters, sort, scope metrics)
+  - `Queue quick scan` (summary-first execution cards)
+  - `Queue execution and history` (pagination, bulk actions, table, progress/error messaging)
+- Queue support states (loading/error/progress/polling) are standardized with `OperatorRouteSupportState` and `WorkspaceMessageStack`.
+- Quick-scan and history framing use consistent empty-state/table-shell treatment.
+- Outcome snapshot details remain available but are positioned as secondary detail below the main queue execution surfaces.
 
 ### Workflow boundary
 

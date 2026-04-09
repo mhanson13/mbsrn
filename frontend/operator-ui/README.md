@@ -48,6 +48,8 @@ Usage guidance:
 - use `OperatorPageSectionStack` to enforce consistent section rhythm after hero surfaces
 - use `WorkspaceActionBar` to separate primary vs secondary action groups
 - use `OperatorRouteSupportState` for loading/error/missing-id support states on detail/workspace routes
+- keep high-traffic operator routes (including `/automation`) in a control-surface cadence: hero -> primary actions -> section stack (operations, outcomes, history)
+- on `/recommendations`, keep a decision-first cadence: hero -> queue controls -> quick scan -> execution/history -> secondary outcome snapshot
 
 Role-aware boundary:
 - these primitives are shared presentation scaffolding for Operator/Admin/User-adapted pages.

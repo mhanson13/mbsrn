@@ -153,7 +153,7 @@ function getRecommendationRow(title: string): HTMLElement {
   return row;
 }
 
-function baseOperatorContext(): OperatorContextMockValue {
+function baseOperatorContext(overrides: Partial<OperatorContextMockValue> = {}): OperatorContextMockValue {
   return {
     loading: false,
     error: null,
@@ -163,6 +163,7 @@ function baseOperatorContext(): OperatorContextMockValue {
     selectedSiteId: "site-1",
     setSelectedSiteId: jest.fn(),
     refreshSites: jest.fn(),
+    ...overrides,
   };
 }
 
@@ -201,6 +202,17 @@ beforeEach(() => {
 });
 
 describe("recommendations queue optimistic workflows", () => {
+  it("renders a no-sites support state when no sites are configured", () => {
+    mockUseOperatorContext.mockReturnValue(baseOperatorContext({ sites: [], selectedSiteId: null }));
+
+    render(<RecommendationsPage />);
+
+    expect(screen.getByRole("heading", { name: "Recommendation Workflow" })).toBeInTheDocument();
+    expect(
+      screen.getByText("No SEO sites are configured yet. Add a site first to view recommendations."),
+    ).toBeInTheDocument();
+  });
+
   it("updates selected visible rows immediately, rolls back failures, and re-selects failed rows", async () => {
     navigationState.searchParams = new URLSearchParams("sort=newest&page=1&page_size=25");
     const recOne = createRecommendation("rec-1", "open", "high", "Recommendation One");
@@ -281,6 +293,9 @@ describe("recommendations queue optimistic workflows", () => {
       expect.stringContaining("/recommendations/rec-1"),
     );
     expect(within(heroActions).getByRole("button", { name: "Refresh Queue" })).toBeInTheDocument();
+    expect(screen.getByTestId("recommendations-queue-controls-actions")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendations-quick-scan-section")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendations-execution-history-section")).toBeInTheDocument();
     expect(screen.getByTestId("recommendations-bulk-actions")).toBeInTheDocument();
     expect(screen.getByTestId("recommendations-table-shell")).toBeInTheDocument();
     expect(screen.getByTestId("recommendation-quick-scan")).toBeInTheDocument();

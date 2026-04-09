@@ -13,6 +13,7 @@ import {
   OperatorPageHero,
   OperatorPageSectionStack,
 } from "../../components/layout/OperatorPageSurface";
+import { OperatorRouteSupportState } from "../../components/layout/OperatorRouteSupportState";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
@@ -2762,44 +2763,26 @@ function RecommendationsPageContent() {
 
   if (context.loading) {
     return (
-      <PageContainer width="full" density="compact">
-        <SectionCard as="div" variant="support" className="role-surface-support">
-          <SectionHeader
-            title="Recommendation Workflow"
-            subtitle="Loading recommendation queue state for your selected site."
-            headingLevel={1}
-            variant="support"
-          />
-        </SectionCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Recommendation Workflow"
+        subtitle="Loading recommendation queue state for your selected site."
+      />
     );
   }
   if (context.error) {
     return (
-      <PageContainer width="full" density="compact">
-        <SectionCard as="div" variant="support" className="role-surface-support">
-          <SectionHeader
-            title="Recommendation Workflow"
-            subtitle="Unable to load tenant context. Refresh and sign in again."
-            headingLevel={1}
-            variant="support"
-          />
-        </SectionCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Recommendation Workflow"
+        subtitle="Unable to load tenant context. Refresh and sign in again."
+      />
     );
   }
   if (context.sites.length === 0) {
     return (
-      <PageContainer width="full" density="compact">
-        <SectionCard variant="support" className="role-surface-support">
-          <SectionHeader
-            title="Recommendation Workflow"
-            subtitle="No SEO sites are configured yet. Add a site first to view recommendations."
-            headingLevel={1}
-            variant="support"
-          />
-        </SectionCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Recommendation Workflow"
+        subtitle="No SEO sites are configured yet. Add a site first to view recommendations."
+      />
     );
   }
 
@@ -2900,8 +2883,8 @@ function RecommendationsPageContent() {
       <OperatorPageSectionStack>
         <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader
-          title="Recommendation queue"
-          subtitle="Filter, sort, batch update, and open recommendation details."
+          title="Queue controls"
+          subtitle="Set queue scope and ordering, then move into execution and review."
           headingLevel={2}
           variant="support"
         />
@@ -3035,12 +3018,29 @@ function RecommendationsPageContent() {
           </div>
         </div>
         <p className="hint muted">Summary cards reflect all filtered results across pages.</p>
+        <WorkspaceActionBar
+          variant="secondary"
+          className="row-wrap-end"
+          data-testid="recommendations-queue-controls-actions"
+        >
+          <span className="hint muted">Scope: {hasActiveFilters ? "Filtered queue" : "All recommendations"}</span>
+          <span className="hint muted">Current page: {activePage}</span>
+          <span className="hint muted">Results per page: {pageSize}</span>
+        </WorkspaceActionBar>
+      </SectionCard>
 
-        <div className="stack" data-testid="recommendation-quick-scan">
-          <h3 className="heading-reset">Queue quick scan</h3>
-          <p className="hint muted">
-            Summary-first cards show what each recommendation is, its current readiness, and the best next action.
-          </p>
+        <SectionCard
+          variant="summary"
+          className="role-surface-support"
+          data-testid="recommendations-quick-scan-section"
+        >
+          <SectionHeader
+            title="Queue quick scan"
+            subtitle="Summary-first cards show current readiness and best-next-action before deep detail review."
+            headingLevel={2}
+            variant="support"
+          />
+          <div className="stack" data-testid="recommendation-quick-scan">
           {recommendationQuickScanItems.length === 0 && !loadingItems ? (
             <WorkspaceEmptyStateCard compact={true}>
               <p className="hint muted">No recommendation items available for quick scan.</p>
@@ -3321,8 +3321,20 @@ function RecommendationsPageContent() {
               })}
             </div>
           ) : null}
-        </div>
+          </div>
+        </SectionCard>
 
+        <SectionCard
+          variant="summary"
+          className="role-surface-support"
+          data-testid="recommendations-execution-history-section"
+        >
+          <SectionHeader
+            title="Queue execution and history"
+            subtitle="Review progress messages, run bulk actions, and inspect recommendation execution detail."
+            headingLevel={2}
+            variant="support"
+          />
         <WorkspaceActionBar
           variant="secondary"
           className="row-wrap-end"
@@ -3852,18 +3864,12 @@ function RecommendationsPageContent() {
 export default function RecommendationsPage() {
   return (
     <Suspense
-      fallback={
-        <PageContainer width="full" density="compact">
-          <SectionCard as="div" variant="support" className="role-surface-support">
-            <SectionHeader
-              title="Recommendation Workflow"
-              subtitle="Loading recommendation queue state for your selected site."
-              headingLevel={1}
-              variant="support"
-            />
-          </SectionCard>
-        </PageContainer>
-      }
+      fallback={(
+        <OperatorRouteSupportState
+          title="Recommendation Workflow"
+          subtitle="Loading recommendation queue state for your selected site."
+        />
+      )}
     >
       <RecommendationsPageContent />
     </Suspense>

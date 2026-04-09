@@ -20,6 +20,21 @@ Operator-visible run trigger failures are mapped to actionable states:
 - missing inputs/validation: `This site is missing required automation inputs. Review site setup and retry.`
 - unavailable/other errors: `Automation run creation is unavailable for this site right now.`
 
+## Automation Page Control-Surface Modernization
+
+The `/automation` route now follows the same control-surface/page composition rhythm used on upgraded operator routes:
+
+- route hero (`OperatorPageHero`) with summary strip metrics and decision-first status context
+- explicit primary action grouping (`WorkspaceActionBar`) for run/start and refresh actions
+- post-hero section cadence (`OperatorPageSectionStack`) separating:
+  - automation operations/configuration
+  - latest run outcome
+  - run quick scan
+  - run history table
+- standardized support-state framing (`OperatorRouteSupportState`, `WorkspaceMessageStack`, `WorkspaceEmptyStateCard`, `WorkspaceTableShell`)
+
+This is a frontend presentation upgrade only. Automation orchestration, polling cadence, API contracts, and execution semantics are unchanged.
+
 ## Automation Configuration Visibility and Step Editor
 
 Automation run history exposes the effective run configuration so skipped-step outcomes are explainable, and now supports a minimal step-toggle editor for admins.

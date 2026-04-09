@@ -8,9 +8,19 @@ import { OutputReview } from "../../components/action-execution/OutputReview";
 import { useAuth } from "../../components/AuthProvider";
 import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { PageContainer } from "../../components/layout/PageContainer";
+import {
+  OperatorPageHero,
+  OperatorPageSectionStack,
+} from "../../components/layout/OperatorPageSurface";
+import { OperatorRouteSupportState } from "../../components/layout/OperatorRouteSupportState";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkspaceActionBar } from "../../components/layout/WorkspaceActionBar";
+import { WorkspaceEmptyStateCard } from "../../components/layout/WorkspaceEmptyStateCard";
+import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
+import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "../../components/layout/WorkspaceMetadataGrid";
+import { WorkspaceTableShell } from "../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -836,6 +846,15 @@ export default function AutomationPage() {
       enabled: automationConfig ? automationConfig[field] : null,
     })),
   }));
+  const automationControlStatusLabel = latestRunActionPresentation?.label || latestRunActionState.label;
+  const automationControlOutcome = latestRunActionPresentation?.outcome || latestRunActionState.outcome;
+  const automationControlNextStep = latestRunActionPresentation?.nextStep || latestRunActionState.nextStep;
+  const automationControlFocus = latestRun
+    ? summarizeAutomationRunOutcome(latestRun)
+    : "No automation runs recorded yet for this site.";
+  const latestRunActivityAt = latestRun
+    ? formatDateTime(latestRun.finished_at || latestRun.started_at || latestRun.created_at || null)
+    : "-";
 
   function handleLocalDecision(actionItemId: string, decision: ActionDecision): void {
     setActionDecisions((current) => ({
@@ -1022,58 +1041,38 @@ export default function AutomationPage() {
 
   if (context.loading) {
     return (
-      <PageContainer width="wide" density="compact">
-        <SectionCard as="div" variant="support" className="role-surface-support">
-          <SectionHeader
-            title="Automation Run History"
-            subtitle="Loading automation run status for your selected site."
-            headingLevel={1}
-            variant="support"
-          />
-        </SectionCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Automation Run History"
+        subtitle="Loading automation run status for your selected site."
+      />
     );
   }
   if (context.error) {
     return (
-      <PageContainer width="wide" density="compact">
-        <SectionCard as="div" variant="support" className="role-surface-support">
-          <SectionHeader
-            title="Automation Run History"
-            subtitle={`Error: ${context.error}`}
-            headingLevel={1}
-            variant="support"
-          />
-        </SectionCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Automation Run History"
+        subtitle={`Error: ${context.error}`}
+      />
     );
   }
   if (context.sites.length === 0) {
     return (
-      <PageContainer width="wide" density="compact">
-        <SectionCard variant="support" className="role-surface-support">
-          <SectionHeader
-            title="Automation Run History"
-            subtitle="No SEO sites are configured yet. Add a site before reviewing automation run history."
-            headingLevel={1}
-            variant="support"
-          />
-        </SectionCard>
-      </PageContainer>
+      <OperatorRouteSupportState
+        title="Automation Run History"
+        subtitle="No SEO sites are configured yet. Add a site before reviewing automation run history."
+      />
     );
   }
 
   return (
     <PageContainer width="wide" density="compact">
-      <div className="role-dashboard-landing">
-        <SectionCard variant="primary" className="role-dashboard-hero">
-          <SectionHeader
-            title="Automation Run History"
-            subtitle="Monitor automated recommendation and workflow run outcomes."
-            headingLevel={1}
-            variant="hero"
-          />
-          <div className="workspace-summary-strip role-summary-strip">
+      <OperatorPageHero
+        title="Automation Run History"
+        subtitle="Monitor automated recommendation and workflow run outcomes."
+        headingLevel={1}
+        data-testid="automation-page-hero"
+        summary={(
+          <>
             <SummaryStatCard
               label="Total runs"
               value={items.length}
@@ -1102,30 +1101,96 @@ export default function AutomationPage() {
               tone={failedRuns > 0 ? "danger" : "success"}
               variant="elevated"
             />
-          </div>
-        </SectionCard>
-      </div>
+          </>
+        )}
+      >
+        <WorkspaceMetadataGrid data-testid="automation-control-grid">
+          <WorkspaceMetadataItem label="Automation status">
+            <p className="hint muted">
+              <span className={latestRunActionPresentation?.badgeClass || latestRunActionState.badgeClass}>
+                {automationControlStatusLabel}
+              </span>
+            </p>
+            <p className="hint muted">{automationControlOutcome}</p>
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="What matters now">
+            <p className="hint muted">{automationControlFocus}</p>
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Do this next">
+            <p className="hint muted">
+              <span className="text-strong">{automationControlNextStep}</span>
+            </p>
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Latest activity">
+            <p className="hint muted">
+              {latestRun ? `${latestRun.id} · ${latestRunActivityAt}` : "No run activity recorded yet."}
+            </p>
+          </WorkspaceMetadataItem>
+        </WorkspaceMetadataGrid>
 
-      <SectionCard variant="summary" className="role-surface-support">
-        <SectionHeader
-          title="Automation runs"
-          subtitle="Select a site and review trigger, lifecycle, and error outcome details."
-          headingLevel={2}
-          variant="support"
-        />
+        <WorkspaceActionBar variant="primary" data-testid="automation-primary-actions">
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => {
+              void handleRunAutomationNow();
+            }}
+            disabled={triggerRunPending}
+          >
+            {triggerRunPending ? "Starting run..." : "Run SEO automation"}
+          </button>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => setRefreshNonce((current) => current + 1)}
+            disabled={loadingItems}
+          >
+            Refresh status
+          </button>
+          {latestRecommendationRunOutputId && latestRun ? (
+            <Link
+              className="button button-tertiary"
+              href={buildAutomationRecommendationRunHref(latestRecommendationRunOutputId, latestRun.site_id)}
+            >
+              Review recommendation output
+            </Link>
+          ) : null}
+          {context.selectedSiteId ? (
+            <Link className="button button-tertiary" href={`/sites/${context.selectedSiteId}`}>
+              Open site workspace
+            </Link>
+          ) : null}
+        </WorkspaceActionBar>
+      </OperatorPageHero>
 
-        {loadingItems ? <p className="hint muted">Loading automation runs...</p> : null}
-        {itemsError ? <p className="hint error">{itemsError}</p> : null}
-        <p className="hint muted" data-testid="automation-non-publishing-banner">
-          This automation analyzes your site and generates recommendations. It does not make changes to your website.
-        </p>
-        {triggerContext.recommendationTitle ? (
-          <p className="hint muted" data-testid="automation-trigger-context">
-            Triggered from recommendation: {triggerContext.recommendationTitle}
-            {triggerContext.recommendationId ? ` (${triggerContext.recommendationId})` : ""}
-          </p>
-        ) : null}
-        <div className="panel panel-compact stack-tight" data-testid="automation-config-summary">
+      <OperatorPageSectionStack>
+        <SectionCard variant="summary" className="role-surface-support">
+          <SectionHeader
+            title="Automation operations"
+            subtitle="Run controls, configuration, and execution-state context for the selected site."
+            headingLevel={2}
+            variant="support"
+          />
+
+          <WorkspaceMessageStack>
+            {loadingItems ? <p className="hint muted">Loading automation runs...</p> : null}
+            {itemsError ? <p className="hint error">{itemsError}</p> : null}
+            <p className="hint muted" data-testid="automation-non-publishing-banner">
+              This automation analyzes your site and generates recommendations. It does not make changes to your website.
+            </p>
+            {triggerContext.recommendationTitle ? (
+              <p className="hint muted" data-testid="automation-trigger-context">
+                Triggered from recommendation: {triggerContext.recommendationTitle}
+                {triggerContext.recommendationId ? ` (${triggerContext.recommendationId})` : ""}
+              </p>
+            ) : null}
+            {automationPollingActive ? (
+              <p className="hint muted" data-testid="automation-polling-status">
+                Automation execution is in progress. Status refreshes automatically every few seconds.
+              </p>
+            ) : null}
+          </WorkspaceMessageStack>
+          <div className="panel panel-compact stack-tight workspace-section-block" data-testid="automation-config-summary">
           <span className="text-strong">Automation configuration</span>
           <span className="hint muted">
             Configure which automation outputs are generated for this site. Changes apply to future runs only.
@@ -1160,7 +1225,7 @@ export default function AutomationPage() {
               {!automationConfigHasEnabledStep ? (
                 <span className="hint muted">Keep at least one step enabled before saving.</span>
               ) : null}
-              <div className="form-actions">
+              <WorkspaceActionBar variant="primary">
                 <button
                   type="button"
                   className="button button-primary button-inline"
@@ -1181,7 +1246,7 @@ export default function AutomationPage() {
                 >
                   Cancel
                 </button>
-              </div>
+              </WorkspaceActionBar>
             </div>
           ) : (
             <div className="stack-tight">
@@ -1217,7 +1282,7 @@ export default function AutomationPage() {
           ) : null}
           {canEditAutomationConfig ? (
             automationConfigEditing ? null : (
-              <div className="form-actions">
+              <WorkspaceActionBar variant="secondary">
                 <button
                   type="button"
                   className="button button-secondary button-inline"
@@ -1227,54 +1292,50 @@ export default function AutomationPage() {
                 >
                   Edit step settings
                 </button>
-              </div>
+              </WorkspaceActionBar>
             )
           ) : (
             <span className="hint muted">Read-only view. Contact admin to change automation settings.</span>
           )}
         </div>
-        {automationPollingActive ? (
-          <p className="hint muted" data-testid="automation-polling-status">
-            Automation execution is in progress. Status refreshes automatically every few seconds.
-          </p>
-        ) : null}
-        {!loadingItems && items.length === 0 ? (
-          <div className="panel panel-compact stack-tight" data-testid="automation-empty-state">
-            <strong>No automation runs yet</strong>
-            <span className="hint muted">
-              Generate a new automation run to analyze this site and produce updated recommendations.
-            </span>
-            <div className="form-actions">
-              <button
-                type="button"
-                className="button button-primary button-inline"
-                onClick={() => {
-                  void handleRunAutomationNow();
-                }}
-                disabled={triggerRunPending}
-                data-testid="automation-empty-state-run-button"
-              >
-                {triggerRunPending ? "Starting run..." : "Run SEO automation"}
-              </button>
-            </div>
-            {triggerRunError ? (
-              <span className="hint error" data-testid="automation-empty-state-run-error">
-                {triggerRunError}
+          {!loadingItems && items.length === 0 ? (
+            <WorkspaceEmptyStateCard data-testid="automation-empty-state">
+              <strong>No automation runs yet</strong>
+              <span className="hint muted">
+                Generate a new automation run to analyze this site and produce updated recommendations.
               </span>
-            ) : null}
-          </div>
-        ) : null}
+              <WorkspaceActionBar variant="primary">
+                <button
+                  type="button"
+                  className="button button-primary button-inline"
+                  onClick={() => {
+                    void handleRunAutomationNow();
+                  }}
+                  disabled={triggerRunPending}
+                  data-testid="automation-empty-state-run-button"
+                >
+                  {triggerRunPending ? "Starting run..." : "Run SEO automation"}
+                </button>
+              </WorkspaceActionBar>
+              {triggerRunError ? (
+                <span className="hint error" data-testid="automation-empty-state-run-error">
+                  {triggerRunError}
+                </span>
+              ) : null}
+            </WorkspaceEmptyStateCard>
+          ) : null}
 
-        <div className="stack" data-testid="automation-quick-scan">
-          {latestRun ? (
-            <SectionCard variant="summary" className="role-surface-support" data-testid="automation-latest-run-summary">
-              <SectionHeader
-                title="Latest automation outcome"
-                subtitle="Summary-first lifecycle and output visibility for the most recent run."
-                headingLevel={3}
-                variant="support"
-              />
-              <div className="stack-tight">
+        </SectionCard>
+
+        {latestRun ? (
+          <SectionCard variant="summary" className="role-surface-support" data-testid="automation-latest-run-summary">
+            <SectionHeader
+              title="Latest automation outcome"
+              subtitle="Summary-first lifecycle and output visibility for the most recent run."
+              headingLevel={2}
+              variant="support"
+            />
+            <div className="stack-tight">
                 <div className="link-row">
                   <span className={`badge ${automationStatusBadgeClass(latestRun.status)}`}>
                     {latestRun.status}
@@ -1364,18 +1425,25 @@ export default function AutomationPage() {
                     <span className="hint muted">No linked recommendation output recorded yet.</span>
                   ) : null}
                 </div>
-              </div>
-            </SectionCard>
-          ) : null}
-          <h3 className="heading-reset">Run quick scan</h3>
-          <p className="hint muted">
-            Summary-first cards show automation status, blockers, and follow-up urgency before deep history review.
-          </p>
-          {items.length === 0 && !loadingItems ? (
-            <p className="hint muted">No automation runs available for quick scan. Start a run to populate history.</p>
-          ) : null}
-          {items.length > 0 ? (
-            <div className="operational-item-list">
+            </div>
+          </SectionCard>
+        ) : null}
+
+        <SectionCard variant="summary" className="role-surface-support">
+          <SectionHeader
+            title="Run quick scan"
+            subtitle="Summary-first cards show automation status, blockers, and follow-up urgency before deep history review."
+            headingLevel={2}
+            variant="support"
+          />
+          <div className="stack" data-testid="automation-quick-scan">
+            {items.length === 0 && !loadingItems ? (
+              <WorkspaceEmptyStateCard compact={true}>
+                <p className="hint muted">No automation runs available for quick scan. Start a run to populate history.</p>
+              </WorkspaceEmptyStateCard>
+            ) : null}
+            {items.length > 0 ? (
+              <div className="operational-item-list">
               {items.slice(0, 6).map((item) => {
                 const normalizedStatus = item.status.toLowerCase();
                 const steps = normalizeAutomationRunSteps(item);
@@ -1616,40 +1684,49 @@ export default function AutomationPage() {
               })}
             </div>
           ) : null}
-        </div>
+          </div>
+        </SectionCard>
 
-        <div className="table-container">
-          <table className="table table-dense">
-            <thead>
-              <tr>
-                <th>Run ID</th>
-                <th>Status</th>
-                <th>Trigger</th>
-                <th>Started</th>
-                <th>Finished</th>
-                <th>Error</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.id}</td>
-                  <td>{item.status}</td>
-                  <td>{item.trigger_source}</td>
-                  <td>{item.started_at || "-"}</td>
-                  <td>{item.finished_at || "-"}</td>
-                  <td>{item.error_message || "-"}</td>
-                </tr>
-              ))}
-              {items.length === 0 && !loadingItems ? (
+        <SectionCard variant="summary" className="role-surface-support">
+          <SectionHeader
+            title="Run history"
+            subtitle="Recent run lifecycle records for auditability and follow-up."
+            headingLevel={2}
+            variant="support"
+          />
+          <WorkspaceTableShell>
+            <table className="table table-dense">
+              <thead>
                 <tr>
-                  <td colSpan={6}>No automation runs found for this site.</td>
+                  <th>Run ID</th>
+                  <th>Status</th>
+                  <th>Trigger</th>
+                  <th>Started</th>
+                  <th>Finished</th>
+                  <th>Error</th>
                 </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.id}</td>
+                    <td>{item.status}</td>
+                    <td>{item.trigger_source}</td>
+                    <td>{item.started_at || "-"}</td>
+                    <td>{item.finished_at || "-"}</td>
+                    <td>{item.error_message || "-"}</td>
+                  </tr>
+                ))}
+                {items.length === 0 && !loadingItems ? (
+                  <tr>
+                    <td colSpan={6}>No automation runs found for this site.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </WorkspaceTableShell>
+        </SectionCard>
+      </OperatorPageSectionStack>
     </PageContainer>
   );
 }

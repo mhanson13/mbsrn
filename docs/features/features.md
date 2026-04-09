@@ -225,6 +225,8 @@ It transforms a business's website and market context into structured insights a
 - Dashboard
 - Competitor Intelligence (`/competitors`)
 - Audit Runs (`/audits`)
+- Automation Run History (`/automation`)
+- Recommendations Workflow (`/recommendations`)
 
 ### Key capability
 - Applies the same summary/status/action/message/table rhythm used in the site workspace to adjacent operator surfaces.
@@ -233,7 +235,7 @@ It transforms a business's website and market context into structured insights a
   - `OperatorPageHero`
   - `OperatorPageSummaryStrip`
   - `OperatorPageSectionStack`
-  - currently applied on `Dashboard`, `Audit Runs`, `Competitor Intelligence`, and `SEO Sites`.
+  - currently applied on `Dashboard`, `Audit Runs`, `Competitor Intelligence`, `SEO Sites`, `Automation`, and `Recommendations`.
 - TailAdmin was used as visual inspiration only; implementation remains MBSRN-native with existing CSS/components.
 
 ### Operator value
