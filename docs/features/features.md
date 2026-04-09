@@ -218,6 +218,29 @@ It transforms a business's website and market context into structured insights a
 
 ---
 
+## 12. Consistent Operator Dashboard Surfaces (UI Pattern Reuse)
+
+### What it does
+- Reuses shared operator-facing presentational primitives across high-traffic non-workspace pages:
+- Dashboard
+- Competitor Intelligence (`/competitors`)
+- Audit Runs (`/audits`)
+
+### Key capability
+- Applies the same summary/status/action/message/table rhythm used in the site workspace to adjacent operator surfaces.
+- Uses shared MBSRN-native primitives (`WorkspaceActionBar`, `WorkspaceMessageStack`, `WorkspaceEmptyStateCard`, `WorkspaceTableShell`, `WorkspaceMetadataGrid`) instead of repeated page-local layout markup.
+- Standardizes route-level page composition on high-traffic top-level pages using reusable page-surface wrappers:
+  - `OperatorPageHero`
+  - `OperatorPageSummaryStrip`
+  - `OperatorPageSectionStack`
+  - currently applied on `Dashboard`, `Audit Runs`, `Competitor Intelligence`, and `SEO Sites`.
+- TailAdmin was used as visual inspiration only; implementation remains MBSRN-native with existing CSS/components.
+
+### Operator value
+> "Core operator pages now scan and behave like one coherent dashboard product."
+
+---
+
 ## Summary
 
 MBSRN transforms a small business from:

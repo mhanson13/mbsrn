@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { WorkspaceActionBar } from "../../layout/WorkspaceActionBar";
+import { WorkspaceMessageStack } from "../../layout/WorkspaceMessageStack";
 import { SectionCard } from "../../layout/SectionCard";
 import { SectionHeader } from "../../layout/SectionHeader";
 
@@ -50,7 +52,7 @@ export function AICompetitorProfilesPanel({
         headingLevel={2}
         data-testid="competitor-section-header"
         actions={(
-          <div className="toolbar-row">
+          <WorkspaceActionBar variant="primary">
             <button
               type="button"
               className="button button-primary"
@@ -65,18 +67,22 @@ export function AICompetitorProfilesPanel({
                 className="button button-secondary"
                 onClick={onRetry}
                 disabled={loadingWorkspace || generationInFlight || retryInFlight || competitorProfileLoading}
-              >
+                >
                 {retryInFlight ? "Retrying..." : "Retry"}
               </button>
             ) : null}
-          </div>
+          </WorkspaceActionBar>
         )}
       />
       {competitorSectionFreshnessContent}
-      {competitorProfileError ? <p className="hint error">{competitorProfileError}</p> : null}
-      {competitorProfileSummaryError ? <p className="hint warning">{competitorProfileSummaryError}</p> : null}
-      {competitorProfileActionError ? <p className="hint error">{competitorProfileActionError}</p> : null}
-      {competitorProfileActionMessage ? <p className="hint success">{competitorProfileActionMessage}</p> : null}
+      {competitorProfileError || competitorProfileSummaryError || competitorProfileActionError || competitorProfileActionMessage ? (
+        <WorkspaceMessageStack data-testid="workspace-competitor-profiles-message-stack">
+          {competitorProfileError ? <p className="hint error">{competitorProfileError}</p> : null}
+          {competitorProfileSummaryError ? <p className="hint warning">{competitorProfileSummaryError}</p> : null}
+          {competitorProfileActionError ? <p className="hint error">{competitorProfileActionError}</p> : null}
+          {competitorProfileActionMessage ? <p className="hint success">{competitorProfileActionMessage}</p> : null}
+        </WorkspaceMessageStack>
+      ) : null}
       {statusStripContent}
       {statusCalloutContent}
       {runOutcomeSummaryContent}

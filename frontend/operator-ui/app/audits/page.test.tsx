@@ -88,6 +88,7 @@ describe("audits page shared-shell framing", () => {
 
     await screen.findByTestId("audit-quick-scan-item-run-1");
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
+    expect(screen.getByTestId("audits-page-hero")).toHaveClass("operator-page-hero-surface");
     expect(screen.getByTestId("audit-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("audit-quick-scan-item-run-1");
     expect(quickScanItem).toHaveTextContent("completed");
@@ -105,5 +106,6 @@ describe("audits page shared-shell framing", () => {
     expect(screen.getByRole("columnheader", { name: "Created" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Duration" })).toBeInTheDocument();
     expect(screen.getByText("1m 00s")).toBeInTheDocument();
+    expect(screen.getByTestId("audits-page-table-shell")).toHaveClass("workspace-table-shell");
   });
 });

@@ -2,6 +2,10 @@
 
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
+import { WorkspaceActionBar } from "./layout/WorkspaceActionBar";
+import { WorkspaceEmptyStateCard } from "./layout/WorkspaceEmptyStateCard";
+import { WorkspaceMessageStack } from "./layout/WorkspaceMessageStack";
+import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "./layout/WorkspaceMetadataGrid";
 import {
   ApiRequestError,
   approveMigrationArtifactVersion,
@@ -1646,20 +1650,24 @@ export function MigrationWorkspacePanel({
         </div>
       </div>
 
-      {errorMessage ? <p className="hint warning">{errorMessage}</p> : null}
-      {errorMessage && errorHint ? (
-        <p className="hint muted" data-testid="migration-error-hint">
-          {errorHint}
-        </p>
+      {errorMessage || statusMessage ? (
+        <WorkspaceMessageStack data-testid="migration-message-stack">
+          {errorMessage ? <p className="hint warning">{errorMessage}</p> : null}
+          {errorMessage && errorHint ? (
+            <p className="hint muted" data-testid="migration-error-hint">
+              {errorHint}
+            </p>
+          ) : null}
+          {statusMessage ? <p className="hint success">{statusMessage}</p> : null}
+        </WorkspaceMessageStack>
       ) : null}
-      {statusMessage ? <p className="hint success">{statusMessage}</p> : null}
 
       <h3 className="hint muted migration-section-title">A. Migration Overview</h3>
       <p className="hint muted migration-section-subtitle">
         Capture source and operator-owned replacement context before generating drafts.
       </p>
 
-      <div className="panel stack">
+      <div className="panel stack workspace-section-block">
         <h3>Source Ingest</h3>
         <label className="stack-tight">
           <span className="hint muted">Source URL</span>
@@ -1670,17 +1678,19 @@ export function MigrationWorkspacePanel({
             onChange={(event) => setSourceUrl(event.target.value)}
           />
         </label>
-        <button
-          type="button"
-          className="button button-primary"
-          onClick={() => void handleIngestSource()}
-          disabled={busyAction === "ingest" || busyAction === "load"}
-        >
-          {busyAction === "ingest" ? "Ingesting..." : "Ingest / Refresh Source"}
-        </button>
+        <WorkspaceActionBar variant="primary">
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => void handleIngestSource()}
+            disabled={busyAction === "ingest" || busyAction === "load"}
+          >
+            {busyAction === "ingest" ? "Ingesting..." : "Ingest / Refresh Source"}
+          </button>
+        </WorkspaceActionBar>
       </div>
 
-      <div className="panel stack" data-testid="migration-source-summary">
+      <div className="panel stack workspace-section-block" data-testid="migration-source-summary">
         <h3>Source Snapshot Summary</h3>
         {sourceSnapshot ? (
           <div className="stack-tight">
@@ -1691,12 +1701,14 @@ export function MigrationWorkspacePanel({
             <span className="hint">Internal links: {asStringList(sourceSnapshot.internal_links).length}</span>
           </div>
         ) : (
-          <p className="hint muted">No source snapshot ingested yet.</p>
+          <WorkspaceEmptyStateCard data-testid="migration-source-summary-empty-state">
+            <p className="hint muted">No source snapshot ingested yet.</p>
+          </WorkspaceEmptyStateCard>
         )}
       </div>
 
       <div className="grid grid-2">
-        <div className="panel stack">
+        <div className="panel stack workspace-section-block">
           <h3>Operator Requirements</h3>
           <label className="stack-tight">
             <span className="hint muted">Business objectives (one per line)</span>
@@ -1726,17 +1738,19 @@ export function MigrationWorkspacePanel({
             <span className="hint muted">Additional requirements notes</span>
             <textarea value={requirementsNotes} onChange={(event) => setRequirementsNotes(event.target.value)} rows={4} />
           </label>
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={() => void handleSaveRequirements()}
-            disabled={busyAction === "save_requirements" || busyAction === "load"}
-          >
-            {busyAction === "save_requirements" ? "Saving..." : "Save Requirements"}
-          </button>
+          <WorkspaceActionBar variant="secondary">
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => void handleSaveRequirements()}
+              disabled={busyAction === "save_requirements" || busyAction === "load"}
+            >
+              {busyAction === "save_requirements" ? "Saving..." : "Save Requirements"}
+            </button>
+          </WorkspaceActionBar>
         </div>
 
-        <div className="panel stack">
+        <div className="panel stack workspace-section-block">
           <h3>Enriched Replacement Content</h3>
           <label className="stack-tight">
             <span className="hint muted">Replacement summary</span>
@@ -1774,18 +1788,20 @@ export function MigrationWorkspacePanel({
             <span className="hint muted">Additional enriched notes</span>
             <textarea value={enrichedNotes} onChange={(event) => setEnrichedNotes(event.target.value)} rows={4} />
           </label>
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={() => void handleSaveEnrichedContent()}
-            disabled={busyAction === "save_enriched" || busyAction === "load"}
-          >
-            {busyAction === "save_enriched" ? "Saving..." : "Save Enriched Content"}
-          </button>
+          <WorkspaceActionBar variant="secondary">
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => void handleSaveEnrichedContent()}
+              disabled={busyAction === "save_enriched" || busyAction === "load"}
+            >
+              {busyAction === "save_enriched" ? "Saving..." : "Save Enriched Content"}
+            </button>
+          </WorkspaceActionBar>
         </div>
       </div>
 
-      <div className="panel stack" data-testid="migration-reused-context">
+      <div className="panel stack workspace-section-block" data-testid="migration-reused-context">
         <h3>Reused MBSRN Context</h3>
         <div className="grid grid-3">
           <div className="panel panel-compact stack-tight">
@@ -1812,44 +1828,62 @@ export function MigrationWorkspacePanel({
         <strong>Current Migration State</strong>
         <span className="hint">State: {draftGenerationStateLabel}</span>
         <span className={draftGenerationStateToneClass}>{draftGenerationState.summary}</span>
-        <span className="hint" data-testid="migration-ai-execution-summary">
-          AI execution: {aiExecutionSummaryLabel}
-        </span>
-        <span className="hint" data-testid="migration-ai-model-used">
-          Generated using: {draftAIExecution.modelUsed || draftAIExecution.modelResolved || "n/a"}
-        </span>
-        <span className="hint" data-testid="migration-ai-request-profile">
-          Request profile: {requestProfileLabel}
-        </span>
-        {requestContractStatusLabel ? (
-          <span className="hint" data-testid="migration-request-contract-status">
-            Request contract: {requestContractStatusLabel}
-          </span>
-        ) : null}
-        {artifactResultLabel ? (
-          <span className="hint" data-testid="migration-artifact-result">
-            Artifact result: {artifactResultLabel}
-          </span>
-        ) : null}
-        {draftDurationLabel ? (
-          <span className="hint" data-testid="migration-ai-duration">
-            Duration: {draftDurationLabel}
-          </span>
-        ) : null}
-        {showDraftTimeout ? (
-          <span className="hint" data-testid="migration-draft-timeout">
-            Timeout: {draftTimeoutLabel}
-            {draftAIExecution.timeoutSource ? ` (${draftAIExecution.timeoutSource})` : ""}
-          </span>
-        ) : null}
-        {draftFailureSourceLabel ? (
-          <span className="hint warning" data-testid="migration-draft-failure-source">
-            Failure source: {draftFailureSourceLabel}
-          </span>
-        ) : null}
+        <WorkspaceMetadataGrid data-testid="migration-ai-execution-metadata">
+          <WorkspaceMetadataItem label="AI execution">
+            <span className="hint" data-testid="migration-ai-execution-summary">
+              AI execution: {aiExecutionSummaryLabel}
+            </span>
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Generated using">
+            <span className="hint" data-testid="migration-ai-model-used">
+              Generated using: {draftAIExecution.modelUsed || draftAIExecution.modelResolved || "n/a"}
+            </span>
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Request profile">
+            <span className="hint" data-testid="migration-ai-request-profile">
+              Request profile: {requestProfileLabel}
+            </span>
+          </WorkspaceMetadataItem>
+          {requestContractStatusLabel ? (
+            <WorkspaceMetadataItem label="Request contract">
+              <span className="hint" data-testid="migration-request-contract-status">
+                Request contract: {requestContractStatusLabel}
+              </span>
+            </WorkspaceMetadataItem>
+          ) : null}
+          {artifactResultLabel ? (
+            <WorkspaceMetadataItem label="Artifact result">
+              <span className="hint" data-testid="migration-artifact-result">
+                Artifact result: {artifactResultLabel}
+              </span>
+            </WorkspaceMetadataItem>
+          ) : null}
+          {draftDurationLabel ? (
+            <WorkspaceMetadataItem label="Duration">
+              <span className="hint" data-testid="migration-ai-duration">
+                Duration: {draftDurationLabel}
+              </span>
+            </WorkspaceMetadataItem>
+          ) : null}
+          {showDraftTimeout ? (
+            <WorkspaceMetadataItem label="Timeout">
+              <span className="hint" data-testid="migration-draft-timeout">
+                Timeout: {draftTimeoutLabel}
+                {draftAIExecution.timeoutSource ? ` (${draftAIExecution.timeoutSource})` : ""}
+              </span>
+            </WorkspaceMetadataItem>
+          ) : null}
+          {draftFailureSourceLabel ? (
+            <WorkspaceMetadataItem label="Failure source">
+              <span className="hint warning" data-testid="migration-draft-failure-source">
+                Failure source: {draftFailureSourceLabel}
+              </span>
+            </WorkspaceMetadataItem>
+          ) : null}
+        </WorkspaceMetadataGrid>
       </div>
 
-      <div className="panel stack">
+      <div className="panel stack workspace-section-block">
         <h3>Draft Artifact Generation</h3>
         <div className="panel panel-compact stack-tight" data-testid="migration-draft-readiness">
           <strong>Preflight Readiness</strong>
@@ -1871,14 +1905,16 @@ export function MigrationWorkspacePanel({
             {draftProviderCompatibility.operatorMessage}
           </span>
         </div>
-        <button
-          type="button"
-          className="button button-primary"
-          onClick={() => void handleGenerateArtifacts()}
-          disabled={busyAction === "generate" || busyAction === "load" || draftGenerationBlocked}
-        >
-          {busyAction === "generate" ? "Generating..." : "Generate Draft Mockup"}
-        </button>
+        <WorkspaceActionBar variant="primary">
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => void handleGenerateArtifacts()}
+            disabled={busyAction === "generate" || busyAction === "load" || draftGenerationBlocked}
+          >
+            {busyAction === "generate" ? "Generating..." : "Generate Draft Mockup"}
+          </button>
+        </WorkspaceActionBar>
         {draftGenerationBlocked ? (
           <span className="hint warning">{draftGenerationBlockedMessage}</span>
         ) : null}
@@ -1889,7 +1925,7 @@ export function MigrationWorkspacePanel({
         Quality scoring is advisory. Resolve notable issues before approval.
       </p>
 
-      <div className="panel stack">
+      <div className="panel stack workspace-section-block">
         <h3>Artifact Quality Summary</h3>
         <label className="stack-tight">
           <span className="hint muted">Selected artifact version</span>
@@ -1957,7 +1993,9 @@ export function MigrationWorkspacePanel({
             )}
           </div>
         ) : (
-          <p className="hint muted">No artifact version selected.</p>
+          <WorkspaceEmptyStateCard data-testid="migration-artifact-quality-empty-state">
+            <p className="hint muted">No artifact version selected.</p>
+          </WorkspaceEmptyStateCard>
         )}
       </div>
 
@@ -1966,7 +2004,7 @@ export function MigrationWorkspacePanel({
         Review strategy, page map, and generated files before approval.
       </p>
 
-      <div className="panel stack">
+      <div className="panel stack workspace-section-block">
         <h3>Draft Artifact Review</h3>
         {selectedArtifact ? (
           <>
@@ -2009,7 +2047,9 @@ export function MigrationWorkspacePanel({
                     </button>
                   ))
                 ) : (
-                  <p className="hint muted">No files available.</p>
+                  <WorkspaceEmptyStateCard compact={true}>
+                    <p className="hint muted">No files available.</p>
+                  </WorkspaceEmptyStateCard>
                 )}
               </div>
               <div className="panel panel-compact stack-tight" data-testid="migration-file-preview">
@@ -2020,7 +2060,9 @@ export function MigrationWorkspacePanel({
             </div>
           </>
         ) : (
-          <p className="hint muted">No artifact version selected.</p>
+          <WorkspaceEmptyStateCard data-testid="migration-artifact-review-empty-state">
+            <p className="hint muted">No artifact version selected.</p>
+          </WorkspaceEmptyStateCard>
         )}
       </div>
 
@@ -2029,14 +2071,16 @@ export function MigrationWorkspacePanel({
         Approval, publish, and deploy remain explicit and unchanged.
       </p>
 
-      <div className="panel stack">
+      <div className="panel stack workspace-section-block">
         <h3>Publish and Deploy Controls</h3>
-        <span className="hint muted">
-          Rollback is explicit: select a previously approved artifact and run publish/deploy again.
-        </span>
-        <span className="hint muted">
-          Publish writes approved artifacts to GitHub only. Deploy remains a separate explicit request.
-        </span>
+        <div className="workspace-status-callout stack-tight">
+          <span className="hint muted">
+            Rollback is explicit: select a previously approved artifact and run publish/deploy again.
+          </span>
+          <span className="hint muted">
+            Publish writes approved artifacts to GitHub only. Deploy remains a separate explicit request.
+          </span>
+        </div>
         <div className="grid grid-2">
           <div className="panel panel-compact stack">
             <strong>GitHub Publish Target</strong>
@@ -2259,9 +2303,9 @@ export function MigrationWorkspacePanel({
         Use detailed diagnostics only when troubleshooting failures.
       </p>
 
-      <div className="panel stack">
+      <div className="panel stack workspace-section-block">
         <h3>Advanced Diagnostics</h3>
-        <details className="migration-advanced-details">
+        <details className="migration-advanced-details workspace-details-shell">
           <summary className="hint muted">Show detailed migration failure diagnostics</summary>
           <div className="panel panel-compact stack-tight" data-testid="migration-action-diagnostics">
             <strong>Action Diagnostics</strong>

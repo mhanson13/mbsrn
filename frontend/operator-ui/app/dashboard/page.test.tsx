@@ -155,6 +155,7 @@ describe("dashboard operator-focused layout", () => {
     render(<DashboardPage />);
 
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
+    expect(screen.getByTestId("dashboard-page-hero")).toHaveClass("operator-page-hero-surface");
     expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Site")).not.toBeInTheDocument();
     expect(screen.getByTestId("dashboard-summary-strip")).toBeInTheDocument();
@@ -170,5 +171,8 @@ describe("dashboard operator-focused layout", () => {
       expect(screen.getByTestId("dashboard-priority-panel")).toHaveTextContent("Review open recommendations");
       expect(screen.getByTestId("dashboard-priority-panel")).toHaveTextContent("Open Recommendations");
     });
+    expect(
+      screen.getByRole("link", { name: "Open Recommendations" }).closest(".workspace-action-bar"),
+    ).toBeTruthy();
   });
 });

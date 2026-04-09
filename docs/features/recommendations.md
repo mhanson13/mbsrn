@@ -259,6 +259,25 @@ Rationale:
 - site/business context is already visible in the global workspace header
 - queue scanning should foreground execution signals (`priority`, `summary`, `status`, `decisiveness`) before IDs
 
+## Workspace Dashboard Visual Pass (Frontend Presentation)
+
+A broader TailAdmin-inspired visual pass (inspiration only; no external template import) was applied across recommendation workspace surfaces using existing MBSRN CSS/components:
+
+- consistent section/action rhythm via shared action bars (`workspace-action-bar-*`)
+- consolidated run/queue feedback into compact status stacks (`workspace-message-stack`)
+- clearer recommendation run-history empty-state treatment (`workspace-empty-state`)
+- stronger card/table framing for scanability (`workspace-table-shell`, updated section block rhythm)
+- repeated presentational structures were standardized into reusable components and adopted across recommendation surfaces:
+  - `WorkspaceActionBar`
+  - `WorkspaceMessageStack`
+  - `WorkspaceEmptyStateCard`
+  - `WorkspaceTableShell`
+
+Boundary:
+- presentation-only updates
+- no recommendation workflow/state semantics changed
+- no backend/API behavior changed
+
 ## GA4 Onboarding Dependency (Phase 1 Discovery)
 
 Recommendation measurement visibility now depends on per-site GA4 onboarding readiness.

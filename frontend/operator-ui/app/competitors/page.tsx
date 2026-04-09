@@ -5,10 +5,19 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { PageContainer } from "../../components/layout/PageContainer";
+import {
+  OperatorPageHero,
+  OperatorPageSectionStack,
+} from "../../components/layout/OperatorPageSurface";
 import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkspaceActionBar } from "../../components/layout/WorkspaceActionBar";
+import { WorkspaceEmptyStateCard } from "../../components/layout/WorkspaceEmptyStateCard";
+import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
+import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "../../components/layout/WorkspaceMetadataGrid";
+import { WorkspaceTableShell } from "../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
@@ -452,15 +461,13 @@ function CompetitorsPageContent() {
 
   return (
     <PageContainer width="wide" density="compact">
-      <div className="role-dashboard-landing">
-        <SectionCard variant="primary" className="role-dashboard-hero">
-          <SectionHeader
-            title="Competitor Intelligence"
-            subtitle="Track competitor set readiness, run status, and domain coverage for the selected site."
-            headingLevel={1}
-            variant="hero"
-          />
-          <div className="workspace-summary-strip role-summary-strip">
+      <OperatorPageHero
+        title="Competitor Intelligence"
+        subtitle="Track competitor set readiness, run status, and domain coverage for the selected site."
+        headingLevel={1}
+        data-testid="competitors-page-hero"
+        summary={(
+          <>
             <SummaryStatCard
               label="Competitor sets"
               value={competitorSetCount}
@@ -497,194 +504,208 @@ function CompetitorsPageContent() {
                   ? "success"
                   : latestComparisonRun
                     ? "warning"
-                    : "neutral"
+                : "neutral"
               }
               variant="elevated"
             />
+          </>
+        )}
+      />
+
+      <OperatorPageSectionStack>
+        <SectionCard variant="summary" className="role-surface-support">
+          <SectionHeader
+            title="Competitor set inventory"
+            subtitle="Review readiness diagnostics and open competitor sets, snapshot runs, and comparison runs."
+            headingLevel={2}
+            variant="support"
+          />
+
+          <div className="panel stack section-card-variant-support">
+            <h2 className="heading-reset">Readiness</h2>
+            <WorkspaceMetadataGrid>
+              <WorkspaceMetadataItem label="Active Sets">
+                <span className="hint muted">{activeSetCount}/{competitorSetCount}</span>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Competitor Domains">
+                <span className="hint muted">{totalDomainCount}</span>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Active Domains">
+                <span className="hint muted">{activeDomainCount}</span>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Latest Snapshot Run">
+                {latestSnapshotRun ? (
+                  <span className="hint muted">
+                    <strong>{formatRunStatus(latestSnapshotRun.status)}</strong>{" "}
+                    ({formatDateTime(latestSnapshotRun.completed_at || latestSnapshotRun.updated_at || latestSnapshotRun.created_at)})
+                    {" "}for {latestSnapshotRun.competitor_set_name}{" "}
+                    <Link href={buildSnapshotRunHref(latestSnapshotRun)}>View</Link>
+                  </span>
+                ) : (
+                  <span className="hint muted">none</span>
+                )}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Latest Comparison Run">
+                {latestComparisonRun ? (
+                  <span className="hint muted">
+                    <strong>{formatRunStatus(latestComparisonRun.status)}</strong>{" "}
+                    ({formatDateTime(latestComparisonRun.completed_at || latestComparisonRun.updated_at || latestComparisonRun.created_at)})
+                    {" "}for {latestComparisonRun.competitor_set_name}{" "}
+                    <Link href={buildComparisonRunHref(latestComparisonRun)}>View</Link>
+                  </span>
+                ) : (
+                  <span className="hint muted">none</span>
+                )}
+              </WorkspaceMetadataItem>
+            </WorkspaceMetadataGrid>
+            <WorkspaceMessageStack>
+              {readinessWarning ? <p className="hint warning">{readinessWarning}</p> : null}
+              <p className="hint muted">{readinessGuidance}</p>
+            </WorkspaceMessageStack>
           </div>
-        </SectionCard>
-      </div>
 
-      <SectionCard variant="summary" className="role-surface-support">
-        <SectionHeader
-          title="Competitor set inventory"
-          subtitle="Review readiness diagnostics and open competitor sets, snapshot runs, and comparison runs."
-          headingLevel={2}
-          variant="support"
-        />
+          <WorkspaceActionBar variant="secondary">
+            <span className="hint muted">Competitor Sets: {competitorSetCount}</span>
+            <span className="hint muted">Domains Across Sets: {totalDomainCount}</span>
+          </WorkspaceActionBar>
 
-        <div className="panel stack section-card-variant-support">
-          <h2 className="heading-reset">Readiness</h2>
-          <div className="row-wrap">
-            <span className="hint muted">Active Sets: {activeSetCount}/{competitorSetCount}</span>
-            <span className="hint muted">Competitor Domains: {totalDomainCount}</span>
-            <span className="hint muted">Active Domains: {activeDomainCount}</span>
+          <div className="stack" data-testid="competitor-quick-scan">
+            <h3 className="heading-reset">Set quick scan</h3>
+            <p className="hint muted">
+              Summary-first cards highlight readiness and the next set to review before opening full tables.
+            </p>
+            {competitorSets.length === 0 && !loadingCompetitors ? (
+              <WorkspaceEmptyStateCard compact={true}>
+                <p className="hint muted">No competitor sets available for quick scan.</p>
+              </WorkspaceEmptyStateCard>
+            ) : null}
+            {competitorSets.length > 0 ? (
+              <div className="operational-item-list">
+                {competitorSets.slice(0, 6).map((item) => {
+                  const snapshotStatus = item.latest_snapshot_status
+                    ? formatRunStatus(item.latest_snapshot_status)
+                    : "No snapshot";
+                  return (
+                    <OperationalItemCard
+                      key={`competitor-quick-scan-${item.id}`}
+                      data-testid={`competitor-quick-scan-item-${item.id}`}
+                      title={`Set: ${item.name}`}
+                      identity={<code>{item.id}</code>}
+                      chips={(
+                        <>
+                          <span className={`badge ${item.is_active ? "badge-success" : "badge-muted"}`}>
+                            {item.is_active ? "Active set" : "Inactive set"}
+                          </span>
+                          <span className="badge badge-muted">{item.active_domain_count}/{item.domain_count} active domains</span>
+                          <span className={`badge ${snapshotStatus.toLowerCase() === "completed" ? "badge-success" : "badge-warn"}`}>
+                            Snapshot: {snapshotStatus}
+                          </span>
+                        </>
+                      )}
+                      summary={`Location: ${formatLocation(item.city, item.state)}. Provenance: ${item.source_summary}.`}
+                      primaryAction={
+                        <Link href={buildSetDetailHref(item)} className="button button-tertiary button-inline">
+                          Open set detail
+                        </Link>
+                      }
+                      secondaryMeta={
+                        <>
+                          <span className="hint muted">Latest domain update: {formatDateTime(item.latest_domain_updated_at)}</span>
+                        </>
+                      }
+                      expandedDetail={
+                        <>
+                          <p className="hint muted">
+                            <span className="text-strong">Business:</span> {item.business_id}
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">Site:</span> {item.site_id}
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">Created:</span> {formatDateTime(item.created_at)}
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">Updated:</span> {formatDateTime(item.updated_at)}
+                          </p>
+                        </>
+                      }
+                    />
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
-          <p className="hint muted">
-            Latest Snapshot Run:{" "}
-            {latestSnapshotRun ? (
-              <>
-                <strong>{formatRunStatus(latestSnapshotRun.status)}</strong>{" "}
-                ({formatDateTime(latestSnapshotRun.completed_at || latestSnapshotRun.updated_at || latestSnapshotRun.created_at)})
-                {" "}for {latestSnapshotRun.competitor_set_name}{" "}
-                <Link href={buildSnapshotRunHref(latestSnapshotRun)}>View</Link>
-              </>
-            ) : (
-              "none"
-            )}
-          </p>
-          <p className="hint muted">
-            Latest Comparison Run:{" "}
-            {latestComparisonRun ? (
-              <>
-                <strong>{formatRunStatus(latestComparisonRun.status)}</strong>{" "}
-                ({formatDateTime(latestComparisonRun.completed_at || latestComparisonRun.updated_at || latestComparisonRun.created_at)})
-                {" "}for {latestComparisonRun.competitor_set_name}{" "}
-                <Link href={buildComparisonRunHref(latestComparisonRun)}>View</Link>
-              </>
-            ) : (
-              "none"
-            )}
-          </p>
-          {readinessWarning ? <p className="hint warning">{readinessWarning}</p> : null}
-          <p className="hint muted">{readinessGuidance}</p>
-        </div>
 
-        <div className="row-wrap">
-          <span className="hint muted">Competitor Sets: {competitorSetCount}</span>
-          <span className="hint muted">Domains Across Sets: {totalDomainCount}</span>
-        </div>
-
-        <div className="stack" data-testid="competitor-quick-scan">
-          <h3 className="heading-reset">Set quick scan</h3>
-          <p className="hint muted">
-            Summary-first cards highlight readiness and the next set to review before opening full tables.
-          </p>
-          {competitorSets.length === 0 && !loadingCompetitors ? (
-            <p className="hint muted">No competitor sets available for quick scan.</p>
+          {loadingCompetitors || competitorsError ? (
+            <WorkspaceMessageStack data-testid="competitors-page-message-stack">
+              {loadingCompetitors ? <p className="hint muted">Loading competitors...</p> : null}
+              {competitorsError ? <p className="hint error">{competitorsError}</p> : null}
+            </WorkspaceMessageStack>
           ) : null}
-          {competitorSets.length > 0 ? (
-            <div className="operational-item-list">
-              {competitorSets.slice(0, 6).map((item) => {
-                const snapshotStatus = item.latest_snapshot_status
-                  ? formatRunStatus(item.latest_snapshot_status)
-                  : "No snapshot";
-                return (
-                  <OperationalItemCard
-                    key={`competitor-quick-scan-${item.id}`}
-                    data-testid={`competitor-quick-scan-item-${item.id}`}
-                    title={`Set: ${item.name}`}
-                    identity={<code>{item.id}</code>}
-                    chips={(
-                      <>
-                        <span className={`badge ${item.is_active ? "badge-success" : "badge-muted"}`}>
-                          {item.is_active ? "Active set" : "Inactive set"}
-                        </span>
-                        <span className="badge badge-muted">{item.active_domain_count}/{item.domain_count} active domains</span>
-                        <span className={`badge ${snapshotStatus.toLowerCase() === "completed" ? "badge-success" : "badge-warn"}`}>
-                          Snapshot: {snapshotStatus}
-                        </span>
-                      </>
-                    )}
-                    summary={`Location: ${formatLocation(item.city, item.state)}. Provenance: ${item.source_summary}.`}
-                    primaryAction={
-                      <Link href={buildSetDetailHref(item)} className="button button-tertiary button-inline">
-                        Open set detail
-                      </Link>
-                    }
-                    secondaryMeta={
-                      <>
-                        <span className="hint muted">Latest domain update: {formatDateTime(item.latest_domain_updated_at)}</span>
-                      </>
-                    }
-                    expandedDetail={
-                      <>
-                        <p className="hint muted">
-                          <span className="text-strong">Business:</span> {item.business_id}
-                        </p>
-                        <p className="hint muted">
-                          <span className="text-strong">Site:</span> {item.site_id}
-                        </p>
-                        <p className="hint muted">
-                          <span className="text-strong">Created:</span> {formatDateTime(item.created_at)}
-                        </p>
-                        <p className="hint muted">
-                          <span className="text-strong">Updated:</span> {formatDateTime(item.updated_at)}
-                        </p>
-                      </>
-                    }
-                  />
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
 
-        {loadingCompetitors ? <p className="hint muted">Loading competitors...</p> : null}
-        {competitorsError ? <p className="hint error">{competitorsError}</p> : null}
-
-        <div className="table-container">
-          <table className="table table-dense">
-            <thead>
-              <tr>
-                <th>Set</th>
-                <th>Business</th>
-                <th>Site</th>
-                <th>Location</th>
-                <th>Status</th>
-                <th>Domains</th>
-                <th>Provenance</th>
-                <th>Created By</th>
-                <th>Created</th>
-                <th>Updated</th>
-                <th>Latest Domain Update</th>
-              </tr>
-            </thead>
-            <tbody>
-              {competitorSets.map((item) => (
-                <tr
-                  key={item.id}
-                  role="link"
-                  tabIndex={0}
-                  className="clickable-row"
-                  onClick={() => router.push(buildSetDetailHref(item))}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      router.push(buildSetDetailHref(item));
-                    }
-                  }}
-                >
-                  <td>
-                    <strong>{item.name}</strong>
-                    <br />
-                    <span className="hint muted">{item.id}</span>
-                  </td>
-                  <td>{item.business_id}</td>
-                  <td>{item.site_id}</td>
-                  <td>{formatLocation(item.city, item.state)}</td>
-                  <td>{item.is_active ? "active" : "inactive"}</td>
-                  <td>
-                    {item.active_domain_count}/{item.domain_count} active
-                  </td>
-                  <td>{item.source_summary}</td>
-                  <td>{item.created_by_principal_id || "-"}</td>
-                  <td>{formatDateTime(item.created_at)}</td>
-                  <td>{formatDateTime(item.updated_at)}</td>
-                  <td>{formatDateTime(item.latest_domain_updated_at)}</td>
-                </tr>
-              ))}
-              {!loadingCompetitors && competitorSets.length === 0 ? (
+          <WorkspaceTableShell data-testid="competitors-page-table-shell">
+            <table className="table table-dense">
+              <thead>
                 <tr>
-                  <td colSpan={11}>
-                    {tableEmptyReason}
-                  </td>
+                  <th>Set</th>
+                  <th>Business</th>
+                  <th>Site</th>
+                  <th>Location</th>
+                  <th>Status</th>
+                  <th>Domains</th>
+                  <th>Provenance</th>
+                  <th>Created By</th>
+                  <th>Created</th>
+                  <th>Updated</th>
+                  <th>Latest Domain Update</th>
                 </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
+              </thead>
+              <tbody>
+                {competitorSets.map((item) => (
+                  <tr
+                    key={item.id}
+                    role="link"
+                    tabIndex={0}
+                    className="clickable-row"
+                    onClick={() => router.push(buildSetDetailHref(item))}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        router.push(buildSetDetailHref(item));
+                      }
+                    }}
+                  >
+                    <td>
+                      <strong>{item.name}</strong>
+                      <br />
+                      <span className="hint muted">{item.id}</span>
+                    </td>
+                    <td>{item.business_id}</td>
+                    <td>{item.site_id}</td>
+                    <td>{formatLocation(item.city, item.state)}</td>
+                    <td>{item.is_active ? "active" : "inactive"}</td>
+                    <td>
+                      {item.active_domain_count}/{item.domain_count} active
+                    </td>
+                    <td>{item.source_summary}</td>
+                    <td>{item.created_by_principal_id || "-"}</td>
+                    <td>{formatDateTime(item.created_at)}</td>
+                    <td>{formatDateTime(item.updated_at)}</td>
+                    <td>{formatDateTime(item.latest_domain_updated_at)}</td>
+                  </tr>
+                ))}
+                {!loadingCompetitors && competitorSets.length === 0 ? (
+                  <tr>
+                    <td colSpan={11}>
+                      {tableEmptyReason}
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </WorkspaceTableShell>
+        </SectionCard>
+      </OperatorPageSectionStack>
     </PageContainer>
   );
 }

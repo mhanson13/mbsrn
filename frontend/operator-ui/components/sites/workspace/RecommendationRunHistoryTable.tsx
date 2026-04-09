@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { WorkspaceEmptyStateCard } from "../../layout/WorkspaceEmptyStateCard";
+import { WorkspaceTableShell } from "../../layout/WorkspaceTableShell";
 import type { RecommendationNarrative, RecommendationRun } from "../../../lib/api/types";
 
 interface RecommendationRunHistoryTableProps {
@@ -29,7 +31,7 @@ export function RecommendationRunHistoryTable({
     <>
       <h3>Recent Run History</h3>
       {recommendationRuns.length > 0 ? (
-        <div className="table-container">
+        <WorkspaceTableShell>
           <table className="table table-dense">
             <thead>
               <tr>
@@ -70,8 +72,14 @@ export function RecommendationRunHistoryTable({
               })}
             </tbody>
           </table>
-        </div>
-      ) : null}
+        </WorkspaceTableShell>
+      ) : (
+        <WorkspaceEmptyStateCard data-testid="workspace-recommendation-runs-empty-state">
+          <p className="hint muted">
+            No recommendation runs available yet. Generate a run to populate history and narrative links.
+          </p>
+        </WorkspaceEmptyStateCard>
+      )}
     </>
   );
 }

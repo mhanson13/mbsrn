@@ -5,6 +5,9 @@ Use these shared primitives first for page structure and layout consistency:
 - `PageContainer`: top-level page rhythm/container
 - `SectionCard`: section framing/card treatment
 - `FormContainer`: consistent form width/spacing
+- `OperatorPageHero`: standardized top-level route hero/title/subtitle composition
+- `OperatorPageSummaryStrip`: standardized summary-strip wrapper for hero stats
+- `OperatorPageSectionStack`: standardized post-hero section cadence
 
 Prefer shared utility classes from `app/globals.css` for common layout patterns:
 

@@ -3,6 +3,7 @@ import type {
   RecommendationEEATCategory,
   RecommendationEEATGapSummary,
   RecommendationNarrative,
+  RecommendationNarrativeSignalSummary,
   RecommendationOrderingExplanation,
   RecommendationPriorityReason,
   RecommendationTargetContext,
@@ -10,6 +11,7 @@ import type {
   RecommendationThemeGroup,
 } from "../../../lib/api/types";
 
+// Pure recommendation-domain helpers only. Keep orchestration/state ownership in page containers.
 function truncateOptionalText(value: string | null | undefined, limit: number): string | null {
   if (!value) {
     return null;
@@ -472,11 +474,13 @@ export function normalizeNarrativeCompetitorInfluence(
   };
 }
 
+type NarrativeSignalEvidenceSource = RecommendationNarrativeSignalSummary["evidence_sources"][number];
+
 export function normalizeNarrativeSignalSummary(
   narrative: RecommendationNarrative | null,
 ): {
   supportLevel: "low" | "medium" | "high";
-  evidenceSources: Array<"site" | "competitors" | "references" | "themes">;
+  evidenceSources: NarrativeSignalEvidenceSource[];
   competitorSignalUsed: boolean;
   siteSignalUsed: boolean;
   referenceSignalUsed: boolean;
@@ -499,7 +503,7 @@ export function normalizeNarrativeSignalSummary(
     .filter(
       (
         value,
-      ): value is "site" | "competitors" | "references" | "themes" =>
+      ): value is NarrativeSignalEvidenceSource =>
         value === "site" || value === "competitors" || value === "references" || value === "themes",
     );
   const competitorSignalUsed = Boolean(rawSignalSummary.competitor_signal_used);

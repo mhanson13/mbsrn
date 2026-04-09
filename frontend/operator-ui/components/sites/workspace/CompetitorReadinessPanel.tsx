@@ -1,5 +1,9 @@
 import Link from "next/link";
 
+import { WorkspaceActionBar } from "../../layout/WorkspaceActionBar";
+import { WorkspaceEmptyStateCard } from "../../layout/WorkspaceEmptyStateCard";
+import { WorkspaceMessageStack } from "../../layout/WorkspaceMessageStack";
+import { WorkspaceTableShell } from "../../layout/WorkspaceTableShell";
 import { SectionCard } from "../../layout/SectionCard";
 import { SectionHeader } from "../../layout/SectionHeader";
 import { SummaryStatCard } from "../../layout/SummaryStatCard";
@@ -70,7 +74,11 @@ export function CompetitorReadinessPanel({
         subtitle="Configured competitor sets, active domains, and recent snapshot/comparison activity."
         headingLevel={2}
       />
-      {competitorError ? <p className="hint error">{competitorError}</p> : null}
+      {competitorError ? (
+        <WorkspaceMessageStack data-testid="workspace-competitor-readiness-message-stack">
+          <p className="hint error">{competitorError}</p>
+        </WorkspaceMessageStack>
+      ) : null}
       <div className="workspace-summary-strip workspace-summary-strip-compact" data-testid="workspace-competitor-readiness-summary-strip">
         <SummaryStatCard
           label="Readiness"
@@ -139,17 +147,22 @@ export function CompetitorReadinessPanel({
       </div>
       <div className="workspace-status-callout stack-tight">
         <span className="hint">{workspaceReadinessMessage}</span>
-        <div className="toolbar-row toolbar-row-links workspace-status-callout-links">
+        <WorkspaceActionBar
+          variant="secondary"
+          className="workspace-status-callout-links"
+        >
           <Link href={competitorWorkspaceHref}>Open Competitor Surfaces</Link>
-        </div>
+        </WorkspaceActionBar>
       </div>
       {competitorSets.length === 0 ? (
-        <p className="hint muted">
-          No competitor sets yet. Add one to compare your site against nearby businesses in your market.
-        </p>
+        <WorkspaceEmptyStateCard data-testid="workspace-competitor-readiness-empty-state">
+          <p className="hint muted">
+            No competitor sets yet. Add one to compare your site against nearby businesses in your market.
+          </p>
+        </WorkspaceEmptyStateCard>
       ) : (
         <>
-          <div className="table-container">
+          <WorkspaceTableShell>
             <table className="table table-dense">
               <thead>
                 <tr>
@@ -191,7 +204,7 @@ export function CompetitorReadinessPanel({
                 ))}
               </tbody>
             </table>
-          </div>
+          </WorkspaceTableShell>
           {competitorSets.length > maxRows ? (
             <p className="hint muted">
               Showing the {maxRows} most recently updated competitor sets for this site.

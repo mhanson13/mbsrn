@@ -1,6 +1,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { WorkspaceActionBar } from "../../layout/WorkspaceActionBar";
+import { WorkspaceEmptyStateCard } from "../../layout/WorkspaceEmptyStateCard";
+import { WorkspaceMessageStack } from "../../layout/WorkspaceMessageStack";
 import { SectionCard } from "../../layout/SectionCard";
 import { SectionHeader } from "../../layout/SectionHeader";
 import { SummaryStatCard } from "../../layout/SummaryStatCard";
@@ -65,7 +68,7 @@ export function RecommendationQueuePanel({
         headingLevel={2}
         data-testid="recommendation-queue-header"
         actions={(
-          <div className="toolbar-row">
+          <WorkspaceActionBar variant="primary">
             <button
               type="button"
               className="button button-primary"
@@ -74,11 +77,11 @@ export function RecommendationQueuePanel({
             >
               {recommendationGenerationInFlight ? "Generating..." : "Generate Recommendations"}
             </button>
-          </div>
+          </WorkspaceActionBar>
         )}
       />
       {recommendationSectionFreshnessContent}
-      <div className="stack-tight">
+      <WorkspaceMessageStack data-testid="workspace-recommendation-queue-message-stack">
         <p className="hint muted">
           Creates a recommendation run from the latest completed audit and/or competitor comparison inputs.
         </p>
@@ -89,8 +92,8 @@ export function RecommendationQueuePanel({
         ) : null}
         {recommendationGenerationError ? <p className="hint error">{recommendationGenerationError}</p> : null}
         {recommendationGenerationMessage ? <p className="hint success">{recommendationGenerationMessage}</p> : null}
-      </div>
-      {queueError ? <p className="hint error">{queueError}</p> : null}
+        {queueError ? <p className="hint error">{queueError}</p> : null}
+      </WorkspaceMessageStack>
       <div className="workspace-summary-strip workspace-summary-strip-compact" data-testid="workspace-recommendation-queue-summary-strip">
         <SummaryStatCard
           label="Queue total"
@@ -126,11 +129,13 @@ export function RecommendationQueuePanel({
         />
       </div>
       {topActionStateContent}
-      <p>
+      <WorkspaceActionBar variant="secondary">
         <Link href={openRecommendationQueueHref}>Open Recommendation Queue</Link>
-      </p>
+      </WorkspaceActionBar>
       {!queueError && !hasQueueItems ? (
-        <p className="hint muted">{emptyQueueMessage}</p>
+        <WorkspaceEmptyStateCard data-testid="workspace-recommendation-queue-empty-state">
+          <p className="hint muted">{emptyQueueMessage}</p>
+        </WorkspaceEmptyStateCard>
       ) : null}
       {hasQueueItems ? queueListContent : null}
     </SectionCard>

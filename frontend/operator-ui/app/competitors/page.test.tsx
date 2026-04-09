@@ -196,6 +196,7 @@ describe("competitors page site-scoped loading", () => {
 
     const frontRangeRows = await screen.findAllByText("Front Range");
     expect(frontRangeRows.length).toBeGreaterThan(0);
+    expect(screen.getByTestId("competitors-page-hero")).toHaveClass("operator-page-hero-surface");
     expect(screen.queryByLabelText("Site")).not.toBeInTheDocument();
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
     expect(screen.getByTestId("competitor-quick-scan")).toBeInTheDocument();
@@ -204,9 +205,11 @@ describe("competitors page site-scoped loading", () => {
     expect(quickScanItem).toHaveTextContent("Snapshot: completed");
     expect(mockFetchCompetitorSets).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     expect(screen.getByText("Competitor Sets: 1")).toBeInTheDocument();
-    expect(screen.getByText("Active Sets: 1/1")).toBeInTheDocument();
-    expect(screen.getByText("Competitor Domains: 1")).toBeInTheDocument();
+    expect(screen.getByText("Active Sets")).toBeInTheDocument();
+    expect(screen.getByText("1/1")).toBeInTheDocument();
+    expect(screen.getByText("Competitor Domains")).toBeInTheDocument();
     expect(screen.getByText("This site has configured competitor data and recent comparison activity.")).toBeInTheDocument();
+    expect(screen.getByTestId("competitors-page-table-shell")).toHaveClass("workspace-table-shell");
   });
 
   it("applies URL site_id context so competitors load for the linked site", async () => {

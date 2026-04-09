@@ -81,6 +81,23 @@ Second-pass polish refinements:
 - site workspace companion panels (`Competitor Readiness`, `AI Competitor Profiles`, `Recommendation Queue`, `Recommendation Runs`) now use the same summary-strip and status-callout rhythm so migration is not the only polished workspace surface
 - implementation maintainability update: the large site workspace page container was decomposed into focused panel modules for competitor/recommendation surfaces without changing operator workflow semantics or backend/API behavior
 
+TailAdmin-inspired visual-system pass (inspiration only; no template import):
+- strengthened section-card rhythm across migration phases (`workspace-section-block`) to improve scan hierarchy from summary -> action -> detail
+- standardized action grouping with shared action-bar patterns (`workspace-action-bar-primary` and `workspace-action-bar-secondary`)
+- normalized inline feedback into compact status stacks (`workspace-message-stack`) so warning/success/error states are visually consistent
+- promoted clearer empty states with bounded card treatment (`workspace-empty-state`) instead of floating muted text
+- introduced compact metadata grids for migration execution diagnostics (`workspace-metadata-grid`) to reduce long-line density
+- de-emphasized troubleshooting-only areas with a consistent collapsible shell (`workspace-details-shell`)
+- standardized reusable workspace presentational primitives were introduced and adopted in migration surfaces:
+  - `WorkspaceActionBar`
+  - `WorkspaceMessageStack`
+  - `WorkspaceEmptyStateCard`
+  - `WorkspaceMetadataGrid` / `WorkspaceMetadataItem`
+
+Operator impact:
+- faster section scanning and clearer primary-vs-secondary content separation
+- no workflow semantic changes (approval/publish/deploy and generation gates are unchanged)
+
 ## Reused Context Availability Semantics
 Migration reused-context cards use best-available signal, not strict completeness.
 

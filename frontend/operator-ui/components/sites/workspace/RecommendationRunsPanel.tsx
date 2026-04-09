@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { WorkspaceMessageStack } from "../../layout/WorkspaceMessageStack";
 import { SectionCard } from "../../layout/SectionCard";
 import { SectionHeader } from "../../layout/SectionHeader";
 
@@ -25,8 +26,12 @@ export function RecommendationRunsPanel({
         data-testid="recommendation-runs-header"
         meta={latestCompletedRunMeta || null}
       />
-      {recommendationRunError ? <p className="hint error">{recommendationRunError}</p> : null}
-      {narrativeLookupError ? <p className="hint warning">{narrativeLookupError}</p> : null}
+      {recommendationRunError || narrativeLookupError ? (
+        <WorkspaceMessageStack data-testid="workspace-recommendation-runs-message-stack">
+          {recommendationRunError ? <p className="hint error">{recommendationRunError}</p> : null}
+          {narrativeLookupError ? <p className="hint warning">{narrativeLookupError}</p> : null}
+        </WorkspaceMessageStack>
+      ) : null}
       {children}
     </SectionCard>
   );

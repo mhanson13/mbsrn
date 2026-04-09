@@ -5,10 +5,15 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "../../components/AuthProvider";
 import { FormContainer } from "../../components/layout/FormContainer";
+import {
+  OperatorPageHero,
+  OperatorPageSectionStack,
+} from "../../components/layout/OperatorPageSurface";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   activateSite,
@@ -385,15 +390,13 @@ export default function SitesPage() {
 
   return (
     <PageContainer>
-      <div className="role-dashboard-landing">
-        <SectionCard variant="primary" className="role-dashboard-hero">
-          <SectionHeader
-            title="SEO Sites"
-            subtitle="Manage tracked properties, trigger audits, and monitor site intelligence."
-            headingLevel={1}
-            variant="hero"
-          />
-          <div className="workspace-summary-strip role-summary-strip">
+      <OperatorPageHero
+        title="SEO Sites"
+        subtitle="Manage tracked properties, trigger audits, and monitor site intelligence."
+        headingLevel={1}
+        data-testid="sites-page-hero"
+        summary={(
+          <>
             <SummaryStatCard
               label="Tracked sites"
               value={context.sites.length}
@@ -422,44 +425,47 @@ export default function SitesPage() {
               tone={needsAuditSiteCount > 0 ? "warning" : "neutral"}
               variant="elevated"
             />
+          </>
+        )}
+      >
+        <FormContainer onSubmit={(event) => void handleCreateSite(event)}>
+          <h2>Add Site</h2>
+          <label htmlFor="base-url">Base URL</label>
+          <input
+            id="base-url"
+            value={baseUrl}
+            onChange={(event) => setBaseUrl(event.target.value)}
+            placeholder="https://example.com"
+            required
+          />
+          <label htmlFor="display-name">Display Name (optional)</label>
+          <input
+            id="display-name"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            placeholder="Example Site"
+          />
+          <div className="form-actions">
+            <button className="button button-primary" type="submit" disabled={submitLoading}>
+              {submitLoading ? "Adding site..." : "Add Site"}
+            </button>
           </div>
+        </FormContainer>
 
-          <FormContainer onSubmit={(event) => void handleCreateSite(event)}>
-            <h2>Add Site</h2>
-            <label htmlFor="base-url">Base URL</label>
-            <input
-              id="base-url"
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder="https://example.com"
-              required
-            />
-            <label htmlFor="display-name">Display Name (optional)</label>
-            <input
-              id="display-name"
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
-              placeholder="Example Site"
-            />
-            <div className="form-actions">
-              <button className="button button-primary" type="submit" disabled={submitLoading}>
-                {submitLoading ? "Adding site..." : "Add Site"}
-              </button>
-            </div>
-          </FormContainer>
-
-          <div className="message-stack">
+        {submitSuccess || submitError || triggerMessage || triggerError || siteActionSuccess || siteActionError ? (
+          <WorkspaceMessageStack data-testid="sites-page-message-stack">
             {submitSuccess ? <p className="hint">{submitSuccess}</p> : null}
             {submitError ? <p className="hint error">{submitError}</p> : null}
             {triggerMessage ? <p className="hint">{triggerMessage}</p> : null}
             {triggerError ? <p className="hint error">{triggerError}</p> : null}
             {siteActionSuccess ? <p className="hint">{siteActionSuccess}</p> : null}
             {siteActionError ? <p className="hint error">{siteActionError}</p> : null}
-          </div>
-        </SectionCard>
-      </div>
+          </WorkspaceMessageStack>
+        ) : null}
+      </OperatorPageHero>
 
-      <SectionCard variant="summary" className="role-surface-support">
+      <OperatorPageSectionStack>
+        <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader
           title="Configured Sites"
           subtitle="Current site inventory with audit status and direct workspace actions."
@@ -551,165 +557,166 @@ export default function SitesPage() {
             </tbody>
           </table>
         </div>
-      </SectionCard>
+        </SectionCard>
 
-      <SectionCard variant="support" className="role-surface-support">
-        <SectionHeader
-          title="Site Intelligence"
-          subtitle="Latest audit findings, recommendations, and trend deltas for the selected site."
-          headingLevel={2}
-          variant="support"
-        />
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Site Intelligence"
+            subtitle="Latest audit findings, recommendations, and trend deltas for the selected site."
+            headingLevel={2}
+            variant="support"
+          />
 
-        {!selectedSite ? <p className="hint muted">No site selected.</p> : null}
-        {loadingIntelligence ? <p className="hint muted">Loading site intelligence...</p> : null}
-        {intelligenceError ? <p className="hint error">{intelligenceError}</p> : null}
+          {!selectedSite ? <p className="hint muted">No site selected.</p> : null}
+          {loadingIntelligence ? <p className="hint muted">Loading site intelligence...</p> : null}
+          {intelligenceError ? <p className="hint error">{intelligenceError}</p> : null}
 
-        {selectedSite && !loadingIntelligence && !intelligenceError ? (
-          <>
-            {!latestSummary ? (
-              <p className="hint warning">
-                No audit summary yet for this site. Run the first audit to generate intelligence data.
-              </p>
-            ) : (
-              <>
-                <div className="stack">
-                  <h3>Latest Audit Summary</h3>
-                  <p>
-                    Status:{" "}
-                    <span className={getAuditStatusBadge(latestSummary.status)}>{latestSummary.status}</span>
-                  </p>
-                  <p>
-                    Last audit timestamp:{" "}
-                    <code>{latestRun?.completed_at || latestRun?.started_at || "unknown"}</code>
-                  </p>
-                  <p>
-                    Health score (audit-derived): <strong>{latestSummary.health_score}</strong>
-                  </p>
-                  <p>
-                    Total findings: <strong>{latestSummary.total_findings}</strong> (critical{" "}
-                    {latestSummary.critical_findings}, warning {latestSummary.warning_findings}, info{" "}
-                    {latestSummary.info_findings})
-                  </p>
-                </div>
+          {selectedSite && !loadingIntelligence && !intelligenceError ? (
+            <>
+              {!latestSummary ? (
+                <p className="hint warning">
+                  No audit summary yet for this site. Run the first audit to generate intelligence data.
+                </p>
+              ) : (
+                <>
+                  <div className="stack">
+                    <h3>Latest Audit Summary</h3>
+                    <p>
+                      Status:{" "}
+                      <span className={getAuditStatusBadge(latestSummary.status)}>{latestSummary.status}</span>
+                    </p>
+                    <p>
+                      Last audit timestamp:{" "}
+                      <code>{latestRun?.completed_at || latestRun?.started_at || "unknown"}</code>
+                    </p>
+                    <p>
+                      Health score (audit-derived): <strong>{latestSummary.health_score}</strong>
+                    </p>
+                    <p>
+                      Total findings: <strong>{latestSummary.total_findings}</strong> (critical{" "}
+                      {latestSummary.critical_findings}, warning {latestSummary.warning_findings}, info{" "}
+                      {latestSummary.info_findings})
+                    </p>
+                  </div>
 
-                <div className="stack">
-                  <h3>Prioritized Findings (Top {MAX_TOP_FINDINGS})</h3>
-                  {topFindings.length === 0 ? (
-                    <p className="hint muted">No findings were recorded for the latest audit.</p>
-                  ) : (
-                    <div className="table-container">
-                      <table className="table">
-                        <thead>
-                          <tr>
-                            <th>Severity</th>
-                            <th>Category</th>
-                            <th>Issue</th>
-                            <th>Suggested Fix</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {topFindings.map((item) => (
-                            <tr key={item.id}>
-                              <td>{item.severity}</td>
-                              <td>{item.category}</td>
-                              <td>{item.title}</td>
-                              <td>{item.suggested_fix || "-"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-
-                <div className="stack">
-                  <h3>Recommendations</h3>
-                  {recommendations.length > 0 ? (
-                    <div className="table-container">
-                      <table className="table">
-                        <thead>
-                          <tr>
-                            <th>Priority</th>
-                            <th>Severity</th>
-                            <th>Recommendation</th>
-                            <th>Rationale</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {recommendations.map((item) => (
-                            <tr key={item.id}>
-                              <td>
-                                {item.priority_score} ({item.priority_band})
-                              </td>
-                              <td>{item.severity}</td>
-                              <td>{item.title}</td>
-                              <td>{item.rationale}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : derivedRecommendations.length > 0 ? (
-                    <>
-                      <p className="hint muted">
-                        No persisted recommendation items exist yet. Showing direct next steps derived from latest
-                        findings.
-                      </p>
+                  <div className="stack">
+                    <h3>Prioritized Findings (Top {MAX_TOP_FINDINGS})</h3>
+                    {topFindings.length === 0 ? (
+                      <p className="hint muted">No findings were recorded for the latest audit.</p>
+                    ) : (
                       <div className="table-container">
                         <table className="table">
                           <thead>
                             <tr>
                               <th>Severity</th>
-                              <th>Recommendation</th>
-                              <th>Source Mapping</th>
+                              <th>Category</th>
+                              <th>Issue</th>
+                              <th>Suggested Fix</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {derivedRecommendations.map((item) => (
+                            {topFindings.map((item) => (
                               <tr key={item.id}>
                                 <td>{item.severity}</td>
+                                <td>{item.category}</td>
                                 <td>{item.title}</td>
-                                <td>{item.action}</td>
+                                <td>{item.suggested_fix || "-"}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
-                    </>
-                  ) : (
-                    <p className="hint muted">No recommendations or actionable findings are available yet.</p>
-                  )}
-                </div>
+                    )}
+                  </div>
 
-                <div className="stack">
-                  <h3>Change Over Time</h3>
-                  {latestSummary && previousSummary ? (
-                    <>
-                      <p>
-                        Latest audit run: <code>{latestRun?.completed_at || latestRun?.started_at || "unknown"}</code>
-                      </p>
-                      <p>
-                        Previous audit run:{" "}
-                        <code>{previousRun?.completed_at || previousRun?.started_at || "unknown"}</code>
-                      </p>
-                      <p>
-                        Health score delta: <strong>{formatSignedDelta(healthDelta || 0)}</strong>
-                      </p>
-                      <p>
-                        Issue count delta: <strong>{formatSignedDelta(issueDelta || 0)}</strong> (negative means fewer
-                        findings)
-                      </p>
-                    </>
-                  ) : (
-                    <p className="hint muted">No historical comparison yet. Complete at least two audits.</p>
-                  )}
-                </div>
-              </>
-            )}
-          </>
-        ) : null}
-      </SectionCard>
+                  <div className="stack">
+                    <h3>Recommendations</h3>
+                    {recommendations.length > 0 ? (
+                      <div className="table-container">
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>Priority</th>
+                              <th>Severity</th>
+                              <th>Recommendation</th>
+                              <th>Rationale</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {recommendations.map((item) => (
+                              <tr key={item.id}>
+                                <td>
+                                  {item.priority_score} ({item.priority_band})
+                                </td>
+                                <td>{item.severity}</td>
+                                <td>{item.title}</td>
+                                <td>{item.rationale}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : derivedRecommendations.length > 0 ? (
+                      <>
+                        <p className="hint muted">
+                          No persisted recommendation items exist yet. Showing direct next steps derived from latest
+                          findings.
+                        </p>
+                        <div className="table-container">
+                          <table className="table">
+                            <thead>
+                              <tr>
+                                <th>Severity</th>
+                                <th>Recommendation</th>
+                                <th>Source Mapping</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {derivedRecommendations.map((item) => (
+                                <tr key={item.id}>
+                                  <td>{item.severity}</td>
+                                  <td>{item.title}</td>
+                                  <td>{item.action}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="hint muted">No recommendations or actionable findings are available yet.</p>
+                    )}
+                  </div>
+
+                  <div className="stack">
+                    <h3>Change Over Time</h3>
+                    {latestSummary && previousSummary ? (
+                      <>
+                        <p>
+                          Latest audit run: <code>{latestRun?.completed_at || latestRun?.started_at || "unknown"}</code>
+                        </p>
+                        <p>
+                          Previous audit run:{" "}
+                          <code>{previousRun?.completed_at || previousRun?.started_at || "unknown"}</code>
+                        </p>
+                        <p>
+                          Health score delta: <strong>{formatSignedDelta(healthDelta || 0)}</strong>
+                        </p>
+                        <p>
+                          Issue count delta: <strong>{formatSignedDelta(issueDelta || 0)}</strong> (negative means fewer
+                          findings)
+                        </p>
+                      </>
+                    ) : (
+                      <p className="hint muted">No historical comparison yet. Complete at least two audits.</p>
+                    )}
+                  </div>
+                </>
+              )}
+            </>
+          ) : null}
+        </SectionCard>
+      </OperatorPageSectionStack>
     </PageContainer>
   );
 }

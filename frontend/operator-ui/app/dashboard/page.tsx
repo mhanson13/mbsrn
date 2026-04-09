@@ -4,9 +4,16 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { PageContainer } from "../../components/layout/PageContainer";
+import {
+  OperatorPageHero,
+  OperatorPageSectionStack,
+} from "../../components/layout/OperatorPageSurface";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { WorkspaceActionBar } from "../../components/layout/WorkspaceActionBar";
+import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
+import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "../../components/layout/WorkspaceMetadataGrid";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   fetchAutomationRuns,
@@ -287,15 +294,13 @@ export default function DashboardPage() {
 
   return (
     <PageContainer width="wide" density="compact">
-      <div className="role-dashboard-landing">
-        <SectionCard variant="primary" className="role-dashboard-hero">
-          <SectionHeader
-            title="Dashboard"
-            subtitle="Operator-first summary for what to review next across audit, recommendations, and automation."
-            headingLevel={1}
-            variant="hero"
-          />
-          <div className="workspace-summary-strip role-summary-strip" data-testid="dashboard-summary-strip">
+      <OperatorPageHero
+        title="Dashboard"
+        subtitle="Operator-first summary for what to review next across audit, recommendations, and automation."
+        headingLevel={1}
+        data-testid="dashboard-page-hero"
+        summary={(
+          <div data-testid="dashboard-summary-strip">
             <SummaryStatCard
               label="Tracked sites"
               value={context.sites.length}
@@ -335,50 +340,56 @@ export default function DashboardPage() {
               variant="elevated"
             />
           </div>
-          {signalLoading ? <p className="hint muted">Refreshing dashboard signals…</p> : null}
-          {signalError ? <p className="hint warning">{signalError}</p> : null}
+        )}
+      >
+        {signalLoading || signalError ? (
+          <WorkspaceMessageStack data-testid="dashboard-signal-messages">
+            {signalLoading ? <p className="hint muted">Refreshing dashboard signals…</p> : null}
+            {signalError ? <p className="hint warning">{signalError}</p> : null}
+          </WorkspaceMessageStack>
+        ) : null}
+      </OperatorPageHero>
+
+      <OperatorPageSectionStack>
+        <SectionCard variant="emphasis" className="role-surface-support" data-testid="dashboard-priority-panel">
+          <SectionHeader
+            title="Do this now"
+            subtitle="Highest-priority deterministic next step from current workspace signals."
+            headingLevel={2}
+            variant="support"
+          />
+          <div className="stack-tight">
+            <div className="link-row">
+              <span className={`badge ${priorityCue.badgeClass}`}>{priorityCue.title}</span>
+              {recommendationRunStatus ? (
+                <span className="badge badge-muted">Recommendation run: {recommendationRunStatus}</span>
+              ) : null}
+            </div>
+            <p className="hint muted">{priorityCue.reason}</p>
+            <WorkspaceActionBar variant="primary">
+              <Link href={priorityCue.href} className="button button-primary button-inline">
+                {priorityCue.actionLabel}
+              </Link>
+            </WorkspaceActionBar>
+          </div>
         </SectionCard>
-      </div>
 
-      <SectionCard variant="emphasis" className="role-surface-support" data-testid="dashboard-priority-panel">
-        <SectionHeader
-          title="Do this now"
-          subtitle="Highest-priority deterministic next step from current workspace signals."
-          headingLevel={2}
-          variant="support"
-        />
-        <div className="stack-tight">
-          <div className="link-row">
-            <span className={`badge ${priorityCue.badgeClass}`}>{priorityCue.title}</span>
-            {recommendationRunStatus ? (
-              <span className="badge badge-muted">Recommendation run: {recommendationRunStatus}</span>
-            ) : null}
-          </div>
-          <p className="hint muted">{priorityCue.reason}</p>
-          <div>
-            <Link href={priorityCue.href} className="button button-primary button-inline">
-              {priorityCue.actionLabel}
-            </Link>
-          </div>
-        </div>
-      </SectionCard>
-
-      <SectionCard variant="summary" className="role-surface-support" data-testid="dashboard-recent-activity">
-        <SectionHeader
-          title="Recent activity"
-          subtitle="Latest terminal outcomes across audit, automation, and recommendation generation."
-          headingLevel={2}
-          variant="support"
-        />
-        <div className="stack-tight">
-          {recentActivityItems.map((item) => (
-            <p key={item.label} className="hint muted">
-              <span className="text-strong">{item.label}:</span> {item.value}
-            </p>
-          ))}
-        </div>
-      </SectionCard>
-
+        <SectionCard variant="summary" className="role-surface-support" data-testid="dashboard-recent-activity">
+          <SectionHeader
+            title="Recent activity"
+            subtitle="Latest terminal outcomes across audit, automation, and recommendation generation."
+            headingLevel={2}
+            variant="support"
+          />
+          <WorkspaceMetadataGrid>
+            {recentActivityItems.map((item) => (
+              <WorkspaceMetadataItem key={item.label} label={item.label}>
+                <span className="hint muted">{item.value}</span>
+              </WorkspaceMetadataItem>
+            ))}
+          </WorkspaceMetadataGrid>
+        </SectionCard>
+      </OperatorPageSectionStack>
     </PageContainer>
   );
 }

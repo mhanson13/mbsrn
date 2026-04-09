@@ -41,6 +41,38 @@ Boundary:
 - no generation/review workflow changes
 - no backend/provider semantics changed
 
+## Workspace Dashboard Visual-System Pass (Frontend Only)
+
+The competitor workspace surfaces were further aligned to a stronger dashboard pattern set (TailAdmin-inspired for visual direction only, implemented with existing MBSRN components/CSS):
+
+- section-level action grouping now uses shared workspace action bars
+- run/action error+success messages are rendered in a compact standardized message stack
+- readiness empty states now use explicit empty-state cards instead of plain muted paragraphs
+- run/readiness tables use a shared framed table shell for cleaner separation from surrounding cards
+- common competitor workspace presentation blocks now use reusable primitives:
+  - `WorkspaceActionBar`
+  - `WorkspaceMessageStack`
+  - `WorkspaceEmptyStateCard`
+  - `WorkspaceTableShell`
+
+Boundary:
+- visual-system consistency only
+- no candidate-generation, review gating, or provider behavior changes
+
+## Competitors Route UI Consistency (Non-Workspace Surface)
+
+The standalone `Competitor Intelligence` page (`/competitors`) now reuses the same MBSRN-native presentational primitives introduced in workspace surfaces:
+- `WorkspaceMetadataGrid` for readiness scan facts
+- `WorkspaceActionBar` for compact inventory/status ribbons
+- `WorkspaceMessageStack` for loading/error callouts
+- `WorkspaceEmptyStateCard` for quick-scan empty states
+- `WorkspaceTableShell` for run/set table framing
+- `OperatorPageHero` + `OperatorPageSectionStack` for route-level hero-to-section composition rhythm
+
+Boundary:
+- presentation consistency only
+- no changes to competitor generation, readiness logic, or API semantics
+
 Bounded exclusion telemetry is persisted at run level for tuning:
 - raw/included/excluded candidate totals,
 - aggregate exclusion counts by deterministic reason code.

@@ -125,6 +125,7 @@ describe("sites admin deactivate controls", () => {
   it("renders Open Workspace using the shared inline button action style", () => {
     render(<SitesPage />);
 
+    expect(screen.getByTestId("sites-page-hero")).toHaveClass("operator-page-hero-surface");
     const openWorkspaceAction = screen.getByRole("link", { name: "Open Workspace" });
     expect(openWorkspaceAction).toHaveClass("button", "button-secondary", "button-inline");
     expect(openWorkspaceAction).toHaveAttribute("href", "/sites/site-1");

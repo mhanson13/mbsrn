@@ -336,6 +336,16 @@ Duration behavior:
 - running run: elapsed since `started_at`
 - missing/invalid timestamps: `—`
 
+Presentation consistency:
+- `/audits` now reuses shared operator presentational primitives already used in site workspace surfaces:
+  - `WorkspaceMessageStack`
+  - `WorkspaceEmptyStateCard`
+  - `WorkspaceTableShell`
+- `/audits` now also uses shared route-level page composition wrappers for hero/summary/section cadence:
+  - `OperatorPageHero`
+  - `OperatorPageSectionStack`
+- This is UI-only standardization; run filtering, loading, and navigation behavior are unchanged.
+
 ## Dashboard (Operator Overview)
 
 The dashboard uses an action-first layout:
