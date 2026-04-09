@@ -29,6 +29,18 @@ Candidate quality is hardened with deterministic backend post-processing:
 
 Business-scoped admin tuning controls now support bounded adjustments for key scoring/exclusion levers without code changes.
 
+## Workspace Presentation Consistency (Frontend Only)
+
+Site workspace competitor-facing panels were aligned with migration/recommendation panel rhythm in a narrow frontend-only pass:
+- `Competitor Readiness` now uses summary-strip cards for readiness, set/domain counts, and latest snapshot/comparison signals.
+- `AI Competitor Profiles` now surfaces a compact status strip (latest run state, reviewable drafts, returned count, failures/retries) plus a bounded status callout for run/provider metadata.
+- spacing/header rhythm now matches adjacent workspace sections more closely.
+
+Boundary:
+- presentation/layout only
+- no generation/review workflow changes
+- no backend/provider semantics changed
+
 Bounded exclusion telemetry is persisted at run level for tuning:
 - raw/included/excluded candidate totals,
 - aggregate exclusion counts by deterministic reason code.

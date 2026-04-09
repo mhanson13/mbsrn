@@ -86,6 +86,8 @@ describe("NavShell", () => {
     const userMgmtLink = screen.getByRole("link", { name: "User Mgmt" });
     expect(userMgmtLink).toBeInTheDocument();
     expect(userMgmtLink).toHaveAttribute("href", "/user-mgmt");
+    expect(screen.getByTestId("topnav-logo-link")).toHaveAttribute("href", "/dashboard");
+    expect(screen.getByTestId("topnav-logo-image")).toHaveAttribute("src", expect.stringContaining("mbsrn-logo.jpg"));
     expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
     expect(document.querySelectorAll(".topnav-links")).toHaveLength(1);
     expect(document.querySelector(".topnav-inner")).toBeTruthy();

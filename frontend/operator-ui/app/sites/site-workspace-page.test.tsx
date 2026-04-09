@@ -2279,6 +2279,13 @@ describe("site workspace migration tab", () => {
     expect(readiness).toHaveTextContent("Status: Ready");
     expect(readiness).toHaveTextContent("Readiness score: 100/100");
     expect(readiness).toHaveTextContent("Ready to generate draft.");
+    const summaryBand = await screen.findByTestId("migration-summary-band");
+    expect(summaryBand).toHaveTextContent("Migration state");
+    expect(summaryBand).toHaveTextContent("Latest draft");
+    expect(summaryBand).toHaveTextContent("Artifact quality");
+    expect(await screen.findByTestId("migration-next-action")).toHaveTextContent(
+      "Review draft quality before approval.",
+    );
     const currentState = await screen.findByTestId("migration-current-state");
     expect(currentState).toHaveTextContent("State: Ready");
     expect(currentState).toHaveTextContent("Ready to generate draft.");
@@ -2296,6 +2303,42 @@ describe("site workspace migration tab", () => {
     expect(await screen.findByTestId("migration-ai-duration")).toHaveTextContent("Duration: 84000 ms");
     expect(screen.queryByTestId("migration-draft-timeout")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Generate Draft Mockup" })).toBeEnabled();
+  });
+
+  it("renders migration summary band safely when artifact details are missing", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        latest_artifact: null,
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: null,
+          latest_generated_artifact_version_number: null,
+          latest_approved_artifact_version_id: null,
+          latest_approved_artifact_version_number: null,
+        }),
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          draft_generation_state: {
+            status: "ready",
+            summary: "Ready to generate draft.",
+          },
+          ai_execution: {},
+        },
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValue({ items: [], total: 0 });
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    const summaryBand = await screen.findByTestId("migration-summary-band");
+    expect(summaryBand).toHaveTextContent("Latest draft");
+    expect(summaryBand).toHaveTextContent("Not generated");
+    expect(summaryBand).toHaveTextContent("Artifact quality");
+    expect(summaryBand).toHaveTextContent("Not scored");
+    expect(await screen.findByTestId("migration-next-action")).toHaveTextContent(
+      "Generate a draft to continue.",
+    );
   });
 
   it("renders warning draft preflight state and keeps generate enabled", async () => {
@@ -6578,10 +6621,12 @@ describe("site workspace timeline controls", () => {
     const competitorHeader = await screen.findByTestId("competitor-section-header");
     expect(within(competitorHeader).getByRole("heading", { name: "AI Competitor Profiles" })).toBeInTheDocument();
     expect(within(competitorHeader).getByRole("button", { name: "Generate Competitor Profiles" })).toBeInTheDocument();
+    expect(await screen.findByTestId("competitor-profile-status-strip")).toBeInTheDocument();
 
     const recommendationHeader = screen.getByTestId("recommendation-queue-header");
     expect(within(recommendationHeader).getByRole("heading", { name: "Recommendation Queue" })).toBeInTheDocument();
     expect(within(recommendationHeader).getByRole("button", { name: "Generate Recommendations" })).toBeInTheDocument();
+    expect(await screen.findByTestId("workspace-recommendation-queue-summary-strip")).toBeInTheDocument();
 
     const runsHeader = screen.getByTestId("recommendation-runs-header");
     expect(within(runsHeader).getByRole("heading", { name: "Recommendation Runs and Narratives" })).toBeInTheDocument();
@@ -6616,7 +6661,7 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "AI Competitor Profiles" });
-    const competitorFreshness = screen.getByTestId("competitor-section-freshness");
+    const competitorFreshness = await screen.findByTestId("competitor-section-freshness");
     expect(within(competitorFreshness).getByText("Run in progress")).toBeInTheDocument();
     expect(
       within(competitorFreshness).getByText(
@@ -6626,7 +6671,7 @@ describe("site workspace timeline controls", () => {
     expect(within(competitorFreshness).getByText(/Refresh expected\./i)).toBeInTheDocument();
     expect(within(competitorFreshness).getByText(/Evaluated/)).toBeInTheDocument();
 
-    const recommendationFreshness = screen.getByTestId("recommendation-section-freshness");
+    const recommendationFreshness = await screen.findByTestId("recommendation-section-freshness");
     expect(within(recommendationFreshness).getByText("Refresh pending")).toBeInTheDocument();
     expect(
       within(recommendationFreshness).getByText(
@@ -6654,7 +6699,7 @@ describe("site workspace timeline controls", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findByRole("heading", { name: "AI Competitor Profiles" });
-    const competitorFreshness = screen.getByTestId("competitor-section-freshness");
+    const competitorFreshness = await screen.findByTestId("competitor-section-freshness");
     expect(within(competitorFreshness).getByText("Possibly outdated")).toBeInTheDocument();
     expect(
       within(competitorFreshness).getByText(
@@ -7896,6 +7941,7 @@ describe("site workspace timeline controls", () => {
       expect(screen.queryByText("Loading workspace data...")).not.toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: "Generate Recommendations" })).toBeEnabled();
+    expect(screen.getByTestId("workspace-recommendation-queue-summary-strip")).toHaveTextContent("No freshness signal");
   });
 
   it("shows prerequisite messaging when no completed recommendation inputs are available", async () => {
@@ -8392,6 +8438,7 @@ describe("site workspace ai competitor profile drafts", () => {
     render(<SiteWorkspacePage />);
 
     await screen.findAllByTestId("competitor-profile-draft-row");
+    expect(screen.getByTestId("competitor-profile-status-strip")).toHaveTextContent("Latest run status");
     expect(mockFetchCompetitorProfileGenerationRunDetail).toHaveBeenCalledWith(
       "token-1",
       "biz-1",

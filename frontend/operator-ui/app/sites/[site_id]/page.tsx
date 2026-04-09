@@ -11,6 +11,20 @@ import { PageContainer } from "../../../components/layout/PageContainer";
 import { SectionHeader } from "../../../components/layout/SectionHeader";
 import { SectionCard } from "../../../components/layout/SectionCard";
 import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
+import { AICompetitorProfilesPanel } from "../../../components/sites/workspace/AICompetitorProfilesPanel";
+import { CompetitorReadinessPanel } from "../../../components/sites/workspace/CompetitorReadinessPanel";
+import { RecommendationNarrativeOverlayPanel } from "../../../components/sites/workspace/RecommendationNarrativeOverlayPanel";
+import { RecommendationQueuePanel } from "../../../components/sites/workspace/RecommendationQueuePanel";
+import { RecommendationRunHistoryTable } from "../../../components/sites/workspace/RecommendationRunHistoryTable";
+import { RecommendationRunsPanel } from "../../../components/sites/workspace/RecommendationRunsPanel";
+import {
+  buildRecommendationDetailClarityView,
+  hasRecommendationDetailClarityContent,
+  RecommendationDetailClarity,
+  RecommendationWorkspaceItemCard,
+  type RecommendationDetailClarityView,
+  type RecommendationWorkspaceItemViewModel,
+} from "../../../components/sites/workspace/RecommendationWorkspaceItemCard";
 import { useOperatorContext } from "../../../components/useOperatorContext";
 import {
   acceptCompetitorProfileDraft,
@@ -3669,13 +3683,6 @@ interface RecommendationPresentationBucket {
   items: Recommendation[];
 }
 
-interface RecommendationDetailClarityView {
-  observedPattern: string | null;
-  observedGap: string | null;
-  recommendedAction: string | null;
-  evidenceContextLines: string[];
-}
-
 function recommendationPresentationBucketBadgeClass(
   key: RecommendationPresentationBucketKey,
 ): string {
@@ -3823,75 +3830,6 @@ function buildRecommendationPresentationBuckets(
     .filter((bucket): bucket is RecommendationPresentationBucket => bucket !== null);
 }
 
-function buildRecommendationDetailClarityView(params: {
-  actionDelta: {
-    observedCompetitorPattern: string;
-    observedSiteGap: string;
-    recommendedOperatorAction: string;
-    evidenceStrength: "high" | "medium" | "low";
-  } | null;
-  evidenceSummary: string | null;
-  observedGapSummary: string | null;
-  actionClarity: string | null;
-  expectedOutcome: string | null;
-  competitorLinkageSummary: string | null;
-  evidenceTrace: string[];
-  targetContext: RecommendationTargetContext | null;
-  targetPageHints: string[];
-  targetContentSummary: string | null;
-}): RecommendationDetailClarityView {
-  const observedPattern =
-    params.actionDelta?.observedCompetitorPattern
-    || params.evidenceSummary
-    || null;
-  const observedGap =
-    params.actionDelta?.observedSiteGap
-    || params.observedGapSummary
-    || params.competitorLinkageSummary
-    || null;
-  const recommendedAction =
-    params.actionDelta?.recommendedOperatorAction
-    || params.actionClarity
-    || params.expectedOutcome
-    || null;
-  const evidenceContextLines: string[] = [];
-  if (params.actionDelta) {
-    evidenceContextLines.push(
-      `Evidence strength: ${formatRecommendationActionDeltaEvidenceStrength(params.actionDelta.evidenceStrength)}.`,
-    );
-  }
-  if (params.evidenceTrace.length > 0) {
-    evidenceContextLines.push(`Evidence trace: ${params.evidenceTrace.join(" · ")}`);
-  }
-  if (params.targetContext) {
-    evidenceContextLines.push(`Target context: ${formatRecommendationTargetContext(params.targetContext)}`);
-  }
-  if (params.targetPageHints.length > 0) {
-    evidenceContextLines.push(`Likely pages: ${params.targetPageHints.join(", ")}`);
-  }
-  if (params.targetContentSummary) {
-    evidenceContextLines.push(`Content to update: ${params.targetContentSummary}`);
-  }
-  if (params.expectedOutcome && params.expectedOutcome !== recommendedAction) {
-    evidenceContextLines.push(`Expected outcome: ${params.expectedOutcome}`);
-  }
-  return {
-    observedPattern,
-    observedGap,
-    recommendedAction,
-    evidenceContextLines,
-  };
-}
-
-function hasRecommendationDetailClarityContent(clarity: RecommendationDetailClarityView): boolean {
-  return Boolean(
-    clarity.observedPattern
-    || clarity.observedGap
-    || clarity.recommendedAction
-    || clarity.evidenceContextLines.length > 0,
-  );
-}
-
 function buildRecommendationDetailClarityFromItem(item: Recommendation): RecommendationDetailClarityView {
   return buildRecommendationDetailClarityView({
     actionDelta: normalizeRecommendationActionDelta(item),
@@ -3904,55 +3842,9 @@ function buildRecommendationDetailClarityFromItem(item: Recommendation): Recomme
     targetContext: normalizeRecommendationTargetContext(item),
     targetPageHints: normalizeRecommendationTargetPageHints(item),
     targetContentSummary: normalizeRecommendationTargetContentSummary(item),
+    formatActionDeltaEvidenceStrength: formatRecommendationActionDeltaEvidenceStrength,
+    formatTargetContext: formatRecommendationTargetContext,
   });
-}
-
-function RecommendationDetailClarity({
-  clarity,
-  bucketKey,
-  testId = "recommendation-detail-clarity",
-}: {
-  clarity: RecommendationDetailClarityView;
-  bucketKey: RecommendationPresentationBucketKey;
-  testId?: string;
-}): JSX.Element | null {
-  if (!hasRecommendationDetailClarityContent(clarity)) {
-    return null;
-  }
-  return (
-    <div className={`recommendation-detail-clarity recommendation-detail-clarity-${bucketKey}`} data-testid={testId}>
-      {clarity.observedPattern ? (
-        <div className="recommendation-detail-clarity-row" data-testid="recommendation-clarity-observed-pattern">
-          <span className="recommendation-detail-clarity-label">What we observed</span>
-          <span className="hint muted">{clarity.observedPattern}</span>
-        </div>
-      ) : null}
-      {clarity.observedGap ? (
-        <div className="recommendation-detail-clarity-row" data-testid="recommendation-clarity-gap">
-          <span className="recommendation-detail-clarity-label">What needs improvement</span>
-          <span className="hint muted">{clarity.observedGap}</span>
-        </div>
-      ) : null}
-      {clarity.recommendedAction ? (
-        <div className="recommendation-detail-clarity-row recommendation-detail-clarity-row-action" data-testid="recommendation-clarity-action">
-          <span className="recommendation-detail-clarity-label">What to do next</span>
-          <strong>{clarity.recommendedAction}</strong>
-        </div>
-      ) : null}
-      {clarity.evidenceContextLines.length > 0 ? (
-        <div className="recommendation-detail-clarity-row recommendation-detail-clarity-row-evidence" data-testid="recommendation-clarity-evidence">
-          <span className="recommendation-detail-clarity-label">Why this is recommended</span>
-          <div className="stack-micro">
-            {clarity.evidenceContextLines.map((line, index) => (
-              <span key={`recommendation-clarity-evidence-${index}`} className="hint muted">
-                {line}
-              </span>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 interface CompetitorContextHealthCheckView {
@@ -5645,17 +5537,20 @@ export default function SiteWorkspacePage() {
     setLatestCompletedRecommendationsError(null);
   }
 
+  const selectedSiteIdForGa4Input = selectedSite?.id || null;
+  const selectedSiteGa4PropertyIdForInput = selectedSite?.ga4_property_id || "";
+
   useEffect(() => {
-    if (!selectedSite) {
+    if (!selectedSiteIdForGa4Input) {
       setGa4PropertyInput("");
       setGa4PropertySaveError(null);
       setGa4PropertySaveMessage(null);
       return;
     }
-    setGa4PropertyInput(normalizeGa4PropertyInput(selectedSite.ga4_property_id || ""));
+    setGa4PropertyInput(normalizeGa4PropertyInput(selectedSiteGa4PropertyIdForInput));
     setGa4PropertySaveError(null);
     setGa4PropertySaveMessage(null);
-  }, [selectedSite?.id, selectedSite?.ga4_property_id]);
+  }, [selectedSiteIdForGa4Input, selectedSiteGa4PropertyIdForInput]);
 
   useEffect(() => {
     if (!selectedSite) {
@@ -8036,6 +7931,294 @@ export default function SiteWorkspacePage() {
     }
   }
 
+  const selectedSiteId = selectedSite.id;
+
+  function buildRecommendationWorkspaceItemViewModel(
+    item: Recommendation,
+    index: number,
+    sectionTheme: string | null,
+  ): RecommendationWorkspaceItemViewModel {
+    const recommendationRank = recommendationRankById.get(item.id) ?? index;
+    const impactLabel = recommendationImpactLabel(item, recommendationRank);
+    const eeatCategories = normalizeEEATCategories(item.eeat_categories);
+    const priorityReasons = normalizeRecommendationPriorityReasons(item.priority_reasons);
+    const recommendationProgress = normalizeRecommendationProgress(item);
+    const recommendationLifecycle = normalizeRecommendationLifecycle(item);
+    const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
+    const recommendationObservedGapSummary = normalizeRecommendationObservedGapSummary(item);
+    const recommendationEvidenceTrace = normalizeRecommendationEvidenceTrace(item);
+    const recommendationActionClarity = normalizeRecommendationActionClarity(item);
+    const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
+    const recommendationTargetContext = normalizeRecommendationTargetContext(item);
+    const recommendationTargetPageHints = normalizeRecommendationTargetPageHints(item);
+    const recommendationTargetContentSummary = normalizeRecommendationTargetContentSummary(item);
+    const recommendationActionPlanSteps = normalizeRecommendationActionPlanSteps(item);
+    const recommendationCompetitorLinkageSummary = normalizeRecommendationCompetitorLinkageSummary(item);
+    const recommendationCompetitorEvidenceLinks = normalizeRecommendationCompetitorEvidenceLinks(item);
+    const recommendationActionDelta = normalizeRecommendationActionDelta(item);
+    const recommendationPriority = normalizeRecommendationPriority(item);
+    const recommendationPriorityRationale = normalizeRecommendationPriorityRationale(item);
+    const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
+    const recommendationCompetitorInfluence = normalizeRecommendationCompetitorInfluenceLevel(item);
+    const recommendationWhyNow = normalizeRecommendationWhyNow(item);
+    const recommendationNextAction = normalizeRecommendationNextAction(item);
+    const recommendationCompetitorInsight = normalizeRecommendationCompetitorInsight(item);
+    const recommendationMeasurementContext = normalizeRecommendationMeasurementContext(item);
+    const recommendationMeasurementContextLine = buildRecommendationMeasurementContextLine(
+      recommendationMeasurementContext,
+    );
+    const recommendationMeasurementSinceLine = buildRecommendationMeasurementSinceLine(
+      recommendationMeasurementContext,
+    );
+    const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
+    const recommendationSearchVisibilityContextLine = buildRecommendationSearchVisibilityContextLine(
+      recommendationSearchConsoleContext,
+    );
+    const recommendationSearchVisibilitySinceLine = buildRecommendationSearchVisibilitySinceLine(
+      recommendationSearchConsoleContext,
+    );
+    const recommendationSearchQueriesLine = recommendationSearchConsoleContext
+      && recommendationSearchConsoleContext.searchConsoleStatus === "available"
+      && recommendationSearchConsoleContext.topQueriesSummary.length > 0
+      ? recommendationSearchConsoleContext.topQueriesSummary
+        .map((query) => query.query)
+        .slice(0, 3)
+        .join(" · ")
+      : null;
+    const recommendationEffectivenessSummary = normalizeRecommendationEffectivenessSummary(item);
+    const recommendationExecutionType = normalizeRecommendationExecutionType(item);
+    const recommendationExecutionScope = normalizeRecommendationExecutionScope(item);
+    const recommendationExecutionInputs = normalizeRecommendationExecutionInputs(item);
+    const recommendationExecutionReadiness = normalizeRecommendationExecutionReadiness(item);
+    const recommendationBlockingReason = normalizeRecommendationBlockingReason(item);
+    const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
+    const recommendationDetailClarity = buildRecommendationDetailClarityView({
+      actionDelta: recommendationActionDelta,
+      evidenceSummary: recommendationEvidenceSummary,
+      observedGapSummary: recommendationObservedGapSummary,
+      actionClarity: recommendationActionClarity,
+      expectedOutcome: recommendationExpectedOutcome,
+      competitorLinkageSummary: recommendationCompetitorLinkageSummary,
+      evidenceTrace: recommendationEvidenceTrace,
+      targetContext: recommendationTargetContext,
+      targetPageHints: recommendationTargetPageHints,
+      targetContentSummary: recommendationTargetContentSummary,
+      formatActionDeltaEvidenceStrength: formatRecommendationActionDeltaEvidenceStrength,
+      formatTargetContext: formatRecommendationTargetContext,
+    });
+    const recommendationActionSummary = recommendationNextAction
+      || recommendationActionClarity
+      || recommendationDetailClarity.recommendedAction
+      || recommendationExpectedOutcome;
+    const recommendationWhyItMattersSummary = recommendationEvidenceSummary
+      || recommendationWhyNow
+      || recommendationObservedGapSummary
+      || recommendationExpectedOutcome
+      || recommendationCompetitorInsight;
+    const recommendationEffortHintLabel = recommendationPriority?.effortHint
+      ? formatRecommendationEffortHintLabel(recommendationPriority.effortHint)
+      : null;
+    const recommendationIsBlocked = recommendationExecutionReadiness !== "ready"
+      && Boolean(recommendationBlockingReason);
+    const hasActionabilitySummary = Boolean(
+      recommendationExecutionReadiness || recommendationEffortHintLabel || recommendationIsBlocked,
+    );
+    const hasActionSectionDetails = Boolean(
+      recommendationActionClarity
+      || recommendationNextAction
+      || recommendationExecutionType
+      || recommendationExecutionScope
+      || recommendationExecutionInputs.length > 0
+      || recommendationExecutionReadiness
+      || recommendationBlockingReason
+      || recommendationTargetContext
+      || recommendationTargetPageHints.length > 0
+      || recommendationTargetContentSummary
+      || recommendationActionPlanSteps.length > 0,
+    );
+    const hasEvidenceSectionDetails = Boolean(
+      recommendationEvidenceSummary
+      || recommendationEvidenceTrace.length > 0
+      || (
+        recommendationObservedGapSummary
+        && recommendationObservedGapSummary.toLowerCase() !== recommendationEvidenceSummary?.toLowerCase()
+      )
+      || recommendationCompetitorInsight
+      || (recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none")
+      || recommendationCompetitorLinkageSummary
+      || recommendationCompetitorEvidenceLinks.length > 0
+      || recommendationActionDelta
+      || recommendationWhyNow
+      || recommendationExpectedOutcome,
+    );
+    const hasReadinessSectionDetails = Boolean(
+      recommendationExecutionReadiness
+      || recommendationPriorityRationale
+      || recommendationEvidenceStrength
+      || recommendationEffectivenessSummary
+      || recommendationMeasurementContextLine
+      || recommendationMeasurementSinceLine
+      || recommendationSearchVisibilityContextLine
+      || recommendationSearchVisibilitySinceLine
+      || recommendationSearchQueriesLine
+      || recommendationMeasurementContext?.measurementStatus === "no_match"
+      || recommendationSearchConsoleContext?.searchConsoleStatus === "no_match",
+    );
+    const recommendationDetailsToggleLabel = recommendationActionPlanSteps.length > 0
+      ? "Show implementation steps"
+      : "Show details";
+    const rowId = recommendationRowId(item.id);
+    const linkKeyPrefix = sectionTheme ? `${sectionTheme}-${item.id}` : item.id;
+    const detailClarityTestId = sectionTheme
+      ? `recommendation-detail-clarity-row-${sectionTheme}-${item.id}`
+      : `recommendation-detail-clarity-row-${item.id}`;
+    const executionReadinessBadge = recommendationExecutionReadiness
+      ? {
+        label: formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness),
+        className: recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness),
+      }
+      : null;
+    const competitorInfluenceBadge = recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none"
+      ? {
+        label: formatRecommendationCompetitorInfluenceLabel(recommendationCompetitorInfluence),
+        className: recommendationCompetitorInfluenceBadgeClass(recommendationCompetitorInfluence),
+      }
+      : null;
+    const lifecycleBadge = recommendationLifecycle
+      ? {
+        label: recommendationLifecycle.label,
+        className: recommendationLifecycle.badgeClass,
+      }
+      : null;
+    const priorityLevelBadge = recommendationPriority
+      ? {
+        label: formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel),
+        className: recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel),
+      }
+      : null;
+    const evidenceStrengthBadge = recommendationEvidenceStrength
+      ? {
+        label: formatRecommendationEvidenceStrengthLabel(recommendationEvidenceStrength),
+        className: recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength),
+      }
+      : null;
+    const actionDeltaSummary = recommendationActionDelta
+      ? `Action delta: ${recommendationActionDelta.observedCompetitorPattern} Site gap: ${recommendationActionDelta.observedSiteGap} Next action: ${recommendationActionDelta.recommendedOperatorAction} Evidence strength: ${formatRecommendationActionDeltaEvidenceStrength(
+        recommendationActionDelta.evidenceStrength,
+      )}.`
+      : null;
+    return {
+      id: item.id,
+      rowId,
+      detailHref: buildRecommendationDetailHref(item.id, selectedSiteId),
+      title: item.title,
+      isFocused: startHereFocusedTargetId === rowId,
+      detailsToggleLabel: recommendationDetailsToggleLabel,
+      detailClarityBucketKey: recommendationPresentationBucketKey,
+      detailClarityTestId,
+      detailClarity: recommendationDetailClarity,
+      actionSummary: recommendationActionSummary,
+      whyItMattersSummary: recommendationWhyItMattersSummary,
+      executionReadinessBadge,
+      effortHintLabel: recommendationEffortHintLabel,
+      isBlocked: recommendationIsBlocked,
+      blockingReason: recommendationBlockingReason,
+      hasActionabilitySummary,
+      hasActionSectionDetails,
+      hasEvidenceSectionDetails,
+      hasReadinessSectionDetails,
+      evidenceSummary: recommendationEvidenceSummary,
+      evidenceTrace: recommendationEvidenceTrace,
+      observedGapSummary: recommendationObservedGapSummary,
+      showObservedGapSummary: Boolean(
+        recommendationObservedGapSummary
+        && recommendationObservedGapSummary.toLowerCase() !== recommendationEvidenceSummary?.toLowerCase(),
+      ),
+      actionClarity: recommendationActionClarity,
+      expectedOutcome: recommendationExpectedOutcome,
+      whyNow: recommendationWhyNow,
+      competitorInsight: recommendationCompetitorInsight,
+      competitorInfluenceBadge,
+      nextAction: recommendationNextAction,
+      executionTypeLabel: recommendationExecutionType
+        ? formatRecommendationExecutionTypeLabel(recommendationExecutionType)
+        : null,
+      executionScope: recommendationExecutionScope,
+      executionInputs: recommendationExecutionInputs,
+      showExecutionBlocking: recommendationExecutionReadiness !== "ready" && Boolean(recommendationBlockingReason),
+      targetContextLabel: recommendationTargetContext
+        ? formatRecommendationTargetContext(recommendationTargetContext)
+        : null,
+      targetPageHints: recommendationTargetPageHints,
+      targetContentSummary: recommendationTargetContentSummary,
+      measurementContextLine: recommendationMeasurementContextLine,
+      measurementSinceLine: recommendationMeasurementSinceLine,
+      hasMeasurementNoMatch: recommendationMeasurementContext?.measurementStatus === "no_match",
+      searchVisibilityContextLine: recommendationSearchVisibilityContextLine,
+      searchVisibilitySinceLine: recommendationSearchVisibilitySinceLine,
+      searchQueriesLine: recommendationSearchQueriesLine,
+      hasSearchNoMatch: recommendationSearchConsoleContext?.searchConsoleStatus === "no_match",
+      effectivenessSummary: recommendationEffectivenessSummary,
+      actionPlanSteps: recommendationActionPlanSteps.map((step) => ({
+        key: `${linkKeyPrefix}-workspace-plan-${step.step_number}`,
+        stepNumber: step.step_number,
+        title: step.title,
+        instruction: step.instruction,
+        beforeExample: step.before_example || null,
+        afterExample: step.after_example || null,
+      })),
+      competitorLinkageSummary: recommendationCompetitorLinkageSummary,
+      competitorEvidenceLinks: recommendationCompetitorEvidenceLinks.map((link) => {
+        const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(link.confidenceLevel);
+        const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
+        const trustTierLabel = formatRecommendationEvidenceTrustTierLabel(link.trustTier);
+        const trustTierBadgeClass = recommendationEvidenceTrustTierBadgeClass(link.trustTier);
+        const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
+        const competitorText = suffixParts.length > 0
+          ? `${link.competitorName} (${suffixParts.join(", ")})`
+          : link.competitorName;
+        return {
+          key: `${linkKeyPrefix}-${link.competitorDraftId}`,
+          competitorText,
+          trustTierLabel,
+          trustTierBadgeClass: trustTierLabel ? trustTierBadgeClass : null,
+        };
+      }),
+      actionDeltaSummary,
+      impactBadge: impactLabel
+        ? {
+          label: impactLabel,
+          className: recommendationImpactBadgeClass(impactLabel),
+        }
+        : null,
+      eeatBadges: eeatCategories.map((category) => ({
+        key: `${item.id}-${category}`,
+        label: formatEEATCategory(category),
+        className: "badge badge-muted",
+      })),
+      priorityReasons: priorityReasons.map((reason) => ({
+        key: `${item.id}-${reason}`,
+        label: formatPriorityReason(reason),
+        className: "badge badge-muted",
+      })),
+      progressBadge: {
+        label: recommendationProgress.label,
+        className: recommendationProgress.badgeClass,
+      },
+      lifecycleBadge,
+      priorityLevelBadge,
+      priorityEffortHintLabel: recommendationPriority?.effortHint
+        ? formatRecommendationEffortHintLabel(recommendationPriority.effortHint)
+        : null,
+      priorityRationale: recommendationPriorityRationale,
+      evidenceStrengthBadge,
+      category: item.category,
+      severity: item.severity,
+      priorityScore: item.priority_score,
+      priorityBand: item.priority_band,
+    };
+  }
+
   return (
     <PageContainer width="full" density="compact">
       <div className="workspace-dashboard-landing">
@@ -9068,304 +9251,256 @@ export default function SiteWorkspacePage() {
         )}
       </SectionCard>
 
-      <SectionCard className="operator-shell-section operator-shell-secondary-zone">
-        <SectionHeader
-          title="Competitor Readiness"
-          subtitle="Configured competitor sets, active domains, and recent snapshot/comparison activity."
-          headingLevel={2}
-        />
-        {competitorError ? <p className="hint error">{competitorError}</p> : null}
-        <p>{workspaceReadinessMessage}</p>
-        <p>Active Competitor Sets: {activeCompetitorSetCount}</p>
-        <p>Total Competitor Domains: {competitorDomainCount}</p>
-        <p>Active Competitor Domains: {activeCompetitorDomainCount}</p>
-        <p>
-          Latest Snapshot Run:{" "}
-          {latestSnapshotRun ? (
-            <Link
-              href={buildSnapshotRunHref(
-                latestSnapshotRun.id,
-                selectedSite.id,
-                latestSnapshotRun.competitor_set_id,
-              )}
-            >
-              {latestSnapshotRun.status} ({formatDateTime(latestSnapshotRun.completed_at || latestSnapshotRun.updated_at)})
-            </Link>
-          ) : (
-            "-"
-          )}
-        </p>
-        <p>
-          Latest Comparison Run:{" "}
-          {latestComparisonRun ? (
-            <Link
-              href={buildComparisonRunHref(
-                latestComparisonRun.id,
-                selectedSite.id,
-                latestComparisonRun.competitor_set_id,
-              )}
-            >
-              {latestComparisonRun.status} ({formatDateTime(latestComparisonRun.completed_at || latestComparisonRun.updated_at)})
-            </Link>
-          ) : (
-            "-"
-          )}
-        </p>
-        <p>
-          <Link href={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}>Open Competitor Surfaces</Link>
-        </p>
-        {competitorSets.length === 0 ? (
-          <p className="hint muted">
-            No competitor sets yet. Add one to compare your site against nearby businesses in your market.
-          </p>
-        ) : (
-          <>
-            <div className="table-container">
-              <table className="table table-dense">
-                <thead>
-                  <tr>
-                    <th>Set</th>
-                    <th>Active</th>
-                    <th>Domains</th>
-                    <th>Latest Snapshot</th>
-                    <th>Updated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {competitorSets.slice(0, MAX_COMPETITOR_ROWS).map((setItem) => (
-                    <tr key={setItem.id}>
-                      <td className="table-cell-wrap">
-                        <Link href={buildCompetitorSetHref(setItem.id, selectedSite.id)}>{setItem.name}</Link>
-                        <br />
-                        <span className="hint muted"><code>{setItem.id}</code></span>
-                      </td>
-                      <td>{setItem.is_active ? "yes" : "no"}</td>
-                      <td>
-                        {setItem.active_domain_count}/{setItem.domain_count}
-                      </td>
-                      <td>
-                        {setItem.latest_snapshot_run ? (
-                          <Link
-                            href={buildSnapshotRunHref(
-                              setItem.latest_snapshot_run.id,
-                              selectedSite.id,
-                              setItem.id,
-                            )}
-                          >
-                            {setItem.latest_snapshot_run.status}
-                          </Link>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                      <td>{formatDateTime(setItem.updated_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {competitorSets.length > MAX_COMPETITOR_ROWS ? (
-              <p className="hint muted">
-                Showing the {MAX_COMPETITOR_ROWS} most recently updated competitor sets for this site.
-              </p>
-            ) : null}
-          </>
-        )}
-      </SectionCard>
+      <CompetitorReadinessPanel
+        competitorError={competitorError}
+        workspaceReadinessMessage={workspaceReadinessMessage}
+        activeCompetitorSetCount={activeCompetitorSetCount}
+        competitorDomainCount={competitorDomainCount}
+        activeCompetitorDomainCount={activeCompetitorDomainCount}
+        latestSnapshotRun={latestSnapshotRun}
+        latestComparisonRun={latestComparisonRun}
+        competitorSets={competitorSets}
+        maxRows={MAX_COMPETITOR_ROWS}
+        competitorWorkspaceHref={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}
+        getSnapshotRunHref={(runId, competitorSetId) => buildSnapshotRunHref(runId, selectedSite.id, competitorSetId)}
+        getComparisonRunHref={(runId, competitorSetId) => buildComparisonRunHref(runId, selectedSite.id, competitorSetId)}
+        getCompetitorSetHref={(setId) => buildCompetitorSetHref(setId, selectedSite.id)}
+        formatDateTime={formatDateTime}
+      />
       </>
       ) : null}
 
-      <SectionCard className="operator-shell-section operator-shell-work-zone">
-        <SectionHeader
-          title="AI Competitor Profiles"
-          subtitle="Generate AI-produced competitor profile drafts, then review and explicitly accept or reject each candidate."
-          headingLevel={2}
-          data-testid="competitor-section-header"
-          actions={(
-            <div className="toolbar-row">
-              <button
-                type="button"
-                className="button button-primary"
-                onClick={() => void handleGenerateCompetitorProfiles()}
-                disabled={loadingWorkspace || generationInFlight || retryInFlight || competitorProfileLoading}
-              >
-                {generationInFlight ? "Queuing..." : "Generate Competitor Profiles"}
-              </button>
-              {latestCompetitorProfileRun?.status === "failed" ? (
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => void handleRetryCompetitorProfileRun()}
-                  disabled={loadingWorkspace || generationInFlight || retryInFlight || competitorProfileLoading}
+      <AICompetitorProfilesPanel
+        loadingWorkspace={loadingWorkspace}
+        generationInFlight={generationInFlight}
+        retryInFlight={retryInFlight}
+        competitorProfileLoading={competitorProfileLoading}
+        showRetryAction={latestCompetitorProfileRun?.status === "failed"}
+        onGenerate={() => void handleGenerateCompetitorProfiles()}
+        onRetry={() => void handleRetryCompetitorProfileRun()}
+        competitorSectionFreshnessContent={
+          competitorSectionFreshness ? (
+            <p className="hint muted" data-testid="competitor-section-freshness">
+              <span className={workspaceSectionFreshnessBadgeClass(competitorSectionFreshness.stateCode)}>
+                {competitorSectionFreshness.stateLabel}
+              </span>{" "}
+              {competitorSectionFreshness.stateReason}
+              {competitorSectionFreshness.refreshExpected ? " Refresh expected." : ""}
+              {competitorSectionFreshness.evaluatedAt ? ` Evaluated ${formatDateTime(competitorSectionFreshness.evaluatedAt)}.` : ""}
+            </p>
+          ) : null
+        }
+        competitorProfileError={competitorProfileError}
+        competitorProfileSummaryError={competitorProfileSummaryError}
+        competitorProfileActionError={competitorProfileActionError}
+        competitorProfileActionMessage={competitorProfileActionMessage}
+        statusStripContent={(
+          <div className="workspace-summary-strip workspace-summary-strip-compact" data-testid="competitor-profile-status-strip">
+            <SummaryStatCard
+              label="Latest run status"
+              value={latestCompetitorProfileRun ? latestCompetitorProfileRun.status : "No run yet"}
+              detail={
+                latestCompetitorProfileRun
+                  ? `Run ${latestCompetitorProfileRun.id}`
+                  : "Generate competitor profiles to start review."
+              }
+              tone={
+                latestCompetitorProfileRun?.status === "failed"
+                  ? "danger"
+                  : latestCompetitorProfileRun?.status === "completed"
+                    ? "success"
+                    : latestCompetitorProfileRun
+                      ? "warning"
+                      : "neutral"
+              }
+              variant="elevated"
+              data-testid="competitor-profile-run-status-summary"
+            />
+            <SummaryStatCard
+              label="Reviewable drafts"
+              value={visibleCompetitorProfileDrafts.length}
+              detail={`${competitorProfileDrafts.length} total in latest run detail`}
+              tone={visibleCompetitorProfileDrafts.length > 0 ? "success" : "neutral"}
+              variant="elevated"
+              data-testid="competitor-profile-drafts-summary"
+            />
+            <SummaryStatCard
+              label="Final returned"
+              value={competitorSummaryStripMetrics.finalReturned}
+              detail={`Eligible ${competitorSummaryStripMetrics.eligibleCandidates} | Excluded ${competitorSummaryStripMetrics.excludedCandidates}`}
+              tone={competitorSummaryStripMetrics.finalReturned > 0 ? "success" : "warning"}
+              variant="elevated"
+              data-testid="competitor-profile-returned-summary"
+            />
+            <SummaryStatCard
+              label="Failures / retries"
+              value={`${competitorSummaryStripMetrics.failureCount} / ${competitorSummaryStripMetrics.retryCount}`}
+              detail="Failure count and retry count from latest telemetry"
+              tone={competitorSummaryStripMetrics.failureCount > 0 ? "warning" : "neutral"}
+              variant="elevated"
+              data-testid="competitor-profile-failures-summary"
+            />
+          </div>
+        )}
+        statusCalloutContent={(
+          <div className="workspace-status-callout stack-tight">
+            {latestCompetitorProfileRun ? (
+              <p className="hint">
+                Latest Run: <code>{latestCompetitorProfileRun.id}</code> ({latestCompetitorProfileRun.status}){" "}
+                {latestCompetitorProfileRun.completed_at
+                  ? `completed ${formatDateTime(latestCompetitorProfileRun.completed_at)}`
+                  : `created ${formatDateTime(latestCompetitorProfileRun.created_at)}`}
+              </p>
+            ) : (
+              <p className="hint muted">
+                No competitor profile runs yet. Generate one to get review-ready competitor candidates.
+              </p>
+            )}
+            {latestCompetitorProfileRun ? (
+              <p className="hint muted">
+                Provider: <code>{latestCompetitorProfileRun.provider_name}</code> | Model:{" "}
+                <code>{latestCompetitorProfileRun.model_name}</code> | Prompt Version:{" "}
+                <code>{latestCompetitorProfileRun.prompt_version}</code>
+              </p>
+            ) : null}
+          </div>
+        )}
+        runOutcomeSummaryContent={
+          competitorRunOutcomeSummary ? (
+            <div className="stack operator-summary-callout" data-testid="competitor-run-outcome-summary">
+              <p className="hint muted">
+                <strong>Run quality</strong>: proposed {competitorRunOutcomeSummary.proposedCount} | returned{" "}
+                {competitorRunOutcomeSummary.returnedCount} | rejected {competitorRunOutcomeSummary.rejectedCount} |
+                degraded mode {competitorRunOutcomeSummary.degradedModeUsed ? "yes" : "no"} | search-backed{" "}
+                {competitorRunOutcomeSummary.searchBacked ? "yes" : "no"}
+              </p>
+              {competitorOutcomeSummary ? (
+                <p
+                  className={competitorOutcomeHintClass(competitorOutcomeSummary.status_level)}
+                  data-testid="competitor-operator-outcome-summary"
                 >
-                  {retryInFlight ? "Retrying..." : "Retry"}
-                </button>
+                  <strong>Outcome:</strong> {formatCompetitorOutcomeStatusLevel(competitorOutcomeSummary.status_level)}
+                  {competitorOutcomeSummary.used_synthetic_fallback ? " (synthetic fallback)" : ""}.{" "}
+                  {competitorOutcomeSummary.message}
+                </p>
+              ) : null}
+              {competitorResponseContractSummary ? (
+                <p
+                  className={responseContractSummaryHintClass(competitorResponseContractSummary)}
+                  data-testid="competitor-response-contract-summary"
+                >
+                  <strong>Quality gate:</strong> {formatResponseContractStatus(competitorResponseContractSummary.status)}.{" "}
+                  {competitorResponseContractSummary.status !== "accepted" &&
+                  (competitorResponseContractSummary.status === "accepted_with_warnings" ||
+                    competitorResponseContractSummary.status === "salvaged")
+                    ? "Results refined for quality. "
+                    : ""}
+                  {competitorResponseContractSummary.summary}
+                </p>
+              ) : null}
+              {competitorOutcomeSummary?.used_timeout_recovery ? (
+                <p className="hint muted">Recovered after provider timeout during this run.</p>
+              ) : null}
+              {competitorOutcomeSummary?.used_google_places_seeds ? (
+                <p className="hint muted">
+                  Nearby business seed discovery was used before AI enrichment in this run.
+                </p>
+              ) : null}
+              {competitorOutcomeSummary?.had_schema_repair_or_discard ? (
+                <p className="hint muted">
+                  Some malformed provider candidate entries were safely discarded during parsing.
+                </p>
+              ) : null}
+              {competitorRunOutcomeSummary.statusNote ? (
+                <p className="hint muted">{competitorRunOutcomeSummary.statusNote}</p>
+              ) : null}
+              {competitorRunOutcomeSummary.filteringSummary ? (
+                <p className="hint muted">{competitorRunOutcomeSummary.filteringSummary}</p>
+              ) : null}
+              {competitorRunOutcomeSummary.searchEscalationNote ? (
+                <p className="hint muted">{competitorRunOutcomeSummary.searchEscalationNote}</p>
+              ) : null}
+              {competitorRunOutcomeSummary.relaxedFilteringNote ? (
+                <p className="hint muted">{competitorRunOutcomeSummary.relaxedFilteringNote}</p>
+              ) : null}
+              {competitorRunOutcomeSummary.lowResultNote ? (
+                <p className="hint warning">{competitorRunOutcomeSummary.lowResultNote}</p>
               ) : null}
             </div>
-          )}
-        />
-        {competitorSectionFreshness ? (
-          <p className="hint muted" data-testid="competitor-section-freshness">
-            <span className={workspaceSectionFreshnessBadgeClass(competitorSectionFreshness.stateCode)}>
-              {competitorSectionFreshness.stateLabel}
-            </span>{" "}
-            {competitorSectionFreshness.stateReason}
-            {competitorSectionFreshness.refreshExpected ? " Refresh expected." : ""}
-            {competitorSectionFreshness.evaluatedAt ? ` Evaluated ${formatDateTime(competitorSectionFreshness.evaluatedAt)}.` : ""}
-          </p>
-        ) : null}
-        {competitorProfileError ? <p className="hint error">{competitorProfileError}</p> : null}
-        {competitorProfileSummaryError ? <p className="hint warning">{competitorProfileSummaryError}</p> : null}
-        {competitorProfileActionError ? <p className="hint error">{competitorProfileActionError}</p> : null}
-        {competitorProfileActionMessage ? <p className="hint success">{competitorProfileActionMessage}</p> : null}
-        {latestCompetitorProfileRun ? (
-          <p>
-            Latest Run: <code>{latestCompetitorProfileRun.id}</code> ({latestCompetitorProfileRun.status}){" "}
-            {latestCompetitorProfileRun.completed_at
-              ? `completed ${formatDateTime(latestCompetitorProfileRun.completed_at)}`
-              : `created ${formatDateTime(latestCompetitorProfileRun.created_at)}`}
-          </p>
-        ) : (
-          <p className="hint muted">
-            No competitor profile runs yet. Generate one to get review-ready competitor candidates.
-          </p>
-        )}
-        {latestCompetitorProfileRun ? (
-          <p className="hint muted">
-            Provider: <code>{latestCompetitorProfileRun.provider_name}</code> | Model:{" "}
-            <code>{latestCompetitorProfileRun.model_name}</code> | Prompt Version:{" "}
-            <code>{latestCompetitorProfileRun.prompt_version}</code>
-          </p>
-        ) : null}
-        {competitorRunOutcomeSummary ? (
-          <div className="stack operator-summary-callout" data-testid="competitor-run-outcome-summary">
-            <p className="hint muted">
-              <strong>Run quality</strong>: proposed {competitorRunOutcomeSummary.proposedCount} | returned{" "}
-              {competitorRunOutcomeSummary.returnedCount} | rejected {competitorRunOutcomeSummary.rejectedCount} |
-              degraded mode {competitorRunOutcomeSummary.degradedModeUsed ? "yes" : "no"} | search-backed{" "}
-              {competitorRunOutcomeSummary.searchBacked ? "yes" : "no"}
-            </p>
-            {competitorOutcomeSummary ? (
-              <p
-                className={competitorOutcomeHintClass(competitorOutcomeSummary.status_level)}
-                data-testid="competitor-operator-outcome-summary"
-              >
-                <strong>Outcome:</strong> {formatCompetitorOutcomeStatusLevel(competitorOutcomeSummary.status_level)}
-                {competitorOutcomeSummary.used_synthetic_fallback ? " (synthetic fallback)" : ""}.{" "}
-                {competitorOutcomeSummary.message}
-              </p>
-            ) : null}
-            {competitorResponseContractSummary ? (
-              <p
-                className={responseContractSummaryHintClass(competitorResponseContractSummary)}
-                data-testid="competitor-response-contract-summary"
-              >
-                <strong>Quality gate:</strong> {formatResponseContractStatus(competitorResponseContractSummary.status)}.{" "}
-                {competitorResponseContractSummary.status !== "accepted" &&
-                (competitorResponseContractSummary.status === "accepted_with_warnings" ||
-                  competitorResponseContractSummary.status === "salvaged")
-                  ? "Results refined for quality. "
-                  : ""}
-                {competitorResponseContractSummary.summary}
-              </p>
-            ) : null}
-            {competitorOutcomeSummary?.used_timeout_recovery ? (
-              <p className="hint muted">Recovered after provider timeout during this run.</p>
-            ) : null}
-            {competitorOutcomeSummary?.used_google_places_seeds ? (
-              <p className="hint muted">
-                Nearby business seed discovery was used before AI enrichment in this run.
-              </p>
-            ) : null}
-            {competitorOutcomeSummary?.had_schema_repair_or_discard ? (
-              <p className="hint muted">
-                Some malformed provider candidate entries were safely discarded during parsing.
-              </p>
-            ) : null}
-            {competitorRunOutcomeSummary.statusNote ? (
-              <p className="hint muted">{competitorRunOutcomeSummary.statusNote}</p>
-            ) : null}
-            {competitorRunOutcomeSummary.filteringSummary ? (
-              <p className="hint muted">{competitorRunOutcomeSummary.filteringSummary}</p>
-            ) : null}
-            {competitorRunOutcomeSummary.searchEscalationNote ? (
-              <p className="hint muted">{competitorRunOutcomeSummary.searchEscalationNote}</p>
-            ) : null}
-            {competitorRunOutcomeSummary.relaxedFilteringNote ? (
-              <p className="hint muted">{competitorRunOutcomeSummary.relaxedFilteringNote}</p>
-            ) : null}
-            {competitorRunOutcomeSummary.lowResultNote ? (
-              <p className="hint warning">{competitorRunOutcomeSummary.lowResultNote}</p>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="stack-tight" data-testid="competitor-summary-strip">
-          <div className="workspace-section-meta">
-            <span className="badge badge-muted">
-              Total candidates {competitorSummaryStripMetrics.totalCandidates}
-            </span>
-            <span className="badge badge-success">
-              Eligible {competitorSummaryStripMetrics.eligibleCandidates}
-            </span>
-            <span className="badge badge-success">
-              Final returned {competitorSummaryStripMetrics.finalReturned}
-            </span>
-            <span className="badge badge-warn">
-              Excluded {competitorSummaryStripMetrics.excludedCandidates}
-            </span>
-            <span className="badge badge-error">
-              Failure count {competitorSummaryStripMetrics.failureCount}
-            </span>
-            <span className="badge badge-muted">
-              Retry count {competitorSummaryStripMetrics.retryCount}
-            </span>
-          </div>
-          {competitorFailureCategoryChips.length > 0 ? (
-            <div className="workspace-section-meta" data-testid="competitor-failure-category-chips">
-              {competitorFailureCategoryChips.map(([category, count]) => (
-                <span key={`failure-${category}`} className="badge badge-muted">
-                  {formatFailureCategory(category)} {count}
+          ) : null
+        }
+        summaryStripContent={(
+          <>
+            <div className="stack-tight" data-testid="competitor-summary-strip">
+              <div className="workspace-section-meta">
+                <span className="badge badge-muted">
+                  Total candidates {competitorSummaryStripMetrics.totalCandidates}
                 </span>
-              ))}
-            </div>
-          ) : null}
-          {competitorExclusionReasonChips.length > 0 ? (
-            <div className="workspace-section-meta" data-testid="competitor-exclusion-reason-chips">
-              {competitorExclusionReasonChips.map(([reason, count]) => (
-                <span key={`exclusion-${reason}`} className="badge badge-muted">
-                  {formatFailureCategory(reason)} {count}
+                <span className="badge badge-success">
+                  Eligible {competitorSummaryStripMetrics.eligibleCandidates}
                 </span>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        {competitorPipelineStageRows.length > 0 ? (
-          <div className="stack-tight" data-testid="competitor-candidate-pipeline-summary-debug">
-            <p className="hint muted">
-              <strong>Candidate pipeline</strong>
-            </p>
-            <div className="table-container table-container-compact">
-              <table className="table table-dense" data-testid="competitor-candidate-pipeline-table">
-                <thead>
-                  <tr>
-                    <th>Stage</th>
-                    <th>Count</th>
-                    <th>Description</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {competitorPipelineStageRows.map((row) => (
-                    <tr key={`competitor-pipeline-${row.stage}`}>
-                      <td>{row.stage}</td>
-                      <td>{row.count}</td>
-                      <td className="table-cell-wrap">{row.description}</td>
-                    </tr>
+                <span className="badge badge-success">
+                  Final returned {competitorSummaryStripMetrics.finalReturned}
+                </span>
+                <span className="badge badge-warn">
+                  Excluded {competitorSummaryStripMetrics.excludedCandidates}
+                </span>
+                <span className="badge badge-error">
+                  Failure count {competitorSummaryStripMetrics.failureCount}
+                </span>
+                <span className="badge badge-muted">
+                  Retry count {competitorSummaryStripMetrics.retryCount}
+                </span>
+              </div>
+              {competitorFailureCategoryChips.length > 0 ? (
+                <div className="workspace-section-meta" data-testid="competitor-failure-category-chips">
+                  {competitorFailureCategoryChips.map(([category, count]) => (
+                    <span key={`failure-${category}`} className="badge badge-muted">
+                      {formatFailureCategory(category)} {count}
+                    </span>
                   ))}
-                </tbody>
-              </table>
+                </div>
+              ) : null}
+              {competitorExclusionReasonChips.length > 0 ? (
+                <div className="workspace-section-meta" data-testid="competitor-exclusion-reason-chips">
+                  {competitorExclusionReasonChips.map(([reason, count]) => (
+                    <span key={`exclusion-${reason}`} className="badge badge-muted">
+                      {formatFailureCategory(reason)} {count}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
-          </div>
-        ) : null}
+            {competitorPipelineStageRows.length > 0 ? (
+              <div className="stack-tight" data-testid="competitor-candidate-pipeline-summary-debug">
+                <p className="hint muted">
+                  <strong>Candidate pipeline</strong>
+                </p>
+                <div className="table-container table-container-compact">
+                  <table className="table table-dense" data-testid="competitor-candidate-pipeline-table">
+                    <thead>
+                      <tr>
+                        <th>Stage</th>
+                        <th>Count</th>
+                        <th>Description</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {competitorPipelineStageRows.map((row) => (
+                        <tr key={`competitor-pipeline-${row.stage}`}>
+                          <td>{row.stage}</td>
+                          <td>{row.count}</td>
+                          <td className="table-cell-wrap">{row.description}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+          </>
+        )}
+      >
         {competitorProfileLoading || competitorProfilePolling ? (
           <p className="hint muted">Refreshing generated draft status...</p>
         ) : null}
@@ -10004,35 +10139,16 @@ export default function SiteWorkspacePage() {
             ) : null}
           </div>
         ) : null}
-      </SectionCard>
+      </AICompetitorProfilesPanel>
 
       {showRecommendationSections ? (
       <>
-      <SectionCard
-        className="operator-shell-section operator-shell-work-zone"
-        role="tabpanel"
-        id="workspace-content-recommendations-panel"
-        aria-labelledby="workspace-content-tab-recommendations"
-      >
-        <SectionHeader
-          title="Recommendation Queue"
-          subtitle="Run deterministic recommendation analysis from the latest audit and competitor comparison context."
-          headingLevel={2}
-          data-testid="recommendation-queue-header"
-          actions={(
-            <div className="toolbar-row">
-              <button
-                type="button"
-                className="button button-primary"
-                onClick={() => void handleGenerateRecommendations()}
-                disabled={loadingWorkspace || recommendationGenerationInFlight || !recommendationGenerationPrerequisitesMet}
-              >
-                {recommendationGenerationInFlight ? "Generating..." : "Generate Recommendations"}
-              </button>
-            </div>
-          )}
-        />
-        {recommendationSectionFreshness ? (
+      <RecommendationQueuePanel
+        loadingWorkspace={loadingWorkspace}
+        recommendationGenerationInFlight={recommendationGenerationInFlight}
+        recommendationGenerationPrerequisitesMet={recommendationGenerationPrerequisitesMet}
+        onGenerateRecommendations={() => void handleGenerateRecommendations()}
+        recommendationSectionFreshnessContent={recommendationSectionFreshness ? (
           <p className="hint muted" data-testid="recommendation-section-freshness">
             <span className={workspaceSectionFreshnessBadgeClass(recommendationSectionFreshness.stateCode)}>
               {recommendationSectionFreshness.stateLabel}
@@ -10044,27 +10160,14 @@ export default function SiteWorkspacePage() {
               : ""}
           </p>
         ) : null}
-        <div className="stack-tight">
-          <p className="hint muted">
-            Creates a recommendation run from the latest completed audit and/or competitor comparison inputs.
-          </p>
-          {!loadingWorkspace && !recommendationGenerationPrerequisitesMet ? (
-            <p className="hint warning">
-              Run site audit before generating recommendations.
-            </p>
-          ) : null}
-          {recommendationGenerationError ? <p className="hint error">{recommendationGenerationError}</p> : null}
-          {recommendationGenerationMessage ? <p className="hint success">{recommendationGenerationMessage}</p> : null}
-        </div>
-        {queueError ? <p className="hint error">{queueError}</p> : null}
-        <div className="workspace-section-meta">
-          <span className="badge badge-muted">Total {recommendationQueueSummary.total}</span>
-          <span className="badge badge-warn">Open {recommendationQueueSummary.open}</span>
-          <span className="badge badge-success">Accepted {recommendationQueueSummary.accepted}</span>
-          <span className="badge badge-muted">Dismissed {recommendationQueueSummary.dismissed}</span>
-          <span className="badge badge-critical">High priority {recommendationQueueSummary.highPriority}</span>
-        </div>
-        {topQueueRecommendation && topQueueRecommendationActionState ? (
+        recommendationGenerationError={recommendationGenerationError}
+        recommendationGenerationMessage={recommendationGenerationMessage}
+        queueError={queueError}
+        recommendationQueueSummary={recommendationQueueSummary}
+        recommendationSectionFreshnessLabel={recommendationSectionFreshness?.stateLabel || null}
+        recommendationSectionFreshnessReason={recommendationSectionFreshness?.stateReason || null}
+        recommendationSectionFreshnessTone={workspaceSectionFreshnessCardTone(recommendationSectionFreshness?.stateCode || null)}
+        topActionStateContent={topQueueRecommendation && topQueueRecommendationActionState ? (
           <div
             className="panel panel-compact stack-tight operator-summary-callout"
             data-testid="workspace-recommendation-action-state"
@@ -10127,15 +10230,10 @@ export default function SiteWorkspacePage() {
             ) : null}
           </div>
         ) : null}
-        <p>
-          <Link href="/recommendations">Open Recommendation Queue</Link>
-        </p>
-        {!queueError && (!queueResponse || queueResponse.items.length === 0) ? (
-          <p className="hint muted">
-            No recommendations yet. Click Generate Recommendations to get your next prioritized actions.
-          </p>
-        ) : null}
-        {queueResponse && queueResponse.items.length > 0 ? (
+        openRecommendationQueueHref="/recommendations"
+        hasQueueItems={Boolean(queueResponse && queueResponse.items.length > 0)}
+        emptyQueueMessage="No recommendations yet. Click Generate Recommendations to get your next prioritized actions."
+        queueListContent={queueResponse && queueResponse.items.length > 0 ? (
           <div className="stack-tight recommendation-workspace-list" data-testid="workspace-recommendation-queue-list">
             {queueResponse.items.map((item) => (
               <article key={item.id} className="workspace-recommendation-row-card">
@@ -10156,23 +10254,18 @@ export default function SiteWorkspacePage() {
             ))}
           </div>
         ) : null}
-      </SectionCard>
+      />
 
-      <SectionCard className="operator-shell-section operator-shell-work-zone">
-        <SectionHeader
-          title="Recommendation Runs and Narratives"
-          subtitle="Review deterministic recommendations, AI narrative overlays, and recent tuning outcomes."
-          headingLevel={2}
-          data-testid="recommendation-runs-header"
-          meta={latestCompletedRecommendationRun ? (
-            <span className="hint muted">
-              Latest completed run: <code>{latestCompletedRecommendationRun.id}</code> (
-              {latestCompletedRecommendationRun.status})
-            </span>
-          ) : null}
-        />
-        {recommendationRunError ? <p className="hint error">{recommendationRunError}</p> : null}
-        {narrativeLookupError ? <p className="hint warning">{narrativeLookupError}</p> : null}
+      <RecommendationRunsPanel
+        latestCompletedRunMeta={latestCompletedRecommendationRun ? (
+          <span className="hint muted">
+            Latest completed run: <code>{latestCompletedRecommendationRun.id}</code> (
+            {latestCompletedRecommendationRun.status})
+          </span>
+        ) : null}
+        recommendationRunError={recommendationRunError}
+        narrativeLookupError={narrativeLookupError}
+      >
         <h3>Latest Completed Run</h3>
         {latestCompletedRecommendationsError ? (
           <p className="hint warning">{latestCompletedRecommendationsError}</p>
@@ -10403,515 +10496,9 @@ export default function SiteWorkspacePage() {
               recommendationThemeSections.length <= 1 ? (
                 <div className="stack-tight recommendation-workspace-list">
                   {(recommendationThemeSections[0]?.items || latestCompletedRecommendations).map((item, index) => {
-                        const recommendationRank = recommendationRankById.get(item.id) ?? index;
-                        const impactLabel = recommendationImpactLabel(item, recommendationRank);
-                        const eeatCategories = normalizeEEATCategories(item.eeat_categories);
-                        const priorityReasons = normalizeRecommendationPriorityReasons(item.priority_reasons);
-                        const recommendationProgress = normalizeRecommendationProgress(item);
-                        const recommendationLifecycle = normalizeRecommendationLifecycle(item);
-                        const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
-                        const recommendationObservedGapSummary = normalizeRecommendationObservedGapSummary(item);
-                        const recommendationEvidenceTrace = normalizeRecommendationEvidenceTrace(item);
-                        const renderObservedGapSummary = recommendationObservedGapSummary
-                          && recommendationObservedGapSummary.toLowerCase() !== recommendationEvidenceSummary?.toLowerCase();
-                        const recommendationActionClarity = normalizeRecommendationActionClarity(item);
-                        const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
-                        const recommendationTargetContext = normalizeRecommendationTargetContext(item);
-                        const recommendationTargetPageHints = normalizeRecommendationTargetPageHints(item);
-                        const recommendationTargetContentSummary =
-                          normalizeRecommendationTargetContentSummary(item);
-                        const recommendationActionPlanSteps = normalizeRecommendationActionPlanSteps(item);
-                        const recommendationCompetitorLinkageSummary =
-                          normalizeRecommendationCompetitorLinkageSummary(item);
-                        const recommendationCompetitorEvidenceLinks =
-                          normalizeRecommendationCompetitorEvidenceLinks(item);
-                        const recommendationActionDelta = normalizeRecommendationActionDelta(item);
-                        const recommendationPriority = normalizeRecommendationPriority(item);
-                        const recommendationPriorityRationale = normalizeRecommendationPriorityRationale(item);
-                        const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
-                        const recommendationCompetitorInfluence = normalizeRecommendationCompetitorInfluenceLevel(item);
-                        const recommendationWhyNow = normalizeRecommendationWhyNow(item);
-                        const recommendationNextAction = normalizeRecommendationNextAction(item);
-                        const recommendationCompetitorInsight = normalizeRecommendationCompetitorInsight(item);
-                        const recommendationMeasurementContext = normalizeRecommendationMeasurementContext(item);
-                        const recommendationMeasurementContextLine = buildRecommendationMeasurementContextLine(
-                          recommendationMeasurementContext,
-                        );
-                        const recommendationMeasurementSinceLine = buildRecommendationMeasurementSinceLine(
-                          recommendationMeasurementContext,
-                        );
-                        const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
-                        const recommendationSearchVisibilityContextLine = buildRecommendationSearchVisibilityContextLine(
-                          recommendationSearchConsoleContext,
-                        );
-                        const recommendationSearchVisibilitySinceLine = buildRecommendationSearchVisibilitySinceLine(
-                          recommendationSearchConsoleContext,
-                        );
-                        const recommendationSearchQueriesLine = recommendationSearchConsoleContext
-                          && recommendationSearchConsoleContext.searchConsoleStatus === "available"
-                          && recommendationSearchConsoleContext.topQueriesSummary.length > 0
-                          ? recommendationSearchConsoleContext.topQueriesSummary
-                            .map((query) => query.query)
-                            .slice(0, 3)
-                            .join(" · ")
-                          : null;
-                        const recommendationEffectivenessSummary = normalizeRecommendationEffectivenessSummary(item);
-                        const recommendationExecutionType = normalizeRecommendationExecutionType(item);
-                        const recommendationExecutionScope = normalizeRecommendationExecutionScope(item);
-                        const recommendationExecutionInputs = normalizeRecommendationExecutionInputs(item);
-                        const recommendationExecutionReadiness = normalizeRecommendationExecutionReadiness(item);
-                        const recommendationBlockingReason = normalizeRecommendationBlockingReason(item);
-                        const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
-                        const recommendationDetailClarity = buildRecommendationDetailClarityView({
-                          actionDelta: recommendationActionDelta,
-                          evidenceSummary: recommendationEvidenceSummary,
-                          observedGapSummary: recommendationObservedGapSummary,
-                          actionClarity: recommendationActionClarity,
-                          expectedOutcome: recommendationExpectedOutcome,
-                          competitorLinkageSummary: recommendationCompetitorLinkageSummary,
-                          evidenceTrace: recommendationEvidenceTrace,
-                          targetContext: recommendationTargetContext,
-                          targetPageHints: recommendationTargetPageHints,
-                          targetContentSummary: recommendationTargetContentSummary,
-                        });
-                        const recommendationActionSummary = recommendationNextAction
-                          || recommendationActionClarity
-                          || recommendationDetailClarity.recommendedAction
-                          || recommendationExpectedOutcome;
-                        const recommendationWhyItMattersSummary = recommendationEvidenceSummary
-                          || recommendationWhyNow
-                          || recommendationObservedGapSummary
-                          || recommendationExpectedOutcome
-                          || recommendationCompetitorInsight;
-                        const recommendationEffortHintLabel = recommendationPriority?.effortHint
-                          ? formatRecommendationEffortHintLabel(recommendationPriority.effortHint)
-                          : null;
-                        const recommendationIsBlocked = recommendationExecutionReadiness !== "ready"
-                          && Boolean(recommendationBlockingReason);
-                        const hasActionabilitySummary = Boolean(
-                          recommendationExecutionReadiness || recommendationEffortHintLabel || recommendationIsBlocked,
-                        );
-                        const hasActionSectionDetails = Boolean(
-                          recommendationActionClarity
-                          || recommendationNextAction
-                          || recommendationExecutionType
-                          || recommendationExecutionScope
-                          || recommendationExecutionInputs.length > 0
-                          || recommendationExecutionReadiness
-                          || recommendationBlockingReason
-                          || recommendationTargetContext
-                          || recommendationTargetPageHints.length > 0
-                          || recommendationTargetContentSummary
-                          || recommendationActionPlanSteps.length > 0,
-                        );
-                        const hasEvidenceSectionDetails = Boolean(
-                          recommendationEvidenceSummary
-                          || recommendationEvidenceTrace.length > 0
-                          || renderObservedGapSummary
-                          || recommendationCompetitorInsight
-                          || (recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none")
-                          || recommendationCompetitorLinkageSummary
-                          || recommendationCompetitorEvidenceLinks.length > 0
-                          || recommendationActionDelta
-                          || recommendationWhyNow
-                          || recommendationExpectedOutcome,
-                        );
-                        const hasReadinessSectionDetails = Boolean(
-                          recommendationExecutionReadiness
-                          || recommendationPriorityRationale
-                          || recommendationEvidenceStrength
-                          || recommendationEffectivenessSummary
-                          || recommendationMeasurementContextLine
-                          || recommendationMeasurementSinceLine
-                          || recommendationSearchVisibilityContextLine
-                          || recommendationSearchVisibilitySinceLine
-                          || recommendationSearchQueriesLine
-                          || recommendationMeasurementContext?.measurementStatus === "no_match"
-                          || recommendationSearchConsoleContext?.searchConsoleStatus === "no_match",
-                        );
-                        const recommendationDetailsToggleLabel = recommendationActionPlanSteps.length > 0
-                          ? "Show implementation steps"
-                          : "Show details";
-                        const rowId = recommendationRowId(item.id);
-                        return (
-                          <article
-                            key={item.id}
-                            id={rowId}
-                            data-testid={`recommendation-workspace-item-${item.id}`}
-                            className={[
-                              "workspace-recommendation-row-card",
-                              startHereFocusedTargetId === rowId ? "start-here-target-active" : "",
-                            ].filter(Boolean).join(" ")}
-                          >
-                            <div className="workspace-recommendation-row-layout">
-                                <div
-                                  className="workspace-recommendation-row-main workspace-recommendation-row-main-bounded"
-                                  data-testid={`recommendation-row-main-${item.id}`}
-                                >
-                                  <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
-                                  {recommendationActionSummary ? (
-                                    <span className="hint workspace-recommendation-summary-line" data-testid="recommendation-what-to-do-now-summary">
-                                      <span className="workspace-recommendation-summary-label">What to do now</span>
-                                      <strong>{recommendationActionSummary}</strong>
-                                    </span>
-                                  ) : null}
-                                  {recommendationWhyItMattersSummary ? (
-                                    <span className="hint muted workspace-recommendation-summary-line" data-testid="recommendation-why-it-matters-summary">
-                                      <span className="workspace-recommendation-summary-label">Why it matters</span>
-                                      <span>{recommendationWhyItMattersSummary}</span>
-                                    </span>
-                                  ) : null}
-                                  {hasActionabilitySummary ? (
-                                    <div className="hint muted workspace-recommendation-summary-line" data-testid="recommendation-actionability-summary">
-                                      <span className="workspace-recommendation-summary-label">How actionable</span>
-                                      <div className="link-row">
-                                        {recommendationExecutionReadiness ? (
-                                          <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
-                                            {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
-                                          </span>
-                                        ) : null}
-                                        {recommendationEffortHintLabel ? (
-                                          <span className="badge badge-muted">Effort: {recommendationEffortHintLabel}</span>
-                                        ) : null}
-                                        {recommendationIsBlocked ? (
-                                          <span className="badge badge-warn">Blocked by prerequisite</span>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                  <details className="workspace-recommendation-details" data-testid={`recommendation-details-${item.id}`}>
-                                    <summary className="workspace-recommendation-details-toggle">{recommendationDetailsToggleLabel}</summary>
-                                    <div className="workspace-recommendation-details-content">
-                                  <RecommendationDetailClarity
-                                    clarity={recommendationDetailClarity}
-                                    bucketKey={recommendationPresentationBucketKey}
-                                    testId={`recommendation-detail-clarity-row-${item.id}`}
-                                  />
-                                  {hasActionSectionDetails ? (
-                                    <span className="workspace-recommendation-summary-label" data-testid="recommendation-action-section-label">
-                                      Action
-                                    </span>
-                                  ) : null}
-                                  {hasEvidenceSectionDetails ? (
-                                    <span className="workspace-recommendation-summary-label" data-testid="recommendation-evidence-section-label">
-                                      Why this matters
-                                    </span>
-                                  ) : null}
-                                  {recommendationEvidenceSummary ? (
-                                    <span className="hint muted" data-testid="recommendation-evidence-summary">
-                                      Why this matters: {recommendationEvidenceSummary}
-                                    </span>
-                                  ) : null}
-                                  {recommendationEvidenceTrace.length > 0 ? (
-                                    <span className="hint muted" data-testid="recommendation-evidence-trace">
-                                      Evidence trace: {recommendationEvidenceTrace.join(" · ")}
-                                    </span>
-                                  ) : null}
-                                  {renderObservedGapSummary ? (
-                                    <span className="hint muted" data-testid="recommendation-observed-gap-summary">
-                                      Observed gap: {recommendationObservedGapSummary}
-                                    </span>
-                                  ) : null}
-                                  {recommendationActionClarity ? (
-                                    <span className="hint muted" data-testid="recommendation-action-clarity">
-                                      Action: {recommendationActionClarity}
-                                    </span>
-                                  ) : null}
-                                  {recommendationExpectedOutcome ? (
-                                    <span className="hint muted" data-testid="recommendation-expected-outcome">
-                                      Expected outcome: {recommendationExpectedOutcome}
-                                    </span>
-                                  ) : null}
-                                  {recommendationWhyNow ? (
-                                    <span className="hint muted" data-testid="recommendation-why-now">
-                                      Why now: {recommendationWhyNow}
-                                    </span>
-                                  ) : null}
-                                  {recommendationCompetitorInsight ? (
-                                    <span className="hint muted" data-testid="recommendation-competitor-insight">
-                                      Competitor insight: {recommendationCompetitorInsight}
-                                    </span>
-                                  ) : null}
-                                  {recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none" ? (
-                                    <span className="hint muted" data-testid="recommendation-competitor-influence">
-                                      Competitor influence:{" "}
-                                      <span className={recommendationCompetitorInfluenceBadgeClass(recommendationCompetitorInfluence)}>
-                                        {formatRecommendationCompetitorInfluenceLabel(recommendationCompetitorInfluence)}
-                                      </span>
-                                    </span>
-                                  ) : null}
-                                  {recommendationNextAction ? (
-                                    <span className="hint muted" data-testid="recommendation-next-action">
-                                      Next action: {recommendationNextAction}
-                                    </span>
-                                  ) : null}
-                                  {recommendationExecutionReadiness ? (
-                                    <span className="hint muted" data-testid="recommendation-execution-readiness">
-                                      Execution readiness:{" "}
-                                      <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
-                                        {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
-                                      </span>
-                                    </span>
-                                  ) : null}
-                                  {recommendationExecutionType ? (
-                                    <span className="hint muted" data-testid="recommendation-execution-type">
-                                      Execution type: {formatRecommendationExecutionTypeLabel(recommendationExecutionType)}
-                                    </span>
-                                  ) : null}
-                                  {recommendationExecutionScope ? (
-                                    <span className="hint muted" data-testid="recommendation-execution-scope">
-                                      Execution scope: {recommendationExecutionScope}
-                                    </span>
-                                  ) : null}
-                                  {recommendationExecutionInputs.length > 0 ? (
-                                    <span className="hint muted" data-testid="recommendation-execution-inputs">
-                                      Execution inputs: {recommendationExecutionInputs.join(" · ")}
-                                    </span>
-                                  ) : null}
-                                  {recommendationExecutionReadiness !== "ready" && recommendationBlockingReason ? (
-                                    <span className="hint muted" data-testid="recommendation-execution-blocking">
-                                      Execution blocker: {recommendationBlockingReason}
-                                    </span>
-                                  ) : null}
-                                  {recommendationTargetContext ? (
-                                    <span className="hint muted" data-testid="recommendation-target-context">
-                                      Where: {formatRecommendationTargetContext(recommendationTargetContext)}
-                                    </span>
-                                  ) : null}
-                                  {recommendationTargetPageHints.length > 0 ? (
-                                    <span className="hint muted" data-testid="recommendation-target-page-hints">
-                                      Likely pages: {recommendationTargetPageHints.join(", ")}
-                                    </span>
-                                  ) : null}
-                                  {recommendationTargetContentSummary ? (
-                                    <span className="hint muted" data-testid="recommendation-target-content-summary">
-                                      Content to update: {recommendationTargetContentSummary}
-                                    </span>
-                                  ) : null}
-                                  {recommendationMeasurementContextLine ? (
-                                    <span className="hint muted" data-testid="recommendation-measurement-context">
-                                      Recent traffic for this page/topic: {recommendationMeasurementContextLine}
-                                    </span>
-                                  ) : null}
-                                  {recommendationMeasurementSinceLine ? (
-                                    <span className="hint muted" data-testid="recommendation-measurement-since">
-                                      Since this recommendation: {recommendationMeasurementSinceLine}
-                                    </span>
-                                  ) : null}
-                                  {recommendationMeasurementContext?.measurementStatus === "no_match" ? (
-                                    <span className="hint muted" data-testid="recommendation-measurement-no-match">
-                                      No page-level measurement match available.
-                                    </span>
-                                  ) : null}
-                                  {recommendationSearchVisibilityContextLine ? (
-                                    <span className="hint muted" data-testid="recommendation-search-context">
-                                      Recent search visibility for this page/topic: {recommendationSearchVisibilityContextLine}
-                                    </span>
-                                  ) : null}
-                                  {recommendationSearchVisibilitySinceLine ? (
-                                    <span className="hint muted" data-testid="recommendation-search-since">
-                                      Since this recommendation (search): {recommendationSearchVisibilitySinceLine}
-                                    </span>
-                                  ) : null}
-                                  {recommendationSearchQueriesLine ? (
-                                    <span className="hint muted" data-testid="recommendation-search-queries">
-                                      Top queries: {recommendationSearchQueriesLine}
-                                    </span>
-                                  ) : null}
-                                  {recommendationSearchConsoleContext?.searchConsoleStatus === "no_match" ? (
-                                    <span className="hint muted" data-testid="recommendation-search-no-match">
-                                      No page-level search visibility match available.
-                                    </span>
-                                  ) : null}
-                                  {recommendationEffectivenessSummary ? (
-                                    <span className="hint muted" data-testid="recommendation-effectiveness-summary">
-                                      Directional outcome: {recommendationEffectivenessSummary}
-                                    </span>
-                                  ) : null}
-                                  {recommendationActionPlanSteps.length > 0 ? (
-                                    <div className="stack-tight" data-testid={`recommendation-action-plan-${item.id}`}>
-                                      <span className="hint muted">
-                                        <span className="text-strong">How to implement:</span>
-                                      </span>
-                                      <ol className="compact-list">
-                                        {recommendationActionPlanSteps.map((step) => (
-                                          <li key={`${item.id}-workspace-plan-${step.step_number}`}>
-                                            <span className="hint muted">
-                                              <span className="text-strong">Step {step.step_number}:</span> {step.title}
-                                            </span>
-                                            <br />
-                                            <span className="hint muted">{step.instruction}</span>
-                                            {step.before_example ? (
-                                              <>
-                                                <br />
-                                                <span className="hint muted">Before: {step.before_example}</span>
-                                              </>
-                                            ) : null}
-                                            {step.after_example ? (
-                                              <>
-                                                <br />
-                                                <span className="hint muted">After: {step.after_example}</span>
-                                              </>
-                                            ) : null}
-                                          </li>
-                                        ))}
-                                      </ol>
-                                    </div>
-                                  ) : null}
-                                  {recommendationCompetitorLinkageSummary ? (
-                                    <span className="hint muted" data-testid="recommendation-competitor-linkage-summary">
-                                      Competitor linkage: {recommendationCompetitorLinkageSummary}
-                                    </span>
-                                  ) : null}
-                                  {recommendationCompetitorEvidenceLinks.length > 0 ? (
-                                    <span className="hint muted" data-testid="recommendation-competitor-linkage">
-                                      Linked competitor evidence:{" "}
-                                      {recommendationCompetitorEvidenceLinks.map((link, index) => {
-                                        const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(link.confidenceLevel);
-                                        const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
-                                        const trustTierLabel = formatRecommendationEvidenceTrustTierLabel(link.trustTier);
-                                        const trustTierBadgeClass = recommendationEvidenceTrustTierBadgeClass(link.trustTier);
-                                        const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
-                                        const competitorText = suffixParts.length > 0
-                                          ? `${link.competitorName} (${suffixParts.join(", ")})`
-                                          : link.competitorName;
-                                        return (
-                                          <span key={`${item.id}-${link.competitorDraftId}`} className="recommendation-linkage-entry">
-                                            {index > 0 ? "; " : null}
-                                            {competitorText}{" "}
-                                            {trustTierLabel ? <span className={trustTierBadgeClass}>{trustTierLabel}</span> : null}
-                                          </span>
-                                        );
-                                      })}
-                                    </span>
-                                  ) : null}
-                                  {recommendationActionDelta ? (
-                                    <span className="hint muted" data-testid="recommendation-action-delta">
-                                      Action delta: {recommendationActionDelta.observedCompetitorPattern} Site gap:{" "}
-                                      {recommendationActionDelta.observedSiteGap} Next action:{" "}
-                                      {recommendationActionDelta.recommendedOperatorAction} Evidence strength:{" "}
-                                      {formatRecommendationActionDeltaEvidenceStrength(
-                                        recommendationActionDelta.evidenceStrength,
-                                      )}
-                                      .
-                                    </span>
-                                  ) : null}
-                                  {hasReadinessSectionDetails ? (
-                                    <span className="workspace-recommendation-summary-label" data-testid="recommendation-readiness-section-label">
-                                      Readiness and confidence
-                                    </span>
-                                  ) : null}
-                                    </div>
-                                  </details>
-                                </div>
-                                <aside className="workspace-recommendation-row-support" data-testid="recommendation-row-support">
-                                  {impactLabel ? (
-                                    <span className={recommendationImpactBadgeClass(impactLabel)}>{impactLabel}</span>
-                                  ) : null}
-                                  {eeatCategories.length > 0 ? (
-                                    <div className="workspace-recommendation-row-support-group">
-                                      <span className="workspace-recommendation-row-support-label">EEAT impact</span>
-                                      <div className="link-row" data-testid="recommendation-eeat-badges">
-                                        {eeatCategories.map((category) => (
-                                          <span key={`${item.id}-${category}`} className="badge badge-muted">
-                                            {formatEEATCategory(category)}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                  {priorityReasons.length > 0 ? (
-                                    <div className="workspace-recommendation-row-support-group">
-                                      <span className="workspace-recommendation-row-support-label">Why surfaced</span>
-                                      <div className="link-row" data-testid="recommendation-priority-reasons">
-                                        {priorityReasons.map((reason) => (
-                                          <span key={`${item.id}-${reason}`} className="badge badge-muted">
-                                            {formatPriorityReason(reason)}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                  <div className="workspace-recommendation-row-support-group">
-                                    <span className="workspace-recommendation-row-support-label">Progress</span>
-                                    <div className="link-row" data-testid="recommendation-progress-status">
-                                      <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
-                                    </div>
-                                  </div>
-                                  {recommendationLifecycle ? (
-                                    <div className="workspace-recommendation-row-support-group">
-                                      <span className="workspace-recommendation-row-support-label">Lifecycle</span>
-                                      <div className="link-row" data-testid="recommendation-lifecycle-state">
-                                        <span className={recommendationLifecycle.badgeClass}>{recommendationLifecycle.label}</span>
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                  {recommendationPriority ? (
-                                    <div className="workspace-recommendation-row-support-group" data-testid="recommendation-priority">
-                                      <span className="workspace-recommendation-row-support-label">Priority</span>
-                                      <div className="link-row">
-                                        <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
-                                          {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
-                                        </span>
-                                        {recommendationPriority.effortHint ? (
-                                          <span className="badge badge-muted">
-                                            Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                  {recommendationPriorityRationale ? (
-                                    <div className="workspace-recommendation-row-support-group">
-                                      <span className="workspace-recommendation-row-support-label">Priority rationale</span>
-                                      <span className="hint muted" data-testid="recommendation-priority-rationale">
-                                        {recommendationPriorityRationale}
-                                      </span>
-                                    </div>
-                                  ) : null}
-                                  {recommendationEvidenceStrength ? (
-                                    <div className="workspace-recommendation-row-support-group">
-                                      <span className="workspace-recommendation-row-support-label">Evidence strength</span>
-                                      <div className="link-row" data-testid="recommendation-evidence-strength">
-                                        <span className={recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}>
-                                          {formatRecommendationEvidenceStrengthLabel(recommendationEvidenceStrength)}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                  {hasActionabilitySummary ? (
-                                    <div className="workspace-recommendation-row-support-group" data-testid="recommendation-actionability-support">
-                                      <span className="workspace-recommendation-row-support-label">Actionability</span>
-                                      <div className="link-row">
-                                        {recommendationExecutionReadiness ? (
-                                          <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
-                                            {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
-                                          </span>
-                                        ) : null}
-                                        {recommendationEffortHintLabel ? (
-                                          <span className="badge badge-muted">Effort: {recommendationEffortHintLabel}</span>
-                                        ) : null}
-                                      </div>
-                                      {recommendationIsBlocked && recommendationBlockingReason ? (
-                                        <span className="hint muted">{recommendationBlockingReason}</span>
-                                      ) : null}
-                                    </div>
-                                  ) : null}
-                                  <div className="workspace-recommendation-row-support-group">
-                                    <span className="workspace-recommendation-row-support-label">Details</span>
-                                    <div className="link-row">
-                                      <span className="badge badge-muted">{item.category}</span>
-                                      <span className="badge badge-muted">{item.severity}</span>
-                                      <span className="badge badge-muted">
-                                        {item.priority_score} ({item.priority_band})
-                                      </span>
-                                    </div>
-                                  </div>
-                                </aside>
-                              </div>
-                          </article>
-                        );
-                      })}
+                    const viewModel = buildRecommendationWorkspaceItemViewModel(item, index, null);
+                    return <RecommendationWorkspaceItemCard key={item.id} view={viewModel} />;
+                  })}
                 </div>
               ) : (
                 <div className="stack" data-testid="recommendation-theme-groups">
@@ -10933,923 +10520,105 @@ export default function SiteWorkspacePage() {
                       </span>
                       <div className="stack-tight recommendation-workspace-list">
                         {section.items.map((item, index) => {
-                              const recommendationRank = recommendationRankById.get(item.id) ?? index;
-                              const impactLabel = recommendationImpactLabel(item, recommendationRank);
-                              const eeatCategories = normalizeEEATCategories(item.eeat_categories);
-                              const priorityReasons = normalizeRecommendationPriorityReasons(item.priority_reasons);
-                              const recommendationProgress = normalizeRecommendationProgress(item);
-                              const recommendationLifecycle = normalizeRecommendationLifecycle(item);
-                              const recommendationEvidenceSummary = normalizeRecommendationEvidenceSummary(item);
-                              const recommendationObservedGapSummary = normalizeRecommendationObservedGapSummary(item);
-                              const recommendationEvidenceTrace = normalizeRecommendationEvidenceTrace(item);
-                              const renderObservedGapSummary = recommendationObservedGapSummary
-                                && recommendationObservedGapSummary.toLowerCase() !== recommendationEvidenceSummary?.toLowerCase();
-                              const recommendationActionClarity = normalizeRecommendationActionClarity(item);
-                              const recommendationExpectedOutcome = normalizeRecommendationExpectedOutcome(item);
-                              const recommendationTargetContext = normalizeRecommendationTargetContext(item);
-                              const recommendationTargetPageHints = normalizeRecommendationTargetPageHints(item);
-                              const recommendationTargetContentSummary =
-                                normalizeRecommendationTargetContentSummary(item);
-                              const recommendationActionPlanSteps = normalizeRecommendationActionPlanSteps(item);
-                              const recommendationCompetitorLinkageSummary =
-                                normalizeRecommendationCompetitorLinkageSummary(item);
-                              const recommendationCompetitorEvidenceLinks =
-                                normalizeRecommendationCompetitorEvidenceLinks(item);
-                              const recommendationActionDelta = normalizeRecommendationActionDelta(item);
-                              const recommendationPriority = normalizeRecommendationPriority(item);
-                              const recommendationPriorityRationale = normalizeRecommendationPriorityRationale(item);
-                              const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
-                              const recommendationCompetitorInfluence = normalizeRecommendationCompetitorInfluenceLevel(item);
-                              const recommendationWhyNow = normalizeRecommendationWhyNow(item);
-                              const recommendationNextAction = normalizeRecommendationNextAction(item);
-                              const recommendationCompetitorInsight = normalizeRecommendationCompetitorInsight(item);
-                              const recommendationMeasurementContext = normalizeRecommendationMeasurementContext(item);
-                              const recommendationMeasurementContextLine = buildRecommendationMeasurementContextLine(
-                                recommendationMeasurementContext,
-                              );
-                              const recommendationMeasurementSinceLine = buildRecommendationMeasurementSinceLine(
-                                recommendationMeasurementContext,
-                              );
-                              const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
-                              const recommendationSearchVisibilityContextLine = buildRecommendationSearchVisibilityContextLine(
-                                recommendationSearchConsoleContext,
-                              );
-                              const recommendationSearchVisibilitySinceLine = buildRecommendationSearchVisibilitySinceLine(
-                                recommendationSearchConsoleContext,
-                              );
-                              const recommendationSearchQueriesLine = recommendationSearchConsoleContext
-                                && recommendationSearchConsoleContext.searchConsoleStatus === "available"
-                                && recommendationSearchConsoleContext.topQueriesSummary.length > 0
-                                ? recommendationSearchConsoleContext.topQueriesSummary
-                                  .map((query) => query.query)
-                                  .slice(0, 3)
-                                  .join(" · ")
-                                : null;
-                              const recommendationEffectivenessSummary = normalizeRecommendationEffectivenessSummary(item);
-                              const recommendationExecutionType = normalizeRecommendationExecutionType(item);
-                              const recommendationExecutionScope = normalizeRecommendationExecutionScope(item);
-                              const recommendationExecutionInputs = normalizeRecommendationExecutionInputs(item);
-                              const recommendationExecutionReadiness = normalizeRecommendationExecutionReadiness(item);
-                              const recommendationBlockingReason = normalizeRecommendationBlockingReason(item);
-                              const recommendationPresentationBucketKey = classifyRecommendationPresentationBucket(item);
-                              const recommendationDetailClarity = buildRecommendationDetailClarityView({
-                                actionDelta: recommendationActionDelta,
-                                evidenceSummary: recommendationEvidenceSummary,
-                                observedGapSummary: recommendationObservedGapSummary,
-                                actionClarity: recommendationActionClarity,
-                                expectedOutcome: recommendationExpectedOutcome,
-                                competitorLinkageSummary: recommendationCompetitorLinkageSummary,
-                                evidenceTrace: recommendationEvidenceTrace,
-                                targetContext: recommendationTargetContext,
-                                targetPageHints: recommendationTargetPageHints,
-                                targetContentSummary: recommendationTargetContentSummary,
-                              });
-                              const recommendationActionSummary = recommendationNextAction
-                                || recommendationActionClarity
-                                || recommendationDetailClarity.recommendedAction
-                                || recommendationExpectedOutcome;
-                              const recommendationWhyItMattersSummary = recommendationEvidenceSummary
-                                || recommendationWhyNow
-                                || recommendationObservedGapSummary
-                                || recommendationExpectedOutcome
-                                || recommendationCompetitorInsight;
-                              const recommendationEffortHintLabel = recommendationPriority?.effortHint
-                                ? formatRecommendationEffortHintLabel(recommendationPriority.effortHint)
-                                : null;
-                              const recommendationIsBlocked = recommendationExecutionReadiness !== "ready"
-                                && Boolean(recommendationBlockingReason);
-                              const hasActionabilitySummary = Boolean(
-                                recommendationExecutionReadiness || recommendationEffortHintLabel || recommendationIsBlocked,
-                              );
-                              const hasActionSectionDetails = Boolean(
-                                recommendationActionClarity
-                                || recommendationNextAction
-                                || recommendationExecutionType
-                                || recommendationExecutionScope
-                                || recommendationExecutionInputs.length > 0
-                                || recommendationExecutionReadiness
-                                || recommendationBlockingReason
-                                || recommendationTargetContext
-                                || recommendationTargetPageHints.length > 0
-                                || recommendationTargetContentSummary
-                                || recommendationActionPlanSteps.length > 0,
-                              );
-                              const hasEvidenceSectionDetails = Boolean(
-                                recommendationEvidenceSummary
-                                || recommendationEvidenceTrace.length > 0
-                                || renderObservedGapSummary
-                                || recommendationCompetitorInsight
-                                || (recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none")
-                                || recommendationCompetitorLinkageSummary
-                                || recommendationCompetitorEvidenceLinks.length > 0
-                                || recommendationActionDelta
-                                || recommendationWhyNow
-                                || recommendationExpectedOutcome,
-                              );
-                              const hasReadinessSectionDetails = Boolean(
-                                recommendationExecutionReadiness
-                                || recommendationPriorityRationale
-                                || recommendationEvidenceStrength
-                                || recommendationEffectivenessSummary
-                                || recommendationMeasurementContextLine
-                                || recommendationMeasurementSinceLine
-                                || recommendationSearchVisibilityContextLine
-                                || recommendationSearchVisibilitySinceLine
-                                || recommendationSearchQueriesLine
-                                || recommendationMeasurementContext?.measurementStatus === "no_match"
-                                || recommendationSearchConsoleContext?.searchConsoleStatus === "no_match",
-                              );
-                              const recommendationDetailsToggleLabel = recommendationActionPlanSteps.length > 0
-                                ? "Show implementation steps"
-                                : "Show details";
-                              const rowId = recommendationRowId(item.id);
-                              return (
-                                <article
-                                  key={item.id}
-                                  id={rowId}
-                                  data-testid={`recommendation-workspace-item-${item.id}`}
-                                  className={[
-                                    "workspace-recommendation-row-card",
-                                    startHereFocusedTargetId === rowId ? "start-here-target-active" : "",
-                                  ].filter(Boolean).join(" ")}
-                                >
-                                  <div className="workspace-recommendation-row-layout">
-                                      <div
-                                        className="workspace-recommendation-row-main workspace-recommendation-row-main-bounded"
-                                        data-testid={`recommendation-row-main-${item.id}`}
-                                      >
-                                        <Link href={buildRecommendationDetailHref(item.id, selectedSite.id)}>{item.title}</Link>
-                                        {recommendationActionSummary ? (
-                                          <span className="hint workspace-recommendation-summary-line" data-testid="recommendation-what-to-do-now-summary">
-                                            <span className="workspace-recommendation-summary-label">What to do now</span>
-                                            <strong>{recommendationActionSummary}</strong>
-                                          </span>
-                                        ) : null}
-                                        {recommendationWhyItMattersSummary ? (
-                                          <span className="hint muted workspace-recommendation-summary-line" data-testid="recommendation-why-it-matters-summary">
-                                            <span className="workspace-recommendation-summary-label">Why it matters</span>
-                                            <span>{recommendationWhyItMattersSummary}</span>
-                                          </span>
-                                        ) : null}
-                                        {hasActionabilitySummary ? (
-                                          <div className="hint muted workspace-recommendation-summary-line" data-testid="recommendation-actionability-summary">
-                                            <span className="workspace-recommendation-summary-label">How actionable</span>
-                                            <div className="link-row">
-                                              {recommendationExecutionReadiness ? (
-                                                <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
-                                                  {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
-                                                </span>
-                                              ) : null}
-                                              {recommendationEffortHintLabel ? (
-                                                <span className="badge badge-muted">Effort: {recommendationEffortHintLabel}</span>
-                                              ) : null}
-                                              {recommendationIsBlocked ? (
-                                                <span className="badge badge-warn">Blocked by prerequisite</span>
-                                              ) : null}
-                                            </div>
-                                          </div>
-                                        ) : null}
-                                        <details className="workspace-recommendation-details" data-testid={`recommendation-details-${item.id}`}>
-                                          <summary className="workspace-recommendation-details-toggle">{recommendationDetailsToggleLabel}</summary>
-                                          <div className="workspace-recommendation-details-content">
-                                        <RecommendationDetailClarity
-                                          clarity={recommendationDetailClarity}
-                                          bucketKey={recommendationPresentationBucketKey}
-                                          testId={`recommendation-detail-clarity-row-${section.theme}-${item.id}`}
-                                        />
-                                        {hasActionSectionDetails ? (
-                                          <span className="workspace-recommendation-summary-label" data-testid="recommendation-action-section-label">
-                                            Action
-                                          </span>
-                                        ) : null}
-                                        {hasEvidenceSectionDetails ? (
-                                          <span className="workspace-recommendation-summary-label" data-testid="recommendation-evidence-section-label">
-                                            Why this matters
-                                          </span>
-                                        ) : null}
-                                        {recommendationEvidenceSummary ? (
-                                          <span className="hint muted" data-testid="recommendation-evidence-summary">
-                                            Why this matters: {recommendationEvidenceSummary}
-                                          </span>
-                                        ) : null}
-                                        {recommendationEvidenceTrace.length > 0 ? (
-                                          <span className="hint muted" data-testid="recommendation-evidence-trace">
-                                            Evidence trace: {recommendationEvidenceTrace.join(" · ")}
-                                          </span>
-                                        ) : null}
-                                        {renderObservedGapSummary ? (
-                                          <span className="hint muted" data-testid="recommendation-observed-gap-summary">
-                                            Observed gap: {recommendationObservedGapSummary}
-                                          </span>
-                                        ) : null}
-                                        {recommendationActionClarity ? (
-                                          <span className="hint muted" data-testid="recommendation-action-clarity">
-                                            Action: {recommendationActionClarity}
-                                          </span>
-                                        ) : null}
-                                        {recommendationExpectedOutcome ? (
-                                          <span className="hint muted" data-testid="recommendation-expected-outcome">
-                                            Expected outcome: {recommendationExpectedOutcome}
-                                          </span>
-                                        ) : null}
-                                        {recommendationWhyNow ? (
-                                          <span className="hint muted" data-testid="recommendation-why-now">
-                                            Why now: {recommendationWhyNow}
-                                          </span>
-                                        ) : null}
-                                        {recommendationCompetitorInsight ? (
-                                          <span className="hint muted" data-testid="recommendation-competitor-insight">
-                                            Competitor insight: {recommendationCompetitorInsight}
-                                          </span>
-                                        ) : null}
-                                        {recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none" ? (
-                                          <span className="hint muted" data-testid="recommendation-competitor-influence">
-                                            Competitor influence:{" "}
-                                            <span className={recommendationCompetitorInfluenceBadgeClass(recommendationCompetitorInfluence)}>
-                                              {formatRecommendationCompetitorInfluenceLabel(recommendationCompetitorInfluence)}
-                                            </span>
-                                          </span>
-                                        ) : null}
-                                        {recommendationNextAction ? (
-                                          <span className="hint muted" data-testid="recommendation-next-action">
-                                            Next action: {recommendationNextAction}
-                                          </span>
-                                        ) : null}
-                                        {recommendationExecutionReadiness ? (
-                                          <span className="hint muted" data-testid="recommendation-execution-readiness">
-                                            Execution readiness:{" "}
-                                            <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
-                                              {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
-                                            </span>
-                                          </span>
-                                        ) : null}
-                                        {recommendationExecutionType ? (
-                                          <span className="hint muted" data-testid="recommendation-execution-type">
-                                            Execution type: {formatRecommendationExecutionTypeLabel(recommendationExecutionType)}
-                                          </span>
-                                        ) : null}
-                                        {recommendationExecutionScope ? (
-                                          <span className="hint muted" data-testid="recommendation-execution-scope">
-                                            Execution scope: {recommendationExecutionScope}
-                                          </span>
-                                        ) : null}
-                                        {recommendationExecutionInputs.length > 0 ? (
-                                          <span className="hint muted" data-testid="recommendation-execution-inputs">
-                                            Execution inputs: {recommendationExecutionInputs.join(" · ")}
-                                          </span>
-                                        ) : null}
-                                        {recommendationExecutionReadiness !== "ready" && recommendationBlockingReason ? (
-                                          <span className="hint muted" data-testid="recommendation-execution-blocking">
-                                            Execution blocker: {recommendationBlockingReason}
-                                          </span>
-                                        ) : null}
-                                        {recommendationTargetContext ? (
-                                          <span className="hint muted" data-testid="recommendation-target-context">
-                                            Where: {formatRecommendationTargetContext(recommendationTargetContext)}
-                                          </span>
-                                        ) : null}
-                                        {recommendationTargetPageHints.length > 0 ? (
-                                          <span className="hint muted" data-testid="recommendation-target-page-hints">
-                                            Likely pages: {recommendationTargetPageHints.join(", ")}
-                                          </span>
-                                        ) : null}
-                                        {recommendationTargetContentSummary ? (
-                                          <span className="hint muted" data-testid="recommendation-target-content-summary">
-                                            Content to update: {recommendationTargetContentSummary}
-                                          </span>
-                                        ) : null}
-                                        {recommendationMeasurementContextLine ? (
-                                          <span className="hint muted" data-testid="recommendation-measurement-context">
-                                            Recent traffic for this page/topic: {recommendationMeasurementContextLine}
-                                          </span>
-                                        ) : null}
-                                        {recommendationMeasurementSinceLine ? (
-                                          <span className="hint muted" data-testid="recommendation-measurement-since">
-                                            Since this recommendation: {recommendationMeasurementSinceLine}
-                                          </span>
-                                        ) : null}
-                                        {recommendationMeasurementContext?.measurementStatus === "no_match" ? (
-                                          <span className="hint muted" data-testid="recommendation-measurement-no-match">
-                                            No page-level measurement match available.
-                                          </span>
-                                        ) : null}
-                                        {recommendationSearchVisibilityContextLine ? (
-                                          <span className="hint muted" data-testid="recommendation-search-context">
-                                            Recent search visibility for this page/topic: {recommendationSearchVisibilityContextLine}
-                                          </span>
-                                        ) : null}
-                                        {recommendationSearchVisibilitySinceLine ? (
-                                          <span className="hint muted" data-testid="recommendation-search-since">
-                                            Since this recommendation (search): {recommendationSearchVisibilitySinceLine}
-                                          </span>
-                                        ) : null}
-                                        {recommendationSearchQueriesLine ? (
-                                          <span className="hint muted" data-testid="recommendation-search-queries">
-                                            Top queries: {recommendationSearchQueriesLine}
-                                          </span>
-                                        ) : null}
-                                        {recommendationSearchConsoleContext?.searchConsoleStatus === "no_match" ? (
-                                          <span className="hint muted" data-testid="recommendation-search-no-match">
-                                            No page-level search visibility match available.
-                                          </span>
-                                        ) : null}
-                                        {recommendationEffectivenessSummary ? (
-                                          <span className="hint muted" data-testid="recommendation-effectiveness-summary">
-                                            Directional outcome: {recommendationEffectivenessSummary}
-                                          </span>
-                                        ) : null}
-                                        {recommendationActionPlanSteps.length > 0 ? (
-                                          <div className="stack-tight" data-testid={`recommendation-action-plan-${item.id}`}>
-                                            <span className="hint muted">
-                                              <span className="text-strong">How to implement:</span>
-                                            </span>
-                                            <ol className="compact-list">
-                                              {recommendationActionPlanSteps.map((step) => (
-                                                <li key={`${section.theme}-${item.id}-workspace-plan-${step.step_number}`}>
-                                                  <span className="hint muted">
-                                                    <span className="text-strong">Step {step.step_number}:</span> {step.title}
-                                                  </span>
-                                                  <br />
-                                                  <span className="hint muted">{step.instruction}</span>
-                                                  {step.before_example ? (
-                                                    <>
-                                                      <br />
-                                                      <span className="hint muted">Before: {step.before_example}</span>
-                                                    </>
-                                                  ) : null}
-                                                  {step.after_example ? (
-                                                    <>
-                                                      <br />
-                                                      <span className="hint muted">After: {step.after_example}</span>
-                                                    </>
-                                                  ) : null}
-                                                </li>
-                                              ))}
-                                            </ol>
-                                          </div>
-                                        ) : null}
-                                        {recommendationCompetitorLinkageSummary ? (
-                                          <span className="hint muted" data-testid="recommendation-competitor-linkage-summary">
-                                            Competitor linkage: {recommendationCompetitorLinkageSummary}
-                                          </span>
-                                        ) : null}
-                                        {recommendationCompetitorEvidenceLinks.length > 0 ? (
-                                          <span className="hint muted" data-testid="recommendation-competitor-linkage">
-                                            Linked competitor evidence:{" "}
-                                            {recommendationCompetitorEvidenceLinks.map((link, index) => {
-                                              const confidenceLabel = formatCompetitorDraftConfidenceLevelLabel(
-                                                link.confidenceLevel,
-                                              );
-                                              const sourceLabel = formatCompetitorDraftSourceTypeLabel(link.sourceType);
-                                              const trustTierLabel = formatRecommendationEvidenceTrustTierLabel(link.trustTier);
-                                              const trustTierBadgeClass = recommendationEvidenceTrustTierBadgeClass(link.trustTier);
-                                              const suffixParts = [confidenceLabel, sourceLabel].filter(Boolean);
-                                              const competitorText = suffixParts.length > 0
-                                                ? `${link.competitorName} (${suffixParts.join(", ")})`
-                                                : link.competitorName;
-                                              return (
-                                                <span
-                                                  key={`${section.theme}-${item.id}-${link.competitorDraftId}`}
-                                                  className="recommendation-linkage-entry"
-                                                >
-                                                  {index > 0 ? "; " : null}
-                                                  {competitorText}{" "}
-                                                  {trustTierLabel ? <span className={trustTierBadgeClass}>{trustTierLabel}</span> : null}
-                                                </span>
-                                              );
-                                            })}
-                                          </span>
-                                        ) : null}
-                                        {recommendationActionDelta ? (
-                                          <span className="hint muted" data-testid="recommendation-action-delta">
-                                            Action delta: {recommendationActionDelta.observedCompetitorPattern} Site gap:{" "}
-                                            {recommendationActionDelta.observedSiteGap} Next action:{" "}
-                                            {recommendationActionDelta.recommendedOperatorAction} Evidence strength:{" "}
-                                            {formatRecommendationActionDeltaEvidenceStrength(
-                                              recommendationActionDelta.evidenceStrength,
-                                            )}
-                                            .
-                                          </span>
-                                        ) : null}
-                                        {hasReadinessSectionDetails ? (
-                                          <span className="workspace-recommendation-summary-label" data-testid="recommendation-readiness-section-label">
-                                            Readiness and confidence
-                                          </span>
-                                        ) : null}
-                                          </div>
-                                        </details>
-                                      </div>
-                                      <aside className="workspace-recommendation-row-support" data-testid="recommendation-row-support">
-                                        {impactLabel ? (
-                                          <span className={recommendationImpactBadgeClass(impactLabel)}>{impactLabel}</span>
-                                        ) : null}
-                                        {eeatCategories.length > 0 ? (
-                                          <div className="workspace-recommendation-row-support-group">
-                                            <span className="workspace-recommendation-row-support-label">EEAT impact</span>
-                                            <div className="link-row" data-testid="recommendation-eeat-badges">
-                                              {eeatCategories.map((category) => (
-                                                <span key={`${item.id}-${category}`} className="badge badge-muted">
-                                                  {formatEEATCategory(category)}
-                                                </span>
-                                              ))}
-                                            </div>
-                                          </div>
-                                        ) : null}
-                                        {priorityReasons.length > 0 ? (
-                                          <div className="workspace-recommendation-row-support-group">
-                                            <span className="workspace-recommendation-row-support-label">Why surfaced</span>
-                                            <div className="link-row" data-testid="recommendation-priority-reasons">
-                                              {priorityReasons.map((reason) => (
-                                                <span key={`${item.id}-${reason}`} className="badge badge-muted">
-                                                  {formatPriorityReason(reason)}
-                                                </span>
-                                              ))}
-                                            </div>
-                                          </div>
-                                        ) : null}
-                                        <div className="workspace-recommendation-row-support-group">
-                                          <span className="workspace-recommendation-row-support-label">Progress</span>
-                                          <div className="link-row" data-testid="recommendation-progress-status">
-                                            <span className={recommendationProgress.badgeClass}>{recommendationProgress.label}</span>
-                                          </div>
-                                        </div>
-                                        {recommendationLifecycle ? (
-                                          <div className="workspace-recommendation-row-support-group">
-                                            <span className="workspace-recommendation-row-support-label">Lifecycle</span>
-                                            <div className="link-row" data-testid="recommendation-lifecycle-state">
-                                              <span className={recommendationLifecycle.badgeClass}>
-                                                {recommendationLifecycle.label}
-                                              </span>
-                                            </div>
-                                          </div>
-                                        ) : null}
-                                        {recommendationPriority ? (
-                                          <div className="workspace-recommendation-row-support-group" data-testid="recommendation-priority">
-                                            <span className="workspace-recommendation-row-support-label">Priority</span>
-                                            <div className="link-row">
-                                              <span className={recommendationPriorityLevelBadgeClass(recommendationPriority.priorityLevel)}>
-                                                {formatRecommendationPriorityLevelLabel(recommendationPriority.priorityLevel)}
-                                              </span>
-                                              {recommendationPriority.effortHint ? (
-                                                <span className="badge badge-muted">
-                                                  Effort: {formatRecommendationEffortHintLabel(recommendationPriority.effortHint)}
-                                                </span>
-                                              ) : null}
-                                            </div>
-                                          </div>
-                                        ) : null}
-                                        {recommendationPriorityRationale ? (
-                                          <div className="workspace-recommendation-row-support-group">
-                                            <span className="workspace-recommendation-row-support-label">Priority rationale</span>
-                                            <span className="hint muted" data-testid="recommendation-priority-rationale">
-                                              {recommendationPriorityRationale}
-                                            </span>
-                                          </div>
-                                        ) : null}
-                                        {recommendationEvidenceStrength ? (
-                                          <div className="workspace-recommendation-row-support-group">
-                                            <span className="workspace-recommendation-row-support-label">Evidence strength</span>
-                                            <div className="link-row" data-testid="recommendation-evidence-strength">
-                                              <span className={recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}>
-                                                {formatRecommendationEvidenceStrengthLabel(recommendationEvidenceStrength)}
-                                              </span>
-                                            </div>
-                                          </div>
-                                        ) : null}
-                                        {hasActionabilitySummary ? (
-                                          <div className="workspace-recommendation-row-support-group" data-testid="recommendation-actionability-support">
-                                            <span className="workspace-recommendation-row-support-label">Actionability</span>
-                                            <div className="link-row">
-                                              {recommendationExecutionReadiness ? (
-                                                <span className={recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}>
-                                                  {formatRecommendationExecutionReadinessLabel(recommendationExecutionReadiness)}
-                                                </span>
-                                              ) : null}
-                                              {recommendationEffortHintLabel ? (
-                                                <span className="badge badge-muted">Effort: {recommendationEffortHintLabel}</span>
-                                              ) : null}
-                                            </div>
-                                            {recommendationIsBlocked && recommendationBlockingReason ? (
-                                              <span className="hint muted">{recommendationBlockingReason}</span>
-                                            ) : null}
-                                          </div>
-                                        ) : null}
-                                        <div className="workspace-recommendation-row-support-group">
-                                          <span className="workspace-recommendation-row-support-label">Details</span>
-                                          <div className="link-row">
-                                            <span className="badge badge-muted">{item.category}</span>
-                                            <span className="badge badge-muted">{item.severity}</span>
-                                            <span className="badge badge-muted">
-                                              {item.priority_score} ({item.priority_band})
-                                            </span>
-                                          </div>
-                                        </div>
-                                      </aside>
-                                    </div>
-                                </article>
-                              );
-                            })}
+                          const viewModel = buildRecommendationWorkspaceItemViewModel(item, index, section.theme);
+                          return <RecommendationWorkspaceItemCard key={item.id} view={viewModel} />;
+                        })}
                       </div>
                     </div>
                   ))}
                 </div>
               )
             ) : null}
-            <h4>AI Narrative Overlay</h4>
-            {latestRecommendationPromptPreview ? (
-              <PromptPreviewPanel
-                preview={latestRecommendationPromptPreview}
-                copyFeedback={promptPreviewCopyFeedbackByType.recommendation}
-                onCopy={() => void handleCopyPromptPreview("recommendation")}
-                onDownload={() => handleDownloadPromptPreview("recommendation")}
-                testId="recommendation-prompt-preview"
-              />
-            ) : null}
-            {latestCompletedRecommendationNarrative ? (
-              <div className="stack">
-                <p className="hint muted">
-                  Narrative v{latestCompletedRecommendationNarrative.version} (
-                  {latestCompletedRecommendationNarrative.status}) | Provider{" "}
-                  {latestCompletedRecommendationNarrative.provider_name} | Model{" "}
-                  {latestCompletedRecommendationNarrative.model_name} | Template{" "}
-                  {latestCompletedRecommendationNarrative.prompt_version}
-                </p>
-                <p>
-                  <Link
-                    href={buildNarrativeDetailHref(
-                      latestCompletedRecommendationRun.id,
-                      latestCompletedRecommendationNarrative.id,
-                      selectedSite.id,
-                    )}
-                  >
-                    Open latest narrative
-                  </Link>
-                </p>
-                {narrativeResponseContractSummary ? (
-                  <p
-                    className={responseContractSummaryHintClass(narrativeResponseContractSummary)}
-                    data-testid="recommendation-response-contract-summary"
-                  >
-                    <strong>Quality gate:</strong> {formatResponseContractStatus(narrativeResponseContractSummary.status)}.{" "}
-                    {narrativeResponseContractSummary.summary}
-                    {narrativeResponseContractSummary.retryable &&
-                    narrativeResponseContractSummary.status !== "accepted"
-                      ? " This looks retryable."
-                      : ""}
-                  </p>
-                ) : null}
-                {narrativeActionSummary ? (
-                  <div className="panel panel-compact stack" data-testid="narrative-action-summary">
-                    <span className="hint muted">Next best move</span>
-                    <strong>{narrativeActionSummary.primaryAction}</strong>
-                    {narrativeActionSummary.whyItMatters ? (
-                      <span className="hint">Why this matters: {narrativeActionSummary.whyItMatters}</span>
-                    ) : null}
-                    {narrativeEEATFocusCategories.length > 0 ? (
-                      <span className="hint muted">
-                        EEAT focus: {narrativeEEATFocusCategories.map((category) => formatEEATCategory(category)).join(", ")}
-                      </span>
-                    ) : null}
-                    {narrativeActionSummary.firstStep ? (
-                      <span className="hint success">Start here: {narrativeActionSummary.firstStep}</span>
-                    ) : null}
-                    {narrativeActionSummary.evidence.length > 0 ? (
-                      <div className="stack-tight">
-                        <span className="hint muted">Evidence</span>
-                        <div className="link-row">
-                          {narrativeActionSummary.evidence.map((evidenceItem) => (
-                            <span key={evidenceItem} className="badge badge-muted">
-                              {evidenceItem}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-                {narrativeCompetitorInfluence ? (
-                  <div className="panel panel-compact stack-tight" data-testid="narrative-competitor-influence">
-                    <span className="hint muted">Competitor-informed</span>
-                    {narrativeCompetitorInfluence.summary ? (
-                      <span className="hint">{narrativeCompetitorInfluence.summary}</span>
-                    ) : null}
-                    {narrativeCompetitorInfluence.topOpportunities.length > 0 ? (
-                      <span className="hint muted">
-                        Top opportunities: {narrativeCompetitorInfluence.topOpportunities.join(", ")}
-                      </span>
-                    ) : null}
-                    {narrativeCompetitorInfluence.competitorNames.length > 0 ? (
-                      <span className="hint muted">
-                        Nearby competitors: {narrativeCompetitorInfluence.competitorNames.join(", ")}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-                {narrativeSignalSummary ? (
-                  <div className="panel panel-compact stack-tight" data-testid="narrative-signal-summary">
-                    <span className="hint muted">Backed by</span>
-                    <span className="hint">
-                      Support level: {formatNarrativeSupportLevel(narrativeSignalSummary.supportLevel)}
-                    </span>
-                    {narrativeSignalSummary.evidenceSources.length > 0 ? (
-                      <div className="link-row">
-                        {narrativeSignalSummary.evidenceSources.map((source) => (
-                          <span key={source} className="badge badge-muted">
-                            {source}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    <span className="hint muted">
-                      Signal check: site {narrativeSignalSummary.siteSignalUsed ? "yes" : "no"}; competitors{" "}
-                      {narrativeSignalSummary.competitorSignalUsed ? "yes" : "no"}; references{" "}
-                      {narrativeSignalSummary.referenceSignalUsed ? "yes" : "no"}.
-                    </span>
-                  </div>
-                ) : null}
-                {recommendationEEATGapSummary ? (
-                  <div className="panel panel-compact stack-tight" data-testid="narrative-eeat-gap-summary">
-                    <span className="hint muted">EEAT gap summary</span>
-                    <div className="link-row">
-                      {recommendationEEATGapSummary.categories.map((category) => (
-                        <span key={`eeat-gap-${category}`} className="badge badge-warn">
-                          {formatEEATCategory(category)}
-                        </span>
-                      ))}
-                    </div>
-                    <span className="hint">{recommendationEEATGapSummary.message}</span>
-                    {recommendationEEATGapSummary.supportingSignals.length > 0 ? (
-                      <div className="stack-tight">
-                        <span className="hint muted">Supporting signals</span>
-                        <div className="link-row">
-                          {recommendationEEATGapSummary.supportingSignals.map((signal) => (
-                            <span key={signal} className="badge badge-muted">
-                              {signal}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-                {recommendationApplyOutcome ? (
-                  <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="narrative-apply-outcome">
-                    <span className="hint muted">Latest apply outcome</span>
-                    <span className="hint success">Applied</span>
-                    {recommendationApplyOutcome.appliedRecommendationTitle ? (
-                      <span className="hint">
-                        Recommendation: {recommendationApplyOutcome.appliedRecommendationTitle}
-                        {recommendationApplyOutcome.appliedRecommendationId
-                          ? ` (${recommendationApplyOutcome.appliedRecommendationId})`
-                          : ""}
-                      </span>
-                    ) : null}
-                    {recommendationApplyOutcome.appliedChangeSummary ? (
-                      <span className="hint muted">What changed: {recommendationApplyOutcome.appliedChangeSummary}</span>
-                    ) : null}
-                    {recommendationApplyOutcome.appliedPreviewSummary ? (
-                      <span className="hint muted">Preview used: {recommendationApplyOutcome.appliedPreviewSummary}</span>
-                    ) : null}
-                    {recommendationApplyOutcome.nextRefreshExpectation ? (
-                      <span className="hint muted">
-                        You should see this after: {recommendationApplyOutcome.nextRefreshExpectation}
-                      </span>
-                    ) : null}
-                    {recommendationApplyOutcome.appliedAt ? (
-                      <span className="hint muted">Applied at: {formatDateTime(recommendationApplyOutcome.appliedAt)}</span>
-                    ) : null}
-                    {recommendationApplyOutcome.source === "recommendation" ? (
-                      <span className="hint muted">Source: recommendation-guided tuning action.</span>
-                    ) : null}
-                  </div>
-                ) : null}
-                {recommendationAnalysisFreshness ? (
-                  <div className="panel panel-compact stack-tight" data-testid="narrative-analysis-freshness">
-                    <span className="hint muted">Analysis freshness</span>
-                    <span className={analysisFreshnessBadgeClass(recommendationAnalysisFreshness.status)}>
-                      {analysisFreshnessLabel(recommendationAnalysisFreshness.status)}
-                    </span>
-                    <span className="hint">{recommendationAnalysisFreshness.message}</span>
-                    {recommendationAnalysisFreshness.analysisGeneratedAt ? (
-                      <span className="hint muted">
-                        Analysis generated at: {formatDateTime(recommendationAnalysisFreshness.analysisGeneratedAt)}
-                      </span>
-                    ) : null}
-                    {recommendationAnalysisFreshness.lastApplyAt ? (
-                      <span className="hint muted">
-                        Last apply at: {formatDateTime(recommendationAnalysisFreshness.lastApplyAt)}
-                      </span>
-                    ) : null}
-                    {formatLocationContextSourceLabel(siteLocationContextSource) ? (
-                      <span className="hint muted">
-                        Location source: {formatLocationContextSourceLabel(siteLocationContextSource)}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-                {competitorContextHealth ? (
-                  <div className="panel panel-compact stack-tight" data-testid="competitor-context-health">
-                    <span className="hint muted">Competitor context health</span>
-                    <span className={competitorContextHealthBadgeClass(competitorContextHealth.status)}>
-                      {competitorContextHealthLabel(competitorContextHealth.status)}
-                    </span>
-                    <span className="hint">{competitorContextHealth.message}</span>
-                    {competitorContextHealth.checks.length > 0 ? (
-                      <div className="stack-tight">
-                        {competitorContextHealth.checks.map((check) => (
-                          <div key={`competitor-context-health-${check.key}`} className="link-row">
-                            <span className={competitorContextHealthCheckBadgeClass(check.status)}>
-                              {check.status === "strong" ? "Strong" : "Weak"}
-                            </span>
-                            <span className="hint">
-                              {check.label}: {check.detail}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-                {latestCompletedRecommendationNarrative.narrative_text ? (
-                  <p>{latestCompletedRecommendationNarrative.narrative_text}</p>
-                ) : null}
-                {!latestCompletedRecommendationNarrative.narrative_text &&
-                latestCompletedRecommendationNarrative.status === "completed" ? (
-                  <p className="hint muted">Narrative completed without summary text.</p>
-                ) : null}
-                {latestCompletedRecommendationNarrative.status === "failed" ? (
-                  <p className="hint warning">
-                    Narrative generation failed.
-                    {latestCompletedRecommendationNarrative.error_message
-                      ? ` ${latestCompletedRecommendationNarrative.error_message}`
-                      : ""}
-                  </p>
-                ) : null}
-                <span className="hint muted">AI-Assisted Tuning Suggestions</span>
-                {tuningApplyMessage ? <span className="hint success">{tuningApplyMessage}</span> : null}
-                {latestCompletedTuningSuggestions.length > 0 ? (
-                  latestCompletedTuningSuggestions.map((suggestion) => {
-                    const previewKey = buildTuningPreviewKey(latestCompletedRecommendationRun.id, suggestion);
-                    const suggestionCardId = tuningSuggestionCardId(latestCompletedRecommendationRun.id, suggestion);
-                    const currentValue = currentSuggestionValue(suggestion);
-                    const alreadyApplied = currentValue === suggestion.recommended_value;
-                    const preview = tuningPreviewByKey[previewKey];
-                    return (
-                      <div
-                        key={`${latestCompletedRecommendationRun.id}-${suggestion.setting}-${suggestion.recommended_value}`}
-                        id={suggestionCardId}
-                        className={
-                          startHereFocusedTargetId === suggestionCardId ||
-                          aiActionFocusedTargetId === suggestionCardId
-                            ? "panel panel-compact stack start-here-target-active"
-                            : "panel panel-compact stack"
-                        }
-                        data-testid="tuning-suggestion-card"
-                      >
-                        <strong>{formatTuningSettingLabel(suggestion.setting)}</strong>
-                        <span className="hint">
-                          Current -&gt; Suggested: <strong>{currentValue}</strong> -&gt;{" "}
-                          <strong>{suggestion.recommended_value}</strong>
-                        </span>
-                        <span className="hint muted">{suggestion.reason}</span>
-                        <span className="hint muted">Confidence: {suggestion.confidence}</span>
-                        <button
-                          type="button"
-                          className="button button-tertiary button-inline"
-                          onClick={() =>
-                            handlePreviewTuningSuggestion(
-                              latestCompletedRecommendationRun.id,
-                              latestCompletedRecommendationNarrative.id,
-                              suggestion,
-                            )
-                          }
-                          disabled={tuningPreviewLoadingKey === previewKey}
-                        >
-                          {tuningPreviewLoadingKey === previewKey ? "Previewing..." : "Preview Impact"}
-                        </button>
-                        <button
-                          type="button"
-                          className="button button-primary button-inline"
-                          onClick={() =>
-                            handleApplyTuningSuggestion(
-                              latestCompletedRecommendationRun.id,
-                              suggestion,
-                            )
-                          }
-                          disabled={alreadyApplied || tuningApplyLoadingKey === previewKey}
-                        >
-                          {alreadyApplied
-                            ? "Applied"
-                            : tuningApplyLoadingKey === previewKey
-                              ? "Applying..."
-                              : "Apply Suggestion"}
-                        </button>
-                        {tuningPreviewErrorByKey[previewKey] ? (
-                          <span className="hint warning">{tuningPreviewErrorByKey[previewKey]}</span>
-                        ) : null}
-                        {tuningApplyErrorByKey[previewKey] ? (
-                          <span className="hint warning">{tuningApplyErrorByKey[previewKey]}</span>
-                        ) : null}
-                        {preview ? (
-                          <>
-                            <span className="hint">
-                              Impact hint: {formatSignedDelta(preview.estimated_impact.estimated_included_candidate_delta)}{" "}
-                              candidates included
-                            </span>
-                            <span className="hint muted">{preview.estimated_impact.summary}</span>
-                            <span className="hint muted">
-                              Included delta:{" "}
-                              {formatSignedDelta(preview.estimated_impact.estimated_included_candidate_delta)};
-                              excluded delta:{" "}
-                              {formatSignedDelta(preview.estimated_impact.estimated_excluded_candidate_delta)}
-                            </span>
-                          </>
-                        ) : null}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <span className="hint muted">No tuning adjustments suggested for current data.</span>
-                )}
-                {recentTuningChanges.length > 0 ? (
-                  <div className="panel panel-compact stack" data-testid="recent-changes-panel">
-                    <span className="hint muted">Recent Changes</span>
-                    <ul>
-                      {recentTuningChanges.map((change) => (
-                        <li key={change.id}>
-                          <span className="hint">
-                            {change.setting_label}: {change.previous_value} -&gt; {change.next_value} (
-                            {formatDateTime(change.applied_at)})
-                          </span>
-                          {change.ai_attribution ? (
-                            <>
-                              <br />
-                              <span className="badge badge-muted">From AI Recommendation</span>
-                              <span className="hint muted"> {change.ai_attribution.recommendation_title}</span>
-                            </>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <p className="hint muted">
-                No narrative has been generated for the latest completed recommendation run yet.
-              </p>
-            )}
+            <RecommendationNarrativeOverlayPanel
+              promptPreviewContent={latestRecommendationPromptPreview ? (
+                <PromptPreviewPanel
+                  preview={latestRecommendationPromptPreview}
+                  copyFeedback={promptPreviewCopyFeedbackByType.recommendation}
+                  onCopy={() => void handleCopyPromptPreview("recommendation")}
+                  onDownload={() => handleDownloadPromptPreview("recommendation")}
+                  testId="recommendation-prompt-preview"
+                />
+              ) : null}
+              latestCompletedRecommendationNarrative={latestCompletedRecommendationNarrative}
+              latestNarrativeDetailHref={
+                latestCompletedRecommendationNarrative
+                  ? buildNarrativeDetailHref(
+                    latestCompletedRecommendationRun.id,
+                    latestCompletedRecommendationNarrative.id,
+                    selectedSite.id,
+                  )
+                  : null
+              }
+              narrativeResponseContractSummary={narrativeResponseContractSummary}
+              narrativeActionSummary={narrativeActionSummary}
+              narrativeEEATFocusCategories={narrativeEEATFocusCategories}
+              narrativeCompetitorInfluence={narrativeCompetitorInfluence}
+              narrativeSignalSummary={narrativeSignalSummary}
+              recommendationEEATGapSummary={recommendationEEATGapSummary}
+              recommendationApplyOutcome={recommendationApplyOutcome}
+              recommendationAnalysisFreshness={recommendationAnalysisFreshness}
+              siteLocationContextSource={siteLocationContextSource}
+              competitorContextHealth={competitorContextHealth}
+              tuningApplyMessage={tuningApplyMessage}
+              latestCompletedTuningSuggestions={latestCompletedTuningSuggestions}
+              recentTuningChanges={recentTuningChanges}
+              runId={latestCompletedRecommendationRun.id}
+              startHereFocusedTargetId={startHereFocusedTargetId}
+              aiActionFocusedTargetId={aiActionFocusedTargetId}
+              tuningPreviewByKey={tuningPreviewByKey}
+              tuningPreviewErrorByKey={tuningPreviewErrorByKey}
+              tuningApplyErrorByKey={tuningApplyErrorByKey}
+              tuningPreviewLoadingKey={tuningPreviewLoadingKey}
+              tuningApplyLoadingKey={tuningApplyLoadingKey}
+              onPreviewTuningSuggestion={(suggestion) => {
+                if (!latestCompletedRecommendationNarrative) {
+                  return;
+                }
+                handlePreviewTuningSuggestion(
+                  latestCompletedRecommendationRun.id,
+                  latestCompletedRecommendationNarrative.id,
+                  suggestion,
+                );
+              }}
+              onApplyTuningSuggestion={(suggestion) => {
+                handleApplyTuningSuggestion(
+                  latestCompletedRecommendationRun.id,
+                  suggestion,
+                );
+              }}
+              buildTuningPreviewKey={buildTuningPreviewKey}
+              tuningSuggestionCardId={tuningSuggestionCardId}
+              currentSuggestionValue={currentSuggestionValue}
+              formatDateTime={formatDateTime}
+              formatResponseContractStatus={formatResponseContractStatus}
+              responseContractSummaryHintClass={responseContractSummaryHintClass}
+              formatEEATCategory={formatEEATCategory}
+              formatNarrativeSupportLevel={formatNarrativeSupportLevel}
+              analysisFreshnessBadgeClass={analysisFreshnessBadgeClass}
+              analysisFreshnessLabel={analysisFreshnessLabel}
+              formatLocationContextSourceLabel={formatLocationContextSourceLabel}
+              competitorContextHealthBadgeClass={competitorContextHealthBadgeClass}
+              competitorContextHealthLabel={competitorContextHealthLabel}
+              competitorContextHealthCheckBadgeClass={competitorContextHealthCheckBadgeClass}
+              formatTuningSettingLabel={formatTuningSettingLabel}
+              formatSignedDelta={formatSignedDelta}
+            />
           </div>
         ) : null}
-        <h3>Recent Run History</h3>
-        {recommendationRuns.length > 0 ? (
-          <div className="table-container">
-            <table className="table table-dense">
-              <thead>
-                <tr>
-                  <th>Run ID</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Completed</th>
-                  <th>Total Recommendations</th>
-                  <th>Narrative</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recommendationRuns.map((run) => {
-                  const latestNarrative = latestNarrativesByRunId[run.id] || null;
-                  return (
-                    <tr key={run.id}>
-                      <td>
-                        <Link href={buildRecommendationRunHref(run.id, selectedSite.id)}>{run.id}</Link>
-                      </td>
-                      <td>{run.status}</td>
-                      <td>{formatDateTime(run.created_at)}</td>
-                      <td>{formatDateTime(run.completed_at)}</td>
-                      <td>{run.total_recommendations}</td>
-                      <td>
-                        <div className="stack">
-                          <Link href={buildNarrativeHistoryHref(run.id, selectedSite.id)}>History</Link>
-                          {latestNarrative ? (
-                            <Link href={buildNarrativeDetailHref(run.id, latestNarrative.id, selectedSite.id)}>
-                              Latest v{latestNarrative.version} ({latestNarrative.status})
-                            </Link>
-                          ) : (
-                            <span className="hint muted">No narrative yet</span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </SectionCard>
+        <RecommendationRunHistoryTable
+          recommendationRuns={recommendationRuns}
+          latestNarrativesByRunId={latestNarrativesByRunId}
+          siteId={selectedSite.id}
+          formatDateTime={formatDateTime}
+          buildRecommendationRunHref={buildRecommendationRunHref}
+          buildNarrativeHistoryHref={buildNarrativeHistoryHref}
+          buildNarrativeDetailHref={buildNarrativeDetailHref}
+        />
+      </RecommendationRunsPanel>
       </>
       ) : null}
     </PageContainer>
   );
 }
+
 

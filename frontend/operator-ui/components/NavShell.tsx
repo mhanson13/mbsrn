@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "./AuthProvider";
@@ -292,7 +293,17 @@ export function NavShell({ children }: { children: React.ReactNode }) {
       <header className="topnav">
         <div className="topnav-inner">
           <div className="topnav-brand">
-            <strong>MBSRN Operator Workspace</strong>
+            <Link href="/dashboard" className="topnav-brand-link" data-testid="topnav-logo-link">
+              <Image
+                src="/images/mbsrn-logo.jpg"
+                alt="MBSRN"
+                className="topnav-logo"
+                width={32}
+                height={32}
+                data-testid="topnav-logo-image"
+              />
+              <strong>MBSRN Operator Workspace</strong>
+            </Link>
           </div>
           <nav className="topnav-links">
             {links

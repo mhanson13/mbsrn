@@ -531,6 +531,18 @@ Additional cleanup:
 - recommendation queue items on the site workspace use compact cards rather than mixed card+table composition
 - global header site switching is now canonical, so workspace recommendation content follows the selected site context without manual page refresh
 
+### Workspace Consistency Pass
+
+A narrow workspace consistency pass aligned recommendation-facing site workspace panels with migration and competitor surfaces without changing workflows:
+
+- recommendation queue now uses the shared summary-strip card rhythm for queue totals, high-priority count, dismissals, and freshness
+- recommendation runs and narratives section now uses the same section spacing/border rhythm as adjacent workspace surfaces
+- competitor surfaces in the same workspace route now use matching summary-strip/status-callout patterns, reducing visual drift between tabs
+
+Boundary:
+- presentation/layout only
+- no recommendation generation, prioritization, action-state, or automation workflow semantics changed
+
 ### AI Prompt debug panel behavior
 
 `View AI prompt` is now explicitly user-driven:

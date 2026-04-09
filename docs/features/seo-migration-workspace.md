@@ -45,6 +45,42 @@ Primary workflow in site workspace `Migration` tab:
 Important operator cue:
 - GitHub publish is not production deployment.
 
+## Operator UI Layout (Dashboard Pass)
+Operator UI now uses a tighter dashboard hierarchy for migration review without changing workflow behavior:
+- global header branding adds a left-aligned MBSRN logo anchor linked to `/dashboard`
+- migration tab starts with a compact summary band for:
+  - migration state
+  - next action
+  - latest draft version/status
+  - artifact quality status
+- migration workspace sections are presented in this order:
+  1. `A. Migration Overview`
+  2. `B. Draft / Version Status`
+  3. `C. Artifact Quality Summary`
+  4. `D. Artifact Review`
+  5. `E. Approval / Publish / Deploy`
+  6. `F. Advanced Diagnostics`
+
+Purpose:
+- improve <10-second scanability for operators
+- surface next action and draft quality earlier
+- keep advanced diagnostics available but lower-priority
+
+No workflow changes:
+- approval/publish/deploy rules are unchanged
+- backend/API behavior and gating are unchanged
+- artifact quality remains advisory only
+
+Second-pass polish refinements:
+- summary band cards now use consistent label/value hierarchy and spacing, with a stronger visual emphasis on `Next action`
+- section rhythm was tightened with compact subtitles and clearer spacing between major migration sections
+- artifact quality issues render as readable issue rows (type + description) with top issues first and full list expandable
+- advanced diagnostics remain available but visually de-emphasized below operator action surfaces
+- header logo integration was tuned for shell consistency and small-screen behavior (text label collapses on narrow widths)
+- frontend `useEffect` dependency cleanup in site workspace page removed a non-functional lint warning only; workflow semantics are unchanged
+- site workspace companion panels (`Competitor Readiness`, `AI Competitor Profiles`, `Recommendation Queue`, `Recommendation Runs`) now use the same summary-strip and status-callout rhythm so migration is not the only polished workspace surface
+- implementation maintainability update: the large site workspace page container was decomposed into focused panel modules for competitor/recommendation surfaces without changing operator workflow semantics or backend/API behavior
+
 ## Reused Context Availability Semantics
 Migration reused-context cards use best-available signal, not strict completeness.
 

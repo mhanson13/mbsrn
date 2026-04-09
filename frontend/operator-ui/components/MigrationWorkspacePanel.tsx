@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   ApiRequestError,
@@ -177,6 +177,21 @@ interface ArtifactQualitySummary {
   qualityStatus: ArtifactQualityStatus;
   operatorSummary: string;
   issues: ArtifactQualityIssue[];
+}
+
+interface MigrationSummaryCardProps {
+  label: string;
+  emphasis?: boolean;
+  children: ReactNode;
+}
+
+function MigrationSummaryCard({ label, emphasis = false, children }: MigrationSummaryCardProps): JSX.Element {
+  return (
+    <div className={emphasis ? "migration-summary-card migration-summary-card-primary" : "migration-summary-card"}>
+      <span className="migration-summary-label">{label}</span>
+      <div className="migration-summary-value">{children}</div>
+    </div>
+  );
 }
 
 function toFailureCategoryLabel(value: string | null): string {
@@ -632,6 +647,16 @@ function toDraftGenerationStateLabel(value: DraftGenerationStateStatus): string 
   return "Draft generated";
 }
 
+function draftGenerationStateBadgeClass(value: DraftGenerationStateStatus): string {
+  if (value === "ready" || value === "generation_succeeded") {
+    return "badge badge-success";
+  }
+  if (value === "ready_with_warnings" || value === "generation_partial") {
+    return "badge badge-warn";
+  }
+  return "badge badge-error";
+}
+
 function parseDraftGenerationState(params: {
   contextSummary: Record<string, unknown>;
   draftReadiness: DraftReadinessEvaluation;
@@ -889,6 +914,69 @@ function artifactQualityBadgeClass(value: ArtifactQualityStatus): string {
   return "badge badge-muted";
 }
 
+function toArtifactQualityIssueTypeLabel(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return "Issue";
+  }
+  return normalized.replace(/_/g, " ");
+}
+
+function deriveMigrationNextAction(params: {
+  draftReadiness: DraftReadinessEvaluation;
+  draftProviderCompatibility: DraftProviderCompatibilityEvaluation;
+  draftGenerationState: DraftGenerationStateEvaluation;
+  selectedArtifact: MigrationArtifactVersion | null;
+  artifactQualitySummary: ArtifactQualitySummary | null;
+  canPublishSelectedArtifact: boolean;
+  canDeploySelectedArtifact: boolean;
+}): string {
+  const {
+    draftReadiness,
+    draftProviderCompatibility,
+    draftGenerationState,
+    selectedArtifact,
+    artifactQualitySummary,
+    canPublishSelectedArtifact,
+    canDeploySelectedArtifact,
+  } = params;
+
+  if (draftReadiness.hardBlocked) {
+    return "Not ready yet — add source ingest, operator requirements, and enriched content first.";
+  }
+  if (!draftProviderCompatibility.supported) {
+    return "Blocked: resolve AI provider compatibility before generating a draft.";
+  }
+  if (!selectedArtifact) {
+    return "Generate a draft to continue.";
+  }
+  if (selectedArtifact.status === "partial") {
+    return "Review partial draft output and regenerate if needed before approval.";
+  }
+  if (artifactQualitySummary?.qualityStatus === "low") {
+    return "Review draft quality issues before approval.";
+  }
+  if (selectedArtifact.approval_status !== "approved") {
+    return "Review draft quality before approval.";
+  }
+  if (canPublishSelectedArtifact) {
+    return "Approved artifact ready for publish.";
+  }
+  if (selectedArtifact.publish_status === "published" && canDeploySelectedArtifact) {
+    return "Published artifact ready for deploy request.";
+  }
+  if (selectedArtifact.publish_status === "published" && selectedArtifact.deploy_status !== "deploy_requested") {
+    return "Publish completed. Deploy remains a separate explicit step.";
+  }
+  if (selectedArtifact.deploy_status === "deploy_requested") {
+    return "Deploy request submitted. Monitor deploy history.";
+  }
+  if (draftGenerationState.status === "ready_with_warnings") {
+    return "Ready to generate, but draft quality may be limited.";
+  }
+  return draftGenerationState.summary || "Review current migration state and continue with the next explicit action.";
+}
+
 interface ReusedContextEntry {
   available: boolean | null;
   source: string | null;
@@ -1102,6 +1190,26 @@ export function MigrationWorkspacePanel({
   const competitorContextLabel = resolveReusedContextLabel({
     entry: competitorReusedContext,
     legacyAvailable: Boolean(existingContextSummaries.competitor_summary) || Boolean(contextSummary.has_competitor_summary),
+  });
+  const latestArtifactForSummary = selectedArtifact || summary?.latest_artifact || artifactVersions[0] || null;
+  const latestArtifactQualitySummary = parseArtifactQualitySummary(latestArtifactForSummary);
+  const latestDraftStatusLabel = latestArtifactForSummary
+    ? `v${latestArtifactForSummary.version} (${latestArtifactForSummary.status})`
+    : "Not generated";
+  const topQualityStatusLabel = latestArtifactQualitySummary
+    ? artifactQualityStatusLabel(latestArtifactQualitySummary.qualityStatus)
+    : "Not scored";
+  const topQualityBadgeClass = latestArtifactQualitySummary
+    ? artifactQualityBadgeClass(latestArtifactQualitySummary.qualityStatus)
+    : "badge badge-muted";
+  const nextActionMessage = deriveMigrationNextAction({
+    draftReadiness,
+    draftProviderCompatibility,
+    draftGenerationState,
+    selectedArtifact: latestArtifactForSummary,
+    artifactQualitySummary: latestArtifactQualitySummary,
+    canPublishSelectedArtifact,
+    canDeploySelectedArtifact,
   });
 
   const hydrateFromSummary = useCallback((nextSummary: MigrationWorkspaceSummary) => {
@@ -1505,7 +1613,7 @@ export function MigrationWorkspacePanel({
   }
 
   return (
-    <div className="stack" data-testid="migration-workspace-panel">
+    <div className="stack migration-workspace-shell" data-testid="migration-workspace-panel">
       <div className="panel panel-compact stack" data-testid="migration-draft-banner">
         <strong>Draft-only mode: generated files are review artifacts pending explicit approval/publish/deploy.</strong>
         <span className="hint">
@@ -1515,45 +1623,27 @@ export function MigrationWorkspacePanel({
         <span className="hint warning">GitHub publish does not equal production deployment. Deploy remains explicit.</span>
       </div>
 
-      <div className="panel panel-compact stack-tight" data-testid="migration-current-state">
-        <strong>Current Migration State</strong>
-        <span className="hint">State: {draftGenerationStateLabel}</span>
-        <span className={draftGenerationStateToneClass}>{draftGenerationState.summary}</span>
-        <span className="hint" data-testid="migration-ai-execution-summary">
-          AI execution: {aiExecutionSummaryLabel}
-        </span>
-        <span className="hint" data-testid="migration-ai-model-used">
-          Generated using: {draftAIExecution.modelUsed || draftAIExecution.modelResolved || "n/a"}
-        </span>
-        <span className="hint" data-testid="migration-ai-request-profile">
-          Request profile: {requestProfileLabel}
-        </span>
-        {requestContractStatusLabel ? (
-          <span className="hint" data-testid="migration-request-contract-status">
-            Request contract: {requestContractStatusLabel}
-          </span>
-        ) : null}
-        {artifactResultLabel ? (
-          <span className="hint" data-testid="migration-artifact-result">
-            Artifact result: {artifactResultLabel}
-          </span>
-        ) : null}
-        {draftDurationLabel ? (
-          <span className="hint" data-testid="migration-ai-duration">
-            Duration: {draftDurationLabel}
-          </span>
-        ) : null}
-        {showDraftTimeout ? (
-          <span className="hint" data-testid="migration-draft-timeout">
-            Timeout: {draftTimeoutLabel}
-            {draftAIExecution.timeoutSource ? ` (${draftAIExecution.timeoutSource})` : ""}
-          </span>
-        ) : null}
-        {draftFailureSourceLabel ? (
-          <span className="hint warning" data-testid="migration-draft-failure-source">
-            Failure source: {draftFailureSourceLabel}
-          </span>
-        ) : null}
+      <div className="panel panel-compact stack migration-summary-band" data-testid="migration-summary-band">
+        <strong>Migration Summary</strong>
+        <div className="migration-summary-grid">
+          <MigrationSummaryCard label="Migration state">
+            <span className={draftGenerationStateBadgeClass(draftGenerationState.status)}>{draftGenerationStateLabel}</span>
+            <span className={draftGenerationStateToneClass}>{draftGenerationState.summary}</span>
+          </MigrationSummaryCard>
+          <MigrationSummaryCard label="Next action" emphasis={true}>
+            <strong data-testid="migration-next-action">{nextActionMessage}</strong>
+          </MigrationSummaryCard>
+          <MigrationSummaryCard label="Latest draft">
+            <strong>{latestDraftStatusLabel}</strong>
+            <span className="hint muted">Selected version: {selectedArtifactVersionIdTrimmed || "None"}</span>
+          </MigrationSummaryCard>
+          <MigrationSummaryCard label="Artifact quality">
+            <span className={topQualityBadgeClass}>Quality: {topQualityStatusLabel}</span>
+            <span className="hint muted">
+              {latestArtifactQualitySummary?.operatorSummary || "Generate and review an artifact to score quality."}
+            </span>
+          </MigrationSummaryCard>
+        </div>
       </div>
 
       {errorMessage ? <p className="hint warning">{errorMessage}</p> : null}
@@ -1563,6 +1653,11 @@ export function MigrationWorkspacePanel({
         </p>
       ) : null}
       {statusMessage ? <p className="hint success">{statusMessage}</p> : null}
+
+      <h3 className="hint muted migration-section-title">A. Migration Overview</h3>
+      <p className="hint muted migration-section-subtitle">
+        Capture source and operator-owned replacement context before generating drafts.
+      </p>
 
       <div className="panel stack">
         <h3>Source Ingest</h3>
@@ -1708,6 +1803,52 @@ export function MigrationWorkspacePanel({
         </div>
       </div>
 
+      <h3 className="hint muted migration-section-title">B. Draft / Version Status</h3>
+      <p className="hint muted migration-section-subtitle">
+        Confirm readiness and compatibility, then generate a draft when unblocked.
+      </p>
+
+      <div className="panel panel-compact stack-tight" data-testid="migration-current-state">
+        <strong>Current Migration State</strong>
+        <span className="hint">State: {draftGenerationStateLabel}</span>
+        <span className={draftGenerationStateToneClass}>{draftGenerationState.summary}</span>
+        <span className="hint" data-testid="migration-ai-execution-summary">
+          AI execution: {aiExecutionSummaryLabel}
+        </span>
+        <span className="hint" data-testid="migration-ai-model-used">
+          Generated using: {draftAIExecution.modelUsed || draftAIExecution.modelResolved || "n/a"}
+        </span>
+        <span className="hint" data-testid="migration-ai-request-profile">
+          Request profile: {requestProfileLabel}
+        </span>
+        {requestContractStatusLabel ? (
+          <span className="hint" data-testid="migration-request-contract-status">
+            Request contract: {requestContractStatusLabel}
+          </span>
+        ) : null}
+        {artifactResultLabel ? (
+          <span className="hint" data-testid="migration-artifact-result">
+            Artifact result: {artifactResultLabel}
+          </span>
+        ) : null}
+        {draftDurationLabel ? (
+          <span className="hint" data-testid="migration-ai-duration">
+            Duration: {draftDurationLabel}
+          </span>
+        ) : null}
+        {showDraftTimeout ? (
+          <span className="hint" data-testid="migration-draft-timeout">
+            Timeout: {draftTimeoutLabel}
+            {draftAIExecution.timeoutSource ? ` (${draftAIExecution.timeoutSource})` : ""}
+          </span>
+        ) : null}
+        {draftFailureSourceLabel ? (
+          <span className="hint warning" data-testid="migration-draft-failure-source">
+            Failure source: {draftFailureSourceLabel}
+          </span>
+        ) : null}
+      </div>
+
       <div className="panel stack">
         <h3>Draft Artifact Generation</h3>
         <div className="panel panel-compact stack-tight" data-testid="migration-draft-readiness">
@@ -1743,8 +1884,13 @@ export function MigrationWorkspacePanel({
         ) : null}
       </div>
 
+      <h3 className="hint muted migration-section-title">C. Artifact Quality Summary</h3>
+      <p className="hint muted migration-section-subtitle">
+        Quality scoring is advisory. Resolve notable issues before approval.
+      </p>
+
       <div className="panel stack">
-        <h3>Draft Artifact Review</h3>
+        <h3>Artifact Quality Summary</h3>
         <label className="stack-tight">
           <span className="hint muted">Selected artifact version</span>
           <select
@@ -1764,6 +1910,65 @@ export function MigrationWorkspacePanel({
           </select>
         </label>
         {selectedArtifact ? (
+          <div className="panel panel-compact stack-tight" data-testid="migration-artifact-quality-summary">
+            <strong>Artifact Quality Summary</strong>
+            {artifactQualitySummary ? (
+              <>
+                <span
+                  className={artifactQualityBadgeClass(artifactQualitySummary.qualityStatus)}
+                  data-testid="migration-artifact-quality-status"
+                >
+                  Quality: {artifactQualityStatusLabel(artifactQualitySummary.qualityStatus)}
+                </span>
+                <span className="hint">{artifactQualitySummary.operatorSummary}</span>
+                {artifactQualitySummary.issues.length > 0 ? (
+                  <>
+                    <strong className="hint muted">Top issues</strong>
+                    <ul className="migration-quality-issue-list" data-testid="migration-artifact-quality-issues">
+                      {artifactQualitySummary.issues.slice(0, 3).map((issue, index) => (
+                        <li className="migration-quality-issue-item" key={`artifact-quality-top-${index}-${issue.type}`}>
+                          <span className="migration-quality-issue-type">{toArtifactQualityIssueTypeLabel(issue.type)}</span>
+                          <span>{issue.description}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {artifactQualitySummary.issues.length > 3 ? (
+                      <details className="migration-quality-details">
+                        <summary className="hint muted">
+                          Show all issues ({artifactQualitySummary.issues.length})
+                        </summary>
+                        <ul className="migration-quality-issue-list">
+                          {artifactQualitySummary.issues.slice(3).map((issue, index) => (
+                            <li className="migration-quality-issue-item" key={`artifact-quality-all-${index}-${issue.type}`}>
+                              <span className="migration-quality-issue-type">{toArtifactQualityIssueTypeLabel(issue.type)}</span>
+                              <span>{issue.description}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
+                  </>
+                ) : (
+                  <span className="hint muted">No quality issues detected.</span>
+                )}
+              </>
+            ) : (
+              <span className="hint muted">No artifact quality evaluation available.</span>
+            )}
+          </div>
+        ) : (
+          <p className="hint muted">No artifact version selected.</p>
+        )}
+      </div>
+
+      <h3 className="hint muted migration-section-title">D. Artifact Review</h3>
+      <p className="hint muted migration-section-subtitle">
+        Review strategy, page map, and generated files before approval.
+      </p>
+
+      <div className="panel stack">
+        <h3>Draft Artifact Review</h3>
+        {selectedArtifact ? (
           <>
             <div className="panel panel-compact stack-tight">
               <strong>Strategy Summary</strong>
@@ -1773,31 +1978,6 @@ export function MigrationWorkspacePanel({
                   Partial draft generated.
                 </span>
               ) : null}
-            </div>
-            <div className="panel panel-compact stack-tight" data-testid="migration-artifact-quality-summary">
-              <strong>Artifact Quality Summary</strong>
-              {artifactQualitySummary ? (
-                <>
-                  <span
-                    className={artifactQualityBadgeClass(artifactQualitySummary.qualityStatus)}
-                    data-testid="migration-artifact-quality-status"
-                  >
-                    Quality: {artifactQualityStatusLabel(artifactQualitySummary.qualityStatus)}
-                  </span>
-                  <span className="hint">{artifactQualitySummary.operatorSummary}</span>
-                  {artifactQualitySummary.issues.length > 0 ? (
-                    <ul data-testid="migration-artifact-quality-issues">
-                      {artifactQualitySummary.issues.slice(0, 8).map((issue, index) => (
-                        <li key={`artifact-quality-${index}-${issue.type}`}>{issue.description}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <span className="hint muted">No quality issues detected.</span>
-                  )}
-                </>
-              ) : (
-                <span className="hint muted">No artifact quality evaluation available.</span>
-              )}
             </div>
             <div className="panel panel-compact stack-tight">
               <strong>Page Map</strong>
@@ -1843,6 +2023,11 @@ export function MigrationWorkspacePanel({
           <p className="hint muted">No artifact version selected.</p>
         )}
       </div>
+
+      <h3 className="hint muted migration-section-title">E. Approval / Publish / Deploy</h3>
+      <p className="hint muted migration-section-subtitle">
+        Approval, publish, and deploy remain explicit and unchanged.
+      </p>
 
       <div className="panel stack">
         <h3>Publish and Deploy Controls</h3>
@@ -1969,34 +2154,6 @@ export function MigrationWorkspacePanel({
           </div>
         </div>
 
-        <div className="panel panel-compact stack-tight" data-testid="migration-action-diagnostics">
-          <strong>Action Diagnostics</strong>
-          <span className="hint">Last draft generation status: {asString(migrationDiagnostics.last_draft_generation_status) || "n/a"}</span>
-          <span className="hint">Last publish status: {asString(migrationDiagnostics.last_publish_status) || "n/a"}</span>
-          <span className="hint">Last deploy status: {asString(migrationDiagnostics.last_deploy_status) || "n/a"}</span>
-          {asString(migrationDiagnostics.last_draft_failure_category) ? (
-            <span className="hint warning">
-              Draft failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_draft_failure_category))}
-            </span>
-          ) : null}
-          {asString(migrationDiagnostics.last_draft_failure_message) ? (
-            <span className="hint warning">{asString(migrationDiagnostics.last_draft_failure_message)}</span>
-          ) : null}
-          {draftFailureSourceLabel ? (
-            <span className="hint warning">Draft failure source: {draftFailureSourceLabel}</span>
-          ) : null}
-          {asString(migrationDiagnostics.last_publish_failure_category) ? (
-            <span className="hint warning">
-              Publish failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_publish_failure_category))}
-            </span>
-          ) : null}
-          {asString(migrationDiagnostics.last_deploy_failure_category) ? (
-            <span className="hint warning">
-              Deploy failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_deploy_failure_category))}
-            </span>
-          ) : null}
-        </div>
-
         <div className="grid grid-3">
           <div className="panel panel-compact stack">
             <strong>Approve</strong>
@@ -2095,6 +2252,45 @@ export function MigrationWorkspacePanel({
             )}
           </div>
         </div>
+      </div>
+
+      <h3 className="hint muted migration-section-title">F. Advanced Diagnostics</h3>
+      <p className="hint muted migration-section-subtitle">
+        Use detailed diagnostics only when troubleshooting failures.
+      </p>
+
+      <div className="panel stack">
+        <h3>Advanced Diagnostics</h3>
+        <details className="migration-advanced-details">
+          <summary className="hint muted">Show detailed migration failure diagnostics</summary>
+          <div className="panel panel-compact stack-tight" data-testid="migration-action-diagnostics">
+            <strong>Action Diagnostics</strong>
+            <span className="hint">Last draft generation status: {asString(migrationDiagnostics.last_draft_generation_status) || "n/a"}</span>
+            <span className="hint">Last publish status: {asString(migrationDiagnostics.last_publish_status) || "n/a"}</span>
+            <span className="hint">Last deploy status: {asString(migrationDiagnostics.last_deploy_status) || "n/a"}</span>
+            {asString(migrationDiagnostics.last_draft_failure_category) ? (
+              <span className="hint warning">
+                Draft failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_draft_failure_category))}
+              </span>
+            ) : null}
+            {asString(migrationDiagnostics.last_draft_failure_message) ? (
+              <span className="hint warning">{asString(migrationDiagnostics.last_draft_failure_message)}</span>
+            ) : null}
+            {draftFailureSourceLabel ? (
+              <span className="hint warning">Draft failure source: {draftFailureSourceLabel}</span>
+            ) : null}
+            {asString(migrationDiagnostics.last_publish_failure_category) ? (
+              <span className="hint warning">
+                Publish failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_publish_failure_category))}
+              </span>
+            ) : null}
+            {asString(migrationDiagnostics.last_deploy_failure_category) ? (
+              <span className="hint warning">
+                Deploy failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_deploy_failure_category))}
+              </span>
+            ) : null}
+          </div>
+        </details>
       </div>
     </div>
   );
