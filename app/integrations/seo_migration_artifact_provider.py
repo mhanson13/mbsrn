@@ -25,6 +25,7 @@ _DRAFT_REASON_TRANSPORT_ERROR = "transport_error"
 _DRAFT_REASON_VALIDATION_FAILED = "validation_failed"
 _DRAFT_REASON_UNKNOWN = "unknown"
 _DRAFT_ERROR_CODE_UNSUPPORTED_REQUEST_SHAPE_INPUT_NON_STRING = "unsupported_request_shape_input_non_string"
+_DRAFT_ERROR_CODE_UNSUPPORTED_REQUEST_SHAPE_CONTRACT_DRIFT = "unsupported_request_shape_contract_drift"
 _DRAFT_REASON_VALUES = {
     _DRAFT_REASON_TIMEOUT,
     _DRAFT_REASON_AUTHENTICATION_FAILED,
@@ -70,6 +71,7 @@ _PROVIDER_LOG_EVENT_REQUEST_START = "seo_migration_draft_provider_request_start"
 _PROVIDER_LOG_EVENT_REQUEST_COMPLETE = "seo_migration_draft_provider_request_complete"
 _PROVIDER_LOG_EVENT_REQUEST_FAILURE = "seo_migration_draft_provider_request_failure"
 _PROVIDER_LOG_EVENT_RESPONSE_PARSE = "seo_migration_draft_provider_response_parse"
+_PROVIDER_LOG_EVENT_REQUEST_CONTRACT_GUARD = "seo_migration_draft_provider_request_contract_guard"
 _CORRELATION_HEADER_KEYS = (
     "x-request-id",
     "x-openai-request-id",
@@ -97,6 +99,9 @@ _MAX_FILE_CONTENT_LENGTH = 120000
 _MAX_PAGE_MAP_ITEMS = 20
 _MAX_LIST_ITEMS = 24
 _MAX_TEXT_FIELD_LENGTH = 8000
+_RESPONSES_CONTRACT_TOP_LEVEL_KEYS = ("input", "model", "text")
+_RESPONSES_CONTRACT_TEXT_TOP_LEVEL_KEYS = ("format",)
+_RESPONSES_CONTRACT_TEXT_FORMAT_KEYS = ("name", "schema", "strict", "type")
 
 logger = logging.getLogger(__name__)
 
@@ -864,6 +869,44 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     f"model={shape.model_name} endpoint={shape.endpoint_path}"
                 ),
             )
+        top_level_keys = tuple(sorted(str(key) for key in payload.keys()))
+        if top_level_keys != _RESPONSES_CONTRACT_TOP_LEVEL_KEYS:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "responses_request_body_top_level_keys_mismatch "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path} "
+                    f"top_level_keys={list(top_level_keys)}"
+                ),
+            )
+        text_top_level_keys = tuple(sorted(str(key) for key in text_payload.keys())) if isinstance(text_payload, dict) else ()
+        if text_top_level_keys != _RESPONSES_CONTRACT_TEXT_TOP_LEVEL_KEYS:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "responses_request_body_text_keys_mismatch "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path} "
+                    f"text_keys={list(text_top_level_keys)}"
+                ),
+            )
+        text_format_keys = (
+            tuple(sorted(str(key) for key in format_payload.keys())) if isinstance(format_payload, dict) else ()
+        )
+        if text_format_keys != _RESPONSES_CONTRACT_TEXT_FORMAT_KEYS:
+            return _MigrationRequestShapeCompatibilityDecision(
+                supported=False,
+                reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
+                admin_summary=(
+                    "responses_request_body_text_format_keys_mismatch "
+                    f"model={shape.model_name} endpoint={shape.endpoint_path} "
+                    f"text_format_keys={list(text_format_keys)}"
+                ),
+            )
         schema_payload = format_payload.get("schema") if isinstance(format_payload, dict) else None
         (
             object_nodes_total,
@@ -1527,7 +1570,40 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
 
         input_payload = payload.get("input")
         if isinstance(input_payload, str) and input_payload.strip():
-            return
+            blocking_codes, warning_codes = self._evaluate_responses_contract_fingerprint(
+                request_fingerprint=request_fingerprint,
+            )
+            if blocking_codes or warning_codes:
+                self._log_provider_request_contract_guard(
+                    request_context=request_context,
+                    request_fingerprint=request_fingerprint,
+                    blocking_codes=blocking_codes,
+                    warning_codes=warning_codes,
+                )
+            if not blocking_codes:
+                return
+            reason_code = _DRAFT_ERROR_CODE_UNSUPPORTED_REQUEST_SHAPE_CONTRACT_DRIFT
+            request_shape_details = self._request_shape_details(request_context=request_context)
+            self._log_provider_request_failure(
+                request_context=request_context,
+                reason=_DRAFT_REASON_UNSUPPORTED_CONFIGURATION,
+                retryable=False,
+                request_fingerprint=request_fingerprint,
+                failure_source="local_preflight",
+            )
+            raise self._provider_error(
+                code=reason_code,
+                reason=_DRAFT_REASON_UNSUPPORTED_CONFIGURATION,
+                safe_message="AI provider configuration is invalid for migration draft generation.",
+                retryable=False,
+                internal_details={
+                    "request_failure_logged": True,
+                    "compatibility_reason_code": _COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
+                    "contract_drift_blocking_codes": list(blocking_codes),
+                    "contract_drift_warning_codes": list(warning_codes),
+                    **request_shape_details,
+                },
+            )
 
         reason_code = _DRAFT_ERROR_CODE_UNSUPPORTED_REQUEST_SHAPE_INPUT_NON_STRING
         request_shape_details = self._request_shape_details(request_context=request_context)
@@ -1549,6 +1625,95 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "compatibility_reason_code": _COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
                 "input_mode": input_mode,
                 **request_shape_details,
+            },
+        )
+
+    @staticmethod
+    def _evaluate_responses_contract_fingerprint(
+        *,
+        request_fingerprint: dict[str, object] | None,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        fingerprint = request_fingerprint or {}
+        blocking: list[str] = []
+        warnings: list[str] = []
+
+        top_level_keys = tuple(
+            sorted(str(item) for item in fingerprint.get("top_level_keys", []) if isinstance(item, str))
+        )
+        if top_level_keys != _RESPONSES_CONTRACT_TOP_LEVEL_KEYS:
+            blocking.append("top_level_keys_mismatch")
+
+        text_top_level_keys = tuple(
+            sorted(str(item) for item in fingerprint.get("text_top_level_keys", []) if isinstance(item, str))
+        )
+        if text_top_level_keys != _RESPONSES_CONTRACT_TEXT_TOP_LEVEL_KEYS:
+            blocking.append("text_top_level_keys_mismatch")
+
+        text_format_keys = tuple(
+            sorted(str(item) for item in fingerprint.get("text_format_keys", []) if isinstance(item, str))
+        )
+        if text_format_keys != _RESPONSES_CONTRACT_TEXT_FORMAT_KEYS:
+            blocking.append("text_format_keys_mismatch")
+
+        if _clean_optional_value(fingerprint.get("input_mode")) != "string":
+            blocking.append("input_mode_non_string")
+        if bool(fingerprint.get("contains_tools")):
+            blocking.append("contains_tools")
+        if bool(fingerprint.get("contains_response_format_legacy")):
+            blocking.append("contains_response_format_legacy")
+        if bool(fingerprint.get("contains_messages_legacy")):
+            blocking.append("contains_messages_legacy")
+        if bool(fingerprint.get("has_extra_request_options")):
+            blocking.append("has_extra_request_options")
+        if bool(fingerprint.get("has_null_optional_fields")):
+            blocking.append("has_null_optional_fields")
+        if _clean_optional_value(fingerprint.get("text_format_type")) != "json_schema":
+            blocking.append("text_format_type_mismatch")
+        if _clean_optional_value(fingerprint.get("schema_name")) != "seo_migration_artifact_response":
+            blocking.append("schema_name_mismatch")
+        if bool(fingerprint.get("strict_enabled")) is not True:
+            blocking.append("strict_enabled_mismatch")
+        if int(fingerprint.get("schema_object_nodes_non_false_additional_properties") or 0) > 0:
+            blocking.append("schema_additional_properties_non_false")
+        if int(fingerprint.get("schema_object_nodes_missing_required") or 0) > 0:
+            blocking.append("schema_object_nodes_missing_required")
+
+        input_length_chars = fingerprint.get("input_length_chars")
+        if isinstance(input_length_chars, int):
+            if input_length_chars <= 0:
+                blocking.append("input_length_non_positive")
+            elif input_length_chars < 128:
+                warnings.append("input_length_short")
+        else:
+            blocking.append("input_length_missing")
+
+        return tuple(sorted(set(blocking))), tuple(sorted(set(warnings)))
+
+    def _log_provider_request_contract_guard(
+        self,
+        *,
+        request_context: dict[str, object] | None,
+        request_fingerprint: dict[str, object] | None,
+        blocking_codes: tuple[str, ...],
+        warning_codes: tuple[str, ...],
+    ) -> None:
+        context = request_context or {}
+        self._emit_structured_provider_log(
+            level=(logging.WARNING if blocking_codes else logging.INFO),
+            event=_PROVIDER_LOG_EVENT_REQUEST_CONTRACT_GUARD,
+            payload={
+                "business_id": _clean_optional_value(context.get("business_id")),
+                "site_id": _clean_optional_value(context.get("site_id")),
+                "workspace_id": _clean_optional_value(context.get("workspace_id")),
+                "model": self.model_name,
+                "prompt_version": self.prompt_version,
+                "endpoint_path": _clean_optional_value(context.get("endpoint_path")),
+                "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
+                "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
+                "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
+                "blocking_codes": list(blocking_codes),
+                "warning_codes": list(warning_codes),
+                **self._request_fingerprint_log_fields(request_fingerprint),
             },
         )
 

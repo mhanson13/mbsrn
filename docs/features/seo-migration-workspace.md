@@ -167,6 +167,11 @@ Migration `/responses` request contract is now locked to a known-good structured
 - migration schema object nodes require `additionalProperties=false`
 - migration strict-schema object nodes require full `required` coverage for declared properties (optional fields are represented with nullable types rather than omitted `required` entries)
 
+Runtime contract guard:
+- `event=seo_migration_draft_provider_request_contract_guard` is emitted before provider invocation when the request fingerprint is evaluated.
+- warning-only drift (for example short input text) is logged and allowed.
+- blocking drift (for example non-string `input`, extra top-level keys, text-format/schema strictness drift) is blocked locally with `unsupported_request_shape_contract_drift` before outbound provider call.
+
 Known unsupported request shapes (blocked locally):
 - `model=gpt-5.1*` with `endpoint_path=/chat/completions`, `execution_mode=full`, `response_format_mode=json_schema`, and `request_body_mode=chat_json_schema` is treated as `unsupported_request_shape`.
 - fallback/default model paths (for example `gpt-4o-mini` using migration chat/json_schema request construction) are blocked unless that exact request shape is explicitly allowlisted and validated.
@@ -216,6 +221,28 @@ Payload drift debugging:
 - use provider redacted payload snapshot helpers to compare the app-emitted payload shape to the known-good curl contract without exposing raw prompt text
 - compare fingerprint + snapshot together when diagnosing remote `unsupported_configuration` responses
 
+Local live-validation harness:
+- Script: `scripts/live_validate_seo_migration_responses.py`
+- Purpose: execute one real migration `/responses` request with the production request builder and emit only safe diagnostics.
+- Input: `AI_API_KEY` from env (or `.env` local file), mapped to runtime provider config without persisting secrets.
+- Safe output fields:
+  - `execution.model_used`
+  - `execution.endpoint_path`
+  - `execution.request_body_mode`
+  - `execution.compatibility_decision`
+  - `execution.request_contract_status`
+  - `execution.provider_execution_status`
+  - `execution.artifact_status`
+  - `execution.artifact_result`
+  - `execution.duration_ms`
+  - `request_fingerprint.*` (sanitized)
+  - `redacted_request_snapshot_overview`
+- Expected success indicators:
+  - `status=succeeded`
+  - `execution.provider_execution_status=accepted`
+  - `execution.artifact_result=succeeded`
+  - `known_good_contract_diff=[]`
+
 ## Draft AI Execution Visibility
 Migration summary now includes a compact execution slice in `context_summary.ai_execution`:
 - `model_requested`
@@ -254,13 +281,14 @@ Success-path contract verification:
 ## AI Draft Generation Timeout
 Migration draft generation timeout is admin-configurable through business settings:
 - setting key: `migration_draft_timeout_seconds`
-- allowed range: 30-900 seconds
+- runtime-safe range: 60-900 seconds
 - default fallback when unset: 120 seconds
 
 Operational guidance:
 - typical range: 60-300 seconds
 - larger draft payloads may require 300+ seconds
 - prefer reducing generated output size/verbosity when possible instead of only increasing timeout
+- values below the safe floor are treated as invalid at runtime and fall back to the default timeout (`120`).
 
 Resolution precedence for timeout:
 1. business admin setting (`migration_draft_timeout_seconds`)

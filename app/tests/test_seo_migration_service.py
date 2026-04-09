@@ -870,6 +870,34 @@ def test_generate_artifacts_uses_admin_configured_migration_timeout(db_session) 
     assert ai_execution.get("timeout_source") == "admin"
 
 
+def test_generate_artifacts_uses_default_timeout_when_admin_timeout_is_below_safe_floor(db_session) -> None:
+    provider = _TimeoutCaptureMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    business = db_session.get(Business, business_id)
+    assert business is not None
+    business.migration_draft_timeout_seconds = 45
+    db_session.commit()
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    assert artifact.status == "completed"
+    assert provider.observed_timeout_seconds == 120
+    assert provider.observed_timeout_source == "default"
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("draft_timeout_seconds") == 120
+    assert diagnostics.get("draft_timeout_source") == "default"
+    ai_execution = (summary.context_summary or {}).get("ai_execution") or {}
+    assert ai_execution.get("timeout_seconds") == 120
+    assert ai_execution.get("timeout_source") == "default"
+
+
 def test_generate_artifacts_blocks_unsupported_shape_when_admin_default_model_is_incompatible(
     db_session,
     monkeypatch,

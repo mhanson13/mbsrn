@@ -61,6 +61,7 @@ Useful fields:
 For migration draft preflight compatibility troubleshooting:
 
 - `jsonPayload.event="seo_migration_provider_compatibility_evaluation"`
+- `jsonPayload.event="seo_migration_draft_provider_request_contract_guard"` (runtime request-fingerprint guard)
 
 Useful fields:
 - `supported`
@@ -115,6 +116,9 @@ Current migration request-shape examples:
 - contract drift indicator: `request_fingerprint_schema_object_nodes_missing_required>0` indicates strict-schema object required coverage drift.
 - contract drift indicator: `request_fingerprint_has_extra_request_options=true` indicates unexpected top-level request options were added.
 - contract drift indicator: `request_fingerprint_has_null_optional_fields=true` indicates null-valued request fields leaked into payload.
+- runtime guard event interpretation:
+  - `seo_migration_draft_provider_request_contract_guard` with `blocking_codes=[]` and non-empty `warning_codes` means request was allowed with warnings.
+  - non-empty `blocking_codes` means the request was blocked locally before provider invocation.
 
 ## Local Block vs Remote Rejection
 
@@ -177,6 +181,7 @@ Interpretation:
 - `failure_reason=timeout` with `failure_source=remote_provider` means the provider call exceeded the configured timeout.
 - timeout failures currently retain `failure_category=config_missing` for migration draft error-contract compatibility.
 - compare `timeout_seconds` and `timeout_source` to verify whether admin override or default timeout was active.
+- migration runtime enforces a safe timeout floor of `60` seconds; values below floor fall back to default `120`.
 - if timeout settings are sane but remote `unsupported_configuration` occurs quickly, compare request fingerprint fields first; contract drift is usually visible in top-level/text-format/schema fingerprint fields before model/latency tuning.
 - for field-by-field drift checks, use the migration provider redacted payload snapshot helper in tests/debug tooling and compare against the known-good curl contract shape (input text remains redacted by design).
 
@@ -193,3 +198,33 @@ When validating operator-visible migration state from backend payloads:
    - workspace blockers
    - provider compatibility blockers
    - latest persisted generation outcome (`failed` / `partial` / `completed`)
+
+## Local Live Validation (Migration /responses)
+
+Use this local-only harness to validate the end-to-end migration request contract against live provider behavior:
+
+1. Ensure `.env` (or process env) contains `AI_API_KEY`.
+2. Run from repo root:
+   - `PYTHONPATH=. python scripts/live_validate_seo_migration_responses.py`
+   - PowerShell:
+     - `$env:PYTHONPATH='.'; python scripts/live_validate_seo_migration_responses.py`
+3. Inspect safe JSON output only (no raw prompts/schemas/secrets).
+
+Expected success signals:
+- `status=succeeded`
+- `execution.compatibility_decision=allowed`
+- `execution.provider_execution_status=accepted`
+- `execution.artifact_result=succeeded`
+- `known_good_contract_diff=[]`
+
+If failure occurs:
+- compare `request_fingerprint` fields and `redacted_request_snapshot_overview` against known-good contract expectations.
+- prioritize concrete differences in:
+  - `top_level_keys`
+  - `text_top_level_keys`
+  - `text_format_keys`
+  - `input_mode`
+  - `has_extra_request_options`
+  - `has_null_optional_fields`
+  - `schema_object_nodes_non_false_additional_properties`
+  - `schema_object_nodes_missing_required`

@@ -370,6 +370,28 @@ def test_openai_migration_provider_compatibility_rejects_responses_payload_with_
     assert "responses_request_body_contains_legacy_response_format" in str(compatibility.admin_summary or "")
 
 
+def test_openai_migration_provider_compatibility_rejects_responses_payload_with_extra_top_level_key(
+    monkeypatch,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    original_builder = provider._build_request_payload
+
+    def _build_payload_with_extra_top_level_key(**kwargs):  # noqa: ANN001
+        payload = original_builder(**kwargs)
+        payload["metadata"] = {"purpose": "contract-drift-test"}
+        return payload
+
+    monkeypatch.setattr(provider, "_build_request_payload", _build_payload_with_extra_top_level_key)
+    compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is False
+    assert compatibility.reason_code == "unsupported_request_shape"
+    assert "responses_request_body_top_level_keys_mismatch" in str(compatibility.admin_summary or "")
+
+
 def test_openai_migration_provider_compatibility_rejects_responses_schema_with_non_false_additional_properties(
     monkeypatch,
 ) -> None:
@@ -433,6 +455,32 @@ def test_openai_migration_provider_compatibility_rejects_responses_schema_with_i
     assert "responses_request_body_schema_required_fields_incomplete" in str(compatibility.admin_summary or "")
 
 
+def test_openai_migration_provider_compatibility_rejects_responses_non_strict_json_schema(
+    monkeypatch,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    original_builder = provider._build_request_payload
+
+    def _build_non_strict_payload(**kwargs):  # noqa: ANN001
+        payload = original_builder(**kwargs)
+        text_payload = payload.get("text")
+        if isinstance(text_payload, dict):
+            format_payload = text_payload.get("format")
+            if isinstance(format_payload, dict):
+                format_payload["strict"] = False
+        return payload
+
+    monkeypatch.setattr(provider, "_build_request_payload", _build_non_strict_payload)
+    compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is False
+    assert compatibility.reason_code == "unsupported_request_shape"
+    assert "responses_request_body_json_schema_invalid" in str(compatibility.admin_summary or "")
+
+
 def test_openai_migration_provider_compatibility_rejects_responses_non_string_input(monkeypatch) -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",
@@ -490,6 +538,86 @@ def test_openai_migration_provider_runtime_blocks_non_string_input_before_provid
     assert error.code == "unsupported_request_shape_input_non_string"
     assert error.retryable is False
     assert urlopen_called is False
+
+
+def test_openai_migration_provider_runtime_blocks_contract_drift_extra_top_level_key_before_provider_call(
+    monkeypatch,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    original_builder = provider._build_request_payload
+    urlopen_called = False
+
+    def _build_drifted_payload(**kwargs):  # noqa: ANN001
+        payload = original_builder(**kwargs)
+        payload["metadata"] = {"reason": "drift"}
+        return payload
+
+    def _capture_request(request, timeout):  # noqa: ANN001
+        del request, timeout
+        nonlocal urlopen_called
+        urlopen_called = True
+        return _FakeResponse(_build_responses_api_response(json_dumps(_build_success_assistant_payload())))
+
+    monkeypatch.setattr(provider, "_build_request_payload", _build_drifted_payload)
+    monkeypatch.setattr(urllib.request, "urlopen", _capture_request)
+
+    with pytest.raises(SEOMigrationArtifactProviderError) as exc_info:
+        provider.generate_artifacts(migration_context=_build_migration_context())
+
+    error = exc_info.value
+    assert error.reason == "unsupported_configuration"
+    assert error.code == "unsupported_request_shape_contract_drift"
+    assert error.retryable is False
+    assert urlopen_called is False
+    details = error.internal_details or {}
+    blocking_codes = details.get("contract_drift_blocking_codes")
+    assert isinstance(blocking_codes, list)
+    assert "top_level_keys_mismatch" in blocking_codes
+    assert "has_extra_request_options" in blocking_codes
+
+
+def test_openai_migration_provider_runtime_logs_contract_warning_for_short_input_but_allows_request(
+    monkeypatch,
+    caplog,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+
+    def _build_short_input_text(**kwargs):  # noqa: ANN001
+        del kwargs
+        return "short-input"
+
+    def _capture_request(request, timeout):  # noqa: ANN001
+        del timeout
+        payload = json.loads(request.data.decode("utf-8"))
+        assert payload.get("input") == "short-input"
+        return _FakeResponse(_build_responses_api_response(json_dumps(_build_success_assistant_payload())))
+
+    monkeypatch.setattr(provider, "_build_responses_input_text", _build_short_input_text)
+    monkeypatch.setattr(urllib.request, "urlopen", _capture_request)
+
+    with caplog.at_level("INFO"):
+        output = provider.generate_artifacts(migration_context=_build_migration_context())
+
+    assert output.generated_files
+    guard_events = [
+        getattr(record, "json_fields", {})
+        for record in caplog.records
+        if isinstance(getattr(record, "json_fields", None), dict)
+        and getattr(record, "json_fields", {}).get("event") == "seo_migration_draft_provider_request_contract_guard"
+    ]
+    assert guard_events
+    guard_event = guard_events[-1]
+    assert guard_event.get("blocking_codes") == []
+    assert guard_event.get("warning_codes") == ["input_length_short"]
+    assert guard_event.get("request_fingerprint_input_mode") == "string"
 
 
 def test_openai_migration_provider_timeout_maps_to_retryable_timeout_reason(monkeypatch) -> None:
