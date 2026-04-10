@@ -138,9 +138,13 @@ _DRAFT_PROVIDER_LOG_EVENT = "seo_migration_draft_generation"
 _DRAFT_CONTRACT_EVALUATION_LOG_EVENT = "seo_migration_draft_contract_evaluation"
 _MIGRATION_READINESS_LOG_EVENT = "seo_migration_readiness_evaluation"
 _DRAFT_PROVIDER_COMPATIBILITY_LOG_EVENT = "seo_migration_provider_compatibility_evaluation"
+_MIGRATION_RUNTIME_PUBLISHER_LOG_EVENT = "seo_migration_runtime_publisher_readiness"
 _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS = 120
 _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS = 60
 _MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS = 900
+_GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING = "runtime_credential_missing"
+_GITHUB_PUBLISHER_REASON_RUNTIME_CONFIG_INVALID = "runtime_configuration_invalid"
+_GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE = "runtime_integration_unavailable"
 
 _DRAFT_PROVIDER_COMPAT_REASON_CODES = {
     "supported",
@@ -366,13 +370,30 @@ class SEOMigrationService:
         )
         if github_publisher is None:
             github_publisher = MisconfiguredSEOMigrationGitHubPublisher(
-                safe_message="GitHub migration publisher is not configured.",
+                safe_message="GitHub publishing integration is unavailable in this runtime.",
+                reason_code=_GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE,
             )
         self.github_publisher = github_publisher
         self.github_publisher_configured = not isinstance(
             github_publisher,
             MisconfiguredSEOMigrationGitHubPublisher,
         )
+        self.github_publisher_reason_code = ""
+        self.github_publisher_status_message = ""
+        self.github_publisher_safe_message = ""
+        if isinstance(github_publisher, MisconfiguredSEOMigrationGitHubPublisher):
+            normalized_reason_code = _normalize_string(
+                getattr(github_publisher, "reason_code", None),
+                max_length=80,
+            )
+            self.github_publisher_reason_code = normalized_reason_code or "publisher_not_configured"
+            self.github_publisher_safe_message = (
+                _normalize_string(getattr(github_publisher, "safe_message", None), max_length=240)
+                or "GitHub publishing integration is unavailable in this runtime."
+            )
+            self.github_publisher_status_message = self._runtime_publisher_reason_message(
+                reason_code=self.github_publisher_reason_code
+            )
         self.github_publish_config_service = github_publish_config_service
         self.provider_name = provider_name
         self.provider_model_name = provider_model_name
@@ -3607,6 +3628,64 @@ class SEOMigrationService:
         }
 
     @staticmethod
+    def _runtime_publisher_reason_message(*, reason_code: str) -> str:
+        normalized = str(reason_code or "").strip().lower()
+        if normalized == _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING:
+            return "Platform runtime action required: GitHub publishing credential is unavailable."
+        if normalized == _GITHUB_PUBLISHER_REASON_RUNTIME_CONFIG_INVALID:
+            return "Platform runtime action required: GitHub publishing runtime configuration is invalid."
+        if normalized == _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE:
+            return "Platform runtime action required: GitHub publishing integration is unavailable."
+        return "Platform/runtime action required: GitHub migration publisher is not configured."
+
+    def _runtime_publisher_diagnostics(self) -> dict[str, object]:
+        if self.github_publisher_configured:
+            return {
+                "configured": True,
+                "reason_code": "",
+                "status_message": "",
+                "safe_message": "",
+            }
+        reason_code = self.github_publisher_reason_code or "publisher_not_configured"
+        status_message = self.github_publisher_status_message or self._runtime_publisher_reason_message(
+            reason_code=reason_code
+        )
+        safe_message = self.github_publisher_safe_message or status_message
+        return {
+            "configured": False,
+            "reason_code": reason_code,
+            "status_message": status_message,
+            "safe_message": safe_message,
+        }
+
+    def _log_runtime_publisher_readiness(
+        self,
+        *,
+        action: str,
+        workspace: SEOMigrationWorkspace,
+        admin_prerequisites: dict[str, bool],
+    ) -> None:
+        runtime = self._runtime_publisher_diagnostics()
+        if bool(runtime.get("configured")):
+            return
+        self._emit_structured_service_log(
+            payload={
+                "event": _MIGRATION_RUNTIME_PUBLISHER_LOG_EVENT,
+                "action": action,
+                "business_id": workspace.business_id,
+                "site_id": workspace.site_id,
+                "workspace_id": workspace.id,
+                "runtime_publisher_available": False,
+                "runtime_publisher_reason_code": str(runtime.get("reason_code") or ""),
+                "admin_publish_configured": bool(admin_prerequisites.get("admin_publish_configured")),
+                "admin_publish_config_enabled": bool(admin_prerequisites.get("admin_publish_config_enabled")),
+                "operator_repository_configured": bool(admin_prerequisites.get("operator_repository_configured")),
+            },
+            fallback_message="seo_migration_runtime_publisher_readiness",
+            level=logging.INFO,
+        )
+
+    @staticmethod
     def _categorize_readiness_failure(*, reasons: object, action: str) -> str:
         normalized_reasons = [str(item or "").strip().lower() for item in reasons or [] if str(item or "").strip()]
         if not normalized_reasons:
@@ -3615,6 +3694,8 @@ class SEOMigrationService:
             "not configured" in reason
             or "configuration" in reason
             or "must configure" in reason
+            or ("credential" in reason and "unavailable" in reason)
+            or ("integration" in reason and "unavailable" in reason)
             for reason in normalized_reasons
         ):
             return "config_missing"
@@ -3645,7 +3726,12 @@ class SEOMigrationService:
     @staticmethod
     def _categorize_publisher_failure(*, exc: SEOMigrationGitHubPublisherError, action: str) -> str:
         code = str(exc.code or "").strip().lower()
-        if code in {"publisher_not_configured"}:
+        if code in {
+            "publisher_not_configured",
+            _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING,
+            _GITHUB_PUBLISHER_REASON_RUNTIME_CONFIG_INVALID,
+            _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE,
+        }:
             return "config_missing"
         if code in {"github_target_not_found"}:
             return "target_invalid"
@@ -3752,8 +3838,14 @@ class SEOMigrationService:
                 reasons.append("An approved artifact is required before publish.")
             if artifact.file_count <= 0:
                 reasons.append("Selected artifact version has no generated files.")
-        if not self.github_publisher_configured:
-            reasons.append("GitHub migration publisher is not configured.")
+        runtime_diagnostics = self._runtime_publisher_diagnostics()
+        if not bool(runtime_diagnostics.get("configured")):
+            reasons.append(str(runtime_diagnostics.get("status_message") or "GitHub migration publisher is not configured."))
+            self._log_runtime_publisher_readiness(
+                action="publish",
+                workspace=workspace,
+                admin_prerequisites=admin_prerequisites,
+            )
         failure_category: str | None = None
         if reasons:
             failure_category = self._categorize_readiness_failure(reasons=reasons, action="publish")
@@ -3764,6 +3856,8 @@ class SEOMigrationService:
             "target": target_summary,
             "config_prerequisites": {
                 "github_publisher_configured": self.github_publisher_configured,
+                "github_publisher_reason_code": str(runtime_diagnostics.get("reason_code") or ""),
+                "github_publisher_status_message": str(runtime_diagnostics.get("status_message") or ""),
                 "target_config_valid": target_valid,
                 "target_enabled": bool(target_summary.get("enabled")),
                 **admin_prerequisites,
@@ -3792,7 +3886,7 @@ class SEOMigrationService:
         )
         reasons.extend(admin_reasons)
         if not bool(admin_prerequisites.get("operator_repository_configured")):
-            reasons.append("Operator must configure a GitHub repository before publish is available.")
+            reasons.append("Operator must configure a GitHub repository before publish/deploy is available.")
         else:
             try:
                 target = _resolve_deploy_target(
@@ -3821,8 +3915,14 @@ class SEOMigrationService:
                 reasons.append("An approved artifact is required before deploy.")
             if artifact.publish_status != "published":
                 reasons.append("A published artifact is required before deploy.")
-        if not self.github_publisher_configured:
-            reasons.append("GitHub migration publisher is not configured.")
+        runtime_diagnostics = self._runtime_publisher_diagnostics()
+        if not bool(runtime_diagnostics.get("configured")):
+            reasons.append(str(runtime_diagnostics.get("status_message") or "GitHub migration publisher is not configured."))
+            self._log_runtime_publisher_readiness(
+                action="deploy",
+                workspace=workspace,
+                admin_prerequisites=admin_prerequisites,
+            )
         if not workspace.last_published_artifact_version_id:
             reasons.append("A published artifact is required before deploy.")
         elif artifact is not None and workspace.last_published_artifact_version_id != artifact.id:
@@ -3837,6 +3937,8 @@ class SEOMigrationService:
             "target": target_summary,
             "config_prerequisites": {
                 "github_publisher_configured": self.github_publisher_configured,
+                "github_publisher_reason_code": str(runtime_diagnostics.get("reason_code") or ""),
+                "github_publisher_status_message": str(runtime_diagnostics.get("status_message") or ""),
                 "target_config_valid": target_valid,
                 "target_enabled": bool(target_summary.get("enabled")),
                 **admin_prerequisites,

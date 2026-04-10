@@ -60,8 +60,14 @@ Migration workspace boundary:
 - site workspace migration panel does not provide editable Admin-owned owner/base-path controls.
 - operators configure workspace repository name plus optional branch override.
 - workspace surfaces a merged effective target/readiness summary (admin owner + workspace repo/branch) without exposing credential material.
+- readiness UI distinguishes metadata readiness from runtime publisher capability:
+  - `Runtime publisher: Ready`
+  - `Runtime publisher: Credential unavailable`
+  - `Runtime publisher: Invalid runtime configuration`
+  - `Runtime publisher: Integration unavailable`
 - analytics insertion mode + GA measurement fields are workspace-level settings and persist after save/reload.
 - approve/publish/deploy control enablement follows backend readiness prerequisites from refreshed summary state.
+- publish readiness requires both merged target metadata and runtime publisher capability (`MIGRATION_GITHUB_TOKEN` and valid runtime publisher wiring).
 
 ## Shared workspace/page composition primitives
 

@@ -91,8 +91,9 @@ class SEOMigrationGitHubPublisher:
 
 
 class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
-    def __init__(self, *, safe_message: str) -> None:
+    def __init__(self, *, safe_message: str, reason_code: str = "publisher_not_configured") -> None:
         self.safe_message = safe_message
+        self.reason_code = reason_code.strip() or "publisher_not_configured"
 
     def publish_files(
         self,
@@ -104,7 +105,7 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
     ) -> SEOMigrationGitHubPublishResult:
         del target, files, commit_message, dry_run
         raise SEOMigrationGitHubPublisherError(
-            code="publisher_not_configured",
+            code=self.reason_code,
             safe_message=self.safe_message,
         )
 
@@ -116,7 +117,7 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
     ) -> SEOMigrationGitHubDeployResult:
         del target, dry_run
         raise SEOMigrationGitHubPublisherError(
-            code="publisher_not_configured",
+            code=self.reason_code,
             safe_message=self.safe_message,
         )
 

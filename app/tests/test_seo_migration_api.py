@@ -1118,7 +1118,8 @@ def test_publish_missing_runtime_config_surfaces_config_diagnostics(db_session) 
         db_session,
         business_id=business_id,
         github_publisher=MisconfiguredSEOMigrationGitHubPublisher(
-            safe_message="GitHub migration publisher is not configured.",
+            safe_message="GitHub publishing runtime credential is unavailable.",
+            reason_code="runtime_credential_missing",
         ),
     )
 
@@ -1158,7 +1159,7 @@ def test_publish_missing_runtime_config_surfaces_config_diagnostics(db_session) 
         },
     )
     assert publish_response.status_code == 422
-    assert "not configured" in str(publish_response.json().get("detail") or "").lower()
+    assert "credential is unavailable" in str(publish_response.json().get("detail") or "").lower()
 
     summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
     assert summary_response.status_code == 200
@@ -1167,6 +1168,8 @@ def test_publish_missing_runtime_config_surfaces_config_diagnostics(db_session) 
     prereqs = publish_readiness.get("config_prerequisites")
     assert isinstance(prereqs, dict)
     assert prereqs.get("github_publisher_configured") is False
+    assert prereqs.get("github_publisher_reason_code") == "runtime_credential_missing"
+    assert "credential is unavailable" in str(prereqs.get("github_publisher_status_message") or "").lower()
 
 
 def test_publish_failure_history_and_summary_include_failure_category(db_session) -> None:
@@ -1305,9 +1308,13 @@ def test_migration_summary_diagnostics_contract_tracks_publish_and_deploy_state_
     publish_prereqs = publish_readiness.get("config_prerequisites") or {}
     deploy_prereqs = deploy_readiness.get("config_prerequisites") or {}
     assert isinstance(publish_prereqs.get("github_publisher_configured"), bool)
+    assert isinstance(publish_prereqs.get("github_publisher_reason_code"), str)
+    assert isinstance(publish_prereqs.get("github_publisher_status_message"), str)
     assert isinstance(publish_prereqs.get("target_config_valid"), bool)
     assert isinstance(publish_prereqs.get("target_enabled"), bool)
     assert isinstance(deploy_prereqs.get("github_publisher_configured"), bool)
+    assert isinstance(deploy_prereqs.get("github_publisher_reason_code"), str)
+    assert isinstance(deploy_prereqs.get("github_publisher_status_message"), str)
     assert isinstance(deploy_prereqs.get("target_config_valid"), bool)
     assert isinstance(deploy_prereqs.get("target_enabled"), bool)
 

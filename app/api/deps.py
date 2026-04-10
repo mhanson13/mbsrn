@@ -775,7 +775,8 @@ def get_seo_migration_github_publisher() -> SEOMigrationGitHubPublisher:
     token = (settings.migration_github_token or "").strip()
     if not token:
         return MisconfiguredSEOMigrationGitHubPublisher(
-            safe_message="GitHub migration publisher is not configured.",
+            safe_message="GitHub publishing runtime credential is unavailable.",
+            reason_code="runtime_credential_missing",
         )
     try:
         return GitHubSEOMigrationPublisher(
@@ -788,7 +789,8 @@ def get_seo_migration_github_publisher() -> SEOMigrationGitHubPublisher:
     except ValueError as exc:
         logger.warning("Failed to initialize GitHub migration publisher: %s", str(exc))
         return MisconfiguredSEOMigrationGitHubPublisher(
-            safe_message="GitHub migration publisher configuration is invalid.",
+            safe_message="GitHub publishing runtime configuration is invalid.",
+            reason_code="runtime_configuration_invalid",
         )
 
 

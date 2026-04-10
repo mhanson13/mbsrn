@@ -620,6 +620,12 @@ Notes:
 - token is only read from runtime environment, never persisted in workspace rows
 - per-site publish/deploy target details are stored in workspace config JSON fields
 - runtime config is validated at action/readiness time for migration publish/deploy (feature-scoped validation); unrelated app features continue running when migration config is missing
+- publish readiness now distinguishes metadata readiness from runtime publisher capability:
+  - Admin/workspace target metadata can be valid while runtime publisher capability is still blocked
+  - example runtime blockers:
+    - `Platform runtime action required: GitHub publishing credential is unavailable.`
+    - `Platform runtime action required: GitHub publishing runtime configuration is invalid.`
+    - `Platform runtime action required: GitHub publishing integration is unavailable.`
 
 ## Deploy Workflow (GKE Path)
 Deploy target is site-scoped configuration:
@@ -663,7 +669,7 @@ Rules:
 Migration publish/deploy paths normalize failures into stable categories:
 - `config_missing`
   - Missing/invalid migration runtime config (most commonly GitHub publisher configuration).
-  - Operator action: verify runtime env wiring (`MIGRATION_*`) and redeploy API if needed.
+  - Operator/Admin action: verify ownership-level metadata first (Admin owner + workspace repo/branch), then platform/runtime wiring (`MIGRATION_*`) if metadata is valid but runtime capability is blocked.
 - `target_invalid`
   - Publish/deploy target repo/branch/root/workflow/ref/inputs failed validation.
   - Operator action: fix site workspace target config and retry.
@@ -709,6 +715,7 @@ Draft generation also emits structured logs:
 - service-level lifecycle (`event=seo_migration_draft_generation`) with requested/completed/partial/failed states
 - provider request lifecycle (`event=seo_migration_draft_provider_request_start|complete|failure`)
 - provider response parse lifecycle (`event=seo_migration_draft_provider_response_parse`)
+- runtime publish/deploy capability diagnostics when unavailable (`event=seo_migration_runtime_publisher_readiness`)
 
 Logged fields are safe metadata only:
 - `business_id`, `site_id`, `workspace_id`
@@ -719,6 +726,7 @@ Logged fields are safe metadata only:
 - draft-generation fields include `draft_run_id`, provider/model/prompt version, retryability, and correlation id when available
 - draft-generation fields include `model_requested`, `model_resolved`, `model_used`, request-shape metadata (`endpoint_path`, `execution_mode`, `response_format_mode`, `request_body_mode`), and `failure_source` (`local_preflight` vs `remote_provider`) for request-path traceability
 - provider parse logs include `raw_length`, `parsed_candidate_count`, `salvaged_candidate_count`, and `malformed_output_reason` (when present)
+- runtime publisher diagnostics include `runtime_publisher_reason_code` plus ownership-level booleans (`admin_publish_configured`, `admin_publish_config_enabled`, `operator_repository_configured`)
 
 Not logged:
 - tokens/secrets

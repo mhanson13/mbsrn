@@ -15,6 +15,7 @@ from app.integrations.seo_migration_artifact_provider import (
     SEOMigrationProviderCompatibilityResult,
 )
 from app.integrations.seo_migration_github_publisher import (
+    MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubDeployResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubPublishFile,
@@ -2613,7 +2614,7 @@ def test_missing_publisher_config_is_categorized_for_readiness_and_errors(db_ses
         principal_id="principal-1",
     )
 
-    with pytest.raises(SEOMigrationValidationError, match="not configured"):
+    with pytest.raises(SEOMigrationValidationError, match="integration is unavailable"):
         service.publish_artifact_version(
             business_id=business_id,
             site_id=site_id,
@@ -2629,7 +2630,85 @@ def test_missing_publisher_config_is_categorized_for_readiness_and_errors(db_ses
     publish_prereqs = summary.publish_readiness.get("config_prerequisites")
     assert isinstance(publish_prereqs, dict)
     assert publish_prereqs.get("github_publisher_configured") is False
+    assert publish_prereqs.get("github_publisher_reason_code") == "runtime_integration_unavailable"
+    assert "integration is unavailable" in str(publish_prereqs.get("github_publisher_status_message") or "").lower()
     assert summary.deploy_readiness.get("failure_category") == "config_missing"
+
+
+def test_runtime_credential_missing_reason_is_exposed_in_publish_readiness(db_session) -> None:
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=MisconfiguredSEOMigrationGitHubPublisher(
+            safe_message="GitHub publishing runtime credential is unavailable.",
+            reason_code="runtime_credential_missing",
+        ),
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    publish_prereqs = summary.publish_readiness.get("config_prerequisites")
+    assert isinstance(publish_prereqs, dict)
+    assert publish_prereqs.get("github_publisher_configured") is False
+    assert publish_prereqs.get("github_publisher_reason_code") == "runtime_credential_missing"
+    assert "credential is unavailable" in str(publish_prereqs.get("github_publisher_status_message") or "").lower()
+    publish_reasons = [str(item).lower() for item in summary.publish_readiness.get("reasons", [])]
+    assert any("credential is unavailable" in reason for reason in publish_reasons)
+
+
+def test_runtime_publisher_readiness_log_includes_reason_code(db_session, caplog) -> None:
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=MisconfiguredSEOMigrationGitHubPublisher(
+            safe_message="GitHub publishing runtime credential is unavailable.",
+            reason_code="runtime_credential_missing",
+        ),
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    service.get_workspace_summary(business_id=business_id, site_id=site_id)
+
+    payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+    ]
+    runtime_events = [payload for payload in payloads if payload.get("event") == "seo_migration_runtime_publisher_readiness"]
+    assert runtime_events
+    assert any(
+        event.get("runtime_publisher_reason_code") == "runtime_credential_missing" and event.get("action") == "publish"
+        for event in runtime_events
+    )
 
 
 def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -> None:

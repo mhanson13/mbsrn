@@ -3186,6 +3186,9 @@ describe("site workspace migration tab", () => {
           target: { enabled: true },
           config_prerequisites: {
             github_publisher_configured: false,
+            github_publisher_reason_code: "runtime_credential_missing",
+            github_publisher_status_message:
+              "Platform runtime action required: GitHub publishing credential is unavailable.",
             target_config_valid: true,
             target_enabled: true,
           },
@@ -3196,6 +3199,9 @@ describe("site workspace migration tab", () => {
           target: { enabled: false },
           config_prerequisites: {
             github_publisher_configured: false,
+            github_publisher_reason_code: "runtime_credential_missing",
+            github_publisher_status_message:
+              "Platform runtime action required: GitHub publishing credential is unavailable.",
             target_config_valid: true,
             target_enabled: false,
           },
@@ -3207,7 +3213,7 @@ describe("site workspace migration tab", () => {
       }),
     );
     mockPublishMigrationArtifactVersion.mockRejectedValueOnce(
-      new ApiRequestError("GitHub migration publisher is not configured.", {
+      new ApiRequestError("GitHub publishing runtime credential is unavailable.", {
         status: 422,
         detail: null,
       }),
@@ -3218,14 +3224,19 @@ describe("site workspace migration tab", () => {
 
     expect(screen.getByTestId("migration-action-diagnostics")).toHaveTextContent("Last publish status: n/a");
     expect(screen.getByTestId("migration-action-diagnostics")).toHaveTextContent("Last deploy status: n/a");
-    expect(screen.getByTestId("migration-publish-readiness")).toHaveTextContent("Runtime config: Missing/invalid");
+    expect(screen.getByTestId("migration-publish-readiness")).toHaveTextContent(
+      "Runtime publisher: Credential unavailable",
+    );
+    expect(screen.getByTestId("migration-publish-readiness")).toHaveTextContent(
+      "Platform runtime action required: GitHub publishing credential is unavailable.",
+    );
 
     const publishButton = screen.getByRole("button", { name: "Publish Approved Draft to GitHub" });
     expect(publishButton).toBeEnabled();
     await user.click(publishButton);
     expect(
       await screen.findByText(
-        "Publish blocked by runtime configuration. GitHub migration publisher is not configured.",
+        "Publish blocked by runtime configuration. GitHub publishing runtime credential is unavailable.",
       ),
     ).toBeInTheDocument();
   });

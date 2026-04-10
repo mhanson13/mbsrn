@@ -205,6 +205,23 @@ function toFailureCategoryLabel(value: string | null): string {
   return value.replace(/_/g, " ");
 }
 
+function toRuntimeConfigLabel(prerequisites: Record<string, unknown>): string {
+  if (Boolean(prerequisites.github_publisher_configured)) {
+    return "Ready";
+  }
+  const reasonCode = asString(prerequisites.github_publisher_reason_code).trim().toLowerCase();
+  if (reasonCode === "runtime_credential_missing") {
+    return "Credential unavailable";
+  }
+  if (reasonCode === "runtime_configuration_invalid") {
+    return "Invalid runtime configuration";
+  }
+  if (reasonCode === "runtime_integration_unavailable") {
+    return "Integration unavailable";
+  }
+  return "Missing/invalid";
+}
+
 function toErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiRequestError) {
     const message = (error.message || "").trim();
@@ -243,7 +260,12 @@ function parseFailureCategory(
     }
   }
   const normalized = message.trim().toLowerCase();
-  if (normalized.includes("not configured") || normalized.includes("configuration")) {
+  if (
+    normalized.includes("not configured") ||
+    normalized.includes("configuration") ||
+    (normalized.includes("credential") && normalized.includes("unavailable")) ||
+    (normalized.includes("integration") && normalized.includes("unavailable"))
+  ) {
     return "config_missing";
   }
   if (normalized.includes("invalid") || normalized.includes("requires")) {
@@ -1177,6 +1199,10 @@ export function MigrationWorkspacePanel({
   const deployFailureCategory = asString(deployReadiness.last_failure_category || deployReadiness.failure_category) || null;
   const publishFailureMessage = asString(publishReadiness.last_failure_message) || null;
   const deployFailureMessage = asString(deployReadiness.last_failure_message) || null;
+  const publishRuntimeStatusLabel = toRuntimeConfigLabel(publishConfigPrerequisites);
+  const deployRuntimeStatusLabel = toRuntimeConfigLabel(deployConfigPrerequisites);
+  const publishRuntimeStatusMessage = asStringOrNull(publishConfigPrerequisites.github_publisher_status_message);
+  const deployRuntimeStatusMessage = asStringOrNull(deployConfigPrerequisites.github_publisher_status_message);
   const contextSummary = asRecord(summary?.context_summary);
   const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
   const draftReadiness = parseDraftReadiness(contextSummary);
@@ -2242,9 +2268,8 @@ export function MigrationWorkspacePanel({
           <div className="panel panel-compact stack" data-testid="migration-publish-readiness">
             <strong>Publish Readiness</strong>
             <span className="hint">Ready: {Boolean(publishReadiness.ready) ? "Yes" : "No"}</span>
-            <span className="hint">
-              Runtime config: {Boolean(publishConfigPrerequisites.github_publisher_configured) ? "Ready" : "Missing/invalid"}
-            </span>
+            <span className="hint">Runtime publisher: {publishRuntimeStatusLabel}</span>
+            {publishRuntimeStatusMessage ? <span className="hint muted">{publishRuntimeStatusMessage}</span> : null}
             {Array.isArray(publishReadiness.reasons) && publishReadiness.reasons.length > 0 ? (
               <ul>
                 {(publishReadiness.reasons as unknown[]).map((reason, index) => (
@@ -2260,9 +2285,8 @@ export function MigrationWorkspacePanel({
           <div className="panel panel-compact stack" data-testid="migration-deploy-readiness">
             <strong>Deploy Readiness</strong>
             <span className="hint">Ready: {Boolean(deployReadiness.ready) ? "Yes" : "No"}</span>
-            <span className="hint">
-              Runtime config: {Boolean(deployConfigPrerequisites.github_publisher_configured) ? "Ready" : "Missing/invalid"}
-            </span>
+            <span className="hint">Runtime publisher: {deployRuntimeStatusLabel}</span>
+            {deployRuntimeStatusMessage ? <span className="hint muted">{deployRuntimeStatusMessage}</span> : null}
             {Array.isArray(deployReadiness.reasons) && deployReadiness.reasons.length > 0 ? (
               <ul>
                 {(deployReadiness.reasons as unknown[]).map((reason, index) => (
