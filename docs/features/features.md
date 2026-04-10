@@ -212,6 +212,7 @@ It transforms a business's website and market context into structured insights a
 - source import is advisory
 - operator input can override weak source material
 - generated outputs remain operator-controlled through approval, publish, and deploy gates (no auto actions)
+- Adds admin-controlled GitHub publish target configuration (`repository`, `default_branch`, `base_path`, `enabled`) so migration publish has an explicit control-plane dependency.
 
 ### Operator value
 > "I can replace a low-quality incumbent site with a structured draft package before any publication step."

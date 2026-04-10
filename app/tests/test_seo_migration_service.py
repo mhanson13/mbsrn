@@ -24,6 +24,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublisherError,
 )
 from app.models.business import Business
+from app.models.github_publish_config import GitHubPublishConfig
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_set import SEOCompetitorSet
@@ -32,6 +33,7 @@ from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_run import SEORecommendationRun
 from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
+from app.repositories.github_publish_config_repository import GitHubPublishConfigRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
 from app.repositories.seo_audit_summary_repository import SEOAuditSummaryRepository
 from app.repositories.seo_competitor_repository import SEOCompetitorRepository
@@ -43,6 +45,7 @@ from app.repositories.seo_site_repository import SEOSiteRepository
 from app.services.seo_migration import SEOMigrationService, SEOMigrationValidationError
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_ingest import SEOMigrationSourceIngestService
+from app.services.github_publish_config import GitHubPublishConfigService
 
 
 class _StaticMigrationProvider(SEOMigrationArtifactGenerationProvider):
@@ -202,6 +205,14 @@ def _seed_business_and_site(db_session, *, ga_measurement_id: str | None = None)
     )
     db_session.add(business)
     db_session.add(site)
+    db_session.add(
+        GitHubPublishConfig(
+            repository="acme/tnmfire-site",
+            default_branch="main",
+            base_path="/",
+            enabled=True,
+        )
+    )
     db_session.commit()
     return business_id, site_id
 
@@ -213,6 +224,10 @@ def _build_service(
     github_publisher: SEOMigrationGitHubPublisher | None = None,
     env_default_model_name: str | None = None,
 ) -> SEOMigrationService:
+    github_publish_config_service = GitHubPublishConfigService(
+        session=db_session,
+        repository=GitHubPublishConfigRepository(db_session),
+    )
     return SEOMigrationService(
         session=db_session,
         business_repository=BusinessRepository(db_session),
@@ -228,6 +243,7 @@ def _build_service(
         context_assembler=SEOMigrationContextAssembler(),
         artifact_provider=provider,
         github_publisher=github_publisher,
+        github_publish_config_service=github_publish_config_service,
         provider_name="mock",
         provider_model_name="mock-seo-migration-v1",
         env_default_model_name=env_default_model_name,
@@ -2436,6 +2452,98 @@ def test_publish_dry_run_does_not_overwrite_published_state(db_session) -> None:
     assert workspace.last_published_commit_sha == "abc123"
     publish_history = workspace.publish_history_json or []
     assert publish_history[-1].get("status") == "dry_run"
+
+
+def test_publish_requires_admin_github_publish_config_enabled(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+
+    config = service.github_publish_config_service.get()
+    config.enabled = False
+    service.github_publish_config_service.repository.save(config)
+    service.session.commit()
+
+    with pytest.raises(SEOMigrationValidationError, match="Admin GitHub publish configuration is not enabled."):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message=None,
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    prereqs = summary.publish_readiness.get("config_prerequisites")
+    assert isinstance(prereqs, dict)
+    assert prereqs.get("admin_publish_configured") is False
+    assert prereqs.get("admin_publish_config_enabled") is False
+
+
+def test_publish_uses_admin_target_when_workspace_publish_config_is_default(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    service.create_or_update_workspace(
+        business_id=business_id,
+        site_id=site_id,
+        source_url="https://legacy.example/",
+        operator_requirements={"business_objectives": ["Replace legacy site"]},
+        enriched_content_notes={"replacement_summary": "Use richer replacement content."},
+        principal_id="principal-1",
+    )
+    _mark_workspace_ingested(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert publisher.publish_calls
+    target, _, _, _ = publisher.publish_calls[-1]
+    assert target.repo_owner == "acme"
+    assert target.repo_name == "tnmfire-site"
+    assert target.branch == "main"
+    assert target.artifact_root == ""
 
 
 def test_missing_publisher_config_is_categorized_for_readiness_and_errors(db_session) -> None:

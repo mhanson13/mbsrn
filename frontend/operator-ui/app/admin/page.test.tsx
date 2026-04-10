@@ -33,6 +33,8 @@ const mockFetchPrincipals = jest.fn();
 const mockFetchPrincipalIdentities = jest.fn();
 const mockFetchBusinessSettings = jest.fn();
 const mockUpdateBusinessSettings = jest.fn();
+const mockFetchGitHubPublishConfig = jest.fn();
+const mockUpdateGitHubPublishConfig = jest.fn();
 
 jest.mock("../../components/useOperatorContext", () => ({
   useOperatorContext: () => mockUseOperatorContext(),
@@ -60,6 +62,8 @@ jest.mock("../../lib/api/client", () => ({
   deleteAdminSite: jest.fn(),
   queryGcpLogs: jest.fn(),
   updateAdminSite: jest.fn(),
+  fetchGitHubPublishConfig: (...args: unknown[]) => mockFetchGitHubPublishConfig(...args),
+  updateGitHubPublishConfig: (...args: unknown[]) => mockUpdateGitHubPublishConfig(...args),
   updateBusinessSettings: (...args: unknown[]) => mockUpdateBusinessSettings(...args),
   fetchPrincipalIdentities: (...args: unknown[]) => mockFetchPrincipalIdentities(...args),
   fetchPrincipals: (...args: unknown[]) => mockFetchPrincipals(...args),
@@ -69,6 +73,8 @@ jest.mock("../../lib/api/client", () => ({
 describe("admin route", () => {
   beforeEach(() => {
     mockUpdateBusinessSettings.mockReset();
+    mockFetchGitHubPublishConfig.mockReset();
+    mockUpdateGitHubPublishConfig.mockReset();
     mockFetchPrincipals.mockResolvedValue({ items: [], total: 0 });
     mockFetchPrincipalIdentities.mockResolvedValue({ items: [], total: 0 });
     mockFetchBusinessSettings.mockResolvedValue({
@@ -92,6 +98,24 @@ describe("admin route", () => {
       ai_prompt_text_recommendations: null,
       default_ai_model: null,
       timezone: "UTC",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockFetchGitHubPublishConfig.mockResolvedValue({
+      id: 1,
+      repository: "",
+      default_branch: "main",
+      base_path: "/",
+      enabled: false,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockUpdateGitHubPublishConfig.mockResolvedValue({
+      id: 1,
+      repository: "mhanson13/tnmfire",
+      default_branch: "main",
+      base_path: "/site",
+      enabled: true,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     });
@@ -172,6 +196,7 @@ describe("admin route", () => {
       "AI Competitor Candidate Quality",
       "AI Competitor Generation Timeouts",
       "AI Prompt Overrides",
+      "GitHub Publish Configuration",
       "Site Management",
       "GCP Logs Query",
       "Admin Console",
@@ -188,6 +213,9 @@ describe("admin route", () => {
     expect(screen.queryByRole("button", { name: "Create and Link Identity" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Default AI model")).toBeInTheDocument();
     expect(screen.getByLabelText("Migration Draft Timeout (seconds)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Repository (owner/name)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Default Branch")).toBeInTheDocument();
+    expect(screen.getByLabelText("Base Path")).toBeInTheDocument();
     expect(screen.getByText("Platform operations tools for diagnostics, site maintenance, and safe configuration updates.")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Property" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Enabled" })).toBeInTheDocument();
@@ -308,7 +336,9 @@ describe("admin route", () => {
     render(<AdminPage />);
 
     const defaultModelInput = await screen.findByLabelText("Default AI model");
-    expect(defaultModelInput).toHaveValue("gpt-4.1-mini");
+    await waitFor(() => {
+      expect(defaultModelInput).toHaveValue("gpt-4.1-mini");
+    });
     const migrationTimeoutInput = screen.getByLabelText("Migration Draft Timeout (seconds)");
     expect(migrationTimeoutInput).toHaveValue(180);
 
@@ -325,6 +355,65 @@ describe("admin route", () => {
     });
     expect(await screen.findByLabelText("Default AI model")).toHaveValue("gpt-4o-mini");
     expect(screen.getByLabelText("Migration Draft Timeout (seconds)")).toHaveValue(240);
+  });
+
+  it("loads and saves GitHub publish configuration in admin settings", async () => {
+    mockFetchGitHubPublishConfig.mockResolvedValueOnce({
+      id: 1,
+      repository: "mhanson13/tnmfire",
+      default_branch: "main",
+      base_path: "/",
+      enabled: true,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockUpdateGitHubPublishConfig.mockResolvedValueOnce({
+      id: 1,
+      repository: "mhanson13/tnmfire",
+      default_branch: "release",
+      base_path: "/site",
+      enabled: true,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-gh-1",
+        display_name: "Admin GH",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    const repositoryInput = await screen.findByLabelText("Repository (owner/name)");
+    await waitFor(() => {
+      expect(repositoryInput).toHaveValue("mhanson13/tnmfire");
+    });
+    const defaultBranchInput = screen.getByLabelText("Default Branch");
+    expect(defaultBranchInput).toHaveValue("main");
+    const basePathInput = screen.getByLabelText("Base Path");
+    expect(basePathInput).toHaveValue("/");
+    const enabledToggle = screen.getByLabelText("Enable migration GitHub publish target");
+    expect(enabledToggle).toBeChecked();
+
+    fireEvent.change(defaultBranchInput, { target: { value: "release" } });
+    fireEvent.change(basePathInput, { target: { value: "/site" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
+
+    await waitFor(() => {
+      expect(mockUpdateGitHubPublishConfig).toHaveBeenCalled();
+    });
+    expect(mockUpdateGitHubPublishConfig.mock.calls.at(-1)?.[1]).toMatchObject({
+      repository: "mhanson13/tnmfire",
+      default_branch: "release",
+      base_path: "/site",
+      enabled: true,
+    });
+    expect(await screen.findByLabelText("Default Branch")).toHaveValue("release");
+    expect(screen.getByLabelText("Base Path")).toHaveValue("/site");
   });
 
   it("keeps /users as a compatibility route", async () => {

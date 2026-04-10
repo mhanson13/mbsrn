@@ -14,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.api.routes import (
+    admin_github_publish_config_router,
     admin_runtime_router,
     auth_router,
     businesses_router,
@@ -413,6 +414,7 @@ app.include_router(leads_router)
 app.include_router(jobs_router)
 app.include_router(businesses_router)
 app.include_router(admin_runtime_router)
+app.include_router(admin_github_publish_config_router)
 app.include_router(auth_router)
 app.include_router(integrations_router)
 app.include_router(seo_router)

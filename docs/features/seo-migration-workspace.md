@@ -556,6 +556,22 @@ Publish behavior:
 - retry after a failed publish is supported and recorded as a new history event
 - dry-run publish records history but does not overwrite prior successful publish commit metadata
 
+### GitHub Publish Configuration (Admin)
+Migration publish now depends on an admin-managed GitHub target baseline:
+- endpoint: `GET /api/admin/github-publish-config`
+- endpoint: `PUT /api/admin/github-publish-config`
+- fields:
+  - `repository` (`owner/name`)
+  - `default_branch`
+  - `base_path` (`/` for repo root, optional subpath like `/site`)
+  - `enabled`
+
+Operational behavior:
+- this config is metadata only; no secrets are stored in the database
+- migration publish/deploy readiness includes admin config prerequisites (`admin_publish_config_*`)
+- publish fails safely with clear validation/readiness errors when admin config is missing or disabled
+- existing site-scoped publish settings remain supported; admin config provides explicit control-plane baseline and fallback
+
 Security constraints:
 - no GitHub token storage in migration rows
 - no token values returned by API

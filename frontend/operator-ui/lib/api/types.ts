@@ -117,6 +117,23 @@ export interface BusinessSettingsUpdateRequest {
   timezone?: string | null;
 }
 
+export interface GitHubPublishConfig {
+  id?: number | null;
+  repository: string;
+  default_branch: string;
+  base_path: string;
+  enabled: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface GitHubPublishConfigUpdateRequest {
+  repository?: string | null;
+  default_branch?: string | null;
+  base_path?: string | null;
+  enabled: boolean;
+}
+
 export interface GCPLogsQueryRequest {
   filter: string;
   page_size?: number;

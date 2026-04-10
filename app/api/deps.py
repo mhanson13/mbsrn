@@ -63,6 +63,7 @@ from app.models.principal import Principal, PrincipalRole
 from app.repositories.api_credential_repository import APICredentialRepository
 from app.repositories.auth_audit_repository import AuthAuditRepository
 from app.repositories.business_repository import BusinessRepository
+from app.repositories.github_publish_config_repository import GitHubPublishConfigRepository
 from app.repositories.lead_repository import LeadRepository
 from app.repositories.principal_identity_repository import PrincipalIdentityRepository
 from app.repositories.principal_repository import PrincipalRepository
@@ -91,6 +92,7 @@ from app.services.google_business_profile_connection import (
     GoogleBusinessProfileConnectionConfigurationError,
     GoogleBusinessProfileConnectionService,
 )
+from app.services.github_publish_config import GitHubPublishConfigService
 from app.services.google_business_profile_service import GoogleBusinessProfileService
 from app.services.lead_intake import LeadIntakeService
 from app.services.lifecycle import LeadLifecycleService
@@ -147,6 +149,10 @@ def get_db() -> Generator[Session, None, None]:
 
 def get_business_repository(db: Session = Depends(get_db)) -> BusinessRepository:
     return BusinessRepository(db)
+
+
+def get_github_publish_config_repository(db: Session = Depends(get_db)) -> GitHubPublishConfigRepository:
+    return GitHubPublishConfigRepository(db)
 
 
 def get_lead_repository(db: Session = Depends(get_db)) -> LeadRepository:
@@ -385,6 +391,16 @@ def get_business_settings_service(
         session=db,
         business_repository=business_repository,
         seo_competitor_profile_generation_repository=seo_competitor_profile_generation_repository,
+    )
+
+
+def get_github_publish_config_service(
+    db: Session = Depends(get_db),
+    github_publish_config_repository: GitHubPublishConfigRepository = Depends(get_github_publish_config_repository),
+) -> GitHubPublishConfigService:
+    return GitHubPublishConfigService(
+        session=db,
+        repository=github_publish_config_repository,
     )
 
 
@@ -1073,6 +1089,7 @@ def get_seo_migration_service(
     context_assembler: SEOMigrationContextAssembler = Depends(get_seo_migration_context_assembler),
     artifact_provider: SEOMigrationArtifactGenerationProvider = Depends(get_seo_migration_artifact_provider),
     github_publisher: SEOMigrationGitHubPublisher = Depends(get_seo_migration_github_publisher),
+    github_publish_config_service: GitHubPublishConfigService = Depends(get_github_publish_config_service),
 ) -> SEOMigrationService:
     settings = get_settings()
     provider_name = str(getattr(artifact_provider, "provider_name", settings.ai_provider_name or "unknown"))
@@ -1093,6 +1110,7 @@ def get_seo_migration_service(
         context_assembler=context_assembler,
         artifact_provider=artifact_provider,
         github_publisher=github_publisher,
+        github_publish_config_service=github_publish_config_service,
         provider_name=provider_name,
         provider_model_name=provider_model_name,
         env_default_model_name=settings.ai_model_name,

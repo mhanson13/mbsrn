@@ -34,6 +34,21 @@ Authentication flow:
 5. UI uses bearer access token for business-scoped API calls.
 6. Sign out calls `POST /api/auth/logout` and clears local session state.
 
+## Admin GitHub publish target configuration
+
+Admin route (`/admin`) includes a `GitHub Publish Configuration` form used by migration publish readiness/execution:
+
+- `Repository (owner/name)`
+- `Default Branch`
+- `Base Path`
+- `Enabled`
+
+API surface:
+- `GET /api/admin/github-publish-config`
+- `PUT /api/admin/github-publish-config`
+
+This stores publish target metadata only. GitHub credentials remain environment-managed and are not exposed in UI.
+
 ## Shared workspace/page composition primitives
 
 Operator-facing routes should prefer shared presentational primitives over page-local framing:

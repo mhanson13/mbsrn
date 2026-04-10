@@ -31,6 +31,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublisherError,
 )
 from app.models.business import Business
+from app.models.github_publish_config import GitHubPublishConfig
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_set import SEOCompetitorSet
@@ -240,6 +241,14 @@ def _seed_business_and_site(db_session, *, business_id: str, site_id: str) -> No
     )
     db_session.add(business)
     db_session.add(site)
+    db_session.add(
+        GitHubPublishConfig(
+            repository="acme/tnmfire-site",
+            default_branch="main",
+            base_path="/",
+            enabled=True,
+        )
+    )
     db_session.commit()
 
 

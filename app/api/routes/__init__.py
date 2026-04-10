@@ -1,3 +1,4 @@
+from app.api.routes.admin_github_publish_config import router as admin_github_publish_config_router
 from app.api.routes.admin_runtime import router as admin_runtime_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.businesses import router as businesses_router
@@ -11,6 +12,7 @@ from app.api.routes.seo_migration import router as seo_migration_router
 
 __all__ = [
     "admin_runtime_router",
+    "admin_github_publish_config_router",
     "auth_router",
     "businesses_router",
     "integrations_router",

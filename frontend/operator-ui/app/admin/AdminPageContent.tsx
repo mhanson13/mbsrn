@@ -19,13 +19,23 @@ import {
   deactivatePrincipalIdentity,
   deactivatePrincipal,
   fetchBusinessSettings,
+  fetchGitHubPublishConfig,
   fetchPrincipalIdentities,
   fetchPrincipals,
   queryGcpLogs,
   updateAdminSite,
   updateBusinessSettings,
+  updateGitHubPublishConfig,
 } from "../../lib/api/client";
-import type { BusinessSettings, GCPLogEntry, Principal, PrincipalIdentity, PrincipalRole, SEOSite } from "../../lib/api/types";
+import type {
+  BusinessSettings,
+  GCPLogEntry,
+  GitHubPublishConfig,
+  Principal,
+  PrincipalIdentity,
+  PrincipalRole,
+  SEOSite,
+} from "../../lib/api/types";
 import {
   COMPETITOR_BIG_BOX_PENALTY_MAX,
   COMPETITOR_BIG_BOX_PENALTY_MIN,
@@ -570,6 +580,59 @@ function normalizeDefaultModelInput(value: string): string | null {
   return normalized;
 }
 
+function normalizeGitHubPublishBasePath(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "/";
+  }
+  if (normalized.startsWith("/")) {
+    return normalized;
+  }
+  return `/${normalized}`;
+}
+
+function safeGitHubPublishConfigLoadErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "Only admin principals can view GitHub publish configuration.";
+    }
+  }
+  return "Unable to load GitHub publish configuration right now.";
+}
+
+function safeGitHubPublishConfigUpdateErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "Only admin principals can update GitHub publish configuration.";
+    }
+    if (error.status === 422) {
+      return error.message || "Unable to save GitHub publish configuration. Review the values and try again.";
+    }
+  }
+  return "Failed to save GitHub publish configuration.";
+}
+
+function applyGitHubPublishConfigInputs(
+  config: GitHubPublishConfig,
+  setters: {
+    setRepository: (value: string) => void;
+    setDefaultBranch: (value: string) => void;
+    setBasePath: (value: string) => void;
+    setEnabled: (value: boolean) => void;
+  },
+): void {
+  setters.setRepository(config.repository || "");
+  setters.setDefaultBranch(config.default_branch || "main");
+  setters.setBasePath(config.base_path || "/");
+  setters.setEnabled(Boolean(config.enabled));
+}
+
 function formatIdentityLabel(identity: PrincipalIdentity): string {
   return identity.email || `${identity.provider}:${identity.provider_subject}`;
 }
@@ -646,6 +709,14 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
   const [promptOverrideMessage, setPromptOverrideMessage] = useState<string | null>(null);
   const [promptOverrideError, setPromptOverrideError] = useState<string | null>(null);
+  const [githubPublishRepositoryInput, setGitHubPublishRepositoryInput] = useState("");
+  const [githubPublishDefaultBranchInput, setGitHubPublishDefaultBranchInput] = useState("main");
+  const [githubPublishBasePathInput, setGitHubPublishBasePathInput] = useState("/");
+  const [githubPublishEnabled, setGitHubPublishEnabled] = useState(false);
+  const [githubPublishConfigLoading, setGitHubPublishConfigLoading] = useState(false);
+  const [githubPublishConfigSubmitting, setGitHubPublishConfigSubmitting] = useState(false);
+  const [githubPublishConfigMessage, setGitHubPublishConfigMessage] = useState<string | null>(null);
+  const [githubPublishConfigError, setGitHubPublishConfigError] = useState<string | null>(null);
   const [siteDraftsById, setSiteDraftsById] = useState<Record<string, SiteManagementDraft>>({});
   const [siteManagementMessage, setSiteManagementMessage] = useState<string | null>(null);
   const [siteManagementError, setSiteManagementError] = useState<string | null>(null);
@@ -790,30 +861,48 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     async function loadBusinessSettings() {
       setBusinessSettingsLoading(true);
       setBusinessSettingsLoadError(null);
+      setGitHubPublishConfigLoading(true);
+      setGitHubPublishConfigError(null);
       try {
-        const settings = await fetchBusinessSettings(context.token, context.businessId);
+        const [settingsResult, githubResult] = await Promise.allSettled([
+          fetchBusinessSettings(context.token, context.businessId),
+          fetchGitHubPublishConfig(context.token),
+        ]);
         if (cancelled) {
           return;
         }
-        setBusinessSettings(settings);
-        setCrawlPageLimitInput(String(settings.seo_audit_crawl_max_pages));
-        setCandidateMinRelevanceScoreInput(String(settings.competitor_candidate_min_relevance_score));
-        setCandidateBigBoxPenaltyInput(String(settings.competitor_candidate_big_box_penalty));
-        setCandidateDirectoryPenaltyInput(String(settings.competitor_candidate_directory_penalty));
-        setCandidateLocalAlignmentBonusInput(String(settings.competitor_candidate_local_alignment_bonus));
-        setCompetitorPrimaryTimeoutInput(timeoutSettingToInput(settings.competitor_primary_timeout_seconds));
-        setCompetitorDegradedTimeoutInput(timeoutSettingToInput(settings.competitor_degraded_timeout_seconds));
-        setCompetitorPromptOverrideInput(settings.ai_prompt_text_competitor || "");
-        setRecommendationsPromptOverrideInput(settings.ai_prompt_text_recommendations || "");
-        setDefaultAiModelInput(settings.default_ai_model || "");
-        setMigrationDraftTimeoutInput(timeoutSettingToInput(settings.migration_draft_timeout_seconds ?? null));
-      } catch (err) {
-        if (!cancelled) {
-          setBusinessSettingsLoadError(safeBusinessSettingsErrorMessage(err));
+        if (settingsResult.status === "fulfilled") {
+          const settings = settingsResult.value;
+          setBusinessSettings(settings);
+          setCrawlPageLimitInput(String(settings.seo_audit_crawl_max_pages));
+          setCandidateMinRelevanceScoreInput(String(settings.competitor_candidate_min_relevance_score));
+          setCandidateBigBoxPenaltyInput(String(settings.competitor_candidate_big_box_penalty));
+          setCandidateDirectoryPenaltyInput(String(settings.competitor_candidate_directory_penalty));
+          setCandidateLocalAlignmentBonusInput(String(settings.competitor_candidate_local_alignment_bonus));
+          setCompetitorPrimaryTimeoutInput(timeoutSettingToInput(settings.competitor_primary_timeout_seconds));
+          setCompetitorDegradedTimeoutInput(timeoutSettingToInput(settings.competitor_degraded_timeout_seconds));
+          setCompetitorPromptOverrideInput(settings.ai_prompt_text_competitor || "");
+          setRecommendationsPromptOverrideInput(settings.ai_prompt_text_recommendations || "");
+          setDefaultAiModelInput(settings.default_ai_model || "");
+          setMigrationDraftTimeoutInput(timeoutSettingToInput(settings.migration_draft_timeout_seconds ?? null));
+        } else {
+          setBusinessSettingsLoadError(safeBusinessSettingsErrorMessage(settingsResult.reason));
+        }
+
+        if (githubResult.status === "fulfilled") {
+          applyGitHubPublishConfigInputs(githubResult.value, {
+            setRepository: setGitHubPublishRepositoryInput,
+            setDefaultBranch: setGitHubPublishDefaultBranchInput,
+            setBasePath: setGitHubPublishBasePathInput,
+            setEnabled: setGitHubPublishEnabled,
+          });
+        } else {
+          setGitHubPublishConfigError(safeGitHubPublishConfigLoadErrorMessage(githubResult.reason));
         }
       } finally {
         if (!cancelled) {
           setBusinessSettingsLoading(false);
+          setGitHubPublishConfigLoading(false);
         }
       }
     }
@@ -1176,6 +1265,41 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       setPromptOverrideError(safePromptSettingsUpdateErrorMessage(err));
     } finally {
       setPromptOverrideSubmitting(false);
+    }
+  };
+
+  const handleSaveGitHubPublishConfig = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setGitHubPublishConfigMessage(null);
+    setGitHubPublishConfigError(null);
+
+    const repository = githubPublishRepositoryInput.trim();
+    const defaultBranch = githubPublishDefaultBranchInput.trim() || "main";
+    const basePath = normalizeGitHubPublishBasePath(githubPublishBasePathInput);
+    if (githubPublishEnabled && !repository) {
+      setGitHubPublishConfigError("Repository is required when GitHub publishing is enabled.");
+      return;
+    }
+
+    setGitHubPublishConfigSubmitting(true);
+    try {
+      const updated = await updateGitHubPublishConfig(context.token, {
+        repository: repository || "",
+        default_branch: defaultBranch,
+        base_path: basePath,
+        enabled: githubPublishEnabled,
+      });
+      applyGitHubPublishConfigInputs(updated, {
+        setRepository: setGitHubPublishRepositoryInput,
+        setDefaultBranch: setGitHubPublishDefaultBranchInput,
+        setBasePath: setGitHubPublishBasePathInput,
+        setEnabled: setGitHubPublishEnabled,
+      });
+      setGitHubPublishConfigMessage("GitHub publish configuration updated.");
+    } catch (err) {
+      setGitHubPublishConfigError(safeGitHubPublishConfigUpdateErrorMessage(err));
+    } finally {
+      setGitHubPublishConfigSubmitting(false);
     }
   };
 
@@ -1549,6 +1673,29 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     settingsHealth.notifications.status === "invalid"
                       ? "warning"
                       : "success"
+                  }
+                  variant="elevated"
+                />
+                <SummaryStatCard
+                  label="GitHub publish target"
+                  value={
+                    githubPublishEnabled
+                      ? githubPublishRepositoryInput.trim()
+                        ? "Enabled"
+                        : "Needs repo"
+                      : "Disabled"
+                  }
+                  detail={
+                    githubPublishRepositoryInput.trim()
+                      ? `${githubPublishRepositoryInput.trim()} @ ${githubPublishDefaultBranchInput.trim() || "main"}`
+                      : "Configure repository, branch, and base path for migration publish."
+                  }
+                  tone={
+                    githubPublishEnabled
+                      ? githubPublishRepositoryInput.trim()
+                        ? "success"
+                        : "warning"
+                      : "neutral"
                   }
                   variant="elevated"
                 />
@@ -2042,6 +2189,78 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             </div>
             {promptOverrideMessage ? <p className="hint">{promptOverrideMessage}</p> : null}
             {promptOverrideError ? <p className="hint error">{promptOverrideError}</p> : null}
+          </FormContainer>
+        </SectionCard>
+        ) : null}
+
+        {showAdminSettings ? (
+        <SectionCard variant="summary" className="role-surface-support">
+          <SectionHeader
+            title="GitHub Publish Configuration"
+            subtitle="Set the migration publish target repository, branch, and base path used by publish readiness and execution."
+            headingLevel={2}
+            variant="support"
+          />
+          <FormContainer onSubmit={(event) => void handleSaveGitHubPublishConfig(event)} noValidate>
+            <label htmlFor="github-publish-repository">Repository (owner/name)</label>
+            <input
+              id="github-publish-repository"
+              type="text"
+              value={githubPublishRepositoryInput}
+              onChange={(event) => setGitHubPublishRepositoryInput(event.target.value)}
+              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              placeholder="mhanson13/tnmfire"
+            />
+
+            <label htmlFor="github-publish-default-branch">Default Branch</label>
+            <input
+              id="github-publish-default-branch"
+              type="text"
+              value={githubPublishDefaultBranchInput}
+              onChange={(event) => setGitHubPublishDefaultBranchInput(event.target.value)}
+              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              placeholder="main"
+            />
+
+            <label htmlFor="github-publish-base-path">Base Path</label>
+            <input
+              id="github-publish-base-path"
+              type="text"
+              value={githubPublishBasePathInput}
+              onChange={(event) => setGitHubPublishBasePathInput(event.target.value)}
+              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              placeholder="/"
+            />
+            <p className="hint muted">
+              Use <code>/</code> for repository root or a subpath like <code>/site</code>.
+            </p>
+
+            <label htmlFor="github-publish-enabled" className="checkbox-chip">
+              <input
+                id="github-publish-enabled"
+                type="checkbox"
+                checked={githubPublishEnabled}
+                onChange={(event) => setGitHubPublishEnabled(event.target.checked)}
+                disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              />
+              Enable migration GitHub publish target
+            </label>
+            <p className="hint muted">
+              This stores target metadata only. GitHub credentials remain environment-managed and are never saved here.
+            </p>
+
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              >
+                {githubPublishConfigSubmitting ? "Saving..." : "Save GitHub Publish Config"}
+              </button>
+            </div>
+            {githubPublishConfigLoading ? <p className="hint muted">Loading GitHub publish configuration...</p> : null}
+            {githubPublishConfigMessage ? <p className="hint">{githubPublishConfigMessage}</p> : null}
+            {githubPublishConfigError ? <p className="hint error">{githubPublishConfigError}</p> : null}
           </FormContainer>
         </SectionCard>
         ) : null}

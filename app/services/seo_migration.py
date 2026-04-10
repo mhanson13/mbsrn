@@ -45,6 +45,7 @@ from app.services.ai_response_contract_evaluator import (
     evaluate_migration_artifact_response,
 )
 from app.services.ai_model_settings import resolve_ai_model_name
+from app.services.github_publish_config import GitHubPublishConfigService
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_artifact_quality import evaluate_migration_artifact_quality
 from app.services.seo_migration_ingest import SEOMigrationSourceIngestError, SEOMigrationSourceIngestService
@@ -336,6 +337,7 @@ class SEOMigrationService:
         context_assembler: SEOMigrationContextAssembler,
         artifact_provider: SEOMigrationArtifactGenerationProvider,
         github_publisher: SEOMigrationGitHubPublisher | None = None,
+        github_publish_config_service: GitHubPublishConfigService | None = None,
         provider_name: str,
         provider_model_name: str,
         env_default_model_name: str | None = None,
@@ -371,6 +373,7 @@ class SEOMigrationService:
             github_publisher,
             MisconfiguredSEOMigrationGitHubPublisher,
         )
+        self.github_publish_config_service = github_publish_config_service
         self.provider_name = provider_name
         self.provider_model_name = provider_model_name
         self._configured_provider_model_name = _normalize_string(provider_model_name, max_length=128)
@@ -697,7 +700,7 @@ class SEOMigrationService:
             artifact_version=artifact.version,
             principal_id=principal_id,
             dry_run=dry_run,
-            target_summary=self._safe_publish_target_summary(workspace.publish_config_json),
+            target_summary=self._safe_effective_publish_target_summary(workspace.publish_config_json),
         )
         readiness = self._build_publish_readiness(
             site=site,
@@ -728,7 +731,11 @@ class SEOMigrationService:
             raise SEOMigrationValidationError(reason_text)
 
         try:
-            target = _resolve_publish_target(workspace.publish_config_json)
+            effective_publish_config, _, _ = self._build_effective_publish_config(
+                workspace_publish_config=workspace.publish_config_json,
+                require_admin=True,
+            )
+            target = _resolve_publish_target(effective_publish_config)
         except ValueError as exc:
             failure_message = str(exc) or "Publish target is invalid."
             self._log_control_plane_action(
@@ -741,7 +748,7 @@ class SEOMigrationService:
                 artifact_version=artifact.version,
                 principal_id=principal_id,
                 dry_run=dry_run,
-                target_summary=self._safe_publish_target_summary(workspace.publish_config_json),
+                target_summary=self._safe_effective_publish_target_summary(workspace.publish_config_json),
                 failure_category="target_invalid",
                 failure_reason=failure_message,
                 duration_ms=self._duration_ms(started_at),
@@ -1005,9 +1012,13 @@ class SEOMigrationService:
             raise SEOMigrationValidationError(reason_text)
 
         try:
+            effective_publish_config, _, _ = self._build_effective_publish_config(
+                workspace_publish_config=workspace.publish_config_json,
+                require_admin=True,
+            )
             deploy_target = _resolve_deploy_target(
                 deploy_config=workspace.deploy_config_json,
-                publish_config=workspace.publish_config_json,
+                publish_config=effective_publish_config,
                 default_workflow_id=self.deploy_default_workflow_id,
                 default_ref=self.deploy_default_ref,
             )
@@ -3497,9 +3508,102 @@ class SEOMigrationService:
             "artifact_root": str(normalized.get("artifact_root") or "").strip(),
         }
 
+    @staticmethod
+    def _is_default_workspace_publish_config(config: dict[str, object]) -> bool:
+        return (
+            not bool(config.get("enabled"))
+            and not str(config.get("repo_owner") or "").strip()
+            and not str(config.get("repo_name") or "").strip()
+            and str(config.get("branch") or "").strip().lower() == "main"
+            and not str(config.get("artifact_root") or "").strip()
+        )
+
+    def _build_effective_publish_config(
+        self,
+        *,
+        workspace_publish_config: object,
+        require_admin: bool,
+    ) -> tuple[dict[str, object], dict[str, bool], list[str]]:
+        normalized_workspace = _normalize_publish_config(workspace_publish_config)
+        effective_config = dict(normalized_workspace)
+        prerequisites = {
+            "admin_publish_config_present": False,
+            "admin_publish_config_enabled": False,
+            "admin_publish_config_valid": False,
+            "admin_publish_configured": False,
+        }
+        reasons: list[str] = []
+
+        if self.github_publish_config_service is None:
+            if require_admin:
+                reasons.append("Admin GitHub publish configuration is not available.")
+            return effective_config, prerequisites, reasons
+
+        admin_config = self.github_publish_config_service.get()
+        repository = _normalize_string(getattr(admin_config, "repository", None), max_length=255) or ""
+        default_branch = _normalize_string(getattr(admin_config, "default_branch", None), max_length=120) or "main"
+        base_path = _normalize_string(getattr(admin_config, "base_path", None), max_length=160) or "/"
+        normalized_artifact_root = base_path.strip().replace("\\", "/").strip("/")
+        enabled = bool(getattr(admin_config, "enabled", False))
+
+        prerequisites["admin_publish_config_present"] = bool(repository)
+        prerequisites["admin_publish_config_enabled"] = enabled
+        if not repository:
+            if require_admin:
+                reasons.append("Admin GitHub publish configuration repository is missing.")
+            return effective_config, prerequisites, reasons
+        if not enabled:
+            if require_admin:
+                reasons.append("Admin GitHub publish configuration is not enabled.")
+            return effective_config, prerequisites, reasons
+
+        try:
+            admin_target = _resolve_publish_target(
+                {
+                    "enabled": True,
+                    "target_repo": repository,
+                    "branch": default_branch,
+                    "artifact_root": normalized_artifact_root,
+                }
+            )
+        except ValueError as exc:
+            if require_admin:
+                reasons.append(str(exc))
+            return effective_config, prerequisites, reasons
+
+        prerequisites["admin_publish_config_valid"] = True
+        prerequisites["admin_publish_configured"] = True
+        if self._is_default_workspace_publish_config(normalized_workspace):
+            return {
+                "enabled": True,
+                "repo_owner": admin_target["repo_owner"],
+                "repo_name": admin_target["repo_name"],
+                "branch": admin_target["branch"],
+                "artifact_root": admin_target["artifact_root"],
+            }, prerequisites, reasons
+
+        if not str(effective_config.get("repo_owner") or "").strip():
+            effective_config["repo_owner"] = admin_target["repo_owner"]
+        if not str(effective_config.get("repo_name") or "").strip():
+            effective_config["repo_name"] = admin_target["repo_name"]
+        if not str(effective_config.get("artifact_root") or "").strip():
+            effective_config["artifact_root"] = admin_target["artifact_root"]
+        return effective_config, prerequisites, reasons
+
+    def _safe_effective_publish_target_summary(self, config: object) -> dict[str, object]:
+        effective, _, _ = self._build_effective_publish_config(
+            workspace_publish_config=config,
+            require_admin=False,
+        )
+        return self._safe_publish_target_summary(effective)
+
     def _safe_deploy_target_summary(self, *, workspace: SEOMigrationWorkspace) -> dict[str, object]:
         normalized = _normalize_deploy_config(workspace.deploy_config_json)
-        fallback_publish = self._safe_publish_target_summary(workspace.publish_config_json)
+        effective_publish_config, _, _ = self._build_effective_publish_config(
+            workspace_publish_config=workspace.publish_config_json,
+            require_admin=False,
+        )
+        fallback_publish = self._safe_publish_target_summary(effective_publish_config)
         return {
             "enabled": bool(normalized.get("enabled")),
             "repo_owner": str(normalized.get("repo_owner") or fallback_publish.get("repo_owner") or "").strip(),
@@ -3615,8 +3719,13 @@ class SEOMigrationService:
         reasons: list[str] = []
         target_summary: dict[str, object] = {}
         target_valid = False
+        effective_publish_config, admin_prerequisites, admin_reasons = self._build_effective_publish_config(
+            workspace_publish_config=workspace.publish_config_json,
+            require_admin=True,
+        )
+        reasons.extend(admin_reasons)
         try:
-            target = _resolve_publish_target(workspace.publish_config_json)
+            target = _resolve_publish_target(effective_publish_config)
             target_valid = True
             target_summary = {
                 "enabled": target["enabled"],
@@ -3650,6 +3759,7 @@ class SEOMigrationService:
                 "github_publisher_configured": self.github_publisher_configured,
                 "target_config_valid": target_valid,
                 "target_enabled": bool(target_summary.get("enabled")),
+                **admin_prerequisites,
             },
             "site_ga_measurement_id": _normalize_ga_measurement_id(site.ga4_measurement_id),
             "workspace_ga_measurement_id": _normalize_ga_measurement_id(
@@ -3669,10 +3779,15 @@ class SEOMigrationService:
         reasons: list[str] = []
         target_summary: dict[str, object] = {}
         target_valid = False
+        effective_publish_config, admin_prerequisites, admin_reasons = self._build_effective_publish_config(
+            workspace_publish_config=workspace.publish_config_json,
+            require_admin=True,
+        )
+        reasons.extend(admin_reasons)
         try:
             target = _resolve_deploy_target(
                 deploy_config=workspace.deploy_config_json,
-                publish_config=workspace.publish_config_json,
+                publish_config=effective_publish_config,
                 default_workflow_id=self.deploy_default_workflow_id,
                 default_ref=self.deploy_default_ref,
             )
@@ -3714,6 +3829,7 @@ class SEOMigrationService:
                 "github_publisher_configured": self.github_publisher_configured,
                 "target_config_valid": target_valid,
                 "target_enabled": bool(target_summary.get("enabled")),
+                **admin_prerequisites,
             },
             "site_ga_measurement_id": _normalize_ga_measurement_id(site.ga4_measurement_id),
             "workspace_ga_measurement_id": _normalize_ga_measurement_id(

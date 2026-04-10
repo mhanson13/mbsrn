@@ -3,6 +3,8 @@ import type {
   AuthExchangeResponse,
   BusinessSettings,
   BusinessSettingsUpdateRequest,
+  GitHubPublishConfig,
+  GitHubPublishConfigUpdateRequest,
   GCPLogsQueryRequest,
   GCPLogsQueryResponse,
   SEOAuditRun,
@@ -230,6 +232,21 @@ export async function updateBusinessSettings(
 ): Promise<BusinessSettings> {
   return apiRequest<BusinessSettings>(`/api/businesses/${businessId}/settings`, {
     method: "PATCH",
+    token,
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchGitHubPublishConfig(token: string): Promise<GitHubPublishConfig> {
+  return apiRequest<GitHubPublishConfig>("/api/admin/github-publish-config", { token });
+}
+
+export async function updateGitHubPublishConfig(
+  token: string,
+  payload: GitHubPublishConfigUpdateRequest,
+): Promise<GitHubPublishConfig> {
+  return apiRequest<GitHubPublishConfig>("/api/admin/github-publish-config", {
+    method: "PUT",
     token,
     body: JSON.stringify(payload),
   });

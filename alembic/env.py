@@ -22,6 +22,7 @@ from app.models import (
     api_credential,
     auth_audit_event,
     business,
+    github_publish_config,
     lead,
     lead_event,
     principal,
