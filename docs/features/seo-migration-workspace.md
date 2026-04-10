@@ -618,6 +618,7 @@ Migration publish/deploy runtime configuration is environment-driven:
 
 Notes:
 - token is only read from runtime environment, never persisted in workspace rows
+- production deployment wiring injects `MIGRATION_GITHUB_TOKEN` into `mbsrn-api` from the `mbsrn-api-auth` Kubernetes secret (`secretKeyRef` key `MIGRATION_GITHUB_TOKEN`)
 - per-site publish/deploy target details are stored in workspace config JSON fields
 - runtime config is validated at action/readiness time for migration publish/deploy (feature-scoped validation); unrelated app features continue running when migration config is missing
 - publish readiness now distinguishes metadata readiness from runtime publisher capability:

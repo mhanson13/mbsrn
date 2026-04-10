@@ -75,6 +75,11 @@ spec:
                 secretKeyRef:
                   name: mbsrn-api-auth
                   key: AI_PROVIDER_API_KEY
+            - name: MIGRATION_GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: MIGRATION_GITHUB_TOKEN
             - name: GOOGLE_PLACES_API_KEY
               valueFrom:
                 secretKeyRef:
