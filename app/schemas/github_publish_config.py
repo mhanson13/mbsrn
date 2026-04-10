@@ -32,6 +32,7 @@ class GitHubPublishConfigRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int | None = None
+    owner: str | None = None
     repository: str | None = None
     default_branch: str = "main"
     base_path: str = "/"
@@ -41,10 +42,16 @@ class GitHubPublishConfigRead(BaseModel):
 
 
 class GitHubPublishConfigUpdateRequest(BaseModel):
+    owner: str | None = Field(default=None, max_length=120)
     repository: str | None = Field(default=None, max_length=255)
     default_branch: str | None = Field(default="main", max_length=120)
     base_path: str | None = Field(default="/", max_length=160)
     enabled: bool = False
+
+    @field_validator("owner", mode="before")
+    @classmethod
+    def _normalize_owner(cls, value: object) -> str | None:
+        return _normalize_optional_text(value, max_length=120)
 
     @field_validator("repository", mode="before")
     @classmethod

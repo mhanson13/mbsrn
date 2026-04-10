@@ -124,7 +124,7 @@ class SEOMigrationPublishConfig(BaseModel):
     enabled: bool = False
     repo_owner: str | None = Field(default=None, max_length=80)
     repo_name: str | None = Field(default=None, max_length=120)
-    branch: str = Field(default="main", max_length=120)
+    branch: str | None = Field(default=None, max_length=120)
     artifact_root: str | None = Field(default="", max_length=120)
 
     @field_validator("repo_owner", "repo_name", "branch", "artifact_root", mode="before")

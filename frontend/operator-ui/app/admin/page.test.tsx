@@ -103,6 +103,7 @@ describe("admin route", () => {
     });
     mockFetchGitHubPublishConfig.mockResolvedValue({
       id: 1,
+      owner: "",
       repository: "",
       default_branch: "main",
       base_path: "/",
@@ -112,7 +113,8 @@ describe("admin route", () => {
     });
     mockUpdateGitHubPublishConfig.mockResolvedValue({
       id: 1,
-      repository: "mhanson13/tnmfire",
+      owner: "mhanson13",
+      repository: "mhanson13",
       default_branch: "main",
       base_path: "/site",
       enabled: true,
@@ -213,7 +215,7 @@ describe("admin route", () => {
     expect(screen.queryByRole("button", { name: "Create and Link Identity" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Default AI model")).toBeInTheDocument();
     expect(screen.getByLabelText("Migration Draft Timeout (seconds)")).toBeInTheDocument();
-    expect(screen.getByLabelText("Repository (owner/name)")).toBeInTheDocument();
+    expect(screen.getByLabelText("GitHub account/owner")).toBeInTheDocument();
     expect(screen.getByLabelText("Default Branch")).toBeInTheDocument();
     expect(screen.getByLabelText("Base Path")).toBeInTheDocument();
     expect(screen.getByText("Platform operations tools for diagnostics, site maintenance, and safe configuration updates.")).toBeInTheDocument();
@@ -360,7 +362,8 @@ describe("admin route", () => {
   it("loads and saves GitHub publish configuration in admin settings", async () => {
     mockFetchGitHubPublishConfig.mockResolvedValueOnce({
       id: 1,
-      repository: "mhanson13/tnmfire",
+      owner: "mhanson13",
+      repository: "mhanson13",
       default_branch: "main",
       base_path: "/",
       enabled: true,
@@ -369,7 +372,8 @@ describe("admin route", () => {
     });
     mockUpdateGitHubPublishConfig.mockResolvedValueOnce({
       id: 1,
-      repository: "mhanson13/tnmfire",
+      owner: "mhanson13",
+      repository: "mhanson13",
       default_branch: "release",
       base_path: "/site/content",
       enabled: true,
@@ -388,9 +392,9 @@ describe("admin route", () => {
 
     render(<AdminPage />);
 
-    const repositoryInput = await screen.findByLabelText("Repository (owner/name)");
+    const repositoryInput = await screen.findByLabelText("GitHub account/owner");
     await waitFor(() => {
-      expect(repositoryInput).toHaveValue("mhanson13/tnmfire");
+      expect(repositoryInput).toHaveValue("mhanson13");
     });
     const defaultBranchInput = screen.getByLabelText("Default Branch");
     expect(defaultBranchInput).toHaveValue("main");
@@ -399,7 +403,7 @@ describe("admin route", () => {
     const enabledToggle = screen.getByLabelText("Enable migration GitHub publish target");
     expect(enabledToggle).toBeChecked();
     const preview = screen.getByTestId("github-publish-effective-preview");
-    expect(preview).toHaveTextContent("mhanson13/tnmfire");
+    expect(preview).toHaveTextContent("mhanson13");
     expect(preview).toHaveTextContent("main");
     expect(preview).toHaveTextContent("/");
 
@@ -412,7 +416,7 @@ describe("admin route", () => {
       expect(mockUpdateGitHubPublishConfig).toHaveBeenCalled();
     });
     expect(mockUpdateGitHubPublishConfig.mock.calls.at(-1)?.[1]).toMatchObject({
-      repository: "mhanson13/tnmfire",
+      owner: "mhanson13",
       default_branch: "release",
       base_path: "/site/content",
       enabled: true,
@@ -435,7 +439,7 @@ describe("admin route", () => {
 
     render(<AdminPage />);
 
-    const repositoryInput = await screen.findByLabelText("Repository (owner/name)");
+    const repositoryInput = await screen.findByLabelText("GitHub account/owner");
     const defaultBranchInput = screen.getByLabelText("Default Branch");
     const basePathInput = screen.getByLabelText("Base Path");
     const enabledToggle = screen.getByLabelText("Enable migration GitHub publish target");
@@ -446,7 +450,7 @@ describe("admin route", () => {
     fireEvent.change(basePathInput, { target: { value: "../bad" } });
 
     expect(
-      screen.getByText("Repository must use owner/repo format (for example: mhanson13/tnmfire)."),
+      screen.getByText("GitHub owner is invalid (for example: mhanson13)."),
     ).toBeInTheDocument();
     expect(
       screen.getByText("Default branch is required when GitHub publishing is enabled."),

@@ -538,11 +538,23 @@ Operator/API behavior:
 - internal reason/warning code arrays stay in logs/diagnostics, not operator-facing debug dumps
 
 ## Publish Workflow (GitHub)
-Publish target metadata is Admin-owned configuration surfaced to workspace as read-only effective target summary:
-- `repository` (`owner/repo`)
-- `default_branch`
+GitHub publish target configuration is split across Admin + workspace ownership:
+
+Admin-owned baseline (global):
+- `owner` (GitHub account/org)
+- `default_branch` (fallback when workspace branch override is empty)
 - `base_path`
 - `enabled`
+
+Workspace-owned destination (site-scoped):
+- `repo_name` (repository name only, no owner segment)
+- optional `branch` override
+- `artifact_root`
+
+Effective publish target is merged at action/readiness time:
+- account/owner from Admin config
+- repository + optional branch override from workspace config
+- branch falls back to Admin `default_branch` when override is blank
 
 Publish behavior:
 - explicit operator-triggered action only
@@ -560,21 +572,22 @@ Migration publish now depends on an admin-managed GitHub target baseline:
 - endpoint: `GET /api/admin/github-publish-config`
 - endpoint: `PUT /api/admin/github-publish-config`
 - fields:
-  - `repository` (`owner/name`)
+  - `owner` (`account/org`, for example `mhanson13`)
   - `default_branch`
   - `base_path` (`/` for repo root, optional subpath like `/site`)
   - `enabled`
 
 Operational behavior:
 - this config is metadata only; no secrets are stored in the database
-- site workspace migration panel no longer exposes editable owner/repo/branch/base-path controls
-- site workspace shows read-only effective target summary and readiness state derived from Admin configuration
+- site workspace migration panel does not expose editable Admin-owned owner/base-path controls
+- site workspace exposes Operator-owned `repo_name` + optional `branch` override for publish destination selection
+- site workspace shows merged effective target summary/readiness (Admin owner + workspace repo/branch)
 - admin UI now validates obvious issues before save:
-  - repository must match `owner/repo`
+  - owner must match GitHub account/org shape
   - default branch is required/validated when enabled
   - base path is normalized/validated (`/` or `/subpath`)
 - admin UI shows an effective target preview with normalized values:
-  - repository
+  - owner
   - default branch
   - normalized base path
 - migration publish/deploy readiness includes admin config prerequisites (`admin_publish_config_*`)
@@ -583,13 +596,14 @@ Operational behavior:
   - `Admin has disabled GitHub publishing.`
   - `An approved artifact is required before publish.`
   - `A published artifact is required before deploy.`
-- existing site-scoped publish settings remain supported; admin config provides explicit control-plane baseline and fallback
+- existing site-scoped publish settings remain supported; admin config provides the owner/fallback baseline while workspace settings provide repo + branch override
 - config updates emit lightweight structured audit logs (`event=admin_github_publish_config_updated`) including timestamp, actor ids (when available), and changed non-secret fields
 
 Security constraints:
 - no GitHub token storage in migration rows
 - no token values returned by API
 - no token values logged
+- GitHub credential/token remains runtime/environment managed; no token input is exposed in workspace surfaces
 
 ## Required Runtime Configuration
 Migration publish/deploy runtime configuration is environment-driven:

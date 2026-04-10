@@ -84,7 +84,7 @@ const GCP_LOGS_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 const GCP_LOGS_DEFAULT_TIME_WINDOW_LABEL = "last 24 hours";
 const GCP_LOGS_SAMPLE_FILTER =
   'severity="ERROR" resource.labels.namespace_name="mbsrn" -textPayload =~ "INFO*"';
-const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 const GITHUB_BRANCH_PATTERN = /^[A-Za-z0-9._/-]{1,120}$/;
 const GITHUB_BASE_PATH_PATTERN = /^\/[A-Za-z0-9._/-]{0,159}$/;
 
@@ -102,10 +102,10 @@ interface SiteManagementDraft {
 }
 
 interface GitHubPublishConfigValidationResult {
-  repository: string;
+  owner: string;
   defaultBranch: string;
   basePath: string;
-  repositoryError: string | null;
+  ownerError: string | null;
   defaultBranchError: string | null;
   basePathError: string | null;
   basePathWarning: string | null;
@@ -612,30 +612,30 @@ function normalizeGitHubPublishBasePath(value: string): string {
 }
 
 function validateGitHubPublishConfigInputs({
-  repositoryInput,
+  ownerInput,
   defaultBranchInput,
   basePathInput,
   enabled,
 }: {
-  repositoryInput: string;
+  ownerInput: string;
   defaultBranchInput: string;
   basePathInput: string;
   enabled: boolean;
 }): GitHubPublishConfigValidationResult {
-  const repository = repositoryInput.trim();
+  const owner = ownerInput.trim();
   const rawDefaultBranch = defaultBranchInput.trim();
   const defaultBranch = rawDefaultBranch || "main";
   const basePath = normalizeGitHubPublishBasePath(basePathInput);
 
-  let repositoryError: string | null = null;
+  let ownerError: string | null = null;
   let defaultBranchError: string | null = null;
   let basePathError: string | null = null;
   let basePathWarning: string | null = null;
 
-  if (enabled && !repository) {
-    repositoryError = "Repository is required when GitHub publishing is enabled.";
-  } else if (repository && !GITHUB_REPOSITORY_PATTERN.test(repository)) {
-    repositoryError = "Repository must use owner/repo format (for example: mhanson13/tnmfire).";
+  if (enabled && !owner) {
+    ownerError = "GitHub owner is required when GitHub publishing is enabled.";
+  } else if (owner && !GITHUB_OWNER_PATTERN.test(owner)) {
+    ownerError = "GitHub owner is invalid (for example: mhanson13).";
   }
 
   if (enabled && !rawDefaultBranch) {
@@ -659,12 +659,12 @@ function validateGitHubPublishConfigInputs({
     }
   }
 
-  const blockingError = repositoryError || defaultBranchError || basePathError || null;
+  const blockingError = ownerError || defaultBranchError || basePathError || null;
   return {
-    repository,
+    owner,
     defaultBranch,
     basePath,
-    repositoryError,
+    ownerError,
     defaultBranchError,
     basePathError,
     basePathWarning,
@@ -702,13 +702,13 @@ function safeGitHubPublishConfigUpdateErrorMessage(error: unknown): string {
 function applyGitHubPublishConfigInputs(
   config: GitHubPublishConfig,
   setters: {
-    setRepository: (value: string) => void;
+    setOwner: (value: string) => void;
     setDefaultBranch: (value: string) => void;
     setBasePath: (value: string) => void;
     setEnabled: (value: boolean) => void;
   },
 ): void {
-  setters.setRepository(config.repository || "");
+  setters.setOwner(config.owner || config.repository || "");
   setters.setDefaultBranch(config.default_branch || "main");
   setters.setBasePath(config.base_path || "/");
   setters.setEnabled(Boolean(config.enabled));
@@ -790,7 +790,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
   const [promptOverrideMessage, setPromptOverrideMessage] = useState<string | null>(null);
   const [promptOverrideError, setPromptOverrideError] = useState<string | null>(null);
-  const [githubPublishRepositoryInput, setGitHubPublishRepositoryInput] = useState("");
+  const [githubPublishOwnerInput, setGitHubPublishOwnerInput] = useState("");
   const [githubPublishDefaultBranchInput, setGitHubPublishDefaultBranchInput] = useState("main");
   const [githubPublishBasePathInput, setGitHubPublishBasePathInput] = useState("/");
   const [githubPublishEnabled, setGitHubPublishEnabled] = useState(false);
@@ -824,7 +824,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const githubPublishValidation = useMemo(
     () =>
       validateGitHubPublishConfigInputs({
-        repositoryInput: githubPublishRepositoryInput,
+        ownerInput: githubPublishOwnerInput,
         defaultBranchInput: githubPublishDefaultBranchInput,
         basePathInput: githubPublishBasePathInput,
         enabled: githubPublishEnabled,
@@ -833,10 +833,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       githubPublishBasePathInput,
       githubPublishDefaultBranchInput,
       githubPublishEnabled,
-      githubPublishRepositoryInput,
+      githubPublishOwnerInput,
     ],
   );
-  const githubPublishPreviewRepository = githubPublishValidation.repository || "Not configured";
+  const githubPublishPreviewOwner = githubPublishValidation.owner || "Not configured";
 
   const loadUsersData = useCallback(async (): Promise<AdminPageLoadResult> => {
     const principalResponse = await fetchPrincipals(context.token, context.businessId);
@@ -988,7 +988,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
 
         if (githubResult.status === "fulfilled") {
           applyGitHubPublishConfigInputs(githubResult.value, {
-            setRepository: setGitHubPublishRepositoryInput,
+            setOwner: setGitHubPublishOwnerInput,
             setDefaultBranch: setGitHubPublishDefaultBranchInput,
             setBasePath: setGitHubPublishBasePathInput,
             setEnabled: setGitHubPublishEnabled,
@@ -1371,7 +1371,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     setGitHubPublishConfigError(null);
 
     const validation = validateGitHubPublishConfigInputs({
-      repositoryInput: githubPublishRepositoryInput,
+      ownerInput: githubPublishOwnerInput,
       defaultBranchInput: githubPublishDefaultBranchInput,
       basePathInput: githubPublishBasePathInput,
       enabled: githubPublishEnabled,
@@ -1384,13 +1384,13 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     setGitHubPublishConfigSubmitting(true);
     try {
       const updated = await updateGitHubPublishConfig(context.token, {
-        repository: validation.repository || "",
+        owner: validation.owner || "",
         default_branch: validation.defaultBranch,
         base_path: validation.basePath,
         enabled: githubPublishEnabled,
       });
       applyGitHubPublishConfigInputs(updated, {
-        setRepository: setGitHubPublishRepositoryInput,
+        setOwner: setGitHubPublishOwnerInput,
         setDefaultBranch: setGitHubPublishDefaultBranchInput,
         setBasePath: setGitHubPublishBasePathInput,
         setEnabled: setGitHubPublishEnabled,
@@ -1782,21 +1782,21 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     githubPublishEnabled
                       ? githubPublishValidation.blockingError
                         ? "Needs review"
-                        : githubPublishValidation.repository
+                        : githubPublishValidation.owner
                           ? "Enabled"
                           : "Needs setup"
                       : "Disabled"
                   }
                   detail={
-                    githubPublishValidation.repository
-                      ? `${githubPublishValidation.repository} @ ${githubPublishValidation.defaultBranch} (${githubPublishValidation.basePath})`
-                      : "Configure repository, branch, and base path for migration publish."
+                    githubPublishValidation.owner
+                      ? `${githubPublishValidation.owner} @ ${githubPublishValidation.defaultBranch} (${githubPublishValidation.basePath})`
+                      : "Configure GitHub account/owner, branch fallback, and base path for migration publish."
                   }
                   tone={
                     githubPublishEnabled
                       ? githubPublishValidation.blockingError
                         ? "warning"
-                        : githubPublishValidation.repository
+                        : githubPublishValidation.owner
                         ? "success"
                         : "warning"
                       : "neutral"
@@ -2301,22 +2301,22 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="GitHub Publish Configuration"
-            subtitle="Set the migration publish target repository, branch, and base path used by publish readiness and execution."
+            subtitle="Set the admin-owned GitHub account/owner, branch fallback, and base path used by migration publish readiness and execution."
             headingLevel={2}
             variant="support"
           />
           <FormContainer onSubmit={(event) => void handleSaveGitHubPublishConfig(event)} noValidate>
-            <label htmlFor="github-publish-repository">Repository (owner/name)</label>
+            <label htmlFor="github-publish-owner">GitHub account/owner</label>
             <input
-              id="github-publish-repository"
+              id="github-publish-owner"
               type="text"
-              value={githubPublishRepositoryInput}
-              onChange={(event) => setGitHubPublishRepositoryInput(event.target.value)}
+              value={githubPublishOwnerInput}
+              onChange={(event) => setGitHubPublishOwnerInput(event.target.value)}
               disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-              placeholder="mhanson13/tnmfire"
+              placeholder="mhanson13"
             />
-            {githubPublishValidation.repositoryError ? (
-              <p className="hint error">{githubPublishValidation.repositoryError}</p>
+            {githubPublishValidation.ownerError ? (
+              <p className="hint error">{githubPublishValidation.ownerError}</p>
             ) : null}
 
             <label htmlFor="github-publish-default-branch">Default Branch</label>
@@ -2369,8 +2369,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 <strong>Effective target preview</strong>
               </p>
               <WorkspaceMetadataGrid>
-                <WorkspaceMetadataItem label="Repository">
-                  <code>{githubPublishPreviewRepository}</code>
+                <WorkspaceMetadataItem label="GitHub account/owner">
+                  <code>{githubPublishPreviewOwner}</code>
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Branch">
                   <code>{githubPublishValidation.defaultBranch}</code>

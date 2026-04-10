@@ -59,6 +59,7 @@ def test_get_github_publish_config_returns_defaults_when_unset(db_session, seede
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["owner"] == ""
     assert payload["repository"] == ""
     assert payload["default_branch"] == "main"
     assert payload["base_path"] == "/"
@@ -71,7 +72,7 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     update_response = client.put(
         "/api/admin/github-publish-config",
         json={
-            "repository": "mhanson13/tnmfire",
+            "owner": "mhanson13",
             "default_branch": "main",
             "base_path": "/site",
             "enabled": True,
@@ -79,7 +80,8 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     )
     assert update_response.status_code == 200
     updated = update_response.json()
-    assert updated["repository"] == "mhanson13/tnmfire"
+    assert updated["owner"] == "mhanson13"
+    assert updated["repository"] == "mhanson13"
     assert updated["default_branch"] == "main"
     assert updated["base_path"] == "/site"
     assert updated["enabled"] is True
@@ -87,19 +89,20 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     get_response = client.get("/api/admin/github-publish-config")
     assert get_response.status_code == 200
     fetched = get_response.json()
-    assert fetched["repository"] == "mhanson13/tnmfire"
+    assert fetched["owner"] == "mhanson13"
+    assert fetched["repository"] == "mhanson13"
     assert fetched["default_branch"] == "main"
     assert fetched["base_path"] == "/site"
     assert fetched["enabled"] is True
 
 
-def test_put_github_publish_config_rejects_enabled_without_repository(db_session, seeded_business) -> None:
+def test_put_github_publish_config_rejects_enabled_without_owner(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
 
     response = client.put(
         "/api/admin/github-publish-config",
         json={
-            "repository": "",
+            "owner": "",
             "default_branch": "main",
             "base_path": "/",
             "enabled": True,
@@ -107,16 +110,16 @@ def test_put_github_publish_config_rejects_enabled_without_repository(db_session
     )
 
     assert response.status_code == 422
-    assert "Repository is required" in response.json()["detail"]
+    assert "GitHub owner is required" in response.json()["detail"]
 
 
-def test_put_github_publish_config_rejects_invalid_repository_format(db_session, seeded_business) -> None:
+def test_put_github_publish_config_rejects_invalid_owner_format(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
 
     response = client.put(
         "/api/admin/github-publish-config",
         json={
-            "repository": "invalid-repo-shape",
+            "owner": "invalid owner",
             "default_branch": "main",
             "base_path": "/",
             "enabled": True,
@@ -124,7 +127,7 @@ def test_put_github_publish_config_rejects_invalid_repository_format(db_session,
     )
 
     assert response.status_code == 422
-    assert "owner/repo format" in response.json()["detail"]
+    assert "GitHub owner is invalid" in response.json()["detail"]
 
 
 def test_put_github_publish_config_rejects_empty_default_branch_when_enabled(db_session, seeded_business) -> None:
@@ -133,7 +136,7 @@ def test_put_github_publish_config_rejects_empty_default_branch_when_enabled(db_
     response = client.put(
         "/api/admin/github-publish-config",
         json={
-            "repository": "mhanson13/tnmfire",
+            "owner": "mhanson13",
             "default_branch": "   ",
             "base_path": "/",
             "enabled": True,
@@ -150,7 +153,7 @@ def test_put_github_publish_config_normalizes_base_path(db_session, seeded_busin
     response = client.put(
         "/api/admin/github-publish-config",
         json={
-            "repository": "mhanson13/tnmfire",
+            "owner": "mhanson13",
             "default_branch": "main",
             "base_path": "site//docs/",
             "enabled": True,
@@ -169,7 +172,7 @@ def test_put_github_publish_config_emits_structured_update_log(db_session, seede
     response = client.put(
         "/api/admin/github-publish-config",
         json={
-            "repository": "mhanson13/tnmfire",
+            "owner": "mhanson13",
             "default_branch": "main",
             "base_path": "/site",
             "enabled": True,
@@ -187,7 +190,7 @@ def test_put_github_publish_config_emits_structured_update_log(db_session, seede
     payload = log_payloads[-1]
     assert payload.get("actor_principal_id") == "admin-audit-1"
     assert payload.get("actor_business_id") == seeded_business.id
-    assert "repository" in (payload.get("changed_fields") or [])
+    assert "owner" in (payload.get("changed_fields") or [])
     assert "enabled" in (payload.get("changed_fields") or [])
 
 
@@ -205,7 +208,7 @@ def test_github_publish_config_routes_require_admin_role(db_session, seeded_busi
     put_response = client.put(
         "/api/admin/github-publish-config",
         json={
-            "repository": "mhanson13/tnmfire",
+            "owner": "mhanson13",
             "default_branch": "main",
             "base_path": "/",
             "enabled": True,

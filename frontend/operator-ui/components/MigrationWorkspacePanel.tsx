@@ -18,6 +18,7 @@ import {
   generateMigrationDraftArtifacts,
   ingestMigrationSource,
   publishMigrationArtifactVersion,
+  updateMigrationPublishConfig,
   updateMigrationAnalyticsConfig,
   updateMigrationDeployConfig,
   updateMigrationEnrichedContent,
@@ -30,6 +31,7 @@ import type {
   MigrationDeployConfig,
   MigrationEnrichedContentNotes,
   MigrationOperatorRequirements,
+  MigrationPublishConfig,
   MigrationWorkspaceSummary,
 } from "../lib/api/types";
 
@@ -44,6 +46,7 @@ type BusyAction =
   | "ingest"
   | "save_requirements"
   | "save_enriched"
+  | "save_publish_config"
   | "save_deploy_config"
   | "save_analytics_config"
   | "generate"
@@ -71,6 +74,14 @@ const EMPTY_ENRICHED_CONTENT: MigrationEnrichedContentNotes = {
   faq_items: [],
   contact_overrides: {},
   additional_notes: null,
+};
+
+const EMPTY_PUBLISH_CONFIG: MigrationPublishConfig = {
+  enabled: true,
+  repo_owner: null,
+  repo_name: null,
+  branch: null,
+  artifact_root: null,
 };
 
 const EMPTY_DEPLOY_CONFIG: MigrationDeployConfig = {
@@ -1090,6 +1101,9 @@ export function MigrationWorkspacePanel({
   const [contactOverrides, setContactOverrides] = useState("");
   const [enrichedNotes, setEnrichedNotes] = useState("");
 
+  const [publishRepoName, setPublishRepoName] = useState("");
+  const [publishBranch, setPublishBranch] = useState("");
+
   const [deployEnabled, setDeployEnabled] = useState(false);
   const [deployRepoOwner, setDeployRepoOwner] = useState("");
   const [deployRepoName, setDeployRepoName] = useState("");
@@ -1122,6 +1136,7 @@ export function MigrationWorkspacePanel({
   const sourceSnapshot = summary?.source_snapshot || null;
   const publishReadiness = asRecord(summary?.publish_readiness || {});
   const deployReadiness = asRecord(summary?.deploy_readiness || {});
+  const workspacePublishConfig = asRecord(summary?.workspace.publish_config_json || {});
   const selectedArtifactVersionIdTrimmed = selectedArtifactVersionId.trim();
   const publishReadinessArtifactVersionId = asString(publishReadiness.approved_artifact_version_id);
   const deployReadinessArtifactVersionId = asString(deployReadiness.approved_artifact_version_id);
@@ -1278,6 +1293,10 @@ export function MigrationWorkspacePanel({
     setContactOverrides(stringifyInputsMap(rawEnriched.contact_overrides));
     setEnrichedNotes(asString(rawEnriched.additional_notes));
 
+    const rawPublishConfig = asRecord(workspace.publish_config_json);
+    setPublishRepoName(asString(rawPublishConfig.repo_name));
+    setPublishBranch(asString(rawPublishConfig.branch));
+
     const rawDeployConfig = asRecord(workspace.deploy_config_json);
     setDeployEnabled(Boolean(rawDeployConfig.enabled));
     setDeployRepoOwner(asString(rawDeployConfig.repo_owner));
@@ -1415,6 +1434,33 @@ export function MigrationWorkspacePanel({
     } catch (error) {
       setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save enriched content."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleSavePublishConfig = async (): Promise<void> => {
+    const payload: MigrationPublishConfig = {
+      ...EMPTY_PUBLISH_CONFIG,
+      enabled: true,
+      repo_owner: null,
+      repo_name: asStringOrNull(publishRepoName),
+      branch: asStringOrNull(publishBranch),
+      artifact_root: asStringOrNull(asString(workspacePublishConfig.artifact_root)),
+    };
+    setBusyAction("save_publish_config");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      await updateMigrationPublishConfig(token, businessId, siteId, {
+        publish_config: payload,
+      });
+      setStatusMessage("Publish repository settings saved.");
+      await loadWorkspaceData(false);
+    } catch (error) {
+      setErrorHint(null);
+      setErrorMessage(toErrorMessage(error, "Failed to save publish repository settings."));
     } finally {
       setBusyAction(null);
     }
@@ -2093,14 +2139,37 @@ export function MigrationWorkspacePanel({
           <div className="panel panel-compact stack" data-testid="migration-publish-target-summary">
             <strong>GitHub Publish Target</strong>
             <span className="hint muted" data-testid="migration-publish-target-admin-boundary">
-              Managed by Admin only. Operators can review effective target details here.
+              Admin controls GitHub account/owner. Operators control repository name and optional branch override.
             </span>
             <span className="hint">{adminPublishReadyLabel}</span>
+            <label className="stack-tight">
+              <span className="hint muted">Repository name (Operator-owned)</span>
+              <input
+                value={publishRepoName}
+                onChange={(event) => setPublishRepoName(event.target.value)}
+                placeholder="tnmfire"
+              />
+            </label>
+            <label className="stack-tight">
+              <span className="hint muted">Branch override (optional)</span>
+              <input value={publishBranch} onChange={(event) => setPublishBranch(event.target.value)} placeholder="main" />
+            </label>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => void handleSavePublishConfig()}
+              disabled={busyAction === "save_publish_config" || busyAction === "load"}
+            >
+              {busyAction === "save_publish_config" ? "Saving..." : "Save Publish Repository"}
+            </button>
             <WorkspaceMetadataGrid>
-              <WorkspaceMetadataItem label="Repository">
+              <WorkspaceMetadataItem label="GitHub account/owner">
+                {effectivePublishRepoOwner || "Not configured"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Effective repository">
                 {effectivePublishRepository || "Not configured"}
               </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Branch">
+              <WorkspaceMetadataItem label="Effective branch">
                 {effectivePublishRepository ? effectivePublishBranch : "n/a"}
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Artifact root">

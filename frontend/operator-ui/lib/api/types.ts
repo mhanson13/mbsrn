@@ -119,7 +119,8 @@ export interface BusinessSettingsUpdateRequest {
 
 export interface GitHubPublishConfig {
   id?: number | null;
-  repository: string;
+  owner: string;
+  repository?: string;
   default_branch: string;
   base_path: string;
   enabled: boolean;
@@ -128,6 +129,7 @@ export interface GitHubPublishConfig {
 }
 
 export interface GitHubPublishConfigUpdateRequest {
+  owner?: string | null;
   repository?: string | null;
   default_branch?: string | null;
   base_path?: string | null;
@@ -258,7 +260,7 @@ export interface MigrationPublishConfig {
   enabled: boolean;
   repo_owner: string | null;
   repo_name: string | null;
-  branch: string;
+  branch: string | null;
   artifact_root: string | null;
 }
 

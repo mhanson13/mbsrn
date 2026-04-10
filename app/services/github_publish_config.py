@@ -11,7 +11,7 @@ from app.models.github_publish_config import GitHubPublishConfig
 from app.repositories.github_publish_config_repository import GitHubPublishConfigRepository
 from app.schemas.github_publish_config import GitHubPublishConfigUpdateRequest
 
-_VALID_REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$")
+_VALID_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 _VALID_BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]{1,120}$")
 _VALID_BASE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9._/-]{0,159}$")
 
@@ -70,19 +70,19 @@ class GitHubPublishConfigService:
         actor_principal_id: str | None = None,
         actor_business_id: str | None = None,
     ) -> GitHubPublishConfig:
-        repository = (payload.repository or "").strip()
+        owner = ((payload.owner or payload.repository) or "").strip()
         raw_default_branch = (payload.default_branch or "").strip()
         default_branch = raw_default_branch or "main"
         base_path = _normalize_base_path(payload.base_path)
         enabled = bool(payload.enabled)
 
-        if enabled and not repository:
+        if enabled and not owner:
             raise GitHubPublishConfigValidationError(
-                "Repository is required when GitHub publishing is enabled."
+                "GitHub owner is required when GitHub publishing is enabled."
             )
-        if repository and not _VALID_REPOSITORY_PATTERN.fullmatch(repository):
+        if owner and not _VALID_OWNER_PATTERN.fullmatch(owner):
             raise GitHubPublishConfigValidationError(
-                "Repository must use owner/repo format (for example: mhanson13/tnmfire)."
+                "GitHub owner is invalid. Use a GitHub account/organization name (for example: mhanson13)."
             )
         if enabled and not raw_default_branch:
             raise GitHubPublishConfigValidationError(
@@ -105,13 +105,13 @@ class GitHubPublishConfigService:
 
         existing = self.repository.get_singleton()
         previous_values = {
-            "repository": (existing.repository if existing is not None else ""),
+            "owner": (existing.repository if existing is not None else ""),
             "default_branch": (existing.default_branch if existing is not None else "main"),
             "base_path": (existing.base_path if existing is not None else "/"),
             "enabled": bool(existing.enabled) if existing is not None else False,
         }
         updated_values = {
-            "repository": repository,
+            "owner": owner,
             "default_branch": default_branch,
             "base_path": base_path,
             "enabled": enabled,
@@ -119,13 +119,13 @@ class GitHubPublishConfigService:
 
         if existing is None:
             existing = GitHubPublishConfig(
-                repository=repository,
+                repository=owner,
                 default_branch=default_branch,
                 base_path=base_path,
                 enabled=enabled,
             )
         else:
-            existing.repository = repository
+            existing.repository = owner
             existing.default_branch = default_branch
             existing.base_path = base_path
             existing.enabled = enabled
@@ -134,7 +134,7 @@ class GitHubPublishConfigService:
         self.session.refresh(existing)
         changed_fields = [
             field_name
-            for field_name in ("repository", "default_branch", "base_path", "enabled")
+            for field_name in ("owner", "default_branch", "base_path", "enabled")
             if previous_values.get(field_name) != updated_values.get(field_name)
         ]
         changed_values = {
@@ -153,6 +153,7 @@ class GitHubPublishConfigService:
                 "changed_fields": changed_fields,
                 "changed_values": changed_values,
                 "effective_target": {
+                    "owner": existing.repository,
                     "repository": existing.repository,
                     "default_branch": existing.default_branch,
                     "base_path": existing.base_path,

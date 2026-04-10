@@ -2735,7 +2735,7 @@ describe("site workspace migration tab", () => {
     );
   });
 
-  it("uses admin-managed publish target summary and saves deploy/analytics settings", async () => {
+  it("uses admin-owned owner with operator-managed repository/branch and saves publish/deploy/analytics settings", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary
       .mockResolvedValueOnce(
@@ -2757,6 +2757,13 @@ describe("site workspace migration tab", () => {
       .mockResolvedValue(
         buildMigrationWorkspaceSummary({
           workspace: buildMigrationWorkspace({
+            publish_config_json: {
+              enabled: true,
+              repo_owner: null,
+              repo_name: "tnmfire",
+              branch: "main",
+              artifact_root: "",
+            },
             analytics_config_json: {
               enabled: true,
               ga_measurement_id: "G-PERSIST9999",
@@ -2787,11 +2794,32 @@ describe("site workspace migration tab", () => {
 
     await switchToMigrationTab(user);
 
-    expect(screen.queryByRole("button", { name: "Save Publish Target" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Save Publish Repository" })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Repo owner")).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Repo name")).not.toBeInTheDocument();
     expect(await screen.findByTestId("migration-publish-target-admin-boundary")).toHaveTextContent(
-      "Managed by Admin only.",
+      "Admin controls GitHub account/owner.",
+    );
+    expect(screen.getByPlaceholderText("tnmfire")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("main")).toBeInTheDocument();
+
+    await user.clear(screen.getByPlaceholderText("tnmfire"));
+    await user.type(screen.getByPlaceholderText("tnmfire"), "tnmfire");
+    await user.clear(screen.getByPlaceholderText("main"));
+    await user.type(screen.getByPlaceholderText("main"), "release");
+    await user.click(screen.getByRole("button", { name: "Save Publish Repository" }));
+    await waitFor(() =>
+      expect(mockUpdateMigrationPublishConfig).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          publish_config: expect.objectContaining({
+            repo_name: "tnmfire",
+            branch: "release",
+          }),
+        },
+      ),
     );
 
     await user.clear(screen.getByPlaceholderText("Workflow ID"));
@@ -2829,7 +2857,6 @@ describe("site workspace migration tab", () => {
     await waitFor(() => expect(screen.getByDisplayValue("G-PERSIST9999")).toBeInTheDocument());
     expect(await screen.findByTestId("migration-publish-target-summary")).toHaveTextContent("mhanson13/tnmfire");
     expect(screen.getByTestId("migration-publish-target-summary")).toHaveTextContent("site");
-    expect(mockUpdateMigrationPublishConfig).not.toHaveBeenCalled();
   });
 
   it("keeps approve/publish/deploy enablement aligned with selected artifact prerequisites", async () => {

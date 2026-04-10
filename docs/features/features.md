@@ -212,10 +212,12 @@ It transforms a business's website and market context into structured insights a
 - source import is advisory
 - operator input can override weak source material
 - generated outputs remain operator-controlled through approval, publish, and deploy gates (no auto actions)
-- Adds admin-controlled GitHub publish target configuration (`repository`, `default_branch`, `base_path`, `enabled`) so migration publish has an explicit control-plane dependency.
+- Adds admin-controlled GitHub publish baseline configuration (`owner`, `default_branch`, `base_path`, `enabled`) so migration publish has an explicit control-plane dependency.
 - Hardens admin GitHub publish target trust with pre-save validation, normalized effective-target preview, clearer publish/deploy readiness ownership messaging, and lightweight structured config-change logging.
-- Keeps GitHub publish target ownership Admin-only in the site workspace:
-- migration workspace shows read-only effective target/readiness context instead of editable owner/repo/branch fields.
+- Uses split ownership for migration publish target:
+- Admin owns GitHub account/owner baseline and runtime credential boundary.
+- Operator owns workspace repository name plus optional branch override.
+- workspace shows merged effective target/readiness context (owner + repo + branch) without exposing credential material.
 - approve/publish/deploy button enablement is driven by authoritative readiness prerequisites after mutation refresh, not local stale assumptions.
 - analytics insertion rules remain workspace-level controls and now persist/reload reliably after save.
 

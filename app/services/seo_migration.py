@@ -413,7 +413,7 @@ class SEOMigrationService:
                 enriched_content_notes_json=_normalize_json_dict(enriched_content_notes),
                 brand_business_facts_snapshot_json=self._build_brand_business_snapshot(site),
                 imported_source_snapshot_json={},
-                publish_config_json=_normalize_publish_config(publish_config),
+                publish_config_json=_normalize_workspace_publish_config(publish_config),
                 deploy_config_json=_normalize_deploy_config(deploy_config),
                 analytics_config_json=_normalize_analytics_config(analytics_config),
                 publish_status="not_ready",
@@ -433,7 +433,7 @@ class SEOMigrationService:
             if enriched_content_notes is not None:
                 workspace.enriched_content_notes_json = _normalize_json_dict(enriched_content_notes)
             if publish_config is not None:
-                workspace.publish_config_json = _normalize_publish_config(publish_config)
+                workspace.publish_config_json = _normalize_workspace_publish_config(publish_config)
             if deploy_config is not None:
                 workspace.deploy_config_json = _normalize_deploy_config(deploy_config)
             if analytics_config is not None:
@@ -536,7 +536,7 @@ class SEOMigrationService:
     ) -> SEOMigrationWorkspace:
         workspace = self.get_workspace(business_id=business_id, site_id=site_id)
         site = self._require_site(business_id=business_id, site_id=site_id)
-        workspace.publish_config_json = _normalize_publish_config(publish_config)
+        workspace.publish_config_json = _normalize_workspace_publish_config(publish_config)
         workspace.updated_by_principal_id = principal_id
         self._update_workspace_readiness_statuses(workspace=workspace, site=site)
         self.seo_migration_repository.save_workspace(workspace)
@@ -3509,12 +3509,20 @@ class SEOMigrationService:
         }
 
     @staticmethod
+    def _normalize_admin_repo_owner(value: object) -> str:
+        normalized = _normalize_string(value, max_length=120) or ""
+        # Backward compatibility: older admin config rows may still contain owner/repo.
+        # Ownership split now treats admin config as owner-only.
+        if "/" in normalized:
+            normalized = normalized.split("/", 1)[0].strip()
+        return normalized
+
+    @staticmethod
     def _is_default_workspace_publish_config(config: dict[str, object]) -> bool:
         return (
             not bool(config.get("enabled"))
-            and not str(config.get("repo_owner") or "").strip()
             and not str(config.get("repo_name") or "").strip()
-            and str(config.get("branch") or "").strip().lower() == "main"
+            and not str(config.get("branch") or "").strip()
             and not str(config.get("artifact_root") or "").strip()
         )
 
@@ -3531,6 +3539,7 @@ class SEOMigrationService:
             "admin_publish_config_enabled": False,
             "admin_publish_config_valid": False,
             "admin_publish_configured": False,
+            "operator_repository_configured": False,
         }
         reasons: list[str] = []
 
@@ -3540,15 +3549,15 @@ class SEOMigrationService:
             return effective_config, prerequisites, reasons
 
         admin_config = self.github_publish_config_service.get()
-        repository = _normalize_string(getattr(admin_config, "repository", None), max_length=255) or ""
+        owner = self._normalize_admin_repo_owner(getattr(admin_config, "repository", None))
         default_branch = _normalize_string(getattr(admin_config, "default_branch", None), max_length=120) or "main"
         base_path = _normalize_string(getattr(admin_config, "base_path", None), max_length=160) or "/"
         normalized_artifact_root = base_path.strip().replace("\\", "/").strip("/")
         enabled = bool(getattr(admin_config, "enabled", False))
 
-        prerequisites["admin_publish_config_present"] = bool(repository)
+        prerequisites["admin_publish_config_present"] = bool(owner)
         prerequisites["admin_publish_config_enabled"] = enabled
-        if not repository:
+        if not owner:
             if require_admin:
                 reasons.append("Admin must configure a GitHub publish target before publish is available.")
             return effective_config, prerequisites, reasons
@@ -3557,37 +3566,22 @@ class SEOMigrationService:
                 reasons.append("Admin has disabled GitHub publishing.")
             return effective_config, prerequisites, reasons
 
-        try:
-            admin_target = _resolve_publish_target(
-                {
-                    "enabled": True,
-                    "target_repo": repository,
-                    "branch": default_branch,
-                    "artifact_root": normalized_artifact_root,
-                }
-            )
-        except ValueError as exc:
+        if not _VALID_REPO_OWNER_PATTERN.fullmatch(owner):
             if require_admin:
-                reasons.append(str(exc))
+                reasons.append("Admin GitHub account/owner is invalid.")
             return effective_config, prerequisites, reasons
 
         prerequisites["admin_publish_config_valid"] = True
         prerequisites["admin_publish_configured"] = True
+        effective_config["enabled"] = True
+        effective_config["repo_owner"] = owner
         if self._is_default_workspace_publish_config(normalized_workspace):
-            return {
-                "enabled": True,
-                "repo_owner": admin_target["repo_owner"],
-                "repo_name": admin_target["repo_name"],
-                "branch": admin_target["branch"],
-                "artifact_root": admin_target["artifact_root"],
-            }, prerequisites, reasons
-
-        if not str(effective_config.get("repo_owner") or "").strip():
-            effective_config["repo_owner"] = admin_target["repo_owner"]
-        if not str(effective_config.get("repo_name") or "").strip():
-            effective_config["repo_name"] = admin_target["repo_name"]
+            effective_config["repo_name"] = ""
+        if not str(effective_config.get("branch") or "").strip():
+            effective_config["branch"] = default_branch
         if not str(effective_config.get("artifact_root") or "").strip():
-            effective_config["artifact_root"] = admin_target["artifact_root"]
+            effective_config["artifact_root"] = normalized_artifact_root
+        prerequisites["operator_repository_configured"] = bool(str(effective_config.get("repo_name") or "").strip())
         return effective_config, prerequisites, reasons
 
     def _safe_effective_publish_target_summary(self, config: object) -> dict[str, object]:
@@ -3617,7 +3611,12 @@ class SEOMigrationService:
         normalized_reasons = [str(item or "").strip().lower() for item in reasons or [] if str(item or "").strip()]
         if not normalized_reasons:
             return "unknown_error"
-        if any("not configured" in reason or "configuration" in reason for reason in normalized_reasons):
+        if any(
+            "not configured" in reason
+            or "configuration" in reason
+            or "must configure" in reason
+            for reason in normalized_reasons
+        ):
             return "config_missing"
         if any("invalid" in reason or "requires" in reason for reason in normalized_reasons):
             return "target_invalid"
@@ -3728,20 +3727,24 @@ class SEOMigrationService:
             require_admin=True,
         )
         reasons.extend(admin_reasons)
-        try:
-            target = _resolve_publish_target(effective_publish_config)
-            target_valid = True
-            target_summary = {
-                "enabled": target["enabled"],
-                "repo_owner": target["repo_owner"],
-                "repo_name": target["repo_name"],
-                "branch": target["branch"],
-                "artifact_root": target["artifact_root"],
-            }
-            if not target["enabled"]:
-                reasons.append("Publish target is not enabled.")
-        except ValueError as exc:
-            reasons.append(str(exc))
+        target_summary = self._safe_publish_target_summary(effective_publish_config)
+        if not bool(admin_prerequisites.get("operator_repository_configured")):
+            reasons.append("Operator must configure a GitHub repository before publish is available.")
+        else:
+            try:
+                target = _resolve_publish_target(effective_publish_config)
+                target_valid = True
+                target_summary = {
+                    "enabled": target["enabled"],
+                    "repo_owner": target["repo_owner"],
+                    "repo_name": target["repo_name"],
+                    "branch": target["branch"],
+                    "artifact_root": target["artifact_root"],
+                }
+                if not target["enabled"]:
+                    reasons.append("Publish target is not enabled.")
+            except ValueError as exc:
+                reasons.append(str(exc))
         if artifact is None:
             reasons.append("An approved artifact is required before publish.")
         else:
@@ -3788,26 +3791,29 @@ class SEOMigrationService:
             require_admin=True,
         )
         reasons.extend(admin_reasons)
-        try:
-            target = _resolve_deploy_target(
-                deploy_config=workspace.deploy_config_json,
-                publish_config=effective_publish_config,
-                default_workflow_id=self.deploy_default_workflow_id,
-                default_ref=self.deploy_default_ref,
-            )
-            target_valid = True
-            target_summary = {
-                "enabled": target["enabled"],
-                "repo_owner": target["repo_owner"],
-                "repo_name": target["repo_name"],
-                "workflow_id": target["workflow_id"],
-                "ref": target["ref"],
-                "inputs": target["inputs"],
-            }
-            if not target["enabled"]:
-                reasons.append("Deploy target is not enabled.")
-        except ValueError as exc:
-            reasons.append(str(exc))
+        if not bool(admin_prerequisites.get("operator_repository_configured")):
+            reasons.append("Operator must configure a GitHub repository before publish is available.")
+        else:
+            try:
+                target = _resolve_deploy_target(
+                    deploy_config=workspace.deploy_config_json,
+                    publish_config=effective_publish_config,
+                    default_workflow_id=self.deploy_default_workflow_id,
+                    default_ref=self.deploy_default_ref,
+                )
+                target_valid = True
+                target_summary = {
+                    "enabled": target["enabled"],
+                    "repo_owner": target["repo_owner"],
+                    "repo_name": target["repo_name"],
+                    "workflow_id": target["workflow_id"],
+                    "ref": target["ref"],
+                    "inputs": target["inputs"],
+                }
+                if not target["enabled"]:
+                    reasons.append("Deploy target is not enabled.")
+            except ValueError as exc:
+                reasons.append(str(exc))
         if artifact is None:
             reasons.append("An approved artifact is required before deploy.")
         else:
@@ -4076,12 +4082,16 @@ def _normalize_publish_config(value: object) -> dict[str, object]:
     target_repo = _normalize_string(source.get("target_repo"), max_length=240)
     repo_owner = _normalize_string(source.get("repo_owner"), max_length=80)
     repo_name = _normalize_string(source.get("repo_name"), max_length=120)
+    if repo_name is None:
+        repo_name = _normalize_string(source.get("repository"), max_length=120)
     if target_repo and (not repo_owner or not repo_name):
         parts = [item.strip() for item in target_repo.split("/", 1)]
         if len(parts) == 2:
             repo_owner = repo_owner or parts[0]
             repo_name = repo_name or parts[1]
-    branch = _normalize_string(source.get("branch"), max_length=120) or "main"
+        elif len(parts) == 1:
+            repo_name = repo_name or parts[0]
+    branch = _normalize_string(source.get("branch"), max_length=120) or ""
     artifact_root = _normalize_string(source.get("artifact_root"), max_length=120)
     if artifact_root is None:
         artifact_root = _normalize_string(source.get("base_path"), max_length=120)
@@ -4092,6 +4102,18 @@ def _normalize_publish_config(value: object) -> dict[str, object]:
         "repo_name": repo_name or "",
         "branch": branch,
         "artifact_root": artifact_root or "",
+    }
+
+
+def _normalize_workspace_publish_config(value: object) -> dict[str, object]:
+    normalized = _normalize_publish_config(value)
+    return {
+        "enabled": bool(normalized.get("enabled")),
+        # GitHub account/owner is Admin-owned. Workspace config only stores repo + optional branch override.
+        "repo_owner": "",
+        "repo_name": str(normalized.get("repo_name") or "").strip(),
+        "branch": str(normalized.get("branch") or "").strip(),
+        "artifact_root": str(normalized.get("artifact_root") or "").strip(),
     }
 
 

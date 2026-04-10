@@ -38,14 +38,14 @@ Authentication flow:
 
 Admin route (`/admin`) includes a `GitHub Publish Configuration` form used by migration publish readiness/execution:
 
-- `Repository (owner/name)`
+- `GitHub account/owner`
 - `Default Branch`
 - `Base Path`
 - `Enabled`
-- Effective target preview (normalized repository/branch/base path)
+- Effective target preview (normalized owner/branch/base path)
 
 Validation expectations:
-- when enabled, repository must use `owner/repo` shape
+- when enabled, owner must use GitHub account/org shape
 - when enabled, default branch is required and must use safe branch characters
 - base path is normalized to `/` or `/subpath` and validated before save
 
@@ -56,8 +56,10 @@ API surface:
 This stores publish target metadata only. GitHub credentials remain environment-managed and are not exposed in UI.
 
 Migration workspace boundary:
-- site workspace migration panel does not provide editable GitHub owner/repo/branch/base-path controls.
-- operators see read-only effective publish target/readiness metadata sourced from Admin configuration.
+- Admin owns GitHub account/owner and runtime credential boundary.
+- site workspace migration panel does not provide editable Admin-owned owner/base-path controls.
+- operators configure workspace repository name plus optional branch override.
+- workspace surfaces a merged effective target/readiness summary (admin owner + workspace repo/branch) without exposing credential material.
 - analytics insertion mode + GA measurement fields are workspace-level settings and persist after save/reload.
 - approve/publish/deploy control enablement follows backend readiness prerequisites from refreshed summary state.
 

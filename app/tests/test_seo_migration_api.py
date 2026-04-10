@@ -243,7 +243,7 @@ def _seed_business_and_site(db_session, *, business_id: str, site_id: str) -> No
     db_session.add(site)
     db_session.add(
         GitHubPublishConfig(
-            repository="acme/tnmfire-site",
+            repository="acme",
             default_branch="main",
             base_path="/",
             enabled=True,

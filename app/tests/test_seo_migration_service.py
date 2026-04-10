@@ -207,7 +207,7 @@ def _seed_business_and_site(db_session, *, ga_measurement_id: str | None = None)
     db_session.add(site)
     db_session.add(
         GitHubPublishConfig(
-            repository="acme/tnmfire-site",
+            repository="acme",
             default_branch="main",
             base_path="/",
             enabled=True,
@@ -2546,7 +2546,7 @@ def test_publish_requires_admin_github_publish_repository_configured(db_session)
         )
 
 
-def test_publish_uses_admin_target_when_workspace_publish_config_is_default(db_session) -> None:
+def test_publish_requires_operator_repository_when_workspace_publish_config_is_default(db_session) -> None:
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
         db_session,
@@ -2575,21 +2575,24 @@ def test_publish_uses_admin_target_when_workspace_publish_config_is_default(db_s
         approval_notes=None,
         principal_id="principal-1",
     )
-    service.publish_artifact_version(
-        business_id=business_id,
-        site_id=site_id,
-        artifact_version_id=artifact.id,
-        dry_run=False,
-        commit_message=None,
-        analytics_measurement_id=None,
-        principal_id="principal-1",
-    )
-    assert publisher.publish_calls
-    target, _, _, _ = publisher.publish_calls[-1]
-    assert target.repo_owner == "acme"
-    assert target.repo_name == "tnmfire-site"
-    assert target.branch == "main"
-    assert target.artifact_root == ""
+    with pytest.raises(
+        SEOMigrationValidationError,
+        match="Operator must configure a GitHub repository before publish is available.",
+    ):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message=None,
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+    assert not publisher.publish_calls
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    prereqs = summary.publish_readiness.get("config_prerequisites")
+    assert isinstance(prereqs, dict)
+    assert prereqs.get("operator_repository_configured") is False
 
 
 def test_missing_publisher_config_is_categorized_for_readiness_and_errors(db_session) -> None:
