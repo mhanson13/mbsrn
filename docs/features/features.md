@@ -285,6 +285,29 @@ It transforms a business's website and market context into structured insights a
 
 ---
 
+## 15. Shared Shell + Dashboard Modernization
+
+### What it does
+- Modernizes shared operator chrome so upgraded routes feel coherent inside the same workspace system.
+- Strengthens top-nav context with:
+- current route area framing
+- concise next-step guidance
+- consistent session/role presentation
+- Upgrades `/dashboard` into a stronger control surface with:
+- explicit "what matters now" emphasis
+- launchpad-style workflow lanes
+- clearer separation between primary action and supporting signals
+
+### Key capability
+- Reuses existing MBSRN-native layout/workspace primitives and cadence (`OperatorPageHero`, `OperatorPageSectionStack`, `WorkspaceActionBar`, metadata/message shells) rather than page-local one-off framing.
+- Keeps shared shell composition role-aware so Operator/Admin/User variants can evolve without rewriting base presentation patterns.
+- TailAdmin remains visual inspiration only; implementation is internal and dependency-free.
+
+### Operator value
+> "The shell and dashboard now feel like a deliberate control console, not older chrome around newer pages."
+
+---
+
 ## Summary
 
 MBSRN transforms a small business from:

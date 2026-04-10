@@ -50,7 +50,13 @@ Usage guidance:
 - use `OperatorRouteSupportState` for loading/error/missing-id support states on detail/workspace routes
 - keep high-traffic operator routes (including `/automation`) in a control-surface cadence: hero -> primary actions -> section stack (operations, outcomes, history)
 - on `/recommendations`, keep a decision-first cadence: hero -> queue controls -> quick scan -> execution/history -> secondary outcome snapshot
+- keep shared shell + dashboard cadence aligned with upgraded route surfaces:
+  - shell route-context rail (current area + quick guidance)
+  - dashboard priority lane (what matters now)
+  - launchpad lane (direct workflow entry)
+  - secondary lane (activity/context signals)
 
 Role-aware boundary:
 - these primitives are shared presentation scaffolding for Operator/Admin/User-adapted pages.
 - keep business/workflow semantics in route/domain logic; primitives remain presentational.
+- avoid embedding Operator-only assumptions into shared shell/layout framing; role intent belongs in route/domain composition.

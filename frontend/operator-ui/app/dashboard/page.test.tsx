@@ -150,17 +150,21 @@ describe("dashboard operator-focused layout", () => {
     expect(screen.getByText("Error: context failed")).toBeInTheDocument();
   });
 
-  it("renders summary, priority, and recent activity without the legacy quick navigation card", async () => {
+  it("renders modernized control surface, launchpad, and activity context panels", async () => {
     mockUseOperatorContext.mockReturnValue(baseContext());
     render(<DashboardPage />);
 
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
     expect(screen.getByTestId("dashboard-page-hero")).toHaveClass("operator-page-hero-surface");
-    expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Operator dashboard" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Site")).not.toBeInTheDocument();
     expect(screen.getByTestId("dashboard-summary-strip")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Do this now" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Recent activity" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What matters now" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Workspace launchpad" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recent activity and context" })).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-operator-focus-zone")).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-launchpad-section")).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-activity-context-grid")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Quick navigation" })).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -168,11 +172,11 @@ describe("dashboard operator-focused layout", () => {
       expect(mockFetchAutomationRuns).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     });
     await waitFor(() => {
-      expect(screen.getByTestId("dashboard-priority-panel")).toHaveTextContent("Review open recommendations");
-      expect(screen.getByTestId("dashboard-priority-panel")).toHaveTextContent("Open Recommendations");
+      expect(screen.getByTestId("dashboard-priority-callout")).toHaveTextContent("Review open recommendations");
+      expect(screen.getByTestId("dashboard-priority-callout")).toHaveTextContent("Open Recommendations");
     });
-    expect(
-      screen.getByRole("link", { name: "Open Recommendations" }).closest(".workspace-action-bar"),
-    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Automation status" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open site workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open competitors" })).toBeInTheDocument();
   });
 });

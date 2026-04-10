@@ -21,6 +21,14 @@ const links = [
   { href: "/user-mgmt", label: "User Mgmt", adminOnly: true },
 ];
 
+type ShellRouteContext = {
+  label: string;
+  summary: string;
+  quickHref: string;
+  quickLabel: string;
+  badgeClass: "badge-success" | "badge-warn" | "badge-muted" | "badge-error";
+};
+
 type ShellWidthMode = "default" | "wide" | "full";
 type ThemeMode = "light" | "dark";
 
@@ -35,6 +43,97 @@ const WORKFLOW_SITE_SELECTOR_PATH_PREFIXES = [
   "/automation",
   "/business-profile",
 ] as const;
+
+function resolveShellRouteContext(pathname: string): ShellRouteContext {
+  if (pathname.startsWith("/sites/")) {
+    return {
+      label: "Site workspace",
+      summary: "Run recommendations, migration, and supporting reviews for one selected site.",
+      quickHref: pathname,
+      quickLabel: "Open site workspace",
+      badgeClass: "badge-success",
+    };
+  }
+  if (pathname === "/sites") {
+    return {
+      label: "Site inventory",
+      summary: "Pick the right site workspace before running audits, recommendations, or migration.",
+      quickHref: "/sites",
+      quickLabel: "Review sites",
+      badgeClass: "badge-muted",
+    };
+  }
+  if (pathname.startsWith("/recommendations/runs/")) {
+    return {
+      label: "Recommendation run details",
+      summary: "Validate run output and narratives, then route decisions back into site execution.",
+      quickHref: "/recommendations",
+      quickLabel: "Back to recommendations",
+      badgeClass: "badge-warn",
+    };
+  }
+  if (pathname.startsWith("/recommendations")) {
+    return {
+      label: "Recommendations workspace",
+      summary: "Prioritize open recommendation work, execute actions, and track run outcomes.",
+      quickHref: "/recommendations",
+      quickLabel: "Review queue",
+      badgeClass: "badge-warn",
+    };
+  }
+  if (pathname.startsWith("/automation")) {
+    return {
+      label: "Automation oversight",
+      summary: "Track current automation status and intervene quickly when run outcomes regress.",
+      quickHref: "/automation",
+      quickLabel: "View automation",
+      badgeClass: "badge-success",
+    };
+  }
+  if (pathname.startsWith("/competitors")) {
+    return {
+      label: "Competitor context",
+      summary: "Use competitive signals to support recommendation prioritization and narrative trust.",
+      quickHref: "/competitors",
+      quickLabel: "Review competitors",
+      badgeClass: "badge-muted",
+    };
+  }
+  if (pathname.startsWith("/audits")) {
+    return {
+      label: "Audit runs",
+      summary: "Check crawl and audit outcomes before triggering recommendation generation.",
+      quickHref: "/audits",
+      quickLabel: "Review audits",
+      badgeClass: "badge-muted",
+    };
+  }
+  if (pathname.startsWith("/business-profile")) {
+    return {
+      label: "Business profile",
+      summary: "Maintain profile and location context so downstream recommendations stay grounded.",
+      quickHref: "/business-profile",
+      quickLabel: "Open profile",
+      badgeClass: "badge-muted",
+    };
+  }
+  if (pathname.startsWith("/admin") || pathname.startsWith("/user-mgmt")) {
+    return {
+      label: "Admin and governance",
+      summary: "Manage workspace governance, access controls, and operator support settings.",
+      quickHref: "/admin",
+      quickLabel: "Open admin",
+      badgeClass: "badge-error",
+    };
+  }
+  return {
+    label: "Dashboard",
+    summary: "Review high-signal priorities and launch the next workflow with confidence.",
+    quickHref: "/dashboard",
+    quickLabel: "Open dashboard",
+    badgeClass: "badge-success",
+  };
+}
 
 function resolveShellWidthMode(pathname: string): ShellWidthMode {
   if (pathname.startsWith("/sites/")) {
@@ -231,6 +330,12 @@ export function NavShell({ children }: { children: React.ReactNode }) {
   const showWorkflowSiteSelector = Boolean(
     resolvedPrincipal?.business_id && token && shouldShowWorkflowSiteSelector(pathname),
   );
+  const routeContext = resolveShellRouteContext(pathname);
+  const principalRoleLabel = resolvedPrincipal?.role === "admin"
+    ? "Admin"
+    : resolvedPrincipal?.role === "operator"
+      ? "Operator"
+      : "Guest";
   const shellWidthMode = resolveShellWidthMode(pathname);
   const shellMainInnerClassName = [
     "operator-shell-main-inner",
@@ -302,49 +407,70 @@ export function NavShell({ children }: { children: React.ReactNode }) {
                 height={32}
                 data-testid="topnav-logo-image"
               />
-              <strong>MBSRN Operator Workspace</strong>
+              <span className="topnav-brand-content">
+                <strong>MBSRN Operator Workspace</strong>
+                <span className="topnav-brand-subtitle">
+                  Unified control surface for operational workflows
+                </span>
+              </span>
             </Link>
           </div>
-          <nav className="topnav-links">
-            {links
-              .filter((link) => !link.adminOnly || resolvedPrincipal?.role === "admin")
-              .map((link) => {
-                const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={active ? "topnav-link is-active" : "topnav-link"}
-                    aria-current={active ? "page" : undefined}
-                  >
-                    {link.label}
-                  </Link>
-                );
-              })}
-          </nav>
+          <div className="topnav-rail" data-testid="topnav-route-rail">
+            <nav className="topnav-links">
+              {links
+                .filter((link) => !link.adminOnly || resolvedPrincipal?.role === "admin")
+                .map((link) => {
+                  const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
+                  return (
+                    <Link
+                      key={link.href}
+                      href={link.href}
+                      className={active ? "topnav-link is-active" : "topnav-link"}
+                      aria-current={active ? "page" : undefined}
+                    >
+                      {link.label}
+                    </Link>
+                  );
+                })}
+            </nav>
+            <div className="topnav-route-context" data-testid="topnav-route-context">
+              <span className={`badge ${routeContext.badgeClass} topnav-route-badge`}>
+                Current area: {routeContext.label}
+              </span>
+              <p className="topnav-route-summary">{routeContext.summary}</p>
+              <Link href={routeContext.quickHref} className="topnav-route-cta">
+                {routeContext.quickLabel}
+              </Link>
+            </div>
+          </div>
           <div className="topnav-session">
-            <small className="topnav-principal">
-              {resolvedPrincipal ? `${resolvedPrincipal.display_name} (${resolvedPrincipal.role})` : "Account"}
-            </small>
-            <button
-              type="button"
-              className="topnav-theme-toggle"
-              onClick={handleThemeToggle}
-              data-testid="topnav-theme-toggle"
-            >
-              Light / Dark
-            </button>
-            {resolvedPrincipal ? (
-              <>
+            <div className="topnav-session-identity">
+              <small className="topnav-principal">
+                {resolvedPrincipal ? resolvedPrincipal.display_name : "Account"}
+              </small>
+              <span className="badge badge-muted topnav-role-badge" data-testid="topnav-role-badge">
+                {principalRoleLabel}
+              </span>
+            </div>
+            <div className="topnav-session-actions">
+              <button
+                type="button"
+                className="topnav-theme-toggle"
+                onClick={handleThemeToggle}
+                data-testid="topnav-theme-toggle"
+              >
+                Light / Dark
+              </button>
+              {resolvedPrincipal ? (
                 <button type="button" onClick={() => void handleSignOut()}>
                   Sign out
                 </button>
-              </>
-            ) : (
-              <Link href="/" className="topnav-link">
-                Sign in
-              </Link>
-            )}
+              ) : (
+                <Link href="/" className="topnav-link">
+                  Sign in
+                </Link>
+              )}
+            </div>
           </div>
         </div>
         {showWorkflowSiteSelector ? <WorkflowHeaderSiteSelector pathname={pathname} /> : null}

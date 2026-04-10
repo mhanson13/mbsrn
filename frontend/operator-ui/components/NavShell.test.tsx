@@ -88,6 +88,9 @@ describe("NavShell", () => {
     expect(userMgmtLink).toHaveAttribute("href", "/user-mgmt");
     expect(screen.getByTestId("topnav-logo-link")).toHaveAttribute("href", "/dashboard");
     expect(screen.getByTestId("topnav-logo-image")).toHaveAttribute("src", expect.stringContaining("mbsrn-logo.jpg"));
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Current area: Dashboard");
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Open dashboard");
+    expect(screen.getByTestId("topnav-role-badge")).toHaveTextContent("Admin");
     expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
     expect(document.querySelectorAll(".topnav-links")).toHaveLength(1);
     expect(document.querySelector(".topnav-inner")).toBeTruthy();
@@ -118,6 +121,7 @@ describe("NavShell", () => {
     );
 
     expect(screen.getByText("Account")).toBeInTheDocument();
+    expect(screen.getByTestId("topnav-role-badge")).toHaveTextContent("Guest");
     expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/");
     expect(screen.getByTestId("topnav-theme-toggle")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
@@ -147,6 +151,8 @@ describe("NavShell", () => {
     const sitesLink = screen.getByRole("link", { name: "Sites" });
     expect(sitesLink).toHaveClass("topnav-link", "is-active");
     expect(sitesLink).toHaveAttribute("aria-current", "page");
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Current area: Site workspace");
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Open site workspace");
     expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveClass("is-active");
     expect(document.querySelector(".operator-shell-main-inner-full")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "User Mgmt" })).not.toBeInTheDocument();
@@ -176,6 +182,8 @@ describe("NavShell", () => {
     );
 
     expect(document.querySelector(".operator-shell-main-inner-wide")).toBeTruthy();
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Current area: Recommendations workspace");
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Review queue");
     expect(screen.getByTestId("topnav-site-selector-row")).toBeInTheDocument();
   });
 

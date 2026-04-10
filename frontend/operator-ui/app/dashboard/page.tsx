@@ -33,6 +33,15 @@ type DashboardPriorityCue = {
   badgeClass: "badge-success" | "badge-warn" | "badge-muted" | "badge-error";
 };
 
+type DashboardLaunchLane = {
+  title: string;
+  summary: string;
+  statusLabel: string;
+  badgeClass: "badge-success" | "badge-warn" | "badge-muted" | "badge-error";
+  ctaLabel: string;
+  href: string;
+};
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return "—";
@@ -141,6 +150,84 @@ function buildPriorityCue(params: {
     href: `/sites/${selectedSite.id}`,
     badgeClass: "badge-muted",
   };
+}
+
+function toScopedRoute(basePath: string, siteId: string | null): string {
+  if (!siteId) {
+    return basePath;
+  }
+  if (basePath === "/sites") {
+    return `/sites/${encodeURIComponent(siteId)}`;
+  }
+  const separator = basePath.includes("?") ? "&" : "?";
+  return `${basePath}${separator}site_id=${encodeURIComponent(siteId)}`;
+}
+
+function buildDashboardLaunchLanes(params: {
+  selectedSiteId: string | null;
+  openRecommendations: number;
+  latestAutomationStatus: string;
+  recommendationRunStatus: string;
+  analysisFreshnessStatus: string;
+}): DashboardLaunchLane[] {
+  const {
+    selectedSiteId,
+    openRecommendations,
+    latestAutomationStatus,
+    recommendationRunStatus,
+    analysisFreshnessStatus,
+  } = params;
+
+  return [
+    {
+      title: "Recommendations",
+      summary: "Review queue health, trigger generation, and move accepted items into execution.",
+      statusLabel:
+        openRecommendations > 0
+          ? `${openRecommendations} open`
+          : recommendationRunStatus
+            ? `Run ${recommendationRunStatus}`
+            : "No run yet",
+      badgeClass: openRecommendations > 0 ? "badge-warn" : "badge-success",
+      ctaLabel: "Open recommendations",
+      href: toScopedRoute("/recommendations", selectedSiteId),
+    },
+    {
+      title: "Site workspace",
+      summary: "Drive recommendation and migration decisions inside the site-specific operator workspace.",
+      statusLabel: selectedSiteId ? "Site selected" : "Select site",
+      badgeClass: selectedSiteId ? "badge-success" : "badge-warn",
+      ctaLabel: selectedSiteId ? "Open site workspace" : "Review sites",
+      href: toScopedRoute("/sites", selectedSiteId),
+    },
+    {
+      title: "Automation",
+      summary: "Track run outcomes and intervene when automation health regresses.",
+      statusLabel: latestAutomationStatus || "No runs",
+      badgeClass:
+        latestAutomationStatus === "failed"
+          ? "badge-error"
+          : latestAutomationStatus === "running" || latestAutomationStatus === "queued"
+            ? "badge-warn"
+            : "badge-muted",
+      ctaLabel: "Open automation",
+      href: toScopedRoute("/automation", selectedSiteId),
+    },
+    {
+      title: "Competitor context",
+      summary: "Keep supporting competitive context fresh before reshaping recommendation plans.",
+      statusLabel:
+        analysisFreshnessStatus === "pending_refresh" || analysisFreshnessStatus === "unknown"
+          ? "Context stale"
+          : "Context available",
+      badgeClass:
+        analysisFreshnessStatus === "pending_refresh" || analysisFreshnessStatus === "unknown"
+          ? "badge-warn"
+          : "badge-muted",
+      ctaLabel: "Open competitors",
+      href: toScopedRoute("/competitors", selectedSiteId),
+    },
+  ];
 }
 
 export default function DashboardPage() {
@@ -270,6 +357,21 @@ export default function DashboardPage() {
     ? formatDateTime(selectedSite.last_audit_completed_at)
     : "Missing";
   const recommendationRunStatus = normalizeStatus(workspaceSummary?.latest_run?.status);
+  const analysisFreshnessStatus = normalizeStatus(workspaceSummary?.analysis_freshness?.status);
+  const selectedSiteId = selectedSite?.id || null;
+  const siteWorkspaceHref = toScopedRoute("/sites", selectedSiteId);
+  const recommendationWorkspaceHref = toScopedRoute("/recommendations", selectedSiteId);
+  const automationWorkspaceHref = toScopedRoute("/automation", selectedSiteId);
+  const competitorsWorkspaceHref = toScopedRoute("/competitors", selectedSiteId);
+  const auditsWorkspaceHref = toScopedRoute("/audits", selectedSiteId);
+  const launchLanes = buildDashboardLaunchLanes({
+    selectedSiteId,
+    openRecommendations,
+    latestAutomationStatus,
+    recommendationRunStatus,
+    analysisFreshnessStatus,
+  });
+  const showHeroSecondaryAction = priorityCue.href !== siteWorkspaceHref;
 
   const recentActivityItems: Array<{ label: string; value: string }> = [
     {
@@ -291,16 +393,54 @@ export default function DashboardPage() {
         : "No recommendation run yet - generate one from Site Workspace",
     },
   ];
+  const supportSignalItems: Array<{ label: string; value: string }> = [
+    {
+      label: "Active site",
+      value: selectedSite ? `${selectedSite.display_name} (${selectedSite.id})` : "No site selected",
+    },
+    {
+      label: "Freshness signal",
+      value: analysisFreshnessStatus || "unknown",
+    },
+    {
+      label: "Next review lane",
+      value: priorityCue.actionLabel,
+    },
+  ];
 
   return (
-    <PageContainer width="wide" density="compact">
+    <PageContainer width="wide" density="compact" className="workspace-shell-overview">
       <OperatorPageHero
-        title="Dashboard"
-        subtitle="Operator-first summary for what to review next across audit, recommendations, and automation."
+        className="workspace-shell-overview-hero"
+        title="Operator dashboard"
+        subtitle="Decision-first launch surface across site execution, recommendations, migration readiness, and automation oversight."
         headingLevel={1}
         data-testid="dashboard-page-hero"
+        meta={selectedSite ? `Active site: ${selectedSite.display_name}` : "No active site selected"}
+        actions={(
+          <WorkspaceActionBar variant="primary" className="dashboard-hero-actions">
+            <Link href={priorityCue.href} className="button button-primary button-inline">
+              {priorityCue.actionLabel}
+            </Link>
+            {showHeroSecondaryAction ? (
+              <Link href={siteWorkspaceHref} className="button button-secondary button-inline">
+                {selectedSite ? "Open active site workspace" : "Open sites"}
+              </Link>
+            ) : null}
+            <Link href={automationWorkspaceHref} className="button button-tertiary button-inline">
+              Automation status
+            </Link>
+          </WorkspaceActionBar>
+        )}
         summary={(
           <div data-testid="dashboard-summary-strip">
+            <SummaryStatCard
+              label="Active site"
+              value={selectedSite?.display_name || "none"}
+              detail={selectedSite ? selectedSite.id : "Select a site to unlock workflow detail"}
+              tone={selectedSite ? "success" : "warning"}
+              variant="elevated"
+            />
             <SummaryStatCard
               label="Tracked sites"
               value={context.sites.length}
@@ -348,46 +488,169 @@ export default function DashboardPage() {
             {signalError ? <p className="hint warning">{signalError}</p> : null}
           </WorkspaceMessageStack>
         ) : null}
+        <div className="panel panel-compact stack-tight dashboard-hero-guidance" data-testid="dashboard-hero-guidance">
+          <p className="hint muted">
+            Primary rhythm: confirm today&apos;s priority, launch the right workspace lane, then review recent outcomes.
+          </p>
+          <div className="link-row">
+            <span className={`badge ${priorityCue.badgeClass}`}>{priorityCue.title}</span>
+            <span className="badge badge-muted">Recommendation run: {recommendationRunStatus || "none"}</span>
+            <span className="badge badge-muted">Automation: {latestAutomationStatus || "none"}</span>
+          </div>
+        </div>
       </OperatorPageHero>
 
       <OperatorPageSectionStack>
-        <SectionCard variant="emphasis" className="role-surface-support" data-testid="dashboard-priority-panel">
+        <SectionCard
+          variant="emphasis"
+          className="operator-shell-section operator-shell-primary-zone"
+          data-testid="dashboard-operator-focus-zone"
+        >
           <SectionHeader
-            title="Do this now"
-            subtitle="Highest-priority deterministic next step from current workspace signals."
+            title="What matters now"
+            subtitle="Highest-priority action lane based on deterministic workspace signals."
             headingLevel={2}
-            variant="support"
+            variant="focus"
           />
-          <div className="stack-tight">
-            <div className="link-row">
-              <span className={`badge ${priorityCue.badgeClass}`}>{priorityCue.title}</span>
-              {recommendationRunStatus ? (
-                <span className="badge badge-muted">Recommendation run: {recommendationRunStatus}</span>
-              ) : null}
+          <div className="operator-focus-grid">
+            <div className="operator-focus-main stack">
+              <div className="panel panel-compact stack-tight operator-focus-callout" data-testid="dashboard-priority-callout">
+                <span className="operator-focus-kicker">Do this next</span>
+                <div className="link-row operator-focus-status-row">
+                  <span className={`badge ${priorityCue.badgeClass}`}>{priorityCue.title}</span>
+                  <span className="badge badge-muted">Needs review: {needsReviewCount}</span>
+                </div>
+                <p className="hint muted">{priorityCue.reason}</p>
+                <WorkspaceActionBar variant="primary">
+                  <Link href={priorityCue.href} className="button button-primary button-inline">
+                    {priorityCue.actionLabel}
+                  </Link>
+                  <Link href={recommendationWorkspaceHref} className="button button-secondary button-inline">
+                    Recommendations queue
+                  </Link>
+                </WorkspaceActionBar>
+              </div>
+              <div className="panel panel-compact stack operator-focus-next-step">
+                <p className="hint muted">Keep supporting lanes in view while executing the primary step.</p>
+                <WorkspaceActionBar variant="secondary">
+                  <Link href={auditsWorkspaceHref} className="button button-tertiary button-inline">
+                    Audit runs
+                  </Link>
+                  <Link href={competitorsWorkspaceHref} className="button button-tertiary button-inline">
+                    Competitors
+                  </Link>
+                  <Link href={automationWorkspaceHref} className="button button-tertiary button-inline">
+                    Automation
+                  </Link>
+                </WorkspaceActionBar>
+              </div>
             </div>
-            <p className="hint muted">{priorityCue.reason}</p>
-            <WorkspaceActionBar variant="primary">
-              <Link href={priorityCue.href} className="button button-primary button-inline">
-                {priorityCue.actionLabel}
-              </Link>
-            </WorkspaceActionBar>
+            <div className="operator-focus-support stack">
+              <div className="metrics-grid operator-focus-metrics">
+                <SummaryStatCard
+                  label="Open recommendations"
+                  value={openRecommendations}
+                  detail="Queue requiring review"
+                  tone={openRecommendations > 0 ? "warning" : "success"}
+                  variant="focus"
+                />
+                <SummaryStatCard
+                  label="Latest automation"
+                  value={latestAutomationStatus || "none"}
+                  detail={latestAutomation ? formatDateTime(latestAutomation.finished_at || latestAutomation.started_at) : "No automation run yet"}
+                  tone={latestAutomationStatus === "failed" ? "danger" : "neutral"}
+                  variant="focus"
+                />
+                <SummaryStatCard
+                  label="Recommendation freshness"
+                  value={analysisFreshnessStatus || "unknown"}
+                  detail={workspaceSummary?.analysis_freshness?.message || "No freshness summary yet"}
+                  tone={
+                    analysisFreshnessStatus === "pending_refresh" || analysisFreshnessStatus === "unknown"
+                      ? "warning"
+                      : "success"
+                  }
+                  variant="focus"
+                />
+              </div>
+            </div>
           </div>
         </SectionCard>
 
-        <SectionCard variant="summary" className="role-surface-support" data-testid="dashboard-recent-activity">
+        <SectionCard
+          variant="summary"
+          className="operator-shell-section operator-shell-work-zone"
+          data-testid="dashboard-launchpad-section"
+        >
           <SectionHeader
-            title="Recent activity"
-            subtitle="Latest terminal outcomes across audit, automation, and recommendation generation."
+            title="Workspace launchpad"
+            subtitle="Jump directly into the right execution lane without losing context."
             headingLevel={2}
             variant="support"
           />
-          <WorkspaceMetadataGrid>
-            {recentActivityItems.map((item) => (
-              <WorkspaceMetadataItem key={item.label} label={item.label}>
-                <span className="hint muted">{item.value}</span>
-              </WorkspaceMetadataItem>
+          <div className="metrics-grid grid-fit-180 dashboard-launch-grid">
+            {launchLanes.map((lane) => (
+              <article key={lane.title} className="panel panel-compact stack-tight dashboard-launch-card">
+                <div className="link-row">
+                  <strong>{lane.title}</strong>
+                  <span className={`badge ${lane.badgeClass}`}>{lane.statusLabel}</span>
+                </div>
+                <p className="hint muted">{lane.summary}</p>
+                <WorkspaceActionBar variant="secondary">
+                  <Link href={lane.href} className="button button-secondary button-inline">
+                    {lane.ctaLabel}
+                  </Link>
+                </WorkspaceActionBar>
+              </article>
             ))}
-          </WorkspaceMetadataGrid>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          variant="support"
+          className="operator-shell-section operator-shell-secondary-zone"
+          data-testid="dashboard-recent-activity"
+        >
+          <SectionHeader
+            title="Recent activity and context"
+            subtitle="Track latest outcomes and support signals without crowding the primary action lane."
+            headingLevel={2}
+            variant="support"
+          />
+          <div className="metrics-grid grid-fit-180 dashboard-activity-grid" data-testid="dashboard-activity-context-grid">
+            <div className="panel panel-compact stack-tight">
+              <SectionHeader
+                title="Recent outcomes"
+                subtitle="Latest terminal events across major workflows."
+                headingLevel={3}
+                compact={true}
+                variant="support"
+              />
+              <WorkspaceMetadataGrid>
+                {recentActivityItems.map((item) => (
+                  <WorkspaceMetadataItem key={item.label} label={item.label}>
+                    <span className="hint muted">{item.value}</span>
+                  </WorkspaceMetadataItem>
+                ))}
+              </WorkspaceMetadataGrid>
+            </div>
+            <div className="panel panel-compact stack-tight">
+              <SectionHeader
+                title="Support context"
+                subtitle="Signals that influence what should be prioritized next."
+                headingLevel={3}
+                compact={true}
+                variant="support"
+              />
+              <WorkspaceMetadataGrid>
+                {supportSignalItems.map((item) => (
+                  <WorkspaceMetadataItem key={item.label} label={item.label}>
+                    <span className="hint muted">{item.value}</span>
+                  </WorkspaceMetadataItem>
+                ))}
+              </WorkspaceMetadataGrid>
+            </div>
+          </div>
         </SectionCard>
       </OperatorPageSectionStack>
     </PageContainer>
