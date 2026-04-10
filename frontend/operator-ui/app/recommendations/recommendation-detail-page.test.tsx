@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 
@@ -128,7 +128,9 @@ describe("recommendation detail optimistic single-item updates", () => {
     const user = userEvent.setup();
     render(<RecommendationDetailPage />);
 
-    await screen.findByText("Status: open");
+    const statusStrip = await screen.findByTestId("recommendation-detail-status-strip");
+    expect(statusStrip).toBeInTheDocument();
+    expect(within(statusStrip).getByText("open")).toBeInTheDocument();
     expect(screen.getByTestId("recommendation-detail-workflow-context")).toBeInTheDocument();
     const detailFocus = screen.getByTestId("recommendation-detail-focus");
     expect(detailFocus).toBeInTheDocument();
@@ -170,7 +172,7 @@ describe("recommendation detail optimistic single-item updates", () => {
     await user.type(screen.getByLabelText("Operator Note"), "Ship this next sprint");
     await user.click(screen.getByRole("button", { name: "Accept" }));
 
-    expect(screen.getByText("Status: accepted")).toBeInTheDocument();
+    expect(within(statusStrip).getByText("accepted")).toBeInTheDocument();
     expect(screen.getByText("Recommendation is marked accepted for this site.")).toBeInTheDocument();
     expect(screen.getByText("Yes. Confirm this change in the next analysis refresh.")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Ship this next sprint")).toBeInTheDocument();
@@ -187,7 +189,7 @@ describe("recommendation detail optimistic single-item updates", () => {
     });
 
     await screen.findByText("Recommendation marked as accepted.");
-    expect(screen.getByText("Status: accepted")).toBeInTheDocument();
+    expect(within(statusStrip).getByText("accepted")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Backend normalized note")).toBeInTheDocument();
     expect(screen.getByText("Apply is complete and now needs visibility confirmation.")).toBeInTheDocument();
     expect(screen.getByText("Waiting on visibility")).toBeInTheDocument();
@@ -222,10 +224,11 @@ describe("recommendation detail optimistic single-item updates", () => {
     const user = userEvent.setup();
     render(<RecommendationDetailPage />);
 
-    await screen.findByText("Status: open");
+    const statusStrip = await screen.findByTestId("recommendation-detail-status-strip");
+    expect(within(statusStrip).getByText("open")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(mockUpdateRecommendationStatus).toHaveBeenCalledTimes(1);
     await screen.findByText("Recommendation update is not allowed in the current state.");
-    expect(screen.getByText("Status: open")).toBeInTheDocument();
+    expect(within(statusStrip).getByText("open")).toBeInTheDocument();
   });
 });

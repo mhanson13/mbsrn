@@ -13,6 +13,8 @@ import {
   OperatorPageSectionStack,
 } from "../../components/layout/OperatorPageSurface";
 import { OperatorRouteSupportState } from "../../components/layout/OperatorRouteSupportState";
+import { RouteActionCluster } from "../../components/layout/RouteActionCluster";
+import { SectionStatusItem, SectionStatusStrip } from "../../components/layout/SectionStatusStrip";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
@@ -1128,39 +1130,48 @@ export default function AutomationPage() {
           </WorkspaceMetadataItem>
         </WorkspaceMetadataGrid>
 
-        <WorkspaceActionBar variant="primary" data-testid="automation-primary-actions">
-          <button
-            type="button"
-            className="button button-primary"
-            onClick={() => {
-              void handleRunAutomationNow();
-            }}
-            disabled={triggerRunPending}
-          >
-            {triggerRunPending ? "Starting run..." : "Run SEO automation"}
-          </button>
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={() => setRefreshNonce((current) => current + 1)}
-            disabled={loadingItems}
-          >
-            Refresh status
-          </button>
-          {latestRecommendationRunOutputId && latestRun ? (
-            <Link
-              className="button button-tertiary"
-              href={buildAutomationRecommendationRunHref(latestRecommendationRunOutputId, latestRun.site_id)}
+        <RouteActionCluster
+          data-testid="automation-primary-actions"
+          primaryActions={(
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => {
+                void handleRunAutomationNow();
+              }}
+              disabled={triggerRunPending}
             >
-              Review recommendation output
-            </Link>
-          ) : null}
-          {context.selectedSiteId ? (
-            <Link className="button button-tertiary" href={`/sites/${context.selectedSiteId}`}>
-              Open site workspace
-            </Link>
-          ) : null}
-        </WorkspaceActionBar>
+              {triggerRunPending ? "Starting run..." : "Run SEO automation"}
+            </button>
+          )}
+          secondaryActions={(
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setRefreshNonce((current) => current + 1)}
+              disabled={loadingItems}
+            >
+              Refresh status
+            </button>
+          )}
+          shortcutActions={(
+            <>
+              {latestRecommendationRunOutputId && latestRun ? (
+                <Link
+                  className="button button-tertiary"
+                  href={buildAutomationRecommendationRunHref(latestRecommendationRunOutputId, latestRun.site_id)}
+                >
+                  Review recommendation output
+                </Link>
+              ) : null}
+              {context.selectedSiteId ? (
+                <Link className="button button-tertiary" href={`/sites/${context.selectedSiteId}`}>
+                  Open site workspace
+                </Link>
+              ) : null}
+            </>
+          )}
+        />
       </OperatorPageHero>
 
       <OperatorPageSectionStack>
@@ -1336,39 +1347,85 @@ export default function AutomationPage() {
               variant="support"
             />
             <div className="stack-tight">
-                <div className="link-row">
-                  <span className={`badge ${automationStatusBadgeClass(latestRun.status)}`}>
-                    {latestRun.status}
-                  </span>
-                  {latestRunOutcomeSummary ? (
-                    <span className={`badge ${automationTerminalOutcomeBadgeClass(latestRunOutcomeSummary.terminal_outcome)}`}>
-                      {formatAutomationTerminalOutcomeLabel(latestRunOutcomeSummary.terminal_outcome)}
-                    </span>
-                  ) : null}
-                  {latestRunCompleteness ? (
-                    <span className={`badge ${latestRunCompleteness.badgeClass}`}>
-                      {latestRunCompleteness.label}
-                    </span>
-                  ) : null}
-                  <span className={latestRunActionPresentation?.badgeClass || latestRunActionState.badgeClass}>
-                    {latestRunActionPresentation?.label || latestRunActionState.label}
-                  </span>
-                  <span className="badge badge-muted">Trigger: {latestRun.trigger_source}</span>
-                  <span className="badge badge-muted">Run: {latestRun.id}</span>
-                </div>
-                {latestRunOutcomeSummary ? (
-                  <div className="link-row">
-                    <span className="badge badge-muted">
-                      {latestRunOutcomeSummary.steps_completed_count} completed
-                    </span>
-                    <span className="badge badge-muted">
-                      {latestRunOutcomeSummary.steps_skipped_count} skipped
-                    </span>
-                    <span className="badge badge-muted">
-                      {latestRunOutcomeSummary.steps_failed_count} failed
-                    </span>
-                  </div>
-                ) : null}
+                <SectionStatusStrip
+                  compact={true}
+                  data-testid="automation-latest-run-status-strip"
+                >
+                  <SectionStatusItem
+                    label="Run status"
+                    value={latestRun.status}
+                    tone={
+                      latestRun.status === "completed"
+                        ? "success"
+                        : latestRun.status === "failed"
+                          ? "danger"
+                          : "warning"
+                    }
+                  />
+                  <SectionStatusItem
+                    label="Terminal outcome"
+                    value={
+                      latestRunOutcomeSummary
+                        ? formatAutomationTerminalOutcomeLabel(latestRunOutcomeSummary.terminal_outcome)
+                        : "Unavailable"
+                    }
+                    tone={
+                      latestRunOutcomeSummary?.terminal_outcome === "failed"
+                        ? "danger"
+                        : latestRunOutcomeSummary?.terminal_outcome === "completed_with_skips"
+                          || latestRunOutcomeSummary?.terminal_outcome === "partial"
+                          ? "warning"
+                          : latestRunOutcomeSummary
+                            ? "success"
+                            : "neutral"
+                    }
+                  />
+                  <SectionStatusItem
+                    label="Completeness"
+                    value={latestRunCompleteness?.label || "Unknown"}
+                    detail={latestRunCompleteness?.hint || "No completeness hint available."}
+                    tone={
+                      latestRunCompleteness?.label === "Complete"
+                        ? "success"
+                        : latestRunCompleteness
+                          ? "warning"
+                          : "neutral"
+                    }
+                  />
+                  <SectionStatusItem
+                    label="Action state"
+                    value={latestRunActionPresentation?.label || latestRunActionState.label}
+                    detail={latestRunActionPresentation?.nextStep || latestRunActionState.nextStep}
+                    tone={latestRunActionState.summaryTone}
+                  />
+                  <SectionStatusItem
+                    label="Trigger source"
+                    value={latestRun.trigger_source}
+                    tone="neutral"
+                  />
+                  <SectionStatusItem
+                    label="Step outcomes"
+                    value={
+                      latestRunOutcomeSummary
+                        ? `${latestRunOutcomeSummary.steps_completed_count} completed`
+                        : "Pending"
+                    }
+                    detail={
+                      latestRunOutcomeSummary
+                        ? `${latestRunOutcomeSummary.steps_skipped_count} skipped · ${latestRunOutcomeSummary.steps_failed_count} failed`
+                        : "Step counts are not available yet."
+                    }
+                    tone={
+                      latestRunOutcomeSummary?.steps_failed_count
+                        ? "danger"
+                        : latestRunOutcomeSummary?.steps_skipped_count
+                          ? "warning"
+                          : latestRunOutcomeSummary
+                            ? "success"
+                            : "neutral"
+                    }
+                  />
+                </SectionStatusStrip>
                 <span className="hint">{summarizeAutomationRunOutcome(latestRun)}</span>
                 {latestRunCompleteness?.hint ? (
                   <span className="hint muted">{latestRunCompleteness.hint}</span>

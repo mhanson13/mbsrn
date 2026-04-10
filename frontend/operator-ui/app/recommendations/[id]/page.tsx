@@ -11,6 +11,8 @@ import {
   OperatorPageHero,
   OperatorPageSectionStack,
 } from "../../../components/layout/OperatorPageSurface";
+import { RouteActionCluster } from "../../../components/layout/RouteActionCluster";
+import { SectionStatusItem, SectionStatusStrip } from "../../../components/layout/SectionStatusStrip";
 import { SectionCard } from "../../../components/layout/SectionCard";
 import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
 import { WorkflowContextPanel } from "../../../components/layout/WorkflowContextPanel";
@@ -752,9 +754,9 @@ export default function RecommendationDetailPage() {
           <span className="hint muted">Recommendation: <code>{recommendationId}</code></span>
         )}
         actions={(
-          <WorkspaceActionBar variant="secondary">
-            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-          </WorkspaceActionBar>
+          <RouteActionCluster
+            secondaryActions={<Link href={backToRecommendationsHref}>Back to Recommendations</Link>}
+          />
         )}
         summary={(
           <>
@@ -824,12 +826,35 @@ export default function RecommendationDetailPage() {
 
           <SectionCard variant="summary" className="role-surface-support">
             <h2>Priority and Status</h2>
-            <p>
-              Priority: {recommendation.priority_score} ({recommendation.priority_band})
-            </p>
-            <p>Status: {recommendation.status}</p>
-            <p>Category: {recommendation.category}</p>
-            <p>Source Type: {recommendationSourceType(recommendation)}</p>
+            <SectionStatusStrip compact={true} data-testid="recommendation-detail-status-strip">
+              <SectionStatusItem
+                label="Priority score"
+                value={recommendation.priority_score}
+                detail={recommendation.priority_band}
+                tone="neutral"
+              />
+              <SectionStatusItem
+                label="Decision status"
+                value={recommendation.status}
+                tone={
+                  recommendation.status === "accepted"
+                    ? "success"
+                    : recommendation.status === "dismissed"
+                      ? "danger"
+                      : "warning"
+                }
+              />
+              <SectionStatusItem
+                label="Category"
+                value={recommendation.category}
+                tone="neutral"
+              />
+              <SectionStatusItem
+                label="Source type"
+                value={recommendationSourceType(recommendation)}
+                tone="neutral"
+              />
+            </SectionStatusStrip>
           </SectionCard>
 
           <SectionCard variant="emphasis" className="role-surface-support" id="recommendation-actions">

@@ -293,6 +293,7 @@ describe("recommendations queue optimistic workflows", () => {
       expect.stringContaining("/recommendations/rec-1"),
     );
     expect(within(heroActions).getByRole("button", { name: "Refresh Queue" })).toBeInTheDocument();
+    expect(screen.getByTestId("recommendations-queue-status-strip")).toBeInTheDocument();
     expect(screen.getByTestId("recommendations-queue-controls-actions")).toBeInTheDocument();
     expect(screen.getByTestId("recommendations-quick-scan-section")).toBeInTheDocument();
     expect(screen.getByTestId("recommendations-execution-history-section")).toBeInTheDocument();

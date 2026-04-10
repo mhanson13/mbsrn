@@ -208,8 +208,9 @@ describe("recommendation narrative detail page presentation", () => {
     expect(detailFocus.compareDocumentPosition(metadataHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("link", { name: "Parent Recommendation Run" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Narrative History" })).toBeInTheDocument();
-    expect(screen.getByText("Narrative status")).toBeInTheDocument();
+    expect(screen.getAllByText("Narrative status").length).toBeGreaterThan(0);
     expect(screen.getByText("Prompt lineage")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-narrative-detail-metadata-strip")).toBeInTheDocument();
     await screen.findByText("No top themes were recorded for this narrative version.");
     await screen.findByText("No structured sections were returned for this narrative version.");
   });

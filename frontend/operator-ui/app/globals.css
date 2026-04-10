@@ -823,6 +823,80 @@ main {
   gap: var(--space-2);
 }
 
+.section-status-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(172px, 1fr));
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--workspace-summary-border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, var(--workspace-summary-bg) 0%, var(--panel) 100%);
+  box-shadow: 0 14px 24px -24px var(--workspace-summary-shadow);
+}
+
+.section-status-strip-compact {
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: 0.42rem;
+  padding: 0.48rem 0.54rem;
+}
+
+.section-status-item {
+  min-width: 0;
+  display: grid;
+  gap: 0.22rem;
+  padding: 0.46rem 0.54rem;
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--surface-subtle) 0%, var(--panel) 100%);
+}
+
+.section-status-item-success {
+  border-color: color-mix(in srgb, #34d399 56%, var(--section-divider));
+}
+
+.section-status-item-warning {
+  border-color: color-mix(in srgb, #f59e0b 56%, var(--section-divider));
+}
+
+.section-status-item-danger {
+  border-color: color-mix(in srgb, #f87171 52%, var(--section-divider));
+}
+
+.section-status-item-label {
+  margin: 0;
+  font-size: var(--type-xs);
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--workspace-summary-muted);
+  font-weight: 700;
+}
+
+.section-status-item-value-badge {
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.section-status-item-value {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--type-sm);
+  font-weight: 650;
+  line-height: 1.28;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.section-status-item-detail {
+  margin: 0;
+  color: var(--workspace-summary-muted);
+  font-size: var(--type-xs);
+  line-height: 1.32;
+}
+
 .workspace-site-surface {
   gap: var(--space-3);
 }
@@ -876,6 +950,26 @@ main {
 
 .workspace-action-bar-secondary a:hover {
   background: var(--link-pill-hover-bg);
+}
+
+.route-action-cluster {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.route-action-cluster-primary,
+.route-action-cluster-secondary,
+.route-action-cluster-shortcuts {
+  margin: 0;
+}
+
+.route-action-cluster-shortcuts {
+  padding-top: 0.08rem;
+  border-top: 1px dashed var(--section-divider);
+}
+
+.route-action-cluster-note {
+  margin-top: 0;
 }
 
 .workspace-message-stack {
@@ -3093,6 +3187,11 @@ code {
   .workspace-section-actions .toolbar-row,
   .workspace-section-actions .form-actions {
     width: 100%;
+  }
+
+  .route-action-cluster .button {
+    flex: 1 1 11rem;
+    justify-content: center;
   }
 
   .operational-item-chip-group {

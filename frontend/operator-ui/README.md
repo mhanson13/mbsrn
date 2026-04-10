@@ -40,12 +40,16 @@ Operator-facing routes should prefer shared presentational primitives over page-
 
 - `OperatorPageHero`
 - `OperatorPageSectionStack`
+- `RouteActionCluster`
+- `SectionStatusStrip`
 - `WorkspaceActionBar`
 - `OperatorRouteSupportState`
 
 Usage guidance:
 - use `OperatorPageHero` for route-level control surfaces (title, summary strip, key actions, next-step visibility)
 - use `OperatorPageSectionStack` to enforce consistent section rhythm after hero surfaces
+- use `RouteActionCluster` for hero-adjacent action hierarchy (primary, secondary, and contextual shortcuts) before dropping to page-local action rows
+- use `SectionStatusStrip` for section-level high-signal status/count context when sections are operationally dense
 - use `WorkspaceActionBar` to separate primary vs secondary action groups
 - use `OperatorRouteSupportState` for loading/error/missing-id support states on detail/workspace routes
 - keep high-traffic operator routes (including `/automation`) in a control-surface cadence: hero -> primary actions -> section stack (operations, outcomes, history)

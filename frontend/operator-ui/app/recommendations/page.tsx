@@ -14,6 +14,8 @@ import {
   OperatorPageSectionStack,
 } from "../../components/layout/OperatorPageSurface";
 import { OperatorRouteSupportState } from "../../components/layout/OperatorRouteSupportState";
+import { RouteActionCluster } from "../../components/layout/RouteActionCluster";
+import { SectionStatusItem, SectionStatusStrip } from "../../components/layout/SectionStatusStrip";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
@@ -2858,26 +2860,29 @@ function RecommendationsPageContent() {
             </p>
           </WorkspaceMetadataItem>
         </WorkspaceMetadataGrid>
-        <WorkspaceActionBar variant="primary" data-testid="recommendations-page-primary-actions">
-          {recommendationQueueNextStep ? (
+        <RouteActionCluster
+          data-testid="recommendations-page-primary-actions"
+          primaryActions={recommendationQueueNextStep ? (
             <Link href={recommendationQueueNextStep.href} className="button button-primary">
               {recommendationQueueNextStep.label}
             </Link>
           ) : null}
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={() => setBulkRefreshNonce((currentValue) => currentValue + 1)}
-            disabled={loadingItems}
-          >
-            Refresh Queue
-          </button>
-          {context.selectedSiteId ? (
+          secondaryActions={(
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setBulkRefreshNonce((currentValue) => currentValue + 1)}
+              disabled={loadingItems}
+            >
+              Refresh Queue
+            </button>
+          )}
+          shortcutActions={context.selectedSiteId ? (
             <Link href={`/sites/${context.selectedSiteId}`} className="button button-tertiary">
               Open Site Workspace
             </Link>
           ) : null}
-        </WorkspaceActionBar>
+        />
       </OperatorPageHero>
 
       <OperatorPageSectionStack>
@@ -2995,29 +3000,40 @@ function RecommendationsPageContent() {
           </button>
         </div>
 
-        <div className="grid-fit-120">
-          <div className="panel stack panel-metric stack-micro">
-          <span className="hint muted">Total Filtered</span>
-          <strong>{queueSummary.total}</strong>
-          </div>
-          <div className="panel stack panel-metric stack-micro">
-          <span className="hint muted">Open</span>
-          <strong>{queueSummary.open}</strong>
-          </div>
-          <div className="panel stack panel-metric stack-micro">
-          <span className="hint muted">Accepted</span>
-          <strong>{queueSummary.accepted}</strong>
-          </div>
-          <div className="panel stack panel-metric stack-micro">
-          <span className="hint muted">Dismissed</span>
-          <strong>{queueSummary.dismissed}</strong>
-          </div>
-          <div className="panel stack panel-metric stack-micro">
-          <span className="hint muted">High Priority</span>
-          <strong>{queueSummary.highPriority}</strong>
-          </div>
-        </div>
-        <p className="hint muted">Summary cards reflect all filtered results across pages.</p>
+        <SectionStatusStrip data-testid="recommendations-queue-status-strip">
+          <SectionStatusItem
+            label="Total Filtered"
+            value={queueSummary.total}
+            tone={queueSummary.total > 0 ? "neutral" : "warning"}
+          />
+          <SectionStatusItem
+            label="Open"
+            value={queueSummary.open}
+            tone={queueSummary.open > 0 ? "warning" : "success"}
+          />
+          <SectionStatusItem
+            label="Accepted"
+            value={queueSummary.accepted}
+            tone={queueSummary.accepted > 0 ? "success" : "neutral"}
+          />
+          <SectionStatusItem
+            label="Dismissed"
+            value={queueSummary.dismissed}
+            tone={queueSummary.dismissed > 0 ? "neutral" : "success"}
+          />
+          <SectionStatusItem
+            label="High Priority"
+            value={queueSummary.highPriority}
+            tone={queueSummary.highPriority > 0 ? "warning" : "neutral"}
+          />
+          <SectionStatusItem
+            label="Queue Scope"
+            value={hasActiveFilters ? "Filtered" : "All"}
+            detail={hasActiveFilters ? "Subset based on active controls" : "No status/category filters"}
+            tone={hasActiveFilters ? "warning" : "neutral"}
+          />
+        </SectionStatusStrip>
+        <p className="hint muted">Section strip reflects all filtered results across pages.</p>
         <WorkspaceActionBar
           variant="secondary"
           className="row-wrap-end"

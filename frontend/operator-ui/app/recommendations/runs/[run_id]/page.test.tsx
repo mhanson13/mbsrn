@@ -298,9 +298,10 @@ describe("recommendation run detail page presentation", () => {
     expect(screen.getByRole("link", { name: "Recommendation Queue" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Linked Automation Run" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Narrative History" })).toBeInTheDocument();
-    expect(screen.getByText("Run status")).toBeInTheDocument();
+    expect(screen.getAllByText("Run status").length).toBeGreaterThan(0);
     expect(screen.getByText("Recommendations")).toBeInTheDocument();
     expect(screen.getByText("Latest Narrative")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-run-context-status-strip")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Choice support" })).toBeInTheDocument();
     expect(
       screen.getByText("No generated narrative is currently available for this recommendation run."),

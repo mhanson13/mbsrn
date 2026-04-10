@@ -11,6 +11,8 @@ import {
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
+import { RouteActionCluster } from "../../components/layout/RouteActionCluster";
+import { SectionStatusItem, SectionStatusStrip } from "../../components/layout/SectionStatusStrip";
 import { WorkspaceActionBar } from "../../components/layout/WorkspaceActionBar";
 import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
 import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "../../components/layout/WorkspaceMetadataGrid";
@@ -230,6 +232,21 @@ function buildDashboardLaunchLanes(params: {
   ];
 }
 
+function badgeClassToSummaryTone(
+  badgeClass: DashboardPriorityCue["badgeClass"],
+): "neutral" | "success" | "warning" | "danger" {
+  if (badgeClass === "badge-success") {
+    return "success";
+  }
+  if (badgeClass === "badge-error") {
+    return "danger";
+  }
+  if (badgeClass === "badge-warn") {
+    return "warning";
+  }
+  return "neutral";
+}
+
 export default function DashboardPage() {
   const context = useOperatorContext();
   const [workspaceSummary, setWorkspaceSummary] = useState<RecommendationWorkspaceSummaryResponse | null>(null);
@@ -418,19 +435,24 @@ export default function DashboardPage() {
         data-testid="dashboard-page-hero"
         meta={selectedSite ? `Active site: ${selectedSite.display_name}` : "No active site selected"}
         actions={(
-          <WorkspaceActionBar variant="primary" className="dashboard-hero-actions">
-            <Link href={priorityCue.href} className="button button-primary button-inline">
-              {priorityCue.actionLabel}
-            </Link>
-            {showHeroSecondaryAction ? (
+          <RouteActionCluster
+            className="dashboard-hero-actions"
+            primaryActions={(
+              <Link href={priorityCue.href} className="button button-primary button-inline">
+                {priorityCue.actionLabel}
+              </Link>
+            )}
+            secondaryActions={showHeroSecondaryAction ? (
               <Link href={siteWorkspaceHref} className="button button-secondary button-inline">
                 {selectedSite ? "Open active site workspace" : "Open sites"}
               </Link>
             ) : null}
-            <Link href={automationWorkspaceHref} className="button button-tertiary button-inline">
-              Automation status
-            </Link>
-          </WorkspaceActionBar>
+            shortcutActions={(
+              <Link href={automationWorkspaceHref} className="button button-tertiary button-inline">
+                Automation status
+              </Link>
+            )}
+          />
         )}
         summary={(
           <div data-testid="dashboard-summary-strip">
@@ -492,11 +514,29 @@ export default function DashboardPage() {
           <p className="hint muted">
             Primary rhythm: confirm today&apos;s priority, launch the right workspace lane, then review recent outcomes.
           </p>
-          <div className="link-row">
-            <span className={`badge ${priorityCue.badgeClass}`}>{priorityCue.title}</span>
-            <span className="badge badge-muted">Recommendation run: {recommendationRunStatus || "none"}</span>
-            <span className="badge badge-muted">Automation: {latestAutomationStatus || "none"}</span>
-          </div>
+          <SectionStatusStrip compact={true} data-testid="dashboard-hero-guidance-strip">
+            <SectionStatusItem
+              label="Current priority"
+              value={priorityCue.title}
+              tone={badgeClassToSummaryTone(priorityCue.badgeClass)}
+            />
+            <SectionStatusItem
+              label="Recommendation run"
+              value={recommendationRunStatus || "none"}
+              tone={recommendationRunStatus ? "success" : "warning"}
+            />
+            <SectionStatusItem
+              label="Automation"
+              value={latestAutomationStatus || "none"}
+              tone={
+                latestAutomationStatus === "failed"
+                  ? "danger"
+                  : latestAutomationStatus === "running" || latestAutomationStatus === "queued"
+                    ? "warning"
+                    : "neutral"
+              }
+            />
+          </SectionStatusStrip>
         </div>
       </OperatorPageHero>
 
@@ -516,10 +556,19 @@ export default function DashboardPage() {
             <div className="operator-focus-main stack">
               <div className="panel panel-compact stack-tight operator-focus-callout" data-testid="dashboard-priority-callout">
                 <span className="operator-focus-kicker">Do this next</span>
-                <div className="link-row operator-focus-status-row">
-                  <span className={`badge ${priorityCue.badgeClass}`}>{priorityCue.title}</span>
-                  <span className="badge badge-muted">Needs review: {needsReviewCount}</span>
-                </div>
+                <SectionStatusStrip compact={true} className="operator-focus-status-row" data-testid="dashboard-priority-strip">
+                  <SectionStatusItem
+                    label="Priority cue"
+                    value={priorityCue.title}
+                    tone={badgeClassToSummaryTone(priorityCue.badgeClass)}
+                  />
+                  <SectionStatusItem
+                    label="Needs review"
+                    value={needsReviewCount}
+                    detail={needsReviewCount > 0 ? "Recommendations waiting" : "No open queue backlog"}
+                    tone={needsReviewCount > 0 ? "warning" : "success"}
+                  />
+                </SectionStatusStrip>
                 <p className="hint muted">{priorityCue.reason}</p>
                 <WorkspaceActionBar variant="primary">
                   <Link href={priorityCue.href} className="button button-primary button-inline">

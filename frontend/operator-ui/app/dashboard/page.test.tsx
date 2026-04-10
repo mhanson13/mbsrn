@@ -159,6 +159,7 @@ describe("dashboard operator-focused layout", () => {
     expect(screen.getByRole("heading", { name: "Operator dashboard" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Site")).not.toBeInTheDocument();
     expect(screen.getByTestId("dashboard-summary-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-hero-guidance-strip")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "What matters now" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Workspace launchpad" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Recent activity and context" })).toBeInTheDocument();
@@ -175,6 +176,7 @@ describe("dashboard operator-focused layout", () => {
       expect(screen.getByTestId("dashboard-priority-callout")).toHaveTextContent("Review open recommendations");
       expect(screen.getByTestId("dashboard-priority-callout")).toHaveTextContent("Open Recommendations");
     });
+    expect(screen.getByTestId("dashboard-priority-strip")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Automation status" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open site workspace" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open competitors" })).toBeInTheDocument();

@@ -13,6 +13,7 @@ import {
 } from "../../../components/layout/OperatorPageSurface";
 import { OperatorRouteSupportState } from "../../../components/layout/OperatorRouteSupportState";
 import { PageContainer } from "../../../components/layout/PageContainer";
+import { RouteActionCluster } from "../../../components/layout/RouteActionCluster";
 import { WorkspaceActionBar } from "../../../components/layout/WorkspaceActionBar";
 import { SectionHeader } from "../../../components/layout/SectionHeader";
 import { SectionCard } from "../../../components/layout/SectionCard";
@@ -7680,12 +7681,21 @@ export default function SiteWorkspacePage() {
           </div>
         )}
         actions={(
-          <WorkspaceActionBar variant="secondary" className="site-workspace-hero-links">
-            <Link href="/sites">Back to Sites</Link>
-            <Link href="/audits">Audit Runs</Link>
-            <Link href={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}>Competitor Workspace</Link>
-            <Link href="/recommendations">Recommendation Queue</Link>
-          </WorkspaceActionBar>
+          <RouteActionCluster
+            className="site-workspace-hero-links"
+            secondaryActions={(
+              <>
+                <Link href="/sites">Back to Sites</Link>
+                <Link href="/audits">Audit Runs</Link>
+              </>
+            )}
+            shortcutActions={(
+              <>
+                <Link href={`/competitors?site_id=${encodeURIComponent(selectedSite.id)}`}>Competitor Workspace</Link>
+                <Link href="/recommendations">Recommendation Queue</Link>
+              </>
+            )}
+          />
         )}
         summary={(
           <>

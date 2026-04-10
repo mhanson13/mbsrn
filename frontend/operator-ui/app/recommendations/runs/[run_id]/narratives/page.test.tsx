@@ -215,8 +215,10 @@ describe("recommendation narrative history compare", () => {
     expect(screen.getByTestId("recommendation-narrative-history-workflow-context")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Parent Recommendation Run" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Recommendation Queue" })).toBeInTheDocument();
-    expect(screen.getByText("Run status")).toBeInTheDocument();
-    expect(screen.getByText("Narrative versions")).toBeInTheDocument();
+    expect(screen.getAllByText("Run status").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Narrative versions").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("recommendation-narrative-run-context-status-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-narrative-summary-status-strip")).toBeInTheDocument();
     await screen.findByText("No narrative history records are available for this run yet.");
   });
 

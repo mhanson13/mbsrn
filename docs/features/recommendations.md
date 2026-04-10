@@ -73,6 +73,40 @@ The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) 
 
 This is a presentation-only improvement. Recommendation generation, queue mutation semantics, polling behavior, and backend/API workflow contracts are unchanged.
 
+## Route-Level Action Cluster Consistency
+
+Recommendation routes now use a shared route-level action cluster near hero/control surfaces to keep action hierarchy consistent across:
+
+- recommendations list workspace (`/recommendations`)
+- recommendation detail (`/recommendations/[id]`)
+- recommendation run detail (`/recommendations/runs/[run_id]`)
+- recommendation narrative history/detail routes
+
+Action framing intent:
+- primary action remains visually dominant when present
+- secondary navigation and support actions are grouped consistently
+- contextual shortcuts are visually de-emphasized but still discoverable
+
+This is presentation-only. Recommendation generation/run/narrative semantics and API behavior are unchanged.
+
+## Section-Level Summary/Status Strip Usage
+
+Recommendation surfaces now use a shared section-level summary/status strip in dense operational sections to improve first-pass scanability before detailed review.
+
+Current usage includes:
+- recommendation queue controls summary context (`/recommendations`)
+- recommendation detail status block (`/recommendations/[id]`)
+- recommendation run context and narrative context metadata (`/recommendations/runs/...`)
+
+Intent:
+- present high-signal section state (status, counts, readiness/error cues) in a compact, consistent pattern
+- reduce repeated page-local metric/badge wrappers
+- keep recommendation semantics unchanged
+
+Boundary:
+- presentation-only
+- no recommendation generation, run/narrative behavior, polling, or mutation semantics changed
+
 ## Site Workspace Recommendation Presentation Expectations
 
 The site operator route (`/sites/[site_id]`) now frames recommendation execution as a distinct operational lane:

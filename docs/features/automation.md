@@ -35,6 +35,36 @@ The `/automation` route now follows the same control-surface/page composition rh
 
 This is a frontend presentation upgrade only. Automation orchestration, polling cadence, API contracts, and execution semantics are unchanged.
 
+## Route-Level Action Cluster Usage
+
+Automation hero actions now use the shared route-level action cluster pattern:
+- primary lane: run automation
+- secondary lane: refresh status
+- contextual shortcuts: recommendation output review / open site workspace
+
+Intent:
+- keep hero action hierarchy consistent with other upgraded operator routes
+- maintain predictable placement of primary vs supporting actions
+
+Boundary:
+- presentation-only
+- no automation execution semantics changed
+
+## Section-Level Summary/Status Strip Usage
+
+Automation sections now also use a shared section-level summary/status strip where run-state density is highest.
+
+Current usage:
+- latest automation outcome section (`/automation`)
+
+Intent:
+- surface run status, terminal outcome, completeness, action state, and step-outcome counts in one compact scan strip
+- keep detailed run hints, controls, and output review below the strip
+
+Boundary:
+- presentation-only
+- no run execution behavior, API contract, or polling semantics changed
+
 ## Automation Configuration Visibility and Step Editor
 
 Automation run history exposes the effective run configuration so skipped-step outcomes are explainable, and now supports a minimal step-toggle editor for admins.

@@ -82,6 +82,10 @@ Site operator page information architecture update:
 - workflow tab metadata now includes quick-open shortcuts so migration stays discoverable from any active workspace lane
 - competitor/profile context is presented as supporting context instead of co-equal primary workflow content
 - this is presentation and information-hierarchy only; migration workflow semantics are unchanged
+- site workspace hero actions now use a shared route-level action cluster pattern:
+  - secondary navigation actions (sites/audits)
+  - contextual shortcuts (competitor workspace/recommendation queue)
+  - this keeps migration discoverability strong while aligning action framing with other upgraded operator routes
 
 Second-pass polish refinements:
 - summary band cards now use consistent label/value hierarchy and spacing, with a stronger visual emphasis on `Next action`

@@ -11,10 +11,11 @@ import {
   OperatorPageHero,
   OperatorPageSectionStack,
 } from "../../../../../../components/layout/OperatorPageSurface";
+import { RouteActionCluster } from "../../../../../../components/layout/RouteActionCluster";
+import { SectionStatusItem, SectionStatusStrip } from "../../../../../../components/layout/SectionStatusStrip";
 import { SectionCard } from "../../../../../../components/layout/SectionCard";
 import { SummaryStatCard } from "../../../../../../components/layout/SummaryStatCard";
 import { WorkflowContextPanel } from "../../../../../../components/layout/WorkflowContextPanel";
-import { WorkspaceActionBar } from "../../../../../../components/layout/WorkspaceActionBar";
 import { WorkspaceMessageStack } from "../../../../../../components/layout/WorkspaceMessageStack";
 import { WorkspaceTableShell } from "../../../../../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../../../../../components/useOperatorContext";
@@ -465,11 +466,15 @@ export default function RecommendationNarrativeDetailPage() {
           </span>
         )}
         actions={(
-          <WorkspaceActionBar variant="secondary" className="row-wrap-tight">
-            <Link href={narrativeHistoryHref}>Back to Narrative History</Link>
-            <Link href={parentRunHref}>Back to Recommendation Run</Link>
-            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-          </WorkspaceActionBar>
+          <RouteActionCluster
+            secondaryActions={(
+              <>
+                <Link href={narrativeHistoryHref}>Back to Narrative History</Link>
+                <Link href={parentRunHref}>Back to Recommendation Run</Link>
+                <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
+              </>
+            )}
+          />
         )}
         summary={(
           <div data-testid="recommendation-narrative-detail-summary-strip">
@@ -540,6 +545,30 @@ export default function RecommendationNarrativeDetailPage() {
         <OperatorPageSectionStack>
           <SectionCard variant="summary" className="role-surface-support">
             <h2>Narrative Metadata</h2>
+            <SectionStatusStrip compact={true} data-testid="recommendation-narrative-detail-metadata-strip">
+              <SectionStatusItem
+                label="Narrative status"
+                value={narrative.status}
+                tone={narrative.status === "completed" ? "success" : "warning"}
+              />
+              <SectionStatusItem
+                label="Version"
+                value={`v${narrative.version}`}
+                tone="neutral"
+              />
+              <SectionStatusItem
+                label="Themes"
+                value={narrative.top_themes_json.length}
+                detail={narrative.top_themes_json.length > 0 ? "Theme context captured" : "No themes recorded"}
+                tone={narrative.top_themes_json.length > 0 ? "success" : "warning"}
+              />
+              <SectionStatusItem
+                label="Provider/model"
+                value={`${narrative.provider_name} / ${narrative.model_name}`}
+                valueAsBadge={false}
+                tone="neutral"
+              />
+            </SectionStatusStrip>
             <p>Version: {narrative.version}</p>
             <p>Status: {narrative.status}</p>
             <p>

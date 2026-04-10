@@ -308,6 +308,47 @@ It transforms a business's website and market context into structured insights a
 
 ---
 
+## 16. Reusable Route-Level Action Cluster
+
+### What it does
+- Introduces a shared route-level action cluster primitive used near hero/control-surface areas to standardize:
+- one clear primary CTA
+- secondary action grouping
+- contextual shortcut actions
+- optional short guidance note
+- Applies this action framing across modernized workspace routes (dashboard, site workspace, automation, recommendations list, and recommendation detail family) to reduce hero/action composition drift.
+
+### Key capability
+- Keeps action hierarchy predictable across routes without changing route semantics.
+- Uses MBSRN-native primitives/components only; no external UI imports.
+- Stays role-aware by keeping labels/semantics in route/domain code while the cluster remains presentational.
+
+### Operator value
+> "Primary and secondary actions now appear in a more consistent place and hierarchy across the workspace."
+
+---
+
+## 17. Reusable Section-Level Summary/Status Strip
+
+### What it does
+- Introduces a shared section-level summary/status strip primitive for dense operational sections.
+- Standardizes quick-scan section cues such as:
+- current status
+- counts/backlog
+- latest outcome/freshness
+- readiness/error presence
+- Applies this strip selectively in modernized routes (dashboard, automation, recommendations, and recommendation detail surfaces) where operators previously had to parse long text blocks before seeing section state.
+
+### Key capability
+- Keeps section scanability consistent after hero-level control surfaces.
+- Uses a small MBSRN-native primitive (`SectionStatusStrip` + `SectionStatusItem`) rather than one-off badge/metric markup in each route.
+- Remains presentational and role-aware; route/domain semantics stay in route code.
+
+### Operator value
+> "I can understand each section’s state in seconds before diving into details."
+
+---
+
 ## Summary
 
 MBSRN transforms a small business from:

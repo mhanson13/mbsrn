@@ -286,6 +286,7 @@ describe("automation page shared-shell framing", () => {
     expect(screen.getByTestId("automation-config-group-recommendations")).toHaveTextContent("Recommendations");
     expect(screen.getByTestId("automation-config-edit-button")).toHaveTextContent("Edit step settings");
     expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Latest automation outcome");
+    expect(screen.getByTestId("automation-latest-run-status-strip")).toBeInTheDocument();
     expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Complete");
     expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Next step:");
     expect(screen.getByText("Review recommendation run output")).toBeInTheDocument();

@@ -10,10 +10,11 @@ import {
   OperatorPageHero,
   OperatorPageSectionStack,
 } from "../../../../../components/layout/OperatorPageSurface";
+import { RouteActionCluster } from "../../../../../components/layout/RouteActionCluster";
+import { SectionStatusItem, SectionStatusStrip } from "../../../../../components/layout/SectionStatusStrip";
 import { SectionCard } from "../../../../../components/layout/SectionCard";
 import { SummaryStatCard } from "../../../../../components/layout/SummaryStatCard";
 import { WorkflowContextPanel } from "../../../../../components/layout/WorkflowContextPanel";
-import { WorkspaceActionBar } from "../../../../../components/layout/WorkspaceActionBar";
 import { WorkspaceMessageStack } from "../../../../../components/layout/WorkspaceMessageStack";
 import { WorkspaceTableShell } from "../../../../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../../../../components/useOperatorContext";
@@ -771,10 +772,14 @@ export default function RecommendationRunNarrativeHistoryPage() {
           </span>
         )}
         actions={(
-          <WorkspaceActionBar variant="secondary" className="row-wrap-tight">
-            <Link href={parentRunHref}>Back to Recommendation Run</Link>
-            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-          </WorkspaceActionBar>
+          <RouteActionCluster
+            secondaryActions={(
+              <>
+                <Link href={parentRunHref}>Back to Recommendation Run</Link>
+                <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
+              </>
+            )}
+          />
         )}
         summary={(
           <div data-testid="recommendation-narrative-history-summary-strip">
@@ -836,6 +841,30 @@ export default function RecommendationRunNarrativeHistoryPage() {
         <OperatorPageSectionStack>
           <SectionCard variant="summary" className="role-surface-support">
             <h2>Run Context</h2>
+            <SectionStatusStrip compact={true} data-testid="recommendation-narrative-run-context-status-strip">
+              <SectionStatusItem
+                label="Run status"
+                value={run.status}
+                tone={run.status === "completed" ? "success" : run.status === "failed" ? "danger" : "warning"}
+              />
+              <SectionStatusItem
+                label="Narrative versions"
+                value={sortedNarratives.length}
+                tone={sortedNarratives.length > 0 ? "success" : "warning"}
+              />
+              <SectionStatusItem
+                label="Latest update"
+                value={formatDateTime(run.updated_at)}
+                valueAsBadge={false}
+                tone="neutral"
+              />
+              <SectionStatusItem
+                label="Error summary"
+                value={run.error_summary ? "Present" : "None"}
+                detail={run.error_summary || "No run-level errors reported."}
+                tone={run.error_summary ? "danger" : "success"}
+              />
+            </SectionStatusStrip>
             <p>
               Business ID: <code>{run.business_id}</code>
             </p>
@@ -856,6 +885,25 @@ export default function RecommendationRunNarrativeHistoryPage() {
 
           <SectionCard variant="summary" className="role-surface-support">
             <h2>Narrative Summary</h2>
+            <SectionStatusStrip compact={true} data-testid="recommendation-narrative-summary-status-strip">
+              <SectionStatusItem
+                label="Total versions"
+                value={sortedNarratives.length}
+                tone={sortedNarratives.length > 0 ? "success" : "warning"}
+              />
+              <SectionStatusItem
+                label="Latest version"
+                value={latestNarrative ? `v${latestNarrative.version}` : "None"}
+                detail={latestNarrative?.status || "Narrative history is empty"}
+                tone={latestNarrative ? "neutral" : "warning"}
+              />
+              <SectionStatusItem
+                label="Provider/model"
+                value={latestNarrative ? `${latestNarrative.provider_name} / ${latestNarrative.model_name}` : "Unavailable"}
+                valueAsBadge={false}
+                tone="neutral"
+              />
+            </SectionStatusStrip>
             <p>Total Narrative Versions: {sortedNarratives.length}</p>
             {!latestNarrative ? (
               <p className="hint muted">No narrative history records are available for this run yet.</p>

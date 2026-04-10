@@ -13,10 +13,11 @@ import {
   OperatorPageHero,
   OperatorPageSectionStack,
 } from "../../../../components/layout/OperatorPageSurface";
+import { RouteActionCluster } from "../../../../components/layout/RouteActionCluster";
+import { SectionStatusItem, SectionStatusStrip } from "../../../../components/layout/SectionStatusStrip";
 import { SectionCard } from "../../../../components/layout/SectionCard";
 import { SummaryStatCard } from "../../../../components/layout/SummaryStatCard";
 import { WorkflowContextPanel } from "../../../../components/layout/WorkflowContextPanel";
-import { WorkspaceActionBar } from "../../../../components/layout/WorkspaceActionBar";
 import { WorkspaceMessageStack } from "../../../../components/layout/WorkspaceMessageStack";
 import { WorkspaceTableShell } from "../../../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../../../components/useOperatorContext";
@@ -1514,9 +1515,9 @@ export default function RecommendationRunDetailPage() {
           </span>
         )}
         actions={(
-          <WorkspaceActionBar variant="secondary">
-            <Link href={backToRecommendationsHref}>Back to Recommendations</Link>
-          </WorkspaceActionBar>
+          <RouteActionCluster
+            secondaryActions={<Link href={backToRecommendationsHref}>Back to Recommendations</Link>}
+          />
         )}
         summary={(
           <div data-testid="recommendation-run-detail-summary-strip">
@@ -1659,6 +1660,30 @@ export default function RecommendationRunDetailPage() {
 
           <SectionCard variant="summary" className="role-surface-support">
             <h2>Run Context</h2>
+            <SectionStatusStrip compact={true} data-testid="recommendation-run-context-status-strip">
+              <SectionStatusItem
+                label="Run status"
+                value={run.status}
+                tone={run.status === "completed" ? "success" : run.status === "failed" ? "danger" : "warning"}
+              />
+              <SectionStatusItem
+                label="Recommendation count"
+                value={run.total_recommendations}
+                detail={`${run.critical_recommendations} critical · ${run.warning_recommendations} warning`}
+                tone={run.total_recommendations > 0 ? "neutral" : "warning"}
+              />
+              <SectionStatusItem
+                label="Duration (ms)"
+                value={run.duration_ms ?? "-"}
+                tone={run.duration_ms ? "neutral" : "warning"}
+              />
+              <SectionStatusItem
+                label="Error summary"
+                value={run.error_summary ? "Present" : "None"}
+                detail={run.error_summary || "No run-level errors reported."}
+                tone={run.error_summary ? "danger" : "success"}
+              />
+            </SectionStatusStrip>
             <p>
               Business ID: <code>{run.business_id}</code>
             </p>
