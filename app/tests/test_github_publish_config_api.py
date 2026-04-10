@@ -107,7 +107,88 @@ def test_put_github_publish_config_rejects_enabled_without_repository(db_session
     )
 
     assert response.status_code == 422
-    assert "repository is required" in response.json()["detail"]
+    assert "Repository is required" in response.json()["detail"]
+
+
+def test_put_github_publish_config_rejects_invalid_repository_format(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "repository": "invalid-repo-shape",
+            "default_branch": "main",
+            "base_path": "/",
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "owner/repo format" in response.json()["detail"]
+
+
+def test_put_github_publish_config_rejects_empty_default_branch_when_enabled(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "repository": "mhanson13/tnmfire",
+            "default_branch": "   ",
+            "base_path": "/",
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Default branch is required" in response.json()["detail"]
+
+
+def test_put_github_publish_config_normalizes_base_path(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "repository": "mhanson13/tnmfire",
+            "default_branch": "main",
+            "base_path": "site//docs/",
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["base_path"] == "/site/docs"
+
+
+def test_put_github_publish_config_emits_structured_update_log(db_session, seeded_business, caplog) -> None:
+    caplog.set_level("INFO", logger="app.services.github_publish_config")
+    client = _make_client(db_session, business_id=seeded_business.id, principal_id="admin-audit-1")
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "repository": "mhanson13/tnmfire",
+            "default_branch": "main",
+            "base_path": "/site",
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 200
+    log_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "admin_github_publish_config_updated"
+    ]
+    assert log_payloads
+    payload = log_payloads[-1]
+    assert payload.get("actor_principal_id") == "admin-audit-1"
+    assert payload.get("actor_business_id") == seeded_business.id
+    assert "repository" in (payload.get("changed_fields") or [])
+    assert "enabled" in (payload.get("changed_fields") or [])
 
 
 def test_github_publish_config_routes_require_admin_role(db_session, seeded_business) -> None:

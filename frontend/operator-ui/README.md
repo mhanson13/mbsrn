@@ -42,12 +42,24 @@ Admin route (`/admin`) includes a `GitHub Publish Configuration` form used by mi
 - `Default Branch`
 - `Base Path`
 - `Enabled`
+- Effective target preview (normalized repository/branch/base path)
+
+Validation expectations:
+- when enabled, repository must use `owner/repo` shape
+- when enabled, default branch is required and must use safe branch characters
+- base path is normalized to `/` or `/subpath` and validated before save
 
 API surface:
 - `GET /api/admin/github-publish-config`
 - `PUT /api/admin/github-publish-config`
 
 This stores publish target metadata only. GitHub credentials remain environment-managed and are not exposed in UI.
+
+Migration workspace boundary:
+- site workspace migration panel does not provide editable GitHub owner/repo/branch/base-path controls.
+- operators see read-only effective publish target/readiness metadata sourced from Admin configuration.
+- analytics insertion mode + GA measurement fields are workspace-level settings and persist after save/reload.
+- approve/publish/deploy control enablement follows backend readiness prerequisites from refreshed summary state.
 
 ## Shared workspace/page composition primitives
 

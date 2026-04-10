@@ -507,7 +507,7 @@ def test_publish_requires_approved_artifact_version(db_session) -> None:
         },
     )
     assert publish_response.status_code == 422
-    assert "not approved" in publish_response.json()["detail"].lower()
+    assert "approved artifact is required before publish" in publish_response.json()["detail"].lower()
 
 
 def test_publish_duplicate_returns_operator_usable_422(db_session) -> None:

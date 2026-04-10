@@ -3536,7 +3536,7 @@ class SEOMigrationService:
 
         if self.github_publish_config_service is None:
             if require_admin:
-                reasons.append("Admin GitHub publish configuration is not available.")
+                reasons.append("Admin must configure a GitHub publish target before publish is available.")
             return effective_config, prerequisites, reasons
 
         admin_config = self.github_publish_config_service.get()
@@ -3550,11 +3550,11 @@ class SEOMigrationService:
         prerequisites["admin_publish_config_enabled"] = enabled
         if not repository:
             if require_admin:
-                reasons.append("Admin GitHub publish configuration repository is missing.")
+                reasons.append("Admin must configure a GitHub publish target before publish is available.")
             return effective_config, prerequisites, reasons
         if not enabled:
             if require_admin:
-                reasons.append("Admin GitHub publish configuration is not enabled.")
+                reasons.append("Admin has disabled GitHub publishing.")
             return effective_config, prerequisites, reasons
 
         try:
@@ -3628,8 +3628,12 @@ class SEOMigrationService:
         if any(
             "not approved" in reason
             or "must be published before deploy" in reason
+            or "approved artifact is required before publish" in reason
+            or "approved artifact is required before deploy" in reason
+            or "published artifact is required before deploy" in reason
             or "published yet" in reason
             or "latest published version" in reason
+            or "latest published artifact" in reason
             for reason in normalized_reasons
         ):
             return "approval_required"
@@ -3739,10 +3743,10 @@ class SEOMigrationService:
         except ValueError as exc:
             reasons.append(str(exc))
         if artifact is None:
-            reasons.append("No approved artifact version selected.")
+            reasons.append("An approved artifact is required before publish.")
         else:
             if artifact.approval_status != "approved":
-                reasons.append("Selected artifact version is not approved.")
+                reasons.append("An approved artifact is required before publish.")
             if artifact.file_count <= 0:
                 reasons.append("Selected artifact version has no generated files.")
         if not self.github_publisher_configured:
@@ -3805,18 +3809,18 @@ class SEOMigrationService:
         except ValueError as exc:
             reasons.append(str(exc))
         if artifact is None:
-            reasons.append("No approved artifact version selected.")
+            reasons.append("An approved artifact is required before deploy.")
         else:
             if artifact.approval_status != "approved":
-                reasons.append("Selected artifact version is not approved.")
+                reasons.append("An approved artifact is required before deploy.")
             if artifact.publish_status != "published":
-                reasons.append("Selected artifact version must be published before deploy.")
+                reasons.append("A published artifact is required before deploy.")
         if not self.github_publisher_configured:
             reasons.append("GitHub migration publisher is not configured.")
         if not workspace.last_published_artifact_version_id:
-            reasons.append("No artifact version has been published yet.")
+            reasons.append("A published artifact is required before deploy.")
         elif artifact is not None and workspace.last_published_artifact_version_id != artifact.id:
-            reasons.append("Selected artifact is not the latest published version.")
+            reasons.append("The selected artifact is not the latest published artifact.")
         failure_category: str | None = None
         if reasons:
             failure_category = self._categorize_readiness_failure(reasons=reasons, action="deploy")

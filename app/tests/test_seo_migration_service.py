@@ -1709,7 +1709,7 @@ def test_publish_requires_approved_artifact(db_session) -> None:
         principal_id="principal-1",
     )
 
-    with pytest.raises(SEOMigrationValidationError, match="not approved"):
+    with pytest.raises(SEOMigrationValidationError, match="approved artifact is required before publish"):
         service.publish_artifact_version(
             business_id=business_id,
             site_id=site_id,
@@ -1943,7 +1943,7 @@ def test_publish_failure_records_failed_state_and_history(db_session) -> None:
     assert migration_diagnostics.get("last_publish_failure_category") == "provider_error"
     assert bool(summary.deploy_readiness.get("ready")) is False
     deploy_reasons = [str(item).lower() for item in summary.deploy_readiness.get("reasons", [])]
-    assert any("must be published before deploy" in reason for reason in deploy_reasons)
+    assert any("published artifact is required before deploy" in reason for reason in deploy_reasons)
 
 
 def test_deploy_omits_ga_input_when_analytics_mode_is_publish_only(db_session) -> None:
@@ -2482,7 +2482,7 @@ def test_publish_requires_admin_github_publish_config_enabled(db_session) -> Non
     service.github_publish_config_service.repository.save(config)
     service.session.commit()
 
-    with pytest.raises(SEOMigrationValidationError, match="Admin GitHub publish configuration is not enabled."):
+    with pytest.raises(SEOMigrationValidationError, match="Admin has disabled GitHub publishing."):
         service.publish_artifact_version(
             business_id=business_id,
             site_id=site_id,
@@ -2498,6 +2498,52 @@ def test_publish_requires_admin_github_publish_config_enabled(db_session) -> Non
     assert isinstance(prereqs, dict)
     assert prereqs.get("admin_publish_configured") is False
     assert prereqs.get("admin_publish_config_enabled") is False
+    publish_reasons = [str(item) for item in summary.publish_readiness.get("reasons", [])]
+    assert "Admin has disabled GitHub publishing." in publish_reasons
+
+
+def test_publish_requires_admin_github_publish_repository_configured(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+
+    config = service.github_publish_config_service.get()
+    config.repository = ""
+    config.enabled = True
+    service.github_publish_config_service.repository.save(config)
+    service.session.commit()
+
+    with pytest.raises(
+        SEOMigrationValidationError,
+        match="Admin must configure a GitHub publish target before publish is available.",
+    ):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message=None,
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
 
 
 def test_publish_uses_admin_target_when_workspace_publish_config_is_default(db_session) -> None:

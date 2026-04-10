@@ -37,7 +37,7 @@ Primary workflow in site workspace `Migration` tab:
 4. Review preflight draft readiness (blocking vs warning-only signals).
 5. Generate and review draft artifacts.
 6. Approve an artifact version.
-7. Configure publish target and run publish dry-run.
+7. Confirm Admin-managed GitHub publish target readiness and run publish dry-run.
 8. Publish approved artifact to target repository.
 9. Configure deploy target and run deploy dry-run.
 10. Submit explicit deploy request to GKE deployment workflow.
@@ -538,11 +538,10 @@ Operator/API behavior:
 - internal reason/warning code arrays stay in logs/diagnostics, not operator-facing debug dumps
 
 ## Publish Workflow (GitHub)
-Publish target is site-scoped configuration:
-- `repo_owner`
-- `repo_name`
-- `branch`
-- `artifact_root`
+Publish target metadata is Admin-owned configuration surfaced to workspace as read-only effective target summary:
+- `repository` (`owner/repo`)
+- `default_branch`
+- `base_path`
 - `enabled`
 
 Publish behavior:
@@ -568,9 +567,24 @@ Migration publish now depends on an admin-managed GitHub target baseline:
 
 Operational behavior:
 - this config is metadata only; no secrets are stored in the database
+- site workspace migration panel no longer exposes editable owner/repo/branch/base-path controls
+- site workspace shows read-only effective target summary and readiness state derived from Admin configuration
+- admin UI now validates obvious issues before save:
+  - repository must match `owner/repo`
+  - default branch is required/validated when enabled
+  - base path is normalized/validated (`/` or `/subpath`)
+- admin UI shows an effective target preview with normalized values:
+  - repository
+  - default branch
+  - normalized base path
 - migration publish/deploy readiness includes admin config prerequisites (`admin_publish_config_*`)
-- publish fails safely with clear validation/readiness errors when admin config is missing or disabled
+- publish/deploy readiness reasons now call out the required actor/action more explicitly:
+  - `Admin must configure a GitHub publish target before publish is available.`
+  - `Admin has disabled GitHub publishing.`
+  - `An approved artifact is required before publish.`
+  - `A published artifact is required before deploy.`
 - existing site-scoped publish settings remain supported; admin config provides explicit control-plane baseline and fallback
+- config updates emit lightweight structured audit logs (`event=admin_github_publish_config_updated`) including timestamp, actor ids (when available), and changed non-secret fields
 
 Security constraints:
 - no GitHub token storage in migration rows
@@ -625,6 +639,7 @@ Rules:
 1. publish request override id (publish only)
 2. workspace analytics config id
 3. site GA4 measurement id
+- analytics insertion settings saved in workspace (`enabled`, `ga_measurement_id`, `insertion_mode`) persist and are re-hydrated from authoritative summary state after save/reload
 - `publish_only` mode omits GA measurement input from deploy dispatch
 - placeholder normalization is deterministic (duplicate placeholders collapse to a single insertion point)
 - repeated publish/deploy actions do not duplicate analytics insertion in generated output payloads
@@ -732,7 +747,7 @@ Publish/deploy controls:
 5. If `ready_with_warnings`, decide whether to proceed or improve warning signals first.
 6. Generate draft artifacts and review files.
 7. Approve the chosen artifact version.
-8. Save publish target config and run publish dry-run.
+8. Confirm Admin publish target readiness and run publish dry-run.
 9. Run publish (non-dry-run) after dry-run checks pass.
 10. Save deploy target config and run deploy dry-run.
 11. Submit deploy request.

@@ -2735,27 +2735,63 @@ describe("site workspace migration tab", () => {
     );
   });
 
-  it("saves publish/deploy target config and analytics rules", async () => {
+  it("uses admin-managed publish target summary and saves deploy/analytics settings", async () => {
     const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary
+      .mockResolvedValueOnce(
+        buildMigrationWorkspaceSummary({
+          publish_readiness: {
+            ready: false,
+            reasons: ["Admin must configure a GitHub publish target before publish is available."],
+            target: {},
+            config_prerequisites: {
+              admin_publish_configured: false,
+              admin_publish_config_enabled: false,
+              github_publisher_configured: true,
+              target_config_valid: false,
+              target_enabled: false,
+            },
+          },
+        }),
+      )
+      .mockResolvedValue(
+        buildMigrationWorkspaceSummary({
+          workspace: buildMigrationWorkspace({
+            analytics_config_json: {
+              enabled: true,
+              ga_measurement_id: "G-PERSIST9999",
+              insertion_mode: "publish_only",
+            },
+          }),
+          publish_readiness: {
+            ready: true,
+            reasons: [],
+            target: {
+              enabled: true,
+              repo_owner: "mhanson13",
+              repo_name: "tnmfire",
+              branch: "main",
+              artifact_root: "site",
+            },
+            config_prerequisites: {
+              admin_publish_configured: true,
+              admin_publish_config_enabled: true,
+              github_publisher_configured: true,
+              target_config_valid: true,
+              target_enabled: true,
+            },
+          },
+        }),
+      );
     render(<SiteWorkspacePage />);
 
     await switchToMigrationTab(user);
 
-    await user.type(screen.getByPlaceholderText("Repo owner"), "acme");
-    await user.type(screen.getByPlaceholderText("Repo name"), "tnmfire-site");
-    await user.click(screen.getByRole("button", { name: "Save Publish Target" }));
-    await waitFor(() =>
-      expect(mockUpdateMigrationPublishConfig).toHaveBeenCalledWith(
-        "token-1",
-        "biz-1",
-        "site-1",
-        {
-          publish_config: expect.objectContaining({
-            repo_owner: "acme",
-            repo_name: "tnmfire-site",
-          }),
-        },
-      ),
+    expect(screen.queryByRole("button", { name: "Save Publish Target" })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Repo owner")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Repo name")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("migration-publish-target-admin-boundary")).toHaveTextContent(
+      "Managed by Admin only.",
     );
 
     await user.clear(screen.getByPlaceholderText("Workflow ID"));
@@ -2789,6 +2825,183 @@ describe("site workspace migration tab", () => {
         },
       ),
     );
+
+    await waitFor(() => expect(screen.getByDisplayValue("G-PERSIST9999")).toBeInTheDocument());
+    expect(await screen.findByTestId("migration-publish-target-summary")).toHaveTextContent("mhanson13/tnmfire");
+    expect(screen.getByTestId("migration-publish-target-summary")).toHaveTextContent("site");
+    expect(mockUpdateMigrationPublishConfig).not.toHaveBeenCalled();
+  });
+
+  it("keeps approve/publish/deploy enablement aligned with selected artifact prerequisites", async () => {
+    const user = userEvent.setup();
+    const approvedArtifact = buildMigrationArtifactVersion({
+      id: "migration-artifact-approved",
+      version: 1,
+      approval_status: "approved",
+      publish_status: "published",
+      deploy_status: "not_deployed",
+    });
+    const pendingArtifact = buildMigrationArtifactVersion({
+      id: "migration-artifact-pending",
+      version: 2,
+      approval_status: "pending",
+      publish_status: "not_published",
+      deploy_status: "not_deployed",
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: pendingArtifact.id,
+          latest_generated_artifact_version_number: pendingArtifact.version,
+          latest_approved_artifact_version_id: approvedArtifact.id,
+          latest_approved_artifact_version_number: approvedArtifact.version,
+          last_published_artifact_version_id: approvedArtifact.id,
+          last_published_artifact_version_number: approvedArtifact.version,
+        }),
+        latest_artifact: pendingArtifact,
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          target: { enabled: true },
+          approved_artifact_version_id: approvedArtifact.id,
+        },
+        deploy_readiness: {
+          ready: true,
+          reasons: [],
+          target: { enabled: true },
+          approved_artifact_version_id: approvedArtifact.id,
+          last_published_artifact_version_id: approvedArtifact.id,
+        },
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValue({
+      items: [pendingArtifact, approvedArtifact],
+      total: 2,
+    });
+
+    render(<SiteWorkspacePage />);
+    await switchToMigrationTab(user);
+
+    expect(await screen.findByText(`Selected version: ${pendingArtifact.id}`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve Selected Draft" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Publish Approved Draft to GitHub" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Request GKE Deploy" })).toBeDisabled();
+
+    await user.selectOptions(screen.getByLabelText("Artifact version"), approvedArtifact.id);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Approve Selected Draft" })).toBeDisabled(),
+    );
+    expect(screen.getByRole("button", { name: "Publish Approved Draft to GitHub" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Request GKE Deploy" })).toBeEnabled();
+  });
+
+  it("reconciles stale selected artifact after analytics save refresh", async () => {
+    const user = userEvent.setup();
+    const oldArtifact = buildMigrationArtifactVersion({
+      id: "migration-artifact-old",
+      version: 1,
+      approval_status: "approved",
+      publish_status: "published",
+    });
+    const refreshedArtifact = buildMigrationArtifactVersion({
+      id: "migration-artifact-new",
+      version: 2,
+      approval_status: "approved",
+      publish_status: "published",
+    });
+    mockFetchMigrationWorkspaceSummary
+      .mockResolvedValueOnce(
+        buildMigrationWorkspaceSummary({
+          workspace: buildMigrationWorkspace({
+            latest_generated_artifact_version_id: oldArtifact.id,
+            latest_generated_artifact_version_number: oldArtifact.version,
+            latest_approved_artifact_version_id: oldArtifact.id,
+            latest_approved_artifact_version_number: oldArtifact.version,
+            last_published_artifact_version_id: oldArtifact.id,
+            last_published_artifact_version_number: oldArtifact.version,
+          }),
+          latest_artifact: oldArtifact,
+          publish_readiness: {
+            ready: true,
+            reasons: [],
+            target: { enabled: true },
+            approved_artifact_version_id: oldArtifact.id,
+          },
+          deploy_readiness: {
+            ready: true,
+            reasons: [],
+            target: { enabled: true },
+            approved_artifact_version_id: oldArtifact.id,
+            last_published_artifact_version_id: oldArtifact.id,
+          },
+        }),
+      )
+      .mockResolvedValue(
+        buildMigrationWorkspaceSummary({
+          workspace: buildMigrationWorkspace({
+            latest_generated_artifact_version_id: refreshedArtifact.id,
+            latest_generated_artifact_version_number: refreshedArtifact.version,
+            latest_approved_artifact_version_id: refreshedArtifact.id,
+            latest_approved_artifact_version_number: refreshedArtifact.version,
+            last_published_artifact_version_id: refreshedArtifact.id,
+            last_published_artifact_version_number: refreshedArtifact.version,
+            analytics_config_json: {
+              enabled: true,
+              ga_measurement_id: "G-NEWARELOAD",
+              insertion_mode: "publish_and_deploy",
+            },
+          }),
+          latest_artifact: refreshedArtifact,
+          publish_readiness: {
+            ready: true,
+            reasons: [],
+            target: { enabled: true },
+            approved_artifact_version_id: refreshedArtifact.id,
+          },
+          deploy_readiness: {
+            ready: true,
+            reasons: [],
+            target: { enabled: true },
+            approved_artifact_version_id: refreshedArtifact.id,
+            last_published_artifact_version_id: refreshedArtifact.id,
+          },
+        }),
+      );
+    mockFetchMigrationArtifactVersions
+      .mockResolvedValueOnce({
+        items: [oldArtifact],
+        total: 1,
+      })
+      .mockResolvedValue({
+        items: [refreshedArtifact],
+        total: 1,
+      });
+
+    render(<SiteWorkspacePage />);
+    await switchToMigrationTab(user);
+    expect(await screen.findByText(`Selected version: ${oldArtifact.id}`)).toBeInTheDocument();
+
+    await user.clear(screen.getByPlaceholderText("GA measurement ID (G-XXXX)"));
+    await user.type(screen.getByPlaceholderText("GA measurement ID (G-XXXX)"), "G-NEWARELOAD");
+    await user.click(screen.getByRole("button", { name: "Save Analytics Rules" }));
+
+    await waitFor(() =>
+      expect(mockUpdateMigrationAnalyticsConfig).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          analytics_config: expect.objectContaining({
+            ga_measurement_id: "G-NEWARELOAD",
+          }),
+        },
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(`Selected version: ${refreshedArtifact.id}`)).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Publish Approved Draft to GitHub" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Request GKE Deploy" })).toBeEnabled();
   });
 
   it("approves, publishes, and deploys selected migration artifacts with explicit actions", async () => {

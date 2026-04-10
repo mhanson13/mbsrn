@@ -46,10 +46,15 @@ class GitHubPublishConfigUpdateRequest(BaseModel):
     base_path: str | None = Field(default="/", max_length=160)
     enabled: bool = False
 
-    @field_validator("repository", "default_branch", mode="before")
+    @field_validator("repository", mode="before")
     @classmethod
-    def _normalize_strings(cls, value: object) -> str | None:
+    def _normalize_repository(cls, value: object) -> str | None:
         return _normalize_optional_text(value, max_length=255)
+
+    @field_validator("default_branch", mode="before")
+    @classmethod
+    def _normalize_default_branch(cls, value: object) -> str | None:
+        return _normalize_optional_text(value, max_length=120)
 
     @field_validator("base_path", mode="before")
     @classmethod

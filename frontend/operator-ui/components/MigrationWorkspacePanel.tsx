@@ -21,7 +21,6 @@ import {
   updateMigrationAnalyticsConfig,
   updateMigrationDeployConfig,
   updateMigrationEnrichedContent,
-  updateMigrationPublishConfig,
   updateMigrationRequirements,
   upsertMigrationWorkspace,
 } from "../lib/api/client";
@@ -31,7 +30,6 @@ import type {
   MigrationDeployConfig,
   MigrationEnrichedContentNotes,
   MigrationOperatorRequirements,
-  MigrationPublishConfig,
   MigrationWorkspaceSummary,
 } from "../lib/api/types";
 
@@ -46,7 +44,6 @@ type BusyAction =
   | "ingest"
   | "save_requirements"
   | "save_enriched"
-  | "save_publish_config"
   | "save_deploy_config"
   | "save_analytics_config"
   | "generate"
@@ -74,14 +71,6 @@ const EMPTY_ENRICHED_CONTENT: MigrationEnrichedContentNotes = {
   faq_items: [],
   contact_overrides: {},
   additional_notes: null,
-};
-
-const EMPTY_PUBLISH_CONFIG: MigrationPublishConfig = {
-  enabled: false,
-  repo_owner: null,
-  repo_name: null,
-  branch: "main",
-  artifact_root: "",
 };
 
 const EMPTY_DEPLOY_CONFIG: MigrationDeployConfig = {
@@ -415,6 +404,46 @@ function stringifyInputsMap(value: unknown): string {
     .map(([key, item]) => `${String(key).trim()}=${String(item || "").trim()}`)
     .filter((line) => line !== "=")
     .join("\n");
+}
+
+function resolveSelectedArtifactVersionId(params: {
+  currentId: string;
+  artifactVersions: MigrationArtifactVersion[];
+  workspaceSummary: MigrationWorkspaceSummary;
+}): string {
+  const { currentId, artifactVersions, workspaceSummary } = params;
+  const validIds = new Set(artifactVersions.map((item) => item.id).filter(Boolean));
+  if (validIds.size === 0) {
+    return "";
+  }
+  const trimmedCurrent = currentId.trim();
+  if (trimmedCurrent && validIds.has(trimmedCurrent)) {
+    return trimmedCurrent;
+  }
+  const publishReadiness = asRecord(workspaceSummary.publish_readiness);
+  const deployReadiness = asRecord(workspaceSummary.deploy_readiness);
+  const artifactsById = new Map(artifactVersions.map((item) => [item.id, item]));
+  const generatedCandidate = (workspaceSummary.workspace.latest_generated_artifact_version_id || "").trim();
+  if (generatedCandidate && validIds.has(generatedCandidate)) {
+    const generatedArtifact = artifactsById.get(generatedCandidate);
+    if (generatedArtifact && generatedArtifact.approval_status !== "approved") {
+      return generatedCandidate;
+    }
+  }
+  const fallbackCandidates = [
+    asStringOrNull(publishReadiness.approved_artifact_version_id),
+    asStringOrNull(deployReadiness.approved_artifact_version_id),
+    workspaceSummary.workspace.latest_approved_artifact_version_id,
+    workspaceSummary.workspace.latest_generated_artifact_version_id,
+    artifactVersions[0]?.id || null,
+  ];
+  for (const candidate of fallbackCandidates) {
+    const candidateId = (candidate || "").trim();
+    if (candidateId && validIds.has(candidateId)) {
+      return candidateId;
+    }
+  }
+  return artifactVersions[0]?.id || "";
 }
 
 function parseDraftReadinessReason(value: unknown): DraftReadinessReason | null {
@@ -1061,12 +1090,6 @@ export function MigrationWorkspacePanel({
   const [contactOverrides, setContactOverrides] = useState("");
   const [enrichedNotes, setEnrichedNotes] = useState("");
 
-  const [publishEnabled, setPublishEnabled] = useState(false);
-  const [publishRepoOwner, setPublishRepoOwner] = useState("");
-  const [publishRepoName, setPublishRepoName] = useState("");
-  const [publishBranch, setPublishBranch] = useState("main");
-  const [publishArtifactRoot, setPublishArtifactRoot] = useState("");
-
   const [deployEnabled, setDeployEnabled] = useState(false);
   const [deployRepoOwner, setDeployRepoOwner] = useState("");
   const [deployRepoName, setDeployRepoName] = useState("");
@@ -1119,6 +1142,22 @@ export function MigrationWorkspacePanel({
     (!deployReadinessArtifactVersionId || deployReadinessArtifactVersionId === selectedArtifactVersionIdTrimmed);
   const publishConfigPrerequisites = asRecord(publishReadiness.config_prerequisites);
   const deployConfigPrerequisites = asRecord(deployReadiness.config_prerequisites);
+  const publishTarget = asRecord(publishReadiness.target);
+  const effectivePublishRepoOwner = asStringOrNull(publishTarget.repo_owner);
+  const effectivePublishRepoName = asStringOrNull(publishTarget.repo_name);
+  const effectivePublishRepository =
+    effectivePublishRepoOwner && effectivePublishRepoName
+      ? `${effectivePublishRepoOwner}/${effectivePublishRepoName}`
+      : null;
+  const effectivePublishBranch = asStringOrNull(publishTarget.branch) || "main";
+  const effectivePublishArtifactRoot = asStringOrNull(publishTarget.artifact_root) || "/";
+  const adminPublishConfigured = Boolean(publishConfigPrerequisites.admin_publish_configured);
+  const adminPublishEnabled = Boolean(publishConfigPrerequisites.admin_publish_config_enabled);
+  const adminPublishReadyLabel = !adminPublishConfigured
+    ? "Admin publish target not configured."
+    : !adminPublishEnabled
+      ? "Admin has disabled GitHub publishing."
+      : "Admin publish target is configured and enabled.";
   const publishFailureCategory = asString(publishReadiness.last_failure_category || publishReadiness.failure_category) || null;
   const deployFailureCategory = asString(deployReadiness.last_failure_category || deployReadiness.failure_category) || null;
   const publishFailureMessage = asString(publishReadiness.last_failure_message) || null;
@@ -1239,13 +1278,6 @@ export function MigrationWorkspacePanel({
     setContactOverrides(stringifyInputsMap(rawEnriched.contact_overrides));
     setEnrichedNotes(asString(rawEnriched.additional_notes));
 
-    const rawPublishConfig = asRecord(workspace.publish_config_json);
-    setPublishEnabled(Boolean(rawPublishConfig.enabled));
-    setPublishRepoOwner(asString(rawPublishConfig.repo_owner));
-    setPublishRepoName(asString(rawPublishConfig.repo_name));
-    setPublishBranch(asString(rawPublishConfig.branch) || "main");
-    setPublishArtifactRoot(asString(rawPublishConfig.artifact_root));
-
     const rawDeployConfig = asRecord(workspace.deploy_config_json);
     setDeployEnabled(Boolean(rawDeployConfig.enabled));
     setDeployRepoOwner(asString(rawDeployConfig.repo_owner));
@@ -1287,12 +1319,14 @@ export function MigrationWorkspacePanel({
         setPublishHistory(publishHistoryResponse.items || workspaceSummary.publish_history || []);
         setDeployHistory(deployHistoryResponse.items || workspaceSummary.deploy_history || []);
         hydrateFromSummary(workspaceSummary);
-        const fallbackArtifactId =
-          workspaceSummary.workspace.latest_approved_artifact_version_id ||
-          workspaceSummary.workspace.latest_generated_artifact_version_id ||
-          versionList.items?.[0]?.id ||
-          "";
-        setSelectedArtifactVersionId((current) => current || fallbackArtifactId);
+        const versions = versionList.items || [];
+        setSelectedArtifactVersionId((current) =>
+          resolveSelectedArtifactVersionId({
+            currentId: current,
+            artifactVersions: versions,
+            workspaceSummary,
+          }),
+        );
       } catch (error) {
         setErrorHint(null);
         setErrorMessage(toErrorMessage(error, "Failed to load migration workspace."));
@@ -1381,33 +1415,6 @@ export function MigrationWorkspacePanel({
     } catch (error) {
       setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save enriched content."));
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const handleSavePublishConfig = async (): Promise<void> => {
-    const payload: MigrationPublishConfig = {
-      ...EMPTY_PUBLISH_CONFIG,
-      enabled: publishEnabled,
-      repo_owner: asStringOrNull(publishRepoOwner),
-      repo_name: asStringOrNull(publishRepoName),
-      branch: publishBranch.trim() || "main",
-      artifact_root: publishArtifactRoot.trim(),
-    };
-    setBusyAction("save_publish_config");
-    setErrorMessage(null);
-    setErrorHint(null);
-    setStatusMessage(null);
-    try {
-      await updateMigrationPublishConfig(token, businessId, siteId, {
-        publish_config: payload,
-      });
-      setStatusMessage("Publish target configuration saved.");
-      await loadWorkspaceData(false);
-    } catch (error) {
-      setErrorHint(null);
-      setErrorMessage(toErrorMessage(error, "Failed to save publish target."));
     } finally {
       setBusyAction(null);
     }
@@ -1930,6 +1937,7 @@ export function MigrationWorkspacePanel({
         <label className="stack-tight">
           <span className="hint muted">Selected artifact version</span>
           <select
+            aria-label="Artifact version"
             value={selectedArtifactVersionId}
             onChange={(event) => {
               setSelectedArtifactVersionId(event.target.value);
@@ -2082,24 +2090,26 @@ export function MigrationWorkspacePanel({
           </span>
         </div>
         <div className="grid grid-2">
-          <div className="panel panel-compact stack">
+          <div className="panel panel-compact stack" data-testid="migration-publish-target-summary">
             <strong>GitHub Publish Target</strong>
-            <label className="link-row">
-              <input type="checkbox" checked={publishEnabled} onChange={(event) => setPublishEnabled(event.target.checked)} />
-              <span>Publish enabled for this site workspace</span>
-            </label>
-            <input value={publishRepoOwner} onChange={(event) => setPublishRepoOwner(event.target.value)} placeholder="Repo owner" />
-            <input value={publishRepoName} onChange={(event) => setPublishRepoName(event.target.value)} placeholder="Repo name" />
-            <input value={publishBranch} onChange={(event) => setPublishBranch(event.target.value)} placeholder="Branch" />
-            <input value={publishArtifactRoot} onChange={(event) => setPublishArtifactRoot(event.target.value)} placeholder="Artifact root (optional)" />
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => void handleSavePublishConfig()}
-              disabled={busyAction === "save_publish_config" || busyAction === "load"}
-            >
-              {busyAction === "save_publish_config" ? "Saving..." : "Save Publish Target"}
-            </button>
+            <span className="hint muted" data-testid="migration-publish-target-admin-boundary">
+              Managed by Admin only. Operators can review effective target details here.
+            </span>
+            <span className="hint">{adminPublishReadyLabel}</span>
+            <WorkspaceMetadataGrid>
+              <WorkspaceMetadataItem label="Repository">
+                {effectivePublishRepository || "Not configured"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Branch">
+                {effectivePublishRepository ? effectivePublishBranch : "n/a"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Artifact root">
+                {effectivePublishRepository ? effectivePublishArtifactRoot : "n/a"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Target status">
+                {Boolean(publishTarget.enabled) ? "Enabled" : "Disabled"}
+              </WorkspaceMetadataItem>
+            </WorkspaceMetadataGrid>
           </div>
 
           <div className="panel panel-compact stack">

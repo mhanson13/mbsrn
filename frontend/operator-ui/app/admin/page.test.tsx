@@ -371,7 +371,7 @@ describe("admin route", () => {
       id: 1,
       repository: "mhanson13/tnmfire",
       default_branch: "release",
-      base_path: "/site",
+      base_path: "/site/content",
       enabled: true,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
@@ -398,9 +398,14 @@ describe("admin route", () => {
     expect(basePathInput).toHaveValue("/");
     const enabledToggle = screen.getByLabelText("Enable migration GitHub publish target");
     expect(enabledToggle).toBeChecked();
+    const preview = screen.getByTestId("github-publish-effective-preview");
+    expect(preview).toHaveTextContent("mhanson13/tnmfire");
+    expect(preview).toHaveTextContent("main");
+    expect(preview).toHaveTextContent("/");
 
     fireEvent.change(defaultBranchInput, { target: { value: "release" } });
-    fireEvent.change(basePathInput, { target: { value: "/site" } });
+    fireEvent.change(basePathInput, { target: { value: "site//content/" } });
+    expect(screen.getByTestId("github-publish-effective-preview")).toHaveTextContent("/site/content");
     fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
 
     await waitFor(() => {
@@ -409,11 +414,49 @@ describe("admin route", () => {
     expect(mockUpdateGitHubPublishConfig.mock.calls.at(-1)?.[1]).toMatchObject({
       repository: "mhanson13/tnmfire",
       default_branch: "release",
-      base_path: "/site",
+      base_path: "/site/content",
       enabled: true,
     });
     expect(await screen.findByLabelText("Default Branch")).toHaveValue("release");
-    expect(screen.getByLabelText("Base Path")).toHaveValue("/site");
+    expect(screen.getByLabelText("Base Path")).toHaveValue("/site/content");
+    expect(screen.getByTestId("github-publish-effective-preview")).toHaveTextContent("/site/content");
+  });
+
+  it("shows GitHub publish validation guidance and blocks save until issues are resolved", async () => {
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-gh-validate",
+        display_name: "Admin GH Validate",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    const repositoryInput = await screen.findByLabelText("Repository (owner/name)");
+    const defaultBranchInput = screen.getByLabelText("Default Branch");
+    const basePathInput = screen.getByLabelText("Base Path");
+    const enabledToggle = screen.getByLabelText("Enable migration GitHub publish target");
+
+    fireEvent.click(enabledToggle);
+    fireEvent.change(repositoryInput, { target: { value: "invalid repo" } });
+    fireEvent.change(defaultBranchInput, { target: { value: " " } });
+    fireEvent.change(basePathInput, { target: { value: "../bad" } });
+
+    expect(
+      screen.getByText("Repository must use owner/repo format (for example: mhanson13/tnmfire)."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Default branch is required when GitHub publishing is enabled."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Base path is invalid. Use '/' or '/subpath' with letters, numbers, -, _, ., and /."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Resolve validation issues above before saving.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save GitHub Publish Config" })).toBeDisabled();
+    expect(mockUpdateGitHubPublishConfig).not.toHaveBeenCalled();
   });
 
   it("keeps /users as a compatibility route", async () => {
