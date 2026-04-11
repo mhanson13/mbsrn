@@ -1318,6 +1318,14 @@ main {
   color: var(--text);
 }
 
+.migration-draft-preview-frame {
+  width: 100%;
+  min-height: 540px;
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
 .migration-advanced-details > summary {
   cursor: pointer;
   font-weight: 600;

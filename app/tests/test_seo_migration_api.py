@@ -467,6 +467,59 @@ def test_migration_summary_requires_existing_workspace(db_session) -> None:
     assert response.json()["detail"] == "Migration workspace not found"
 
 
+def test_migration_summary_destination_reports_expected_publish_and_deploy_urls(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_name": "tnmfire-site",
+                "branch": "main",
+                "artifact_root": "site",
+            },
+            "deploy_config": {
+                "enabled": True,
+                "workflow_id": "deploy-www-prod.yml",
+                "ref": "main",
+                "inputs": {
+                    "site_url": "https://tnmfire-www.example",
+                },
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 201
+    artifact_id = generate_response.json()["id"]
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    destination = summary_response.json().get("context_summary", {}).get("destination_summary") or {}
+    draft_preview = destination.get("draft_preview") or {}
+    publish_destination = destination.get("publish_destination") or {}
+    deploy_destination = destination.get("deploy_destination") or {}
+
+    assert draft_preview.get("state") == "available"
+    assert draft_preview.get("artifact_version_id") == artifact_id
+    assert draft_preview.get("entry_path") == "index.html"
+    assert publish_destination.get("repository") == "acme/tnmfire-site"
+    assert publish_destination.get("expected_location") == "acme/tnmfire-site@main:/site"
+    assert publish_destination.get("expected_url") == "https://github.com/acme/tnmfire-site/tree/main/site"
+    assert deploy_destination.get("expected_url") == "https://tnmfire-www.example"
+    assert deploy_destination.get("url_source") == "deploy_input:site_url"
+    assert deploy_destination.get("state") == "expected_after_deploy"
+
+
 def test_publish_requires_approved_artifact_version(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"
@@ -647,6 +700,11 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
         "generation_succeeded",
     }
     assert isinstance(draft_generation_state.get("summary"), str)
+    destination_summary = payload.get("context_summary", {}).get("destination_summary")
+    assert isinstance(destination_summary, dict)
+    assert isinstance(destination_summary.get("draft_preview"), dict)
+    assert isinstance(destination_summary.get("publish_destination"), dict)
+    assert isinstance(destination_summary.get("deploy_destination"), dict)
     assert "last_draft_generation_status" in migration_diagnostics
     assert "last_draft_failure_category" in migration_diagnostics
     assert "last_draft_failure_reason" in migration_diagnostics

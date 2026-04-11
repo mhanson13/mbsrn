@@ -2184,6 +2184,45 @@ describe("site workspace migration tab", () => {
     expect(mockFetchMigrationArtifactVersions).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
   });
 
+  it("renders migration effective destination summary with expected publish and deploy URLs", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          destination_summary: {
+            draft_preview: {
+              state: "available",
+              entry_path: "index.html",
+            },
+            publish_destination: {
+              state: "configured",
+              repository: "mhanson13/tnmfire",
+              branch: "main",
+              artifact_root: "/site",
+              expected_location: "mhanson13/tnmfire@main:/site",
+              expected_url: "https://github.com/mhanson13/tnmfire/tree/main/site",
+            },
+            deploy_destination: {
+              state: "expected_after_deploy",
+              expected_url: "https://www.tnmfire.com",
+              url_source: "deploy_input:site_url",
+            },
+          },
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+    await switchToMigrationTab(user);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    expect(destinationSummary).toHaveTextContent("mhanson13/tnmfire@main:/site");
+    expect(destinationSummary).toHaveTextContent("https://github.com/mhanson13/tnmfire/tree/main/site");
+    expect(destinationSummary).toHaveTextContent("https://www.tnmfire.com");
+    expect(destinationSummary).toHaveTextContent("deploy_input:site_url");
+  });
+
   it("renders reused context availability from explicit backend signals", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValue(
@@ -2644,6 +2683,58 @@ describe("site workspace migration tab", () => {
       ),
     );
     expect(await screen.findByTestId("migration-file-preview")).toHaveTextContent("ANALYTICS_PLACEHOLDER");
+  });
+
+  it("renders a sandboxed migration draft preview from generated artifact content", async () => {
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+    await switchToMigrationTab(user);
+
+    const previewButton = await screen.findByTestId("migration-preview-draft-button");
+    expect(previewButton).toBeEnabled();
+    await user.click(previewButton);
+
+    const previewFrame = await screen.findByTestId("migration-draft-preview-iframe");
+    expect(previewFrame).toHaveAttribute("sandbox", "");
+    expect(previewFrame).toHaveAttribute(
+      "srcdoc",
+      expect.stringContaining("Draft preview only. Not published. Not deployed."),
+    );
+  });
+
+  it("shows explicit non-previewable artifact messaging when no HTML files exist", async () => {
+    const user = userEvent.setup();
+    const nonPreviewableArtifact = buildMigrationArtifactVersion({
+      id: "migration-artifact-no-html",
+      generated_files_json: [
+        {
+          path: "styles.css",
+          media_type: "text/css",
+          content: "body { color: #222; }",
+          size_bytes: 21,
+        },
+      ],
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: nonPreviewableArtifact.id,
+          latest_generated_artifact_version_number: nonPreviewableArtifact.version,
+        }),
+        latest_artifact: nonPreviewableArtifact,
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValue({
+      items: [nonPreviewableArtifact],
+      total: 1,
+    });
+
+    render(<SiteWorkspacePage />);
+    await switchToMigrationTab(user);
+
+    const previewButton = await screen.findByTestId("migration-preview-draft-button");
+    expect(previewButton).toBeDisabled();
+    expect(await screen.findByText("Selected artifact does not contain previewable HTML.")).toBeInTheDocument();
   });
 
   it("shows a partial draft indicator when selected migration artifact is salvaged", async () => {

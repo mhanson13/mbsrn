@@ -23,6 +23,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubWorkflowProvisionResult,
 )
 from app.models.business import Business
 from app.models.github_publish_config import GitHubPublishConfig
@@ -120,13 +121,23 @@ class _CompatibilityTrackingMigrationProvider(SEOMigrationArtifactGenerationProv
 
 
 class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
-    def __init__(self, *, fail_publish: bool = False, fail_deploy: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_publish: bool = False,
+        fail_deploy: bool = False,
+        fail_workflow_provision: bool = False,
+        existing_workflow: bool = False,
+    ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
+        self.fail_workflow_provision = fail_workflow_provision
+        self.existing_workflow = existing_workflow
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
+        self.workflow_provision_calls: list[tuple[str, str, str, str, bool]] = []
 
     def publish_files(
         self,
@@ -175,6 +186,33 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             ref=target.ref,
             inputs=dict(target.inputs),
             dispatched_at="2026-04-07T12:05:00+00:00",
+        )
+
+    def ensure_deploy_workflow(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        workflow_id: str,
+        dry_run: bool,
+    ) -> SEOMigrationGitHubWorkflowProvisionResult:
+        self.workflow_provision_calls.append((repo_owner, repo_name, branch, workflow_id, dry_run))
+        if self.fail_workflow_provision:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_provision_failed",
+                safe_message="Simulated workflow provisioning failure.",
+            )
+        provisioned = (not self.existing_workflow) and (not dry_run)
+        commit_sha = "wf123" if provisioned else None
+        return SEOMigrationGitHubWorkflowProvisionResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            workflow_id=workflow_id,
+            workflow_path=f".github/workflows/{workflow_id}",
+            provisioned=provisioned,
+            commit_sha=commit_sha,
         )
 
 
@@ -1869,6 +1907,109 @@ def test_publish_filters_invalid_stored_paths_before_publish(db_session) -> None
     assert any("outside static package boundary" in str(item) for item in warnings)
 
 
+def test_publish_provisions_missing_deploy_workflow_once(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher(existing_workflow=False)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert publisher.workflow_provision_calls == [
+        ("acme", "tnmfire-site", "main", "deploy-tnmfire-www-prod.yml", False)
+    ]
+    assert result.result.get("deploy_workflow_provisioned") is True
+    assert result.result.get("deploy_workflow_id") == "deploy-tnmfire-www-prod.yml"
+    assert result.result.get("deploy_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    provision_logs = [
+        record
+        for record in caplog.records
+        if isinstance(record.msg, str) and '"event": "migration_workflow_provisioned"' in record.msg
+    ]
+    assert provision_logs
+    assert '"workflow_id": "deploy-tnmfire-www-prod.yml"' in provision_logs[-1].msg
+
+
+def test_publish_does_not_overwrite_existing_deploy_workflow(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher(existing_workflow=True)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert publisher.workflow_provision_calls == [
+        ("acme", "tnmfire-site", "main", "deploy-tnmfire-www-prod.yml", False)
+    ]
+    assert result.result.get("deploy_workflow_provisioned") is False
+    provision_logs = [
+        record
+        for record in caplog.records
+        if isinstance(record.msg, str) and '"event": "migration_workflow_provisioned"' in record.msg
+    ]
+    assert provision_logs == []
+
+
 def test_publish_failure_records_failed_state_and_history(db_session) -> None:
     publisher = _RecordingGitHubPublisher(fail_publish=True)
     service = _build_service(
@@ -2715,6 +2856,47 @@ def test_runtime_publisher_readiness_log_includes_reason_code(db_session, caplog
         event.get("runtime_publisher_reason_code") == "runtime_credential_missing" and event.get("action") == "publish"
         for event in runtime_events
     )
+
+
+def test_workspace_summary_includes_destination_summary_and_draft_preview_entry(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id, artifact_root="site")
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "workflow_id": "deploy-www-prod.yml",
+            "ref": "main",
+            "inputs": {"site_url": "https://tnmfire-www.example"},
+        },
+        principal_id="principal-1",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    destination = (summary.context_summary or {}).get("destination_summary") or {}
+    assert isinstance(destination, dict)
+    draft_preview = destination.get("draft_preview") or {}
+    assert draft_preview.get("state") == "available"
+    assert draft_preview.get("artifact_version_id") == artifact.id
+    assert draft_preview.get("entry_path") == "index.html"
+
+    publish_destination = destination.get("publish_destination") or {}
+    assert publish_destination.get("state") == "configured"
+    assert publish_destination.get("repository") == "acme/tnmfire-site"
+    assert publish_destination.get("expected_location") == "acme/tnmfire-site@main:/site"
+    assert publish_destination.get("expected_url") == "https://github.com/acme/tnmfire-site/tree/main/site"
+
+    deploy_destination = destination.get("deploy_destination") or {}
+    assert deploy_destination.get("state") == "expected_after_deploy"
+    assert deploy_destination.get("expected_url") == "https://tnmfire-www.example"
+    assert deploy_destination.get("url_source") == "deploy_input:site_url"
 
 
 def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -> None:

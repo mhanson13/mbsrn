@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import time
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +26,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubWorkflowProvisionResult,
 )
 from app.models.business import Business
 from app.models.seo_migration_artifact_version import SEOMigrationArtifactVersion
@@ -139,6 +140,7 @@ _DRAFT_CONTRACT_EVALUATION_LOG_EVENT = "seo_migration_draft_contract_evaluation"
 _MIGRATION_READINESS_LOG_EVENT = "seo_migration_readiness_evaluation"
 _DRAFT_PROVIDER_COMPATIBILITY_LOG_EVENT = "seo_migration_provider_compatibility_evaluation"
 _MIGRATION_RUNTIME_PUBLISHER_LOG_EVENT = "seo_migration_runtime_publisher_readiness"
+_MIGRATION_WORKFLOW_PROVISIONED_LOG_EVENT = "migration_workflow_provisioned"
 _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS = 120
 _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS = 60
 _MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS = 900
@@ -840,7 +842,39 @@ class SEOMigrationService:
             normalized_commit_message = (
                 f"{self.publish_commit_message_prefix} site={site.id} artifact=v{artifact.version}"
             )
+        deploy_workflow_provision_result: SEOMigrationGitHubWorkflowProvisionResult | None = None
         try:
+            deploy_target_for_workflow: dict[str, object] | None = None
+            try:
+                deploy_target_for_workflow = _resolve_deploy_target(
+                    deploy_config=workspace.deploy_config_json,
+                    publish_config=effective_publish_config,
+                    default_workflow_id=self.deploy_default_workflow_id,
+                    default_ref=self.deploy_default_ref,
+                )
+            except ValueError:
+                deploy_target_for_workflow = None
+
+            if (
+                not dry_run
+                and isinstance(deploy_target_for_workflow, dict)
+                and bool(deploy_target_for_workflow.get("enabled"))
+            ):
+                deploy_workflow_provision_result = self.github_publisher.ensure_deploy_workflow(
+                    repo_owner=str(deploy_target_for_workflow.get("repo_owner") or target["repo_owner"]),
+                    repo_name=str(deploy_target_for_workflow.get("repo_name") or target["repo_name"]),
+                    branch=str(deploy_target_for_workflow.get("ref") or target["branch"]),
+                    workflow_id=str(deploy_target_for_workflow.get("workflow_id") or self.deploy_default_workflow_id),
+                    dry_run=False,
+                )
+                if deploy_workflow_provision_result.provisioned:
+                    self._log_workflow_provisioned(
+                        business_id=business_id,
+                        site_id=site_id,
+                        workspace_id=workspace.id,
+                        principal_id=principal_id,
+                        provision_result=deploy_workflow_provision_result,
+                    )
             publish_result = self.github_publisher.publish_files(
                 target=SEOMigrationGitHubPublishTarget(
                     repo_owner=target["repo_owner"],
@@ -944,7 +978,15 @@ class SEOMigrationService:
             "analytics_applied": bool(analytics_injected_paths),
             "analytics_injected_paths": analytics_injected_paths,
             "warnings": publish_warnings,
+            "deploy_workflow_provisioned": bool(
+                not dry_run
+                and deploy_workflow_provision_result is not None
+                and deploy_workflow_provision_result.provisioned
+            ),
         }
+        if not dry_run and deploy_workflow_provision_result is not None:
+            history_payload["deploy_workflow_id"] = deploy_workflow_provision_result.workflow_id
+            history_payload["deploy_workflow_path"] = deploy_workflow_provision_result.workflow_path
         workspace.publish_history_json = _append_history_item(
             workspace.publish_history_json,
             history_payload,
@@ -1916,6 +1958,13 @@ class SEOMigrationService:
             draft_provider_compatibility=draft_provider_compatibility,
             draft_diagnostics=draft_diagnostics,
         )
+        destination_summary = self._build_destination_summary(
+            site=site,
+            workspace=workspace,
+            latest_artifact=latest_artifact,
+            publish_readiness=publish_readiness,
+            deploy_readiness=deploy_readiness,
+        )
         publish_readiness = {
             **publish_readiness,
             "last_status": publish_diagnostics.get("last_status"),
@@ -1994,6 +2043,7 @@ class SEOMigrationService:
                 compatibility=draft_provider_compatibility,
             ),
             "draft_generation_state": draft_generation_state,
+            "destination_summary": destination_summary,
         }
         return SEOMigrationWorkspaceSummary(
             workspace=workspace,
@@ -3526,6 +3576,35 @@ class SEOMigrationService:
             level=level,
         )
 
+    def _log_workflow_provisioned(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace_id: str | None,
+        principal_id: str | None,
+        provision_result: SEOMigrationGitHubWorkflowProvisionResult,
+    ) -> None:
+        payload: dict[str, object] = {
+            "event": _MIGRATION_WORKFLOW_PROVISIONED_LOG_EVENT,
+            "timestamp": utc_now().isoformat(),
+            "business_id": business_id,
+            "site_id": site_id,
+            "workspace_id": workspace_id,
+            "principal_id": principal_id,
+            "repo_owner": provision_result.repo_owner,
+            "repo_name": provision_result.repo_name,
+            "branch": provision_result.branch,
+            "workflow_id": provision_result.workflow_id,
+            "workflow_path": provision_result.workflow_path,
+            "commit_sha": provision_result.commit_sha,
+        }
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message=_MIGRATION_WORKFLOW_PROVISIONED_LOG_EVENT,
+            level=logging.INFO,
+        )
+
     @staticmethod
     def _safe_publish_target_summary(config: object) -> dict[str, object]:
         normalized = _normalize_publish_config(config)
@@ -3634,6 +3713,146 @@ class SEOMigrationService:
             "workflow_id": str(normalized.get("workflow_id") or self.deploy_default_workflow_id).strip(),
             "ref": str(normalized.get("ref") or self.deploy_default_ref).strip(),
         }
+
+    def _build_destination_summary(
+        self,
+        *,
+        site: SEOSite,
+        workspace: SEOMigrationWorkspace,
+        latest_artifact: SEOMigrationArtifactVersion | None,
+        publish_readiness: dict[str, object],
+        deploy_readiness: dict[str, object],
+    ) -> dict[str, object]:
+        publish_target = _normalize_json_dict(publish_readiness.get("target"))
+        deploy_target = _normalize_json_dict(deploy_readiness.get("target"))
+        publish_owner = _normalize_string(publish_target.get("repo_owner"), max_length=80)
+        publish_repo = _normalize_string(publish_target.get("repo_name"), max_length=120)
+        publish_branch = _normalize_string(publish_target.get("branch"), max_length=120) or "main"
+        publish_root = (_normalize_string(publish_target.get("artifact_root"), max_length=120) or "").strip("/")
+        publish_repository = (
+            f"{publish_owner}/{publish_repo}" if publish_owner and publish_repo else None
+        )
+        publish_tree_url = self._derive_publish_tree_url(
+            repo_owner=publish_owner,
+            repo_name=publish_repo,
+            branch=publish_branch,
+            artifact_root=publish_root,
+        )
+        publish_root_display = f"/{publish_root}" if publish_root else "/"
+        expected_publish_location = (
+            f"{publish_repository}@{publish_branch}:{publish_root_display}"
+            if publish_repository
+            else None
+        )
+
+        deploy_url, deploy_url_source = self._resolve_expected_deploy_url(deploy_target=deploy_target)
+        deployed_live = bool(workspace.last_deployed_at)
+        deploy_state = "unknown"
+        if deploy_url and deployed_live:
+            deploy_state = "active_live"
+        elif deploy_url:
+            deploy_state = "expected_after_deploy"
+
+        draft_preview_entry_path = self._derive_preview_entry_path(latest_artifact)
+        draft_preview_state = "available" if draft_preview_entry_path else "unavailable"
+
+        return {
+            "draft_preview": {
+                "state": draft_preview_state,
+                "artifact_version_id": latest_artifact.id if latest_artifact is not None else None,
+                "artifact_version_number": latest_artifact.version if latest_artifact is not None else None,
+                "entry_path": draft_preview_entry_path,
+            },
+            "publish_destination": {
+                "state": "configured" if publish_repository else "unknown",
+                "repository": publish_repository,
+                "branch": publish_branch if publish_repository else None,
+                "artifact_root": publish_root_display if publish_repository else None,
+                "expected_location": expected_publish_location,
+                "expected_url": publish_tree_url,
+                "is_published": bool(workspace.last_published_at),
+                "last_published_at": (
+                    workspace.last_published_at.isoformat()
+                    if hasattr(workspace.last_published_at, "isoformat")
+                    else None
+                ),
+            },
+            "deploy_destination": {
+                "state": deploy_state,
+                "expected_url": deploy_url,
+                "active_url": deploy_url if deployed_live else None,
+                "url_source": deploy_url_source,
+                "is_deployed": deployed_live,
+                "last_deployed_at": (
+                    workspace.last_deployed_at.isoformat()
+                    if hasattr(workspace.last_deployed_at, "isoformat")
+                    else None
+                ),
+                "target_repository": (
+                    f"{_normalize_string(deploy_target.get('repo_owner'), max_length=80) or ''}/"
+                    f"{_normalize_string(deploy_target.get('repo_name'), max_length=120) or ''}"
+                ).strip("/")
+                or None,
+                "workflow_id": _normalize_string(deploy_target.get("workflow_id"), max_length=160),
+                "ref": _normalize_string(deploy_target.get("ref"), max_length=120),
+            },
+            "current_site_url": _normalize_string(site.base_url, max_length=2048),
+        }
+
+    @staticmethod
+    def _derive_preview_entry_path(artifact: SEOMigrationArtifactVersion | None) -> str | None:
+        if artifact is None:
+            return None
+        generated_files = artifact.generated_files_json if isinstance(artifact.generated_files_json, list) else []
+        html_paths: list[str] = []
+        for item in generated_files:
+            if not isinstance(item, dict):
+                continue
+            path = _normalize_generated_path(item.get("path"))
+            if path is None:
+                continue
+            if path.lower().endswith(".html"):
+                html_paths.append(path)
+        if not html_paths:
+            return None
+        for candidate in ("index.html", "public/index.html"):
+            for path in html_paths:
+                if path.lower() == candidate:
+                    return path
+        html_paths.sort()
+        return html_paths[0]
+
+    @staticmethod
+    def _derive_publish_tree_url(
+        *,
+        repo_owner: str | None,
+        repo_name: str | None,
+        branch: str | None,
+        artifact_root: str | None,
+    ) -> str | None:
+        owner = str(repo_owner or "").strip()
+        repo = str(repo_name or "").strip()
+        branch_name = str(branch or "").strip()
+        if not owner or not repo or not branch_name:
+            return None
+        root = str(artifact_root or "").strip().strip("/")
+        encoded_branch = quote(branch_name, safe="")
+        if root:
+            return f"https://github.com/{owner}/{repo}/tree/{encoded_branch}/{root}"
+        return f"https://github.com/{owner}/{repo}/tree/{encoded_branch}"
+
+    @staticmethod
+    def _resolve_expected_deploy_url(*, deploy_target: dict[str, object]) -> tuple[str | None, str]:
+        inputs = _normalize_history_inputs(deploy_target.get("inputs"))
+        for key in ("deploy_url", "public_url", "site_url", "url"):
+            candidate = _normalize_url_candidate(inputs.get(key))
+            if candidate:
+                return candidate, f"deploy_input:{key}"
+        for key in ("host", "domain"):
+            candidate = _normalize_host_candidate(inputs.get(key))
+            if candidate:
+                return candidate, f"deploy_input:{key}"
+        return None, "undetermined"
 
     @staticmethod
     def _runtime_publisher_reason_message(*, reason_code: str, action: str) -> str:
@@ -4722,6 +4941,29 @@ def _coerce_bool(value: object, *, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _normalize_url_candidate(value: object) -> str | None:
+    normalized = _normalize_string(value, max_length=2048)
+    if normalized is None:
+        return None
+    lowered = normalized.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        return normalized
+    return None
+
+
+def _normalize_host_candidate(value: object) -> str | None:
+    normalized = _normalize_string(value, max_length=253)
+    if normalized is None:
+        return None
+    if normalized.startswith("http://") or normalized.startswith("https://"):
+        return _normalize_url_candidate(normalized)
+    if "/" in normalized or " " in normalized:
+        return None
+    if "." not in normalized:
+        return None
+    return f"https://{normalized}"
 
 
 def _try_parse_json_payload(raw_output: str) -> dict[str, object] | None:

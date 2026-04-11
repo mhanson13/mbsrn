@@ -72,6 +72,11 @@ Migration workspace boundary:
 - analytics insertion mode + GA measurement fields are workspace-level settings and persist after save/reload.
 - approve/publish/deploy control enablement follows backend readiness prerequisites from refreshed summary state.
 - publish readiness requires both merged target metadata and runtime publisher capability (`MIGRATION_GITHUB_TOKEN` and valid runtime publisher wiring).
+- migration workspace now shows an explicit effective destination summary:
+  - draft preview availability
+  - expected publish destination (owner/repo/branch/path and derived GitHub URL when determinable)
+  - expected deploy URL / live URL state when determinable
+- migration draft preview is rendered from selected artifact content in a sandboxed iframe and is always labeled as draft-only (not published, not deployed).
 
 ## Shared workspace/page composition primitives
 

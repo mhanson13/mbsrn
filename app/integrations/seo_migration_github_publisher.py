@@ -61,6 +61,17 @@ class SEOMigrationGitHubDeployResult:
 
 
 @dataclass(frozen=True)
+class SEOMigrationGitHubWorkflowProvisionResult:
+    repo_owner: str
+    repo_name: str
+    branch: str
+    workflow_id: str
+    workflow_path: str
+    provisioned: bool
+    commit_sha: str | None
+
+
+@dataclass(frozen=True)
 class SEOMigrationGitHubPublisherError(RuntimeError):
     code: str
     safe_message: str
@@ -88,6 +99,26 @@ class SEOMigrationGitHubPublisher:
         dry_run: bool,
     ) -> SEOMigrationGitHubDeployResult:
         raise NotImplementedError
+
+    def ensure_deploy_workflow(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        workflow_id: str,
+        dry_run: bool,
+    ) -> SEOMigrationGitHubWorkflowProvisionResult:
+        workflow_path = _workflow_repo_path(workflow_id)
+        return SEOMigrationGitHubWorkflowProvisionResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            workflow_id=workflow_id,
+            workflow_path=workflow_path,
+            provisioned=False,
+            commit_sha=None,
+        )
 
 
 class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
@@ -252,6 +283,85 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             dispatched_at=dispatched_at,
         )
 
+    def ensure_deploy_workflow(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        workflow_id: str,
+        dry_run: bool,
+    ) -> SEOMigrationGitHubWorkflowProvisionResult:
+        normalized_workflow_id = str(workflow_id or "").strip()
+        if not normalized_workflow_id:
+            raise SEOMigrationGitHubPublisherError(
+                code="github_workflow_invalid",
+                safe_message="Deploy workflow target is invalid.",
+            )
+        workflow_path = _workflow_repo_path(normalized_workflow_id)
+        existing_sha = self._fetch_existing_sha(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            path=workflow_path,
+        )
+        if existing_sha:
+            return SEOMigrationGitHubWorkflowProvisionResult(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=branch,
+                workflow_id=normalized_workflow_id,
+                workflow_path=workflow_path,
+                provisioned=False,
+                commit_sha=existing_sha,
+            )
+        if dry_run:
+            return SEOMigrationGitHubWorkflowProvisionResult(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=branch,
+                workflow_id=normalized_workflow_id,
+                workflow_path=workflow_path,
+                provisioned=False,
+                commit_sha=None,
+            )
+
+        encoded_content = base64.b64encode(
+            _default_deploy_workflow_yaml(workflow_id=normalized_workflow_id).encode("utf-8")
+        ).decode("ascii")
+        response_payload = self._request_json(
+            method="PUT",
+            path=(
+                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                f"/contents/{urllib.parse.quote(workflow_path, safe='/')}"
+            ),
+            payload={
+                "message": f"chore(migration): provision deploy workflow {normalized_workflow_id}",
+                "content": encoded_content,
+                "branch": branch,
+                "committer": {
+                    "name": self.committer_name,
+                    "email": self.committer_email,
+                },
+            },
+        )
+        commit_sha: str | None = None
+        if isinstance(response_payload, dict):
+            commit_payload = response_payload.get("commit")
+            if isinstance(commit_payload, dict):
+                candidate = str(commit_payload.get("sha") or "").strip()
+                if candidate:
+                    commit_sha = candidate
+        return SEOMigrationGitHubWorkflowProvisionResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            workflow_id=normalized_workflow_id,
+            workflow_path=workflow_path,
+            provisioned=True,
+            commit_sha=commit_sha,
+        )
+
     def _fetch_existing_sha(
         self,
         *,
@@ -373,6 +483,33 @@ def _join_repo_path(root: str, path: str) -> str:
     if not normalized_path:
         return normalized_root
     return f"{normalized_root}/{normalized_path}"
+
+
+def _workflow_repo_path(workflow_id: str) -> str:
+    normalized = str(workflow_id or "").strip().replace("\\", "/").lstrip("/")
+    if not normalized or ".." in normalized:
+        raise SEOMigrationGitHubPublisherError(
+            code="github_workflow_invalid",
+            safe_message="Deploy workflow target is invalid.",
+        )
+    return _join_repo_path(".github/workflows", normalized)
+
+
+def _default_deploy_workflow_yaml(*, workflow_id: str) -> str:
+    normalized_workflow_id = str(workflow_id or "").strip() or "deploy-www-prod.yml"
+    return (
+        "name: Deploy Site\n"
+        "\n"
+        "on:\n"
+        "  workflow_dispatch:\n"
+        "\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: Placeholder deploy\n"
+        f"        run: echo \"Deploy workflow ({normalized_workflow_id}) provisioned; customize before production rollout.\"\n"
+    )
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:

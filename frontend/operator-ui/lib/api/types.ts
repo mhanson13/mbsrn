@@ -529,6 +529,43 @@ export interface MigrationDraftGenerationState {
   retryable?: boolean | null;
 }
 
+export interface MigrationDestinationPreviewSummary {
+  state: "available" | "unavailable" | string;
+  artifact_version_id?: string | null;
+  artifact_version_number?: number | null;
+  entry_path?: string | null;
+}
+
+export interface MigrationDestinationPublishSummary {
+  state: "configured" | "unknown" | string;
+  repository?: string | null;
+  branch?: string | null;
+  artifact_root?: string | null;
+  expected_location?: string | null;
+  expected_url?: string | null;
+  is_published?: boolean;
+  last_published_at?: string | null;
+}
+
+export interface MigrationDestinationDeploySummary {
+  state: "active_live" | "expected_after_deploy" | "unknown" | string;
+  expected_url?: string | null;
+  active_url?: string | null;
+  url_source?: string | null;
+  is_deployed?: boolean;
+  last_deployed_at?: string | null;
+  target_repository?: string | null;
+  workflow_id?: string | null;
+  ref?: string | null;
+}
+
+export interface MigrationDestinationSummary {
+  draft_preview?: MigrationDestinationPreviewSummary;
+  publish_destination?: MigrationDestinationPublishSummary;
+  deploy_destination?: MigrationDestinationDeploySummary;
+  current_site_url?: string | null;
+}
+
 export interface MigrationContextSummary extends Record<string, unknown> {
   has_source_snapshot?: boolean;
   has_operator_requirements?: boolean;
@@ -540,6 +577,7 @@ export interface MigrationContextSummary extends Record<string, unknown> {
   draft_generation_readiness?: MigrationDraftReadiness;
   draft_provider_compatibility?: MigrationDraftProviderCompatibility;
   draft_generation_state?: MigrationDraftGenerationState;
+  destination_summary?: MigrationDestinationSummary;
 }
 
 export interface MigrationWorkspaceSummary {

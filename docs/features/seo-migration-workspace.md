@@ -114,6 +114,17 @@ Operator impact:
 - faster section scanning and clearer primary-vs-secondary content separation
 - no workflow semantic changes (approval/publish/deploy and generation gates are unchanged)
 
+Destination and preview trust additions:
+- migration workspace now includes an `Effective Publish/Deploy Destinations` section that separates:
+  - draft preview availability
+  - expected publish destination (owner/repo/branch/path and derived GitHub tree URL when determinable)
+  - expected deploy URL and active/live URL state when determinable from deploy inputs/runtime state
+- destination values are labeled as configured/expected/live/unknown; URLs are only shown when derivable from existing config
+- draft website preview is available before publish/deploy from the selected artifact version:
+  - rendered in a sandboxed, read-only iframe
+  - explicitly labeled as draft-only (`not published`, `not deployed`)
+  - unavailable state is explicit when artifact HTML is missing
+
 ## Reused Context Availability Semantics
 Migration reused-context cards use best-available signal, not strict completeness.
 
@@ -560,12 +571,15 @@ Publish behavior:
 - explicit operator-triggered action only
 - approved artifact required
 - bounded file/path validation before publish
+- publish now provisions the expected deploy workflow file if missing (`.github/workflows/{workflow_id}`)
 - no writes outside configured artifact root
 - dry-run supported
 - history captured with status/result metadata
 - duplicate non-dry-run publish attempts for the same artifact+target are rejected with operator-readable validation errors
 - retry after a failed publish is supported and recorded as a new history event
 - dry-run publish records history but does not overwrite prior successful publish commit metadata
+- workflow provisioning is idempotent: existing workflow files are never overwritten
+- auto-provisioned workflow uses a minimal `workflow_dispatch` placeholder job and is intended to be customized by platform teams.
 
 ### GitHub Publish Configuration (Admin)
 Migration publish now depends on an admin-managed GitHub target baseline:

@@ -224,6 +224,9 @@ It transforms a business's website and market context into structured insights a
 - Production deployment injects `MIGRATION_GITHUB_TOKEN` into `mbsrn-api` through existing `mbsrn-api-auth` secret wiring; the token is not stored/editable in application UI.
 - approve/publish/deploy button enablement is driven by authoritative readiness prerequisites after mutation refresh, not local stale assumptions.
 - analytics insertion rules remain workspace-level controls and now persist/reload reliably after save.
+- publish now ensures the expected deploy workflow file exists in GitHub before artifact commit (create-if-missing, no overwrite), reducing deploy failures caused by missing workflow definitions.
+- workspace now surfaces effective migration destinations (draft preview state, expected publish location/URL, expected deploy/live URL when determinable) for clearer pre-execution trust.
+- operators can open a sandboxed draft preview of selected migration artifact HTML before publish/deploy; preview is explicitly read-only and non-live.
 
 ### Operator value
 > "I can replace a low-quality incumbent site with a structured draft package before any publication step."

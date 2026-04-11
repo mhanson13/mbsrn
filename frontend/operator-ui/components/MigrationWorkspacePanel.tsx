@@ -183,6 +183,29 @@ interface ArtifactQualitySummary {
   issues: ArtifactQualityIssue[];
 }
 
+interface MigrationDestinationSummaryEvaluation {
+  draftPreviewState: string;
+  draftPreviewEntryPath: string | null;
+  publishRepository: string | null;
+  publishBranch: string | null;
+  publishArtifactRoot: string | null;
+  publishExpectedLocation: string | null;
+  publishExpectedUrl: string | null;
+  publishState: string;
+  deployExpectedUrl: string | null;
+  deployActiveUrl: string | null;
+  deployState: string;
+  deployUrlSource: string | null;
+  currentSiteUrl: string | null;
+}
+
+interface DraftPreviewEvaluation {
+  available: boolean;
+  entryPath: string | null;
+  html: string | null;
+  reason: string | null;
+}
+
 interface MigrationSummaryCardProps {
   label: string;
   emphasis?: boolean;
@@ -1118,6 +1141,227 @@ function resolveReusedContextLabel(params: {
   return "Available";
 }
 
+function derivePublishTreeUrl(
+  repoOwner: string | null,
+  repoName: string | null,
+  branch: string | null,
+  artifactRoot: string | null,
+): string | null {
+  const owner = (repoOwner || "").trim();
+  const repo = (repoName || "").trim();
+  const branchValue = (branch || "").trim();
+  if (!owner || !repo || !branchValue) {
+    return null;
+  }
+  const root = (artifactRoot || "").trim().replace(/^\/+|\/+$/g, "");
+  const encodedBranch = encodeURIComponent(branchValue);
+  return root
+    ? `https://github.com/${owner}/${repo}/tree/${encodedBranch}/${root}`
+    : `https://github.com/${owner}/${repo}/tree/${encodedBranch}`;
+}
+
+function deriveDeployUrlFromInputs(inputs: Record<string, unknown>): { url: string | null; source: string | null } {
+  const candidates = ["deploy_url", "public_url", "site_url", "url"];
+  for (const key of candidates) {
+    const value = asStringOrNull(inputs[key]);
+    if (!value) {
+      continue;
+    }
+    const normalized = value.trim();
+    if (normalized.startsWith("https://") || normalized.startsWith("http://")) {
+      return { url: normalized, source: `deploy_input:${key}` };
+    }
+  }
+  const hostCandidates = ["host", "domain"];
+  for (const key of hostCandidates) {
+    const value = asStringOrNull(inputs[key]);
+    if (!value) {
+      continue;
+    }
+    const normalized = value.trim();
+    if (!normalized || normalized.includes("/") || !normalized.includes(".")) {
+      continue;
+    }
+    return { url: `https://${normalized}`, source: `deploy_input:${key}` };
+  }
+  return { url: null, source: null };
+}
+
+function deriveMigrationDestinationSummary(params: {
+  contextSummary: Record<string, unknown>;
+  publishTarget: Record<string, unknown>;
+  deployTarget: Record<string, unknown>;
+  effectivePublishRepoOwner: string | null;
+  effectivePublishRepoName: string | null;
+  effectivePublishBranch: string;
+  effectivePublishArtifactRoot: string;
+  currentSiteUrl: string | null;
+}): MigrationDestinationSummaryEvaluation {
+  const destinationSummary = asRecord(params.contextSummary.destination_summary);
+  const draftPreview = asRecord(destinationSummary.draft_preview);
+  const publishDestination = asRecord(destinationSummary.publish_destination);
+  const deployDestination = asRecord(destinationSummary.deploy_destination);
+
+  const publishRepository =
+    asStringOrNull(publishDestination.repository) ||
+    (params.effectivePublishRepoOwner && params.effectivePublishRepoName
+      ? `${params.effectivePublishRepoOwner}/${params.effectivePublishRepoName}`
+      : null);
+  const publishBranch = asStringOrNull(publishDestination.branch) || params.effectivePublishBranch || null;
+  const publishArtifactRoot =
+    asStringOrNull(publishDestination.artifact_root) || params.effectivePublishArtifactRoot || null;
+  const publishExpectedUrl =
+    asStringOrNull(publishDestination.expected_url) ||
+    derivePublishTreeUrl(
+      params.effectivePublishRepoOwner,
+      params.effectivePublishRepoName,
+      params.effectivePublishBranch,
+      params.effectivePublishArtifactRoot,
+    );
+  const publishExpectedLocation =
+    asStringOrNull(publishDestination.expected_location) ||
+    (publishRepository && publishBranch
+      ? `${publishRepository}@${publishBranch}:${publishArtifactRoot || "/"}`
+      : null);
+  const fallbackDeployUrl = deriveDeployUrlFromInputs(asRecord(params.deployTarget.inputs));
+  const deployExpectedUrl = asStringOrNull(deployDestination.expected_url) || fallbackDeployUrl.url;
+  const deployUrlSource = asStringOrNull(deployDestination.url_source) || fallbackDeployUrl.source;
+
+  return {
+    draftPreviewState: asStringOrNull(draftPreview.state) || "unavailable",
+    draftPreviewEntryPath: asStringOrNull(draftPreview.entry_path),
+    publishRepository,
+    publishBranch,
+    publishArtifactRoot,
+    publishExpectedLocation,
+    publishExpectedUrl,
+    publishState: asStringOrNull(publishDestination.state) || (publishRepository ? "configured" : "unknown"),
+    deployExpectedUrl,
+    deployActiveUrl: asStringOrNull(deployDestination.active_url),
+    deployState: asStringOrNull(deployDestination.state) || (deployExpectedUrl ? "expected_after_deploy" : "unknown"),
+    deployUrlSource,
+    currentSiteUrl: asStringOrNull(destinationSummary.current_site_url) || params.currentSiteUrl,
+  };
+}
+
+function normalizeArtifactPathForPreview(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+}
+
+function resolveArtifactRelativePath(entryPath: string, href: string): string | null {
+  const normalizedHref = href.trim();
+  if (!normalizedHref || normalizedHref.startsWith("#")) {
+    return null;
+  }
+  if (
+    normalizedHref.startsWith("http://") ||
+    normalizedHref.startsWith("https://") ||
+    normalizedHref.startsWith("data:")
+  ) {
+    return null;
+  }
+  const cleanedHref = normalizedHref.split("?")[0]?.split("#")[0] || "";
+  if (!cleanedHref) {
+    return null;
+  }
+  if (cleanedHref.startsWith("/")) {
+    return normalizeArtifactPathForPreview(cleanedHref);
+  }
+  const baseDir = entryPath.includes("/") ? entryPath.slice(0, entryPath.lastIndexOf("/") + 1) : "";
+  try {
+    const resolved = new URL(cleanedHref, `https://preview.local/${baseDir}`);
+    return normalizeArtifactPathForPreview(resolved.pathname);
+  } catch {
+    return null;
+  }
+}
+
+function buildDraftPreviewEvaluation(artifact: MigrationArtifactVersion | null): DraftPreviewEvaluation {
+  if (!artifact || !Array.isArray(artifact.generated_files_json)) {
+    return {
+      available: false,
+      entryPath: null,
+      html: null,
+      reason: "Select an artifact version with generated files to preview.",
+    };
+  }
+  const htmlFiles = artifact.generated_files_json
+    .map((item) => asRecord(item))
+    .map((item) => ({
+      path: normalizeArtifactPathForPreview(asString(item.path)),
+      content: asString(item.content),
+    }))
+    .filter((item) => item.path.endsWith(".html") && item.content.length > 0);
+  if (htmlFiles.length === 0) {
+    return {
+      available: false,
+      entryPath: null,
+      html: null,
+      reason: "Selected artifact does not contain previewable HTML.",
+    };
+  }
+  const entry = htmlFiles.find((item) => item.path.toLowerCase() === "index.html") || htmlFiles[0];
+  const cssContentByPath = new Map<string, string>();
+  artifact.generated_files_json.forEach((item) => {
+    const record = asRecord(item);
+    const path = normalizeArtifactPathForPreview(asString(record.path));
+    const content = asString(record.content);
+    if (!path || !content || !path.endsWith(".css")) {
+      return;
+    }
+    cssContentByPath.set(path, content);
+  });
+  const linkStylesheetRegex =
+    /<link\b(?=[^>]*\brel=["'][^"']*stylesheet[^"']*["'])(?=[^>]*\bhref=["'][^"']+["'])[^>]*\bhref=["']([^"']+)["'][^>]*>/gi;
+  let html = entry.content.replace(linkStylesheetRegex, (full, hrefValue: string) => {
+    const resolvedPath = resolveArtifactRelativePath(entry.path, hrefValue);
+    if (!resolvedPath) {
+      return full;
+    }
+    const cssContent = cssContentByPath.get(resolvedPath);
+    if (!cssContent) {
+      return full;
+    }
+    return `<style data-preview-inline-source="${resolvedPath}">\n${cssContent}\n</style>`;
+  });
+  const previewBanner =
+    '<div style="position:sticky;top:0;z-index:2147483646;padding:10px 14px;border-bottom:1px solid #d6e4ff;background:#eef4ff;color:#12316b;font:600 12px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">Draft preview only. Not published. Not deployed.</div>';
+  if (/<body[^>]*>/i.test(html)) {
+    html = html.replace(/<body([^>]*)>/i, `<body$1>${previewBanner}`);
+  } else {
+    html = `${previewBanner}${html}`;
+  }
+  return {
+    available: true,
+    entryPath: entry.path,
+    html,
+    reason: null,
+  };
+}
+
+function toDestinationStateLabel(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "configured") {
+    return "Configured";
+  }
+  if (normalized === "active_live") {
+    return "Active/live";
+  }
+  if (normalized === "expected_after_deploy") {
+    return "Expected after deploy";
+  }
+  if (normalized === "available") {
+    return "Available";
+  }
+  if (normalized === "unavailable") {
+    return "Unavailable";
+  }
+  if (!normalized) {
+    return "Unknown";
+  }
+  return normalized.replace(/_/g, " ");
+}
+
 export function MigrationWorkspacePanel({
   token,
   businessId,
@@ -1175,6 +1419,7 @@ export function MigrationWorkspacePanel({
   const [selectedFilePath, setSelectedFilePath] = useState("");
   const [filePreviewContent, setFilePreviewContent] = useState("");
   const [filePreviewMediaType, setFilePreviewMediaType] = useState("");
+  const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
 
   const selectedArtifact = useMemo(() => {
     if (!selectedArtifactVersionId) {
@@ -1209,6 +1454,7 @@ export function MigrationWorkspacePanel({
   const deployConfigPrerequisites = asRecord(deployReadiness.config_prerequisites);
   const deployBlockerCodes = parseBlockerCodes(deployReadiness.blocker_codes);
   const publishTarget = asRecord(publishReadiness.target);
+  const deployTarget = asRecord(deployReadiness.target);
   const effectivePublishRepoOwner = asStringOrNull(publishTarget.repo_owner);
   const effectivePublishRepoName = asStringOrNull(publishTarget.repo_name);
   const effectivePublishRepository =
@@ -1234,6 +1480,17 @@ export function MigrationWorkspacePanel({
   const deployRuntimeStatusMessage = asStringOrNull(deployConfigPrerequisites.github_publisher_status_message);
   const deployPrimaryBlockerMessage = toDeployBlockerMessage(deployBlockerCodes);
   const contextSummary = asRecord(summary?.context_summary);
+  const currentSiteUrl = asStringOrNull(sourceSnapshot?.final_url) || asStringOrNull(summary?.workspace.source_url);
+  const destinationSummary = deriveMigrationDestinationSummary({
+    contextSummary,
+    publishTarget,
+    deployTarget,
+    effectivePublishRepoOwner,
+    effectivePublishRepoName,
+    effectivePublishBranch,
+    effectivePublishArtifactRoot,
+    currentSiteUrl,
+  });
   const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
   const draftReadiness = parseDraftReadiness(contextSummary);
   const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
@@ -1306,6 +1563,7 @@ export function MigrationWorkspacePanel({
     legacyAvailable: Boolean(existingContextSummaries.competitor_summary) || Boolean(contextSummary.has_competitor_summary),
   });
   const latestArtifactForSummary = selectedArtifact || summary?.latest_artifact || artifactVersions[0] || null;
+  const draftPreview = useMemo(() => buildDraftPreviewEvaluation(selectedArtifact), [selectedArtifact]);
   const latestArtifactQualitySummary = parseArtifactQualitySummary(latestArtifactForSummary);
   const latestDraftStatusLabel = latestArtifactForSummary
     ? `v${latestArtifactForSummary.version} (${latestArtifactForSummary.status})`
@@ -1415,6 +1673,10 @@ export function MigrationWorkspacePanel({
   useEffect(() => {
     void loadWorkspaceData(true);
   }, [loadWorkspaceData]);
+
+  useEffect(() => {
+    setDraftPreviewOpen(false);
+  }, [selectedArtifactVersionId]);
 
   const handleIngestSource = async (): Promise<void> => {
     setBusyAction("ingest");
@@ -1771,6 +2033,64 @@ export function MigrationWorkspacePanel({
         </WorkspaceMessageStack>
       ) : null}
 
+      <div className="panel panel-compact stack workspace-section-block" data-testid="migration-destination-summary">
+        <h3>Effective Publish/Deploy Destinations</h3>
+        <span className="hint muted">
+          Draft preview, publish target, and deploy target are shown separately so operators can validate destination intent
+          before execution.
+        </span>
+        <WorkspaceMetadataGrid>
+          <WorkspaceMetadataItem label="Draft preview">
+            {toDestinationStateLabel(destinationSummary.draftPreviewState)}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Draft entry file">
+            {destinationSummary.draftPreviewEntryPath || "Not available"}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Publish target state">
+            {toDestinationStateLabel(destinationSummary.publishState)}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Expected publish location">
+            {destinationSummary.publishExpectedLocation || "Not yet determinable"}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Expected publish URL">
+            {destinationSummary.publishExpectedUrl ? (
+              <a href={destinationSummary.publishExpectedUrl} target="_blank" rel="noreferrer">
+                {destinationSummary.publishExpectedUrl}
+              </a>
+            ) : (
+              "Not yet determinable"
+            )}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Deploy URL state">
+            {toDestinationStateLabel(destinationSummary.deployState)}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Expected deploy URL">
+            {destinationSummary.deployExpectedUrl ? (
+              <a href={destinationSummary.deployExpectedUrl} target="_blank" rel="noreferrer">
+                {destinationSummary.deployExpectedUrl}
+              </a>
+            ) : (
+              "Not determinable from current configuration"
+            )}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Live deploy URL">
+            {destinationSummary.deployActiveUrl ? (
+              <a href={destinationSummary.deployActiveUrl} target="_blank" rel="noreferrer">
+                {destinationSummary.deployActiveUrl}
+              </a>
+            ) : (
+              "Not currently active"
+            )}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Current site URL">
+            {destinationSummary.currentSiteUrl || "Not available"}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Deploy URL source">
+            {destinationSummary.deployUrlSource || "undetermined"}
+          </WorkspaceMetadataItem>
+        </WorkspaceMetadataGrid>
+      </div>
+
       <h3 className="hint muted migration-section-title">A. Migration Overview</h3>
       <p className="hint muted migration-section-subtitle">
         Capture source and operator-owned replacement context before generating drafts.
@@ -2118,6 +2438,38 @@ export function MigrationWorkspacePanel({
         <h3>Draft Artifact Review</h3>
         {selectedArtifact ? (
           <>
+            <WorkspaceActionBar variant="secondary">
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => setDraftPreviewOpen((current) => !current)}
+                disabled={!draftPreview.available}
+                data-testid="migration-preview-draft-button"
+              >
+                {draftPreviewOpen ? "Hide Draft Preview" : "Preview Draft"}
+              </button>
+              <span className="hint muted">
+                {draftPreview.available
+                  ? "Draft preview only. Not published and not deployed."
+                  : draftPreview.reason || "Preview unavailable for this artifact."}
+              </span>
+            </WorkspaceActionBar>
+            {draftPreviewOpen && draftPreview.available ? (
+              <div className="panel panel-compact stack-tight" data-testid="migration-draft-preview-surface">
+                <strong>Draft Preview (Read-only)</strong>
+                <span className="hint muted">
+                  Entry file: {draftPreview.entryPath || "index.html"} | This preview is sandboxed and not live.
+                </span>
+                <iframe
+                  title="Migration draft preview"
+                  className="migration-draft-preview-frame"
+                  sandbox=""
+                  srcDoc={draftPreview.html || ""}
+                  referrerPolicy="no-referrer"
+                  data-testid="migration-draft-preview-iframe"
+                />
+              </div>
+            ) : null}
             <div className="panel panel-compact stack-tight">
               <strong>Strategy Summary</strong>
               <p>{selectedArtifact.strategy_summary || "No strategy summary provided."}</p>
