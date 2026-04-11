@@ -120,6 +120,7 @@ const mockUpdateMigrationAnalyticsConfig = jest.fn<Promise<MigrationWorkspace>, 
 const mockApproveMigrationArtifactVersion = jest.fn<Promise<MigrationArtifactVersion>, unknown[]>();
 const mockPublishMigrationArtifactVersion = jest.fn<Promise<MigrationPublishActionResponse>, unknown[]>();
 const mockDeployMigrationArtifactVersion = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
+const mockRefreshMigrationDeployStatus = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
 const mockFetchMigrationPublishHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
 const mockFetchMigrationDeployHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
 const mockGenerateMigrationDraftArtifacts = jest.fn<Promise<MigrationArtifactVersion>, unknown[]>();
@@ -186,6 +187,7 @@ jest.mock("../../lib/api/client", () => {
     approveMigrationArtifactVersion: (...args: unknown[]) => mockApproveMigrationArtifactVersion(...args),
     publishMigrationArtifactVersion: (...args: unknown[]) => mockPublishMigrationArtifactVersion(...args),
     deployMigrationArtifactVersion: (...args: unknown[]) => mockDeployMigrationArtifactVersion(...args),
+    refreshMigrationDeployStatus: (...args: unknown[]) => mockRefreshMigrationDeployStatus(...args),
     fetchMigrationPublishHistory: (...args: unknown[]) => mockFetchMigrationPublishHistory(...args),
     fetchMigrationDeployHistory: (...args: unknown[]) => mockFetchMigrationDeployHistory(...args),
     generateMigrationDraftArtifacts: (...args: unknown[]) => mockGenerateMigrationDraftArtifacts(...args),
@@ -932,6 +934,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockApproveMigrationArtifactVersion.mockReset();
   mockPublishMigrationArtifactVersion.mockReset();
   mockDeployMigrationArtifactVersion.mockReset();
+  mockRefreshMigrationDeployStatus.mockReset();
   mockFetchMigrationPublishHistory.mockReset();
   mockFetchMigrationDeployHistory.mockReset();
   mockGenerateMigrationDraftArtifacts.mockReset();
@@ -1018,6 +1021,35 @@ function seedCompetitorProfileGenerationDefaults(): void {
     }),
     readiness: { ready: true, reasons: [] },
     result: { status: "deploy_requested" },
+  });
+  mockRefreshMigrationDeployStatus.mockResolvedValue({
+    workspace: buildMigrationWorkspace({
+      deploy_status: "deploy_requested",
+      migration_status: "deploy_requested",
+      last_deployed_artifact_version_id: defaultMigrationArtifact.id,
+      last_deployed_artifact_version_number: defaultMigrationArtifact.version,
+      last_deployed_at: "2026-03-21T00:14:00Z",
+      latest_approved_artifact_version_id: defaultMigrationArtifact.id,
+      latest_approved_artifact_version_number: defaultMigrationArtifact.version,
+    }),
+    artifact: buildMigrationArtifactVersion({
+      id: defaultMigrationArtifact.id,
+      approval_status: "approved",
+      publish_status: "published",
+      deploy_status: "deploy_requested",
+      last_deployed_at: "2026-03-21T00:14:00Z",
+    }),
+    readiness: { ready: true, reasons: [] },
+    result: {
+      action: "deploy_status_refresh",
+      status: "no_change",
+      no_change_reason: "workflow_run_in_progress",
+      workflow_run_status: "in_progress",
+      workflow_run_conclusion: null,
+      resolved_live_url: null,
+      url_source: "unknown",
+      url_source_detail: null,
+    },
   });
   mockGenerateMigrationDraftArtifacts.mockResolvedValue(defaultMigrationArtifact);
 }
@@ -2201,12 +2233,18 @@ describe("site workspace migration tab", () => {
               branch: "main",
               artifact_root: "/site",
               expected_location: "mhanson13/tnmfire@main:/site",
+              expected_publish_url: "https://www.tnmfire.com",
+              url_source: "deterministic_target_config",
+              url_source_detail: "deploy_input:site_url",
               expected_url: "https://github.com/mhanson13/tnmfire/tree/main/site",
             },
             deploy_destination: {
               state: "expected_after_deploy",
+              expected_publish_url: "https://www.tnmfire.com",
+              resolved_live_url: null,
               expected_url: "https://www.tnmfire.com",
-              url_source: "deploy_input:site_url",
+              url_source: "deterministic_target_config",
+              url_source_detail: "deploy_input:site_url",
             },
           },
         },
@@ -2220,7 +2258,9 @@ describe("site workspace migration tab", () => {
     expect(destinationSummary).toHaveTextContent("mhanson13/tnmfire@main:/site");
     expect(destinationSummary).toHaveTextContent("https://github.com/mhanson13/tnmfire/tree/main/site");
     expect(destinationSummary).toHaveTextContent("https://www.tnmfire.com");
+    expect(destinationSummary).toHaveTextContent("deterministic_target_config");
     expect(destinationSummary).toHaveTextContent("deploy_input:site_url");
+    expect(destinationSummary).toHaveTextContent("Not yet confirmed");
   });
 
   it("renders reused context availability from explicit backend signals", async () => {
@@ -3291,6 +3331,14 @@ describe("site workspace migration tab", () => {
         }),
       ),
     );
+
+    await user.click(screen.getByRole("button", { name: "Refresh Deploy Status" }));
+    await waitFor(() =>
+      expect(mockRefreshMigrationDeployStatus).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+        artifact_version_id: "migration-artifact-1",
+      }),
+    );
+    expect(await screen.findByText("Deploy status unchanged. Workflow run is in_progress.")).toBeInTheDocument();
 
     expect(await screen.findByTestId("migration-publish-history")).toHaveTextContent("published");
     expect(await screen.findByTestId("migration-deploy-history")).toHaveTextContent("deploy_requested");

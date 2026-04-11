@@ -227,7 +227,10 @@ It transforms a business's website and market context into structured insights a
 - publish now ensures the expected deploy workflow file exists in GitHub before artifact commit (create-if-missing, no overwrite), reducing deploy failures caused by missing workflow definitions.
 - deploy now prefers authoritative workflow identity captured at publish time (`deploy_workflow_id` / `deploy_workflow_path`) before falling back to workspace/default workflow ids, preventing stale workspace workflow drift from blocking dispatch.
 - deploy target lookup failures are now classified with non-secret reason codes (`repo_not_found`, `workflow_not_found`, `branch_not_found_or_ref_invalid`, `workflow_dispatch_not_supported`, `token_not_authorized`) for clearer control-plane troubleshooting.
-- workspace now surfaces effective migration destinations (draft preview state, expected publish location/URL, expected deploy/live URL when determinable) for clearer pre-execution trust.
+- workspace now surfaces effective migration destinations with explicit URL states (expected published URL vs resolved live URL), deterministic URL source labeling, and clear draft/expected/live distinction for pre-execution trust.
+- deploy now performs a best-effort post-dispatch workflow-run result capture; when explicit workflow completion metadata includes a live URL signal, it is stored as `resolved_live_url` with `url_source=workflow_output`.
+- migration workspace includes a manual `Refresh Deploy Status` action so operators/admins can re-check workflow-run completion metadata later without re-dispatching deploy.
+- refresh updates run status/conclusion and only promotes confirmed live URL when new explicit workflow output evidence is available.
 - operators can open a sandboxed draft preview of selected migration artifact content before publish/deploy; preview is explicitly read-only and non-live, supports multi-page draft navigation when artifact HTML pages are available, and keeps file preview hide/show controls in the review pane.
 - migration analytics insertion controls now hydrate from authoritative workspace/site GA state and persist across save/reload without introducing a second source of truth.
 

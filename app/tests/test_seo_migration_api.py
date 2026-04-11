@@ -23,6 +23,7 @@ from app.integrations.seo_migration_artifact_provider import (
 from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubDeployResult,
+    SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishResult,
@@ -75,11 +76,29 @@ class _StubMigrationIngestService:
 
 
 class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
-    def __init__(self, *, fail_publish: bool = False, fail_deploy: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_publish: bool = False,
+        fail_deploy: bool = False,
+        deploy_workflow_run_id: int | None = None,
+        deploy_workflow_run_status: str | None = None,
+        deploy_workflow_run_conclusion: str | None = None,
+        refresh_workflow_run_status: str | None = None,
+        refresh_workflow_run_conclusion: str | None = None,
+        refresh_workflow_output: dict[str, str] | None = None,
+    ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
+        self.deploy_workflow_run_id = deploy_workflow_run_id
+        self.deploy_workflow_run_status = deploy_workflow_run_status
+        self.deploy_workflow_run_conclusion = deploy_workflow_run_conclusion
+        self.refresh_workflow_run_status = refresh_workflow_run_status
+        self.refresh_workflow_run_conclusion = refresh_workflow_run_conclusion
+        self.refresh_workflow_output = dict(refresh_workflow_output or {})
         self.publish_calls: list[tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], bool]] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
+        self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
 
     def publish_files(
         self,
@@ -129,6 +148,29 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             ref=target.ref,
             inputs=dict(target.inputs),
             dispatched_at="2026-04-07T12:10:00+00:00",
+            workflow_run_id=self.deploy_workflow_run_id,
+            workflow_run_status=self.deploy_workflow_run_status,
+            workflow_run_conclusion=self.deploy_workflow_run_conclusion,
+        )
+
+    def refresh_deploy_run_status(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        workflow_run_id: int,
+        dispatched_at: str | None = None,
+    ) -> SEOMigrationGitHubDeployRunStatusResult:
+        self.refresh_calls.append((target, workflow_run_id, dispatched_at))
+        return SEOMigrationGitHubDeployRunStatusResult(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            workflow_id=target.workflow_id,
+            ref=target.ref,
+            workflow_run_id=workflow_run_id,
+            workflow_run_status=self.refresh_workflow_run_status,
+            workflow_run_conclusion=self.refresh_workflow_run_conclusion,
+            workflow_output=dict(self.refresh_workflow_output),
+            refreshed_at="2026-04-07T12:20:00+00:00",
         )
 
 
@@ -410,6 +452,8 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert publish_response.status_code == 200
     assert publish_response.json()["workspace"]["publish_status"] == "published"
     assert publish_response.json()["artifact"]["publish_status"] == "published"
+    assert "expected_publish_url" in (publish_response.json().get("result") or {})
+    assert "url_source" in (publish_response.json().get("result") or {})
 
     deploy_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy",
@@ -421,6 +465,8 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert deploy_response.status_code == 200
     assert deploy_response.json()["workspace"]["deploy_status"] == "deploy_requested"
     assert deploy_response.json()["artifact"]["deploy_status"] == "deploy_requested"
+    assert "resolved_live_url" in (deploy_response.json().get("result") or {})
+    assert "url_source" in (deploy_response.json().get("result") or {})
 
     publish_history_response = client.get(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish-history"
@@ -465,6 +511,166 @@ def test_migration_summary_requires_existing_workspace(db_session) -> None:
     response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
     assert response.status_code == 404
     assert response.json()["detail"] == "Migration workspace not found"
+
+
+def test_refresh_migration_deploy_status_updates_run_metadata_and_confirms_live_url(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    publisher = _StubMigrationGitHubPublisher(
+        deploy_workflow_run_id=778899,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="success",
+        refresh_workflow_output={"live_url": "https://live.tnmfire.example"},
+    )
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        github_publisher=publisher,
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_name": "tnmfire-site",
+                "branch": "main",
+            },
+            "deploy_config": {
+                "enabled": True,
+                "workflow_id": "deploy-www-prod.yml",
+                "ref": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 201
+    artifact_id = generate_response.json()["id"]
+
+    approve_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
+        json={"approval_notes": "Approved"},
+    )
+    assert approve_response.status_code == 200
+
+    publish_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish",
+        json={
+            "artifact_version_id": artifact_id,
+            "dry_run": False,
+        },
+    )
+    assert publish_response.status_code == 200
+
+    deploy_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy",
+        json={
+            "artifact_version_id": artifact_id,
+            "dry_run": False,
+        },
+    )
+    assert deploy_response.status_code == 200
+
+    refresh_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy/refresh-status",
+        json={"artifact_version_id": artifact_id},
+    )
+    assert refresh_response.status_code == 200
+    refresh_payload = refresh_response.json()
+    refresh_result = refresh_payload.get("result") or {}
+    assert refresh_result.get("status") == "updated"
+    assert refresh_result.get("workflow_run_status") == "completed"
+    assert refresh_result.get("workflow_run_conclusion") == "success"
+    assert refresh_result.get("resolved_live_url") == "https://live.tnmfire.example"
+    assert refresh_result.get("url_source") == "workflow_output"
+    assert len(publisher.refresh_calls) == 1
+
+
+def test_refresh_migration_deploy_status_is_noop_without_workflow_run_metadata(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    publisher = _StubMigrationGitHubPublisher(
+        deploy_workflow_run_id=None,
+        deploy_workflow_run_status=None,
+        deploy_workflow_run_conclusion=None,
+    )
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        github_publisher=publisher,
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_name": "tnmfire-site",
+                "branch": "main",
+            },
+            "deploy_config": {
+                "enabled": True,
+                "workflow_id": "deploy-www-prod.yml",
+                "ref": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 201
+    artifact_id = generate_response.json()["id"]
+
+    approve_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
+        json={"approval_notes": "Approved"},
+    )
+    assert approve_response.status_code == 200
+
+    publish_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish",
+        json={
+            "artifact_version_id": artifact_id,
+            "dry_run": False,
+        },
+    )
+    assert publish_response.status_code == 200
+
+    deploy_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy",
+        json={
+            "artifact_version_id": artifact_id,
+            "dry_run": False,
+        },
+    )
+    assert deploy_response.status_code == 200
+
+    refresh_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy/refresh-status",
+        json={"artifact_version_id": artifact_id},
+    )
+    assert refresh_response.status_code == 200
+    refresh_payload = refresh_response.json()
+    refresh_result = refresh_payload.get("result") or {}
+    assert refresh_result.get("status") == "no_change"
+    assert refresh_result.get("no_change_reason") == "workflow_run_metadata_missing"
+    assert not publisher.refresh_calls
 
 
 def test_migration_summary_destination_reports_expected_publish_and_deploy_urls(db_session) -> None:
@@ -515,8 +721,14 @@ def test_migration_summary_destination_reports_expected_publish_and_deploy_urls(
     assert publish_destination.get("repository") == "acme/tnmfire-site"
     assert publish_destination.get("expected_location") == "acme/tnmfire-site@main:/site"
     assert publish_destination.get("expected_url") == "https://github.com/acme/tnmfire-site/tree/main/site"
+    assert publish_destination.get("expected_publish_url") == "https://tnmfire-www.example"
+    assert publish_destination.get("url_source") == "deterministic_target_config"
+    assert publish_destination.get("url_source_detail") == "deploy_input:site_url"
+    assert deploy_destination.get("expected_publish_url") == "https://tnmfire-www.example"
+    assert deploy_destination.get("resolved_live_url") is None
     assert deploy_destination.get("expected_url") == "https://tnmfire-www.example"
-    assert deploy_destination.get("url_source") == "deploy_input:site_url"
+    assert deploy_destination.get("url_source") == "deterministic_target_config"
+    assert deploy_destination.get("url_source_detail") == "deploy_input:site_url"
     assert deploy_destination.get("state") == "expected_after_deploy"
 
 

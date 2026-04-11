@@ -18,6 +18,7 @@ import {
   generateMigrationDraftArtifacts,
   ingestMigrationSource,
   publishMigrationArtifactVersion,
+  refreshMigrationDeployStatus,
   updateMigrationPublishConfig,
   updateMigrationAnalyticsConfig,
   updateMigrationDeployConfig,
@@ -53,6 +54,7 @@ type BusyAction =
   | "approve"
   | "publish"
   | "deploy"
+  | "refresh_deploy_status"
   | null;
 
 const EMPTY_REQUIREMENTS: MigrationOperatorRequirements = {
@@ -190,12 +192,16 @@ interface MigrationDestinationSummaryEvaluation {
   publishBranch: string | null;
   publishArtifactRoot: string | null;
   publishExpectedLocation: string | null;
-  publishExpectedUrl: string | null;
+  publishRepositoryUrl: string | null;
+  publishExpectedPublishedUrl: string | null;
   publishState: string;
-  deployExpectedUrl: string | null;
-  deployActiveUrl: string | null;
+  publishUrlSource: string | null;
+  publishUrlSourceDetail: string | null;
+  deployExpectedPublishUrl: string | null;
+  deployResolvedLiveUrl: string | null;
   deployState: string;
   deployUrlSource: string | null;
+  deployUrlSourceDetail: string | null;
   currentSiteUrl: string | null;
 }
 
@@ -1222,14 +1228,35 @@ function deriveMigrationDestinationSummary(params: {
       params.effectivePublishBranch,
       params.effectivePublishArtifactRoot,
     );
+  const fallbackDeployUrl = deriveDeployUrlFromInputs(asRecord(params.deployTarget.inputs));
+  const publishExpectedPublishedUrl =
+    asStringOrNull(publishDestination.expected_publish_url) ||
+    asStringOrNull(deployDestination.expected_publish_url) ||
+    fallbackDeployUrl.url;
+  const publishUrlSource =
+    asStringOrNull(publishDestination.url_source) || (fallbackDeployUrl.url ? "deterministic_target_config" : null);
+  const publishUrlSourceDetail = asStringOrNull(publishDestination.url_source_detail) || fallbackDeployUrl.source;
   const publishExpectedLocation =
     asStringOrNull(publishDestination.expected_location) ||
     (publishRepository && publishBranch
       ? `${publishRepository}@${publishBranch}:${publishArtifactRoot || "/"}`
       : null);
-  const fallbackDeployUrl = deriveDeployUrlFromInputs(asRecord(params.deployTarget.inputs));
-  const deployExpectedUrl = asStringOrNull(deployDestination.expected_url) || fallbackDeployUrl.url;
-  const deployUrlSource = asStringOrNull(deployDestination.url_source) || fallbackDeployUrl.source;
+  const deployExpectedPublishUrl =
+    asStringOrNull(deployDestination.expected_publish_url) ||
+    asStringOrNull(deployDestination.expected_url) ||
+    publishExpectedPublishedUrl ||
+    fallbackDeployUrl.url;
+  const deployUrlSource =
+    asStringOrNull(deployDestination.url_source) ||
+    publishUrlSource ||
+    (fallbackDeployUrl.url ? "deterministic_target_config" : null);
+  const deployUrlSourceDetail = asStringOrNull(deployDestination.url_source_detail) || publishUrlSourceDetail || fallbackDeployUrl.source;
+  const deployResolvedLiveCandidate =
+    asStringOrNull(deployDestination.active_url) || asStringOrNull(deployDestination.resolved_live_url);
+  const deployResolvedLiveUrl =
+    deployUrlSource === "deploy_result" || deployUrlSource === "workflow_output"
+      ? deployResolvedLiveCandidate
+      : asStringOrNull(deployDestination.active_url);
 
   return {
     draftPreviewState: asStringOrNull(draftPreview.state) || "unavailable",
@@ -1238,12 +1265,16 @@ function deriveMigrationDestinationSummary(params: {
     publishBranch,
     publishArtifactRoot,
     publishExpectedLocation,
-    publishExpectedUrl,
+    publishRepositoryUrl: publishExpectedUrl,
+    publishExpectedPublishedUrl,
     publishState: asStringOrNull(publishDestination.state) || (publishRepository ? "configured" : "unknown"),
-    deployExpectedUrl,
-    deployActiveUrl: asStringOrNull(deployDestination.active_url),
-    deployState: asStringOrNull(deployDestination.state) || (deployExpectedUrl ? "expected_after_deploy" : "unknown"),
+    publishUrlSource,
+    publishUrlSourceDetail,
+    deployExpectedPublishUrl,
+    deployResolvedLiveUrl,
+    deployState: asStringOrNull(deployDestination.state) || (deployExpectedPublishUrl ? "expected_after_deploy" : "unknown"),
     deployUrlSource,
+    deployUrlSourceDetail,
     currentSiteUrl: asStringOrNull(destinationSummary.current_site_url) || params.currentSiteUrl,
   };
 }
@@ -2043,6 +2074,58 @@ export function MigrationWorkspacePanel({
     }
   };
 
+  const handleRefreshDeployStatus = async (): Promise<void> => {
+    if (!selectedArtifactVersionId) {
+      setErrorHint(null);
+      setErrorMessage("Select an artifact version before refreshing deploy status.");
+      return;
+    }
+    setBusyAction("refresh_deploy_status");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const actionResult = await refreshMigrationDeployStatus(token, businessId, siteId, {
+        artifact_version_id: selectedArtifactVersionId,
+      });
+      const result = asRecord(actionResult.result);
+      const refreshStatus = asString(result.status).trim().toLowerCase();
+      const noChangeReason = asString(result.no_change_reason).trim().toLowerCase();
+      const workflowRunStatus = asStringOrNull(result.workflow_run_status);
+      const workflowRunConclusion = asStringOrNull(result.workflow_run_conclusion);
+      const resolvedLiveUrl = asStringOrNull(result.resolved_live_url);
+      if (refreshStatus === "updated") {
+        if (resolvedLiveUrl) {
+          setStatusMessage("Deploy status refreshed. Confirmed live URL captured from workflow output.");
+        } else {
+          setStatusMessage("Deploy status refreshed. Workflow run metadata updated.");
+        }
+      } else if (noChangeReason === "workflow_run_metadata_missing") {
+        setStatusMessage("Deploy status refresh found no workflow run metadata yet for this artifact.");
+      } else if (noChangeReason === "deploy_record_missing") {
+        setStatusMessage("No deploy request record was found for the selected artifact.");
+      } else if (noChangeReason === "deploy_target_metadata_missing") {
+        setStatusMessage("Deploy status refresh requires stored deploy target metadata.");
+      } else if (workflowRunStatus && workflowRunConclusion) {
+        setStatusMessage(
+          `Deploy status unchanged. Workflow run is ${workflowRunStatus} (${workflowRunConclusion}).`,
+        );
+      } else if (workflowRunStatus) {
+        setStatusMessage(`Deploy status unchanged. Workflow run is ${workflowRunStatus}.`);
+      } else {
+        setStatusMessage("Deploy status refresh found no new workflow evidence.");
+      }
+      await loadWorkspaceData(false);
+    } catch (error) {
+      const baseMessage = toErrorMessage(error, "Deploy status refresh failed.");
+      await loadWorkspaceData(false, { preserveErrorMessage: true });
+      setErrorHint(null);
+      setErrorMessage(baseMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const handleSelectArtifactFile = async (path: string): Promise<void> => {
     if (!selectedArtifactVersionId || !path) {
       return;
@@ -2142,41 +2225,53 @@ export function MigrationWorkspacePanel({
           <WorkspaceMetadataItem label="Expected publish location">
             {destinationSummary.publishExpectedLocation || "Not yet determinable"}
           </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Expected publish URL">
-            {destinationSummary.publishExpectedUrl ? (
-              <a href={destinationSummary.publishExpectedUrl} target="_blank" rel="noreferrer">
-                {destinationSummary.publishExpectedUrl}
+          <WorkspaceMetadataItem label="Repository publish URL">
+            {destinationSummary.publishRepositoryUrl ? (
+              <a href={destinationSummary.publishRepositoryUrl} target="_blank" rel="noreferrer">
+                {destinationSummary.publishRepositoryUrl}
               </a>
             ) : (
               "Not yet determinable"
             )}
           </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Deploy URL state">
-            {toDestinationStateLabel(destinationSummary.deployState)}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Expected deploy URL">
-            {destinationSummary.deployExpectedUrl ? (
-              <a href={destinationSummary.deployExpectedUrl} target="_blank" rel="noreferrer">
-                {destinationSummary.deployExpectedUrl}
+          <WorkspaceMetadataItem label="Expected published site URL">
+            {destinationSummary.publishExpectedPublishedUrl ? (
+              <a href={destinationSummary.publishExpectedPublishedUrl} target="_blank" rel="noreferrer">
+                {destinationSummary.publishExpectedPublishedUrl}
               </a>
             ) : (
               "Not determinable from current configuration"
             )}
           </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Live deploy URL">
-            {destinationSummary.deployActiveUrl ? (
-              <a href={destinationSummary.deployActiveUrl} target="_blank" rel="noreferrer">
-                {destinationSummary.deployActiveUrl}
+          <WorkspaceMetadataItem label="Deploy URL state">
+            {toDestinationStateLabel(destinationSummary.deployState)}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Expected post-deploy site URL">
+            {destinationSummary.deployExpectedPublishUrl ? (
+              <a href={destinationSummary.deployExpectedPublishUrl} target="_blank" rel="noreferrer">
+                {destinationSummary.deployExpectedPublishUrl}
               </a>
             ) : (
-              "Not currently active"
+              "Not determinable from current configuration"
+            )}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="Live URL (confirmed)">
+            {destinationSummary.deployResolvedLiveUrl ? (
+              <a href={destinationSummary.deployResolvedLiveUrl} target="_blank" rel="noreferrer">
+                {destinationSummary.deployResolvedLiveUrl}
+              </a>
+            ) : (
+              "Not yet confirmed"
             )}
           </WorkspaceMetadataItem>
           <WorkspaceMetadataItem label="Current site URL">
             {destinationSummary.currentSiteUrl || "Not available"}
           </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Deploy URL source">
-            {destinationSummary.deployUrlSource || "undetermined"}
+          <WorkspaceMetadataItem label="URL source">
+            {destinationSummary.deployUrlSource || destinationSummary.publishUrlSource || "unknown"}
+          </WorkspaceMetadataItem>
+          <WorkspaceMetadataItem label="URL source detail">
+            {destinationSummary.deployUrlSourceDetail || destinationSummary.publishUrlSourceDetail || "Not available"}
           </WorkspaceMetadataItem>
         </WorkspaceMetadataGrid>
       </div>
@@ -2880,6 +2975,18 @@ export function MigrationWorkspacePanel({
             >
               {busyAction === "deploy" ? "Submitting..." : "Request GKE Deploy"}
             </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => void handleRefreshDeployStatus()}
+              disabled={isActionInFlight || !selectedArtifactVersionIdTrimmed}
+              data-testid="migration-refresh-deploy-status-button"
+            >
+              {busyAction === "refresh_deploy_status" ? "Refreshing..." : "Refresh Deploy Status"}
+            </button>
+            <span className="hint muted">
+              Re-checks the dispatched workflow run and captures confirmed live URL evidence when available.
+            </span>
           </div>
         </div>
 

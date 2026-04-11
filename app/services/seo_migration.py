@@ -155,6 +155,10 @@ _DEPLOY_BLOCKER_INTEGRATION_UNAVAILABLE = "deploy_integration_unavailable"
 _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY = "publish_history_workflow"
 _DEPLOY_WORKFLOW_SOURCE_WORKSPACE_CONFIG = "workspace_config_workflow"
 _DEPLOY_WORKFLOW_SOURCE_DEFAULT = "default_workflow"
+_MIGRATION_URL_SOURCE_DETERMINISTIC_TARGET_CONFIG = "deterministic_target_config"
+_MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT = "workflow_output"
+_MIGRATION_URL_SOURCE_DEPLOY_RESULT = "deploy_result"
+_MIGRATION_URL_SOURCE_UNKNOWN = "unknown"
 _DEPLOY_TARGET_REASON_REPO_NOT_FOUND = "repo_not_found"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND = "workflow_not_found"
 _DEPLOY_TARGET_REASON_REF_INVALID = "branch_not_found_or_ref_invalid"
@@ -851,6 +855,9 @@ class SEOMigrationService:
                 f"{self.publish_commit_message_prefix} site={site.id} artifact=v{artifact.version}"
             )
         deploy_workflow_provision_result: SEOMigrationGitHubWorkflowProvisionResult | None = None
+        expected_publish_url: str | None = None
+        expected_publish_url_source = _MIGRATION_URL_SOURCE_UNKNOWN
+        expected_publish_url_source_detail: str | None = None
         try:
             deploy_target_for_workflow: dict[str, object] | None = None
             try:
@@ -862,6 +869,15 @@ class SEOMigrationService:
                 )
             except ValueError:
                 deploy_target_for_workflow = None
+
+            (
+                expected_publish_url,
+                expected_publish_url_source,
+                expected_publish_url_source_detail,
+            ) = self._resolve_expected_publish_url(
+                deploy_target=deploy_target_for_workflow,
+                deploy_config=workspace.deploy_config_json,
+            )
 
             if (
                 not dry_run
@@ -917,6 +933,9 @@ class SEOMigrationService:
                     "artifact_root": target["artifact_root"],
                     "analytics_measurement_id": effective_ga_measurement_id,
                     "analytics_insertion_mode": analytics_insertion_mode,
+                    "expected_publish_url": expected_publish_url,
+                    "url_source": expected_publish_url_source,
+                    "url_source_detail": expected_publish_url_source_detail,
                     "failure_category": failure_category,
                     "error": exc.safe_message,
                     "error_summary": exc.safe_message,
@@ -986,6 +1005,9 @@ class SEOMigrationService:
             "analytics_applied": bool(analytics_injected_paths),
             "analytics_injected_paths": analytics_injected_paths,
             "warnings": publish_warnings,
+            "expected_publish_url": expected_publish_url,
+            "url_source": expected_publish_url_source,
+            "url_source_detail": expected_publish_url_source_detail,
             "deploy_workflow_provisioned": bool(
                 not dry_run
                 and deploy_workflow_provision_result is not None
@@ -1020,6 +1042,9 @@ class SEOMigrationService:
                 "repo_name": publish_result.repo_name,
                 "branch": publish_result.branch,
                 "artifact_root": publish_result.artifact_root,
+                "expected_publish_url": expected_publish_url,
+                "url_source": expected_publish_url_source,
+                "url_source_detail": expected_publish_url_source_detail,
             },
             duration_ms=self._duration_ms(started_at),
         )
@@ -1136,6 +1161,18 @@ class SEOMigrationService:
                 fallback_message="seo_migration_deploy_workflow_resolution",
                 level=logging.INFO,
             )
+        (
+            expected_publish_url,
+            expected_publish_url_source,
+            expected_publish_url_source_detail,
+        ) = self._resolve_expected_publish_url_for_deploy(
+            workspace=workspace,
+            artifact_version_id=artifact.id,
+            deploy_target=deploy_target,
+        )
+        resolved_live_url: str | None = None
+        resolved_live_url_source = _MIGRATION_URL_SOURCE_UNKNOWN
+        resolved_live_url_source_detail: str | None = None
         deploy_inputs = dict(deploy_target["inputs"])
         deploy_inputs.setdefault("site_id", site.id)
         deploy_inputs.setdefault("artifact_version", str(artifact.version))
@@ -1223,6 +1260,10 @@ class SEOMigrationService:
                     "inputs": deploy_inputs,
                     "analytics_measurement_id": effective_ga_measurement_id,
                     "analytics_insertion_mode": analytics_insertion_mode,
+                    "expected_publish_url": expected_publish_url,
+                    "resolved_live_url": resolved_live_url,
+                    "url_source": expected_publish_url_source,
+                    "url_source_detail": expected_publish_url_source_detail,
                     "failure_category": failure_category,
                     "failure_reason": failure_reason_code,
                     "failure_stage": failure_stage,
@@ -1254,6 +1295,10 @@ class SEOMigrationService:
                     "resolved_workflow_source": workflow_resolution.get("source"),
                     "failure_reason_code": failure_reason_code,
                     "failure_stage": failure_stage,
+                    "expected_publish_url": expected_publish_url,
+                    "resolved_live_url": resolved_live_url,
+                    "url_source": expected_publish_url_source,
+                    "url_source_detail": expected_publish_url_source_detail,
                 },
                 failure_category=failure_category,
                 failure_reason=failure_reason_for_log,
@@ -1276,12 +1321,107 @@ class SEOMigrationService:
                     "failure_stage": failure_stage,
                     "failure_category": failure_category,
                     "failure_message": exc.safe_message,
+                    "expected_publish_url": expected_publish_url,
+                    "resolved_live_url": resolved_live_url,
+                    "url_source": expected_publish_url_source,
+                    "url_source_detail": expected_publish_url_source_detail,
                 },
                 fallback_message="seo_migration_deploy_dispatch_failed",
                 level=logging.WARNING,
             )
             raise SEOMigrationValidationError(exc.safe_message) from exc
 
+        (
+            resolved_live_url,
+            resolved_live_url_source,
+            resolved_live_url_source_detail,
+        ) = self._resolve_deploy_live_url(
+            deploy_result=deploy_result,
+            expected_publish_url=expected_publish_url,
+            expected_publish_url_source=expected_publish_url_source,
+            expected_publish_url_source_detail=expected_publish_url_source_detail,
+        )
+        self._emit_structured_service_log(
+            payload={
+                "event": "seo_migration_deploy_dispatch_accepted",
+                "business_id": business_id,
+                "site_id": site_id,
+                "workspace_id": workspace.id,
+                "artifact_version_id": artifact.id,
+                "repo_owner": deploy_result.repo_owner,
+                "repo_name": deploy_result.repo_name,
+                "workflow_id": deploy_result.workflow_id,
+                "ref": deploy_result.ref,
+                "dispatched_at": deploy_result.dispatched_at,
+                "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
+                "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
+                "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+            },
+            fallback_message="seo_migration_deploy_dispatch_accepted",
+            level=logging.INFO,
+        )
+        self._emit_structured_service_log(
+            payload={
+                "event": "seo_migration_workflow_run_lookup_attempted",
+                "business_id": business_id,
+                "site_id": site_id,
+                "workspace_id": workspace.id,
+                "artifact_version_id": artifact.id,
+                "repo_owner": deploy_result.repo_owner,
+                "repo_name": deploy_result.repo_name,
+                "workflow_id": deploy_result.workflow_id,
+                "ref": deploy_result.ref,
+                "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
+                "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
+                "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+            },
+            fallback_message="seo_migration_workflow_run_lookup_attempted",
+            level=logging.INFO,
+        )
+        if getattr(deploy_result, "workflow_run_id", None) is not None:
+            self._emit_structured_service_log(
+                payload={
+                    "event": "seo_migration_workflow_run_result_captured",
+                    "business_id": business_id,
+                    "site_id": site_id,
+                    "workspace_id": workspace.id,
+                    "artifact_version_id": artifact.id,
+                    "repo_owner": deploy_result.repo_owner,
+                    "repo_name": deploy_result.repo_name,
+                    "workflow_id": deploy_result.workflow_id,
+                    "ref": deploy_result.ref,
+                    "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
+                    "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
+                    "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+                },
+                fallback_message="seo_migration_workflow_run_result_captured",
+                level=logging.INFO,
+            )
+        if (
+            resolved_live_url
+            and resolved_live_url_source == _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT
+        ):
+            self._emit_structured_service_log(
+                payload={
+                    "event": "seo_migration_workflow_output_url_captured",
+                    "business_id": business_id,
+                    "site_id": site_id,
+                    "workspace_id": workspace.id,
+                    "artifact_version_id": artifact.id,
+                    "repo_owner": deploy_result.repo_owner,
+                    "repo_name": deploy_result.repo_name,
+                    "workflow_id": deploy_result.workflow_id,
+                    "ref": deploy_result.ref,
+                    "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
+                    "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
+                    "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+                    "resolved_live_url": resolved_live_url,
+                    "url_source": resolved_live_url_source,
+                    "url_source_detail": resolved_live_url_source_detail,
+                },
+                fallback_message="seo_migration_workflow_output_url_captured",
+                level=logging.INFO,
+            )
         now = utc_now()
         status_label = "dry_run" if dry_run else "deploy_requested"
         if not dry_run:
@@ -1320,6 +1460,13 @@ class SEOMigrationService:
             "analytics_applied": bool(effective_ga_measurement_id),
             "dispatched_at": deploy_result.dispatched_at,
             "resolved_workflow_source": workflow_resolution.get("source"),
+            "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
+            "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
+            "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+            "expected_publish_url": expected_publish_url,
+            "resolved_live_url": resolved_live_url,
+            "url_source": resolved_live_url_source,
+            "url_source_detail": resolved_live_url_source_detail,
         }
         workspace.deploy_history_json = _append_history_item(
             workspace.deploy_history_json,
@@ -1348,6 +1495,13 @@ class SEOMigrationService:
                 "workflow_path": workflow_resolution.get("workflow_path"),
                 "ref": deploy_result.ref,
                 "resolved_workflow_source": workflow_resolution.get("source"),
+                "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
+                "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
+                "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+                "expected_publish_url": expected_publish_url,
+                "resolved_live_url": resolved_live_url,
+                "url_source": resolved_live_url_source,
+                "url_source_detail": resolved_live_url_source_detail,
             },
             duration_ms=self._duration_ms(started_at),
         )
@@ -1356,6 +1510,464 @@ class SEOMigrationService:
             artifact=artifact,
             readiness=readiness,
             result=history_payload,
+        )
+
+    def refresh_deploy_run_status(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        artifact_version_id: str,
+        principal_id: str | None,
+    ) -> SEOMigrationDeployActionResult:
+        started_at = time.monotonic()
+        workspace = self.get_workspace(business_id=business_id, site_id=site_id)
+        site = self._require_site(business_id=business_id, site_id=site_id)
+        artifact = self.get_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact_version_id,
+        )
+
+        self._log_control_plane_action(
+            action="deploy_status_refresh",
+            status="requested",
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            artifact_version_id=artifact.id,
+            artifact_version=artifact.version,
+            principal_id=principal_id,
+            target_summary={"artifact_version_id": artifact.id},
+        )
+        self._emit_structured_service_log(
+            payload={
+                "event": "seo_migration_deploy_status_refresh_requested",
+                "business_id": business_id,
+                "site_id": site_id,
+                "workspace_id": workspace.id,
+                "artifact_version_id": artifact.id,
+                "artifact_version": artifact.version,
+                "principal_id": principal_id,
+            },
+            fallback_message="seo_migration_deploy_status_refresh_requested",
+            level=logging.INFO,
+        )
+
+        readiness = self._build_deploy_readiness(
+            site=site,
+            workspace=workspace,
+            artifact=artifact,
+        )
+        normalized_history = _normalize_history_list(workspace.deploy_history_json)
+        history_index = _find_latest_deploy_history_index_for_refresh(
+            history=normalized_history,
+            artifact_version_id=artifact.id,
+        )
+        if history_index is None:
+            return self._build_deploy_refresh_no_change_result(
+                business_id=business_id,
+                site_id=site_id,
+                workspace=workspace,
+                artifact=artifact,
+                readiness=readiness,
+                started_at=started_at,
+                reason_code="deploy_record_missing",
+                reason_message="No deploy request record was found for this artifact.",
+                principal_id=principal_id,
+            )
+
+        target_history_item = _normalize_json_dict(normalized_history[history_index])
+        workflow_run_id = _coerce_int(target_history_item.get("workflow_run_id"))
+        if workflow_run_id is None:
+            return self._build_deploy_refresh_no_change_result(
+                business_id=business_id,
+                site_id=site_id,
+                workspace=workspace,
+                artifact=artifact,
+                readiness=readiness,
+                started_at=started_at,
+                reason_code="workflow_run_metadata_missing",
+                reason_message="No workflow run metadata is available yet for this deploy request.",
+                principal_id=principal_id,
+                history_item=target_history_item,
+            )
+
+        repo_owner = _normalize_string(target_history_item.get("repo_owner"), max_length=80)
+        repo_name = _normalize_string(target_history_item.get("repo_name"), max_length=120)
+        workflow_id = _normalize_workflow_id_for_deploy(target_history_item.get("workflow_id"))
+        ref = _normalize_string(target_history_item.get("ref"), max_length=120)
+        if not repo_owner or not repo_name or not workflow_id or not ref:
+            return self._build_deploy_refresh_no_change_result(
+                business_id=business_id,
+                site_id=site_id,
+                workspace=workspace,
+                artifact=artifact,
+                readiness=readiness,
+                started_at=started_at,
+                reason_code="deploy_target_metadata_missing",
+                reason_message="Deploy status refresh requires stored deploy target metadata.",
+                principal_id=principal_id,
+                history_item=target_history_item,
+            )
+
+        dispatched_at = _normalize_string(target_history_item.get("dispatched_at"), max_length=64)
+        target_inputs = _normalize_history_inputs(target_history_item.get("inputs"))
+        deploy_target = SEOMigrationGitHubDeployTarget(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            workflow_id=workflow_id,
+            ref=ref,
+            inputs=target_inputs,
+        )
+        self._emit_structured_service_log(
+            payload={
+                "event": "seo_migration_workflow_run_refresh_lookup_attempted",
+                "business_id": business_id,
+                "site_id": site_id,
+                "workspace_id": workspace.id,
+                "artifact_version_id": artifact.id,
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "workflow_id": workflow_id,
+                "ref": ref,
+                "workflow_run_id": workflow_run_id,
+            },
+            fallback_message="seo_migration_workflow_run_refresh_lookup_attempted",
+            level=logging.INFO,
+        )
+
+        try:
+            refresh_result = self.github_publisher.refresh_deploy_run_status(
+                target=deploy_target,
+                workflow_run_id=workflow_run_id,
+                dispatched_at=dispatched_at,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            failure_category = self._categorize_publisher_failure(exc=exc, action="deploy")
+            failure_reason_code = _normalize_deploy_failure_reason_code(exc.code)
+            failure_stage = _normalize_deploy_failure_stage(exc.stage)
+            self._log_control_plane_action(
+                action="deploy_status_refresh",
+                status="failed",
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace.id,
+                artifact_version_id=artifact.id,
+                artifact_version=artifact.version,
+                principal_id=principal_id,
+                target_summary={
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "workflow_id": workflow_id,
+                    "ref": ref,
+                    "workflow_run_id": workflow_run_id,
+                    "resolved_workflow_source": target_history_item.get("resolved_workflow_source"),
+                    "failure_reason_code": failure_reason_code,
+                    "failure_stage": failure_stage,
+                },
+                failure_category=failure_category,
+                failure_reason=exc.safe_message,
+                duration_ms=self._duration_ms(started_at),
+            )
+            self._emit_structured_service_log(
+                payload={
+                    "event": "seo_migration_deploy_status_refresh_failed",
+                    "business_id": business_id,
+                    "site_id": site_id,
+                    "workspace_id": workspace.id,
+                    "artifact_version_id": artifact.id,
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "workflow_id": workflow_id,
+                    "ref": ref,
+                    "workflow_run_id": workflow_run_id,
+                    "failure_category": failure_category,
+                    "failure_reason_code": failure_reason_code,
+                    "failure_stage": failure_stage,
+                    "failure_message": exc.safe_message,
+                },
+                fallback_message="seo_migration_deploy_status_refresh_failed",
+                level=logging.WARNING,
+            )
+            raise SEOMigrationValidationError(exc.safe_message) from exc
+
+        self._emit_structured_service_log(
+            payload={
+                "event": "seo_migration_workflow_run_refresh_result_captured",
+                "business_id": business_id,
+                "site_id": site_id,
+                "workspace_id": workspace.id,
+                "artifact_version_id": artifact.id,
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "workflow_id": workflow_id,
+                "ref": ref,
+                "workflow_run_id": refresh_result.workflow_run_id,
+                "workflow_run_status": refresh_result.workflow_run_status,
+                "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
+            },
+            fallback_message="seo_migration_workflow_run_refresh_result_captured",
+            level=logging.INFO,
+        )
+
+        next_item = dict(target_history_item)
+        updated = False
+        for field_name, field_value in (
+            ("workflow_run_id", refresh_result.workflow_run_id),
+            ("workflow_run_status", _normalize_string(refresh_result.workflow_run_status, max_length=40)),
+            ("workflow_run_conclusion", _normalize_string(refresh_result.workflow_run_conclusion, max_length=40)),
+        ):
+            if next_item.get(field_name) != field_value:
+                next_item[field_name] = field_value
+                updated = True
+
+        candidate_live_url, candidate_url_source, candidate_url_source_detail = self._resolve_deploy_live_url(
+            deploy_result=refresh_result,
+            expected_publish_url=None,
+            expected_publish_url_source=_MIGRATION_URL_SOURCE_UNKNOWN,
+            expected_publish_url_source_detail=None,
+        )
+        if candidate_url_source not in {_MIGRATION_URL_SOURCE_DEPLOY_RESULT, _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT}:
+            candidate_live_url = None
+            candidate_url_source = _MIGRATION_URL_SOURCE_UNKNOWN
+            candidate_url_source_detail = None
+
+        existing_live_url = _normalize_url_candidate(next_item.get("resolved_live_url"))
+        existing_url_source = _normalize_migration_url_source(next_item.get("url_source"))
+        existing_url_source_detail = _normalize_string(next_item.get("url_source_detail"), max_length=120)
+        if candidate_live_url:
+            existing_rank = _confirmed_live_url_source_rank(existing_url_source)
+            candidate_rank = _confirmed_live_url_source_rank(candidate_url_source)
+            if (
+                existing_live_url is None
+                or candidate_rank > existing_rank
+                or (candidate_rank == existing_rank and existing_live_url != candidate_live_url)
+            ):
+                next_item["resolved_live_url"] = candidate_live_url
+                next_item["url_source"] = candidate_url_source
+                next_item["url_source_detail"] = candidate_url_source_detail
+                existing_live_url = candidate_live_url
+                existing_url_source = candidate_url_source
+                existing_url_source_detail = candidate_url_source_detail
+                updated = True
+                if candidate_url_source == _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT:
+                    self._emit_structured_service_log(
+                        payload={
+                            "event": "seo_migration_workflow_output_url_captured_via_refresh",
+                            "business_id": business_id,
+                            "site_id": site_id,
+                            "workspace_id": workspace.id,
+                            "artifact_version_id": artifact.id,
+                            "repo_owner": repo_owner,
+                            "repo_name": repo_name,
+                            "workflow_id": workflow_id,
+                            "ref": ref,
+                            "workflow_run_id": refresh_result.workflow_run_id,
+                            "workflow_run_status": refresh_result.workflow_run_status,
+                            "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
+                            "resolved_live_url": candidate_live_url,
+                            "url_source": candidate_url_source,
+                            "url_source_detail": candidate_url_source_detail,
+                        },
+                        fallback_message="seo_migration_workflow_output_url_captured_via_refresh",
+                        level=logging.INFO,
+                    )
+
+        refresh_status = "updated" if updated else "no_change"
+        no_change_reason = None
+        if refresh_status == "no_change":
+            run_status = str(refresh_result.workflow_run_status or "").strip().lower()
+            run_conclusion = str(refresh_result.workflow_run_conclusion or "").strip().lower()
+            if run_status in {"queued", "waiting", "requested"}:
+                no_change_reason = "workflow_run_pending"
+            elif run_status in {"in_progress", "running"}:
+                no_change_reason = "workflow_run_in_progress"
+            elif run_status == "completed" and run_conclusion == "success":
+                no_change_reason = "workflow_output_missing_url"
+            elif run_status == "completed" and run_conclusion and run_conclusion != "success":
+                no_change_reason = "workflow_run_completed_without_success"
+            else:
+                no_change_reason = "no_new_workflow_evidence"
+
+        if updated:
+            normalized_history[history_index] = _normalize_json_dict(next_item)
+            workspace.deploy_history_json = normalized_history
+            workspace.updated_by_principal_id = principal_id
+            self._update_workspace_readiness_statuses(workspace=workspace, site=site)
+            self.seo_migration_repository.save_workspace(workspace)
+            self.session.commit()
+            self.session.refresh(workspace)
+
+        refreshed_at = _normalize_string(getattr(refresh_result, "refreshed_at", None), max_length=64)
+        result_payload: dict[str, object] = {
+            "action": "deploy_status_refresh",
+            "status": refresh_status,
+            "artifact_version_id": artifact.id,
+            "artifact_version": artifact.version,
+            "timestamp": utc_now().isoformat(),
+            "repo_owner": repo_owner,
+            "repo_name": repo_name,
+            "workflow_id": workflow_id,
+            "ref": ref,
+            "resolved_workflow_source": next_item.get("resolved_workflow_source"),
+            "workflow_run_id": refresh_result.workflow_run_id,
+            "workflow_run_status": refresh_result.workflow_run_status,
+            "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
+            "resolved_live_url": existing_live_url,
+            "url_source": existing_url_source,
+            "url_source_detail": existing_url_source_detail,
+            "updated": updated,
+        }
+        if refreshed_at:
+            result_payload["refreshed_at"] = refreshed_at
+        if no_change_reason:
+            result_payload["no_change_reason"] = no_change_reason
+
+        self._emit_structured_service_log(
+            payload={
+                "event": "seo_migration_deploy_status_refresh_completed",
+                "business_id": business_id,
+                "site_id": site_id,
+                "workspace_id": workspace.id,
+                "artifact_version_id": artifact.id,
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "workflow_id": workflow_id,
+                "ref": ref,
+                "workflow_run_id": refresh_result.workflow_run_id,
+                "workflow_run_status": refresh_result.workflow_run_status,
+                "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
+                "resolved_live_url": existing_live_url,
+                "url_source": existing_url_source,
+                "url_source_detail": existing_url_source_detail,
+                "refresh_status": refresh_status,
+                "no_change_reason": no_change_reason,
+            },
+            fallback_message="seo_migration_deploy_status_refresh_completed",
+            level=logging.INFO,
+        )
+        self._log_control_plane_action(
+            action="deploy_status_refresh",
+            status="completed",
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            artifact_version_id=artifact.id,
+            artifact_version=artifact.version,
+            principal_id=principal_id,
+            target_summary={
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "workflow_id": workflow_id,
+                "ref": ref,
+                "resolved_workflow_source": next_item.get("resolved_workflow_source"),
+                "workflow_run_id": refresh_result.workflow_run_id,
+                "workflow_run_status": refresh_result.workflow_run_status,
+                "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
+                "resolved_live_url": existing_live_url,
+                "url_source": existing_url_source,
+                "url_source_detail": existing_url_source_detail,
+                "refresh_status": refresh_status,
+                "no_change_reason": no_change_reason,
+            },
+            duration_ms=self._duration_ms(started_at),
+        )
+        refreshed_readiness = self._build_deploy_readiness(
+            site=site,
+            workspace=workspace,
+            artifact=artifact,
+        )
+        return SEOMigrationDeployActionResult(
+            workspace=workspace,
+            artifact=artifact,
+            readiness=refreshed_readiness,
+            result=result_payload,
+        )
+
+    def _build_deploy_refresh_no_change_result(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace: SEOMigrationWorkspace,
+        artifact: SEOMigrationArtifactVersion,
+        readiness: dict[str, object],
+        started_at: float,
+        reason_code: str,
+        reason_message: str,
+        principal_id: str | None,
+        history_item: dict[str, object] | None = None,
+    ) -> SEOMigrationDeployActionResult:
+        history_item = history_item or {}
+        now = utc_now().isoformat()
+        result_payload: dict[str, object] = {
+            "action": "deploy_status_refresh",
+            "status": "no_change",
+            "artifact_version_id": artifact.id,
+            "artifact_version": artifact.version,
+            "timestamp": now,
+            "no_change_reason": reason_code,
+            "message": reason_message,
+            "updated": False,
+            "repo_owner": _normalize_string(history_item.get("repo_owner"), max_length=80),
+            "repo_name": _normalize_string(history_item.get("repo_name"), max_length=120),
+            "workflow_id": _normalize_string(history_item.get("workflow_id"), max_length=160),
+            "ref": _normalize_string(history_item.get("ref"), max_length=120),
+            "resolved_workflow_source": _normalize_string(history_item.get("resolved_workflow_source"), max_length=40),
+            "workflow_run_id": _coerce_int(history_item.get("workflow_run_id")),
+            "workflow_run_status": _normalize_string(history_item.get("workflow_run_status"), max_length=40),
+            "workflow_run_conclusion": _normalize_string(history_item.get("workflow_run_conclusion"), max_length=40),
+            "resolved_live_url": _normalize_url_candidate(history_item.get("resolved_live_url")),
+            "url_source": _normalize_migration_url_source(history_item.get("url_source")),
+            "url_source_detail": _normalize_string(history_item.get("url_source_detail"), max_length=120),
+        }
+        self._emit_structured_service_log(
+            payload={
+                "event": "seo_migration_deploy_status_refresh_no_change",
+                "business_id": business_id,
+                "site_id": site_id,
+                "workspace_id": workspace.id,
+                "artifact_version_id": artifact.id,
+                "refresh_status": "no_change",
+                "no_change_reason": reason_code,
+                "reason_message": reason_message,
+                "repo_owner": result_payload.get("repo_owner"),
+                "repo_name": result_payload.get("repo_name"),
+                "workflow_id": result_payload.get("workflow_id"),
+                "ref": result_payload.get("ref"),
+                "workflow_run_id": result_payload.get("workflow_run_id"),
+                "workflow_run_status": result_payload.get("workflow_run_status"),
+                "workflow_run_conclusion": result_payload.get("workflow_run_conclusion"),
+            },
+            fallback_message="seo_migration_deploy_status_refresh_no_change",
+            level=logging.INFO,
+        )
+        self._log_control_plane_action(
+            action="deploy_status_refresh",
+            status="completed",
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            artifact_version_id=artifact.id,
+            artifact_version=artifact.version,
+            principal_id=principal_id,
+            target_summary={
+                "refresh_status": "no_change",
+                "no_change_reason": reason_code,
+                "repo_owner": result_payload.get("repo_owner"),
+                "repo_name": result_payload.get("repo_name"),
+                "workflow_id": result_payload.get("workflow_id"),
+                "ref": result_payload.get("ref"),
+                "workflow_run_id": result_payload.get("workflow_run_id"),
+            },
+            duration_ms=self._duration_ms(started_at),
+        )
+        return SEOMigrationDeployActionResult(
+            workspace=workspace,
+            artifact=artifact,
+            readiness=readiness,
+            result=result_payload,
         )
 
     def list_publish_history(self, *, business_id: str, site_id: str) -> list[dict[str, object]]:
@@ -3862,13 +4474,40 @@ class SEOMigrationService:
             else None
         )
 
-        deploy_url, deploy_url_source = self._resolve_expected_deploy_url(deploy_target=deploy_target)
+        expected_publish_url, expected_publish_url_source, expected_publish_url_source_detail = (
+            self._resolve_expected_publish_url_for_deploy(
+                workspace=workspace,
+                artifact_version_id=workspace.last_published_artifact_version_id,
+                deploy_target=deploy_target,
+            )
+        )
+        resolved_live_url, resolved_live_url_source, resolved_live_url_source_detail = (
+            self._resolve_latest_deploy_live_url(
+                workspace=workspace,
+                artifact_version_id=workspace.last_deployed_artifact_version_id,
+                repo_owner=_normalize_string(deploy_target.get("repo_owner"), max_length=80) or "",
+                repo_name=_normalize_string(deploy_target.get("repo_name"), max_length=120) or "",
+                ref=_normalize_string(deploy_target.get("ref"), max_length=120) or "",
+            )
+        )
+        confirmed_live_url = (
+            resolved_live_url
+            if resolved_live_url_source in {_MIGRATION_URL_SOURCE_DEPLOY_RESULT, _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT}
+            else None
+        )
         deployed_live = bool(workspace.last_deployed_at)
         deploy_state = "unknown"
-        if deploy_url and deployed_live:
+        if confirmed_live_url and deployed_live:
             deploy_state = "active_live"
-        elif deploy_url:
+        elif expected_publish_url:
             deploy_state = "expected_after_deploy"
+        elif resolved_live_url:
+            deploy_state = "expected_after_deploy"
+
+        if not resolved_live_url and deployed_live and expected_publish_url:
+            resolved_live_url = expected_publish_url
+            resolved_live_url_source = expected_publish_url_source
+            resolved_live_url_source_detail = expected_publish_url_source_detail
 
         draft_preview_entry_path = self._derive_preview_entry_path(latest_artifact)
         draft_preview_state = "available" if draft_preview_entry_path else "unavailable"
@@ -3886,6 +4525,9 @@ class SEOMigrationService:
                 "branch": publish_branch if publish_repository else None,
                 "artifact_root": publish_root_display if publish_repository else None,
                 "expected_location": expected_publish_location,
+                "expected_publish_url": expected_publish_url,
+                "url_source": expected_publish_url_source,
+                "url_source_detail": expected_publish_url_source_detail,
                 "expected_url": publish_tree_url,
                 "is_published": bool(workspace.last_published_at),
                 "last_published_at": (
@@ -3896,9 +4538,20 @@ class SEOMigrationService:
             },
             "deploy_destination": {
                 "state": deploy_state,
-                "expected_url": deploy_url,
-                "active_url": deploy_url if deployed_live else None,
-                "url_source": deploy_url_source,
+                "expected_publish_url": expected_publish_url,
+                "resolved_live_url": resolved_live_url,
+                "expected_url": expected_publish_url,
+                "active_url": confirmed_live_url if deployed_live else None,
+                "url_source": (
+                    resolved_live_url_source
+                    if resolved_live_url_source != _MIGRATION_URL_SOURCE_UNKNOWN
+                    else expected_publish_url_source
+                ),
+                "url_source_detail": (
+                    resolved_live_url_source_detail
+                    if resolved_live_url_source_detail is not None
+                    else expected_publish_url_source_detail
+                ),
                 "is_deployed": deployed_live,
                 "last_deployed_at": (
                     workspace.last_deployed_at.isoformat()
@@ -3958,10 +4611,105 @@ class SEOMigrationService:
             return f"https://github.com/{owner}/{repo}/tree/{encoded_branch}/{root}"
         return f"https://github.com/{owner}/{repo}/tree/{encoded_branch}"
 
+    def _resolve_expected_publish_url(
+        self,
+        *,
+        deploy_target: dict[str, object] | None,
+        deploy_config: object | None,
+    ) -> tuple[str | None, str, str | None]:
+        target_inputs = {}
+        if isinstance(deploy_target, dict):
+            target_inputs = _normalize_history_inputs(deploy_target.get("inputs"))
+        if not target_inputs:
+            target_inputs = _normalize_history_inputs(_normalize_json_dict(deploy_config).get("inputs"))
+        candidate_url, source_detail = self._resolve_url_candidate_from_inputs(target_inputs)
+        if candidate_url:
+            return (
+                candidate_url,
+                _MIGRATION_URL_SOURCE_DETERMINISTIC_TARGET_CONFIG,
+                source_detail,
+            )
+        return None, _MIGRATION_URL_SOURCE_UNKNOWN, None
+
+    def _resolve_expected_publish_url_for_deploy(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        artifact_version_id: str | None,
+        deploy_target: dict[str, object],
+    ) -> tuple[str | None, str, str | None]:
+        target_owner = _normalize_string(deploy_target.get("repo_owner"), max_length=80) or ""
+        target_repo = _normalize_string(deploy_target.get("repo_name"), max_length=120) or ""
+        target_ref = _normalize_string(deploy_target.get("ref"), max_length=120) or ""
+        history_url, history_url_source, history_url_source_detail = _resolve_publish_history_expected_publish_url(
+            history=workspace.publish_history_json,
+            artifact_version_id=artifact_version_id,
+            repo_owner=target_owner,
+            repo_name=target_repo,
+            ref=target_ref,
+        )
+        if history_url:
+            return history_url, history_url_source, history_url_source_detail
+        return self._resolve_expected_publish_url(
+            deploy_target=deploy_target,
+            deploy_config=workspace.deploy_config_json,
+        )
+
+    def _resolve_deploy_live_url(
+        self,
+        *,
+        deploy_result: object,
+        expected_publish_url: str | None,
+        expected_publish_url_source: str,
+        expected_publish_url_source_detail: str | None,
+    ) -> tuple[str | None, str, str | None]:
+        explicit_live_url = _normalize_url_candidate(getattr(deploy_result, "live_url", None))
+        if explicit_live_url:
+            return explicit_live_url, _MIGRATION_URL_SOURCE_DEPLOY_RESULT, "deploy_result:live_url"
+
+        workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "workflow_output", {}))
+        if not workflow_output_payload:
+            workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "workflow_outputs", {}))
+        if not workflow_output_payload:
+            workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "outputs", {}))
+        metadata_live_url, metadata_source_detail = self._resolve_url_candidate_from_inputs(
+            workflow_output_payload,
+            preferred_keys=("live_url", "resolved_live_url", "deployed_url"),
+        )
+        if metadata_live_url:
+            detail = metadata_source_detail or "workflow_output:live_url"
+            if detail.startswith("deploy_input:"):
+                detail = detail.replace("deploy_input:", "workflow_output:", 1)
+            return metadata_live_url, _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT, detail
+
+        if expected_publish_url:
+            return expected_publish_url, expected_publish_url_source, expected_publish_url_source_detail
+        return None, _MIGRATION_URL_SOURCE_UNKNOWN, None
+
+    def _resolve_latest_deploy_live_url(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        artifact_version_id: str | None,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+    ) -> tuple[str | None, str, str | None]:
+        return _resolve_deploy_history_live_url(
+            history=workspace.deploy_history_json,
+            artifact_version_id=artifact_version_id,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            ref=ref,
+        )
+
     @staticmethod
-    def _resolve_expected_deploy_url(*, deploy_target: dict[str, object]) -> tuple[str | None, str]:
-        inputs = _normalize_history_inputs(deploy_target.get("inputs"))
-        for key in ("deploy_url", "public_url", "site_url", "url"):
+    def _resolve_url_candidate_from_inputs(
+        inputs: dict[str, str],
+        *,
+        preferred_keys: tuple[str, ...] = ("deploy_url", "public_url", "site_url", "url"),
+    ) -> tuple[str | None, str | None]:
+        for key in preferred_keys:
             candidate = _normalize_url_candidate(inputs.get(key))
             if candidate:
                 return candidate, f"deploy_input:{key}"
@@ -3969,7 +4717,7 @@ class SEOMigrationService:
             candidate = _normalize_host_candidate(inputs.get(key))
             if candidate:
                 return candidate, f"deploy_input:{key}"
-        return None, "undetermined"
+        return None, None
 
     @staticmethod
     def _runtime_publisher_reason_message(*, reason_code: str, action: str) -> str:
@@ -4850,6 +5598,88 @@ def _resolve_publish_history_workflow_identity(
     return None, None
 
 
+def _resolve_publish_history_expected_publish_url(
+    *,
+    history: object,
+    artifact_version_id: str | None,
+    repo_owner: str,
+    repo_name: str,
+    ref: str,
+) -> tuple[str | None, str, str | None]:
+    normalized_history = _normalize_history_list(history)
+    artifact_id = str(artifact_version_id or "").strip()
+    normalized_owner = str(repo_owner or "").strip()
+    normalized_repo = str(repo_name or "").strip()
+    normalized_ref = str(ref or "").strip()
+    for item in reversed(normalized_history):
+        if str(item.get("action") or "").strip().lower() != "publish":
+            continue
+        if str(item.get("status") or "").strip().lower() != "published":
+            continue
+        if _coerce_bool(item.get("dry_run"), default=False):
+            continue
+        if artifact_id and str(item.get("artifact_version_id") or "").strip() != artifact_id:
+            continue
+        if normalized_owner and str(item.get("repo_owner") or "").strip() != normalized_owner:
+            continue
+        if normalized_repo and str(item.get("repo_name") or "").strip() != normalized_repo:
+            continue
+        publish_branch = str(item.get("branch") or "").strip()
+        if normalized_ref and publish_branch and publish_branch != normalized_ref:
+            continue
+
+        expected_publish_url = _normalize_url_candidate(item.get("expected_publish_url"))
+        if expected_publish_url:
+            return (
+                expected_publish_url,
+                _normalize_migration_url_source(item.get("url_source")),
+                _normalize_string(item.get("url_source_detail"), max_length=120),
+            )
+    return None, _MIGRATION_URL_SOURCE_UNKNOWN, None
+
+
+def _resolve_deploy_history_live_url(
+    *,
+    history: object,
+    artifact_version_id: str | None,
+    repo_owner: str,
+    repo_name: str,
+    ref: str,
+) -> tuple[str | None, str, str | None]:
+    normalized_history = _normalize_history_list(history)
+    artifact_id = str(artifact_version_id or "").strip()
+    normalized_owner = str(repo_owner or "").strip()
+    normalized_repo = str(repo_name or "").strip()
+    normalized_ref = str(ref or "").strip()
+    for item in reversed(normalized_history):
+        if str(item.get("action") or "").strip().lower() != "deploy":
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status not in {"deploy_requested", "deployed"}:
+            continue
+        if _coerce_bool(item.get("dry_run"), default=False):
+            continue
+        if artifact_id and str(item.get("artifact_version_id") or "").strip() != artifact_id:
+            continue
+        if normalized_owner and str(item.get("repo_owner") or "").strip() != normalized_owner:
+            continue
+        if normalized_repo and str(item.get("repo_name") or "").strip() != normalized_repo:
+            continue
+        if normalized_ref and str(item.get("ref") or "").strip() != normalized_ref:
+            continue
+
+        resolved_live_url = _normalize_url_candidate(item.get("resolved_live_url"))
+        if not resolved_live_url:
+            resolved_live_url = _normalize_url_candidate(item.get("active_url"))
+        if resolved_live_url:
+            return (
+                resolved_live_url,
+                _normalize_migration_url_source(item.get("url_source")),
+                _normalize_string(item.get("url_source_detail"), max_length=120),
+            )
+    return None, _MIGRATION_URL_SOURCE_UNKNOWN, None
+
+
 def _normalize_workflow_id_for_deploy(value: object) -> str | None:
     normalized = _normalize_string(value, max_length=160)
     if not normalized:
@@ -4900,6 +5730,22 @@ def _append_history_item(current: object, item: dict[str, object]) -> list[dict[
     if len(normalized) > _MAX_HISTORY_ITEMS:
         return normalized[-_MAX_HISTORY_ITEMS:]
     return normalized
+
+
+def _find_latest_deploy_history_index_for_refresh(*, history: list[dict[str, object]], artifact_version_id: str) -> int | None:
+    artifact_id = str(artifact_version_id or "").strip()
+    if not artifact_id:
+        return None
+    for index in range(len(history) - 1, -1, -1):
+        item = _normalize_json_dict(history[index])
+        if str(item.get("action") or "").strip().lower() != "deploy":
+            continue
+        if _coerce_bool(item.get("dry_run"), default=False):
+            continue
+        if str(item.get("artifact_version_id") or "").strip() != artifact_id:
+            continue
+        return index
+    return None
 
 
 def _is_duplicate_publish_attempt(
@@ -5180,6 +6026,45 @@ def _coerce_bool(value: object, *, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _coerce_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    try:
+        return int(normalized)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_migration_url_source(value: object) -> str:
+    normalized = _normalize_string(value, max_length=80)
+    if not normalized:
+        return _MIGRATION_URL_SOURCE_UNKNOWN
+    normalized_lower = normalized.lower()
+    if normalized_lower in {
+        _MIGRATION_URL_SOURCE_DETERMINISTIC_TARGET_CONFIG,
+        _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT,
+        _MIGRATION_URL_SOURCE_DEPLOY_RESULT,
+    }:
+        return normalized_lower
+    return _MIGRATION_URL_SOURCE_UNKNOWN
+
+
+def _confirmed_live_url_source_rank(source: object) -> int:
+    normalized = _normalize_migration_url_source(source)
+    if normalized == _MIGRATION_URL_SOURCE_DEPLOY_RESULT:
+        return 2
+    if normalized == _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT:
+        return 1
+    return 0
 
 
 def _normalize_url_candidate(value: object) -> str | None:

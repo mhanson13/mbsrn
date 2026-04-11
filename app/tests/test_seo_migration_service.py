@@ -17,6 +17,7 @@ from app.integrations.seo_migration_artifact_provider import (
 from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubDeployResult,
+    SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishResult,
@@ -126,6 +127,19 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         *,
         fail_publish: bool = False,
         fail_deploy: bool = False,
+        deploy_live_url: str | None = None,
+        deploy_workflow_output: dict[str, str] | None = None,
+        deploy_workflow_run_id: int | None = None,
+        deploy_workflow_run_status: str | None = None,
+        deploy_workflow_run_conclusion: str | None = None,
+        refresh_workflow_output: dict[str, str] | None = None,
+        refresh_workflow_run_id: int | None = None,
+        refresh_workflow_run_status: str | None = None,
+        refresh_workflow_run_conclusion: str | None = None,
+        fail_refresh: bool = False,
+        refresh_error_code: str | None = None,
+        refresh_error_message: str | None = None,
+        refresh_error_stage: str | None = None,
         deploy_error_code: str | None = None,
         deploy_error_message: str | None = None,
         deploy_error_stage: str | None = None,
@@ -134,6 +148,19 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
+        self.deploy_live_url = deploy_live_url
+        self.deploy_workflow_output = dict(deploy_workflow_output or {})
+        self.deploy_workflow_run_id = deploy_workflow_run_id
+        self.deploy_workflow_run_status = deploy_workflow_run_status
+        self.deploy_workflow_run_conclusion = deploy_workflow_run_conclusion
+        self.refresh_workflow_output = dict(refresh_workflow_output or {})
+        self.refresh_workflow_run_id = refresh_workflow_run_id
+        self.refresh_workflow_run_status = refresh_workflow_run_status
+        self.refresh_workflow_run_conclusion = refresh_workflow_run_conclusion
+        self.fail_refresh = fail_refresh
+        self.refresh_error_code = refresh_error_code
+        self.refresh_error_message = refresh_error_message
+        self.refresh_error_stage = refresh_error_stage
         self.deploy_error_code = deploy_error_code
         self.deploy_error_message = deploy_error_message
         self.deploy_error_stage = deploy_error_stage
@@ -143,6 +170,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
+        self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.workflow_provision_calls: list[tuple[str, str, str, str, bool]] = []
 
     def publish_files(
@@ -193,6 +221,37 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             ref=target.ref,
             inputs=dict(target.inputs),
             dispatched_at="2026-04-07T12:05:00+00:00",
+            live_url=self.deploy_live_url,
+            workflow_output=dict(self.deploy_workflow_output),
+            workflow_run_id=self.deploy_workflow_run_id,
+            workflow_run_status=self.deploy_workflow_run_status,
+            workflow_run_conclusion=self.deploy_workflow_run_conclusion,
+        )
+
+    def refresh_deploy_run_status(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        workflow_run_id: int,
+        dispatched_at: str | None = None,
+    ) -> SEOMigrationGitHubDeployRunStatusResult:
+        self.refresh_calls.append((target, workflow_run_id, dispatched_at))
+        if self.fail_refresh:
+            raise SEOMigrationGitHubPublisherError(
+                code=self.refresh_error_code or "workflow_not_found",
+                safe_message=self.refresh_error_message or "Simulated deploy status refresh failure.",
+                stage=self.refresh_error_stage or "workflow_run_lookup",
+            )
+        return SEOMigrationGitHubDeployRunStatusResult(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            workflow_id=target.workflow_id,
+            ref=target.ref,
+            workflow_run_id=self.refresh_workflow_run_id or workflow_run_id,
+            workflow_run_status=self.refresh_workflow_run_status,
+            workflow_run_conclusion=self.refresh_workflow_run_conclusion,
+            workflow_output=dict(self.refresh_workflow_output),
+            refreshed_at="2026-04-07T12:15:00+00:00",
         )
 
     def ensure_deploy_workflow(
@@ -1855,6 +1914,546 @@ def test_publish_and_deploy_flow_records_status_and_analytics(db_session) -> Non
     assert deploy_target.inputs.get("ga_measurement_id") == "G-WORK1234"
 
 
+def test_publish_records_expected_publish_url_when_determinable(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "workflow_id": "deploy-www-prod.yml",
+            "ref": "main",
+            "inputs": {"site_url": "https://www.tnmfire.com"},
+        },
+        principal_id="principal-1",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+
+    result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert result.result.get("expected_publish_url") == "https://www.tnmfire.com"
+    assert result.result.get("url_source") == "deterministic_target_config"
+    assert result.result.get("url_source_detail") == "deploy_input:site_url"
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    publish_history = workspace.publish_history_json or []
+    assert publish_history
+    assert publish_history[-1].get("expected_publish_url") == "https://www.tnmfire.com"
+
+
+def test_publish_records_null_expected_publish_url_when_not_determinable(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+
+    result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert result.result.get("expected_publish_url") is None
+    assert result.result.get("url_source") == "unknown"
+    assert result.result.get("url_source_detail") is None
+
+
+def test_deploy_records_resolved_live_url_from_deploy_result(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(deploy_live_url="https://live.tnmfire.com")
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "workflow_id": "deploy-www-prod.yml",
+            "ref": "main",
+            "inputs": {"site_url": "https://www.tnmfire.com"},
+        },
+        principal_id="principal-1",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("resolved_live_url") == "https://live.tnmfire.com"
+    assert deploy_result.result.get("url_source") == "deploy_result"
+    assert deploy_result.result.get("url_source_detail") == "deploy_result:live_url"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    destination = (summary.context_summary or {}).get("destination_summary") or {}
+    deploy_destination = destination.get("deploy_destination") or {}
+    assert deploy_destination.get("state") == "active_live"
+    assert deploy_destination.get("active_url") == "https://live.tnmfire.com"
+    assert deploy_destination.get("resolved_live_url") == "https://live.tnmfire.com"
+
+
+def test_deploy_falls_back_to_expected_publish_url_when_live_url_not_returned(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "workflow_id": "deploy-www-prod.yml",
+            "ref": "main",
+            "inputs": {"site_url": "https://www.tnmfire.com"},
+        },
+        principal_id="principal-1",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("resolved_live_url") == "https://www.tnmfire.com"
+    assert deploy_result.result.get("url_source") == "deterministic_target_config"
+    assert deploy_result.result.get("url_source_detail") == "deploy_input:site_url"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    destination = (summary.context_summary or {}).get("destination_summary") or {}
+    deploy_destination = destination.get("deploy_destination") or {}
+    assert deploy_destination.get("state") == "expected_after_deploy"
+    assert deploy_destination.get("active_url") is None
+    assert deploy_destination.get("resolved_live_url") == "https://www.tnmfire.com"
+
+
+def test_deploy_records_resolved_live_url_from_workflow_output(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_output={"live_url": "https://workflow-live.tnmfire.com"},
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "workflow_id": "deploy-www-prod.yml",
+            "ref": "main",
+            "inputs": {"site_url": "https://www.tnmfire.com"},
+        },
+        principal_id="principal-1",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("resolved_live_url") == "https://workflow-live.tnmfire.com"
+    assert deploy_result.result.get("url_source") == "workflow_output"
+    assert deploy_result.result.get("url_source_detail") == "workflow_output:live_url"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    destination = (summary.context_summary or {}).get("destination_summary") or {}
+    deploy_destination = destination.get("deploy_destination") or {}
+    assert deploy_destination.get("state") == "active_live"
+    assert deploy_destination.get("active_url") == "https://workflow-live.tnmfire.com"
+
+
+def test_deploy_does_not_treat_request_inputs_as_confirmed_live_url(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "workflow_id": "deploy-www-prod.yml",
+            "ref": "main",
+            "inputs": {"live_url": "https://operator-input.example"},
+        },
+        principal_id="principal-1",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("resolved_live_url") is None
+    assert deploy_result.result.get("url_source") == "unknown"
+    assert deploy_result.result.get("url_source_detail") is None
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    destination = (summary.context_summary or {}).get("destination_summary") or {}
+    deploy_destination = destination.get("deploy_destination") or {}
+    assert deploy_destination.get("state") == "unknown"
+    assert deploy_destination.get("active_url") is None
+    assert deploy_destination.get("resolved_live_url") is None
+
+
+def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output_url(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=998877,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        refresh_workflow_run_id=998877,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="success",
+        refresh_workflow_output={"live_url": "https://refresh-live.tnmfire.com"},
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("status") == "updated"
+    assert refresh_result.result.get("workflow_run_status") == "completed"
+    assert refresh_result.result.get("workflow_run_conclusion") == "success"
+    assert refresh_result.result.get("resolved_live_url") == "https://refresh-live.tnmfire.com"
+    assert refresh_result.result.get("url_source") == "workflow_output"
+    assert publisher.refresh_calls
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest_entry = deploy_history[-1]
+    assert latest_entry.get("workflow_run_status") == "completed"
+    assert latest_entry.get("workflow_run_conclusion") == "success"
+    assert latest_entry.get("resolved_live_url") == "https://refresh-live.tnmfire.com"
+    assert latest_entry.get("url_source") == "workflow_output"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    destination = (summary.context_summary or {}).get("destination_summary") or {}
+    deploy_destination = destination.get("deploy_destination") or {}
+    assert deploy_destination.get("active_url") == "https://refresh-live.tnmfire.com"
+    assert deploy_destination.get("url_source") == "workflow_output"
+
+    refresh_logs = [record.msg for record in caplog.records if isinstance(record.msg, str)]
+    assert any('"event": "seo_migration_deploy_status_refresh_requested"' in item for item in refresh_logs)
+    assert any('"event": "seo_migration_workflow_run_refresh_lookup_attempted"' in item for item in refresh_logs)
+    assert any('"event": "seo_migration_workflow_run_refresh_result_captured"' in item for item in refresh_logs)
+    assert any('"event": "seo_migration_workflow_output_url_captured_via_refresh"' in item for item in refresh_logs)
+    assert any('"event": "seo_migration_deploy_status_refresh_completed"' in item for item in refresh_logs)
+    assert "MIGRATION_GITHUB_TOKEN" not in " ".join(refresh_logs)
+
+
+def test_refresh_deploy_status_is_noop_without_workflow_run_metadata(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("status") == "no_change"
+    assert refresh_result.result.get("no_change_reason") == "workflow_run_metadata_missing"
+    assert publisher.refresh_calls == []
+
+
+def test_refresh_deploy_status_preserves_stronger_existing_confirmed_url(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_live_url="https://deploy-live.tnmfire.com",
+        deploy_workflow_run_id=123456,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=123456,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="success",
+        refresh_workflow_output={"live_url": "https://workflow-live.tnmfire.com"},
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("status") == "updated"
+    assert refresh_result.result.get("resolved_live_url") == "https://deploy-live.tnmfire.com"
+    assert refresh_result.result.get("url_source") == "deploy_result"
+
 def test_publish_filters_invalid_stored_paths_before_publish(db_session) -> None:
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
@@ -3111,15 +3710,80 @@ def test_workspace_summary_includes_destination_summary_and_draft_preview_entry(
     assert publish_destination.get("repository") == "acme/tnmfire-site"
     assert publish_destination.get("expected_location") == "acme/tnmfire-site@main:/site"
     assert publish_destination.get("expected_url") == "https://github.com/acme/tnmfire-site/tree/main/site"
+    assert publish_destination.get("expected_publish_url") == "https://tnmfire-www.example"
+    assert publish_destination.get("url_source") == "deterministic_target_config"
+    assert publish_destination.get("url_source_detail") == "deploy_input:site_url"
 
     deploy_destination = destination.get("deploy_destination") or {}
     assert deploy_destination.get("state") == "expected_after_deploy"
+    assert deploy_destination.get("expected_publish_url") == "https://tnmfire-www.example"
+    assert deploy_destination.get("resolved_live_url") is None
     assert deploy_destination.get("expected_url") == "https://tnmfire-www.example"
-    assert deploy_destination.get("url_source") == "deploy_input:site_url"
+    assert deploy_destination.get("url_source") == "deterministic_target_config"
+    assert deploy_destination.get("url_source_detail") == "deploy_input:site_url"
+
+
+def test_workspace_summary_handles_legacy_history_without_url_fields(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    workspace = _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "workflow_id": "deploy-www-prod.yml",
+            "ref": "main",
+            "inputs": {},
+        },
+        principal_id="principal-1",
+    )
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.publish_history_json = [
+        {
+            "action": "publish",
+            "status": "published",
+            "artifact_version_id": "legacy-artifact-1",
+            "repo_owner": "acme",
+            "repo_name": "tnmfire-site",
+            "branch": "main",
+            "dry_run": False,
+        }
+    ]
+    workspace.deploy_history_json = [
+        {
+            "action": "deploy",
+            "status": "deploy_requested",
+            "artifact_version_id": "legacy-artifact-1",
+            "repo_owner": "acme",
+            "repo_name": "tnmfire-site",
+            "workflow_id": "deploy-www-prod.yml",
+            "ref": "main",
+            "dry_run": False,
+        }
+    ]
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    destination = (summary.context_summary or {}).get("destination_summary") or {}
+    publish_destination = destination.get("publish_destination") or {}
+    deploy_destination = destination.get("deploy_destination") or {}
+
+    assert publish_destination.get("expected_publish_url") is None
+    assert publish_destination.get("url_source") == "unknown"
+    assert deploy_destination.get("resolved_live_url") is None
+    assert deploy_destination.get("url_source") == "unknown"
 
 
 def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -> None:
-    publisher = _RecordingGitHubPublisher()
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_output={"live_url": "https://workflow-live.tnmfire.com"},
+        deploy_workflow_run_id=998877,
+        deploy_workflow_run_status="completed",
+        deploy_workflow_run_conclusion="success",
+    )
     service = _build_service(
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
@@ -3187,6 +3851,8 @@ def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -
         and payload.get("status") == "completed"
         and isinstance(payload.get("target"), dict)
         and payload.get("target", {}).get("repo_owner") == "acme"
+        and "expected_publish_url" in payload.get("target", {})
+        and "url_source" in payload.get("target", {})
         for payload in payloads
     )
     assert any(
@@ -3194,7 +3860,26 @@ def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -
         and payload.get("status") == "completed"
         and isinstance(payload.get("target"), dict)
         and payload.get("target", {}).get("workflow_id") == "deploy-www-prod.yml"
+        and "resolved_live_url" in payload.get("target", {})
+        and "url_source" in payload.get("target", {})
         for payload in payloads
+    )
+    service_events = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+    ]
+    assert any(
+        payload.get("event") == "seo_migration_workflow_run_lookup_attempted"
+        and payload.get("workflow_run_id") is not None
+        and payload.get("workflow_run_status")
+        for payload in service_events
+    )
+    assert any(
+        payload.get("event") == "seo_migration_workflow_output_url_captured"
+        and payload.get("url_source") == "workflow_output"
+        and payload.get("resolved_live_url") == "https://workflow-live.tnmfire.com"
+        for payload in service_events
     )
 
 

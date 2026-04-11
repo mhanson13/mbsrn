@@ -117,9 +117,26 @@ Operator impact:
 Destination and preview trust additions:
 - migration workspace now includes an `Effective Publish/Deploy Destinations` section that separates:
   - draft preview availability
-  - expected publish destination (owner/repo/branch/path and derived GitHub tree URL when determinable)
-  - expected deploy URL and active/live URL state when determinable from deploy inputs/runtime state
-- destination values are labeled as configured/expected/live/unknown; URLs are only shown when derivable from existing config
+  - expected publish destination (owner/repo/branch/path and derived repository tree URL when determinable)
+  - expected published site URL (`expected_publish_url`) when deterministic from target config
+  - resolved live URL (`resolved_live_url`) when deploy metadata/runtime result provides a concrete URL
+- URL source metadata now uses stable values:
+  - `deterministic_target_config` (derived from configured deploy target inputs)
+  - `workflow_output` (explicit URL captured from GitHub workflow completion metadata)
+  - `deploy_result` (explicit URL surfaced by deploy dispatch result metadata)
+  - `unknown` (not determinable from current config/history)
+- confirmation semantics:
+  - `deterministic_target_config` remains expected/not-confirmed destination guidance
+  - only `deploy_result` and `workflow_output` sources are treated as confirmed live URL sources
+  - deploy request inputs are never treated as confirmed live evidence; only explicit deploy-result/workflow output metadata can confirm live URL state
+  - post-dispatch capture is best-effort and synchronous: the deploy action attempts to resolve the dispatched workflow run and reads explicit run-correlated completion metadata (for example deployment `environment_url`) when available
+  - if completion metadata is not yet available immediately after dispatch, URL remains unconfirmed until a later deploy result includes explicit live URL evidence
+- manual follow-up capture is available through `Refresh Deploy Status` in the migration workspace:
+  - operator/admin can re-check stored workflow-run metadata without re-dispatching deploy
+  - refresh updates workflow run status/conclusion when the run progresses
+  - confirmed live URL is promoted only when new explicit workflow completion evidence is found
+  - common no-op states are surfaced explicitly (`workflow_run_metadata_missing`, `deploy_record_missing`, `deploy_target_metadata_missing`)
+- destination values are labeled as configured/expected/live/unknown; URLs are only shown when derivable from existing config or recorded deploy metadata
 - draft website preview is available before publish/deploy from the selected artifact version:
   - rendered in a sandboxed, read-only iframe
   - explicitly labeled as draft-only (`not published`, `not deployed`)
@@ -635,6 +652,7 @@ Migration publish/deploy runtime configuration is environment-driven:
 Notes:
 - token is only read from runtime environment, never persisted in workspace rows
 - production deployment wiring injects `MIGRATION_GITHUB_TOKEN` into `mbsrn-api` from the `mbsrn-api-auth` Kubernetes secret (`secretKeyRef` key `MIGRATION_GITHUB_TOKEN`)
+- optional local GitHub control-plane validation may use `GITHUB_TEST_PUBLISH_TOKEN` from developer environment only; it is never a production runtime input
 - per-site publish/deploy target details are stored in workspace config JSON fields
 - runtime config is validated at action/readiness time for migration publish/deploy (feature-scoped validation); unrelated app features continue running when migration config is missing
 - publish readiness now distinguishes metadata readiness from runtime publisher capability:
@@ -797,6 +815,7 @@ Publish/deploy controls:
 - `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_version_id}/approve`
 - `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/publish`
 - `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy/refresh-status`
 - `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/publish-history`
 - `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy-history`
 

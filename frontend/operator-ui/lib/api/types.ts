@@ -332,6 +332,10 @@ export interface MigrationDeployRequest {
   dry_run?: boolean;
 }
 
+export interface MigrationDeployStatusRefreshRequest {
+  artifact_version_id: string;
+}
+
 export interface MigrationSourceSnapshot {
   fetched_at?: string | null;
   final_url?: string | null;
@@ -542,6 +546,9 @@ export interface MigrationDestinationPublishSummary {
   branch?: string | null;
   artifact_root?: string | null;
   expected_location?: string | null;
+  expected_publish_url?: string | null;
+  url_source?: string | null;
+  url_source_detail?: string | null;
   expected_url?: string | null;
   is_published?: boolean;
   last_published_at?: string | null;
@@ -549,9 +556,12 @@ export interface MigrationDestinationPublishSummary {
 
 export interface MigrationDestinationDeploySummary {
   state: "active_live" | "expected_after_deploy" | "unknown" | string;
+  expected_publish_url?: string | null;
+  resolved_live_url?: string | null;
   expected_url?: string | null;
   active_url?: string | null;
   url_source?: string | null;
+  url_source_detail?: string | null;
   is_deployed?: boolean;
   last_deployed_at?: string | null;
   target_repository?: string | null;

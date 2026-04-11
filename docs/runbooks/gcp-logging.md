@@ -206,6 +206,16 @@ When migration deploy fails after publish, query these structured events:
 - `jsonPayload.event="seo_migration_control_plane_action"` with `jsonPayload.action="deploy"`
 - `jsonPayload.event="seo_migration_deploy_dispatch_failed"`
 - `jsonPayload.event="seo_migration_deploy_workflow_resolution"` (emitted when deploy uses publish-history workflow identity)
+- `jsonPayload.event="seo_migration_deploy_dispatch_accepted"`
+- `jsonPayload.event="seo_migration_workflow_run_lookup_attempted"`
+- `jsonPayload.event="seo_migration_workflow_run_result_captured"`
+- `jsonPayload.event="seo_migration_workflow_output_url_captured"`
+- `jsonPayload.event="seo_migration_deploy_status_refresh_requested"`
+- `jsonPayload.event="seo_migration_workflow_run_refresh_lookup_attempted"`
+- `jsonPayload.event="seo_migration_workflow_run_refresh_result_captured"`
+- `jsonPayload.event="seo_migration_workflow_output_url_captured_via_refresh"`
+- `jsonPayload.event="seo_migration_deploy_status_refresh_completed"`
+- `jsonPayload.event="seo_migration_deploy_status_refresh_no_change"`
 
 Key non-secret fields:
 
@@ -213,6 +223,8 @@ Key non-secret fields:
 - `failure_reason_code` / `target.failure_reason_code`
 - `failure_stage` (`repo_lookup`, `workflow_lookup`, `workflow_dispatch`)
 - `workflow_id`, optional `workflow_path`, `ref`, `repo_owner`, `repo_name`
+- `workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`
+- `resolved_live_url`, `url_source`, `url_source_detail`
 
 Reason-code guidance:
 
@@ -221,6 +233,22 @@ Reason-code guidance:
 - `branch_not_found_or_ref_invalid`: dispatch ref is invalid or missing in target repo.
 - `workflow_dispatch_not_supported`: workflow exists but does not expose `workflow_dispatch`.
 - `token_not_authorized`: runtime token lacks required repository/workflow permissions.
+
+Live URL confirmation guidance:
+
+- `url_source=deploy_result` or `url_source=workflow_output` indicates confirmed live URL evidence from deploy/runtime metadata.
+- `url_source=deterministic_target_config` remains expected guidance only and should not be treated as confirmed live state.
+- deploy request inputs (for example `site_url`) are not confirmed-live evidence.
+- workflow-output URL confirmation requires run-correlated completion metadata (for example deployment status `environment_url` linked to the dispatched workflow run id).
+- refresh no-op reasons:
+  - `workflow_run_metadata_missing`: deploy record exists but run id/status correlation is not available yet.
+  - `deploy_record_missing`: no non-dry-run deploy history entry exists for the selected artifact.
+  - `deploy_target_metadata_missing`: deploy target repo/workflow/ref metadata is incomplete for refresh lookup.
+
+Local-only validation note:
+
+- For optional local verification against GitHub APIs, use `GITHUB_TEST_PUBLISH_TOKEN` from local environment only.
+- Never print/log/commit token values and never replace production runtime token wiring (`MIGRATION_GITHUB_TOKEN`) with local test token usage.
 
 ## Local Live Validation (Migration /responses)
 

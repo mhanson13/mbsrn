@@ -4,9 +4,11 @@ from dataclasses import dataclass
 import base64
 import json
 import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
 from app.core.time import utc_now
 
@@ -58,6 +60,24 @@ class SEOMigrationGitHubDeployResult:
     ref: str
     inputs: dict[str, str]
     dispatched_at: str
+    live_url: str | None = None
+    workflow_output: dict[str, str] | None = None
+    workflow_run_id: int | None = None
+    workflow_run_status: str | None = None
+    workflow_run_conclusion: str | None = None
+
+
+@dataclass(frozen=True)
+class SEOMigrationGitHubDeployRunStatusResult:
+    repo_owner: str
+    repo_name: str
+    workflow_id: str
+    ref: str
+    workflow_run_id: int
+    workflow_run_status: str | None = None
+    workflow_run_conclusion: str | None = None
+    workflow_output: dict[str, str] | None = None
+    refreshed_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +119,15 @@ class SEOMigrationGitHubPublisher:
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
     ) -> SEOMigrationGitHubDeployResult:
+        raise NotImplementedError
+
+    def refresh_deploy_run_status(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        workflow_run_id: int,
+        dispatched_at: str | None = None,
+    ) -> SEOMigrationGitHubDeployRunStatusResult:
         raise NotImplementedError
 
     def ensure_deploy_workflow(
@@ -148,6 +177,19 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         dry_run: bool,
     ) -> SEOMigrationGitHubDeployResult:
         del target, dry_run
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
+    def refresh_deploy_run_status(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        workflow_run_id: int,
+        dispatched_at: str | None = None,
+    ) -> SEOMigrationGitHubDeployRunStatusResult:
+        del target, workflow_run_id, dispatched_at
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -261,10 +303,23 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         dry_run: bool,
     ) -> SEOMigrationGitHubDeployResult:
         dispatched_at = utc_now().isoformat()
+        workflow_output: dict[str, str] | None = None
+        workflow_run_id: int | None = None
+        workflow_run_status: str | None = None
+        workflow_run_conclusion: str | None = None
         if not dry_run:
             self._ensure_repo_exists_for_deploy(target=target)
             self._ensure_workflow_exists_for_deploy(target=target)
             self._dispatch_workflow_request(target=target)
+            (
+                workflow_run_id,
+                workflow_run_status,
+                workflow_run_conclusion,
+                workflow_output,
+            ) = self._try_capture_post_dispatch_workflow_result(
+                target=target,
+                dispatched_at=dispatched_at,
+            )
         return SEOMigrationGitHubDeployResult(
             dry_run=dry_run,
             repo_owner=target.repo_owner,
@@ -273,7 +328,255 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             ref=target.ref,
             inputs={str(key): str(value) for key, value in target.inputs.items()},
             dispatched_at=dispatched_at,
+            live_url=None,
+            workflow_output=workflow_output,
+            workflow_run_id=workflow_run_id,
+            workflow_run_status=workflow_run_status,
+            workflow_run_conclusion=workflow_run_conclusion,
         )
+
+    def refresh_deploy_run_status(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        workflow_run_id: int,
+        dispatched_at: str | None = None,
+    ) -> SEOMigrationGitHubDeployRunStatusResult:
+        if workflow_run_id <= 0:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_not_found",
+                safe_message="GitHub workflow run target was not found.",
+                stage="workflow_run_lookup",
+            )
+
+        run_payload = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
+                f"/actions/runs/{workflow_run_id}"
+            ),
+            expected_statuses=(200,),
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                404: (
+                    "workflow_not_found",
+                    "GitHub workflow run target was not found.",
+                ),
+            },
+            error_stage="workflow_run_lookup",
+        )
+        if not isinstance(run_payload, dict):
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_not_found",
+                safe_message="GitHub workflow run target was not found.",
+                stage="workflow_run_lookup",
+            )
+
+        run_id = _coerce_int(run_payload.get("id")) or workflow_run_id
+        run_status = _coerce_string(run_payload.get("status"))
+        run_conclusion = _coerce_string(run_payload.get("conclusion"))
+        created_at = _coerce_string(run_payload.get("created_at"))
+        completed_at = _coerce_string(run_payload.get("updated_at"))
+        refreshed_at = completed_at or created_at or utc_now().isoformat()
+
+        dispatched_at_candidate = _coerce_string(dispatched_at) or created_at or refreshed_at
+        workflow_output: dict[str, str] | None = None
+        if run_status == "completed" and run_conclusion == "success":
+            live_url = self._resolve_live_url_from_workflow_completion_metadata(
+                target=target,
+                workflow_run_id=run_id,
+                dispatched_at=dispatched_at_candidate,
+            )
+            if live_url:
+                workflow_output = {"live_url": live_url}
+
+        return SEOMigrationGitHubDeployRunStatusResult(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            workflow_id=target.workflow_id,
+            ref=target.ref,
+            workflow_run_id=run_id,
+            workflow_run_status=run_status,
+            workflow_run_conclusion=run_conclusion,
+            workflow_output=workflow_output,
+            refreshed_at=refreshed_at,
+        )
+
+    def _try_capture_post_dispatch_workflow_result(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        dispatched_at: str,
+    ) -> tuple[int | None, str | None, str | None, dict[str, str] | None]:
+        try:
+            run_payload = self._find_recent_workflow_run_for_dispatch(
+                target=target,
+                dispatched_at=dispatched_at,
+            )
+        except SEOMigrationGitHubPublisherError:
+            return None, None, None, None
+
+        if not isinstance(run_payload, dict):
+            return None, None, None, None
+
+        workflow_run_id = _coerce_int(run_payload.get("id"))
+        workflow_run_status = _coerce_string(run_payload.get("status"))
+        workflow_run_conclusion = _coerce_string(run_payload.get("conclusion"))
+
+        workflow_output: dict[str, str] | None = None
+        if workflow_run_status == "completed" and workflow_run_conclusion == "success":
+            live_url = self._resolve_live_url_from_workflow_completion_metadata(
+                target=target,
+                workflow_run_id=workflow_run_id,
+                dispatched_at=dispatched_at,
+            )
+            if live_url:
+                workflow_output = {"live_url": live_url}
+
+        return workflow_run_id, workflow_run_status, workflow_run_conclusion, workflow_output
+
+    def _find_recent_workflow_run_for_dispatch(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        dispatched_at: str,
+    ) -> dict[str, object] | None:
+        dispatched_dt = _parse_iso8601_timestamp(dispatched_at)
+        if dispatched_dt is None:
+            return None
+        lower_bound = dispatched_dt - timedelta(minutes=2)
+        upper_bound = dispatched_dt + timedelta(minutes=15)
+
+        for attempt in range(3):
+            runs_response = self._request_json(
+                method="GET",
+                path=(
+                    f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
+                    f"/actions/workflows/{urllib.parse.quote(target.workflow_id, safe='')}/runs"
+                    f"?event=workflow_dispatch&branch={urllib.parse.quote(target.ref, safe='')}&per_page=10"
+                ),
+                expected_statuses=(200,),
+                status_error_map={
+                    401: (
+                        "token_not_authorized",
+                        "GitHub token is not authorized for deploy operations.",
+                    ),
+                    403: (
+                        "token_not_authorized",
+                        "GitHub token is not authorized for deploy operations.",
+                    ),
+                    404: (
+                        "workflow_not_found",
+                        "GitHub workflow target was not found.",
+                    ),
+                },
+                error_stage="workflow_result_lookup",
+            )
+            runs_payload = (
+                runs_response.get("workflow_runs")
+                if isinstance(runs_response, dict)
+                else None
+            )
+            if not isinstance(runs_payload, list):
+                return None
+
+            selected_run: dict[str, object] | None = None
+            for item in runs_payload:
+                if not isinstance(item, dict):
+                    continue
+                head_branch = _coerce_string(item.get("head_branch"))
+                if head_branch and head_branch != target.ref:
+                    continue
+                event_name = _coerce_string(item.get("event"))
+                if event_name and event_name != "workflow_dispatch":
+                    continue
+                created_at_value = _parse_iso8601_timestamp(_coerce_string(item.get("created_at")))
+                if created_at_value is not None:
+                    if created_at_value < lower_bound or created_at_value > upper_bound:
+                        continue
+                selected_run = item
+                break
+
+            if selected_run is not None:
+                return selected_run
+            if attempt < 2:
+                time.sleep(0.5)
+        return None
+
+    def _resolve_live_url_from_workflow_completion_metadata(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        workflow_run_id: int | None,
+        dispatched_at: str,
+    ) -> str | None:
+        dispatched_dt = _parse_iso8601_timestamp(dispatched_at)
+        if dispatched_dt is None:
+            return None
+        deployments_response = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
+                f"/deployments?ref={urllib.parse.quote(target.ref, safe='')}&per_page=10"
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_stage="workflow_result_lookup",
+            expect_object=False,
+        )
+        if not isinstance(deployments_response, list):
+            return None
+        for deployment_item in deployments_response:
+            if not isinstance(deployment_item, dict):
+                continue
+            deployment_created_at = _parse_iso8601_timestamp(_coerce_string(deployment_item.get("created_at")))
+            # Ignore deployments clearly older than this dispatch window.
+            if deployment_created_at is not None and deployment_created_at < (dispatched_dt - timedelta(minutes=2)):
+                continue
+            deployment_id = _coerce_int(deployment_item.get("id"))
+            if deployment_id is None:
+                continue
+            statuses_response = self._request_json(
+                method="GET",
+                path=(
+                    f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
+                    f"/deployments/{deployment_id}/statuses?per_page=10"
+                ),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_stage="workflow_result_lookup",
+                expect_object=False,
+            )
+            if not isinstance(statuses_response, list):
+                continue
+            for status_item in statuses_response:
+                if not isinstance(status_item, dict):
+                    continue
+                status_state = _coerce_string(status_item.get("state")) or ""
+                if status_state.lower() not in {"success", "active"}:
+                    continue
+                environment_url = _normalize_url(_coerce_string(status_item.get("environment_url")))
+                if environment_url:
+                    status_created_at = _parse_iso8601_timestamp(_coerce_string(status_item.get("created_at")))
+                    if status_created_at is not None:
+                        if status_created_at < (dispatched_dt - timedelta(minutes=2)):
+                            continue
+                        if status_created_at > (dispatched_dt + timedelta(hours=1)):
+                            continue
+                    if workflow_run_id is not None and not _status_links_to_workflow_run(
+                        status_item=status_item,
+                        workflow_run_id=workflow_run_id,
+                    ):
+                        continue
+                    return environment_url
+        return None
 
     def _ensure_repo_exists_for_deploy(self, *, target: SEOMigrationGitHubDeployTarget) -> None:
         self._request_json(
@@ -536,7 +839,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         allow_404: bool = False,
         status_error_map: dict[int, tuple[str, str]] | None = None,
         error_stage: str | None = None,
-    ) -> dict[str, object] | None:
+        expect_object: bool = True,
+    ) -> dict[str, object] | list[object] | None:
         body = None
         headers = {
             "Accept": "application/vnd.github+json",
@@ -568,9 +872,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 if not response_body:
                     return None
                 parsed = json.loads(response_body)
-                if not isinstance(parsed, dict):
-                    return None
-                return parsed
+                if expect_object:
+                    if not isinstance(parsed, dict):
+                        return None
+                    return parsed
+                if isinstance(parsed, (dict, list)):
+                    return parsed
+                return None
         except urllib.error.HTTPError as exc:
             status_code = int(getattr(exc, "code", 0) or 0)
             if allow_404 and status_code == 404:
@@ -700,3 +1008,65 @@ def _dedupe_strings(values: list[str]) -> list[str]:
         seen.add(item)
         deduped.append(item)
     return deduped
+
+
+def _coerce_string(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _coerce_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if not candidate.isdigit():
+            return None
+        try:
+            return int(candidate)
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_iso8601_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    normalized = candidate.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    lowered = candidate.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        return candidate
+    return None
+
+
+def _status_links_to_workflow_run(*, status_item: dict[str, object], workflow_run_id: int) -> bool:
+    needle = f"/actions/runs/{workflow_run_id}"
+    for key in ("log_url", "target_url", "url"):
+        value = _coerce_string(status_item.get(key))
+        if value and needle in value:
+            return True
+    return False

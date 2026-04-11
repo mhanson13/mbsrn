@@ -16,6 +16,7 @@ from app.schemas.seo_migration import (
     SEOMigrationArtifactVersionRead,
     SEOMigrationDeployActionRead,
     SEOMigrationDeployConfigUpdateRequest,
+    SEOMigrationDeployStatusRefreshRequest,
     SEOMigrationDeployRequest,
     SEOMigrationDraftGenerateRequest,
     SEOMigrationEnrichedContentUpdateRequest,
@@ -517,6 +518,37 @@ def deploy_seo_migration_artifact_version(
             site_id=site_id,
             artifact_version_id=payload.artifact_version_id,
             dry_run=payload.dry_run,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOMigrationDeployActionRead(
+        workspace=_to_workspace_read(action_result.workspace),
+        artifact=_to_artifact_read(action_result.artifact),
+        readiness=action_result.readiness,
+        result=action_result.result,
+    )
+
+
+@router.post("/sites/{site_id}/migration/deploy/refresh-status", response_model=SEOMigrationDeployActionRead)
+def refresh_seo_migration_deploy_status(
+    business_id: str,
+    site_id: str,
+    payload: SEOMigrationDeployStatusRefreshRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationDeployActionRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        action_result = migration_service.refresh_deploy_run_status(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            artifact_version_id=payload.artifact_version_id,
             principal_id=tenant_context.principal_id,
         )
     except SEOMigrationNotFoundError as exc:

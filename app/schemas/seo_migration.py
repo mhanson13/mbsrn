@@ -274,6 +274,10 @@ class SEOMigrationDeployRequest(BaseModel):
     dry_run: bool = False
 
 
+class SEOMigrationDeployStatusRefreshRequest(BaseModel):
+    artifact_version_id: str = Field(min_length=1, max_length=36)
+
+
 class SEOMigrationSourceSnapshotRead(BaseModel):
     fetched_at: str | None = None
     final_url: str | None = None

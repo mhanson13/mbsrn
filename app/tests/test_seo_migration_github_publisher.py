@@ -7,6 +7,7 @@ import urllib.request
 
 import pytest
 
+from app.core.time import utc_now
 from app.integrations.seo_migration_github_publisher import (
     GitHubSEOMigrationPublisher,
     SEOMigrationGitHubDeployTarget,
@@ -174,3 +175,144 @@ def test_dispatch_deploy_classifies_token_not_authorized(monkeypatch) -> None:
     assert exc_info.value.stage == "repo_lookup"
     assert len(calls) == 1
 
+
+def test_dispatch_deploy_captures_workflow_output_live_url_from_completion_metadata(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    created_at = utc_now().isoformat()
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=204),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 99991,
+                                "status": "completed",
+                                "conclusion": "success",
+                                "event": "workflow_dispatch",
+                                "head_branch": "main",
+                                "created_at": created_at,
+                            }
+                        ]
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps([{"id": 12345}])),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    [
+                        {
+                            "state": "success",
+                            "created_at": created_at,
+                            "log_url": "https://github.com/mhanson13/tnmfire/actions/runs/99991",
+                            "environment_url": "https://live.tnmfire.com",
+                        }
+                    ]
+                ),
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
+    assert result.workflow_run_id == 99991
+    assert result.workflow_run_status == "completed"
+    assert result.workflow_run_conclusion == "success"
+    assert result.workflow_output == {"live_url": "https://live.tnmfire.com"}
+    assert len(calls) == 6
+
+
+def test_dispatch_deploy_does_not_capture_unrelated_deployment_status_url(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    created_at = utc_now().isoformat()
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=204),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 99993,
+                                "status": "completed",
+                                "conclusion": "success",
+                                "event": "workflow_dispatch",
+                                "head_branch": "main",
+                                "created_at": created_at,
+                            }
+                        ]
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps([{"id": 12346, "created_at": created_at}])),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    [
+                        {
+                            "state": "success",
+                            "created_at": created_at,
+                            "log_url": "https://github.com/mhanson13/tnmfire/actions/runs/11111",
+                            "environment_url": "https://stale-or-unrelated.example",
+                        }
+                    ]
+                ),
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
+    assert result.workflow_run_id == 99993
+    assert result.workflow_run_status == "completed"
+    assert result.workflow_run_conclusion == "success"
+    assert result.workflow_output is None
+    assert len(calls) == 6
+
+
+def test_dispatch_deploy_without_completion_output_keeps_workflow_output_empty(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    created_at = utc_now().isoformat()
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=204),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 99992,
+                                "status": "in_progress",
+                                "conclusion": None,
+                                "event": "workflow_dispatch",
+                                "head_branch": "main",
+                                "created_at": created_at,
+                            }
+                        ]
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
+    assert result.workflow_run_id == 99992
+    assert result.workflow_run_status == "in_progress"
+    assert result.workflow_run_conclusion is None
+    assert result.workflow_output is None
+    assert len(calls) == 4

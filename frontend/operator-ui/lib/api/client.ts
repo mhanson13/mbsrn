@@ -26,6 +26,7 @@ import type {
   MigrationDeployActionResponse,
   MigrationDeployConfigUpdateRequest,
   MigrationDeployRequest,
+  MigrationDeployStatusRefreshRequest,
   MigrationDraftGenerateRequest,
   MigrationEnrichedContentUpdateRequest,
   MigrationHistoryListResponse,
@@ -501,6 +502,22 @@ export async function deployMigrationArtifactVersion(
 ): Promise<MigrationDeployActionResponse> {
   return apiRequest<MigrationDeployActionResponse>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/migration/deploy`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function refreshMigrationDeployStatus(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationDeployStatusRefreshRequest,
+): Promise<MigrationDeployActionResponse> {
+  return apiRequest<MigrationDeployActionResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/deploy/refresh-status`,
     {
       method: "POST",
       token,

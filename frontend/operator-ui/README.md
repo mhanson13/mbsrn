@@ -74,8 +74,16 @@ Migration workspace boundary:
 - publish readiness requires both merged target metadata and runtime publisher capability (`MIGRATION_GITHUB_TOKEN` and valid runtime publisher wiring).
 - migration workspace now shows an explicit effective destination summary:
   - draft preview availability
-  - expected publish destination (owner/repo/branch/path and derived GitHub URL when determinable)
-  - expected deploy URL / live URL state when determinable
+  - expected publish destination (owner/repo/branch/path and derived repository URL when determinable)
+  - expected published site URL (deterministic target config)
+  - resolved live URL (deploy metadata/result when available)
+  - URL source labeling (`deterministic_target_config`, `deploy_result`, `workflow_output`, `unknown`)
+  - deterministic target URLs remain expected guidance; only deploy-result/workflow-output URLs are treated as confirmed live URLs
+- migration deploy section includes a manual `Refresh Deploy Status` action:
+  - re-checks stored workflow-run metadata without re-dispatching deploy
+  - updates workflow run status/conclusion when execution progresses
+  - promotes confirmed live URL only when explicit workflow completion output evidence is found
+  - surfaces safe no-change states when run metadata/target metadata is not yet available
 - migration draft preview is rendered from selected artifact content in a sandboxed iframe and is always labeled as draft-only (not published, not deployed).
 - draft preview supports whole-site navigation through generated HTML pages when the artifact includes multiple pages.
 - artifact file preview supports explicit hide/show controls so operators can collapse preview output without losing selected file context.
