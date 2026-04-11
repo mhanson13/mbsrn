@@ -199,6 +199,29 @@ When validating operator-visible migration state from backend payloads:
    - provider compatibility blockers
    - latest persisted generation outcome (`failed` / `partial` / `completed`)
 
+## Migration Deploy Dispatch Troubleshooting
+
+When migration deploy fails after publish, query these structured events:
+
+- `jsonPayload.event="seo_migration_control_plane_action"` with `jsonPayload.action="deploy"`
+- `jsonPayload.event="seo_migration_deploy_dispatch_failed"`
+- `jsonPayload.event="seo_migration_deploy_workflow_resolution"` (emitted when deploy uses publish-history workflow identity)
+
+Key non-secret fields:
+
+- `target.resolved_workflow_source` (`publish_history_workflow`, `workspace_config_workflow`, `default_workflow`)
+- `failure_reason_code` / `target.failure_reason_code`
+- `failure_stage` (`repo_lookup`, `workflow_lookup`, `workflow_dispatch`)
+- `workflow_id`, optional `workflow_path`, `ref`, `repo_owner`, `repo_name`
+
+Reason-code guidance:
+
+- `repo_not_found`: repository lookup failed for owner/repo.
+- `workflow_not_found`: repository exists, but requested workflow id/path was not found.
+- `branch_not_found_or_ref_invalid`: dispatch ref is invalid or missing in target repo.
+- `workflow_dispatch_not_supported`: workflow exists but does not expose `workflow_dispatch`.
+- `token_not_authorized`: runtime token lacks required repository/workflow permissions.
+
 ## Local Live Validation (Migration /responses)
 
 Use this local-only harness to validate the end-to-end migration request contract against live provider behavior:

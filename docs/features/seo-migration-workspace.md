@@ -123,7 +123,9 @@ Destination and preview trust additions:
 - draft website preview is available before publish/deploy from the selected artifact version:
   - rendered in a sandboxed, read-only iframe
   - explicitly labeled as draft-only (`not published`, `not deployed`)
+  - supports whole-site preview across generated HTML pages via a page selector when multiple pages exist
   - unavailable state is explicit when artifact HTML is missing
+- artifact file preview now supports explicit hide/show controls so operators can collapse preview content without losing selected file context
 
 ## Reused Context Availability Semantics
 Migration reused-context cards use best-available signal, not strict completeness.
@@ -660,6 +662,10 @@ Deploy behavior:
 - explicit operator-triggered action only
 - approved + published artifact required
 - readiness/state tracked separately from publish state
+- deploy workflow dispatch target now resolves with precedence:
+  1. authoritative publish-history workflow identity for the same artifact + repo/ref (`deploy_workflow_id` / `deploy_workflow_path`) when available
+  2. workspace deploy config `workflow_id`
+  3. platform default workflow id
 - deployment history captured with status/result metadata
 - duplicate non-dry-run deploy requests for the same artifact+target+inputs are rejected with operator-readable validation errors
 - retry after a failed deploy is supported and recorded as a new history event
@@ -682,6 +688,7 @@ Rules:
 2. workspace analytics config id
 3. site GA4 measurement id
 - analytics insertion settings saved in workspace (`enabled`, `ga_measurement_id`, `insertion_mode`) persist and are re-hydrated from authoritative summary state after save/reload
+- when workspace GA measurement id is empty, migration workspace hydrates from authoritative site GA measurement id surfaced in migration readiness payloads
 - `publish_only` mode omits GA measurement input from deploy dispatch
 - placeholder normalization is deterministic (duplicate placeholders collapse to a single insertion point)
 - repeated publish/deploy actions do not duplicate analytics insertion in generated output payloads
@@ -695,6 +702,11 @@ Migration publish/deploy paths normalize failures into stable categories:
 - `target_invalid`
   - Publish/deploy target repo/branch/root/workflow/ref/inputs failed validation.
   - Operator action: fix site workspace target config and retry.
+  - Deploy dispatch failures now include specific non-secret reason codes for target resolution:
+    - `repo_not_found`
+    - `workflow_not_found`
+    - `branch_not_found_or_ref_invalid`
+    - `workflow_dispatch_not_supported`
 - `approval_required`
   - Attempted publish/deploy before required approval/publish prerequisites were satisfied.
   - Operator action: approve artifact first; deploy only after successful publish.
@@ -725,13 +737,17 @@ Publish/deploy history entries are append-only, bounded lists and include:
 - analytics metadata (`analytics_measurement_id`, `analytics_insertion_mode`, plus `analytics_applied` when available)
 - result identifiers when available (`latest_commit_sha`, `commit_shas`, `published_at`, `dispatched_at`)
 - normalized failure category (`failure_category`) on error paths
+- normalized deploy failure reason code (`failure_reason`) and stage (`failure_stage`) on deploy failure paths when available
 - sanitized failure summary (`error_summary`) on error paths
+- deploy workflow resolution trace fields (`resolved_workflow_source`, and `workflow_path` when known)
 
 ## Structured Logging
 Migration control-plane actions emit structured logs (`event=seo_migration_control_plane_action`) for:
 - approval requested/completed/failed
 - publish requested/completed/failed
 - deploy requested/completed/failed
+- deploy workflow source resolution (`event=seo_migration_deploy_workflow_resolution`) when publish-history workflow identity is used
+- deploy dispatch failure diagnostics (`event=seo_migration_deploy_dispatch_failed`)
 
 Draft generation also emits structured logs:
 - service-level lifecycle (`event=seo_migration_draft_generation`) with requested/completed/partial/failed states
@@ -745,6 +761,7 @@ Logged fields are safe metadata only:
 - `action`, `status`, `dry_run`, `duration_ms`
 - sanitized target summary (repo/branch/root or workflow/ref)
 - `failure_category` and sanitized `failure_reason` on failures
+- deploy failure logs include non-secret dispatch diagnostics (`failure_reason_code`, `failure_stage`) and workflow source (`resolved_workflow_source`)
 - draft-generation fields include `draft_run_id`, provider/model/prompt version, retryability, and correlation id when available
 - draft-generation fields include `model_requested`, `model_resolved`, `model_used`, request-shape metadata (`endpoint_path`, `execution_mode`, `response_format_mode`, `request_body_mode`), and `failure_source` (`local_preflight` vs `remote_provider`) for request-path traceability
 - provider parse logs include `raw_length`, `parsed_candidate_count`, `salvaged_candidate_count`, and `malformed_output_reason` (when present)

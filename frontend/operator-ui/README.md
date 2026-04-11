@@ -77,6 +77,9 @@ Migration workspace boundary:
   - expected publish destination (owner/repo/branch/path and derived GitHub URL when determinable)
   - expected deploy URL / live URL state when determinable
 - migration draft preview is rendered from selected artifact content in a sandboxed iframe and is always labeled as draft-only (not published, not deployed).
+- draft preview supports whole-site navigation through generated HTML pages when the artifact includes multiple pages.
+- artifact file preview supports explicit hide/show controls so operators can collapse preview output without losing selected file context.
+- migration analytics rules hydrate from authoritative workspace/site GA values and persist after save/reload.
 
 ## Shared workspace/page composition primitives
 

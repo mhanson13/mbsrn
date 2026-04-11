@@ -2702,6 +2702,62 @@ describe("site workspace migration tab", () => {
     );
   });
 
+  it("supports whole-site draft preview navigation across generated HTML pages", async () => {
+    const user = userEvent.setup();
+    const multiPageArtifact = buildMigrationArtifactVersion({
+      generated_files_json: [
+        {
+          path: "index.html",
+          media_type: "text/html",
+          content:
+            '<html><head><title>Home</title><link rel="stylesheet" href="styles.css"></head><body><h1>Home Draft</h1><a href="services.html">Services</a></body></html>',
+          size_bytes: 148,
+        },
+        {
+          path: "services.html",
+          media_type: "text/html",
+          content:
+            '<html><head><title>Services</title><link rel="stylesheet" href="styles.css"></head><body><h1>Services Draft</h1></body></html>',
+          size_bytes: 126,
+        },
+        {
+          path: "styles.css",
+          media_type: "text/css",
+          content: "h1 { color: #0f172a; }",
+          size_bytes: 22,
+        },
+      ],
+      file_count: 3,
+      total_bytes: 296,
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: multiPageArtifact.id,
+          latest_generated_artifact_version_number: multiPageArtifact.version,
+        }),
+        latest_artifact: multiPageArtifact,
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValue({
+      items: [multiPageArtifact],
+      total: 1,
+    });
+
+    render(<SiteWorkspacePage />);
+    await switchToMigrationTab(user);
+
+    await user.click(await screen.findByTestId("migration-preview-draft-button"));
+    const previewFrame = await screen.findByTestId("migration-draft-preview-iframe");
+    expect(previewFrame).toHaveAttribute("srcdoc", expect.stringContaining("Home Draft"));
+
+    const pageSelect = await screen.findByTestId("migration-draft-preview-page-select");
+    await user.selectOptions(pageSelect, "services.html");
+    await waitFor(() =>
+      expect(previewFrame).toHaveAttribute("srcdoc", expect.stringContaining("Services Draft")),
+    );
+  });
+
   it("shows explicit non-previewable artifact messaging when no HTML files exist", async () => {
     const user = userEvent.setup();
     const nonPreviewableArtifact = buildMigrationArtifactVersion({
@@ -2735,6 +2791,54 @@ describe("site workspace migration tab", () => {
     const previewButton = await screen.findByTestId("migration-preview-draft-button");
     expect(previewButton).toBeDisabled();
     expect(await screen.findByText("Selected artifact does not contain previewable HTML.")).toBeInTheDocument();
+  });
+
+  it("supports hiding and restoring file preview without losing selected file context", async () => {
+    const user = userEvent.setup();
+    render(<SiteWorkspacePage />);
+    await switchToMigrationTab(user);
+
+    const fileTree = await screen.findByTestId("migration-file-tree");
+    await user.click(within(fileTree).getByRole("button", { name: "index.html" }));
+
+    const filePreview = await screen.findByTestId("migration-file-preview");
+    expect(filePreview).toHaveTextContent("ANALYTICS_PLACEHOLDER");
+
+    await user.click(await screen.findByTestId("migration-file-preview-hide"));
+    expect(filePreview).toHaveTextContent("Preview hidden for index.html.");
+    expect(screen.queryByText("ANALYTICS_PLACEHOLDER")).not.toBeInTheDocument();
+
+    await user.click(await screen.findByTestId("migration-file-preview-show"));
+    expect(await screen.findByTestId("migration-file-preview")).toHaveTextContent("ANALYTICS_PLACEHOLDER");
+  });
+
+  it("hydrates analytics measurement id from authoritative site settings when workspace value is empty", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          analytics_config_json: {
+            enabled: true,
+            ga_measurement_id: null,
+            insertion_mode: "publish_and_deploy",
+          },
+        }),
+        publish_readiness: {
+          ...buildMigrationWorkspaceSummary().publish_readiness,
+          site_ga_measurement_id: "G-SITE1234",
+          workspace_ga_measurement_id: null,
+        },
+      }),
+    );
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    expect(await screen.findByDisplayValue("G-SITE1234")).toBeInTheDocument();
+    const insertionModeSelect = screen
+      .getAllByRole("combobox")
+      .find((element) => (element as HTMLSelectElement).value === "publish_and_deploy");
+    expect(insertionModeSelect).toBeDefined();
   });
 
   it("shows a partial draft indicator when selected migration artifact is salvaged", async () => {

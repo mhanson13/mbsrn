@@ -1320,10 +1320,36 @@ main {
 
 .migration-draft-preview-frame {
   width: 100%;
+  max-width: 100%;
   min-height: 540px;
+  height: clamp(480px, 60vh, 760px);
   border: 1px solid var(--section-divider);
   border-radius: var(--radius-sm);
   background: #fff;
+  display: block;
+}
+
+.migration-draft-preview-surface {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.migration-artifact-review-grid {
+  align-items: start;
+}
+
+.migration-file-tree-panel,
+.migration-file-preview-panel {
+  min-width: 0;
+}
+
+.migration-file-preview-content {
+  margin: 0;
+  max-height: 420px;
+  white-space: pre-wrap;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .migration-advanced-details > summary {

@@ -76,6 +76,7 @@ class SEOMigrationGitHubPublisherError(RuntimeError):
     code: str
     safe_message: str
     status_code: int | None = None
+    stage: str | None = None
 
     def __str__(self) -> str:
         return self.safe_message
@@ -261,18 +262,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
     ) -> SEOMigrationGitHubDeployResult:
         dispatched_at = utc_now().isoformat()
         if not dry_run:
-            self._request_json(
-                method="POST",
-                path=(
-                    f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
-                    f"/actions/workflows/{urllib.parse.quote(target.workflow_id, safe='')}/dispatches"
-                ),
-                payload={
-                    "ref": target.ref,
-                    "inputs": target.inputs,
-                },
-                expected_statuses=(204,),
-            )
+            self._ensure_repo_exists_for_deploy(target=target)
+            self._ensure_workflow_exists_for_deploy(target=target)
+            self._dispatch_workflow_request(target=target)
         return SEOMigrationGitHubDeployResult(
             dry_run=dry_run,
             repo_owner=target.repo_owner,
@@ -282,6 +274,156 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             inputs={str(key): str(value) for key, value in target.inputs.items()},
             dispatched_at=dispatched_at,
         )
+
+    def _ensure_repo_exists_for_deploy(self, *, target: SEOMigrationGitHubDeployTarget) -> None:
+        self._request_json(
+            method="GET",
+            path=f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}",
+            expected_statuses=(200,),
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                404: (
+                    "repo_not_found",
+                    "GitHub repository target was not found.",
+                ),
+            },
+            error_stage="repo_lookup",
+        )
+
+    def _ensure_workflow_exists_for_deploy(self, *, target: SEOMigrationGitHubDeployTarget) -> None:
+        self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
+                f"/actions/workflows/{urllib.parse.quote(target.workflow_id, safe='')}"
+            ),
+            expected_statuses=(200,),
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                404: (
+                    "workflow_not_found",
+                    "GitHub workflow target was not found.",
+                ),
+            },
+            error_stage="workflow_lookup",
+        )
+
+    def _dispatch_workflow_request(self, *, target: SEOMigrationGitHubDeployTarget) -> None:
+        payload = {
+            "ref": target.ref,
+            "inputs": target.inputs,
+        }
+        body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {self.token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "MBSRN-MigrationPublisher/1.0",
+            "Content-Type": "application/json",
+        }
+        request = urllib.request.Request(
+            url=(
+                f"{self.api_base_url}/repos/{urllib.parse.quote(target.repo_owner)}/"
+                f"{urllib.parse.quote(target.repo_name)}/actions/workflows/"
+                f"{urllib.parse.quote(target.workflow_id, safe='')}/dispatches"
+            ),
+            data=body,
+            method="POST",
+            headers=headers,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                status_code = int(getattr(response, "status", 0) or 0)
+                if status_code != 204:
+                    raise SEOMigrationGitHubPublisherError(
+                        code="github_unexpected_status",
+                        safe_message="GitHub operation returned an unexpected status code.",
+                        status_code=status_code,
+                        stage="workflow_dispatch",
+                    )
+        except urllib.error.HTTPError as exc:
+            status_code = int(getattr(exc, "code", 0) or 0)
+            response_message = self._extract_http_error_message(exc).lower()
+            if status_code in {401, 403}:
+                raise SEOMigrationGitHubPublisherError(
+                    code="token_not_authorized",
+                    safe_message="GitHub token is not authorized for deploy operations.",
+                    status_code=status_code,
+                    stage="workflow_dispatch",
+                ) from exc
+            if status_code == 404:
+                raise SEOMigrationGitHubPublisherError(
+                    code="workflow_not_found",
+                    safe_message="GitHub workflow target was not found.",
+                    status_code=status_code,
+                    stage="workflow_dispatch",
+                ) from exc
+            if status_code == 422:
+                if "workflow_dispatch" in response_message:
+                    raise SEOMigrationGitHubPublisherError(
+                        code="workflow_dispatch_not_supported",
+                        safe_message="GitHub workflow does not support workflow_dispatch.",
+                        status_code=status_code,
+                        stage="workflow_dispatch",
+                    ) from exc
+                if "ref" in response_message or "branch" in response_message:
+                    raise SEOMigrationGitHubPublisherError(
+                        code="branch_not_found_or_ref_invalid",
+                        safe_message="GitHub deploy ref was not found or is invalid.",
+                        status_code=status_code,
+                        stage="workflow_dispatch",
+                    ) from exc
+                raise SEOMigrationGitHubPublisherError(
+                    code="branch_not_found_or_ref_invalid",
+                    safe_message="GitHub deploy ref was not found or is invalid.",
+                    status_code=status_code,
+                    stage="workflow_dispatch",
+                ) from exc
+            if status_code in {408, 429, 500, 502, 503, 504}:
+                raise SEOMigrationGitHubPublisherError(
+                    code="github_temporal_failure",
+                    safe_message="GitHub publish/deploy request failed temporarily.",
+                    status_code=status_code,
+                    stage="workflow_dispatch",
+                ) from exc
+            raise SEOMigrationGitHubPublisherError(
+                code="github_request_failed",
+                safe_message="GitHub publish/deploy request failed.",
+                status_code=status_code,
+                stage="workflow_dispatch",
+            ) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise SEOMigrationGitHubPublisherError(
+                code="github_timeout",
+                safe_message="GitHub publish/deploy request timed out.",
+                stage="workflow_dispatch",
+            ) from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
+                raise SEOMigrationGitHubPublisherError(
+                    code="github_timeout",
+                    safe_message="GitHub publish/deploy request timed out.",
+                    stage="workflow_dispatch",
+                ) from exc
+            raise SEOMigrationGitHubPublisherError(
+                code="github_network_error",
+                safe_message="GitHub publish/deploy network request failed.",
+                stage="workflow_dispatch",
+            ) from exc
 
     def ensure_deploy_workflow(
         self,
@@ -392,6 +534,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         payload: dict[str, object] | None = None,
         expected_statuses: tuple[int, ...] = (200, 201),
         allow_404: bool = False,
+        status_error_map: dict[int, tuple[str, str]] | None = None,
+        error_stage: str | None = None,
     ) -> dict[str, object] | None:
         body = None
         headers = {
@@ -418,6 +562,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                         code="github_unexpected_status",
                         safe_message="GitHub operation returned an unexpected status code.",
                         status_code=status_code,
+                        stage=error_stage,
                     )
                 response_body = response.read().decode("utf-8", errors="replace").strip()
                 if not response_body:
@@ -430,49 +575,83 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             status_code = int(getattr(exc, "code", 0) or 0)
             if allow_404 and status_code == 404:
                 return None
+            if status_error_map and status_code in status_error_map:
+                code, safe_message = status_error_map[status_code]
+                raise SEOMigrationGitHubPublisherError(
+                    code=code,
+                    safe_message=safe_message,
+                    status_code=status_code,
+                    stage=error_stage,
+                ) from exc
             if status_code in {401, 403}:
                 raise SEOMigrationGitHubPublisherError(
                     code="github_auth_failed",
                     safe_message="GitHub publish/deploy authentication failed.",
                     status_code=status_code,
+                    stage=error_stage,
                 ) from exc
             if status_code == 404:
                 raise SEOMigrationGitHubPublisherError(
                     code="github_target_not_found",
                     safe_message="GitHub repository or workflow target was not found.",
                     status_code=status_code,
+                    stage=error_stage,
                 ) from exc
             if status_code in {408, 429, 500, 502, 503, 504}:
                 raise SEOMigrationGitHubPublisherError(
                     code="github_temporal_failure",
                     safe_message="GitHub publish/deploy request failed temporarily.",
                     status_code=status_code,
+                    stage=error_stage,
                 ) from exc
             raise SEOMigrationGitHubPublisherError(
                 code="github_request_failed",
                 safe_message="GitHub publish/deploy request failed.",
                 status_code=status_code,
+                stage=error_stage,
             ) from exc
         except json.JSONDecodeError as exc:
             raise SEOMigrationGitHubPublisherError(
                 code="github_parse_error",
                 safe_message="GitHub response parsing failed.",
+                stage=error_stage,
             ) from exc
         except (TimeoutError, socket.timeout) as exc:
             raise SEOMigrationGitHubPublisherError(
                 code="github_timeout",
                 safe_message="GitHub publish/deploy request timed out.",
+                stage=error_stage,
             ) from exc
         except urllib.error.URLError as exc:
             if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
                 raise SEOMigrationGitHubPublisherError(
                     code="github_timeout",
                     safe_message="GitHub publish/deploy request timed out.",
+                    stage=error_stage,
                 ) from exc
             raise SEOMigrationGitHubPublisherError(
                 code="github_network_error",
                 safe_message="GitHub publish/deploy network request failed.",
+                stage=error_stage,
             ) from exc
+
+    @staticmethod
+    def _extract_http_error_message(exc: urllib.error.HTTPError) -> str:
+        try:
+            payload = exc.read().decode("utf-8", errors="replace").strip()
+        except Exception:  # pragma: no cover - defensive
+            return ""
+        if not payload:
+            return ""
+        try:
+            parsed = json.loads(payload)
+            if isinstance(parsed, dict):
+                message = parsed.get("message")
+                if isinstance(message, str):
+                    return message
+        except Exception:  # pragma: no cover - defensive
+            pass
+        return payload[:300]
 
 
 def _join_repo_path(root: str, path: str) -> str:

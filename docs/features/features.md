@@ -225,8 +225,11 @@ It transforms a business's website and market context into structured insights a
 - approve/publish/deploy button enablement is driven by authoritative readiness prerequisites after mutation refresh, not local stale assumptions.
 - analytics insertion rules remain workspace-level controls and now persist/reload reliably after save.
 - publish now ensures the expected deploy workflow file exists in GitHub before artifact commit (create-if-missing, no overwrite), reducing deploy failures caused by missing workflow definitions.
+- deploy now prefers authoritative workflow identity captured at publish time (`deploy_workflow_id` / `deploy_workflow_path`) before falling back to workspace/default workflow ids, preventing stale workspace workflow drift from blocking dispatch.
+- deploy target lookup failures are now classified with non-secret reason codes (`repo_not_found`, `workflow_not_found`, `branch_not_found_or_ref_invalid`, `workflow_dispatch_not_supported`, `token_not_authorized`) for clearer control-plane troubleshooting.
 - workspace now surfaces effective migration destinations (draft preview state, expected publish location/URL, expected deploy/live URL when determinable) for clearer pre-execution trust.
-- operators can open a sandboxed draft preview of selected migration artifact HTML before publish/deploy; preview is explicitly read-only and non-live.
+- operators can open a sandboxed draft preview of selected migration artifact content before publish/deploy; preview is explicitly read-only and non-live, supports multi-page draft navigation when artifact HTML pages are available, and keeps file preview hide/show controls in the review pane.
+- migration analytics insertion controls now hydrate from authoritative workspace/site GA state and persist across save/reload without introducing a second source of truth.
 
 ### Operator value
 > "I can replace a low-quality incumbent site with a structured draft package before any publication step."

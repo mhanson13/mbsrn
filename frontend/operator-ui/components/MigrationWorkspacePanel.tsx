@@ -202,7 +202,11 @@ interface MigrationDestinationSummaryEvaluation {
 interface DraftPreviewEvaluation {
   available: boolean;
   entryPath: string | null;
-  html: string | null;
+  pages: Array<{
+    path: string;
+    html: string;
+    title: string;
+  }>;
   reason: string | null;
 }
 
@@ -1276,65 +1280,106 @@ function resolveArtifactRelativePath(entryPath: string, href: string): string | 
   }
 }
 
+function extractPreviewPageTitle(path: string, html: string): string {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleMatch && titleMatch[1]) {
+    const normalized = titleMatch[1].replace(/\s+/g, " ").trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return path;
+}
+
 function buildDraftPreviewEvaluation(artifact: MigrationArtifactVersion | null): DraftPreviewEvaluation {
   if (!artifact || !Array.isArray(artifact.generated_files_json)) {
     return {
       available: false,
       entryPath: null,
-      html: null,
+      pages: [],
       reason: "Select an artifact version with generated files to preview.",
     };
   }
-  const htmlFiles = artifact.generated_files_json
+  const normalizedFiles = artifact.generated_files_json
     .map((item) => asRecord(item))
     .map((item) => ({
       path: normalizeArtifactPathForPreview(asString(item.path)),
       content: asString(item.content),
+      mediaType: asString(item.media_type).trim().toLowerCase(),
     }))
-    .filter((item) => item.path.endsWith(".html") && item.content.length > 0);
+    .filter((item) => item.path.length > 0 && item.content.length > 0);
+  const htmlFiles = normalizedFiles.filter((item) => item.path.endsWith(".html"));
   if (htmlFiles.length === 0) {
     return {
       available: false,
       entryPath: null,
-      html: null,
+      pages: [],
       reason: "Selected artifact does not contain previewable HTML.",
     };
   }
+
+  const fileMap = new Map<string, { content: string; mediaType: string }>();
+  normalizedFiles.forEach((item) => {
+    fileMap.set(item.path, {
+      content: item.content,
+      mediaType: item.mediaType,
+    });
+  });
+
   const entry = htmlFiles.find((item) => item.path.toLowerCase() === "index.html") || htmlFiles[0];
   const cssContentByPath = new Map<string, string>();
-  artifact.generated_files_json.forEach((item) => {
-    const record = asRecord(item);
-    const path = normalizeArtifactPathForPreview(asString(record.path));
-    const content = asString(record.content);
-    if (!path || !content || !path.endsWith(".css")) {
-      return;
+  normalizedFiles.forEach((item) => {
+    if (item.path.endsWith(".css")) {
+      cssContentByPath.set(item.path, item.content);
     }
-    cssContentByPath.set(path, content);
   });
   const linkStylesheetRegex =
     /<link\b(?=[^>]*\brel=["'][^"']*stylesheet[^"']*["'])(?=[^>]*\bhref=["'][^"']+["'])[^>]*\bhref=["']([^"']+)["'][^>]*>/gi;
-  let html = entry.content.replace(linkStylesheetRegex, (full, hrefValue: string) => {
-    const resolvedPath = resolveArtifactRelativePath(entry.path, hrefValue);
-    if (!resolvedPath) {
-      return full;
+
+  const buildPreviewHtmlForPage = (path: string, content: string): string => {
+    let html = content.replace(linkStylesheetRegex, (full, hrefValue: string) => {
+      const resolvedPath = resolveArtifactRelativePath(path, hrefValue);
+      if (!resolvedPath) {
+        return full;
+      }
+      const cssContent = cssContentByPath.get(resolvedPath);
+      if (!cssContent) {
+        return full;
+      }
+      return `<style data-preview-inline-source="${resolvedPath}">\n${cssContent}\n</style>`;
+    });
+    html = html.replace(
+      /<a\b([^>]*)\bhref=["']([^"']+)["']([^>]*)>/gi,
+      (full, prefix: string, hrefValue: string, suffix: string) => {
+        const resolvedPath = resolveArtifactRelativePath(path, hrefValue);
+        if (!resolvedPath || !resolvedPath.endsWith(".html") || !fileMap.has(resolvedPath)) {
+          return full;
+        }
+        return `<a${prefix}href="#draft-preview-page=${encodeURIComponent(resolvedPath)}"${suffix}>`;
+      },
+    );
+    const previewBanner =
+      '<div style="position:sticky;top:0;z-index:2147483646;padding:10px 14px;border-bottom:1px solid #d6e4ff;background:#eef4ff;color:#12316b;font:600 12px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">Draft preview only. Not published. Not deployed. Use page selector above to navigate this draft site.</div>';
+    if (/<body[^>]*>/i.test(html)) {
+      html = html.replace(/<body([^>]*)>/i, `<body$1>${previewBanner}`);
+    } else {
+      html = `${previewBanner}${html}`;
     }
-    const cssContent = cssContentByPath.get(resolvedPath);
-    if (!cssContent) {
-      return full;
-    }
-    return `<style data-preview-inline-source="${resolvedPath}">\n${cssContent}\n</style>`;
-  });
-  const previewBanner =
-    '<div style="position:sticky;top:0;z-index:2147483646;padding:10px 14px;border-bottom:1px solid #d6e4ff;background:#eef4ff;color:#12316b;font:600 12px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">Draft preview only. Not published. Not deployed.</div>';
-  if (/<body[^>]*>/i.test(html)) {
-    html = html.replace(/<body([^>]*)>/i, `<body$1>${previewBanner}`);
-  } else {
-    html = `${previewBanner}${html}`;
-  }
+    return html;
+  };
+
+  const pages = [...htmlFiles]
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .map((page) => ({
+      path: page.path,
+      html: buildPreviewHtmlForPage(page.path, page.content),
+      title: extractPreviewPageTitle(page.path, page.content),
+    }));
+
   return {
     available: true,
     entryPath: entry.path,
-    html,
+    pages,
     reason: null,
   };
 }
@@ -1419,7 +1464,9 @@ export function MigrationWorkspacePanel({
   const [selectedFilePath, setSelectedFilePath] = useState("");
   const [filePreviewContent, setFilePreviewContent] = useState("");
   const [filePreviewMediaType, setFilePreviewMediaType] = useState("");
+  const [filePreviewOpen, setFilePreviewOpen] = useState(false);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
+  const [selectedDraftPreviewPath, setSelectedDraftPreviewPath] = useState("");
 
   const selectedArtifact = useMemo(() => {
     if (!selectedArtifactVersionId) {
@@ -1564,6 +1611,19 @@ export function MigrationWorkspacePanel({
   });
   const latestArtifactForSummary = selectedArtifact || summary?.latest_artifact || artifactVersions[0] || null;
   const draftPreview = useMemo(() => buildDraftPreviewEvaluation(selectedArtifact), [selectedArtifact]);
+  const activeDraftPreviewPage = useMemo(() => {
+    if (!draftPreview.available || draftPreview.pages.length === 0) {
+      return null;
+    }
+    const selectedPath = selectedDraftPreviewPath.trim();
+    if (selectedPath) {
+      const selectedPage = draftPreview.pages.find((page) => page.path === selectedPath);
+      if (selectedPage) {
+        return selectedPage;
+      }
+    }
+    return draftPreview.pages[0] || null;
+  }, [draftPreview, selectedDraftPreviewPath]);
   const latestArtifactQualitySummary = parseArtifactQualitySummary(latestArtifactForSummary);
   const latestDraftStatusLabel = latestArtifactForSummary
     ? `v${latestArtifactForSummary.version} (${latestArtifactForSummary.status})`
@@ -1620,8 +1680,17 @@ export function MigrationWorkspacePanel({
     setDeployInputsText(stringifyInputsMap(rawDeployConfig.inputs));
 
     const rawAnalyticsConfig = asRecord(workspace.analytics_config_json);
+    const publishReadiness = asRecord(nextSummary.publish_readiness);
+    const deployReadiness = asRecord(nextSummary.deploy_readiness);
+    const workspaceMeasurementId = asString(rawAnalyticsConfig.ga_measurement_id).trim();
+    const derivedWorkspaceMeasurementId =
+      asString(publishReadiness.workspace_ga_measurement_id).trim() ||
+      asString(deployReadiness.workspace_ga_measurement_id).trim();
+    const siteMeasurementId =
+      asString(publishReadiness.site_ga_measurement_id).trim() ||
+      asString(deployReadiness.site_ga_measurement_id).trim();
     setAnalyticsEnabled(rawAnalyticsConfig.enabled !== false);
-    setAnalyticsMeasurementId(asString(rawAnalyticsConfig.ga_measurement_id));
+    setAnalyticsMeasurementId(workspaceMeasurementId || derivedWorkspaceMeasurementId || siteMeasurementId);
     const mode = asString(rawAnalyticsConfig.insertion_mode);
     if (mode === "publish_only" || mode === "publish_and_deploy") {
       setAnalyticsMode(mode);
@@ -1676,7 +1745,26 @@ export function MigrationWorkspacePanel({
 
   useEffect(() => {
     setDraftPreviewOpen(false);
+    setSelectedDraftPreviewPath("");
+    setFilePreviewOpen(false);
+    setSelectedFilePath("");
+    setFilePreviewContent("");
+    setFilePreviewMediaType("");
   }, [selectedArtifactVersionId]);
+
+  useEffect(() => {
+    if (!draftPreview.available || draftPreview.pages.length === 0) {
+      setSelectedDraftPreviewPath("");
+      return;
+    }
+    setSelectedDraftPreviewPath((current) => {
+      const normalizedCurrent = current.trim();
+      if (normalizedCurrent && draftPreview.pages.some((page) => page.path === normalizedCurrent)) {
+        return normalizedCurrent;
+      }
+      return draftPreview.entryPath || draftPreview.pages[0]?.path || "";
+    });
+  }, [draftPreview]);
 
   const handleIngestSource = async (): Promise<void> => {
     setBusyAction("ingest");
@@ -1972,9 +2060,11 @@ export function MigrationWorkspacePanel({
       );
       setFilePreviewMediaType(preview.media_type);
       setFilePreviewContent(preview.content);
+      setFilePreviewOpen(true);
     } catch (error) {
       setFilePreviewMediaType("text/plain");
       setFilePreviewContent("");
+      setFilePreviewOpen(false);
       setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to load artifact file preview."));
     }
@@ -2455,16 +2545,32 @@ export function MigrationWorkspacePanel({
               </span>
             </WorkspaceActionBar>
             {draftPreviewOpen && draftPreview.available ? (
-              <div className="panel panel-compact stack-tight" data-testid="migration-draft-preview-surface">
+              <div className="panel panel-compact stack-tight migration-draft-preview-surface" data-testid="migration-draft-preview-surface">
                 <strong>Draft Preview (Read-only)</strong>
                 <span className="hint muted">
                   Entry file: {draftPreview.entryPath || "index.html"} | This preview is sandboxed and not live.
                 </span>
+                {draftPreview.pages.length > 1 ? (
+                  <label className="stack-tight">
+                    <span className="hint muted">Preview page</span>
+                    <select
+                      value={activeDraftPreviewPage?.path || ""}
+                      onChange={(event) => setSelectedDraftPreviewPath(event.target.value)}
+                      data-testid="migration-draft-preview-page-select"
+                    >
+                      {draftPreview.pages.map((page) => (
+                        <option key={`preview-page-${page.path}`} value={page.path}>
+                          {page.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 <iframe
                   title="Migration draft preview"
                   className="migration-draft-preview-frame"
                   sandbox=""
-                  srcDoc={draftPreview.html || ""}
+                  srcDoc={activeDraftPreviewPage?.html || ""}
                   referrerPolicy="no-referrer"
                   data-testid="migration-draft-preview-iframe"
                 />
@@ -2494,8 +2600,8 @@ export function MigrationWorkspacePanel({
                 <p className="hint muted">No page map entries.</p>
               )}
             </div>
-            <div className="grid grid-2">
-              <div className="panel panel-compact stack-tight" data-testid="migration-file-tree">
+            <div className="grid grid-2 migration-artifact-review-grid">
+              <div className="panel panel-compact stack-tight migration-file-tree-panel" data-testid="migration-file-tree">
                 <strong>Generated Files</strong>
                 {filePaths.length > 0 ? (
                   filePaths.map((path) => (
@@ -2514,10 +2620,43 @@ export function MigrationWorkspacePanel({
                   </WorkspaceEmptyStateCard>
                 )}
               </div>
-              <div className="panel panel-compact stack-tight" data-testid="migration-file-preview">
-                <strong>File Preview</strong>
-                <span className="hint muted">{filePreviewMediaType || "Select a file to preview."}</span>
-                <pre>{filePreviewContent || ""}</pre>
+              <div className="panel panel-compact stack-tight migration-file-preview-panel" data-testid="migration-file-preview">
+                <div className="workspace-section-header workspace-section-header-compact">
+                  <div className="workspace-section-header-main">
+                    <strong>File Preview</strong>
+                  </div>
+                  <div className="workspace-section-actions">
+                    {filePreviewOpen ? (
+                      <button
+                        type="button"
+                        className="button button-tertiary button-inline"
+                        onClick={() => setFilePreviewOpen(false)}
+                        data-testid="migration-file-preview-hide"
+                      >
+                        Hide preview
+                      </button>
+                    ) : selectedFilePath ? (
+                      <button
+                        type="button"
+                        className="button button-tertiary button-inline"
+                        onClick={() => setFilePreviewOpen(true)}
+                        data-testid="migration-file-preview-show"
+                      >
+                        Show preview
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <span className="hint muted">
+                  {filePreviewOpen
+                    ? filePreviewMediaType || "text/plain"
+                    : selectedFilePath
+                      ? `Preview hidden for ${selectedFilePath}.`
+                      : "Select a file to preview."}
+                </span>
+                {filePreviewOpen ? (
+                  <pre className="migration-file-preview-content">{filePreviewContent || ""}</pre>
+                ) : null}
               </div>
             </div>
           </>

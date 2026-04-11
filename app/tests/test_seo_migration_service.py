@@ -126,11 +126,17 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         *,
         fail_publish: bool = False,
         fail_deploy: bool = False,
+        deploy_error_code: str | None = None,
+        deploy_error_message: str | None = None,
+        deploy_error_stage: str | None = None,
         fail_workflow_provision: bool = False,
         existing_workflow: bool = False,
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
+        self.deploy_error_code = deploy_error_code
+        self.deploy_error_message = deploy_error_message
+        self.deploy_error_stage = deploy_error_stage
         self.fail_workflow_provision = fail_workflow_provision
         self.existing_workflow = existing_workflow
         self.publish_calls: list[
@@ -175,8 +181,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.deploy_calls.append((target, dry_run))
         if self.fail_deploy:
             raise SEOMigrationGitHubPublisherError(
-                code="deploy_failed",
-                safe_message="Simulated deploy failure.",
+                code=self.deploy_error_code or "deploy_failed",
+                safe_message=self.deploy_error_message or "Simulated deploy failure.",
+                stage=self.deploy_error_stage,
             )
         return SEOMigrationGitHubDeployResult(
             dry_run=dry_run,
@@ -2234,6 +2241,59 @@ def test_publish_duplicate_non_dry_run_is_rejected(db_session) -> None:
     assert len(publisher.publish_calls) == 1
 
 
+def test_duplicate_publish_rejection_still_allows_deploy(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    with pytest.raises(SEOMigrationValidationError, match="already published"):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message=None,
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert len(publisher.publish_calls) == 1
+    assert len(publisher.deploy_calls) == 1
+
+
 def test_deploy_duplicate_non_dry_run_is_rejected(db_session) -> None:
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
@@ -2282,6 +2342,165 @@ def test_deploy_duplicate_non_dry_run_is_rejected(db_session) -> None:
             principal_id="principal-1",
         )
     assert len(publisher.deploy_calls) == 1
+
+
+def test_deploy_uses_publish_history_workflow_when_workspace_config_is_stale(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="stale-workflow.yml",
+    )
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.deploy_calls
+    deploy_target, _ = publisher.deploy_calls[-1]
+    assert deploy_target.workflow_id == "deploy-tnmfire-www-prod.yml"
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    last_deploy = deploy_history[-1]
+    assert last_deploy.get("resolved_workflow_source") == "publish_history_workflow"
+    assert last_deploy.get("workflow_id") == "deploy-tnmfire-www-prod.yml"
+    assert last_deploy.get("workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+
+    resolution_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_workflow_resolution"
+    ]
+    assert resolution_payloads
+    assert resolution_payloads[-1].get("resolved_workflow_source") == "publish_history_workflow"
+    assert resolution_payloads[-1].get("workflow_id") == "deploy-tnmfire-www-prod.yml"
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "failure_stage", "expected_failure_category"),
+    [
+        ("repo_not_found", "repo_lookup", "target_invalid"),
+        ("workflow_not_found", "workflow_lookup", "target_invalid"),
+        ("branch_not_found_or_ref_invalid", "workflow_dispatch", "target_invalid"),
+        ("workflow_dispatch_not_supported", "workflow_dispatch", "target_invalid"),
+        ("token_not_authorized", "repo_lookup", "config_missing"),
+    ],
+)
+def test_deploy_failure_reason_codes_are_recorded(
+    db_session,
+    caplog,
+    reason_code: str,
+    failure_stage: str,
+    expected_failure_category: str,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        fail_deploy=True,
+        deploy_error_code=reason_code,
+        deploy_error_message="Simulated deploy target failure.",
+        deploy_error_stage=failure_stage,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    with pytest.raises(SEOMigrationValidationError, match="Simulated deploy target failure."):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    failed_entry = deploy_history[-1]
+    assert failed_entry.get("status") == "failed"
+    assert failed_entry.get("failure_category") == expected_failure_category
+    assert failed_entry.get("failure_reason") == reason_code
+    assert failed_entry.get("failure_stage") == failure_stage
+
+    dispatch_failure_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_dispatch_failed"
+    ]
+    assert dispatch_failure_logs
+    assert dispatch_failure_logs[-1].get("failure_reason_code") == reason_code
+    assert dispatch_failure_logs[-1].get("failure_stage") == failure_stage
 
 
 def test_publish_retry_after_failure_is_deterministic(db_session) -> None:
