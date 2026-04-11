@@ -65,6 +65,10 @@ Migration workspace boundary:
   - `Runtime publisher: Credential unavailable`
   - `Runtime publisher: Invalid runtime configuration`
   - `Runtime publisher: Integration unavailable`
+- deploy readiness surfaces explicit blocker guidance from backend `blocker_codes`:
+  - `published_artifact_missing` -> published artifact required before deploy
+  - `deploy_configuration_missing` / `deploy_configuration_invalid` -> deploy target config action required
+  - `deploy_runtime_unavailable` / `deploy_integration_unavailable` -> platform/runtime deploy wiring action required
 - analytics insertion mode + GA measurement fields are workspace-level settings and persist after save/reload.
 - approve/publish/deploy control enablement follows backend readiness prerequisites from refreshed summary state.
 - publish readiness requires both merged target metadata and runtime publisher capability (`MIGRATION_GITHUB_TOKEN` and valid runtime publisher wiring).

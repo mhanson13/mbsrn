@@ -219,6 +219,7 @@ It transforms a business's website and market context into structured insights a
 - Operator owns workspace repository name plus optional branch override.
 - workspace shows merged effective target/readiness context (owner + repo + branch) without exposing credential material.
 - Readiness explicitly distinguishes merged metadata readiness from runtime publisher capability (for example credential unavailable vs runtime integration unavailable) so publish blockers map to the correct actor.
+- Deploy readiness now exposes explicit blocker classes (`published_artifact_missing`, deploy target config missing/invalid, deploy runtime/integration unavailable) so deploy blockers map to the correct actor without generic "runtime missing" ambiguity.
 - Runtime publisher credentials remain environment-managed (`MIGRATION_GITHUB_TOKEN`) and are never exposed through Admin/workspace payloads.
 - Production deployment injects `MIGRATION_GITHUB_TOKEN` into `mbsrn-api` through existing `mbsrn-api-auth` secret wiring; the token is not stored/editable in application UI.
 - approve/publish/deploy button enablement is driven by authoritative readiness prerequisites after mutation refresh, not local stale assumptions.

@@ -145,6 +145,11 @@ _MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS = 900
 _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING = "runtime_credential_missing"
 _GITHUB_PUBLISHER_REASON_RUNTIME_CONFIG_INVALID = "runtime_configuration_invalid"
 _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE = "runtime_integration_unavailable"
+_DEPLOY_BLOCKER_PUBLISHED_ARTIFACT_MISSING = "published_artifact_missing"
+_DEPLOY_BLOCKER_RUNTIME_UNAVAILABLE = "deploy_runtime_unavailable"
+_DEPLOY_BLOCKER_CONFIGURATION_MISSING = "deploy_configuration_missing"
+_DEPLOY_BLOCKER_CONFIGURATION_INVALID = "deploy_configuration_invalid"
+_DEPLOY_BLOCKER_INTEGRATION_UNAVAILABLE = "deploy_integration_unavailable"
 
 _DRAFT_PROVIDER_COMPAT_REASON_CODES = {
     "supported",
@@ -392,7 +397,8 @@ class SEOMigrationService:
                 or "GitHub publishing integration is unavailable in this runtime."
             )
             self.github_publisher_status_message = self._runtime_publisher_reason_message(
-                reason_code=self.github_publisher_reason_code
+                reason_code=self.github_publisher_reason_code,
+                action="publish",
             )
         self.github_publish_config_service = github_publish_config_service
         self.provider_name = provider_name
@@ -733,6 +739,7 @@ class SEOMigrationService:
             failure_category = self._categorize_readiness_failure(
                 reasons=readiness.get("reasons"),
                 action="publish",
+                blocker_codes=readiness.get("blocker_codes"),
             )
             self._log_control_plane_action(
                 action="publish",
@@ -1014,6 +1021,7 @@ class SEOMigrationService:
             failure_category = self._categorize_readiness_failure(
                 reasons=readiness.get("reasons"),
                 action="deploy",
+                blocker_codes=readiness.get("blocker_codes"),
             )
             self._log_control_plane_action(
                 action="deploy",
@@ -3628,17 +3636,26 @@ class SEOMigrationService:
         }
 
     @staticmethod
-    def _runtime_publisher_reason_message(*, reason_code: str) -> str:
+    def _runtime_publisher_reason_message(*, reason_code: str, action: str) -> str:
         normalized = str(reason_code or "").strip().lower()
+        action_normalized = str(action or "").strip().lower()
         if normalized == _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING:
+            if action_normalized == "deploy":
+                return "Platform runtime action required: GitHub deployment credential is unavailable."
             return "Platform runtime action required: GitHub publishing credential is unavailable."
         if normalized == _GITHUB_PUBLISHER_REASON_RUNTIME_CONFIG_INVALID:
+            if action_normalized == "deploy":
+                return "Platform runtime action required: GitHub deployment runtime configuration is invalid."
             return "Platform runtime action required: GitHub publishing runtime configuration is invalid."
         if normalized == _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE:
+            if action_normalized == "deploy":
+                return "Platform deployment integration is not configured."
             return "Platform runtime action required: GitHub publishing integration is unavailable."
+        if action_normalized == "deploy":
+            return "Platform/runtime action required: GKE deployment runtime integration is unavailable."
         return "Platform/runtime action required: GitHub migration publisher is not configured."
 
-    def _runtime_publisher_diagnostics(self) -> dict[str, object]:
+    def _runtime_publisher_diagnostics(self, *, action: str) -> dict[str, object]:
         if self.github_publisher_configured:
             return {
                 "configured": True,
@@ -3648,7 +3665,8 @@ class SEOMigrationService:
             }
         reason_code = self.github_publisher_reason_code or "publisher_not_configured"
         status_message = self.github_publisher_status_message or self._runtime_publisher_reason_message(
-            reason_code=reason_code
+            reason_code=reason_code,
+            action=action,
         )
         safe_message = self.github_publisher_safe_message or status_message
         return {
@@ -3665,7 +3683,7 @@ class SEOMigrationService:
         workspace: SEOMigrationWorkspace,
         admin_prerequisites: dict[str, bool],
     ) -> None:
-        runtime = self._runtime_publisher_diagnostics()
+        runtime = self._runtime_publisher_diagnostics(action=action)
         if bool(runtime.get("configured")):
             return
         self._emit_structured_service_log(
@@ -3677,6 +3695,7 @@ class SEOMigrationService:
                 "workspace_id": workspace.id,
                 "runtime_publisher_available": False,
                 "runtime_publisher_reason_code": str(runtime.get("reason_code") or ""),
+                "runtime_publisher_status_message": str(runtime.get("status_message") or ""),
                 "admin_publish_configured": bool(admin_prerequisites.get("admin_publish_configured")),
                 "admin_publish_config_enabled": bool(admin_prerequisites.get("admin_publish_config_enabled")),
                 "operator_repository_configured": bool(admin_prerequisites.get("operator_repository_configured")),
@@ -3686,7 +3705,22 @@ class SEOMigrationService:
         )
 
     @staticmethod
-    def _categorize_readiness_failure(*, reasons: object, action: str) -> str:
+    def _categorize_readiness_failure(*, reasons: object, action: str, blocker_codes: object = None) -> str:
+        normalized_blockers = [str(item or "").strip().lower() for item in blocker_codes or [] if str(item or "").strip()]
+        if normalized_blockers:
+            if _DEPLOY_BLOCKER_CONFIGURATION_INVALID in normalized_blockers:
+                return "target_invalid"
+            if any(
+                code in normalized_blockers
+                for code in {
+                    _DEPLOY_BLOCKER_CONFIGURATION_MISSING,
+                    _DEPLOY_BLOCKER_RUNTIME_UNAVAILABLE,
+                    _DEPLOY_BLOCKER_INTEGRATION_UNAVAILABLE,
+                }
+            ):
+                return "config_missing"
+            if _DEPLOY_BLOCKER_PUBLISHED_ARTIFACT_MISSING in normalized_blockers:
+                return "approval_required"
         normalized_reasons = [str(item or "").strip().lower() for item in reasons or [] if str(item or "").strip()]
         if not normalized_reasons:
             return "unknown_error"
@@ -3806,6 +3840,7 @@ class SEOMigrationService:
         artifact: SEOMigrationArtifactVersion | None,
     ) -> dict[str, object]:
         reasons: list[str] = []
+        blocker_codes: list[str] = []
         target_summary: dict[str, object] = {}
         target_valid = False
         effective_publish_config, admin_prerequisites, admin_reasons = self._build_effective_publish_config(
@@ -3816,6 +3851,7 @@ class SEOMigrationService:
         target_summary = self._safe_publish_target_summary(effective_publish_config)
         if not bool(admin_prerequisites.get("operator_repository_configured")):
             reasons.append("Operator must configure a GitHub repository before publish is available.")
+            blocker_codes.append("publish_configuration_missing")
         else:
             try:
                 target = _resolve_publish_target(effective_publish_config)
@@ -3829,18 +3865,28 @@ class SEOMigrationService:
                 }
                 if not target["enabled"]:
                     reasons.append("Publish target is not enabled.")
+                    blocker_codes.append("publish_configuration_missing")
             except ValueError as exc:
                 reasons.append(str(exc))
+                blocker_codes.append("publish_configuration_invalid")
         if artifact is None:
             reasons.append("An approved artifact is required before publish.")
+            blocker_codes.append("publish_artifact_missing")
         else:
             if artifact.approval_status != "approved":
                 reasons.append("An approved artifact is required before publish.")
+                blocker_codes.append("publish_artifact_missing")
             if artifact.file_count <= 0:
                 reasons.append("Selected artifact version has no generated files.")
-        runtime_diagnostics = self._runtime_publisher_diagnostics()
+                blocker_codes.append("publish_artifact_invalid")
+        runtime_diagnostics = self._runtime_publisher_diagnostics(action="publish")
         if not bool(runtime_diagnostics.get("configured")):
             reasons.append(str(runtime_diagnostics.get("status_message") or "GitHub migration publisher is not configured."))
+            reason_code = str(runtime_diagnostics.get("reason_code") or "").strip().lower()
+            if reason_code == _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE:
+                blocker_codes.append("publish_integration_unavailable")
+            else:
+                blocker_codes.append("publish_runtime_unavailable")
             self._log_runtime_publisher_readiness(
                 action="publish",
                 workspace=workspace,
@@ -3848,16 +3894,22 @@ class SEOMigrationService:
             )
         failure_category: str | None = None
         if reasons:
-            failure_category = self._categorize_readiness_failure(reasons=reasons, action="publish")
+            failure_category = self._categorize_readiness_failure(
+                reasons=reasons,
+                action="publish",
+                blocker_codes=blocker_codes,
+            )
         return {
             "ready": not reasons,
             "reasons": reasons,
+            "blocker_codes": blocker_codes,
             "failure_category": failure_category,
             "target": target_summary,
             "config_prerequisites": {
                 "github_publisher_configured": self.github_publisher_configured,
                 "github_publisher_reason_code": str(runtime_diagnostics.get("reason_code") or ""),
                 "github_publisher_status_message": str(runtime_diagnostics.get("status_message") or ""),
+                "publish_runtime_available": bool(runtime_diagnostics.get("configured")),
                 "target_config_valid": target_valid,
                 "target_enabled": bool(target_summary.get("enabled")),
                 **admin_prerequisites,
@@ -3878,6 +3930,7 @@ class SEOMigrationService:
         artifact: SEOMigrationArtifactVersion | None,
     ) -> dict[str, object]:
         reasons: list[str] = []
+        blocker_codes: list[str] = []
         target_summary: dict[str, object] = {}
         target_valid = False
         effective_publish_config, admin_prerequisites, admin_reasons = self._build_effective_publish_config(
@@ -3885,8 +3938,11 @@ class SEOMigrationService:
             require_admin=True,
         )
         reasons.extend(admin_reasons)
+        if admin_reasons:
+            blocker_codes.append(_DEPLOY_BLOCKER_CONFIGURATION_MISSING)
         if not bool(admin_prerequisites.get("operator_repository_configured")):
             reasons.append("Operator must configure a GitHub repository before publish/deploy is available.")
+            blocker_codes.append(_DEPLOY_BLOCKER_CONFIGURATION_MISSING)
         else:
             try:
                 target = _resolve_deploy_target(
@@ -3906,18 +3962,28 @@ class SEOMigrationService:
                 }
                 if not target["enabled"]:
                     reasons.append("Deploy target is not enabled.")
+                    blocker_codes.append(_DEPLOY_BLOCKER_CONFIGURATION_MISSING)
             except ValueError as exc:
                 reasons.append(str(exc))
+                blocker_codes.append(_DEPLOY_BLOCKER_CONFIGURATION_INVALID)
         if artifact is None:
             reasons.append("An approved artifact is required before deploy.")
+            blocker_codes.append(_DEPLOY_BLOCKER_PUBLISHED_ARTIFACT_MISSING)
         else:
             if artifact.approval_status != "approved":
                 reasons.append("An approved artifact is required before deploy.")
+                blocker_codes.append(_DEPLOY_BLOCKER_PUBLISHED_ARTIFACT_MISSING)
             if artifact.publish_status != "published":
                 reasons.append("A published artifact is required before deploy.")
-        runtime_diagnostics = self._runtime_publisher_diagnostics()
+                blocker_codes.append(_DEPLOY_BLOCKER_PUBLISHED_ARTIFACT_MISSING)
+        runtime_diagnostics = self._runtime_publisher_diagnostics(action="deploy")
         if not bool(runtime_diagnostics.get("configured")):
             reasons.append(str(runtime_diagnostics.get("status_message") or "GitHub migration publisher is not configured."))
+            reason_code = str(runtime_diagnostics.get("reason_code") or "").strip().lower()
+            if reason_code == _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE:
+                blocker_codes.append(_DEPLOY_BLOCKER_INTEGRATION_UNAVAILABLE)
+            else:
+                blocker_codes.append(_DEPLOY_BLOCKER_RUNTIME_UNAVAILABLE)
             self._log_runtime_publisher_readiness(
                 action="deploy",
                 workspace=workspace,
@@ -3925,20 +3991,29 @@ class SEOMigrationService:
             )
         if not workspace.last_published_artifact_version_id:
             reasons.append("A published artifact is required before deploy.")
+            blocker_codes.append(_DEPLOY_BLOCKER_PUBLISHED_ARTIFACT_MISSING)
         elif artifact is not None and workspace.last_published_artifact_version_id != artifact.id:
             reasons.append("The selected artifact is not the latest published artifact.")
+            blocker_codes.append(_DEPLOY_BLOCKER_PUBLISHED_ARTIFACT_MISSING)
+        blocker_codes = _dedupe_strings(blocker_codes)
         failure_category: str | None = None
         if reasons:
-            failure_category = self._categorize_readiness_failure(reasons=reasons, action="deploy")
+            failure_category = self._categorize_readiness_failure(
+                reasons=reasons,
+                action="deploy",
+                blocker_codes=blocker_codes,
+            )
         return {
             "ready": not reasons,
             "reasons": reasons,
+            "blocker_codes": blocker_codes,
             "failure_category": failure_category,
             "target": target_summary,
             "config_prerequisites": {
                 "github_publisher_configured": self.github_publisher_configured,
                 "github_publisher_reason_code": str(runtime_diagnostics.get("reason_code") or ""),
                 "github_publisher_status_message": str(runtime_diagnostics.get("status_message") or ""),
+                "deploy_runtime_available": bool(runtime_diagnostics.get("configured")),
                 "target_config_valid": target_valid,
                 "target_enabled": bool(target_summary.get("enabled")),
                 **admin_prerequisites,
@@ -4744,6 +4819,20 @@ def _normalize_string(value: object, *, max_length: int) -> str | None:
     if len(normalized) > max_length:
         return normalized[:max_length]
     return normalized
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = " ".join(str(value or "").split()).strip()
+        if not normalized:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
 
 
 def _coerce_object_list(value: object, *, max_items: int) -> list[dict[str, object]]:

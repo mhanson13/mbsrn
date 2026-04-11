@@ -590,6 +590,7 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert isinstance(payload.get("deploy_readiness"), dict)
     assert isinstance(payload["publish_readiness"].get("ready"), bool)
     assert isinstance(payload["publish_readiness"].get("reasons"), list)
+    assert isinstance(payload["publish_readiness"].get("blocker_codes"), list)
     assert isinstance(payload["publish_readiness"].get("target"), dict)
     assert isinstance(payload["publish_readiness"].get("config_prerequisites"), dict)
     assert "last_status" in payload["publish_readiness"]
@@ -597,6 +598,7 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_failure_message" in payload["publish_readiness"]
     assert isinstance(payload["deploy_readiness"].get("ready"), bool)
     assert isinstance(payload["deploy_readiness"].get("reasons"), list)
+    assert isinstance(payload["deploy_readiness"].get("blocker_codes"), list)
     assert isinstance(payload["deploy_readiness"].get("target"), dict)
     assert isinstance(payload["deploy_readiness"].get("config_prerequisites"), dict)
     assert "last_status" in payload["deploy_readiness"]

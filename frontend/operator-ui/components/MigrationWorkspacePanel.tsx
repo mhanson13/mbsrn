@@ -222,6 +222,34 @@ function toRuntimeConfigLabel(prerequisites: Record<string, unknown>): string {
   return "Missing/invalid";
 }
 
+function parseBlockerCodes(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => asString(item).trim().toLowerCase())
+    .filter((item) => item.length > 0);
+}
+
+function toDeployBlockerMessage(blockerCodes: string[]): string | null {
+  if (blockerCodes.includes("published_artifact_missing")) {
+    return "A published artifact is required before deploy.";
+  }
+  if (blockerCodes.includes("deploy_runtime_unavailable")) {
+    return "Platform runtime action required: deploy runtime is unavailable.";
+  }
+  if (blockerCodes.includes("deploy_integration_unavailable")) {
+    return "Platform deployment integration is not configured.";
+  }
+  if (blockerCodes.includes("deploy_configuration_invalid")) {
+    return "Deployment target configuration is invalid.";
+  }
+  if (blockerCodes.includes("deploy_configuration_missing")) {
+    return "Deployment target configuration is missing or disabled.";
+  }
+  return null;
+}
+
 function toErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiRequestError) {
     const message = (error.message || "").trim();
@@ -1179,6 +1207,7 @@ export function MigrationWorkspacePanel({
     (!deployReadinessArtifactVersionId || deployReadinessArtifactVersionId === selectedArtifactVersionIdTrimmed);
   const publishConfigPrerequisites = asRecord(publishReadiness.config_prerequisites);
   const deployConfigPrerequisites = asRecord(deployReadiness.config_prerequisites);
+  const deployBlockerCodes = parseBlockerCodes(deployReadiness.blocker_codes);
   const publishTarget = asRecord(publishReadiness.target);
   const effectivePublishRepoOwner = asStringOrNull(publishTarget.repo_owner);
   const effectivePublishRepoName = asStringOrNull(publishTarget.repo_name);
@@ -1203,6 +1232,7 @@ export function MigrationWorkspacePanel({
   const deployRuntimeStatusLabel = toRuntimeConfigLabel(deployConfigPrerequisites);
   const publishRuntimeStatusMessage = asStringOrNull(publishConfigPrerequisites.github_publisher_status_message);
   const deployRuntimeStatusMessage = asStringOrNull(deployConfigPrerequisites.github_publisher_status_message);
+  const deployPrimaryBlockerMessage = toDeployBlockerMessage(deployBlockerCodes);
   const contextSummary = asRecord(summary?.context_summary);
   const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
   const draftReadiness = parseDraftReadiness(contextSummary);
@@ -2287,6 +2317,7 @@ export function MigrationWorkspacePanel({
             <span className="hint">Ready: {Boolean(deployReadiness.ready) ? "Yes" : "No"}</span>
             <span className="hint">Runtime publisher: {deployRuntimeStatusLabel}</span>
             {deployRuntimeStatusMessage ? <span className="hint muted">{deployRuntimeStatusMessage}</span> : null}
+            {deployPrimaryBlockerMessage ? <span className="hint warning">{deployPrimaryBlockerMessage}</span> : null}
             {Array.isArray(deployReadiness.reasons) && deployReadiness.reasons.length > 0 ? (
               <ul>
                 {(deployReadiness.reasons as unknown[]).map((reason, index) => (

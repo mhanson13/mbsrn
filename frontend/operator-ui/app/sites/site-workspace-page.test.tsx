@@ -3196,6 +3196,7 @@ describe("site workspace migration tab", () => {
         deploy_readiness: {
           ready: false,
           reasons: ["Deploy target is not enabled."],
+          blocker_codes: ["deploy_configuration_missing"],
           target: { enabled: false },
           config_prerequisites: {
             github_publisher_configured: false,
@@ -3229,6 +3230,9 @@ describe("site workspace migration tab", () => {
     );
     expect(screen.getByTestId("migration-publish-readiness")).toHaveTextContent(
       "Platform runtime action required: GitHub publishing credential is unavailable.",
+    );
+    expect(screen.getByTestId("migration-deploy-readiness")).toHaveTextContent(
+      "Deployment target configuration is missing or disabled.",
     );
 
     const publishButton = screen.getByRole("button", { name: "Publish Approved Draft to GitHub" });

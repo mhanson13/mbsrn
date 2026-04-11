@@ -627,6 +627,13 @@ Notes:
     - `Platform runtime action required: GitHub publishing credential is unavailable.`
     - `Platform runtime action required: GitHub publishing runtime configuration is invalid.`
     - `Platform runtime action required: GitHub publishing integration is unavailable.`
+- deploy readiness now uses explicit blocker classes so operators can distinguish prerequisite type quickly:
+  - `published_artifact_missing`
+  - `deploy_configuration_missing`
+  - `deploy_configuration_invalid`
+  - `deploy_runtime_unavailable`
+  - `deploy_integration_unavailable`
+  - UI messaging maps these classes to role-aware guidance (Operator action vs Platform/Admin action).
 
 ## Deploy Workflow (GKE Path)
 Deploy target is site-scoped configuration:
@@ -804,6 +811,10 @@ Deploy failures:
 - verify deploy target enabled/workflow/ref values
 - inspect deploy history inputs and workflow execution status
 - if duplicate deploy is reported, verify whether the prior deploy request already covers the same artifact+target+inputs
+- if readiness is blocked, use deploy blocker class + message to identify the owning actor:
+  - `published_artifact_missing` -> Operator must publish first
+  - `deploy_configuration_missing` / `deploy_configuration_invalid` -> Operator/Admin must fix target config
+  - `deploy_runtime_unavailable` / `deploy_integration_unavailable` -> Platform/runtime wiring action required
 
 Verification checklist:
 - publish success:

@@ -2632,7 +2632,13 @@ def test_missing_publisher_config_is_categorized_for_readiness_and_errors(db_ses
     assert publish_prereqs.get("github_publisher_configured") is False
     assert publish_prereqs.get("github_publisher_reason_code") == "runtime_integration_unavailable"
     assert "integration is unavailable" in str(publish_prereqs.get("github_publisher_status_message") or "").lower()
+    assert publish_prereqs.get("publish_runtime_available") is False
     assert summary.deploy_readiness.get("failure_category") == "config_missing"
+    deploy_prereqs = summary.deploy_readiness.get("config_prerequisites")
+    assert isinstance(deploy_prereqs, dict)
+    assert deploy_prereqs.get("deploy_runtime_available") is False
+    deploy_blocker_codes = summary.deploy_readiness.get("blocker_codes") or []
+    assert "deploy_integration_unavailable" in deploy_blocker_codes
 
 
 def test_runtime_credential_missing_reason_is_exposed_in_publish_readiness(db_session) -> None:
