@@ -316,3 +316,67 @@ def test_dispatch_deploy_without_completion_output_keeps_workflow_output_empty(m
     assert result.workflow_run_conclusion is None
     assert result.workflow_output is None
     assert len(calls) == 4
+
+
+def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "commit-created"}})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "verified-sha"})),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+    )
+    assert result.provisioned is True
+    assert result.workflow_path == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert result.commit_sha == "verified-sha"
+    assert len(calls) == 3
+    assert calls[0][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main")
+    assert calls[1][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+
+
+def test_ensure_deploy_workflow_fails_when_post_write_verification_missing(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "commit-created"}})),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+        )
+    assert exc_info.value.code == "workflow_provisioning_failed"
+    assert exc_info.value.stage == "workflow_provisioning"
+    assert len(calls) == 3

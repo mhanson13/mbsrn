@@ -590,11 +590,16 @@ Publish behavior:
 - explicit operator-triggered action only
 - approved artifact required
 - bounded file/path validation before publish
-- publish now provisions the expected deploy workflow file if missing (`.github/workflows/{workflow_id}`)
+- publish always runs deploy-workflow bootstrap verification against the target branch (`.github/workflows/{workflow_id}`) before returning success for non-dry-run publish
+- generated/target repos are treated as workflow-missing by default until verified
+- if workflow is missing, publish provisions it and verifies presence before marking publish as valid/deploy-ready
+- if workflow provisioning cannot be created or verified, publish fails (`workflow_provisioning_failed`) and is not marked successful
 - no writes outside configured artifact root
 - dry-run supported
 - history captured with status/result metadata
 - duplicate non-dry-run publish attempts for the same artifact+target are rejected with operator-readable validation errors
+- duplicate artifact protection remains in place for file writes, but no longer short-circuits workflow bootstrap
+- if artifact content is already published and workflow is missing, a follow-up publish can repair workflow bootstrap without re-writing artifact files (`duplicate_publish_repair`)
 - retry after a failed publish is supported and recorded as a new history event
 - dry-run publish records history but does not overwrite prior successful publish commit metadata
 - workflow provisioning is idempotent: existing workflow files are never overwritten
@@ -855,6 +860,10 @@ Publish failures:
 - verify artifact approval status and readiness reasons
 - check path-boundary rejections in publish warnings/history
 - if duplicate publish is reported, either select a different approved artifact or change target config intentionally
+- if repository UI shows "Get started with GitHub Actions" after publish, inspect workflow provisioning logs/history:
+  - `event=seo_migration_workflow_provisioning`
+  - statuses: `created`, `already_exists`, `verified`, `failed`
+  - remediation modes: `bootstrap`, `already_present`, `duplicate_publish_repair`
 
 Deploy failures:
 - verify publish completed for selected artifact

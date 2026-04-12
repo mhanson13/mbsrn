@@ -30,6 +30,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubWorkflowProvisionResult,
 )
 from app.models.business import Business
 from app.models.github_publish_config import GitHubPublishConfig
@@ -81,6 +82,8 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         *,
         fail_publish: bool = False,
         fail_deploy: bool = False,
+        fail_workflow_provision: bool = False,
+        existing_workflow: bool = True,
         deploy_workflow_run_id: int | None = None,
         deploy_workflow_run_status: str | None = None,
         deploy_workflow_run_conclusion: str | None = None,
@@ -90,6 +93,8 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
+        self.fail_workflow_provision = fail_workflow_provision
+        self.existing_workflow = existing_workflow
         self.deploy_workflow_run_id = deploy_workflow_run_id
         self.deploy_workflow_run_status = deploy_workflow_run_status
         self.deploy_workflow_run_conclusion = deploy_workflow_run_conclusion
@@ -99,6 +104,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         self.publish_calls: list[tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], bool]] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
+        self.workflow_provision_calls: list[tuple[str, str, str, str, bool]] = []
 
     def publish_files(
         self,
@@ -171,6 +177,34 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_run_conclusion=self.refresh_workflow_run_conclusion,
             workflow_output=dict(self.refresh_workflow_output),
             refreshed_at="2026-04-07T12:20:00+00:00",
+        )
+
+    def ensure_deploy_workflow(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        workflow_id: str,
+        dry_run: bool,
+    ) -> SEOMigrationGitHubWorkflowProvisionResult:
+        self.workflow_provision_calls.append((repo_owner, repo_name, branch, workflow_id, dry_run))
+        if self.fail_workflow_provision:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_provision_failed",
+                safe_message="Simulated workflow provisioning failure.",
+            )
+        provisioned = (not self.existing_workflow) and (not dry_run)
+        if provisioned:
+            self.existing_workflow = True
+        return SEOMigrationGitHubWorkflowProvisionResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            workflow_id=workflow_id,
+            workflow_path=f".github/workflows/{workflow_id}",
+            provisioned=provisioned,
+            commit_sha="wf123" if provisioned else None,
         )
 
 
@@ -833,6 +867,79 @@ def test_publish_duplicate_returns_operator_usable_422(db_session) -> None:
     detail = str(duplicate_publish.json().get("detail") or "")
     assert "already published" in detail.lower()
     assert "traceback" not in detail.lower()
+
+
+def test_publish_duplicate_repairs_missing_workflow_when_artifact_already_exists(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    publisher = _StubMigrationGitHubPublisher(existing_workflow=False)
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        github_publisher=publisher,
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_owner": "acme",
+                "repo_name": "tnmfire-site",
+                "branch": "main",
+            },
+            "deploy_config": {
+                "enabled": True,
+                "workflow_id": "deploy-www-prod.yml",
+                "ref": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 201
+    artifact_id = generate_response.json()["id"]
+
+    approve_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
+        json={"approval_notes": "Approved"},
+    )
+    assert approve_response.status_code == 200
+
+    first_publish = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish",
+        json={
+            "artifact_version_id": artifact_id,
+            "dry_run": False,
+        },
+    )
+    assert first_publish.status_code == 200
+    assert len(publisher.publish_calls) == 1
+
+    publisher.existing_workflow = False
+    remediation_publish = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish",
+        json={
+            "artifact_version_id": artifact_id,
+            "dry_run": False,
+        },
+    )
+    assert remediation_publish.status_code == 200
+    result_payload = remediation_publish.json().get("result") or {}
+    assert result_payload.get("status") == "published"
+    assert result_payload.get("duplicate_artifact_skipped") is True
+    assert result_payload.get("deploy_workflow_provisioned") is True
+    assert result_payload.get("workflow_provisioning_remediation_mode") == "duplicate_publish_repair"
+    assert result_payload.get("workflow_provisioning_status") == "created"
+    assert len(publisher.publish_calls) == 1
+    assert len(publisher.workflow_provision_calls) == 2
 
 
 def test_migration_summary_contract_includes_readiness_and_history_shapes(db_session) -> None:

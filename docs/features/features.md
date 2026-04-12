@@ -224,7 +224,11 @@ It transforms a business's website and market context into structured insights a
 - Production deployment injects `MIGRATION_GITHUB_TOKEN` into `mbsrn-api` through existing `mbsrn-api-auth` secret wiring; the token is not stored/editable in application UI.
 - approve/publish/deploy button enablement is driven by authoritative readiness prerequisites after mutation refresh, not local stale assumptions.
 - analytics insertion rules remain workspace-level controls and now persist/reload reliably after save.
-- publish now ensures the expected deploy workflow file exists in GitHub before artifact commit (create-if-missing, no overwrite), reducing deploy failures caused by missing workflow definitions.
+- publish now enforces workflow bootstrap verification on every non-dry-run publish for target/generated repos:
+  - checks/verifies `.github/workflows/{workflow_id}` on target branch
+  - provisions missing workflow file before publish is considered valid
+  - fails publish if provisioning cannot be verified (`workflow_provisioning_failed`)
+  - keeps duplicate artifact write protection while allowing workflow-repair publishes (`duplicate_publish_repair`) when content already exists but workflow is missing
 - deploy now prefers authoritative workflow identity captured at publish time (`deploy_workflow_id` / `deploy_workflow_path`) before falling back to workspace/default workflow ids, preventing stale workspace workflow drift from blocking dispatch.
 - deploy target lookup failures are now classified with non-secret reason codes (`repo_not_found`, `workflow_not_found`, `branch_not_found_or_ref_invalid`, `workflow_dispatch_not_supported`, `token_not_authorized`) for clearer control-plane troubleshooting.
 - workspace now surfaces effective migration destinations with explicit URL states (expected published URL vs resolved live URL), deterministic URL source labeling, and clear draft/expected/live distinction for pre-execution trust.

@@ -797,6 +797,18 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 candidate = str(commit_payload.get("sha") or "").strip()
                 if candidate:
                     commit_sha = candidate
+        verified_sha = self._fetch_existing_sha(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            path=workflow_path,
+        )
+        if not verified_sha:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_provisioning_failed",
+                safe_message="Deploy workflow provisioning could not be verified.",
+                stage="workflow_provisioning",
+            )
         return SEOMigrationGitHubWorkflowProvisionResult(
             repo_owner=repo_owner,
             repo_name=repo_name,
@@ -804,7 +816,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_id=normalized_workflow_id,
             workflow_path=workflow_path,
             provisioned=True,
-            commit_sha=commit_sha,
+            commit_sha=verified_sha or commit_sha,
         )
 
     def _fetch_existing_sha(

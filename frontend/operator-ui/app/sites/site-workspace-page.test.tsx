@@ -3344,6 +3344,56 @@ describe("site workspace migration tab", () => {
     expect(await screen.findByTestId("migration-deploy-history")).toHaveTextContent("deploy_requested");
   });
 
+  it("shows remediation status when duplicate artifact publish repairs missing workflow", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: "migration-artifact-1",
+          latest_generated_artifact_version_number: 1,
+          latest_approved_artifact_version_id: "migration-artifact-1",
+          latest_approved_artifact_version_number: 1,
+          publish_status: "ready",
+          deploy_status: "ready",
+        }),
+        publish_readiness: { ready: true, reasons: [], target: { enabled: true } },
+      }),
+    );
+    mockPublishMigrationArtifactVersion.mockResolvedValueOnce({
+      workspace: buildMigrationWorkspace({
+        publish_status: "published",
+        migration_status: "published_to_github",
+        latest_approved_artifact_version_id: "migration-artifact-1",
+        latest_approved_artifact_version_number: 1,
+      }),
+      artifact: buildMigrationArtifactVersion({
+        id: "migration-artifact-1",
+        approval_status: "approved",
+        publish_status: "published",
+      }),
+      readiness: { ready: true, reasons: [] },
+      result: {
+        status: "published",
+        duplicate_artifact_skipped: true,
+        deploy_workflow_provisioned: true,
+        workflow_provisioning_remediation_mode: "duplicate_publish_repair",
+      },
+    });
+
+    render(<SiteWorkspacePage />);
+    await switchToMigrationTab(user);
+
+    const dryRunToggles = screen.getAllByLabelText("Dry run only");
+    await user.click(dryRunToggles[0]);
+    await user.click(screen.getByRole("button", { name: "Publish Approved Draft to GitHub" }));
+    await waitFor(() => expect(mockPublishMigrationArtifactVersion).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText(
+        "Artifact content was already published. Missing deploy workflow was provisioned and verified.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("renders publish failure safely and allows retry", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValue(

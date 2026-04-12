@@ -23,6 +23,7 @@ from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubPublishFile,
+    SEOMigrationGitHubPublishResult,
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
@@ -141,6 +142,7 @@ _MIGRATION_READINESS_LOG_EVENT = "seo_migration_readiness_evaluation"
 _DRAFT_PROVIDER_COMPATIBILITY_LOG_EVENT = "seo_migration_provider_compatibility_evaluation"
 _MIGRATION_RUNTIME_PUBLISHER_LOG_EVENT = "seo_migration_runtime_publisher_readiness"
 _MIGRATION_WORKFLOW_PROVISIONED_LOG_EVENT = "migration_workflow_provisioned"
+_MIGRATION_WORKFLOW_PROVISIONING_LOG_EVENT = "seo_migration_workflow_provisioning"
 _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS = 120
 _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS = 60
 _MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS = 900
@@ -796,28 +798,13 @@ class SEOMigrationService:
                 duration_ms=self._duration_ms(started_at),
             )
             raise SEOMigrationValidationError(failure_message) from exc
-        if not dry_run and _is_duplicate_publish_attempt(
-            history=workspace.publish_history_json,
-            artifact_version_id=artifact.id,
-            target=target,
-        ):
-            failure_message = "This artifact version is already published to the configured GitHub target."
-            self._log_control_plane_action(
-                action="publish",
-                status="failed",
-                business_id=business_id,
-                site_id=site_id,
-                workspace_id=workspace.id,
+        duplicate_publish_attempt = False
+        if not dry_run:
+            duplicate_publish_attempt = _is_duplicate_publish_attempt(
+                history=workspace.publish_history_json,
                 artifact_version_id=artifact.id,
-                artifact_version=artifact.version,
-                principal_id=principal_id,
-                dry_run=dry_run,
-                target_summary=target,
-                failure_category="duplicate_request",
-                failure_reason=failure_message,
-                duration_ms=self._duration_ms(started_at),
+                target=target,
             )
-            raise SEOMigrationValidationError(failure_message)
         effective_ga_measurement_id = _resolve_effective_ga_measurement_id(
             site=site,
             workspace=workspace,
@@ -855,9 +842,14 @@ class SEOMigrationService:
                 f"{self.publish_commit_message_prefix} site={site.id} artifact=v{artifact.version}"
             )
         deploy_workflow_provision_result: SEOMigrationGitHubWorkflowProvisionResult | None = None
+        workflow_provisioning_status: str | None = None
+        workflow_provisioning_remediation_mode: str | None = None
+        workflow_provisioning_verified = False
         expected_publish_url: str | None = None
         expected_publish_url_source = _MIGRATION_URL_SOURCE_UNKNOWN
         expected_publish_url_source_detail: str | None = None
+        duplicate_publish_repaired = False
+        publish_result: SEOMigrationGitHubPublishResult | None = None
         try:
             deploy_target_for_workflow: dict[str, object] | None = None
             try:
@@ -868,7 +860,14 @@ class SEOMigrationService:
                     default_ref=self.deploy_default_ref,
                 )
             except ValueError:
-                deploy_target_for_workflow = None
+                deploy_target_for_workflow = {
+                    "enabled": False,
+                    "repo_owner": target["repo_owner"],
+                    "repo_name": target["repo_name"],
+                    "workflow_id": self.deploy_default_workflow_id,
+                    "ref": target["branch"] or self.deploy_default_ref,
+                    "inputs": {},
+                }
 
             (
                 expected_publish_url,
@@ -879,17 +878,62 @@ class SEOMigrationService:
                 deploy_config=workspace.deploy_config_json,
             )
 
-            if (
-                not dry_run
-                and isinstance(deploy_target_for_workflow, dict)
-                and bool(deploy_target_for_workflow.get("enabled"))
-            ):
+            if not dry_run and isinstance(deploy_target_for_workflow, dict):
+                workflow_provisioning_remediation_mode = (
+                    "duplicate_publish_repair" if duplicate_publish_attempt else "bootstrap"
+                )
+                workflow_owner = str(deploy_target_for_workflow.get("repo_owner") or target["repo_owner"])
+                workflow_repo = str(deploy_target_for_workflow.get("repo_name") or target["repo_name"])
+                workflow_ref = str(deploy_target_for_workflow.get("ref") or target["branch"])
+                workflow_identifier = str(
+                    deploy_target_for_workflow.get("workflow_id") or self.deploy_default_workflow_id
+                )
+                workflow_path = f".github/workflows/{workflow_identifier}"
                 deploy_workflow_provision_result = self.github_publisher.ensure_deploy_workflow(
-                    repo_owner=str(deploy_target_for_workflow.get("repo_owner") or target["repo_owner"]),
-                    repo_name=str(deploy_target_for_workflow.get("repo_name") or target["repo_name"]),
-                    branch=str(deploy_target_for_workflow.get("ref") or target["branch"]),
-                    workflow_id=str(deploy_target_for_workflow.get("workflow_id") or self.deploy_default_workflow_id),
+                    repo_owner=workflow_owner,
+                    repo_name=workflow_repo,
+                    branch=workflow_ref,
+                    workflow_id=workflow_identifier,
                     dry_run=False,
+                )
+                workflow_provisioning_verified = True
+                workflow_path = deploy_workflow_provision_result.workflow_path
+                workflow_provisioning_status = (
+                    "created" if deploy_workflow_provision_result.provisioned else "already_exists"
+                )
+                if not deploy_workflow_provision_result.provisioned:
+                    workflow_provisioning_remediation_mode = "already_present"
+                self._log_workflow_provisioning(
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    principal_id=principal_id,
+                    artifact_version_id=artifact.id,
+                    repo_owner=workflow_owner,
+                    repo_name=workflow_repo,
+                    ref=workflow_ref,
+                    workflow_id=workflow_identifier,
+                    workflow_path=workflow_path,
+                    status=workflow_provisioning_status,
+                    remediation_mode=workflow_provisioning_remediation_mode,
+                    commit_sha=deploy_workflow_provision_result.commit_sha,
+                    verified=True,
+                )
+                self._log_workflow_provisioning(
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    principal_id=principal_id,
+                    artifact_version_id=artifact.id,
+                    repo_owner=workflow_owner,
+                    repo_name=workflow_repo,
+                    ref=workflow_ref,
+                    workflow_id=workflow_identifier,
+                    workflow_path=workflow_path,
+                    status="verified",
+                    remediation_mode=workflow_provisioning_remediation_mode,
+                    commit_sha=deploy_workflow_provision_result.commit_sha,
+                    verified=True,
                 )
                 if deploy_workflow_provision_result.provisioned:
                     self._log_workflow_provisioned(
@@ -899,18 +943,118 @@ class SEOMigrationService:
                         principal_id=principal_id,
                         provision_result=deploy_workflow_provision_result,
                     )
-            publish_result = self.github_publisher.publish_files(
-                target=SEOMigrationGitHubPublishTarget(
-                    repo_owner=target["repo_owner"],
-                    repo_name=target["repo_name"],
-                    branch=target["branch"],
-                    artifact_root=target["artifact_root"],
-                ),
-                files=publish_files,
-                commit_message=normalized_commit_message,
-                dry_run=dry_run,
-            )
+            if duplicate_publish_attempt:
+                if (
+                    deploy_workflow_provision_result is not None
+                    and deploy_workflow_provision_result.provisioned
+                ):
+                    duplicate_publish_repaired = True
+                    publish_result = SEOMigrationGitHubPublishResult(
+                        dry_run=False,
+                        repo_owner=target["repo_owner"],
+                        repo_name=target["repo_name"],
+                        branch=target["branch"],
+                        artifact_root=target["artifact_root"],
+                        files_published=0,
+                        total_bytes=0,
+                        commit_shas=(),
+                        committed_paths=(),
+                        published_at=utc_now().isoformat(),
+                    )
+                else:
+                    failure_message = "This artifact version is already published to the configured GitHub target."
+                    self._log_control_plane_action(
+                        action="publish",
+                        status="failed",
+                        business_id=business_id,
+                        site_id=site_id,
+                        workspace_id=workspace.id,
+                        artifact_version_id=artifact.id,
+                        artifact_version=artifact.version,
+                        principal_id=principal_id,
+                        dry_run=dry_run,
+                        target_summary={
+                            **target,
+                            "workflow_provisioning_status": workflow_provisioning_status,
+                            "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+                        },
+                        failure_category="duplicate_request",
+                        failure_reason=failure_message,
+                        duration_ms=self._duration_ms(started_at),
+                    )
+                    raise SEOMigrationValidationError(failure_message)
+            else:
+                publish_result = self.github_publisher.publish_files(
+                    target=SEOMigrationGitHubPublishTarget(
+                        repo_owner=target["repo_owner"],
+                        repo_name=target["repo_name"],
+                        branch=target["branch"],
+                        artifact_root=target["artifact_root"],
+                    ),
+                    files=publish_files,
+                    commit_message=normalized_commit_message,
+                    dry_run=dry_run,
+                )
         except SEOMigrationGitHubPublisherError as exc:
+            if workflow_provisioning_remediation_mode:
+                workflow_identifier = (
+                    deploy_workflow_provision_result.workflow_id
+                    if deploy_workflow_provision_result is not None
+                    else str(
+                        (
+                            deploy_target_for_workflow.get("workflow_id")
+                            if isinstance(deploy_target_for_workflow, dict)
+                            else self.deploy_default_workflow_id
+                        )
+                        or self.deploy_default_workflow_id
+                    )
+                )
+                workflow_path = (
+                    deploy_workflow_provision_result.workflow_path
+                    if deploy_workflow_provision_result is not None
+                    else f".github/workflows/{workflow_identifier}"
+                )
+                workflow_owner = str(
+                    (
+                        deploy_target_for_workflow.get("repo_owner")
+                        if isinstance(deploy_target_for_workflow, dict)
+                        else target.get("repo_owner")
+                    )
+                    or target["repo_owner"]
+                )
+                workflow_repo = str(
+                    (
+                        deploy_target_for_workflow.get("repo_name")
+                        if isinstance(deploy_target_for_workflow, dict)
+                        else target.get("repo_name")
+                    )
+                    or target["repo_name"]
+                )
+                workflow_ref = str(
+                    (
+                        deploy_target_for_workflow.get("ref")
+                        if isinstance(deploy_target_for_workflow, dict)
+                        else target.get("branch")
+                    )
+                    or target["branch"]
+                )
+                self._log_workflow_provisioning(
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    principal_id=principal_id,
+                    artifact_version_id=artifact.id,
+                    repo_owner=workflow_owner,
+                    repo_name=workflow_repo,
+                    ref=workflow_ref,
+                    workflow_id=workflow_identifier,
+                    workflow_path=workflow_path,
+                    status="failed",
+                    remediation_mode=workflow_provisioning_remediation_mode,
+                    verified=workflow_provisioning_verified,
+                    error_code=exc.code,
+                    error_message=exc.safe_message,
+                )
             failure_category = self._categorize_publisher_failure(exc=exc, action="publish")
             artifact.publish_status = "publish_failed"
             artifact.last_publish_error_summary = exc.safe_message
@@ -936,6 +1080,7 @@ class SEOMigrationService:
                     "expected_publish_url": expected_publish_url,
                     "url_source": expected_publish_url_source,
                     "url_source_detail": expected_publish_url_source_detail,
+                    "failure_reason": _normalize_string(exc.code, max_length=80),
                     "failure_category": failure_category,
                     "error": exc.safe_message,
                     "error_summary": exc.safe_message,
@@ -955,25 +1100,42 @@ class SEOMigrationService:
                 artifact_version=artifact.version,
                 principal_id=principal_id,
                 dry_run=dry_run,
-                target_summary=target,
+                target_summary={
+                    **target,
+                    "failure_reason_code": _normalize_string(exc.code, max_length=80),
+                    "workflow_provisioning_status": workflow_provisioning_status,
+                    "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+                },
                 failure_category=failure_category,
                 failure_reason=exc.safe_message,
                 duration_ms=self._duration_ms(started_at),
             )
             raise SEOMigrationValidationError(exc.safe_message) from exc
 
+        if publish_result is None:
+            raise SEOMigrationValidationError("Migration publish result was unavailable.")
+
         now = utc_now()
         status_label = "dry_run" if dry_run else "published"
         if not dry_run:
             artifact.publish_status = "published"
-            artifact.last_published_at = now
+            if not duplicate_publish_repaired:
+                artifact.last_published_at = now
+            elif artifact.last_published_at is None:
+                artifact.last_published_at = now
             artifact.last_publish_error_summary = None
-            artifact.last_published_commit_sha = publish_result.commit_shas[-1] if publish_result.commit_shas else None
+            if not duplicate_publish_repaired:
+                artifact.last_published_commit_sha = publish_result.commit_shas[-1] if publish_result.commit_shas else None
             workspace.last_published_artifact_version_id = artifact.id
             workspace.last_published_artifact_version_number = artifact.version
-            workspace.last_published_commit_sha = artifact.last_published_commit_sha
-            workspace.last_published_at = now
-            workspace.last_published_by_principal_id = principal_id
+            if not duplicate_publish_repaired or workspace.last_published_commit_sha is None:
+                workspace.last_published_commit_sha = artifact.last_published_commit_sha
+            if not duplicate_publish_repaired:
+                workspace.last_published_at = now
+            elif workspace.last_published_at is None:
+                workspace.last_published_at = artifact.last_published_at or now
+            if not duplicate_publish_repaired or workspace.last_published_by_principal_id is None:
+                workspace.last_published_by_principal_id = principal_id
             workspace.publish_status = "published"
             workspace.migration_status = "published_to_github"
         else:
@@ -1008,6 +1170,10 @@ class SEOMigrationService:
             "expected_publish_url": expected_publish_url,
             "url_source": expected_publish_url_source,
             "url_source_detail": expected_publish_url_source_detail,
+            "duplicate_artifact_skipped": bool(duplicate_publish_repaired),
+            "workflow_provisioning_status": workflow_provisioning_status,
+            "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+            "workflow_provisioning_verified": workflow_provisioning_verified,
             "deploy_workflow_provisioned": bool(
                 not dry_run
                 and deploy_workflow_provision_result is not None
@@ -1045,6 +1211,10 @@ class SEOMigrationService:
                 "expected_publish_url": expected_publish_url,
                 "url_source": expected_publish_url_source,
                 "url_source_detail": expected_publish_url_source_detail,
+                "duplicate_artifact_skipped": bool(duplicate_publish_repaired),
+                "workflow_provisioning_status": workflow_provisioning_status,
+                "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+                "workflow_provisioning_verified": workflow_provisioning_verified,
             },
             duration_ms=self._duration_ms(started_at),
         )
@@ -4289,6 +4459,60 @@ class SEOMigrationService:
             level=logging.INFO,
         )
 
+    def _log_workflow_provisioning(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace_id: str | None,
+        principal_id: str | None,
+        artifact_version_id: str | None,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        workflow_id: str,
+        workflow_path: str,
+        status: str,
+        remediation_mode: str,
+        commit_sha: str | None = None,
+        verified: bool | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        payload: dict[str, object] = {
+            "event": _MIGRATION_WORKFLOW_PROVISIONING_LOG_EVENT,
+            "timestamp": utc_now().isoformat(),
+            "business_id": business_id,
+            "site_id": site_id,
+            "workspace_id": workspace_id,
+            "principal_id": principal_id,
+            "artifact_version_id": artifact_version_id,
+            "repo_owner": repo_owner,
+            "repo_name": repo_name,
+            "ref": ref,
+            "workflow_id": workflow_id,
+            "workflow_path": workflow_path,
+            "status": _normalize_string(status, max_length=40) or "unknown",
+            "remediation_mode": _normalize_string(remediation_mode, max_length=60) or "unknown",
+        }
+        normalized_sha = _normalize_string(commit_sha, max_length=80)
+        if normalized_sha:
+            payload["commit_sha"] = normalized_sha
+        if verified is not None:
+            payload["verified"] = bool(verified)
+        normalized_error_code = _normalize_string(error_code, max_length=80)
+        if normalized_error_code:
+            payload["error_code"] = normalized_error_code
+        normalized_error_message = _normalize_string(error_message, max_length=300)
+        if normalized_error_message:
+            payload["error_message"] = normalized_error_message
+        level = logging.INFO if payload["status"] != "failed" else logging.WARNING
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message=_MIGRATION_WORKFLOW_PROVISIONING_LOG_EVENT,
+            level=level,
+        )
+
     @staticmethod
     def _safe_publish_target_summary(config: object) -> dict[str, object]:
         normalized = _normalize_publish_config(config)
@@ -4854,6 +5078,9 @@ class SEOMigrationService:
             return "config_missing"
         if code in {
             "github_target_not_found",
+            "github_workflow_invalid",
+            "workflow_provisioning_failed",
+            "workflow_provision_failed",
             _DEPLOY_TARGET_REASON_REPO_NOT_FOUND,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
             _DEPLOY_TARGET_REASON_REF_INVALID,

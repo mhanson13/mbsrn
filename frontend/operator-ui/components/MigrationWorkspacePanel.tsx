@@ -2027,13 +2027,24 @@ export function MigrationWorkspacePanel({
     setErrorHint(null);
     setStatusMessage(null);
     try {
-      await publishMigrationArtifactVersion(token, businessId, siteId, {
+      const actionResult = await publishMigrationArtifactVersion(token, businessId, siteId, {
         artifact_version_id: selectedArtifactVersionId,
         dry_run: publishDryRun,
         commit_message: asStringOrNull(publishCommitMessage),
         analytics_measurement_id: asStringOrNull(publishAnalyticsOverride),
       });
-      setStatusMessage(publishDryRun ? "Publish dry-run completed." : "Publish to GitHub completed.");
+      const resultPayload = asRecord(actionResult.result);
+      const duplicateArtifactSkipped = resultPayload.duplicate_artifact_skipped === true;
+      const workflowProvisioned = resultPayload.deploy_workflow_provisioned === true;
+      if (publishDryRun) {
+        setStatusMessage("Publish dry-run completed.");
+      } else if (duplicateArtifactSkipped && workflowProvisioned) {
+        setStatusMessage(
+          "Artifact content was already published. Missing deploy workflow was provisioned and verified.",
+        );
+      } else {
+        setStatusMessage("Publish to GitHub completed.");
+      }
       await loadWorkspaceData(false);
     } catch (error) {
       const baseMessage = toErrorMessage(error, "Publish failed.");
