@@ -218,6 +218,9 @@ It transforms a business's website and market context into structured insights a
 - Admin owns GitHub account/owner baseline and runtime credential boundary.
 - Operator owns workspace repository name plus optional branch override.
 - workspace shows merged effective target/readiness context (owner + repo + branch) without exposing credential material.
+- Deploy routing trust boundary is now explicit:
+- Admin owns raw deploy workflow control-plane fields (`repo_owner`, `repo_name`, `workflow_id`, `ref`, `inputs`).
+- Operator workspace keeps those values read-only and only exposes bounded deploy availability toggling plus staged deploy diagnostics.
 - Readiness explicitly distinguishes merged metadata readiness from runtime publisher capability (for example credential unavailable vs runtime integration unavailable) so publish blockers map to the correct actor.
 - Deploy readiness now exposes explicit blocker classes (`published_artifact_missing`, deploy target config missing/invalid, deploy runtime/integration unavailable) so deploy blockers map to the correct actor without generic "runtime missing" ambiguity.
 - Runtime publisher credentials remain environment-managed (`MIGRATION_GITHUB_TOKEN`) and are never exposed through Admin/workspace payloads.
@@ -230,6 +233,7 @@ It transforms a business's website and market context into structured insights a
   - fails publish if provisioning cannot be verified (`workflow_provisioning_failed`)
   - keeps duplicate artifact write protection while allowing workflow-repair publishes (`duplicate_publish_repair`) when content already exists but workflow is missing
 - deploy now prefers authoritative workflow identity captured at publish time (`deploy_workflow_id` / `deploy_workflow_path`) before falling back to workspace/default workflow ids, preventing stale workspace workflow drift from blocking dispatch.
+- deploy now records requested-vs-used workflow identifiers (`workflow_identifier_requested`, `workflow_identifier_used`) plus identifier type/resolution source fields so dispatch by workflow id vs file-derived identifier is explicit in control-plane diagnostics.
 - deploy target lookup failures are now classified with non-secret reason codes (`repo_not_found`, `workflow_not_found`, `branch_not_found_or_ref_invalid`, `workflow_not_dispatchable`, `workflow_dispatch_not_supported`, `token_not_authorized`) for clearer control-plane troubleshooting.
 - deploy now emits an explicit managed-target readiness preflight (`seo_migration_target_readiness_check`) for the authoritative tuple (repo owner/name, ref, workflow id/path) so dispatch never relies on implicit repo/ref/workflow assumptions.
 - deploy diagnostics now model a distinct dispatch-service availability stage (`dispatch_service_availability`, `dispatch_service_reason_code`) so operators can distinguish workflow identity/trigger support from downstream service/function readiness before dispatch.

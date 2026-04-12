@@ -101,12 +101,18 @@ def upsert_seo_migration_workspace(
             deploy_config=(
                 normalized_payload.deploy_config.model_dump(mode="json") if normalized_payload.deploy_config else None
             ),
+            deploy_config_field_names=(
+                set(normalized_payload.deploy_config.model_fields_set)
+                if normalized_payload.deploy_config
+                else None
+            ),
             analytics_config=(
                 normalized_payload.analytics_config.model_dump(mode="json")
                 if normalized_payload.analytics_config
                 else None
             ),
             principal_id=tenant_context.principal_id,
+            principal_role=tenant_context.principal_role,
         )
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -253,7 +259,9 @@ def update_seo_migration_deploy_config(
             business_id=scoped_business_id,
             site_id=site_id,
             deploy_config=payload.deploy_config.model_dump(mode="json"),
+            deploy_config_field_names=set(payload.deploy_config.model_fields_set),
             principal_id=tenant_context.principal_id,
+            principal_role=tenant_context.principal_role,
         )
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

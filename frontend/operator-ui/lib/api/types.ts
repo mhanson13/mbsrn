@@ -273,6 +273,15 @@ export interface MigrationDeployConfig {
   inputs: Record<string, string>;
 }
 
+export interface MigrationDeployConfigUpdate {
+  enabled?: boolean;
+  repo_owner?: string | null;
+  repo_name?: string | null;
+  workflow_id?: string | null;
+  ref?: string | null;
+  inputs?: Record<string, string>;
+}
+
 export interface MigrationAnalyticsConfig {
   enabled: boolean;
   ga_measurement_id: string | null;
@@ -305,7 +314,7 @@ export interface MigrationPublishConfigUpdateRequest {
 }
 
 export interface MigrationDeployConfigUpdateRequest {
-  deploy_config: MigrationDeployConfig;
+  deploy_config: MigrationDeployConfigUpdate;
 }
 
 export interface MigrationAnalyticsConfigUpdateRequest {

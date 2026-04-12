@@ -234,12 +234,18 @@ Key non-secret fields:
 - `failure_reason_code` / `target.failure_reason_code`
 - `failure_stage` (`repo_lookup`, `ref_lookup`, `workflow_lookup`, `workflow_dispatch`)
 - `workflow_id`, optional `workflow_path`, `ref`, `repo_owner`, `repo_name`
+- `workflow_identifier_requested`, `workflow_identifier_used`
+- `workflow_identifier_type_requested`, `workflow_identifier_type_used`
+- `workflow_dispatch_resolution_source`, `workflow_file_path`, `workflow_name`
 - `workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`
 - `resolved_live_url`, `url_source`, `url_source_detail`
 - readiness check fields:
   - `requested_ref`, `resolved_ref`, `ref_source`
   - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`
   - `workflow_dispatch_supported`, `workflow_trigger_types`, `dispatch_identifier_type`
+  - `workflow_identifier_requested`, `workflow_identifier_used`
+  - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
+  - `workflow_dispatch_resolution_source`, `workflow_file_path`, `workflow_name`
   - `dispatch_service_availability`, `dispatch_service_reason_code`
   - `deploy_trace_id`
   - `remediation_mode`
@@ -274,9 +280,10 @@ Use this sequence for one bounded production deploy validation:
    - `jsonPayload.action="deploy"`
    - `jsonPayload.target.deploy_trace_id="<trace-id>"`
 4. Confirm staged evidence progression in logs:
-   - readiness/preflight fields (`workflow_identifier`, `workflow_dispatch_supported`, `dispatch_service_availability`)
+   - readiness/preflight fields (`workflow_identifier`, `workflow_identifier_requested`, `workflow_identifier_used`, `workflow_dispatch_supported`, `dispatch_service_availability`)
    - dispatch attempt fields (`dispatch_attempted=true`, `dispatch_result_stage`)
    - run evidence fields (`workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`) when available
+   - identifier-resolution fields (`workflow_dispatch_resolution_source`, `workflow_identifier_type_used`) show the exact dispatch identifier strategy.
 5. If UI shows `Dispatch was accepted, but no workflow run evidence is available yet`, wait for eventual consistency and run **Refresh deploy status**.
 6. Re-query refresh events by trace id:
    - `jsonPayload.event="seo_migration_deploy_status_refresh_requested"`

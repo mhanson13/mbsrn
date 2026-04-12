@@ -34,6 +34,7 @@ from app.integrations.seo_migration_github_publisher import (
 )
 from app.models.business import Business
 from app.models.github_publish_config import GitHubPublishConfig
+from app.models.principal import PrincipalRole
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_set import SEOCompetitorSet
@@ -251,12 +252,17 @@ class _IncompatibleMigrationArtifactProvider(SEOMigrationArtifactGenerationProvi
         raise RuntimeError("provider call should be blocked by compatibility preflight")
 
 
-def _override_tenant_context(business_id: str):
+def _override_tenant_context(
+    business_id: str,
+    *,
+    principal_role: PrincipalRole | None = None,
+):
     def _resolver() -> TenantContext:
         return TenantContext(
             business_id=business_id,
             principal_id=f"test-principal:{business_id}",
             auth_source="test",
+            principal_role=principal_role,
         )
 
     return _resolver
@@ -268,6 +274,7 @@ def _make_client(
     business_id: str,
     github_publisher: SEOMigrationGitHubPublisher | None = None,
     artifact_provider: SEOMigrationArtifactGenerationProvider | None = None,
+    principal_role: PrincipalRole | None = None,
 ) -> TestClient:
     app = FastAPI()
     app.include_router(seo_migration_router)
@@ -279,7 +286,10 @@ def _make_client(
             pass
 
     app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_tenant_context] = _override_tenant_context(business_id)
+    app.dependency_overrides[get_tenant_context] = _override_tenant_context(
+        business_id,
+        principal_role=principal_role,
+    )
     app.dependency_overrides[get_seo_migration_ingest_service] = lambda: _StubMigrationIngestService()
     resolved_provider = artifact_provider or MockSEOMigrationArtifactGenerationProvider(
         provider_name="mock",
@@ -505,6 +515,11 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert isinstance(deploy_result.get("deploy_trace_id"), str)
     assert deploy_result.get("deploy_trace_id")
     assert "workflow_identifier" in deploy_result
+    assert "workflow_identifier_requested" in deploy_result
+    assert "workflow_identifier_used" in deploy_result
+    assert "workflow_identifier_type_requested" in deploy_result
+    assert "workflow_identifier_type_used" in deploy_result
+    assert "workflow_dispatch_resolution_source" in deploy_result
     assert isinstance(deploy_result.get("workflow_trigger_types"), list)
     assert "dispatch_service_availability" in deploy_result
     assert "dispatch_service_reason_code" in deploy_result
@@ -554,6 +569,75 @@ def test_migration_summary_requires_existing_workspace(db_session) -> None:
     assert response.status_code == 404
     assert response.json()["detail"] == "Migration workspace not found"
 
+
+def test_operator_cannot_update_admin_owned_deploy_workflow_fields(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    bootstrap_client = _make_client(db_session, business_id=business_id)
+    operator_client = _make_client(
+        db_session,
+        business_id=business_id,
+        principal_role=PrincipalRole.OPERATOR,
+    )
+
+    workspace_response = bootstrap_client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    response = operator_client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy-config",
+        json={
+            "deploy_config": {
+                "enabled": True,
+                "workflow_id": "deploy-custom-prod.yml",
+            }
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Only admin principals can update deploy repository/workflow controls."
+
+
+def test_operator_can_toggle_deploy_enabled_without_changing_admin_owned_fields(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    bootstrap_client = _make_client(db_session, business_id=business_id)
+    operator_client = _make_client(
+        db_session,
+        business_id=business_id,
+        principal_role=PrincipalRole.OPERATOR,
+    )
+
+    workspace_response = bootstrap_client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_name": "tnmfire-site",
+                "branch": "main",
+            },
+            "deploy_config": {
+                "enabled": False,
+                "workflow_id": "deploy-tnmfire-www-prod.yml",
+                "ref": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+
+    response = operator_client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy-config",
+        json={"deploy_config": {"enabled": True}},
+    )
+    assert response.status_code == 200
+    deploy_config_json = response.json().get("deploy_config_json") or {}
+    assert deploy_config_json.get("enabled") is True
+    assert deploy_config_json.get("workflow_id") == "deploy-tnmfire-www-prod.yml"
+    assert deploy_config_json.get("ref") == "main"
 
 def test_refresh_migration_deploy_status_updates_run_metadata_and_confirms_live_url(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"

@@ -86,15 +86,6 @@ const EMPTY_PUBLISH_CONFIG: MigrationPublishConfig = {
   artifact_root: null,
 };
 
-const EMPTY_DEPLOY_CONFIG: MigrationDeployConfig = {
-  enabled: false,
-  repo_owner: null,
-  repo_name: null,
-  workflow_id: "deploy-www-prod.yml",
-  ref: "main",
-  inputs: {},
-};
-
 const EMPTY_ANALYTICS_CONFIG: MigrationAnalyticsConfig = {
   enabled: true,
   ga_measurement_id: null,
@@ -1522,11 +1513,6 @@ export function MigrationWorkspacePanel({
   const [publishBranch, setPublishBranch] = useState("");
 
   const [deployEnabled, setDeployEnabled] = useState(false);
-  const [deployRepoOwner, setDeployRepoOwner] = useState("");
-  const [deployRepoName, setDeployRepoName] = useState("");
-  const [deployWorkflowId, setDeployWorkflowId] = useState("deploy-www-prod.yml");
-  const [deployRef, setDeployRef] = useState("main");
-  const [deployInputsText, setDeployInputsText] = useState("");
 
   const [analyticsEnabled, setAnalyticsEnabled] = useState(true);
   const [analyticsMeasurementId, setAnalyticsMeasurementId] = useState("");
@@ -1622,9 +1608,30 @@ export function MigrationWorkspacePanel({
     asStringOrNull(latestDeployHistoryRecord.deploy_trace_id) ||
     asStringOrNull(deployReadiness.last_deploy_trace_id);
   const deployWorkflowIdentifier =
+    asStringOrNull(latestDeployHistoryRecord.workflow_identifier_used) ||
     asStringOrNull(latestDeployHistoryRecord.workflow_identifier) ||
+    asStringOrNull(deployReadiness.workflow_identifier_used) ||
     asStringOrNull(deployReadiness.workflow_identifier) ||
     asStringOrNull(deployTarget.workflow_id);
+  const deployWorkflowIdentifierRequested =
+    asStringOrNull(latestDeployHistoryRecord.workflow_identifier_requested) ||
+    asStringOrNull(deployReadiness.workflow_identifier_requested) ||
+    asStringOrNull(deployTarget.workflow_id);
+  const deployWorkflowIdentifierTypeRequested =
+    asStringOrNull(latestDeployHistoryRecord.workflow_identifier_type_requested) ||
+    asStringOrNull(deployReadiness.workflow_identifier_type_requested);
+  const deployWorkflowIdentifierTypeUsed =
+    asStringOrNull(latestDeployHistoryRecord.workflow_identifier_type_used) ||
+    asStringOrNull(deployReadiness.workflow_identifier_type_used);
+  const deployWorkflowDispatchResolutionSource =
+    asStringOrNull(latestDeployHistoryRecord.workflow_dispatch_resolution_source) ||
+    asStringOrNull(deployReadiness.workflow_dispatch_resolution_source);
+  const deployWorkflowFilePath =
+    asStringOrNull(latestDeployHistoryRecord.workflow_file_path) ||
+    asStringOrNull(deployReadiness.workflow_file_path) ||
+    asStringOrNull(deployTarget.resolved_workflow_path);
+  const deployWorkflowName =
+    asStringOrNull(latestDeployHistoryRecord.workflow_name) || asStringOrNull(deployReadiness.workflow_name);
   const deployResolvedWorkflowSource =
     asStringOrNull(latestDeployHistoryRecord.resolved_workflow_source) ||
     asStringOrNull(deployTarget.resolved_workflow_source);
@@ -1816,11 +1823,6 @@ export function MigrationWorkspacePanel({
 
     const rawDeployConfig = asRecord(workspace.deploy_config_json);
     setDeployEnabled(Boolean(rawDeployConfig.enabled));
-    setDeployRepoOwner(asString(rawDeployConfig.repo_owner));
-    setDeployRepoName(asString(rawDeployConfig.repo_name));
-    setDeployWorkflowId(asString(rawDeployConfig.workflow_id) || "deploy-www-prod.yml");
-    setDeployRef(asString(rawDeployConfig.ref) || "main");
-    setDeployInputsText(stringifyInputsMap(rawDeployConfig.inputs));
 
     const rawAnalyticsConfig = asRecord(workspace.analytics_config_json);
     const publishReadiness = asRecord(nextSummary.publish_readiness);
@@ -2017,13 +2019,12 @@ export function MigrationWorkspacePanel({
 
   const handleSaveDeployConfig = async (): Promise<void> => {
     const payload: MigrationDeployConfig = {
-      ...EMPTY_DEPLOY_CONFIG,
       enabled: deployEnabled,
-      repo_owner: asStringOrNull(deployRepoOwner),
-      repo_name: asStringOrNull(deployRepoName),
-      workflow_id: asStringOrNull(deployWorkflowId),
-      ref: asStringOrNull(deployRef),
-      inputs: parseInputsText(deployInputsText),
+      repo_owner: null,
+      repo_name: null,
+      workflow_id: null,
+      ref: null,
+      inputs: {},
     };
     setBusyAction("save_deploy_config");
     setErrorMessage(null);
@@ -2031,9 +2032,11 @@ export function MigrationWorkspacePanel({
     setStatusMessage(null);
     try {
       await updateMigrationDeployConfig(token, businessId, siteId, {
-        deploy_config: payload,
+        deploy_config: {
+          enabled: payload.enabled,
+        },
       });
-      setStatusMessage("Deploy target configuration saved.");
+      setStatusMessage("Deploy availability saved.");
       await loadWorkspaceData(false);
     } catch (error) {
       setErrorHint(null);
@@ -2948,27 +2951,45 @@ export function MigrationWorkspacePanel({
 
           <div className="panel panel-compact stack">
             <strong>GKE Deploy Target</strong>
+            <span className="hint muted" data-testid="migration-deploy-target-admin-boundary">
+              Admin controls deploy repository/workflow routing. Operators can enable deploy for this workspace and
+              review effective target diagnostics.
+            </span>
             <label className="link-row">
               <input type="checkbox" checked={deployEnabled} onChange={(event) => setDeployEnabled(event.target.checked)} />
               <span>Deploy enabled for this site workspace</span>
             </label>
-            <input value={deployRepoOwner} onChange={(event) => setDeployRepoOwner(event.target.value)} placeholder="Repo owner (optional override)" />
-            <input value={deployRepoName} onChange={(event) => setDeployRepoName(event.target.value)} placeholder="Repo name (optional override)" />
-            <input value={deployWorkflowId} onChange={(event) => setDeployWorkflowId(event.target.value)} placeholder="Workflow ID" />
-            <input value={deployRef} onChange={(event) => setDeployRef(event.target.value)} placeholder="Workflow ref" />
-            <textarea
-              value={deployInputsText}
-              onChange={(event) => setDeployInputsText(event.target.value)}
-              rows={4}
-              placeholder="workflow inputs as key=value per line"
-            />
+            <WorkspaceMetadataGrid data-testid="migration-deploy-target-readonly">
+              <WorkspaceMetadataItem label="Effective repository">
+                {deployTraceRepo || effectivePublishRepository || "Not configured"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Effective ref / branch">
+                {deployTraceRef || effectivePublishBranch || "Not configured"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow identifier">
+                {deployWorkflowIdentifier || "Not configured"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow source">
+                {deployResolvedWorkflowSource || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow inputs">
+                {(() => {
+                  const targetInputs = asRecord(deployTarget.inputs);
+                  const inputCount = Object.keys(targetInputs).length;
+                  if (inputCount <= 0) {
+                    return "None";
+                  }
+                  return `Configured (${inputCount})`;
+                })()}
+              </WorkspaceMetadataItem>
+            </WorkspaceMetadataGrid>
             <button
               type="button"
               className="button button-secondary"
               onClick={() => void handleSaveDeployConfig()}
               disabled={busyAction === "save_deploy_config" || busyAction === "load"}
             >
-              {busyAction === "save_deploy_config" ? "Saving..." : "Save Deploy Target"}
+              {busyAction === "save_deploy_config" ? "Saving..." : "Save Deploy Availability"}
             </button>
           </div>
         </div>
@@ -3047,6 +3068,24 @@ export function MigrationWorkspacePanel({
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Workflow identifier">
                 {deployWorkflowIdentifier || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow identifier requested">
+                {deployWorkflowIdentifierRequested || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow identifier type (requested)">
+                {deployWorkflowIdentifierTypeRequested || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow identifier type (used)">
+                {deployWorkflowIdentifierTypeUsed || dispatchIdentifierType || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow dispatch resolution">
+                {deployWorkflowDispatchResolutionSource || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow file path">
+                {deployWorkflowFilePath || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow name">
+                {deployWorkflowName || "Not available"}
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Workflow source">
                 {deployResolvedWorkflowSource || "Not available"}

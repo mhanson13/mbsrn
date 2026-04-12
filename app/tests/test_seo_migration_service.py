@@ -29,6 +29,7 @@ from app.integrations.seo_migration_github_publisher import (
 )
 from app.models.business import Business
 from app.models.github_publish_config import GitHubPublishConfig
+from app.models.principal import PrincipalRole
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_set import SEOCompetitorSet
@@ -569,6 +570,72 @@ def _configure_deploy_target(
         },
         principal_id="principal-1",
     )
+
+
+def test_update_deploy_config_rejects_operator_updates_to_admin_owned_fields(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "workflow_id": "deploy-tnmfire-www-prod.yml",
+            "ref": "main",
+        },
+        deploy_config_field_names={"enabled", "workflow_id", "ref"},
+        principal_id="admin-principal",
+        principal_role=PrincipalRole.ADMIN,
+    )
+
+    with pytest.raises(
+        SEOMigrationValidationError,
+        match="Only admin principals can update deploy repository/workflow controls.",
+    ):
+        service.update_deploy_config(
+            business_id=business_id,
+            site_id=site_id,
+            deploy_config={"workflow_id": "deploy-other.yml"},
+            deploy_config_field_names={"workflow_id"},
+            principal_id="operator-principal",
+            principal_role=PrincipalRole.OPERATOR,
+        )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    assert isinstance(workspace.deploy_config_json, dict)
+    assert workspace.deploy_config_json.get("workflow_id") == "deploy-tnmfire-www-prod.yml"
+
+
+def test_update_deploy_config_allows_operator_to_toggle_enabled_only(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": False,
+            "workflow_id": "deploy-tnmfire-www-prod.yml",
+            "ref": "main",
+        },
+        deploy_config_field_names={"enabled", "workflow_id", "ref"},
+        principal_id="admin-principal",
+        principal_role=PrincipalRole.ADMIN,
+    )
+
+    workspace = service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={"enabled": True},
+        deploy_config_field_names={"enabled"},
+        principal_id="operator-principal",
+        principal_role=PrincipalRole.OPERATOR,
+    )
+    assert isinstance(workspace.deploy_config_json, dict)
+    assert workspace.deploy_config_json.get("enabled") is True
+    assert workspace.deploy_config_json.get("workflow_id") == "deploy-tnmfire-www-prod.yml"
+    assert workspace.deploy_config_json.get("ref") == "main"
 
 
 def test_generate_artifacts_applies_guardrails_and_analytics_normalization(db_session) -> None:
@@ -3185,6 +3252,155 @@ def test_deploy_uses_publish_history_workflow_when_workspace_config_is_stale(db_
     assert resolution_payloads
     assert resolution_payloads[-1].get("resolved_workflow_source") == "publish_history_workflow"
     assert resolution_payloads[-1].get("workflow_id") == "deploy-tnmfire-www-prod.yml"
+
+
+def test_deploy_prefers_publish_history_workflow_path_when_history_workflow_id_is_stale(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    publish_history = list(workspace.publish_history_json or [])
+    assert publish_history
+    publish_history[-1] = {
+        **dict(publish_history[-1]),
+        "deploy_workflow_id": "stale-workflow-id.yml",
+        "deploy_workflow_path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+    }
+    workspace.publish_history_json = publish_history
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    action_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.deploy_calls
+    deploy_target, _ = publisher.deploy_calls[-1]
+    assert deploy_target.workflow_id == "deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("workflow_identifier_requested") == "stale-workflow-id.yml"
+    assert action_result.result.get("workflow_identifier_used") == "deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("workflow_identifier_type_requested") == "workflow_id"
+    assert action_result.result.get("workflow_identifier_type_used") == "workflow_file_path"
+    assert action_result.result.get("workflow_dispatch_resolution_source") == "workflow_file_path"
+    assert action_result.result.get("workflow_file_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("workflow_name") == "deploy-tnmfire-www-prod.yml"
+
+    accepted_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_dispatch_accepted"
+    ]
+    assert accepted_payloads
+    assert accepted_payloads[-1].get("workflow_identifier_requested") == "stale-workflow-id.yml"
+    assert accepted_payloads[-1].get("workflow_identifier_used") == "deploy-tnmfire-www-prod.yml"
+    assert accepted_payloads[-1].get("workflow_identifier_type_used") == "workflow_file_path"
+    assert accepted_payloads[-1].get("workflow_dispatch_resolution_source") == "workflow_file_path"
+
+
+def test_deploy_keeps_requested_workflow_identifier_when_history_workflow_path_missing(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    publish_history = list(workspace.publish_history_json or [])
+    assert publish_history
+    publish_history[-1] = {
+        **dict(publish_history[-1]),
+        "deploy_workflow_id": "stale-workflow-id.yml",
+        "deploy_workflow_path": None,
+    }
+    workspace.publish_history_json = publish_history
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    action_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.deploy_calls
+    deploy_target, _ = publisher.deploy_calls[-1]
+    assert deploy_target.workflow_id == "stale-workflow-id.yml"
+    assert action_result.result.get("workflow_identifier_requested") == "stale-workflow-id.yml"
+    assert action_result.result.get("workflow_identifier_used") == "stale-workflow-id.yml"
+    assert action_result.result.get("workflow_dispatch_resolution_source") == "workflow_id"
 
 
 @pytest.mark.parametrize(

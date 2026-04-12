@@ -60,6 +60,9 @@ Migration workspace boundary:
 - site workspace migration panel does not provide editable Admin-owned owner/base-path controls.
 - operators configure workspace repository name plus optional branch override.
 - workspace surfaces a merged effective target/readiness summary (admin owner + workspace repo/branch) without exposing credential material.
+- deploy routing controls are Admin-owned:
+  - `repo_owner`, `repo_name`, `workflow_id`, `ref`, `inputs`
+- site workspace shows those deploy routing values as read-only diagnostics and only allows bounded deploy availability toggling.
 - readiness UI distinguishes metadata readiness from runtime publisher capability:
   - `Runtime publisher: Ready`
   - `Runtime publisher: Credential unavailable`
@@ -67,7 +70,7 @@ Migration workspace boundary:
   - `Runtime publisher: Integration unavailable`
 - deploy readiness surfaces explicit blocker guidance from backend `blocker_codes`:
   - `published_artifact_missing` -> published artifact required before deploy
-  - `deploy_configuration_missing` / `deploy_configuration_invalid` -> deploy target config action required
+  - `deploy_configuration_missing` / `deploy_configuration_invalid` -> admin deploy-target configuration action required
   - `deploy_runtime_unavailable` / `deploy_integration_unavailable` -> platform/runtime deploy wiring action required
 - analytics insertion mode + GA measurement fields are workspace-level settings and persist after save/reload.
 - approve/publish/deploy control enablement follows backend readiness prerequisites from refreshed summary state.

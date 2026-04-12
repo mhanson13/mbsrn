@@ -39,7 +39,7 @@ Primary workflow in site workspace `Migration` tab:
 6. Approve an artifact version.
 7. Confirm Admin-managed GitHub publish target readiness and run publish dry-run.
 8. Publish approved artifact to target repository.
-9. Configure deploy target and run deploy dry-run.
+9. Review Admin-owned deploy target diagnostics, set workspace deploy availability if needed, and run deploy dry-run.
 10. Submit explicit deploy request to GKE deployment workflow.
 
 Important operator cue:
@@ -621,6 +621,8 @@ Operational behavior:
 - site workspace migration panel does not expose editable Admin-owned owner/base-path controls
 - site workspace exposes Operator-owned `repo_name` + optional `branch` override for publish destination selection
 - site workspace shows merged effective target summary/readiness (Admin owner + workspace repo/branch)
+- site workspace does not expose editable raw deploy workflow routing controls (`repo_owner`, `repo_name`, `workflow_id`, `ref`, `inputs`) for operators
+- migration workspace keeps deploy routing values visible as read-only diagnostics and only allows bounded deploy availability toggle at workspace level
 - admin UI now validates obvious issues before save:
   - owner must match GitHub account/org shape
   - default branch is required/validated when enabled
@@ -676,11 +678,14 @@ Notes:
   - UI messaging maps these classes to role-aware guidance (Operator action vs Platform/Admin action).
 
 ## Deploy Workflow (GKE Path)
-Deploy target is site-scoped configuration:
-- optional repo override (`repo_owner`, `repo_name`)
-- workflow id/ref (`workflow_id`, `ref`)
-- bounded workflow `inputs`
-- `enabled`
+Deploy target ownership is split for safety:
+- Admin-owned deploy routing controls:
+  - `repo_owner`, `repo_name`
+  - `workflow_id`, `ref`
+  - bounded workflow `inputs`
+- Operator workspace controls:
+  - `enabled` toggle only
+  - read-only effective deploy target diagnostics (repo/ref/workflow identity + staged readiness/traceability)
 
 Deploy behavior:
 - explicit operator-triggered action only
@@ -695,6 +700,11 @@ Deploy behavior:
   1. authoritative publish-history workflow identity for the same artifact + repo/ref (`deploy_workflow_id` / `deploy_workflow_path`) when available
   2. workspace deploy config `workflow_id`
   3. platform default workflow id
+- deploy dispatch now records both requested and used workflow identifiers for traceability:
+  - `workflow_identifier_requested` / `workflow_identifier_type_requested`
+  - `workflow_identifier_used` / `workflow_identifier_type_used`
+  - `workflow_dispatch_resolution_source` (`workflow_id`, `workflow_file_path`, `workflow_id_path_normalized`)
+  - when publish history contains a verified workflow file path, dispatch prefers the file-derived workflow identifier to avoid stale id drift
 - deployment history captured with status/result metadata
 - duplicate non-dry-run deploy requests for the same artifact+target+inputs are rejected with operator-readable validation errors
 - retry after a failed deploy is supported and recorded as a new history event
@@ -812,6 +822,9 @@ Logged fields are safe metadata only:
   - `requested_ref`, `resolved_ref`, `ref_source`
   - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`
   - `workflow_dispatch_supported`, `workflow_trigger_types`, `dispatch_identifier_type`
+  - `workflow_identifier_requested`, `workflow_identifier_used`
+  - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
+  - `workflow_dispatch_resolution_source`, `workflow_file_path`, `workflow_name`
   - `dispatch_service_availability`, `dispatch_service_reason_code`
   - `deploy_trace_id`
   - `remediation_mode`
@@ -864,7 +877,7 @@ Publish/deploy controls:
 7. Approve the chosen artifact version.
 8. Confirm Admin publish target readiness and run publish dry-run.
 9. Run publish (non-dry-run) after dry-run checks pass.
-10. Save deploy target config and run deploy dry-run.
+10. Confirm deploy is enabled for the workspace and run deploy dry-run.
 11. Submit deploy request.
 12. Validate deployment externally and coordinate DNS cutover separately.
 
@@ -872,7 +885,7 @@ Publish/deploy controls:
 
 In the Deploy Readiness traceability grid, use these fields for production verification:
 - `Deploy trace ID`: correlation handle for control-plane and refresh logs.
-- `Workflow identifier`, `Ref / branch`, `Workflow source`: confirms which workflow target was selected.
+- `Workflow identifier (requested vs used)`, `Ref / branch`, `Workflow source`: confirms which workflow target was requested, what was dispatched, and why.
 - `Trigger support` and `Service/function availability`: separates workflow trigger compatibility from runtime service readiness.
 - `Dispatch result stage` and `Dispatch result reason`: identifies the exact stage that blocked/failed.
 - `Workflow run ID` and `Workflow run state`: confirms when run evidence exists.

@@ -2970,7 +2970,7 @@ describe("site workspace migration tab", () => {
     );
   });
 
-  it("uses admin-owned owner with operator-managed repository/branch and saves publish/deploy/analytics settings", async () => {
+  it("uses admin-owned deploy workflow controls and saves bounded publish/deploy/analytics settings", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary
       .mockResolvedValueOnce(
@@ -3057,18 +3057,20 @@ describe("site workspace migration tab", () => {
       ),
     );
 
-    await user.clear(screen.getByPlaceholderText("Workflow ID"));
-    await user.type(screen.getByPlaceholderText("Workflow ID"), "deploy-www-prod.yml");
-    await user.click(screen.getByRole("button", { name: "Save Deploy Target" }));
+    expect(screen.queryByPlaceholderText("Workflow ID")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Workflow ref")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("workflow inputs as key=value per line")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("migration-deploy-target-admin-boundary")).toHaveTextContent(
+      "Admin controls deploy repository/workflow routing.",
+    );
+    await user.click(screen.getByRole("button", { name: "Save Deploy Availability" }));
     await waitFor(() =>
       expect(mockUpdateMigrationDeployConfig).toHaveBeenCalledWith(
         "token-1",
         "biz-1",
         "site-1",
         {
-          deploy_config: expect.objectContaining({
-            workflow_id: "deploy-www-prod.yml",
-          }),
+          deploy_config: expect.objectContaining({ enabled: false }),
         },
       ),
     );
@@ -3555,6 +3557,13 @@ describe("site workspace migration tab", () => {
             resolved_workflow_source: "publish_history_workflow",
           },
           workflow_identifier: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          workflow_identifier_requested: "stale-workflow-id.yml",
+          workflow_identifier_used: "deploy-tnmfire-www-prod.yml",
+          workflow_identifier_type_requested: "workflow_id",
+          workflow_identifier_type_used: "workflow_file_path",
+          workflow_dispatch_resolution_source: "workflow_file_path",
+          workflow_file_path: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          workflow_name: "deploy-tnmfire-www-prod.yml",
           dispatch_identifier_type: "workflow_id",
           workflow_dispatch_supported: true,
           workflow_trigger_types: ["workflow_dispatch"],
@@ -3582,6 +3591,13 @@ describe("site workspace migration tab", () => {
           ref: "main",
           workflow_id: "deploy-tnmfire-www-prod.yml",
           workflow_identifier: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          workflow_identifier_requested: "stale-workflow-id.yml",
+          workflow_identifier_used: "deploy-tnmfire-www-prod.yml",
+          workflow_identifier_type_requested: "workflow_id",
+          workflow_identifier_type_used: "workflow_file_path",
+          workflow_dispatch_resolution_source: "workflow_file_path",
+          workflow_file_path: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          workflow_name: "deploy-tnmfire-www-prod.yml",
           resolved_workflow_source: "publish_history_workflow",
           deploy_trace_id: "deploy-trace-123",
           workflow_dispatch_supported: true,
@@ -3606,6 +3622,9 @@ describe("site workspace migration tab", () => {
     expect(traceabilityPanel).toHaveTextContent("mhanson13/tnmfire");
     expect(traceabilityPanel).toHaveTextContent("main");
     expect(traceabilityPanel).toHaveTextContent(".github/workflows/deploy-tnmfire-www-prod.yml");
+    expect(traceabilityPanel).toHaveTextContent("stale-workflow-id.yml");
+    expect(traceabilityPanel).toHaveTextContent("deploy-tnmfire-www-prod.yml");
+    expect(traceabilityPanel).toHaveTextContent("workflow_file_path");
     expect(traceabilityPanel).toHaveTextContent("publish_history_workflow");
     expect(traceabilityPanel).toHaveTextContent("deploy-trace-123");
     expect(traceabilityPanel).toHaveTextContent("Supported");
