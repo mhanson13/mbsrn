@@ -466,6 +466,13 @@ function asStringOrNull(value: unknown): string | null {
   return normalized || null;
 }
 
+function asBooleanOrNull(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return null;
+}
+
 function asStringList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -473,6 +480,23 @@ function asStringList(value: unknown): string[] {
   return value
     .map((item) => String(item || "").trim())
     .filter((item) => item.length > 0);
+}
+
+function formatBooleanStateLabel(value: boolean | null, labels?: { trueLabel?: string; falseLabel?: string }): string {
+  if (value === true) {
+    return labels?.trueLabel || "Yes";
+  }
+  if (value === false) {
+    return labels?.falseLabel || "No";
+  }
+  return "Unknown";
+}
+
+function formatReasonCodeLabel(value: string | null): string {
+  if (!value) {
+    return "Not available";
+  }
+  return value.replace(/_/g, " ");
 }
 
 function parseInputsText(value: string): Record<string, string> {
@@ -1569,6 +1593,71 @@ export function MigrationWorkspacePanel({
     effectivePublishArtifactRoot,
     currentSiteUrl,
   });
+  const latestDeployHistoryRecord =
+    deployHistory.length > 0 ? asRecord(deployHistory[deployHistory.length - 1]) : {};
+  const deployTraceId =
+    asStringOrNull(latestDeployHistoryRecord.deploy_trace_id) ||
+    asStringOrNull(deployReadiness.last_deploy_trace_id);
+  const deployWorkflowIdentifier =
+    asStringOrNull(latestDeployHistoryRecord.workflow_identifier) ||
+    asStringOrNull(deployReadiness.workflow_identifier) ||
+    asStringOrNull(deployTarget.workflow_id);
+  const deployResolvedWorkflowSource =
+    asStringOrNull(latestDeployHistoryRecord.resolved_workflow_source) ||
+    asStringOrNull(deployTarget.resolved_workflow_source);
+  const deployTraceRepoOwner =
+    asStringOrNull(latestDeployHistoryRecord.repo_owner) || asStringOrNull(deployTarget.repo_owner);
+  const deployTraceRepoName =
+    asStringOrNull(latestDeployHistoryRecord.repo_name) || asStringOrNull(deployTarget.repo_name);
+  const deployTraceRepo =
+    deployTraceRepoOwner && deployTraceRepoName ? `${deployTraceRepoOwner}/${deployTraceRepoName}` : null;
+  const deployTraceRef =
+    asStringOrNull(latestDeployHistoryRecord.resolved_ref) ||
+    asStringOrNull(latestDeployHistoryRecord.ref) ||
+    asStringOrNull(deployTarget.ref);
+  const workflowDispatchSupported =
+    asBooleanOrNull(latestDeployHistoryRecord.workflow_dispatch_supported) ??
+    asBooleanOrNull(deployReadiness.workflow_dispatch_supported);
+  const workflowTriggerTypes = (() => {
+    const historyTriggerTypes = asStringList(latestDeployHistoryRecord.workflow_trigger_types);
+    if (historyTriggerTypes.length > 0) {
+      return historyTriggerTypes;
+    }
+    return asStringList(deployReadiness.workflow_trigger_types);
+  })();
+  const dispatchServiceAvailability =
+    asBooleanOrNull(latestDeployHistoryRecord.dispatch_service_availability) ??
+    asBooleanOrNull(deployReadiness.dispatch_service_availability);
+  const dispatchServiceReasonCode =
+    asStringOrNull(latestDeployHistoryRecord.dispatch_service_reason_code) ||
+    asStringOrNull(deployReadiness.dispatch_service_reason_code);
+  const dispatchIdentifierType =
+    asStringOrNull(latestDeployHistoryRecord.dispatch_identifier_type) ||
+    asStringOrNull(deployReadiness.dispatch_identifier_type);
+  const dispatchAttempted =
+    asBooleanOrNull(latestDeployHistoryRecord.dispatch_attempted) ??
+    asBooleanOrNull(deployReadiness.last_dispatch_attempted);
+  const dispatchResultStage =
+    asStringOrNull(latestDeployHistoryRecord.dispatch_result_stage) ||
+    asStringOrNull(deployReadiness.last_dispatch_result_stage);
+  const workflowRunId = (() => {
+    const fromHistory = latestDeployHistoryRecord.workflow_run_id;
+    if (typeof fromHistory === "number" && Number.isFinite(fromHistory)) {
+      return String(Math.trunc(fromHistory));
+    }
+    const fromReadiness = deployReadiness.last_workflow_run_id;
+    if (typeof fromReadiness === "number" && Number.isFinite(fromReadiness)) {
+      return String(Math.trunc(fromReadiness));
+    }
+    return asStringOrNull(fromHistory) || asStringOrNull(fromReadiness);
+  })();
+  const workflowRunStatus =
+    asStringOrNull(latestDeployHistoryRecord.workflow_run_status) ||
+    asStringOrNull(deployReadiness.last_workflow_run_status);
+  const workflowRunConclusion =
+    asStringOrNull(latestDeployHistoryRecord.workflow_run_conclusion) ||
+    asStringOrNull(deployReadiness.last_workflow_run_conclusion);
+  const deployFailureReasonCode = asStringOrNull(deployReadiness.last_failure_reason);
   const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
   const draftReadiness = parseDraftReadiness(contextSummary);
   const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
@@ -2926,6 +3015,69 @@ export function MigrationWorkspacePanel({
               <span className="hint warning">Last failure category: {toFailureCategoryLabel(deployFailureCategory)}</span>
             ) : null}
             {deployFailureMessage ? <span className="hint warning">{deployFailureMessage}</span> : null}
+            <WorkspaceMetadataGrid data-testid="migration-deploy-traceability">
+              <WorkspaceMetadataItem label="Repository">
+                {deployTraceRepo || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Ref / branch">
+                {deployTraceRef || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow identifier">
+                {deployWorkflowIdentifier || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow source">
+                {deployResolvedWorkflowSource || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Deploy trace ID">
+                {deployTraceId || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Trigger support">
+                {formatBooleanStateLabel(workflowDispatchSupported, {
+                  trueLabel: "Supported",
+                  falseLabel: "Not supported",
+                })}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Trigger types">
+                {workflowTriggerTypes.length > 0 ? workflowTriggerTypes.join(", ") : "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Dispatch identifier type">
+                {dispatchIdentifierType || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Service/function availability">
+                {formatBooleanStateLabel(dispatchServiceAvailability, {
+                  trueLabel: "Available",
+                  falseLabel: "Unavailable",
+                })}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Service availability reason">
+                {formatReasonCodeLabel(dispatchServiceReasonCode)}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Dispatch attempted">
+                {formatBooleanStateLabel(dispatchAttempted)}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Dispatch result stage">
+                {dispatchResultStage || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Dispatch result reason">
+                {formatReasonCodeLabel(deployFailureReasonCode)}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow run ID">
+                {workflowRunId || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow run state">
+                {workflowRunStatus
+                  ? workflowRunConclusion
+                    ? `${workflowRunStatus} (${workflowRunConclusion})`
+                    : workflowRunStatus
+                  : "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Expected URL">
+                {destinationSummary.deployExpectedPublishUrl || "Not determinable"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Confirmed live URL">
+                {destinationSummary.deployResolvedLiveUrl || "Not yet confirmed"}
+              </WorkspaceMetadataItem>
+            </WorkspaceMetadataGrid>
           </div>
         </div>
 

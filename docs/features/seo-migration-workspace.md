@@ -771,6 +771,21 @@ Publish/deploy history entries are append-only, bounded lists and include:
 - sanitized failure summary (`error_summary`) on error paths
 - deploy workflow resolution trace fields (`resolved_workflow_source`, and `workflow_path` when known)
 
+## Deploy Path Stage Model
+Deploy diagnostics now track explicit staged evidence:
+1. `artifact`
+2. `publish_target`
+3. `workflow_identity`
+4. `dispatch_service_availability`
+5. `workflow_dispatch` attempt/result
+6. `workflow_run_evidence`
+7. `resolved_live_url_evidence`
+
+This keeps trigger-level and service-level readiness distinct:
+- workflow trigger support: `workflow_dispatch_supported`, `workflow_trigger_types`
+- deployment-side service/function availability: `dispatch_service_availability`, `dispatch_service_reason_code`
+- dispatch outcome evidence: `dispatch_attempted`, `dispatch_result_stage`, `workflow_run_id`
+
 ## Structured Logging
 Migration control-plane actions emit structured logs (`event=seo_migration_control_plane_action`) for:
 - approval requested/completed/failed
@@ -796,6 +811,9 @@ Logged fields are safe metadata only:
 - deploy target readiness logs include:
   - `requested_ref`, `resolved_ref`, `ref_source`
   - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`
+  - `workflow_dispatch_supported`, `workflow_trigger_types`, `dispatch_identifier_type`
+  - `dispatch_service_availability`, `dispatch_service_reason_code`
+  - `deploy_trace_id`
   - `remediation_mode`
 - draft-generation fields include `draft_run_id`, provider/model/prompt version, retryability, and correlation id when available
 - draft-generation fields include `model_requested`, `model_resolved`, `model_used`, request-shape metadata (`endpoint_path`, `execution_mode`, `response_format_mode`, `request_body_mode`), and `failure_source` (`local_preflight` vs `remote_provider`) for request-path traceability

@@ -106,6 +106,8 @@ class SEOMigrationGitHubTargetReadinessResult:
     workflow_dispatch_ready: bool
     workflow_dispatch_supported: bool
     workflow_trigger_types: tuple[str, ...]
+    dispatch_service_availability: bool
+    dispatch_service_reason_code: str | None
     dispatch_identifier_type: str
     remediation_mode: str
 
@@ -194,6 +196,8 @@ class SEOMigrationGitHubPublisher:
             workflow_dispatch_ready=True,
             workflow_dispatch_supported=True,
             workflow_trigger_types=("workflow_dispatch",),
+            dispatch_service_availability=True,
+            dispatch_service_reason_code="available",
             dispatch_identifier_type="workflow_id",
             remediation_mode=remediation_mode.strip() or "none",
         )
@@ -1227,6 +1231,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_dispatch_ready=bool(workflow_dispatch_ready),
             workflow_dispatch_supported=True,
             workflow_trigger_types=workflow_trigger_types,
+            dispatch_service_availability=True,
+            dispatch_service_reason_code="available",
             dispatch_identifier_type=_workflow_dispatch_identifier_type(target.workflow_id),
             remediation_mode=remediation_mode.strip() or "none",
         )

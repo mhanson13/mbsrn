@@ -3538,6 +3538,87 @@ describe("site workspace migration tab", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders staged deploy traceability diagnostics from readiness and deploy history", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        deploy_readiness: {
+          ready: false,
+          reasons: ["A published artifact is required before deploy."],
+          blocker_codes: ["published_artifact_missing"],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            workflow_id: "deploy-tnmfire-www-prod.yml",
+            ref: "main",
+            resolved_workflow_source: "publish_history_workflow",
+          },
+          workflow_identifier: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          dispatch_identifier_type: "workflow_id",
+          workflow_dispatch_supported: true,
+          workflow_trigger_types: ["workflow_dispatch"],
+          dispatch_service_availability: false,
+          dispatch_service_reason_code: "runtime_publisher_unavailable",
+          last_deploy_trace_id: "deploy-trace-123",
+          last_dispatch_attempted: true,
+          last_dispatch_result_stage: "workflow_dispatch",
+          last_workflow_run_id: 987654,
+          last_workflow_run_status: "in_progress",
+          last_workflow_run_conclusion: null,
+          last_failure_reason: "workflow_dispatch_not_supported",
+        },
+      }),
+    );
+    mockFetchMigrationDeployHistory.mockResolvedValue({
+      items: [
+        {
+          timestamp: "2026-03-21T00:14:00Z",
+          action: "deploy",
+          status: "failed",
+          artifact_version: "1",
+          repo_owner: "mhanson13",
+          repo_name: "tnmfire",
+          ref: "main",
+          workflow_id: "deploy-tnmfire-www-prod.yml",
+          workflow_identifier: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          resolved_workflow_source: "publish_history_workflow",
+          deploy_trace_id: "deploy-trace-123",
+          workflow_dispatch_supported: true,
+          workflow_trigger_types: ["workflow_dispatch"],
+          dispatch_service_availability: false,
+          dispatch_service_reason_code: "runtime_publisher_unavailable",
+          dispatch_identifier_type: "workflow_id",
+          dispatch_attempted: true,
+          dispatch_result_stage: "workflow_dispatch",
+          workflow_run_id: 987654,
+          workflow_run_status: "in_progress",
+          workflow_run_conclusion: null,
+        },
+      ],
+      total: 1,
+    });
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+
+    const traceabilityPanel = await screen.findByTestId("migration-deploy-traceability");
+    expect(traceabilityPanel).toHaveTextContent("mhanson13/tnmfire");
+    expect(traceabilityPanel).toHaveTextContent("main");
+    expect(traceabilityPanel).toHaveTextContent(".github/workflows/deploy-tnmfire-www-prod.yml");
+    expect(traceabilityPanel).toHaveTextContent("publish_history_workflow");
+    expect(traceabilityPanel).toHaveTextContent("deploy-trace-123");
+    expect(traceabilityPanel).toHaveTextContent("Supported");
+    expect(traceabilityPanel).toHaveTextContent("workflow_dispatch");
+    expect(traceabilityPanel).toHaveTextContent("Unavailable");
+    expect(traceabilityPanel).toHaveTextContent("runtime publisher unavailable");
+    expect(traceabilityPanel).toHaveTextContent("workflow dispatch");
+    expect(traceabilityPanel).toHaveTextContent("workflow dispatch not supported");
+    expect(traceabilityPanel).toHaveTextContent("987654");
+    expect(traceabilityPanel).toHaveTextContent("in_progress");
+    expect(traceabilityPanel).toHaveTextContent("Not yet confirmed");
+  });
+
   it("renders structured draft generation failure details with retry hint", async () => {
     const user = userEvent.setup();
     mockGenerateMigrationDraftArtifacts.mockRejectedValueOnce(

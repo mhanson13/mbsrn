@@ -499,8 +499,16 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert deploy_response.status_code == 200
     assert deploy_response.json()["workspace"]["deploy_status"] == "deploy_requested"
     assert deploy_response.json()["artifact"]["deploy_status"] == "deploy_requested"
-    assert "resolved_live_url" in (deploy_response.json().get("result") or {})
-    assert "url_source" in (deploy_response.json().get("result") or {})
+    deploy_result = deploy_response.json().get("result") or {}
+    assert "resolved_live_url" in deploy_result
+    assert "url_source" in deploy_result
+    assert isinstance(deploy_result.get("deploy_trace_id"), str)
+    assert deploy_result.get("deploy_trace_id")
+    assert "workflow_identifier" in deploy_result
+    assert isinstance(deploy_result.get("workflow_trigger_types"), list)
+    assert "dispatch_service_availability" in deploy_result
+    assert "dispatch_service_reason_code" in deploy_result
+    assert "dispatch_result_stage" in deploy_result
 
     publish_history_response = client.get(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish-history"
@@ -614,6 +622,10 @@ def test_refresh_migration_deploy_status_updates_run_metadata_and_confirms_live_
         },
     )
     assert deploy_response.status_code == 200
+    deploy_result = deploy_response.json().get("result") or {}
+    deploy_trace_id = deploy_result.get("deploy_trace_id")
+    assert isinstance(deploy_trace_id, str)
+    assert deploy_trace_id
 
     refresh_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy/refresh-status",
@@ -627,6 +639,10 @@ def test_refresh_migration_deploy_status_updates_run_metadata_and_confirms_live_
     assert refresh_result.get("workflow_run_conclusion") == "success"
     assert refresh_result.get("resolved_live_url") == "https://live.tnmfire.example"
     assert refresh_result.get("url_source") == "workflow_output"
+    assert refresh_result.get("deploy_trace_id") == deploy_trace_id
+    assert "dispatch_service_availability" in refresh_result
+    assert "dispatch_service_reason_code" in refresh_result
+    assert "workflow_identifier" in refresh_result
     assert len(publisher.refresh_calls) == 1
 
 

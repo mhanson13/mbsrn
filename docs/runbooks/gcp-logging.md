@@ -219,6 +219,15 @@ When migration deploy fails after publish, query these structured events:
 - `jsonPayload.event="seo_migration_deploy_status_refresh_completed"`
 - `jsonPayload.event="seo_migration_deploy_status_refresh_no_change"`
 
+Stage model to follow during triage:
+1. `artifact`
+2. `publish_target`
+3. `workflow_identity`
+4. `dispatch_service_availability`
+5. `workflow_dispatch`
+6. `workflow_run_evidence`
+7. `resolved_live_url_evidence`
+
 Key non-secret fields:
 
 - `target.resolved_workflow_source` (`publish_history_workflow`, `workspace_config_workflow`, `default_workflow`)
@@ -231,6 +240,8 @@ Key non-secret fields:
   - `requested_ref`, `resolved_ref`, `ref_source`
   - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`
   - `workflow_dispatch_supported`, `workflow_trigger_types`, `dispatch_identifier_type`
+  - `dispatch_service_availability`, `dispatch_service_reason_code`
+  - `deploy_trace_id`
   - `remediation_mode`
 - workflow provisioning fields:
   - `status` (`created`, `already_exists`, `verified`, `failed`)
@@ -250,6 +261,7 @@ Reason-code guidance:
 
 Dispatch-stage interpretation note:
 - if target-readiness preflight already logged `repo_exists=true`, `ref_exists=true`, `workflow_exists=true`, and a later `workflow_dispatch` call fails, prefer workflow dispatchability troubleshooting before assuming branch/ref drift.
+- if `workflow_dispatch_supported=true` but `dispatch_service_availability=false`, treat this as service/function readiness unavailability (not workflow identity/trigger mismatch).
 
 Live URL confirmation guidance:
 

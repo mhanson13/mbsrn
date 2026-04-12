@@ -24,6 +24,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
 )
 from app.models.business import Business
@@ -145,6 +146,11 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         deploy_error_stage: str | None = None,
         fail_workflow_provision: bool = False,
         existing_workflow: bool = False,
+        readiness_workflow_dispatch_supported: bool = True,
+        readiness_workflow_trigger_types: tuple[str, ...] | None = None,
+        readiness_dispatch_service_availability: bool = True,
+        readiness_dispatch_service_reason_code: str | None = "available",
+        readiness_dispatch_identifier_type: str = "workflow_id",
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
@@ -166,6 +172,11 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.deploy_error_stage = deploy_error_stage
         self.fail_workflow_provision = fail_workflow_provision
         self.existing_workflow = existing_workflow
+        self.readiness_workflow_dispatch_supported = readiness_workflow_dispatch_supported
+        self.readiness_workflow_trigger_types = readiness_workflow_trigger_types or ("workflow_dispatch",)
+        self.readiness_dispatch_service_availability = readiness_dispatch_service_availability
+        self.readiness_dispatch_service_reason_code = readiness_dispatch_service_reason_code
+        self.readiness_dispatch_identifier_type = readiness_dispatch_identifier_type
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
@@ -281,6 +292,36 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_path=f".github/workflows/{workflow_id}",
             provisioned=provisioned,
             commit_sha=commit_sha,
+        )
+
+    def check_deploy_target_readiness(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        allow_ref_repair: bool = False,
+        allow_workflow_repair: bool = False,
+        dry_run: bool = False,
+        remediation_mode: str = "none",
+    ) -> SEOMigrationGitHubTargetReadinessResult:
+        del allow_ref_repair, allow_workflow_repair, dry_run
+        return SEOMigrationGitHubTargetReadinessResult(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            requested_ref=target.ref,
+            resolved_ref=target.ref,
+            ref_source="requested",
+            workflow_id=target.workflow_id,
+            workflow_path=f".github/workflows/{target.workflow_id}",
+            repo_exists=True,
+            ref_exists=True,
+            workflow_exists=True,
+            workflow_dispatch_ready=True,
+            workflow_dispatch_supported=self.readiness_workflow_dispatch_supported,
+            workflow_trigger_types=tuple(self.readiness_workflow_trigger_types),
+            dispatch_service_availability=self.readiness_dispatch_service_availability,
+            dispatch_service_reason_code=self.readiness_dispatch_service_reason_code,
+            dispatch_identifier_type=self.readiness_dispatch_identifier_type,
+            remediation_mode=remediation_mode.strip() or "none",
         )
 
 
@@ -2301,7 +2342,7 @@ def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output
         analytics_measurement_id=None,
         principal_id="principal-1",
     )
-    service.deploy_artifact_version(
+    deploy_result = service.deploy_artifact_version(
         business_id=business_id,
         site_id=site_id,
         artifact_version_id=artifact.id,
@@ -2321,6 +2362,7 @@ def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output
     assert refresh_result.result.get("workflow_run_conclusion") == "success"
     assert refresh_result.result.get("resolved_live_url") == "https://refresh-live.tnmfire.com"
     assert refresh_result.result.get("url_source") == "workflow_output"
+    assert refresh_result.result.get("deploy_trace_id") == deploy_result.result.get("deploy_trace_id")
     assert publisher.refresh_calls
 
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
@@ -4088,4 +4130,96 @@ def test_deploy_failure_logs_failure_category(db_session, caplog) -> None:
         and payload.get("failure_category") == "deploy_error"
         and payload.get("failure_reason") == "Simulated deploy failure."
         for payload in payloads
+    )
+
+
+def test_deploy_logs_distinguish_trigger_support_from_dispatch_service_availability(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher(
+        fail_deploy=True,
+        deploy_error_code="workflow_dispatch_not_supported",
+        deploy_error_message="Workflow dispatch rejected.",
+        deploy_error_stage="workflow_dispatch",
+        readiness_workflow_dispatch_supported=True,
+        readiness_workflow_trigger_types=("workflow_dispatch",),
+        readiness_dispatch_service_availability=False,
+        readiness_dispatch_service_reason_code="runtime_unavailable",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+
+    with pytest.raises(SEOMigrationValidationError, match="Workflow dispatch rejected."):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    event_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+    ]
+    readiness_events = [
+        payload
+        for payload in event_payloads
+        if payload.get("event") == "seo_migration_target_readiness_check"
+    ]
+    assert readiness_events
+    assert any(
+        payload.get("workflow_dispatch_supported") is True
+        and "workflow_dispatch" in (payload.get("workflow_trigger_types") or [])
+        and payload.get("dispatch_service_availability") is False
+        and payload.get("dispatch_service_reason_code") == "runtime_unavailable"
+        and payload.get("dispatch_identifier_type") == "workflow_id"
+        for payload in readiness_events
+    )
+
+    control_plane_payloads = [
+        payload
+        for payload in event_payloads
+        if payload.get("event") == "seo_migration_control_plane_action"
+        and payload.get("action") == "deploy"
+        and payload.get("status") == "failed"
+    ]
+    assert control_plane_payloads
+    assert any(
+        isinstance(payload.get("target"), dict)
+        and payload.get("target", {}).get("dispatch_service_availability") is False
+        and payload.get("target", {}).get("dispatch_service_reason_code") == "runtime_unavailable"
+        and payload.get("target", {}).get("dispatch_result_stage") == "workflow_dispatch"
+        and payload.get("target", {}).get("failure_reason_code") == "workflow_dispatch_not_supported"
+        and isinstance(payload.get("target", {}).get("deploy_trace_id"), str)
+        and payload.get("target", {}).get("deploy_trace_id")
+        for payload in control_plane_payloads
     )
