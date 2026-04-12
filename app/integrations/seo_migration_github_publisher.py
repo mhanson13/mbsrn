@@ -104,6 +104,9 @@ class SEOMigrationGitHubTargetReadinessResult:
     ref_exists: bool
     workflow_exists: bool
     workflow_dispatch_ready: bool
+    workflow_dispatch_supported: bool
+    workflow_trigger_types: tuple[str, ...]
+    dispatch_identifier_type: str
     remediation_mode: str
 
 
@@ -189,6 +192,9 @@ class SEOMigrationGitHubPublisher:
             ref_exists=True,
             workflow_exists=True,
             workflow_dispatch_ready=True,
+            workflow_dispatch_supported=True,
+            workflow_trigger_types=("workflow_dispatch",),
+            dispatch_identifier_type="workflow_id",
             remediation_mode=remediation_mode.strip() or "none",
         )
 
@@ -364,15 +370,21 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         workflow_run_id: int | None = None
         workflow_run_status: str | None = None
         workflow_run_conclusion: str | None = None
+        readiness_result: SEOMigrationGitHubTargetReadinessResult | None = None
         if not dry_run:
-            self.check_deploy_target_readiness(
+            readiness_result = self.check_deploy_target_readiness(
                 target=target,
                 allow_ref_repair=False,
                 allow_workflow_repair=False,
                 dry_run=False,
                 remediation_mode="none",
             )
-            self._dispatch_workflow_request(target=target)
+            self._dispatch_workflow_request(
+                target=target,
+                preflight_ref_verified=bool(readiness_result.ref_exists),
+                preflight_workflow_verified=bool(readiness_result.workflow_exists),
+                preflight_dispatch_ready=bool(readiness_result.workflow_dispatch_ready),
+            )
             (
                 workflow_run_id,
                 workflow_run_status,
@@ -840,14 +852,14 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             )
         return sha
 
-    def _workflow_file_exists_on_ref(
+    def _fetch_workflow_file_payload_on_ref(
         self,
         *,
         repo_owner: str,
         repo_name: str,
         ref: str,
         workflow_path: str,
-    ) -> bool:
+    ) -> dict[str, object] | None:
         payload = self._request_json(
             method="GET",
             path=(
@@ -869,9 +881,16 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             },
             error_stage="workflow_lookup",
         )
-        return isinstance(payload, dict)
+        if not isinstance(payload, dict):
+            return None
+        return payload
 
-    def _ensure_workflow_dispatch_ready_for_target(self, *, target: SEOMigrationGitHubDeployTarget) -> None:
+    def _ensure_workflow_dispatch_ready_for_target(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        workflow_file_payload: dict[str, object] | None = None,
+    ) -> tuple[bool, tuple[str, ...]]:
         workflow_payload = self._request_json(
             method="GET",
             path=(
@@ -914,8 +933,23 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     safe_message="GitHub workflow target was not found.",
                     stage="workflow_lookup",
                 )
+        trigger_types = _extract_workflow_trigger_types(workflow_file_payload)
+        if trigger_types and "workflow_dispatch" not in trigger_types:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_not_dispatchable",
+                safe_message="GitHub workflow is not dispatchable for the deploy target.",
+                stage="workflow_lookup",
+            )
+        return True, tuple(sorted(trigger_types))
 
-    def _dispatch_workflow_request(self, *, target: SEOMigrationGitHubDeployTarget) -> None:
+    def _dispatch_workflow_request(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        preflight_ref_verified: bool = False,
+        preflight_workflow_verified: bool = False,
+        preflight_dispatch_ready: bool = False,
+    ) -> None:
         payload = {
             "ref": target.ref,
             "inputs": target.inputs,
@@ -974,9 +1008,23 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                         stage="workflow_dispatch",
                     ) from exc
                 if "ref" in response_message or "branch" in response_message:
+                    if preflight_ref_verified and preflight_workflow_verified and preflight_dispatch_ready:
+                        raise SEOMigrationGitHubPublisherError(
+                            code="workflow_not_dispatchable",
+                            safe_message="GitHub workflow is not dispatchable for the deploy target.",
+                            status_code=status_code,
+                            stage="workflow_dispatch",
+                        ) from exc
                     raise SEOMigrationGitHubPublisherError(
                         code="branch_not_found_or_ref_invalid",
                         safe_message="GitHub deploy ref was not found or is invalid.",
+                        status_code=status_code,
+                        stage="workflow_dispatch",
+                    ) from exc
+                if preflight_ref_verified and preflight_workflow_verified and preflight_dispatch_ready:
+                    raise SEOMigrationGitHubPublisherError(
+                        code="workflow_not_dispatchable",
+                        safe_message="GitHub workflow is not dispatchable for the deploy target.",
                         status_code=status_code,
                         stage="workflow_dispatch",
                     ) from exc
@@ -1133,13 +1181,14 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             ref=target.ref,
             allow_repair=allow_ref_repair and (not dry_run),
         )
-        workflow_exists = self._workflow_file_exists_on_ref(
+        workflow_file_payload = self._fetch_workflow_file_payload_on_ref(
             repo_owner=target.repo_owner,
             repo_name=target.repo_name,
             ref=target.ref,
             workflow_path=workflow_path,
         )
-        if not workflow_exists and allow_workflow_repair and (not dry_run):
+        workflow_exists = isinstance(workflow_file_payload, dict)
+        if (not workflow_exists) and allow_workflow_repair and (not dry_run):
             self.ensure_deploy_workflow(
                 repo_owner=target.repo_owner,
                 repo_name=target.repo_name,
@@ -1147,19 +1196,23 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 workflow_id=target.workflow_id,
                 dry_run=False,
             )
-            workflow_exists = self._workflow_file_exists_on_ref(
+            workflow_file_payload = self._fetch_workflow_file_payload_on_ref(
                 repo_owner=target.repo_owner,
                 repo_name=target.repo_name,
                 ref=target.ref,
                 workflow_path=workflow_path,
             )
+            workflow_exists = isinstance(workflow_file_payload, dict)
         if not workflow_exists:
             raise SEOMigrationGitHubPublisherError(
                 code="workflow_not_found",
                 safe_message="GitHub workflow target was not found.",
                 stage="workflow_lookup",
             )
-        self._ensure_workflow_dispatch_ready_for_target(target=target)
+        workflow_dispatch_ready, workflow_trigger_types = self._ensure_workflow_dispatch_ready_for_target(
+            target=target,
+            workflow_file_payload=workflow_file_payload,
+        )
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
             repo_name=target.repo_name,
@@ -1171,7 +1224,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             repo_exists=True,
             ref_exists=True,
             workflow_exists=True,
-            workflow_dispatch_ready=True,
+            workflow_dispatch_ready=bool(workflow_dispatch_ready),
+            workflow_dispatch_supported=True,
+            workflow_trigger_types=workflow_trigger_types,
+            dispatch_identifier_type=_workflow_dispatch_identifier_type(target.workflow_id),
             remediation_mode=remediation_mode.strip() or "none",
         )
 
@@ -1438,3 +1494,34 @@ def _status_links_to_workflow_run(*, status_item: dict[str, object], workflow_ru
         if value and needle in value:
             return True
     return False
+
+
+def _extract_workflow_trigger_types(workflow_file_payload: dict[str, object] | None) -> set[str]:
+    if not isinstance(workflow_file_payload, dict):
+        return set()
+    encoding = (_coerce_string(workflow_file_payload.get("encoding")) or "").strip().lower()
+    content = _coerce_string(workflow_file_payload.get("content"))
+    if encoding != "base64" or not content:
+        return set()
+    try:
+        decoded = base64.b64decode(content, validate=False).decode("utf-8", errors="replace")
+    except Exception:
+        return set()
+    lowered = decoded.lower()
+    triggers: set[str] = set()
+    if "workflow_dispatch" in lowered:
+        triggers.add("workflow_dispatch")
+    if "push" in lowered:
+        triggers.add("push")
+    if "pull_request" in lowered:
+        triggers.add("pull_request")
+    return triggers
+
+
+def _workflow_dispatch_identifier_type(workflow_id: str) -> str:
+    normalized = str(workflow_id or "").strip()
+    if normalized.isdigit():
+        return "workflow_numeric_id"
+    if "/" in normalized or normalized.lower().endswith(".yml") or normalized.lower().endswith(".yaml"):
+        return "workflow_id"
+    return "workflow_id"

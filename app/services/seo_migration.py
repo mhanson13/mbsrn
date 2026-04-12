@@ -1430,6 +1430,9 @@ class SEOMigrationService:
                     ref_exists=target_readiness.ref_exists,
                     workflow_exists=target_readiness.workflow_exists,
                     workflow_dispatch_ready=target_readiness.workflow_dispatch_ready,
+                    workflow_dispatch_supported=target_readiness.workflow_dispatch_supported,
+                    workflow_trigger_types=target_readiness.workflow_trigger_types,
+                    dispatch_identifier_type=target_readiness.dispatch_identifier_type,
                     remediation_mode=target_readiness.remediation_mode,
                 )
             deploy_result = self.github_publisher.dispatch_deploy(
@@ -1445,6 +1448,17 @@ class SEOMigrationService:
                 ref_exists = failure_stage not in {"repo_lookup", "ref_lookup"}
                 workflow_exists = failure_stage not in {"repo_lookup", "ref_lookup", "workflow_lookup"}
                 workflow_dispatch_ready = failure_stage not in {"repo_lookup", "ref_lookup", "workflow_lookup"}
+                workflow_dispatch_supported = (
+                    target_readiness.workflow_dispatch_supported
+                    if target_readiness is not None
+                    else failure_stage not in {"repo_lookup", "ref_lookup", "workflow_lookup", "workflow_dispatch"}
+                )
+                workflow_trigger_types = (
+                    target_readiness.workflow_trigger_types if target_readiness is not None else ()
+                )
+                dispatch_identifier_type = (
+                    target_readiness.dispatch_identifier_type if target_readiness is not None else "workflow_id"
+                )
                 self._log_target_readiness_check(
                     business_id=business_id,
                     site_id=site_id,
@@ -1465,6 +1479,9 @@ class SEOMigrationService:
                     ref_exists=ref_exists,
                     workflow_exists=workflow_exists,
                     workflow_dispatch_ready=workflow_dispatch_ready,
+                    workflow_dispatch_supported=workflow_dispatch_supported,
+                    workflow_trigger_types=workflow_trigger_types,
+                    dispatch_identifier_type=dispatch_identifier_type,
                     remediation_mode="none",
                 )
             failure_reason_for_log = (
@@ -4637,6 +4654,9 @@ class SEOMigrationService:
         ref_exists: bool,
         workflow_exists: bool,
         workflow_dispatch_ready: bool,
+        workflow_dispatch_supported: bool | None = None,
+        workflow_trigger_types: tuple[str, ...] | list[str] | None = None,
+        dispatch_identifier_type: str | None = None,
         remediation_mode: str,
     ) -> None:
         payload: dict[str, object] = {
@@ -4658,6 +4678,19 @@ class SEOMigrationService:
             "workflow_dispatch_ready": bool(workflow_dispatch_ready),
             "remediation_mode": _normalize_string(remediation_mode, max_length=60) or "none",
         }
+        if workflow_dispatch_supported is not None:
+            payload["workflow_dispatch_supported"] = bool(workflow_dispatch_supported)
+        normalized_trigger_types: list[str] = []
+        if isinstance(workflow_trigger_types, (tuple, list)):
+            for item in workflow_trigger_types:
+                normalized = _normalize_string(item, max_length=60)
+                if normalized:
+                    normalized_trigger_types.append(normalized)
+        if normalized_trigger_types:
+            payload["workflow_trigger_types"] = normalized_trigger_types
+        normalized_identifier_type = _normalize_string(dispatch_identifier_type, max_length=80)
+        if normalized_identifier_type:
+            payload["dispatch_identifier_type"] = normalized_identifier_type
         normalized_workflow_path = _normalize_string(workflow_path, max_length=200)
         if normalized_workflow_path:
             payload["workflow_path"] = normalized_workflow_path

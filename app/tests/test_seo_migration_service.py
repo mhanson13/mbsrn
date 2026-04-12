@@ -4013,6 +4013,9 @@ def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -
         and payload.get("ref_exists") is True
         and payload.get("workflow_exists") is True
         and payload.get("workflow_dispatch_ready") is True
+        and payload.get("workflow_dispatch_supported") is True
+        and "workflow_dispatch" in (payload.get("workflow_trigger_types") or [])
+        and payload.get("dispatch_identifier_type") == "workflow_id"
         and payload.get("remediation_mode") == "none"
         for payload in readiness_events
     )

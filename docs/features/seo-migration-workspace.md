@@ -593,6 +593,7 @@ Publish behavior:
 - publish always runs deploy-workflow bootstrap verification against the target branch (`.github/workflows/{workflow_id}`) before returning success for non-dry-run publish
 - generated/target repos are treated as workflow-missing by default until verified
 - if workflow is missing, publish provisions it and verifies presence before marking publish as valid/deploy-ready
+- provisioned workflow contract is explicitly dispatchable (`on: workflow_dispatch`) so deploy dispatch is a first-class bootstrap guarantee
 - if workflow provisioning cannot be created or verified, publish fails (`workflow_provisioning_failed`) and is not marked successful
 - no writes outside configured artifact root
 - dry-run supported
@@ -689,7 +690,7 @@ Deploy behavior:
   - repo must exist
   - target ref must exist
   - workflow file must exist on the target ref
-  - workflow must be dispatch-ready on the target ref
+  - workflow must be dispatch-ready on the target ref (file presence alone is insufficient)
 - deploy workflow dispatch target now resolves with precedence:
   1. authoritative publish-history workflow identity for the same artifact + repo/ref (`deploy_workflow_id` / `deploy_workflow_path`) when available
   2. workspace deploy config `workflow_id`
@@ -888,6 +889,7 @@ Deploy failures:
 - for repo/ref/workflow bootstrap target issues, inspect `seo_migration_target_readiness_check`:
   - `workflow_exists=false` means workflow bootstrap/repair did not verify on target ref
   - `workflow_dispatch_ready=false` means workflow metadata exists but is not dispatchable on target ref
+  - `workflow_dispatch_supported=false` means trigger-level dispatch support is missing/invalid for the target ref
   - mismatched `requested_ref` vs `resolved_ref` indicates ref resolution drift
 
 Verification checklist:

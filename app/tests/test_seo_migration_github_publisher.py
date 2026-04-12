@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import base64
 import urllib.error
 import urllib.request
 
@@ -139,7 +140,7 @@ def test_dispatch_deploy_classifies_ref_invalid(monkeypatch) -> None:
     publisher = GitHubSEOMigrationPublisher(token="test-token")
     with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
         publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
-    assert exc_info.value.code == "branch_not_found_or_ref_invalid"
+    assert exc_info.value.code == "workflow_not_dispatchable"
     assert exc_info.value.stage == "workflow_dispatch"
     assert len(calls) == 5
 
@@ -212,6 +213,55 @@ def test_dispatch_deploy_classifies_workflow_not_dispatchable(monkeypatch) -> No
                 body=json.dumps(
                     {
                         "state": "disabled_manually",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
+    assert exc_info.value.code == "workflow_not_dispatchable"
+    assert exc_info.value.stage == "workflow_lookup"
+    assert len(calls) == 4
+
+
+def test_dispatch_deploy_classifies_workflow_not_dispatchable_when_trigger_missing_on_ref(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    encoded_workflow = base64.b64encode(
+        (
+            "name: Deploy Site\n"
+            "on:\n"
+            "  push:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: echo deploy\n"
+        ).encode("utf-8")
+    ).decode("ascii")
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": "wfsha",
+                        "encoding": "base64",
+                        "content": encoded_workflow,
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
                         "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
                     }
                 ),
@@ -453,6 +503,51 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert calls[1][1].endswith("/repos/mhanson13/tnmfire/branches/main")
     assert calls[2][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main")
     assert calls[3][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+
+
+def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    captured_put_payload: dict[str, object] = {}
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _FakeHTTPResponse(status=200, body="{}"),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "commit-created"}})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"sha": "verified-sha"})),
+    ]
+
+    def _stub(request, timeout=None):
+        del timeout
+        calls.append((request.get_method(), request.full_url))
+        if (
+            request.get_method() == "PUT"
+            and request.full_url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+            and request.data
+        ):
+            captured_put_payload.update(json.loads(request.data.decode("utf-8")))
+        next_item = queue.pop(0)
+        if isinstance(next_item, Exception):
+            raise next_item
+        return next_item
+
+    monkeypatch.setattr(urllib.request, "urlopen", _stub)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+    )
+    encoded_content = str(captured_put_payload.get("content") or "")
+    assert encoded_content
+    workflow_yaml = base64.b64decode(encoded_content).decode("utf-8")
+    assert "workflow_dispatch" in workflow_yaml
+    assert len(calls) == 5
 
 
 def test_ensure_deploy_workflow_fails_when_post_write_verification_missing(monkeypatch) -> None:

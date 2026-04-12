@@ -230,6 +230,7 @@ Key non-secret fields:
 - readiness check fields:
   - `requested_ref`, `resolved_ref`, `ref_source`
   - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`
+  - `workflow_dispatch_supported`, `workflow_trigger_types`, `dispatch_identifier_type`
   - `remediation_mode`
 - workflow provisioning fields:
   - `status` (`created`, `already_exists`, `verified`, `failed`)
@@ -246,6 +247,9 @@ Reason-code guidance:
 - `workflow_dispatch_not_supported`: workflow exists but does not expose `workflow_dispatch`.
 - `token_not_authorized`: runtime token lacks required repository/workflow permissions.
 - `workflow_provisioning_failed`: publish could not verify workflow file presence after provisioning attempt.
+
+Dispatch-stage interpretation note:
+- if target-readiness preflight already logged `repo_exists=true`, `ref_exists=true`, `workflow_exists=true`, and a later `workflow_dispatch` call fails, prefer workflow dispatchability troubleshooting before assuming branch/ref drift.
 
 Live URL confirmation guidance:
 
