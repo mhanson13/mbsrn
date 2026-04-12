@@ -868,6 +868,18 @@ Publish/deploy controls:
 11. Submit deploy request.
 12. Validate deployment externally and coordinate DNS cutover separately.
 
+### Deploy Verification Cues (UI)
+
+In the Deploy Readiness traceability grid, use these fields for production verification:
+- `Deploy trace ID`: correlation handle for control-plane and refresh logs.
+- `Workflow identifier`, `Ref / branch`, `Workflow source`: confirms which workflow target was selected.
+- `Trigger support` and `Service/function availability`: separates workflow trigger compatibility from runtime service readiness.
+- `Dispatch result stage` and `Dispatch result reason`: identifies the exact stage that blocked/failed.
+- `Workflow run ID` and `Workflow run state`: confirms when run evidence exists.
+- `Expected URL` vs `Confirmed live URL`: expected URL is guidance; confirmed URL appears only from explicit deploy/workflow evidence.
+
+If dispatch was accepted but run evidence is not yet present, the workspace shows a no-run-yet message and instructs operators to use **Refresh deploy status** after eventual consistency delay.
+
 ## Controlled Production Exercise Checklist
 Use this checklist for a bounded real-world migration exercise:
 1. Confirm migration runtime config is present (`MIGRATION_GITHUB_TOKEN` and related `MIGRATION_*` values).

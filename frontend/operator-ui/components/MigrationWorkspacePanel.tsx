@@ -499,6 +499,29 @@ function formatReasonCodeLabel(value: string | null): string {
   return value.replace(/_/g, " ");
 }
 
+function formatDispatchStageLabel(value: string | null): string {
+  if (!value) {
+    return "Not available";
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return "Not available";
+  }
+  if (normalized === "workflow_dispatch") {
+    return "workflow dispatch";
+  }
+  if (normalized === "workflow_lookup") {
+    return "workflow lookup";
+  }
+  if (normalized === "ref_lookup") {
+    return "ref lookup";
+  }
+  if (normalized === "repo_lookup") {
+    return "repo lookup";
+  }
+  return normalized.replace(/_/g, " ");
+}
+
 function parseInputsText(value: string): Record<string, string> {
   const lines = splitLines(value);
   const result: Record<string, string> = {};
@@ -3029,7 +3052,7 @@ export function MigrationWorkspacePanel({
                 {deployResolvedWorkflowSource || "Not available"}
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Deploy trace ID">
-                {deployTraceId || "Not available"}
+                {deployTraceId ? <code data-testid="migration-deploy-trace-id">{deployTraceId}</code> : "Not available"}
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Trigger support">
                 {formatBooleanStateLabel(workflowDispatchSupported, {
@@ -3056,7 +3079,7 @@ export function MigrationWorkspacePanel({
                 {formatBooleanStateLabel(dispatchAttempted)}
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Dispatch result stage">
-                {dispatchResultStage || "Not available"}
+                {formatDispatchStageLabel(dispatchResultStage)}
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Dispatch result reason">
                 {formatReasonCodeLabel(deployFailureReasonCode)}
@@ -3078,6 +3101,19 @@ export function MigrationWorkspacePanel({
                 {destinationSummary.deployResolvedLiveUrl || "Not yet confirmed"}
               </WorkspaceMetadataItem>
             </WorkspaceMetadataGrid>
+            <span className="hint muted">
+              Expected URL is guidance only. Confirmed live URL appears only after explicit deploy/workflow evidence.
+            </span>
+            {dispatchAttempted === false ? (
+              <span className="hint warning" data-testid="migration-dispatch-state-hint">
+                Dispatch was not attempted because deploy readiness failed. Resolve blockers and retry deploy.
+              </span>
+            ) : dispatchAttempted === true && !workflowRunId ? (
+              <span className="hint warning" data-testid="migration-dispatch-state-hint">
+                Dispatch was accepted, but no workflow run evidence is available yet. Use &quot;Refresh deploy status&quot; after
+                eventual consistency delay.
+              </span>
+            ) : null}
           </div>
         </div>
 

@@ -263,6 +263,30 @@ Dispatch-stage interpretation note:
 - if target-readiness preflight already logged `repo_exists=true`, `ref_exists=true`, `workflow_exists=true`, and a later `workflow_dispatch` call fails, prefer workflow dispatchability troubleshooting before assuming branch/ref drift.
 - if `workflow_dispatch_supported=true` but `dispatch_service_availability=false`, treat this as service/function readiness unavailability (not workflow identity/trigger mismatch).
 
+### Production Verification Checklist (TnM Fire)
+
+Use this sequence for one bounded production deploy validation:
+
+1. In the migration workspace, choose the latest published artifact for `mhanson13/tnmfire` (`ref=main`).
+2. Submit deploy and capture `Deploy trace ID` from the Deploy Readiness traceability grid.
+3. Query deploy control-plane events using trace id correlation:
+   - `jsonPayload.event="seo_migration_control_plane_action"`
+   - `jsonPayload.action="deploy"`
+   - `jsonPayload.target.deploy_trace_id="<trace-id>"`
+4. Confirm staged evidence progression in logs:
+   - readiness/preflight fields (`workflow_identifier`, `workflow_dispatch_supported`, `dispatch_service_availability`)
+   - dispatch attempt fields (`dispatch_attempted=true`, `dispatch_result_stage`)
+   - run evidence fields (`workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`) when available
+5. If UI shows `Dispatch was accepted, but no workflow run evidence is available yet`, wait for eventual consistency and run **Refresh deploy status**.
+6. Re-query refresh events by trace id:
+   - `jsonPayload.event="seo_migration_deploy_status_refresh_requested"`
+   - `jsonPayload.event="seo_migration_workflow_run_refresh_result_captured"`
+   - `jsonPayload.event="seo_migration_deploy_status_refresh_completed"`
+7. Confirm URL evidence contract:
+   - `expected_publish_url` may be present as guidance
+   - `resolved_live_url` is only confirmed when explicit evidence is present with `url_source=workflow_output` or `url_source=deploy_result`
+8. If deploy still fails, route by `failure_stage` + `failure_reason_code` without guessing at hidden causes.
+
 Live URL confirmation guidance:
 
 - `url_source=deploy_result` or `url_source=workflow_output` indicates confirmed live URL evidence from deploy/runtime metadata.

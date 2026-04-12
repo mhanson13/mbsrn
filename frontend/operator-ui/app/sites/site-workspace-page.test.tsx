@@ -3617,6 +3617,66 @@ describe("site workspace migration tab", () => {
     expect(traceabilityPanel).toHaveTextContent("987654");
     expect(traceabilityPanel).toHaveTextContent("in_progress");
     expect(traceabilityPanel).toHaveTextContent("Not yet confirmed");
+    expect(screen.getByText(
+      "Expected URL is guidance only. Confirmed live URL appears only after explicit deploy/workflow evidence.",
+    )).toBeInTheDocument();
+    expect(screen.getByTestId("migration-deploy-trace-id")).toHaveTextContent("deploy-trace-123");
+  });
+
+  it("shows eventual-consistency deploy hint when dispatch has no workflow run evidence yet", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        deploy_readiness: {
+          ready: false,
+          reasons: ["Deployment target configuration is missing or disabled."],
+          blocker_codes: ["deploy_configuration_missing"],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            workflow_id: "deploy-tnmfire-www-prod.yml",
+            ref: "main",
+          },
+          workflow_identifier: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          workflow_dispatch_supported: true,
+          workflow_trigger_types: ["workflow_dispatch"],
+          dispatch_service_availability: true,
+          last_deploy_trace_id: "deploy-trace-no-run",
+          last_dispatch_attempted: true,
+          last_dispatch_result_stage: "workflow_dispatch",
+          last_workflow_run_id: null,
+          last_workflow_run_status: null,
+          last_workflow_run_conclusion: null,
+        },
+      }),
+    );
+    mockFetchMigrationDeployHistory.mockResolvedValue({
+      items: [
+        {
+          timestamp: "2026-03-21T00:14:00Z",
+          action: "deploy",
+          status: "deploy_requested",
+          artifact_version: "1",
+          repo_owner: "mhanson13",
+          repo_name: "tnmfire",
+          ref: "main",
+          workflow_id: "deploy-tnmfire-www-prod.yml",
+          workflow_identifier: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          deploy_trace_id: "deploy-trace-no-run",
+          dispatch_attempted: true,
+          dispatch_result_stage: "workflow_dispatch",
+        },
+      ],
+      total: 1,
+    });
+
+    render(<SiteWorkspacePage />);
+    await switchToMigrationTab(user);
+
+    expect(await screen.findByTestId("migration-dispatch-state-hint")).toHaveTextContent(
+      'Dispatch was accepted, but no workflow run evidence is available yet. Use "Refresh deploy status" after eventual consistency delay.',
+    );
   });
 
   it("renders structured draft generation failure details with retry hint", async () => {
