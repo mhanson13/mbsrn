@@ -685,6 +685,11 @@ Deploy behavior:
 - explicit operator-triggered action only
 - approved + published artifact required
 - readiness/state tracked separately from publish state
+- deploy target readiness is explicit for managed bootstrap targets (repo/ref/workflow):
+  - repo must exist
+  - target ref must exist
+  - workflow file must exist on the target ref
+  - workflow must be dispatch-ready on the target ref
 - deploy workflow dispatch target now resolves with precedence:
   1. authoritative publish-history workflow identity for the same artifact + repo/ref (`deploy_workflow_id` / `deploy_workflow_path`) when available
   2. workspace deploy config `workflow_id`
@@ -729,6 +734,7 @@ Migration publish/deploy paths normalize failures into stable categories:
     - `repo_not_found`
     - `workflow_not_found`
     - `branch_not_found_or_ref_invalid`
+    - `workflow_not_dispatchable`
     - `workflow_dispatch_not_supported`
 - `approval_required`
   - Attempted publish/deploy before required approval/publish prerequisites were satisfied.
@@ -770,6 +776,7 @@ Migration control-plane actions emit structured logs (`event=seo_migration_contr
 - publish requested/completed/failed
 - deploy requested/completed/failed
 - deploy workflow source resolution (`event=seo_migration_deploy_workflow_resolution`) when publish-history workflow identity is used
+- deploy target readiness preflight (`event=seo_migration_target_readiness_check`) with repo/ref/workflow/dispatch-ready booleans
 - deploy dispatch failure diagnostics (`event=seo_migration_deploy_dispatch_failed`)
 
 Draft generation also emits structured logs:
@@ -785,6 +792,10 @@ Logged fields are safe metadata only:
 - sanitized target summary (repo/branch/root or workflow/ref)
 - `failure_category` and sanitized `failure_reason` on failures
 - deploy failure logs include non-secret dispatch diagnostics (`failure_reason_code`, `failure_stage`) and workflow source (`resolved_workflow_source`)
+- deploy target readiness logs include:
+  - `requested_ref`, `resolved_ref`, `ref_source`
+  - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`
+  - `remediation_mode`
 - draft-generation fields include `draft_run_id`, provider/model/prompt version, retryability, and correlation id when available
 - draft-generation fields include `model_requested`, `model_resolved`, `model_used`, request-shape metadata (`endpoint_path`, `execution_mode`, `response_format_mode`, `request_body_mode`), and `failure_source` (`local_preflight` vs `remote_provider`) for request-path traceability
 - provider parse logs include `raw_length`, `parsed_candidate_count`, `salvaged_candidate_count`, and `malformed_output_reason` (when present)
@@ -874,6 +885,10 @@ Deploy failures:
   - `published_artifact_missing` -> Operator must publish first
   - `deploy_configuration_missing` / `deploy_configuration_invalid` -> Operator/Admin must fix target config
   - `deploy_runtime_unavailable` / `deploy_integration_unavailable` -> Platform/runtime wiring action required
+- for repo/ref/workflow bootstrap target issues, inspect `seo_migration_target_readiness_check`:
+  - `workflow_exists=false` means workflow bootstrap/repair did not verify on target ref
+  - `workflow_dispatch_ready=false` means workflow metadata exists but is not dispatchable on target ref
+  - mismatched `requested_ref` vs `resolved_ref` indicates ref resolution drift
 
 Verification checklist:
 - publish success:

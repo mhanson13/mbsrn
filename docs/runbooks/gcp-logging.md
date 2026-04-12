@@ -206,6 +206,7 @@ When migration deploy fails after publish, query these structured events:
 - `jsonPayload.event="seo_migration_control_plane_action"` with `jsonPayload.action="deploy"`
 - `jsonPayload.event="seo_migration_deploy_dispatch_failed"`
 - `jsonPayload.event="seo_migration_deploy_workflow_resolution"` (emitted when deploy uses publish-history workflow identity)
+- `jsonPayload.event="seo_migration_target_readiness_check"` (repo/ref/workflow dispatch preflight)
 - `jsonPayload.event="seo_migration_workflow_provisioning"` (publish-time workflow bootstrap/verification)
 - `jsonPayload.event="seo_migration_deploy_dispatch_accepted"`
 - `jsonPayload.event="seo_migration_workflow_run_lookup_attempted"`
@@ -222,10 +223,14 @@ Key non-secret fields:
 
 - `target.resolved_workflow_source` (`publish_history_workflow`, `workspace_config_workflow`, `default_workflow`)
 - `failure_reason_code` / `target.failure_reason_code`
-- `failure_stage` (`repo_lookup`, `workflow_lookup`, `workflow_dispatch`)
+- `failure_stage` (`repo_lookup`, `ref_lookup`, `workflow_lookup`, `workflow_dispatch`)
 - `workflow_id`, optional `workflow_path`, `ref`, `repo_owner`, `repo_name`
 - `workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`
 - `resolved_live_url`, `url_source`, `url_source_detail`
+- readiness check fields:
+  - `requested_ref`, `resolved_ref`, `ref_source`
+  - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`
+  - `remediation_mode`
 - workflow provisioning fields:
   - `status` (`created`, `already_exists`, `verified`, `failed`)
   - `remediation_mode` (`bootstrap`, `already_present`, `duplicate_publish_repair`)
@@ -237,6 +242,7 @@ Reason-code guidance:
 - `repo_not_found`: repository lookup failed for owner/repo.
 - `workflow_not_found`: repository exists, but requested workflow id/path was not found.
 - `branch_not_found_or_ref_invalid`: dispatch ref is invalid or missing in target repo.
+- `workflow_not_dispatchable`: workflow exists but is not in a dispatch-ready state for target ref.
 - `workflow_dispatch_not_supported`: workflow exists but does not expose `workflow_dispatch`.
 - `token_not_authorized`: runtime token lacks required repository/workflow permissions.
 - `workflow_provisioning_failed`: publish could not verify workflow file presence after provisioning attempt.

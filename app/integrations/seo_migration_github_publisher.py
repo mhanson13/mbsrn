@@ -92,6 +92,22 @@ class SEOMigrationGitHubWorkflowProvisionResult:
 
 
 @dataclass(frozen=True)
+class SEOMigrationGitHubTargetReadinessResult:
+    repo_owner: str
+    repo_name: str
+    requested_ref: str
+    resolved_ref: str
+    ref_source: str
+    workflow_id: str
+    workflow_path: str
+    repo_exists: bool
+    ref_exists: bool
+    workflow_exists: bool
+    workflow_dispatch_ready: bool
+    remediation_mode: str
+
+
+@dataclass(frozen=True)
 class SEOMigrationGitHubPublisherError(RuntimeError):
     code: str
     safe_message: str
@@ -150,6 +166,32 @@ class SEOMigrationGitHubPublisher:
             commit_sha=None,
         )
 
+    def check_deploy_target_readiness(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        allow_ref_repair: bool = False,
+        allow_workflow_repair: bool = False,
+        dry_run: bool = False,
+        remediation_mode: str = "none",
+    ) -> SEOMigrationGitHubTargetReadinessResult:
+        del allow_ref_repair, allow_workflow_repair, dry_run
+        workflow_path = _workflow_repo_path(target.workflow_id)
+        return SEOMigrationGitHubTargetReadinessResult(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            requested_ref=target.ref,
+            resolved_ref=target.ref,
+            ref_source="requested",
+            workflow_id=target.workflow_id,
+            workflow_path=workflow_path,
+            repo_exists=True,
+            ref_exists=True,
+            workflow_exists=True,
+            workflow_dispatch_ready=True,
+            remediation_mode=remediation_mode.strip() or "none",
+        )
+
 
 class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
     def __init__(self, *, safe_message: str, reason_code: str = "publisher_not_configured") -> None:
@@ -190,6 +232,21 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         dispatched_at: str | None = None,
     ) -> SEOMigrationGitHubDeployRunStatusResult:
         del target, workflow_run_id, dispatched_at
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
+    def check_deploy_target_readiness(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        allow_ref_repair: bool = False,
+        allow_workflow_repair: bool = False,
+        dry_run: bool = False,
+        remediation_mode: str = "none",
+    ) -> SEOMigrationGitHubTargetReadinessResult:
+        del target, allow_ref_repair, allow_workflow_repair, dry_run, remediation_mode
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -308,8 +365,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         workflow_run_status: str | None = None
         workflow_run_conclusion: str | None = None
         if not dry_run:
-            self._ensure_repo_exists_for_deploy(target=target)
-            self._ensure_workflow_exists_for_deploy(target=target)
+            self.check_deploy_target_readiness(
+                target=target,
+                allow_ref_repair=False,
+                allow_workflow_repair=False,
+                dry_run=False,
+                remediation_mode="none",
+            )
             self._dispatch_workflow_request(target=target)
             (
                 workflow_run_id,
@@ -578,10 +640,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     return environment_url
         return None
 
-    def _ensure_repo_exists_for_deploy(self, *, target: SEOMigrationGitHubDeployTarget) -> None:
+    def _ensure_repo_exists(self, *, repo_owner: str, repo_name: str) -> None:
         self._request_json(
             method="GET",
-            path=f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}",
+            path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}",
             expected_statuses=(200,),
             status_error_map={
                 401: (
@@ -600,8 +662,217 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             error_stage="repo_lookup",
         )
 
-    def _ensure_workflow_exists_for_deploy(self, *, target: SEOMigrationGitHubDeployTarget) -> None:
+    def _ensure_ref_exists(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        allow_repair: bool,
+    ) -> None:
+        normalized_ref = str(ref or "").strip()
+        if not normalized_ref:
+            raise SEOMigrationGitHubPublisherError(
+                code="branch_not_found_or_ref_invalid",
+                safe_message="GitHub deploy ref was not found or is invalid.",
+                stage="ref_lookup",
+            )
+        branch_exists = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                f"/branches/{urllib.parse.quote(normalized_ref, safe='')}"
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+            },
+            error_stage="ref_lookup",
+        )
+        if isinstance(branch_exists, dict):
+            return
+        if not allow_repair:
+            raise SEOMigrationGitHubPublisherError(
+                code="branch_not_found_or_ref_invalid",
+                safe_message="GitHub deploy ref was not found or is invalid.",
+                stage="ref_lookup",
+            )
+        default_branch = self._resolve_default_branch(repo_owner=repo_owner, repo_name=repo_name)
+        default_branch_sha = self._resolve_branch_head_sha(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=default_branch,
+        )
         self._request_json(
+            method="POST",
+            path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/refs",
+            payload={
+                "ref": f"refs/heads/{normalized_ref}",
+                "sha": default_branch_sha,
+            },
+            expected_statuses=(201,),
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                422: (
+                    "branch_not_found_or_ref_invalid",
+                    "GitHub deploy ref was not found or is invalid.",
+                ),
+            },
+            error_stage="ref_lookup",
+        )
+        branch_exists_after = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                f"/branches/{urllib.parse.quote(normalized_ref, safe='')}"
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+            },
+            error_stage="ref_lookup",
+        )
+        if not isinstance(branch_exists_after, dict):
+            raise SEOMigrationGitHubPublisherError(
+                code="branch_not_found_or_ref_invalid",
+                safe_message="GitHub deploy ref was not found or is invalid.",
+                stage="ref_lookup",
+            )
+
+    def _resolve_default_branch(self, *, repo_owner: str, repo_name: str) -> str:
+        repo_payload = self._request_json(
+            method="GET",
+            path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}",
+            expected_statuses=(200,),
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                404: (
+                    "repo_not_found",
+                    "GitHub repository target was not found.",
+                ),
+            },
+            error_stage="repo_lookup",
+        )
+        default_branch = ""
+        if isinstance(repo_payload, dict):
+            default_branch = _coerce_string(repo_payload.get("default_branch")) or ""
+        return default_branch or "main"
+
+    def _resolve_branch_head_sha(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+    ) -> str:
+        branch_ref_payload = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                f"/git/ref/heads/{urllib.parse.quote(branch, safe='')}"
+            ),
+            expected_statuses=(200,),
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                404: (
+                    "branch_not_found_or_ref_invalid",
+                    "GitHub deploy ref was not found or is invalid.",
+                ),
+            },
+            error_stage="ref_lookup",
+        )
+        if not isinstance(branch_ref_payload, dict):
+            raise SEOMigrationGitHubPublisherError(
+                code="branch_not_found_or_ref_invalid",
+                safe_message="GitHub deploy ref was not found or is invalid.",
+                stage="ref_lookup",
+            )
+        object_payload = branch_ref_payload.get("object")
+        if not isinstance(object_payload, dict):
+            raise SEOMigrationGitHubPublisherError(
+                code="branch_not_found_or_ref_invalid",
+                safe_message="GitHub deploy ref was not found or is invalid.",
+                stage="ref_lookup",
+            )
+        sha = _coerce_string(object_payload.get("sha"))
+        if not sha:
+            raise SEOMigrationGitHubPublisherError(
+                code="branch_not_found_or_ref_invalid",
+                safe_message="GitHub deploy ref was not found or is invalid.",
+                stage="ref_lookup",
+            )
+        return sha
+
+    def _workflow_file_exists_on_ref(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        workflow_path: str,
+    ) -> bool:
+        payload = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                f"/contents/{urllib.parse.quote(workflow_path, safe='/')}"
+                f"?ref={urllib.parse.quote(ref, safe='')}"
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+            },
+            error_stage="workflow_lookup",
+        )
+        return isinstance(payload, dict)
+
+    def _ensure_workflow_dispatch_ready_for_target(self, *, target: SEOMigrationGitHubDeployTarget) -> None:
+        workflow_payload = self._request_json(
             method="GET",
             path=(
                 f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
@@ -624,6 +895,25 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             },
             error_stage="workflow_lookup",
         )
+        workflow_state = ""
+        workflow_path = ""
+        if isinstance(workflow_payload, dict):
+            workflow_state = (_coerce_string(workflow_payload.get("state")) or "").strip().lower()
+            workflow_path = (_coerce_string(workflow_payload.get("path")) or "").strip()
+        if workflow_state and workflow_state != "active":
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_not_dispatchable",
+                safe_message="GitHub workflow is not dispatchable for the deploy target.",
+                stage="workflow_lookup",
+            )
+        if workflow_path:
+            expected_path = _workflow_repo_path(target.workflow_id)
+            if workflow_path.strip().lower() != expected_path.strip().lower():
+                raise SEOMigrationGitHubPublisherError(
+                    code="workflow_not_found",
+                    safe_message="GitHub workflow target was not found.",
+                    stage="workflow_lookup",
+                )
 
     def _dispatch_workflow_request(self, *, target: SEOMigrationGitHubDeployTarget) -> None:
         payload = {
@@ -744,6 +1034,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 safe_message="Deploy workflow target is invalid.",
             )
         workflow_path = _workflow_repo_path(normalized_workflow_id)
+        self._ensure_repo_exists(repo_owner=repo_owner, repo_name=repo_name)
+        self._ensure_ref_exists(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            ref=branch,
+            allow_repair=not dry_run,
+        )
         existing_sha = self._fetch_existing_sha(
             repo_owner=repo_owner,
             repo_name=repo_name,
@@ -817,6 +1114,65 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_path=workflow_path,
             provisioned=True,
             commit_sha=verified_sha or commit_sha,
+        )
+
+    def check_deploy_target_readiness(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        allow_ref_repair: bool = False,
+        allow_workflow_repair: bool = False,
+        dry_run: bool = False,
+        remediation_mode: str = "none",
+    ) -> SEOMigrationGitHubTargetReadinessResult:
+        workflow_path = _workflow_repo_path(target.workflow_id)
+        self._ensure_repo_exists(repo_owner=target.repo_owner, repo_name=target.repo_name)
+        self._ensure_ref_exists(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            ref=target.ref,
+            allow_repair=allow_ref_repair and (not dry_run),
+        )
+        workflow_exists = self._workflow_file_exists_on_ref(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            ref=target.ref,
+            workflow_path=workflow_path,
+        )
+        if not workflow_exists and allow_workflow_repair and (not dry_run):
+            self.ensure_deploy_workflow(
+                repo_owner=target.repo_owner,
+                repo_name=target.repo_name,
+                branch=target.ref,
+                workflow_id=target.workflow_id,
+                dry_run=False,
+            )
+            workflow_exists = self._workflow_file_exists_on_ref(
+                repo_owner=target.repo_owner,
+                repo_name=target.repo_name,
+                ref=target.ref,
+                workflow_path=workflow_path,
+            )
+        if not workflow_exists:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_not_found",
+                safe_message="GitHub workflow target was not found.",
+                stage="workflow_lookup",
+            )
+        self._ensure_workflow_dispatch_ready_for_target(target=target)
+        return SEOMigrationGitHubTargetReadinessResult(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            requested_ref=target.ref,
+            resolved_ref=target.ref,
+            ref_source="requested",
+            workflow_id=target.workflow_id,
+            workflow_path=workflow_path,
+            repo_exists=True,
+            ref_exists=True,
+            workflow_exists=True,
+            workflow_dispatch_ready=True,
+            remediation_mode=remediation_mode.strip() or "none",
         )
 
     def _fetch_existing_sha(

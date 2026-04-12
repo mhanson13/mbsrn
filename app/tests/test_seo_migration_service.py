@@ -4002,6 +4002,20 @@ def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -
         for record in caplog.records
         if isinstance(record.__dict__.get("json_fields"), dict)
     ]
+    readiness_events = [
+        payload
+        for payload in service_events
+        if payload.get("event") == "seo_migration_target_readiness_check"
+    ]
+    assert readiness_events
+    assert any(
+        payload.get("repo_exists") is True
+        and payload.get("ref_exists") is True
+        and payload.get("workflow_exists") is True
+        and payload.get("workflow_dispatch_ready") is True
+        and payload.get("remediation_mode") == "none"
+        for payload in readiness_events
+    )
     assert any(
         payload.get("event") == "seo_migration_workflow_run_lookup_attempted"
         and payload.get("workflow_run_id") is not None

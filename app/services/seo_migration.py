@@ -27,6 +27,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
 )
 from app.models.business import Business
@@ -166,6 +167,7 @@ _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND = "workflow_not_found"
 _DEPLOY_TARGET_REASON_REF_INVALID = "branch_not_found_or_ref_invalid"
 _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED = "workflow_dispatch_not_supported"
 _DEPLOY_TARGET_REASON_TOKEN_UNAUTHORIZED = "token_not_authorized"
+_DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE = "workflow_not_dispatchable"
 
 _DRAFT_PROVIDER_COMPAT_REASON_CODES = {
     "supported",
@@ -1343,6 +1345,10 @@ class SEOMigrationService:
         resolved_live_url: str | None = None
         resolved_live_url_source = _MIGRATION_URL_SOURCE_UNKNOWN
         resolved_live_url_source_detail: str | None = None
+        requested_ref = str(deploy_target["ref"] or "").strip()
+        resolved_ref = requested_ref
+        ref_source = "requested"
+        target_readiness: SEOMigrationGitHubTargetReadinessResult | None = None
         deploy_inputs = dict(deploy_target["inputs"])
         deploy_inputs.setdefault("site_id", site.id)
         deploy_inputs.setdefault("artifact_version", str(artifact.version))
@@ -1390,20 +1396,77 @@ class SEOMigrationService:
             raise SEOMigrationValidationError(failure_message)
 
         try:
+            deploy_target_for_dispatch = SEOMigrationGitHubDeployTarget(
+                repo_owner=deploy_target["repo_owner"],
+                repo_name=deploy_target["repo_name"],
+                workflow_id=deploy_target["workflow_id"],
+                ref=deploy_target["ref"],
+                inputs=deploy_inputs,
+            )
+            if not dry_run:
+                target_readiness = self.github_publisher.check_deploy_target_readiness(
+                    target=deploy_target_for_dispatch,
+                    allow_ref_repair=False,
+                    allow_workflow_repair=False,
+                    dry_run=False,
+                    remediation_mode="none",
+                )
+                requested_ref = target_readiness.requested_ref
+                resolved_ref = target_readiness.resolved_ref
+                ref_source = target_readiness.ref_source
+                self._log_target_readiness_check(
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    artifact_version_id=artifact.id,
+                    repo_owner=target_readiness.repo_owner,
+                    repo_name=target_readiness.repo_name,
+                    requested_ref=target_readiness.requested_ref,
+                    resolved_ref=target_readiness.resolved_ref,
+                    ref_source=target_readiness.ref_source,
+                    workflow_id=target_readiness.workflow_id,
+                    workflow_path=target_readiness.workflow_path,
+                    repo_exists=target_readiness.repo_exists,
+                    ref_exists=target_readiness.ref_exists,
+                    workflow_exists=target_readiness.workflow_exists,
+                    workflow_dispatch_ready=target_readiness.workflow_dispatch_ready,
+                    remediation_mode=target_readiness.remediation_mode,
+                )
             deploy_result = self.github_publisher.dispatch_deploy(
-                target=SEOMigrationGitHubDeployTarget(
-                    repo_owner=deploy_target["repo_owner"],
-                    repo_name=deploy_target["repo_name"],
-                    workflow_id=deploy_target["workflow_id"],
-                    ref=deploy_target["ref"],
-                    inputs=deploy_inputs,
-                ),
+                target=deploy_target_for_dispatch,
                 dry_run=dry_run,
             )
         except SEOMigrationGitHubPublisherError as exc:
             failure_category = self._categorize_publisher_failure(exc=exc, action="deploy")
             failure_reason_code = _normalize_deploy_failure_reason_code(exc.code)
             failure_stage = _normalize_deploy_failure_stage(exc.stage)
+            if not dry_run:
+                repo_exists = failure_stage not in {"repo_lookup"}
+                ref_exists = failure_stage not in {"repo_lookup", "ref_lookup"}
+                workflow_exists = failure_stage not in {"repo_lookup", "ref_lookup", "workflow_lookup"}
+                workflow_dispatch_ready = failure_stage not in {"repo_lookup", "ref_lookup", "workflow_lookup"}
+                self._log_target_readiness_check(
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    artifact_version_id=artifact.id,
+                    repo_owner=deploy_target["repo_owner"],
+                    repo_name=deploy_target["repo_name"],
+                    requested_ref=requested_ref or str(deploy_target.get("ref") or ""),
+                    resolved_ref=resolved_ref or str(deploy_target.get("ref") or ""),
+                    ref_source=ref_source or "requested",
+                    workflow_id=deploy_target["workflow_id"],
+                    workflow_path=(
+                        target_readiness.workflow_path
+                        if target_readiness is not None
+                        else workflow_resolution.get("workflow_path")
+                    ),
+                    repo_exists=repo_exists,
+                    ref_exists=ref_exists,
+                    workflow_exists=workflow_exists,
+                    workflow_dispatch_ready=workflow_dispatch_ready,
+                    remediation_mode="none",
+                )
             failure_reason_for_log = (
                 f"{failure_reason_code}: {exc.safe_message}" if failure_reason_code else exc.safe_message
             )
@@ -1427,6 +1490,9 @@ class SEOMigrationService:
                     "workflow_id": deploy_target["workflow_id"],
                     "workflow_path": workflow_resolution.get("workflow_path"),
                     "ref": deploy_target["ref"],
+                    "requested_ref": requested_ref,
+                    "resolved_ref": resolved_ref,
+                    "ref_source": ref_source,
                     "inputs": deploy_inputs,
                     "analytics_measurement_id": effective_ga_measurement_id,
                     "analytics_insertion_mode": analytics_insertion_mode,
@@ -1460,8 +1526,15 @@ class SEOMigrationService:
                     "repo_owner": deploy_target["repo_owner"],
                     "repo_name": deploy_target["repo_name"],
                     "workflow_id": deploy_target["workflow_id"],
-                    "workflow_path": workflow_resolution.get("workflow_path"),
+                    "workflow_path": (
+                        target_readiness.workflow_path
+                        if target_readiness is not None
+                        else workflow_resolution.get("workflow_path")
+                    ),
                     "ref": deploy_target["ref"],
+                    "requested_ref": requested_ref,
+                    "resolved_ref": resolved_ref,
+                    "ref_source": ref_source,
                     "resolved_workflow_source": workflow_resolution.get("source"),
                     "failure_reason_code": failure_reason_code,
                     "failure_stage": failure_stage,
@@ -1484,8 +1557,15 @@ class SEOMigrationService:
                     "repo_owner": deploy_target["repo_owner"],
                     "repo_name": deploy_target["repo_name"],
                     "workflow_id": deploy_target["workflow_id"],
-                    "workflow_path": workflow_resolution.get("workflow_path"),
+                    "workflow_path": (
+                        target_readiness.workflow_path
+                        if target_readiness is not None
+                        else workflow_resolution.get("workflow_path")
+                    ),
                     "ref": deploy_target["ref"],
+                    "requested_ref": requested_ref,
+                    "resolved_ref": resolved_ref,
+                    "ref_source": ref_source,
                     "resolved_workflow_source": workflow_resolution.get("source"),
                     "failure_reason_code": failure_reason_code,
                     "failure_stage": failure_stage,
@@ -1522,6 +1602,9 @@ class SEOMigrationService:
                 "repo_name": deploy_result.repo_name,
                 "workflow_id": deploy_result.workflow_id,
                 "ref": deploy_result.ref,
+                "requested_ref": requested_ref,
+                "resolved_ref": resolved_ref,
+                "ref_source": ref_source,
                 "dispatched_at": deploy_result.dispatched_at,
                 "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                 "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
@@ -1541,6 +1624,9 @@ class SEOMigrationService:
                 "repo_name": deploy_result.repo_name,
                 "workflow_id": deploy_result.workflow_id,
                 "ref": deploy_result.ref,
+                "requested_ref": requested_ref,
+                "resolved_ref": resolved_ref,
+                "ref_source": ref_source,
                 "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                 "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                 "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -1560,6 +1646,9 @@ class SEOMigrationService:
                     "repo_name": deploy_result.repo_name,
                     "workflow_id": deploy_result.workflow_id,
                     "ref": deploy_result.ref,
+                    "requested_ref": requested_ref,
+                    "resolved_ref": resolved_ref,
+                    "ref_source": ref_source,
                     "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                     "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                     "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -1582,6 +1671,9 @@ class SEOMigrationService:
                     "repo_name": deploy_result.repo_name,
                     "workflow_id": deploy_result.workflow_id,
                     "ref": deploy_result.ref,
+                    "requested_ref": requested_ref,
+                    "resolved_ref": resolved_ref,
+                    "ref_source": ref_source,
                     "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                     "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                     "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -1622,8 +1714,15 @@ class SEOMigrationService:
             "repo_owner": deploy_result.repo_owner,
             "repo_name": deploy_result.repo_name,
             "workflow_id": deploy_result.workflow_id,
-            "workflow_path": workflow_resolution.get("workflow_path"),
+            "workflow_path": (
+                target_readiness.workflow_path
+                if target_readiness is not None
+                else workflow_resolution.get("workflow_path")
+            ),
             "ref": deploy_result.ref,
+            "requested_ref": requested_ref,
+            "resolved_ref": resolved_ref,
+            "ref_source": ref_source,
             "inputs": deploy_result.inputs,
             "analytics_measurement_id": effective_ga_measurement_id,
             "analytics_insertion_mode": analytics_insertion_mode,
@@ -1662,8 +1761,15 @@ class SEOMigrationService:
                 "repo_owner": deploy_result.repo_owner,
                 "repo_name": deploy_result.repo_name,
                 "workflow_id": deploy_result.workflow_id,
-                "workflow_path": workflow_resolution.get("workflow_path"),
+                "workflow_path": (
+                    target_readiness.workflow_path
+                    if target_readiness is not None
+                    else workflow_resolution.get("workflow_path")
+                ),
                 "ref": deploy_result.ref,
+                "requested_ref": requested_ref,
+                "resolved_ref": resolved_ref,
+                "ref_source": ref_source,
                 "resolved_workflow_source": workflow_resolution.get("source"),
                 "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                 "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
@@ -4513,6 +4619,59 @@ class SEOMigrationService:
             level=level,
         )
 
+    def _log_target_readiness_check(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace_id: str | None,
+        artifact_version_id: str | None,
+        repo_owner: str,
+        repo_name: str,
+        requested_ref: str,
+        resolved_ref: str,
+        ref_source: str,
+        workflow_id: str,
+        workflow_path: str | None,
+        repo_exists: bool,
+        ref_exists: bool,
+        workflow_exists: bool,
+        workflow_dispatch_ready: bool,
+        remediation_mode: str,
+    ) -> None:
+        payload: dict[str, object] = {
+            "event": "seo_migration_target_readiness_check",
+            "timestamp": utc_now().isoformat(),
+            "business_id": business_id,
+            "site_id": site_id,
+            "workspace_id": workspace_id,
+            "artifact_version_id": artifact_version_id,
+            "repo_owner": repo_owner,
+            "repo_name": repo_name,
+            "requested_ref": requested_ref,
+            "resolved_ref": resolved_ref,
+            "ref_source": ref_source,
+            "workflow_id": workflow_id,
+            "repo_exists": bool(repo_exists),
+            "ref_exists": bool(ref_exists),
+            "workflow_exists": bool(workflow_exists),
+            "workflow_dispatch_ready": bool(workflow_dispatch_ready),
+            "remediation_mode": _normalize_string(remediation_mode, max_length=60) or "none",
+        }
+        normalized_workflow_path = _normalize_string(workflow_path, max_length=200)
+        if normalized_workflow_path:
+            payload["workflow_path"] = normalized_workflow_path
+        level = (
+            logging.INFO
+            if payload["repo_exists"] and payload["ref_exists"] and payload["workflow_exists"] and payload["workflow_dispatch_ready"]
+            else logging.WARNING
+        )
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message="seo_migration_target_readiness_check",
+            level=level,
+        )
+
     @staticmethod
     def _safe_publish_target_summary(config: object) -> dict[str, object]:
         normalized = _normalize_publish_config(config)
@@ -5085,6 +5244,7 @@ class SEOMigrationService:
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
             _DEPLOY_TARGET_REASON_REF_INVALID,
             _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
+            _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
         }:
             return "target_invalid"
         if action == "deploy":
@@ -5760,6 +5920,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_TARGET_REASON_REF_INVALID,
         _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
         _DEPLOY_TARGET_REASON_TOKEN_UNAUTHORIZED,
+        _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
         "github_target_not_found",
         "github_request_failed",
         "github_temporal_failure",
@@ -5778,7 +5939,7 @@ def _normalize_deploy_failure_stage(value: object) -> str | None:
     if not normalized:
         return None
     normalized_lower = normalized.lower()
-    if normalized_lower in {"repo_lookup", "workflow_lookup", "workflow_dispatch"}:
+    if normalized_lower in {"repo_lookup", "ref_lookup", "workflow_lookup", "workflow_dispatch"}:
         return normalized_lower
     return None
 

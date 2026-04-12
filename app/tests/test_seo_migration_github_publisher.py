@@ -93,6 +93,8 @@ def test_dispatch_deploy_classifies_workflow_not_found(monkeypatch) -> None:
         monkeypatch,
         [
             _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "wfsha"})),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/actions/workflows/deploy-tnmfire-www-prod.yml",
                 status_code=404,
@@ -106,7 +108,7 @@ def test_dispatch_deploy_classifies_workflow_not_found(monkeypatch) -> None:
         publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
     assert exc_info.value.code == "workflow_not_found"
     assert exc_info.value.stage == "workflow_lookup"
-    assert len(calls) == 2
+    assert len(calls) == 4
 
 
 def test_dispatch_deploy_classifies_ref_invalid(monkeypatch) -> None:
@@ -116,6 +118,16 @@ def test_dispatch_deploy_classifies_ref_invalid(monkeypatch) -> None:
         [
             _FakeHTTPResponse(status=200, body="{}"),
             _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "wfsha"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/actions/workflows/deploy-tnmfire-www-prod.yml/dispatches",
                 status_code=422,
@@ -129,7 +141,29 @@ def test_dispatch_deploy_classifies_ref_invalid(monkeypatch) -> None:
         publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
     assert exc_info.value.code == "branch_not_found_or_ref_invalid"
     assert exc_info.value.stage == "workflow_dispatch"
-    assert len(calls) == 3
+    assert len(calls) == 5
+
+
+def test_dispatch_deploy_preflight_classifies_ref_invalid(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/branches/main",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
+    assert exc_info.value.code == "branch_not_found_or_ref_invalid"
+    assert exc_info.value.stage == "ref_lookup"
+    assert len(calls) == 2
 
 
 def test_dispatch_deploy_classifies_workflow_dispatch_not_supported(monkeypatch) -> None:
@@ -139,6 +173,16 @@ def test_dispatch_deploy_classifies_workflow_dispatch_not_supported(monkeypatch)
         [
             _FakeHTTPResponse(status=200, body="{}"),
             _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "wfsha"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/actions/workflows/deploy-tnmfire-www-prod.yml/dispatches",
                 status_code=422,
@@ -152,7 +196,35 @@ def test_dispatch_deploy_classifies_workflow_dispatch_not_supported(monkeypatch)
         publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
     assert exc_info.value.code == "workflow_dispatch_not_supported"
     assert exc_info.value.stage == "workflow_dispatch"
-    assert len(calls) == 3
+    assert len(calls) == 5
+
+
+def test_dispatch_deploy_classifies_workflow_not_dispatchable(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "wfsha"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "disabled_manually",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
+    assert exc_info.value.code == "workflow_not_dispatchable"
+    assert exc_info.value.stage == "workflow_lookup"
+    assert len(calls) == 4
 
 
 def test_dispatch_deploy_classifies_token_not_authorized(monkeypatch) -> None:
@@ -184,6 +256,16 @@ def test_dispatch_deploy_captures_workflow_output_live_url_from_completion_metad
         [
             _FakeHTTPResponse(status=200, body="{}"),
             _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "wfsha"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
             _FakeHTTPResponse(status=204),
             _FakeHTTPResponse(
                 status=200,
@@ -225,7 +307,7 @@ def test_dispatch_deploy_captures_workflow_output_live_url_from_completion_metad
     assert result.workflow_run_status == "completed"
     assert result.workflow_run_conclusion == "success"
     assert result.workflow_output == {"live_url": "https://live.tnmfire.com"}
-    assert len(calls) == 6
+    assert len(calls) == 8
 
 
 def test_dispatch_deploy_does_not_capture_unrelated_deployment_status_url(monkeypatch) -> None:
@@ -236,6 +318,16 @@ def test_dispatch_deploy_does_not_capture_unrelated_deployment_status_url(monkey
         [
             _FakeHTTPResponse(status=200, body="{}"),
             _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "wfsha"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
             _FakeHTTPResponse(status=204),
             _FakeHTTPResponse(
                 status=200,
@@ -277,7 +369,7 @@ def test_dispatch_deploy_does_not_capture_unrelated_deployment_status_url(monkey
     assert result.workflow_run_status == "completed"
     assert result.workflow_run_conclusion == "success"
     assert result.workflow_output is None
-    assert len(calls) == 6
+    assert len(calls) == 8
 
 
 def test_dispatch_deploy_without_completion_output_keeps_workflow_output_empty(monkeypatch) -> None:
@@ -288,6 +380,16 @@ def test_dispatch_deploy_without_completion_output_keeps_workflow_output_empty(m
         [
             _FakeHTTPResponse(status=200, body="{}"),
             _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "wfsha"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
             _FakeHTTPResponse(status=204),
             _FakeHTTPResponse(
                 status=200,
@@ -315,7 +417,7 @@ def test_dispatch_deploy_without_completion_output_keeps_workflow_output_empty(m
     assert result.workflow_run_status == "in_progress"
     assert result.workflow_run_conclusion is None
     assert result.workflow_output is None
-    assert len(calls) == 4
+    assert len(calls) == 6
 
 
 def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monkeypatch) -> None:
@@ -323,6 +425,8 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     _install_urlopen_stub(
         monkeypatch,
         [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body="{}"),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
                 status_code=404,
@@ -344,9 +448,11 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert result.provisioned is True
     assert result.workflow_path == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert result.commit_sha == "verified-sha"
-    assert len(calls) == 3
-    assert calls[0][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main")
-    assert calls[1][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+    assert len(calls) == 5
+    assert calls[0][1].endswith("/repos/mhanson13/tnmfire")
+    assert calls[1][1].endswith("/repos/mhanson13/tnmfire/branches/main")
+    assert calls[2][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main")
+    assert calls[3][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
 
 
 def test_ensure_deploy_workflow_fails_when_post_write_verification_missing(monkeypatch) -> None:
@@ -354,6 +460,8 @@ def test_ensure_deploy_workflow_fails_when_post_write_verification_missing(monke
     _install_urlopen_stub(
         monkeypatch,
         [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body="{}"),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
                 status_code=404,
@@ -379,4 +487,4 @@ def test_ensure_deploy_workflow_fails_when_post_write_verification_missing(monke
         )
     assert exc_info.value.code == "workflow_provisioning_failed"
     assert exc_info.value.stage == "workflow_provisioning"
-    assert len(calls) == 3
+    assert len(calls) == 5
