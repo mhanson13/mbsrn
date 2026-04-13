@@ -1100,7 +1100,14 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert isinstance(payload["deploy_readiness"].get("config_prerequisites"), dict)
     assert "last_status" in payload["deploy_readiness"]
     assert "last_failure_category" in payload["deploy_readiness"]
+    assert "last_failure_reason" in payload["deploy_readiness"]
+    assert "last_failure_stage" in payload["deploy_readiness"]
     assert "last_failure_message" in payload["deploy_readiness"]
+    assert "workflow_identifier_requested" in payload["deploy_readiness"]
+    assert "workflow_identifier_used" in payload["deploy_readiness"]
+    assert "workflow_dispatch_resolution_source" in payload["deploy_readiness"]
+    assert "dispatch_service_reason_code" in payload["deploy_readiness"]
+    assert "last_workflow_exists" in payload["deploy_readiness"]
     migration_diagnostics = payload.get("context_summary", {}).get("migration_diagnostics")
     assert isinstance(migration_diagnostics, dict)
     draft_readiness = payload.get("context_summary", {}).get("draft_generation_readiness")

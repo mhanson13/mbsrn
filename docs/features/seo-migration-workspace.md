@@ -923,6 +923,15 @@ In the Deploy Readiness traceability grid, use these fields for production verif
 - `Workflow run ID` and `Workflow run state`: confirms when run evidence exists.
 - `Expected URL` vs `Confirmed live URL`: expected URL is guidance; confirmed URL appears only from explicit deploy/workflow evidence.
 
+In **Advanced Diagnostics -> Deploy Diagnostics**, operator-safe failure evidence is shown directly when available:
+- deploy failure category/reason/stage
+- requested workflow identifier and resolved workflow path
+- workflow existence (`Yes` / `No`) at the selected target
+- workflow resolution source
+- dispatch service reason code
+
+Use this block to diagnose workflow-lookup failures without relying only on coarse `target invalid` category labels.
+
 If dispatch was accepted but run evidence is not yet present, the workspace shows a no-run-yet message and instructs operators to use **Refresh deploy status** after eventual consistency delay.
 
 ## Controlled Production Exercise Checklist

@@ -1716,7 +1716,16 @@ export function MigrationWorkspacePanel({
   const workflowRunConclusion =
     asStringOrNull(latestDeployHistoryRecord.workflow_run_conclusion) ||
     asStringOrNull(deployReadiness.last_workflow_run_conclusion);
-  const deployFailureReasonCode = asStringOrNull(deployReadiness.last_failure_reason);
+  const deployFailureReasonCode =
+    asStringOrNull(deployReadiness.last_failure_reason) ||
+    asStringOrNull(latestDeployHistoryRecord.failure_reason);
+  const deployFailureStage =
+    asStringOrNull(deployReadiness.last_failure_stage) ||
+    asStringOrNull(latestDeployHistoryRecord.failure_stage) ||
+    asStringOrNull(latestDeployHistoryRecord.dispatch_result_stage);
+  const deployWorkflowExists =
+    asBooleanOrNull(latestDeployHistoryRecord.workflow_exists) ??
+    asBooleanOrNull(deployReadiness.last_workflow_exists);
   const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
   const draftReadiness = parseDraftReadiness(contextSummary);
   const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
@@ -3330,32 +3339,80 @@ export function MigrationWorkspacePanel({
         <h3>Advanced Diagnostics</h3>
         <details className="migration-advanced-details workspace-details-shell">
           <summary className="hint muted">Show detailed migration failure diagnostics</summary>
-          <div className="panel panel-compact stack-tight" data-testid="migration-action-diagnostics">
-            <strong>Action Diagnostics</strong>
-            <span className="hint">Last draft generation status: {asString(migrationDiagnostics.last_draft_generation_status) || "n/a"}</span>
-            <span className="hint">Last publish status: {asString(migrationDiagnostics.last_publish_status) || "n/a"}</span>
-            <span className="hint">Last deploy status: {asString(migrationDiagnostics.last_deploy_status) || "n/a"}</span>
-            {asString(migrationDiagnostics.last_draft_failure_category) ? (
-              <span className="hint warning">
-                Draft failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_draft_failure_category))}
+          <div className="stack">
+            <div className="panel panel-compact stack-tight" data-testid="migration-action-diagnostics">
+              <strong>Action Diagnostics Snapshot</strong>
+              <span className="hint">
+                Last draft generation status: {asString(migrationDiagnostics.last_draft_generation_status) || "n/a"}
               </span>
-            ) : null}
-            {asString(migrationDiagnostics.last_draft_failure_message) ? (
-              <span className="hint warning">{asString(migrationDiagnostics.last_draft_failure_message)}</span>
-            ) : null}
-            {draftFailureSourceLabel ? (
-              <span className="hint warning">Draft failure source: {draftFailureSourceLabel}</span>
-            ) : null}
-            {asString(migrationDiagnostics.last_publish_failure_category) ? (
-              <span className="hint warning">
-                Publish failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_publish_failure_category))}
-              </span>
-            ) : null}
-            {asString(migrationDiagnostics.last_deploy_failure_category) ? (
-              <span className="hint warning">
-                Deploy failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_deploy_failure_category))}
-              </span>
-            ) : null}
+              <span className="hint">Last publish status: {asString(migrationDiagnostics.last_publish_status) || "n/a"}</span>
+              <span className="hint">Last deploy status: {asString(migrationDiagnostics.last_deploy_status) || "n/a"}</span>
+            </div>
+
+            <div className="grid grid-2">
+              <div className="panel panel-compact stack-tight" data-testid="migration-publish-diagnostics">
+                <strong>Publish Diagnostics</strong>
+                {asString(migrationDiagnostics.last_publish_failure_category) ? (
+                  <span className="hint warning">
+                    Publish failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_publish_failure_category))}
+                  </span>
+                ) : (
+                  <span className="hint muted">No publish failure recorded.</span>
+                )}
+                {asString(migrationDiagnostics.last_publish_failure_message) ? (
+                  <span className="hint warning">{asString(migrationDiagnostics.last_publish_failure_message)}</span>
+                ) : null}
+              </div>
+
+              <div className="panel panel-compact stack-tight" data-testid="migration-deploy-diagnostics">
+                <strong>Deploy Diagnostics</strong>
+                <span className="hint">
+                  Deploy failure category:{" "}
+                  {deployFailureCategory ? toFailureCategoryLabel(deployFailureCategory) : "Not available"}
+                </span>
+                <span className="hint">
+                  Deploy failure reason: {deployFailureReasonCode ? formatReasonCodeLabel(deployFailureReasonCode) : "Not available"}
+                </span>
+                <span className="hint">
+                  Deploy failure stage: {deployFailureStage ? formatDispatchStageLabel(deployFailureStage) : "Not available"}
+                </span>
+                <span className="hint">
+                  Requested workflow identifier: {deployWorkflowIdentifierRequested || "Not available"}
+                </span>
+                <span className="hint">Resolved workflow path: {deployWorkflowFilePath || "Not available"}</span>
+                <span className="hint">
+                  Workflow exists:{" "}
+                  {formatBooleanStateLabel(deployWorkflowExists, {
+                    trueLabel: "Yes",
+                    falseLabel: "No",
+                  })}
+                </span>
+                <span className="hint">
+                  Workflow resolution source: {deployWorkflowDispatchResolutionSource || "Not available"}
+                </span>
+                <span className="hint">
+                  Dispatch service reason: {formatReasonCodeLabel(dispatchServiceReasonCode)}
+                </span>
+                {deployFailureMessage ? <span className="hint warning">{deployFailureMessage}</span> : null}
+              </div>
+            </div>
+
+            <div className="panel panel-compact stack-tight" data-testid="migration-draft-diagnostics">
+              <strong>Draft Diagnostics</strong>
+              {asString(migrationDiagnostics.last_draft_failure_category) ? (
+                <span className="hint warning">
+                  Draft failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_draft_failure_category))}
+                </span>
+              ) : (
+                <span className="hint muted">No draft failure recorded.</span>
+              )}
+              {asString(migrationDiagnostics.last_draft_failure_message) ? (
+                <span className="hint warning">{asString(migrationDiagnostics.last_draft_failure_message)}</span>
+              ) : null}
+              {draftFailureSourceLabel ? (
+                <span className="hint warning">Draft failure source: {draftFailureSourceLabel}</span>
+              ) : null}
+            </div>
           </div>
         </details>
       </div>

@@ -3520,6 +3520,91 @@ def test_deploy_keeps_requested_workflow_identifier_when_history_workflow_path_m
     assert action_result.result.get("workflow_dispatch_resolution_source") == "workflow_file_path"
 
 
+def test_deploy_prefers_site_specific_workflow_even_when_non_dispatchable(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        available_workflow_paths={".github/workflows/deploy-tnmfire-www-prod.yml"},
+        non_dispatchable_workflow_paths={".github/workflows/deploy-tnmfire-www-prod.yml"},
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    publish_history = list(workspace.publish_history_json or [])
+    assert publish_history
+    publish_history[-1] = {
+        **dict(publish_history[-1]),
+        "deploy_workflow_id": "stale-workflow-id.yml",
+        "deploy_workflow_path": ".github/workflows/deploy-www-prod.yml",
+    }
+    workspace.publish_history_json = publish_history
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    with pytest.raises(SEOMigrationValidationError, match="not dispatchable"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert not publisher.deploy_calls
+    updated_workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = updated_workspace.deploy_history_json or []
+    assert deploy_history
+    last_failure = deploy_history[-1]
+    assert last_failure.get("resolved_workflow_source") == "site_specific_workflow"
+    assert last_failure.get("workflow_id") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert last_failure.get("workflow_identifier_requested") == "deploy-tnmfire-www-prod.yml"
+    assert last_failure.get("workflow_identifier_used") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert last_failure.get("workflow_dispatch_resolution_source") == "workflow_file_path"
+    assert last_failure.get("failure_reason") == "workflow_not_dispatchable"
+    assert last_failure.get("failure_stage") == "workflow_lookup"
+    assert last_failure.get("workflow_exists") is True
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness
+    assert deploy_readiness.get("last_failure_reason") == "workflow_not_dispatchable"
+    assert deploy_readiness.get("last_failure_stage") == "workflow_lookup"
+    assert deploy_readiness.get("last_workflow_exists") is True
+    assert deploy_readiness.get("workflow_identifier_requested") == "deploy-tnmfire-www-prod.yml"
+    assert deploy_readiness.get("workflow_identifier_used") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+
+
 @pytest.mark.parametrize(
     ("reason_code", "failure_stage", "expected_failure_category"),
     [

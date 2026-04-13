@@ -1759,6 +1759,14 @@ class SEOMigrationService:
                 ref_exists = failure_stage not in {"repo_lookup", "ref_lookup"}
                 workflow_exists = failure_stage not in {"repo_lookup", "ref_lookup", "workflow_lookup"}
                 workflow_dispatch_ready = failure_stage not in {"repo_lookup", "ref_lookup", "workflow_lookup"}
+                if failure_stage == "workflow_lookup" and failure_reason_code in {
+                    _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
+                    _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
+                }:
+                    # Workflow lookup completed against an existing workflow, but dispatch
+                    # requirements were not met (for example non-dispatchable trigger/contract).
+                    workflow_exists = True
+                    workflow_dispatch_ready = False
                 workflow_dispatch_supported = (
                     target_readiness.workflow_dispatch_supported
                     if target_readiness is not None
@@ -1909,6 +1917,10 @@ class SEOMigrationService:
                     "dispatch_identifier_type": dispatch_identifier_type,
                     "dispatch_attempted": dispatch_attempted,
                     "dispatch_result_stage": dispatch_result_stage,
+                    "repo_exists": repo_exists if not dry_run else None,
+                    "ref_exists": ref_exists if not dry_run else None,
+                    "workflow_exists": workflow_exists if not dry_run else None,
+                    "workflow_dispatch_ready": workflow_dispatch_ready if not dry_run else None,
                     "failure_category": failure_category,
                     "failure_reason": failure_reason_code,
                     "failure_stage": failure_stage,
@@ -2295,6 +2307,10 @@ class SEOMigrationService:
             "dispatch_identifier_type": dispatch_identifier_type,
             "dispatch_attempted": dispatch_attempted,
             "dispatch_result_stage": dispatch_result_stage,
+            "repo_exists": target_readiness.repo_exists if target_readiness is not None else None,
+            "ref_exists": target_readiness.ref_exists if target_readiness is not None else None,
+            "workflow_exists": target_readiness.workflow_exists if target_readiness is not None else None,
+            "workflow_dispatch_ready": target_readiness.workflow_dispatch_ready if target_readiness is not None else None,
             "analytics_measurement_id": effective_ga_measurement_id,
             "analytics_insertion_mode": analytics_insertion_mode,
             "analytics_applied": bool(effective_ga_measurement_id),
@@ -5924,7 +5940,7 @@ class SEOMigrationService:
         )
 
         selected_candidate = (
-            workflow_candidates[-1]
+            workflow_candidates[0]
             if workflow_candidates
             else {
                 "source": fallback_source,
@@ -5943,12 +5959,16 @@ class SEOMigrationService:
                 if candidate_valid:
                     selected_candidate = candidate
                     break
+                if candidate_reason_code == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND:
+                    continue
                 if candidate_reason_code in {
-                    _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
                     _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
                     _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
                 }:
-                    continue
+                    # Preserve higher-priority target truth when the workflow exists but is
+                    # not dispatchable; do not silently fall through to lower-priority defaults.
+                    selected_candidate = candidate
+                    break
                 # Preserve failure truth for non-workflow-specific preflight issues
                 # (for example repo/ref/runtime authorization blockers).
                 selected_candidate = candidate
@@ -6571,6 +6591,20 @@ class SEOMigrationService:
                 "dispatch_identifier_type": _normalize_string(item.get("dispatch_identifier_type"), max_length=80),
                 "dispatch_attempted": bool(dispatch_attempted) if isinstance(dispatch_attempted, bool) else None,
                 "dispatch_result_stage": _normalize_string(item.get("dispatch_result_stage"), max_length=40),
+                "repo_exists": (
+                    bool(item.get("repo_exists")) if isinstance(item.get("repo_exists"), bool) else None
+                ),
+                "ref_exists": (
+                    bool(item.get("ref_exists")) if isinstance(item.get("ref_exists"), bool) else None
+                ),
+                "workflow_exists": (
+                    bool(item.get("workflow_exists")) if isinstance(item.get("workflow_exists"), bool) else None
+                ),
+                "workflow_dispatch_ready": (
+                    bool(item.get("workflow_dispatch_ready"))
+                    if isinstance(item.get("workflow_dispatch_ready"), bool)
+                    else None
+                ),
                 "workflow_run_id": _coerce_int(item.get("workflow_run_id")),
                 "workflow_run_status": _normalize_string(item.get("workflow_run_status"), max_length=40),
                 "workflow_run_conclusion": _normalize_string(item.get("workflow_run_conclusion"), max_length=40),
@@ -6900,6 +6934,10 @@ class SEOMigrationService:
             "last_deploy_trace_id": latest_traceability.get("deploy_trace_id"),
             "last_dispatch_attempted": latest_traceability.get("dispatch_attempted"),
             "last_dispatch_result_stage": latest_traceability.get("dispatch_result_stage"),
+            "last_repo_exists": latest_traceability.get("repo_exists"),
+            "last_ref_exists": latest_traceability.get("ref_exists"),
+            "last_workflow_exists": latest_traceability.get("workflow_exists"),
+            "last_workflow_dispatch_ready": latest_traceability.get("workflow_dispatch_ready"),
             "last_workflow_run_id": latest_traceability.get("workflow_run_id"),
             "last_workflow_run_status": latest_traceability.get("workflow_run_status"),
             "last_workflow_run_conclusion": latest_traceability.get("workflow_run_conclusion"),

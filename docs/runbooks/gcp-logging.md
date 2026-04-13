@@ -258,6 +258,19 @@ Key non-secret fields:
   - `workflow_id`, `workflow_path`, `ref`, `repo_owner`, `repo_name`
   - optional `error_code` / `error_message` on failed provisioning
 
+Workflow lookup failure quick triage:
+- when `failure_stage=workflow_lookup`, compare:
+  - `failure_reason_code`
+  - `dispatch_service_reason_code`
+  - `workflow_identifier_requested`
+  - `workflow_identifier_used`
+  - `workflow_file_path`
+  - `workflow_exists`
+- common interpretation:
+  - `failure_reason_code=workflow_not_dispatchable` with `dispatch_service_reason_code=target_configuration_invalid` means the selected workflow identity resolved, but the workflow is not deploy-dispatchable for the managed path.
+  - `workflow_exists=false` means lookup failed for the selected identifier/path on the target ref.
+  - `workflow_identifier_requested=deploy-www-prod.yml` while a site-specific workflow should be used indicates workflow-selection/target-mapping drift that should be corrected before retry.
+
 Reason-code guidance:
 
 - `repo_not_found`: repository lookup failed for owner/repo.
