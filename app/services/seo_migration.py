@@ -157,6 +157,7 @@ _DEPLOY_BLOCKER_CONFIGURATION_MISSING = "deploy_configuration_missing"
 _DEPLOY_BLOCKER_CONFIGURATION_INVALID = "deploy_configuration_invalid"
 _DEPLOY_BLOCKER_INTEGRATION_UNAVAILABLE = "deploy_integration_unavailable"
 _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY = "publish_history_workflow"
+_DEPLOY_WORKFLOW_SOURCE_SITE_SPECIFIC = "site_specific_workflow"
 _DEPLOY_WORKFLOW_SOURCE_WORKSPACE_CONFIG = "workspace_config_workflow"
 _DEPLOY_WORKFLOW_SOURCE_DEFAULT = "default_workflow"
 
@@ -1427,6 +1428,7 @@ class SEOMigrationService:
                 workspace=workspace,
                 effective_publish_config=effective_publish_config,
                 artifact_version_id=artifact.id,
+                validate_workflow_candidates=True,
             )
         except ValueError as exc:
             failure_message = str(exc) or "Deploy target is invalid."
@@ -1489,7 +1491,10 @@ class SEOMigrationService:
             workflow_id=workflow_identifier_used or deploy_target.get("workflow_id"),
             workflow_path=workflow_file_path,
         )
-        if workflow_resolution.get("source") == _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY:
+        if workflow_resolution.get("source") in {
+            _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY,
+            _DEPLOY_WORKFLOW_SOURCE_SITE_SPECIFIC,
+        }:
             self._emit_structured_service_log(
                 payload={
                     "event": "seo_migration_deploy_workflow_resolution",
@@ -5680,6 +5685,7 @@ class SEOMigrationService:
         workspace: SEOMigrationWorkspace,
         effective_publish_config: dict[str, object],
         artifact_version_id: str | None,
+        validate_workflow_candidates: bool = False,
     ) -> tuple[dict[str, object], dict[str, object]]:
         normalized_deploy_config = _normalize_deploy_config(workspace.deploy_config_json)
         configured_workflow_path = _normalize_workflow_path_for_deploy(normalized_deploy_config.get("workflow_id"))
@@ -5702,10 +5708,16 @@ class SEOMigrationService:
             repo_name=candidate_repo,
             ref=candidate_ref,
         )
+        site_specific_workflow_id = _derive_site_specific_workflow_id_for_repo_name(candidate_repo)
+        site_specific_workflow_path = (
+            _normalize_workflow_path_for_deploy(f".github/workflows/{site_specific_workflow_id}")
+            if site_specific_workflow_id
+            else None
+        )
 
-        resolved_source = _DEPLOY_WORKFLOW_SOURCE_DEFAULT
+        fallback_source = _DEPLOY_WORKFLOW_SOURCE_DEFAULT
         if str(normalized_deploy_config.get("workflow_id") or "").strip():
-            resolved_source = _DEPLOY_WORKFLOW_SOURCE_WORKSPACE_CONFIG
+            fallback_source = _DEPLOY_WORKFLOW_SOURCE_WORKSPACE_CONFIG
 
         resolved_target = _resolve_deploy_target(
             deploy_config=normalized_deploy_config,
@@ -5713,23 +5725,147 @@ class SEOMigrationService:
             default_workflow_id=self.deploy_default_workflow_id,
             default_ref=self.deploy_default_ref,
         )
-        resolved_workflow_path = _normalize_workflow_path_for_deploy(
-            f".github/workflows/{str(resolved_target.get('workflow_id') or '').strip()}"
+        fallback_workflow_id = _normalize_workflow_id_for_deploy(resolved_target.get("workflow_id"))
+        fallback_workflow_path = _normalize_workflow_path_for_deploy(
+            f".github/workflows/{str(fallback_workflow_id or '').strip()}"
         )
-        if history_workflow_path:
-            resolved_workflow_path = history_workflow_path
-            resolved_source = _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY
+        workflow_candidates: list[dict[str, str | None]] = []
+        seen_candidate_keys: set[str] = set()
+
+        def _append_candidate(*, source: str, workflow_id: object, workflow_path: object) -> None:
+            normalized_path = _normalize_workflow_path_for_deploy(workflow_path)
+            normalized_id = (
+                _workflow_id_from_path_for_deploy(normalized_path)
+                or _normalize_workflow_id_for_deploy(workflow_id)
+                or _normalize_string(workflow_id, max_length=160)
+            )
+            if normalized_id is None:
+                return
+            if normalized_path is None:
+                normalized_path = _normalize_workflow_path_for_deploy(f".github/workflows/{normalized_id}")
+            candidate_key = normalized_path or normalized_id
+            if not candidate_key or candidate_key in seen_candidate_keys:
+                return
+            seen_candidate_keys.add(candidate_key)
+            workflow_candidates.append(
+                {
+                    "source": source,
+                    "workflow_id": normalized_id,
+                    "workflow_path": normalized_path,
+                }
+            )
+
+        if validate_workflow_candidates:
+            _append_candidate(
+                source=_DEPLOY_WORKFLOW_SOURCE_SITE_SPECIFIC,
+                workflow_id=site_specific_workflow_id,
+                workflow_path=site_specific_workflow_path,
+            )
+        _append_candidate(
+            source=_DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY,
+            workflow_id=history_workflow_id,
+            workflow_path=history_workflow_path,
+        )
+        _append_candidate(
+            source=fallback_source,
+            workflow_id=fallback_workflow_id,
+            workflow_path=fallback_workflow_path,
+        )
+
+        selected_candidate = (
+            workflow_candidates[-1]
+            if workflow_candidates
+            else {
+                "source": fallback_source,
+                "workflow_id": fallback_workflow_id,
+                "workflow_path": fallback_workflow_path,
+            }
+        )
+        if validate_workflow_candidates and workflow_candidates:
+            for candidate in workflow_candidates:
+                candidate_valid, candidate_reason_code = self._is_dispatchable_workflow_candidate(
+                    repo_owner=candidate_owner,
+                    repo_name=candidate_repo,
+                    ref=candidate_ref,
+                    workflow_id=candidate.get("workflow_id"),
+                )
+                if candidate_valid:
+                    selected_candidate = candidate
+                    break
+                if candidate_reason_code in {
+                    _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
+                    _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
+                    _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
+                }:
+                    continue
+                # Preserve failure truth for non-workflow-specific preflight issues
+                # (for example repo/ref/runtime authorization blockers).
+                selected_candidate = candidate
+                break
+
+        selected_workflow_id = _normalize_workflow_id_for_deploy(selected_candidate.get("workflow_id"))
+        selected_workflow_path = _normalize_workflow_path_for_deploy(selected_candidate.get("workflow_path"))
+        if selected_workflow_id:
+            resolved_target["workflow_id"] = selected_workflow_id
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
         resolution = {
-            "source": resolved_source,
+            "source": str(selected_candidate.get("source") or fallback_source),
             "workflow_id": str(resolved_target.get("workflow_id") or "").strip(),
-            "workflow_path": resolved_workflow_path,
+            "workflow_path": selected_workflow_path,
             "history_workflow_id": history_workflow_id,
+            "site_specific_workflow_id": site_specific_workflow_id,
+            "site_specific_workflow_path": site_specific_workflow_path,
             "deploy_workflow_mode": admin_deploy_metadata.get("deploy_workflow_mode"),
             "target_environment_key": admin_deploy_metadata.get("target_environment_key"),
             "target_environment_source": admin_deploy_metadata.get("target_environment_source"),
         }
         return resolved_target, resolution
+
+    def _is_dispatchable_workflow_candidate(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        workflow_id: object,
+    ) -> tuple[bool, str | None]:
+        normalized_owner = _normalize_string(repo_owner, max_length=80)
+        normalized_repo = _normalize_string(repo_name, max_length=120)
+        normalized_ref = _normalize_string(ref, max_length=120)
+        normalized_workflow_id = _normalize_workflow_id_for_deploy(workflow_id)
+        if (
+            not normalized_owner
+            or not normalized_repo
+            or not normalized_ref
+            or not normalized_workflow_id
+            or not self.github_publisher_configured
+        ):
+            return False, None
+        target = SEOMigrationGitHubDeployTarget(
+            repo_owner=normalized_owner,
+            repo_name=normalized_repo,
+            workflow_id=normalized_workflow_id,
+            ref=normalized_ref,
+            inputs={},
+        )
+        try:
+            readiness = self.github_publisher.check_deploy_target_readiness(
+                target=target,
+                allow_ref_repair=False,
+                allow_workflow_repair=False,
+                dry_run=False,
+                remediation_mode="none",
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            return False, _normalize_deploy_failure_reason_code(exc.code)
+
+        if not readiness.workflow_exists:
+            return False, _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND
+        if not readiness.workflow_dispatch_ready:
+            return False, _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE
+        if not readiness.workflow_dispatch_supported:
+            return False, _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED
+        return True, None
 
     def _build_destination_summary(
         self,
@@ -6417,6 +6553,7 @@ class SEOMigrationService:
                     workspace=workspace,
                     effective_publish_config=effective_publish_config,
                     artifact_version_id=artifact.id if artifact is not None else workspace.last_published_artifact_version_id,
+                    validate_workflow_candidates=False,
                 )
                 target_valid = True
                 target_summary = {
@@ -7294,6 +7431,22 @@ def _resolve_deploy_history_live_url(
                 _normalize_string(item.get("url_source_detail"), max_length=120),
             )
     return None, _MIGRATION_URL_SOURCE_UNKNOWN, None
+
+
+def _derive_site_specific_workflow_id_for_repo_name(repo_name: object) -> str | None:
+    normalized_repo_name = _normalize_string(repo_name, max_length=120)
+    if not normalized_repo_name:
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized_repo_name.lower()).strip("-")
+    if not slug:
+        return None
+    for suffix in ("-site", "-website"):
+        if slug.endswith(suffix) and len(slug) > len(suffix):
+            slug = slug[: -len(suffix)].rstrip("-")
+            break
+    if not slug:
+        return None
+    return _normalize_workflow_id_for_deploy(f"deploy-{slug}-www-prod.yml")
 
 
 def _normalize_workflow_id_for_deploy(value: object) -> str | None:

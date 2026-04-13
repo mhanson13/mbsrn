@@ -152,6 +152,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         readiness_dispatch_service_availability: bool = True,
         readiness_dispatch_service_reason_code: str | None = "available",
         readiness_dispatch_identifier_type: str | None = None,
+        available_workflow_paths: set[str] | None = None,
+        non_dispatchable_workflow_paths: set[str] | None = None,
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
@@ -178,6 +180,16 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.readiness_dispatch_service_availability = readiness_dispatch_service_availability
         self.readiness_dispatch_service_reason_code = readiness_dispatch_service_reason_code
         self.readiness_dispatch_identifier_type = readiness_dispatch_identifier_type
+        self.available_workflow_paths = (
+            {str(item).strip() for item in available_workflow_paths if str(item).strip()}
+            if available_workflow_paths is not None
+            else None
+        )
+        self.non_dispatchable_workflow_paths = (
+            {str(item).strip() for item in non_dispatchable_workflow_paths if str(item).strip()}
+            if non_dispatchable_workflow_paths is not None
+            else set()
+        )
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
@@ -329,6 +341,18 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             if str(target.workflow_id or "").startswith(".github/workflows/")
             else f".github/workflows/{target.workflow_id}"
         )
+        if self.available_workflow_paths is not None and workflow_path not in self.available_workflow_paths:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_not_found",
+                safe_message="GitHub workflow target was not found.",
+                stage="workflow_lookup",
+            )
+        if workflow_path in self.non_dispatchable_workflow_paths:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_not_dispatchable",
+                safe_message="GitHub workflow is not dispatchable for the deploy target.",
+                stage="workflow_lookup",
+            )
         dispatch_identifier_type = self.readiness_dispatch_identifier_type or (
             "workflow_file_path" if workflow_path == target.workflow_id else "workflow_id"
         )
@@ -3226,8 +3250,13 @@ def test_deploy_duplicate_non_dry_run_is_rejected(db_session) -> None:
     assert len(publisher.deploy_calls) == 1
 
 
-def test_deploy_uses_publish_history_workflow_when_workspace_config_is_stale(db_session, caplog) -> None:
-    publisher = _RecordingGitHubPublisher()
+def test_deploy_prefers_site_specific_workflow_when_workspace_config_is_stale(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher(
+        available_workflow_paths={
+            ".github/workflows/deploy-www-prod.yml",
+            ".github/workflows/deploy-tnmfire-www-prod.yml",
+        }
+    )
     service = _build_service(
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
@@ -3286,7 +3315,7 @@ def test_deploy_uses_publish_history_workflow_when_workspace_config_is_stale(db_
     deploy_history = workspace.deploy_history_json or []
     assert deploy_history
     last_deploy = deploy_history[-1]
-    assert last_deploy.get("resolved_workflow_source") == "publish_history_workflow"
+    assert last_deploy.get("resolved_workflow_source") == "site_specific_workflow"
     assert last_deploy.get("workflow_id") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert last_deploy.get("workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
 
@@ -3297,12 +3326,17 @@ def test_deploy_uses_publish_history_workflow_when_workspace_config_is_stale(db_
         and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_workflow_resolution"
     ]
     assert resolution_payloads
-    assert resolution_payloads[-1].get("resolved_workflow_source") == "publish_history_workflow"
-    assert resolution_payloads[-1].get("workflow_id") == "stale-workflow.yml"
+    assert resolution_payloads[-1].get("resolved_workflow_source") == "site_specific_workflow"
+    assert resolution_payloads[-1].get("workflow_id") == "deploy-tnmfire-www-prod.yml"
 
 
-def test_deploy_prefers_publish_history_workflow_path_when_history_workflow_id_is_stale(db_session, caplog) -> None:
-    publisher = _RecordingGitHubPublisher()
+def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher(
+        available_workflow_paths={
+            ".github/workflows/deploy-www-prod.yml",
+            ".github/workflows/deploy-tnmfire-www-prod.yml",
+        }
+    )
     service = _build_service(
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
@@ -3345,7 +3379,7 @@ def test_deploy_prefers_publish_history_workflow_path_when_history_workflow_id_i
     publish_history[-1] = {
         **dict(publish_history[-1]),
         "deploy_workflow_id": "stale-workflow-id.yml",
-        "deploy_workflow_path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+        "deploy_workflow_path": ".github/workflows/deploy-www-prod.yml",
     }
     workspace.publish_history_json = publish_history
     service.seo_migration_repository.save_workspace(workspace)
@@ -3370,6 +3404,7 @@ def test_deploy_prefers_publish_history_workflow_path_when_history_workflow_id_i
     assert action_result.result.get("workflow_dispatch_resolution_source") == "workflow_file_path"
     assert action_result.result.get("workflow_file_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("workflow_name") == "deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("resolved_workflow_source") == "site_specific_workflow"
     assert action_result.result.get("actual_dispatch_identifier_sent") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("actual_dispatch_identifier_type_sent") == "workflow_file_path"
 
@@ -3599,7 +3634,10 @@ def test_publish_retry_after_failure_is_deterministic(db_session) -> None:
 
 
 def test_deploy_retry_after_failure_preserves_publish_state(db_session) -> None:
-    publisher = _RecordingGitHubPublisher(fail_deploy=True)
+    publisher = _RecordingGitHubPublisher(
+        fail_deploy=True,
+        available_workflow_paths={".github/workflows/deploy-www-prod.yml"},
+    )
     service = _build_service(
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
@@ -3712,7 +3750,9 @@ def test_publish_rejects_reserved_git_root_path(db_session) -> None:
 
 
 def test_deploy_uses_publish_history_workflow_when_workspace_workflow_path_is_invalid(db_session) -> None:
-    publisher = _RecordingGitHubPublisher()
+    publisher = _RecordingGitHubPublisher(
+        available_workflow_paths={".github/workflows/deploy-www-prod.yml"}
+    )
     service = _build_service(
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
@@ -4310,7 +4350,7 @@ def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -
         payload.get("action") == "deploy"
         and payload.get("status") == "completed"
         and isinstance(payload.get("target"), dict)
-        and payload.get("target", {}).get("workflow_id") == ".github/workflows/deploy-www-prod.yml"
+        and payload.get("target", {}).get("workflow_id") == ".github/workflows/deploy-tnmfire-www-prod.yml"
         and "resolved_live_url" in payload.get("target", {})
         and "url_source" in payload.get("target", {})
         for payload in payloads
