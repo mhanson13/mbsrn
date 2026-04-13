@@ -150,7 +150,7 @@ def test_dispatch_deploy_uses_workflow_file_path_identifier_when_provided(monkey
     result = publisher.dispatch_deploy(target=_dispatch_target_with_workflow_path(), dry_run=False)
     assert result.workflow_id == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert any(
-        call[1].endswith("/actions/workflows/.github%2Fworkflows%2Fdeploy-tnmfire-www-prod.yml/dispatches")
+        call[1].endswith("/actions/workflows/deploy-tnmfire-www-prod.yml/dispatches")
         for call in calls
     )
     assert any(

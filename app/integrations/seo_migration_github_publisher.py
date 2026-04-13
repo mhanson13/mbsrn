@@ -965,6 +965,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         preflight_workflow_verified: bool = False,
         preflight_dispatch_ready: bool = False,
     ) -> None:
+        dispatch_identifier = normalize_workflow_dispatch_identifier_for_api(target.workflow_id) or target.workflow_id
         payload = {
             "ref": target.ref,
             "inputs": target.inputs,
@@ -981,7 +982,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             url=(
                 f"{self.api_base_url}/repos/{urllib.parse.quote(target.repo_owner)}/"
                 f"{urllib.parse.quote(target.repo_name)}/actions/workflows/"
-                f"{urllib.parse.quote(target.workflow_id, safe='')}/dispatches"
+                f"{urllib.parse.quote(dispatch_identifier, safe='')}/dispatches"
             ),
             data=body,
             method="POST",
@@ -1450,6 +1451,18 @@ def _workflow_repo_path(workflow_id: str) -> str:
     if normalized.lower().startswith("github/workflows/"):
         return f".{normalized}"
     return _join_repo_path(".github/workflows", normalized)
+
+
+def normalize_workflow_dispatch_identifier_for_api(workflow_id: object) -> str | None:
+    normalized = _coerce_string(workflow_id)
+    if not normalized:
+        return None
+    try:
+        workflow_path = _workflow_repo_path(normalized)
+    except SEOMigrationGitHubPublisherError:
+        return normalized.strip() or None
+    workflow_name = workflow_path.rsplit("/", 1)[-1].strip()
+    return workflow_name or normalized.strip() or None
 
 
 def _normalize_deploy_workflow_mode(value: object) -> str:

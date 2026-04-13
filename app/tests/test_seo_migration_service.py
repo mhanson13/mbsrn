@@ -3405,8 +3405,8 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
     assert action_result.result.get("workflow_file_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("workflow_name") == "deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("resolved_workflow_source") == "site_specific_workflow"
-    assert action_result.result.get("actual_dispatch_identifier_sent") == ".github/workflows/deploy-tnmfire-www-prod.yml"
-    assert action_result.result.get("actual_dispatch_identifier_type_sent") == "workflow_file_path"
+    assert action_result.result.get("actual_dispatch_identifier_sent") == "deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("actual_dispatch_identifier_type_sent") == "workflow_id"
 
     accepted_payloads = [
         record.__dict__.get("json_fields")
@@ -3419,8 +3419,8 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
     assert accepted_payloads[-1].get("workflow_identifier_used") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert accepted_payloads[-1].get("workflow_identifier_type_used") == "workflow_file_path"
     assert accepted_payloads[-1].get("workflow_dispatch_resolution_source") == "workflow_file_path"
-    assert accepted_payloads[-1].get("actual_dispatch_identifier_sent") == ".github/workflows/deploy-tnmfire-www-prod.yml"
-    assert accepted_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_file_path"
+    assert accepted_payloads[-1].get("actual_dispatch_identifier_sent") == "deploy-tnmfire-www-prod.yml"
+    assert accepted_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_id"
     preflight_payloads = [
         record.__dict__.get("json_fields")
         for record in caplog.records
@@ -3428,8 +3428,8 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
         and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_dispatch_preflight"
     ]
     assert preflight_payloads
-    assert preflight_payloads[-1].get("actual_dispatch_identifier_sent") == ".github/workflows/deploy-tnmfire-www-prod.yml"
-    assert preflight_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_file_path"
+    assert preflight_payloads[-1].get("actual_dispatch_identifier_sent") == "deploy-tnmfire-www-prod.yml"
+    assert preflight_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_id"
 
 
 def test_deploy_keeps_requested_workflow_identifier_when_history_workflow_path_missing(db_session) -> None:

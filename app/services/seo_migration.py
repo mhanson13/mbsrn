@@ -29,6 +29,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublisherError,
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
+    normalize_workflow_dispatch_identifier_for_api,
 )
 from app.models.business import Business
 from app.models.principal import PrincipalRole
@@ -1672,10 +1673,13 @@ class SEOMigrationService:
                     ref=deploy_target_for_dispatch.ref,
                     inputs=deploy_inputs,
                 )
-            actual_dispatch_identifier_sent = _normalize_string(deploy_target_for_dispatch.workflow_id, max_length=200)
-            actual_dispatch_identifier_type_sent = _normalize_string(dispatch_identifier_type, max_length=80) or _infer_dispatch_identifier_type(
-                actual_dispatch_identifier_sent
-            )
+            actual_dispatch_identifier_sent = _normalize_string(
+                normalize_workflow_dispatch_identifier_for_api(deploy_target_for_dispatch.workflow_id),
+                max_length=200,
+            ) or _normalize_string(deploy_target_for_dispatch.workflow_id, max_length=200)
+            actual_dispatch_identifier_type_sent = _infer_dispatch_identifier_type(actual_dispatch_identifier_sent)
+            if not actual_dispatch_identifier_type_sent:
+                actual_dispatch_identifier_type_sent = _normalize_string(dispatch_identifier_type, max_length=80)
             self._emit_structured_service_log(
                 payload={
                     "event": "seo_migration_deploy_dispatch_preflight",

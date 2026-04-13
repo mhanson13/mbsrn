@@ -237,6 +237,7 @@ Key non-secret fields:
 - `workflow_identifier_requested`, `workflow_identifier_used`
 - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
 - `workflow_dispatch_resolution_source`, `workflow_file_path`, `workflow_name`
+- `actual_dispatch_identifier_sent`, `actual_dispatch_identifier_type_sent`
 - `workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`
 - `resolved_live_url`, `url_source`, `url_source_detail`
 - readiness check fields:
@@ -284,7 +285,8 @@ Use this sequence for one bounded production deploy validation:
    - readiness/preflight fields (`workflow_identifier`, `workflow_identifier_requested`, `workflow_identifier_used`, `workflow_dispatch_supported`, `dispatch_service_availability`)
    - dispatch attempt fields (`dispatch_attempted=true`, `dispatch_result_stage`)
    - run evidence fields (`workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`) when available
-   - identifier-resolution fields (`workflow_dispatch_resolution_source`, `workflow_identifier_type_used`) show the exact dispatch identifier strategy.
+   - identifier-resolution fields (`workflow_dispatch_resolution_source`, `workflow_identifier_type_used`) show selected/provenance workflow identity.
+   - outbound dispatch fields (`actual_dispatch_identifier_sent`, `actual_dispatch_identifier_type_sent`) show the exact identifier value/type sent to the GitHub dispatch API.
 5. If UI shows `Dispatch was accepted, but no workflow run evidence is available yet`, wait for eventual consistency and run **Refresh deploy status**.
 6. Re-query refresh events by trace id:
    - `jsonPayload.event="seo_migration_deploy_status_refresh_requested"`
@@ -315,6 +317,9 @@ Use the latest `deploy_trace_id` from the workspace traceability grid and evalua
      - `failure_stage=workflow_dispatch`
    - Interpretation:
      - Target preflight passed but GitHub dispatch failed.
+     - Compare selected vs sent identifiers:
+       - `workflow_identifier_used` can remain full workflow path provenance (for example `.github/workflows/deploy-tnmfire-www-prod.yml`)
+       - `actual_dispatch_identifier_sent` is the normalized identifier sent to GitHub (for example `deploy-tnmfire-www-prod.yml`)
    - Route by reason code:
      - `workflow_not_dispatchable`
      - `workflow_dispatch_not_supported`
