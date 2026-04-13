@@ -3584,6 +3584,10 @@ describe("site workspace migration tab", () => {
           workflow_trigger_types: ["workflow_dispatch"],
           dispatch_service_availability: false,
           dispatch_service_reason_code: "runtime_publisher_unavailable",
+          workflow_conformance_checked: true,
+          workflow_conformance_status: "workflow_contract_incomplete",
+          workflow_conformance_reasons: ["managed_deploy_contract_markers_missing"],
+          workflow_conformance_evidence_summary: "workflow_dispatch=true;required_deploy_markers=missing",
           last_deploy_trace_id: "deploy-trace-123",
           last_dispatch_attempted: true,
           last_dispatch_result_stage: "workflow_dispatch",
@@ -3619,6 +3623,10 @@ describe("site workspace migration tab", () => {
           workflow_trigger_types: ["workflow_dispatch"],
           dispatch_service_availability: false,
           dispatch_service_reason_code: "runtime_publisher_unavailable",
+          workflow_conformance_checked: true,
+          workflow_conformance_status: "workflow_contract_incomplete",
+          workflow_conformance_reasons: ["managed_deploy_contract_markers_missing"],
+          workflow_conformance_evidence_summary: "workflow_dispatch=true;required_deploy_markers=missing",
           dispatch_identifier_type: "workflow_id",
           dispatch_attempted: true,
           dispatch_result_stage: "workflow_dispatch",
@@ -3646,6 +3654,8 @@ describe("site workspace migration tab", () => {
     expect(traceabilityPanel).toHaveTextContent("workflow_dispatch");
     expect(traceabilityPanel).toHaveTextContent("Unavailable");
     expect(traceabilityPanel).toHaveTextContent("runtime publisher unavailable");
+    expect(traceabilityPanel).toHaveTextContent("workflow_contract_incomplete");
+    expect(traceabilityPanel).toHaveTextContent("managed_deploy_contract_markers_missing");
     expect(traceabilityPanel).toHaveTextContent("workflow dispatch");
     expect(traceabilityPanel).toHaveTextContent("workflow dispatch not supported");
     expect(traceabilityPanel).toHaveTextContent("987654");

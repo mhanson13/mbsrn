@@ -238,6 +238,8 @@ Key non-secret fields:
 - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
 - `workflow_dispatch_resolution_source`, `workflow_file_path`, `workflow_name`
 - `actual_dispatch_identifier_sent`, `actual_dispatch_identifier_type_sent`
+- `workflow_conformance_checked`, `workflow_conformance_status`
+- `workflow_conformance_reasons`, `workflow_conformance_evidence_summary`
 - `workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`
 - `resolved_live_url`, `url_source`, `url_source_detail`
 - readiness check fields:
@@ -266,6 +268,14 @@ Reason-code guidance:
 - `token_not_authorized`: runtime token lacks required repository/workflow permissions.
 - `workflow_provisioning_failed`: publish could not verify workflow file presence after provisioning attempt.
 
+Workflow conformance status guidance:
+- `conformant`: workflow content includes `workflow_dispatch` and managed deploy contract markers.
+- `workflow_dispatch_missing`: workflow content was readable but missing `workflow_dispatch`.
+- `workflow_placeholder_detected`: workflow appears to be placeholder/example content.
+- `workflow_contract_incomplete`: workflow is dispatchable but missing required managed deploy contract markers.
+- `workflow_unreadable`: workflow file existed but content could not be decoded/read safely for conformance checks.
+- `workflow_missing`: workflow file payload was unavailable during conformance evaluation.
+
 Dispatch-stage interpretation note:
 - if target-readiness preflight already logged `repo_exists=true`, `ref_exists=true`, `workflow_exists=true`, and a later `workflow_dispatch` call fails, prefer workflow dispatchability troubleshooting before assuming branch/ref drift.
 - if `workflow_dispatch_supported=true` but `dispatch_service_availability=false`, treat this as service/function readiness unavailability (not workflow identity/trigger mismatch).
@@ -287,6 +297,7 @@ Use this sequence for one bounded production deploy validation:
    - run evidence fields (`workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`) when available
    - identifier-resolution fields (`workflow_dispatch_resolution_source`, `workflow_identifier_type_used`) show selected/provenance workflow identity.
    - outbound dispatch fields (`actual_dispatch_identifier_sent`, `actual_dispatch_identifier_type_sent`) show the exact identifier value/type sent to the GitHub dispatch API.
+   - conformance fields (`workflow_conformance_status`, `workflow_conformance_reasons`) indicate whether selected workflow content is deploy-capable for managed migration deploy.
 5. If UI shows `Dispatch was accepted, but no workflow run evidence is available yet`, wait for eventual consistency and run **Refresh deploy status**.
 6. Re-query refresh events by trace id:
    - `jsonPayload.event="seo_migration_deploy_status_refresh_requested"`

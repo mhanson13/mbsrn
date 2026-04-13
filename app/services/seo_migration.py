@@ -1538,6 +1538,10 @@ class SEOMigrationService:
         workflow_trigger_types: tuple[str, ...] | list[str] = ()
         dispatch_service_availability: bool | None = None
         dispatch_service_reason_code: str | None = None
+        workflow_conformance_checked: bool | None = None
+        workflow_conformance_status: str | None = None
+        workflow_conformance_reasons: list[str] = []
+        workflow_conformance_evidence_summary: str | None = None
         dispatch_identifier_type: str | None = (
             workflow_identifier_type_used
             or _infer_dispatch_identifier_type(workflow_identifier_used or deploy_target.get("workflow_id"))
@@ -1618,6 +1622,10 @@ class SEOMigrationService:
                 workflow_trigger_types = target_readiness.workflow_trigger_types
                 dispatch_service_availability = target_readiness.dispatch_service_availability
                 dispatch_service_reason_code = target_readiness.dispatch_service_reason_code
+                workflow_conformance_checked = target_readiness.workflow_conformance_checked
+                workflow_conformance_status = target_readiness.workflow_conformance_status
+                workflow_conformance_reasons = list(target_readiness.workflow_conformance_reasons or ())
+                workflow_conformance_evidence_summary = target_readiness.workflow_conformance_evidence_summary
                 dispatch_identifier_type = target_readiness.dispatch_identifier_type
                 workflow_identifier_used = _normalize_string(target_readiness.workflow_id, max_length=160)
                 if workflow_identifier_type_used is None:
@@ -1663,6 +1671,10 @@ class SEOMigrationService:
                     workflow_identifier_type_used=workflow_identifier_type_used,
                     workflow_dispatch_resolution_source=workflow_dispatch_resolution_source,
                     workflow_name=workflow_name,
+                    workflow_conformance_checked=target_readiness.workflow_conformance_checked,
+                    workflow_conformance_status=target_readiness.workflow_conformance_status,
+                    workflow_conformance_reasons=target_readiness.workflow_conformance_reasons,
+                    workflow_conformance_evidence_summary=target_readiness.workflow_conformance_evidence_summary,
                     deploy_trace_id=deploy_trace_id,
                     remediation_mode=target_readiness.remediation_mode,
                 )
@@ -1699,6 +1711,10 @@ class SEOMigrationService:
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_file_path": workflow_file_path,
                     "workflow_name": workflow_name,
+                    "workflow_conformance_checked": workflow_conformance_checked,
+                    "workflow_conformance_status": workflow_conformance_status,
+                    "workflow_conformance_reasons": list(workflow_conformance_reasons),
+                    "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
                     "dispatch_identifier_type": dispatch_identifier_type,
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
@@ -1750,6 +1766,22 @@ class SEOMigrationService:
                 )
                 workflow_trigger_types = (
                     target_readiness.workflow_trigger_types if target_readiness is not None else ()
+                )
+                workflow_conformance_checked = (
+                    target_readiness.workflow_conformance_checked if target_readiness is not None else workflow_conformance_checked
+                )
+                workflow_conformance_status = (
+                    target_readiness.workflow_conformance_status if target_readiness is not None else workflow_conformance_status
+                )
+                workflow_conformance_reasons = (
+                    list(target_readiness.workflow_conformance_reasons or ())
+                    if target_readiness is not None
+                    else workflow_conformance_reasons
+                )
+                workflow_conformance_evidence_summary = (
+                    target_readiness.workflow_conformance_evidence_summary
+                    if target_readiness is not None
+                    else workflow_conformance_evidence_summary
                 )
                 dispatch_identifier_type = (
                     target_readiness.dispatch_identifier_type if target_readiness is not None else "workflow_id"
@@ -1806,6 +1838,10 @@ class SEOMigrationService:
                     workflow_identifier_type_used=workflow_identifier_type_used,
                     workflow_dispatch_resolution_source=workflow_dispatch_resolution_source,
                     workflow_name=workflow_name,
+                    workflow_conformance_checked=workflow_conformance_checked,
+                    workflow_conformance_status=workflow_conformance_status,
+                    workflow_conformance_reasons=workflow_conformance_reasons,
+                    workflow_conformance_evidence_summary=workflow_conformance_evidence_summary,
                     deploy_trace_id=deploy_trace_id,
                     remediation_mode="none",
                 )
@@ -1848,6 +1884,10 @@ class SEOMigrationService:
                     "workflow_identifier_type_used": workflow_identifier_type_used,
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_name": workflow_name,
+                    "workflow_conformance_checked": workflow_conformance_checked,
+                    "workflow_conformance_status": workflow_conformance_status,
+                    "workflow_conformance_reasons": list(workflow_conformance_reasons),
+                    "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_target["ref"],
@@ -1918,6 +1958,10 @@ class SEOMigrationService:
                     "workflow_identifier_type_used": workflow_identifier_type_used,
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_name": workflow_name,
+                    "workflow_conformance_checked": workflow_conformance_checked,
+                    "workflow_conformance_status": workflow_conformance_status,
+                    "workflow_conformance_reasons": list(workflow_conformance_reasons),
+                    "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_target["ref"],
@@ -1978,6 +2022,10 @@ class SEOMigrationService:
                     "workflow_identifier_type_used": workflow_identifier_type_used,
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_name": workflow_name,
+                    "workflow_conformance_checked": workflow_conformance_checked,
+                    "workflow_conformance_status": workflow_conformance_status,
+                    "workflow_conformance_reasons": list(workflow_conformance_reasons),
+                    "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_target["ref"],
@@ -2034,6 +2082,10 @@ class SEOMigrationService:
                 "workflow_identifier_type_used": workflow_identifier_type_used,
                 "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                 "workflow_name": workflow_name,
+                "workflow_conformance_checked": workflow_conformance_checked,
+                "workflow_conformance_status": workflow_conformance_status,
+                "workflow_conformance_reasons": list(workflow_conformance_reasons),
+                "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
                 "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                 "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                 "ref": deploy_result.ref,
@@ -2073,6 +2125,10 @@ class SEOMigrationService:
                 "workflow_identifier_type_used": workflow_identifier_type_used,
                 "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                 "workflow_name": workflow_name,
+                "workflow_conformance_checked": workflow_conformance_checked,
+                "workflow_conformance_status": workflow_conformance_status,
+                "workflow_conformance_reasons": list(workflow_conformance_reasons),
+                "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
                 "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                 "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                 "ref": deploy_result.ref,
@@ -2107,6 +2163,10 @@ class SEOMigrationService:
                     "workflow_identifier_type_used": workflow_identifier_type_used,
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_name": workflow_name,
+                    "workflow_conformance_checked": workflow_conformance_checked,
+                    "workflow_conformance_status": workflow_conformance_status,
+                    "workflow_conformance_reasons": list(workflow_conformance_reasons),
+                    "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_result.ref,
@@ -2142,6 +2202,10 @@ class SEOMigrationService:
                     "workflow_identifier_type_used": workflow_identifier_type_used,
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_name": workflow_name,
+                    "workflow_conformance_checked": workflow_conformance_checked,
+                    "workflow_conformance_status": workflow_conformance_status,
+                    "workflow_conformance_reasons": list(workflow_conformance_reasons),
+                    "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_result.ref,
@@ -2196,6 +2260,10 @@ class SEOMigrationService:
             "workflow_identifier_type_used": workflow_identifier_type_used,
             "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
             "workflow_name": workflow_name,
+            "workflow_conformance_checked": workflow_conformance_checked,
+            "workflow_conformance_status": workflow_conformance_status,
+            "workflow_conformance_reasons": list(workflow_conformance_reasons),
+            "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
             "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
             "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
             "workflow_path": (
@@ -2271,6 +2339,10 @@ class SEOMigrationService:
                 "workflow_identifier_type_used": workflow_identifier_type_used,
                 "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                 "workflow_name": workflow_name,
+                "workflow_conformance_checked": workflow_conformance_checked,
+                "workflow_conformance_status": workflow_conformance_status,
+                "workflow_conformance_reasons": list(workflow_conformance_reasons),
+                "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
                 "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                 "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                 "workflow_path": (
@@ -2739,6 +2811,24 @@ class SEOMigrationService:
             "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
             "workflow_file_path": workflow_file_path,
             "workflow_name": workflow_name,
+            "workflow_conformance_checked": (
+                bool(next_item.get("workflow_conformance_checked"))
+                if isinstance(next_item.get("workflow_conformance_checked"), bool)
+                else None
+            ),
+            "workflow_conformance_status": _normalize_string(
+                next_item.get("workflow_conformance_status"),
+                max_length=80,
+            ),
+            "workflow_conformance_reasons": _normalize_string_list(
+                next_item.get("workflow_conformance_reasons"),
+                max_items=10,
+                max_item_length=120,
+            ),
+            "workflow_conformance_evidence_summary": _normalize_string(
+                next_item.get("workflow_conformance_evidence_summary"),
+                max_length=240,
+            ),
             "ref": ref,
             "deploy_trace_id": deploy_trace_id,
             "resolved_workflow_source": next_item.get("resolved_workflow_source"),
@@ -2780,6 +2870,10 @@ class SEOMigrationService:
                 "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                 "workflow_file_path": workflow_file_path,
                 "workflow_name": workflow_name,
+                "workflow_conformance_checked": result_payload.get("workflow_conformance_checked"),
+                "workflow_conformance_status": result_payload.get("workflow_conformance_status"),
+                "workflow_conformance_reasons": result_payload.get("workflow_conformance_reasons"),
+                "workflow_conformance_evidence_summary": result_payload.get("workflow_conformance_evidence_summary"),
                 "ref": ref,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
@@ -2822,6 +2916,10 @@ class SEOMigrationService:
                 "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                 "workflow_file_path": workflow_file_path,
                 "workflow_name": workflow_name,
+                "workflow_conformance_checked": result_payload.get("workflow_conformance_checked"),
+                "workflow_conformance_status": result_payload.get("workflow_conformance_status"),
+                "workflow_conformance_reasons": result_payload.get("workflow_conformance_reasons"),
+                "workflow_conformance_evidence_summary": result_payload.get("workflow_conformance_evidence_summary"),
                 "ref": ref,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
@@ -2918,6 +3016,24 @@ class SEOMigrationService:
                 _normalize_workflow_path_for_deploy(history_item.get("workflow_file_path"))
                 or _normalize_workflow_path_for_deploy(history_item.get("workflow_path"))
             ),
+            "workflow_conformance_checked": (
+                bool(history_item.get("workflow_conformance_checked"))
+                if isinstance(history_item.get("workflow_conformance_checked"), bool)
+                else None
+            ),
+            "workflow_conformance_status": _normalize_string(
+                history_item.get("workflow_conformance_status"),
+                max_length=80,
+            ),
+            "workflow_conformance_reasons": _normalize_string_list(
+                history_item.get("workflow_conformance_reasons"),
+                max_items=10,
+                max_item_length=120,
+            ),
+            "workflow_conformance_evidence_summary": _normalize_string(
+                history_item.get("workflow_conformance_evidence_summary"),
+                max_length=240,
+            ),
             "ref": _normalize_string(history_item.get("ref"), max_length=120),
             "deploy_trace_id": _normalize_string(history_item.get("deploy_trace_id"), max_length=80),
             "resolved_workflow_source": _normalize_string(history_item.get("resolved_workflow_source"), max_length=40),
@@ -2972,6 +3088,10 @@ class SEOMigrationService:
                 "workflow_dispatch_resolution_source": result_payload.get("workflow_dispatch_resolution_source"),
                 "workflow_file_path": result_payload.get("workflow_file_path"),
                 "workflow_name": result_payload.get("workflow_name"),
+                "workflow_conformance_checked": result_payload.get("workflow_conformance_checked"),
+                "workflow_conformance_status": result_payload.get("workflow_conformance_status"),
+                "workflow_conformance_reasons": result_payload.get("workflow_conformance_reasons"),
+                "workflow_conformance_evidence_summary": result_payload.get("workflow_conformance_evidence_summary"),
                 "ref": result_payload.get("ref"),
                 "deploy_trace_id": result_payload.get("deploy_trace_id"),
                 "workflow_dispatch_supported": result_payload.get("workflow_dispatch_supported"),
@@ -3011,6 +3131,10 @@ class SEOMigrationService:
                 "workflow_dispatch_resolution_source": result_payload.get("workflow_dispatch_resolution_source"),
                 "workflow_file_path": result_payload.get("workflow_file_path"),
                 "workflow_name": result_payload.get("workflow_name"),
+                "workflow_conformance_checked": result_payload.get("workflow_conformance_checked"),
+                "workflow_conformance_status": result_payload.get("workflow_conformance_status"),
+                "workflow_conformance_reasons": result_payload.get("workflow_conformance_reasons"),
+                "workflow_conformance_evidence_summary": result_payload.get("workflow_conformance_evidence_summary"),
                 "ref": result_payload.get("ref"),
                 "deploy_trace_id": result_payload.get("deploy_trace_id"),
                 "workflow_dispatch_supported": result_payload.get("workflow_dispatch_supported"),
@@ -5453,6 +5577,10 @@ class SEOMigrationService:
         workflow_identifier_type_used: str | None = None,
         workflow_dispatch_resolution_source: str | None = None,
         workflow_name: str | None = None,
+        workflow_conformance_checked: bool | None = None,
+        workflow_conformance_status: str | None = None,
+        workflow_conformance_reasons: tuple[str, ...] | list[str] | None = None,
+        workflow_conformance_evidence_summary: str | None = None,
         deploy_trace_id: str | None = None,
         remediation_mode: str,
     ) -> None:
@@ -5506,6 +5634,25 @@ class SEOMigrationService:
         normalized_workflow_name = _normalize_string(workflow_name, max_length=160)
         if normalized_workflow_name:
             payload["workflow_name"] = normalized_workflow_name
+        if workflow_conformance_checked is not None:
+            payload["workflow_conformance_checked"] = bool(workflow_conformance_checked)
+        normalized_conformance_status = _normalize_string(workflow_conformance_status, max_length=80)
+        if normalized_conformance_status:
+            payload["workflow_conformance_status"] = normalized_conformance_status
+        normalized_conformance_reasons: list[str] = []
+        if isinstance(workflow_conformance_reasons, (tuple, list)):
+            for item in workflow_conformance_reasons:
+                normalized = _normalize_string(item, max_length=120)
+                if normalized:
+                    normalized_conformance_reasons.append(normalized)
+        if normalized_conformance_reasons:
+            payload["workflow_conformance_reasons"] = normalized_conformance_reasons
+        normalized_conformance_evidence_summary = _normalize_string(
+            workflow_conformance_evidence_summary,
+            max_length=240,
+        )
+        if normalized_conformance_evidence_summary:
+            payload["workflow_conformance_evidence_summary"] = normalized_conformance_evidence_summary
         if dispatch_service_availability is not None:
             payload["dispatch_service_availability"] = bool(dispatch_service_availability)
         normalized_dispatch_service_reason = _normalize_dispatch_service_reason_code(dispatch_service_reason_code)
@@ -6349,6 +6496,8 @@ class SEOMigrationService:
                 continue
             workflow_dispatch_supported = item.get("workflow_dispatch_supported")
             dispatch_service_availability = item.get("dispatch_service_availability")
+            workflow_conformance_checked = item.get("workflow_conformance_checked")
+            workflow_conformance_reasons = item.get("workflow_conformance_reasons")
             dispatch_attempted = item.get("dispatch_attempted")
             workflow_file_path = _normalize_workflow_path_for_deploy(item.get("workflow_file_path")) or _normalize_workflow_path_for_deploy(
                 item.get("workflow_path")
@@ -6400,6 +6549,24 @@ class SEOMigrationService:
                 ),
                 "dispatch_service_reason_code": _normalize_dispatch_service_reason_code(
                     item.get("dispatch_service_reason_code")
+                ),
+                "workflow_conformance_checked": (
+                    bool(workflow_conformance_checked)
+                    if isinstance(workflow_conformance_checked, bool)
+                    else None
+                ),
+                "workflow_conformance_status": _normalize_string(
+                    item.get("workflow_conformance_status"),
+                    max_length=80,
+                ),
+                "workflow_conformance_reasons": _normalize_string_list(
+                    workflow_conformance_reasons,
+                    max_items=10,
+                    max_item_length=120,
+                ),
+                "workflow_conformance_evidence_summary": _normalize_string(
+                    item.get("workflow_conformance_evidence_summary"),
+                    max_length=240,
                 ),
                 "dispatch_identifier_type": _normalize_string(item.get("dispatch_identifier_type"), max_length=80),
                 "dispatch_attempted": bool(dispatch_attempted) if isinstance(dispatch_attempted, bool) else None,
@@ -6681,6 +6848,26 @@ class SEOMigrationService:
         )
         if workflow_file_path and not workflow_name:
             workflow_name = _workflow_id_from_path_for_deploy(workflow_file_path)
+        workflow_conformance_checked = (
+            bool(latest_traceability.get("workflow_conformance_checked"))
+            if isinstance(latest_traceability.get("workflow_conformance_checked"), bool)
+            else (
+                bool(target_summary.get("workflow_conformance_checked"))
+                if isinstance(target_summary.get("workflow_conformance_checked"), bool)
+                else None
+            )
+        )
+        workflow_conformance_status = _normalize_string(
+            latest_traceability.get("workflow_conformance_status"),
+            max_length=80,
+        ) or _normalize_string(target_summary.get("workflow_conformance_status"), max_length=80)
+        workflow_conformance_reasons = _normalize_string_list(
+            latest_traceability.get("workflow_conformance_reasons")
+        ) or _normalize_string_list(target_summary.get("workflow_conformance_reasons"))
+        workflow_conformance_evidence_summary = _normalize_string(
+            latest_traceability.get("workflow_conformance_evidence_summary"),
+            max_length=240,
+        ) or _normalize_string(target_summary.get("workflow_conformance_evidence_summary"), max_length=240)
         failure_category: str | None = None
         if reasons:
             failure_category = self._categorize_readiness_failure(
@@ -6706,6 +6893,10 @@ class SEOMigrationService:
             "workflow_trigger_types": latest_traceability.get("workflow_trigger_types") or [],
             "dispatch_service_availability": dispatch_service_availability,
             "dispatch_service_reason_code": dispatch_service_reason_code,
+            "workflow_conformance_checked": workflow_conformance_checked,
+            "workflow_conformance_status": workflow_conformance_status,
+            "workflow_conformance_reasons": workflow_conformance_reasons,
+            "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
             "last_deploy_trace_id": latest_traceability.get("deploy_trace_id"),
             "last_dispatch_attempted": latest_traceability.get("dispatch_attempted"),
             "last_dispatch_result_stage": latest_traceability.get("dispatch_result_stage"),
@@ -7810,6 +8001,25 @@ def _inject_analytics_measurement_id(*, path: str, content: str, ga_measurement_
         return normalized
     idx = lower.index("</head>")
     return normalized[:idx] + "\n  " + script_block + "\n" + normalized[idx:]
+
+
+def _normalize_string_list(value: object, *, max_items: int = 10, max_item_length: int = 120) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized_items: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        normalized = _normalize_string(item, max_length=max_item_length)
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized_items.append(normalized)
+        if len(normalized_items) >= max_items:
+            break
+    return normalized_items
 
 
 def _coerce_bool(value: object, *, default: bool) -> bool:

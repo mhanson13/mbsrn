@@ -1674,6 +1674,22 @@ export function MigrationWorkspacePanel({
   const dispatchServiceReasonCode =
     asStringOrNull(latestDeployHistoryRecord.dispatch_service_reason_code) ||
     asStringOrNull(deployReadiness.dispatch_service_reason_code);
+  const workflowConformanceChecked =
+    asBooleanOrNull(latestDeployHistoryRecord.workflow_conformance_checked) ??
+    asBooleanOrNull(deployReadiness.workflow_conformance_checked);
+  const workflowConformanceStatus =
+    asStringOrNull(latestDeployHistoryRecord.workflow_conformance_status) ||
+    asStringOrNull(deployReadiness.workflow_conformance_status);
+  const workflowConformanceReasons = (() => {
+    const historyReasons = asStringList(latestDeployHistoryRecord.workflow_conformance_reasons);
+    if (historyReasons.length > 0) {
+      return historyReasons;
+    }
+    return asStringList(deployReadiness.workflow_conformance_reasons);
+  })();
+  const workflowConformanceEvidenceSummary =
+    asStringOrNull(latestDeployHistoryRecord.workflow_conformance_evidence_summary) ||
+    asStringOrNull(deployReadiness.workflow_conformance_evidence_summary);
   const dispatchIdentifierType =
     asStringOrNull(latestDeployHistoryRecord.dispatch_identifier_type) ||
     asStringOrNull(deployReadiness.dispatch_identifier_type);
@@ -3138,6 +3154,18 @@ export function MigrationWorkspacePanel({
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Service availability reason">
                 {formatReasonCodeLabel(dispatchServiceReasonCode)}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow conformance checked">
+                {formatBooleanStateLabel(workflowConformanceChecked)}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow conformance status">
+                {workflowConformanceStatus || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow conformance reasons">
+                {workflowConformanceReasons.length > 0 ? workflowConformanceReasons.join(", ") : "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow conformance evidence">
+                {workflowConformanceEvidenceSummary || "Not available"}
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Dispatch attempted">
                 {formatBooleanStateLabel(dispatchAttempted)}

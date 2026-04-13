@@ -807,8 +807,21 @@ Deploy diagnostics now track explicit staged evidence:
 
 This keeps trigger-level and service-level readiness distinct:
 - workflow trigger support: `workflow_dispatch_supported`, `workflow_trigger_types`
+- workflow conformance support: `workflow_conformance_checked`, `workflow_conformance_status`, `workflow_conformance_reasons`
 - deployment-side service/function availability: `dispatch_service_availability`, `dispatch_service_reason_code`
 - dispatch outcome evidence: `dispatch_attempted`, `dispatch_result_stage`, `workflow_run_id`
+
+Workflow conformance semantics:
+- `conformant`: workflow content is dispatchable and includes managed deploy contract markers
+- `workflow_dispatch_missing`: workflow content is readable but missing `workflow_dispatch`
+- `workflow_placeholder_detected`: workflow content matches placeholder/example markers
+- `workflow_contract_incomplete`: workflow is dispatchable but missing required managed deploy contract markers
+- `workflow_unreadable`: workflow file exists but content could not be decoded/read for conformance checks
+- `workflow_missing`: workflow payload was unavailable during conformance evaluation
+
+Safety boundary:
+- workflow conformance diagnostics are deterministic and content-based.
+- expected vs confirmed URL evidence rules are unchanged: `resolved_live_url` only comes from explicit deploy evidence (`workflow_output` or `deploy_result`), never from workflow selection or operator input.
 
 Scope note:
 - `dispatch_service_availability` is a control-plane readiness signal (runtime publisher wiring + target tuple validity + target enabled).
@@ -840,6 +853,7 @@ Logged fields are safe metadata only:
   - `requested_ref`, `resolved_ref`, `ref_source`
   - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`
   - `workflow_dispatch_supported`, `workflow_trigger_types`, `dispatch_identifier_type`
+  - `workflow_conformance_checked`, `workflow_conformance_status`, `workflow_conformance_reasons`, `workflow_conformance_evidence_summary`
   - `workflow_identifier_requested`, `workflow_identifier_used`
   - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
   - `workflow_dispatch_resolution_source`, `workflow_file_path`, `workflow_name`

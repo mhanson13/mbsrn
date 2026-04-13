@@ -152,6 +152,10 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         readiness_dispatch_service_availability: bool = True,
         readiness_dispatch_service_reason_code: str | None = "available",
         readiness_dispatch_identifier_type: str | None = None,
+        readiness_workflow_conformance_checked: bool = True,
+        readiness_workflow_conformance_status: str = "conformant",
+        readiness_workflow_conformance_reasons: tuple[str, ...] | None = None,
+        readiness_workflow_conformance_evidence_summary: str | None = "managed_contract_markers_present",
         available_workflow_paths: set[str] | None = None,
         non_dispatchable_workflow_paths: set[str] | None = None,
     ) -> None:
@@ -180,6 +184,10 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.readiness_dispatch_service_availability = readiness_dispatch_service_availability
         self.readiness_dispatch_service_reason_code = readiness_dispatch_service_reason_code
         self.readiness_dispatch_identifier_type = readiness_dispatch_identifier_type
+        self.readiness_workflow_conformance_checked = readiness_workflow_conformance_checked
+        self.readiness_workflow_conformance_status = readiness_workflow_conformance_status
+        self.readiness_workflow_conformance_reasons = readiness_workflow_conformance_reasons or ()
+        self.readiness_workflow_conformance_evidence_summary = readiness_workflow_conformance_evidence_summary
         self.available_workflow_paths = (
             {str(item).strip() for item in available_workflow_paths if str(item).strip()}
             if available_workflow_paths is not None
@@ -374,6 +382,10 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             dispatch_service_reason_code=self.readiness_dispatch_service_reason_code,
             dispatch_identifier_type=dispatch_identifier_type,
             remediation_mode=remediation_mode.strip() or "none",
+            workflow_conformance_checked=self.readiness_workflow_conformance_checked,
+            workflow_conformance_status=self.readiness_workflow_conformance_status,
+            workflow_conformance_reasons=tuple(self.readiness_workflow_conformance_reasons),
+            workflow_conformance_evidence_summary=self.readiness_workflow_conformance_evidence_summary,
         )
 
 
@@ -3407,6 +3419,10 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
     assert action_result.result.get("resolved_workflow_source") == "site_specific_workflow"
     assert action_result.result.get("actual_dispatch_identifier_sent") == "deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("actual_dispatch_identifier_type_sent") == "workflow_id"
+    assert action_result.result.get("workflow_conformance_checked") is True
+    assert action_result.result.get("workflow_conformance_status") == "conformant"
+    assert action_result.result.get("workflow_conformance_reasons") == []
+    assert action_result.result.get("workflow_conformance_evidence_summary") == "managed_contract_markers_present"
 
     accepted_payloads = [
         record.__dict__.get("json_fields")
@@ -3421,6 +3437,10 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
     assert accepted_payloads[-1].get("workflow_dispatch_resolution_source") == "workflow_file_path"
     assert accepted_payloads[-1].get("actual_dispatch_identifier_sent") == "deploy-tnmfire-www-prod.yml"
     assert accepted_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_id"
+    assert accepted_payloads[-1].get("workflow_conformance_checked") is True
+    assert accepted_payloads[-1].get("workflow_conformance_status") == "conformant"
+    assert accepted_payloads[-1].get("workflow_conformance_reasons") == []
+    assert accepted_payloads[-1].get("workflow_conformance_evidence_summary") == "managed_contract_markers_present"
     preflight_payloads = [
         record.__dict__.get("json_fields")
         for record in caplog.records
@@ -3430,6 +3450,8 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
     assert preflight_payloads
     assert preflight_payloads[-1].get("actual_dispatch_identifier_sent") == "deploy-tnmfire-www-prod.yml"
     assert preflight_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_id"
+    assert preflight_payloads[-1].get("workflow_conformance_checked") is True
+    assert preflight_payloads[-1].get("workflow_conformance_status") == "conformant"
 
 
 def test_deploy_keeps_requested_workflow_identifier_when_history_workflow_path_missing(db_session) -> None:

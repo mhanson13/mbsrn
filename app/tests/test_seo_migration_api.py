@@ -545,6 +545,10 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert "dispatch_service_availability" in deploy_result
     assert "dispatch_service_reason_code" in deploy_result
     assert "dispatch_result_stage" in deploy_result
+    assert "workflow_conformance_checked" in deploy_result
+    assert "workflow_conformance_status" in deploy_result
+    assert isinstance(deploy_result.get("workflow_conformance_reasons"), list)
+    assert "workflow_conformance_evidence_summary" in deploy_result
 
     publish_history_response = client.get(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish-history"

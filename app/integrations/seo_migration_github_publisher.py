@@ -113,6 +113,18 @@ class SEOMigrationGitHubTargetReadinessResult:
     dispatch_service_reason_code: str | None
     dispatch_identifier_type: str
     remediation_mode: str
+    workflow_conformance_checked: bool = False
+    workflow_conformance_status: str = "workflow_conformance_unknown"
+    workflow_conformance_reasons: tuple[str, ...] = ()
+    workflow_conformance_evidence_summary: str | None = None
+
+
+@dataclass(frozen=True)
+class SEOMigrationGitHubWorkflowConformanceResult:
+    is_conformant: bool
+    conformance_status: str
+    conformance_reasons: tuple[str, ...]
+    evidence_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -211,6 +223,10 @@ class SEOMigrationGitHubPublisher:
             dispatch_service_reason_code="available",
             dispatch_identifier_type="workflow_id",
             remediation_mode=remediation_mode.strip() or "none",
+            workflow_conformance_checked=True,
+            workflow_conformance_status="conformant",
+            workflow_conformance_reasons=(),
+            workflow_conformance_evidence_summary="default_stub",
         )
 
 
@@ -905,7 +921,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         *,
         target: SEOMigrationGitHubDeployTarget,
         workflow_file_payload: dict[str, object] | None = None,
-    ) -> tuple[bool, tuple[str, ...]]:
+    ) -> tuple[bool, tuple[str, ...], SEOMigrationGitHubWorkflowConformanceResult]:
         workflow_payload = self._request_json(
             method="GET",
             path=(
@@ -949,13 +965,21 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     stage="workflow_lookup",
                 )
         trigger_types = _extract_workflow_trigger_types(workflow_file_payload)
-        if trigger_types and "workflow_dispatch" not in trigger_types:
+        conformance = _evaluate_workflow_conformance(
+            workflow_file_payload=workflow_file_payload,
+            workflow_trigger_types=trigger_types,
+        )
+        if conformance.conformance_status in {
+            _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_DISPATCH_MISSING,
+            _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_PLACEHOLDER_DETECTED,
+            _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_CONTRACT_INCOMPLETE,
+        }:
             raise SEOMigrationGitHubPublisherError(
                 code="workflow_not_dispatchable",
                 safe_message="GitHub workflow is not dispatchable for the deploy target.",
                 stage="workflow_lookup",
             )
-        return True, tuple(sorted(trigger_types))
+        return True, tuple(sorted(trigger_types)), conformance
 
     def _dispatch_workflow_request(
         self,
@@ -1250,7 +1274,11 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 safe_message="GitHub workflow target was not found.",
                 stage="workflow_lookup",
             )
-        workflow_dispatch_ready, workflow_trigger_types = self._ensure_workflow_dispatch_ready_for_target(
+        (
+            workflow_dispatch_ready,
+            workflow_trigger_types,
+            workflow_conformance,
+        ) = self._ensure_workflow_dispatch_ready_for_target(
             target=target,
             workflow_file_payload=workflow_file_payload,
         )
@@ -1272,6 +1300,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             dispatch_service_reason_code="available",
             dispatch_identifier_type=_workflow_dispatch_identifier_type(target.workflow_id),
             remediation_mode=remediation_mode.strip() or "none",
+            workflow_conformance_checked=True,
+            workflow_conformance_status=workflow_conformance.conformance_status,
+            workflow_conformance_reasons=workflow_conformance.conformance_reasons,
+            workflow_conformance_evidence_summary=workflow_conformance.evidence_summary,
         )
 
     def _fetch_existing_sha(
@@ -1634,16 +1666,126 @@ def _status_links_to_workflow_run(*, status_item: dict[str, object], workflow_ru
     return False
 
 
-def _extract_workflow_trigger_types(workflow_file_payload: dict[str, object] | None) -> set[str]:
+_WORKFLOW_CONFORMANCE_STATUS_CONFORMANT = "conformant"
+_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_MISSING = "workflow_missing"
+_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_UNREADABLE = "workflow_unreadable"
+_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_DISPATCH_MISSING = "workflow_dispatch_missing"
+_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_PLACEHOLDER_DETECTED = "workflow_placeholder_detected"
+_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_CONTRACT_INCOMPLETE = "workflow_contract_incomplete"
+_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_CONFORMANCE_UNKNOWN = "workflow_conformance_unknown"
+
+_WORKFLOW_CONFORMANCE_REQUIRED_DEPLOY_MARKERS: tuple[str, ...] = (
+    "google-github-actions/auth",
+    "google-github-actions/get-gke-credentials",
+    "kubectl apply",
+    "kubectl rollout",
+    "gcloud container clusters get-credentials",
+    "gcloud container",
+)
+
+_WORKFLOW_CONFORMANCE_PLACEHOLDER_MARKERS: tuple[str, ...] = (
+    "mbsrn managed deploy placeholder",
+    "placeholder deploy",
+    "deploy step not yet implemented",
+    "get started with github actions",
+)
+
+
+def _decode_workflow_file_content(workflow_file_payload: dict[str, object] | None) -> str | None:
     if not isinstance(workflow_file_payload, dict):
-        return set()
+        return None
     encoding = (_coerce_string(workflow_file_payload.get("encoding")) or "").strip().lower()
     content = _coerce_string(workflow_file_payload.get("content"))
     if encoding != "base64" or not content:
-        return set()
+        return None
     try:
         decoded = base64.b64decode(content, validate=False).decode("utf-8", errors="replace")
     except Exception:
+        return None
+    normalized = decoded.strip()
+    return normalized or None
+
+
+def _evaluate_workflow_conformance(
+    *,
+    workflow_file_payload: dict[str, object] | None,
+    workflow_trigger_types: set[str] | tuple[str, ...] | list[str],
+) -> SEOMigrationGitHubWorkflowConformanceResult:
+    if not isinstance(workflow_file_payload, dict):
+        return SEOMigrationGitHubWorkflowConformanceResult(
+            is_conformant=False,
+            conformance_status=_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_MISSING,
+            conformance_reasons=("workflow_file_payload_missing",),
+            evidence_summary="workflow_file_payload=missing",
+        )
+
+    decoded_content = _decode_workflow_file_content(workflow_file_payload)
+    if decoded_content is None:
+        return SEOMigrationGitHubWorkflowConformanceResult(
+            is_conformant=False,
+            conformance_status=_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_UNREADABLE,
+            conformance_reasons=("workflow_file_content_unreadable",),
+            evidence_summary="workflow_file_content=unreadable",
+        )
+
+    lowered = decoded_content.lower()
+    normalized_trigger_types = {
+        str(item).strip().lower()
+        for item in (workflow_trigger_types or [])
+        if str(item).strip()
+    }
+    has_dispatch_trigger = "workflow_dispatch" in lowered or "workflow_dispatch" in normalized_trigger_types
+    if not has_dispatch_trigger:
+        return SEOMigrationGitHubWorkflowConformanceResult(
+            is_conformant=False,
+            conformance_status=_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_DISPATCH_MISSING,
+            conformance_reasons=("workflow_dispatch_trigger_missing",),
+            evidence_summary="workflow_dispatch=false",
+        )
+
+    placeholder_markers = tuple(
+        marker
+        for marker in _WORKFLOW_CONFORMANCE_PLACEHOLDER_MARKERS
+        if marker in lowered
+    )
+    if placeholder_markers:
+        return SEOMigrationGitHubWorkflowConformanceResult(
+            is_conformant=False,
+            conformance_status=_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_PLACEHOLDER_DETECTED,
+            conformance_reasons=("placeholder_workflow_content_detected",),
+            evidence_summary=(
+                "workflow_dispatch=true;"
+                f"placeholder_markers={','.join(placeholder_markers)}"
+            ),
+        )
+
+    required_marker_hits = tuple(
+        marker
+        for marker in _WORKFLOW_CONFORMANCE_REQUIRED_DEPLOY_MARKERS
+        if marker in lowered
+    )
+    if not required_marker_hits:
+        return SEOMigrationGitHubWorkflowConformanceResult(
+            is_conformant=False,
+            conformance_status=_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_CONTRACT_INCOMPLETE,
+            conformance_reasons=("managed_deploy_contract_markers_missing",),
+            evidence_summary="workflow_dispatch=true;required_deploy_markers=missing",
+        )
+
+    return SEOMigrationGitHubWorkflowConformanceResult(
+        is_conformant=True,
+        conformance_status=_WORKFLOW_CONFORMANCE_STATUS_CONFORMANT,
+        conformance_reasons=(),
+        evidence_summary=(
+            "workflow_dispatch=true;"
+            f"required_deploy_markers={','.join(required_marker_hits)}"
+        ),
+    )
+
+
+def _extract_workflow_trigger_types(workflow_file_payload: dict[str, object] | None) -> set[str]:
+    decoded = _decode_workflow_file_content(workflow_file_payload)
+    if not decoded:
         return set()
     lowered = decoded.lower()
     triggers: set[str] = set()
