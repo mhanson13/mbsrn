@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -21,6 +24,7 @@ from app.integrations.seo_migration_artifact_provider import (
     SEOMigrationProviderCompatibilityResult,
 )
 from app.integrations.seo_migration_github_publisher import (
+    GitHubSEOMigrationPublisher,
     MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubDeployResult,
     SEOMigrationGitHubDeployRunStatusResult,
@@ -319,6 +323,36 @@ def _make_client(
     if github_publisher is not None:
         app.dependency_overrides[get_seo_migration_github_publisher] = lambda: github_publisher
     return TestClient(app)
+
+
+def test_github_publisher_dependency_uses_migration_github_token_when_present() -> None:
+    settings = SimpleNamespace(
+        migration_github_token=" test-token ",
+        migration_github_api_base_url="https://api.github.com",
+        migration_github_timeout_seconds=30.0,
+        migration_publish_committer_name="MBSRN Automation",
+        migration_publish_committer_email="automation@example.com",
+    )
+    with patch("app.api.deps.get_settings", return_value=settings):
+        publisher = get_seo_migration_github_publisher()
+
+    assert isinstance(publisher, GitHubSEOMigrationPublisher)
+
+
+def test_github_publisher_dependency_returns_misconfigured_when_token_missing() -> None:
+    settings = SimpleNamespace(
+        migration_github_token="  ",
+        migration_github_api_base_url="https://api.github.com",
+        migration_github_timeout_seconds=30.0,
+        migration_publish_committer_name="MBSRN Automation",
+        migration_publish_committer_email="automation@example.com",
+    )
+    with patch("app.api.deps.get_settings", return_value=settings):
+        publisher = get_seo_migration_github_publisher()
+
+    assert isinstance(publisher, MisconfiguredSEOMigrationGitHubPublisher)
+    assert publisher.reason_code == "runtime_credential_missing"
+    assert "credential is unavailable" in publisher.safe_message.lower()
 
 
 def _seed_business_and_site(db_session, *, business_id: str, site_id: str) -> None:
@@ -1103,6 +1137,15 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_failure_reason" in payload["deploy_readiness"]
     assert "last_failure_stage" in payload["deploy_readiness"]
     assert "last_failure_message" in payload["deploy_readiness"]
+    assert "last_failure_remediation_hint" in payload["deploy_readiness"]
+    assert "last_failure_workflow_identifier_requested" in payload["deploy_readiness"]
+    assert "last_failure_workflow_identifier_used" in payload["deploy_readiness"]
+    assert "last_failure_workflow_file_path" in payload["deploy_readiness"]
+    assert "last_failure_workflow_exists" in payload["deploy_readiness"]
+    assert "last_failure_workflow_dispatch_resolution_source" in payload["deploy_readiness"]
+    assert "last_failure_dispatch_service_reason_code" in payload["deploy_readiness"]
+    assert "last_failure_workflow_conformance_status" in payload["deploy_readiness"]
+    assert "last_failure_workflow_conformance_reasons" in payload["deploy_readiness"]
     assert "workflow_identifier_requested" in payload["deploy_readiness"]
     assert "workflow_identifier_used" in payload["deploy_readiness"]
     assert "workflow_dispatch_resolution_source" in payload["deploy_readiness"]
@@ -1835,6 +1878,15 @@ def test_migration_summary_diagnostics_contract_tracks_publish_and_deploy_state_
     assert diagnostics.get("last_deploy_status") == "failed"
     assert diagnostics.get("last_deploy_failure_category") == "deploy_error"
     assert diagnostics.get("last_deploy_failure_message") == "Simulated deploy failure."
+    assert "last_deploy_failure_remediation_hint" in diagnostics
+    assert "last_deploy_failure_workflow_identifier_requested" in diagnostics
+    assert "last_deploy_failure_workflow_identifier_used" in diagnostics
+    assert "last_deploy_failure_workflow_file_path" in diagnostics
+    assert "last_deploy_failure_workflow_exists" in diagnostics
+    assert "last_deploy_failure_workflow_dispatch_resolution_source" in diagnostics
+    assert "last_deploy_failure_dispatch_service_reason_code" in diagnostics
+    assert "last_deploy_failure_workflow_conformance_status" in diagnostics
+    assert "last_deploy_failure_workflow_conformance_reasons" in diagnostics
 
     assert publish_readiness.get("last_status") == "published"
     assert publish_readiness.get("last_failure_category") is None
@@ -1842,3 +1894,4 @@ def test_migration_summary_diagnostics_contract_tracks_publish_and_deploy_state_
     assert deploy_readiness.get("last_status") == "failed"
     assert deploy_readiness.get("last_failure_category") == "deploy_error"
     assert deploy_readiness.get("last_failure_message") == "Simulated deploy failure."
+    assert "last_failure_remediation_hint" in deploy_readiness

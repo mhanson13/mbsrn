@@ -1865,6 +1865,12 @@ class SEOMigrationService:
             failure_reason_for_log = (
                 f"{failure_reason_code}: {exc.safe_message}" if failure_reason_code else exc.safe_message
             )
+            failure_remediation_hint = _derive_deploy_failure_remediation_hint(
+                failure_reason=failure_reason_code,
+                failure_stage=failure_stage,
+                workflow_exists=workflow_exists if not dry_run else None,
+                dispatch_service_reason_code=dispatch_service_reason_code,
+            )
             artifact.deploy_status = "deploy_failed"
             artifact.last_deploy_error_summary = exc.safe_message
             workspace.deploy_status = "deploy_failed"
@@ -1924,6 +1930,7 @@ class SEOMigrationService:
                     "failure_category": failure_category,
                     "failure_reason": failure_reason_code,
                     "failure_stage": failure_stage,
+                    "failure_remediation_hint": failure_remediation_hint,
                     "error": exc.safe_message,
                     "error_summary": exc.safe_message,
                     "resolved_workflow_source": workflow_resolution.get("source"),
@@ -1991,6 +1998,7 @@ class SEOMigrationService:
                     "dispatch_result_stage": dispatch_result_stage,
                     "failure_reason_code": failure_reason_code,
                     "failure_stage": failure_stage,
+                    "failure_remediation_hint": failure_remediation_hint,
                     "expected_publish_url": expected_publish_url,
                     "resolved_live_url": resolved_live_url,
                     "url_source": expected_publish_url_source,
@@ -2057,6 +2065,7 @@ class SEOMigrationService:
                     "failure_stage": failure_stage,
                     "failure_category": failure_category,
                     "failure_message": exc.safe_message,
+                    "failure_remediation_hint": failure_remediation_hint,
                     "expected_publish_url": expected_publish_url,
                     "resolved_live_url": resolved_live_url,
                     "url_source": expected_publish_url_source,
@@ -3813,6 +3822,9 @@ class SEOMigrationService:
             history=workspace.deploy_history_json,
             action="deploy",
         )
+        latest_deploy_failure_detail = self._derive_latest_deploy_failure_detail(
+            history=workspace.deploy_history_json
+        )
         draft_diagnostics = self._derive_draft_generation_diagnostics(artifact=latest_artifact)
         draft_readiness = self._build_draft_generation_readiness(
             business_id=business_id,
@@ -3858,6 +3870,32 @@ class SEOMigrationService:
             "last_failure_reason": deploy_diagnostics.get("last_failure_reason"),
             "last_failure_stage": deploy_diagnostics.get("last_failure_stage"),
             "last_failure_message": deploy_diagnostics.get("last_failure_message"),
+            "last_failure_remediation_hint": deploy_diagnostics.get("last_failure_remediation_hint"),
+            "last_failure_workflow_identifier_requested": latest_deploy_failure_detail.get(
+                "workflow_identifier_requested"
+            ),
+            "last_failure_workflow_identifier_used": latest_deploy_failure_detail.get(
+                "workflow_identifier_used"
+            ),
+            "last_failure_workflow_file_path": latest_deploy_failure_detail.get("workflow_file_path"),
+            "last_failure_workflow_exists": latest_deploy_failure_detail.get("workflow_exists"),
+            "last_failure_workflow_dispatch_resolution_source": latest_deploy_failure_detail.get(
+                "workflow_dispatch_resolution_source"
+            ),
+            "last_failure_dispatch_service_reason_code": latest_deploy_failure_detail.get(
+                "dispatch_service_reason_code"
+            ),
+            "last_failure_workflow_conformance_status": latest_deploy_failure_detail.get(
+                "workflow_conformance_status"
+            ),
+            "last_failure_workflow_conformance_reasons": latest_deploy_failure_detail.get(
+                "workflow_conformance_reasons"
+            ),
+            "last_failure_resolved_workflow_source": latest_deploy_failure_detail.get(
+                "resolved_workflow_source"
+            ),
+            "last_failure_target_environment_key": latest_deploy_failure_detail.get("target_environment_key"),
+            "last_failure_target_environment_source": latest_deploy_failure_detail.get("target_environment_source"),
         }
         context_summary = {
             **context_summary,
@@ -3872,6 +3910,36 @@ class SEOMigrationService:
                 "last_deploy_failure_reason": deploy_diagnostics.get("last_failure_reason"),
                 "last_deploy_failure_stage": deploy_diagnostics.get("last_failure_stage"),
                 "last_deploy_failure_message": deploy_diagnostics.get("last_failure_message"),
+                "last_deploy_failure_remediation_hint": deploy_diagnostics.get("last_failure_remediation_hint"),
+                "last_deploy_failure_workflow_identifier_requested": latest_deploy_failure_detail.get(
+                    "workflow_identifier_requested"
+                ),
+                "last_deploy_failure_workflow_identifier_used": latest_deploy_failure_detail.get(
+                    "workflow_identifier_used"
+                ),
+                "last_deploy_failure_workflow_file_path": latest_deploy_failure_detail.get("workflow_file_path"),
+                "last_deploy_failure_workflow_exists": latest_deploy_failure_detail.get("workflow_exists"),
+                "last_deploy_failure_workflow_dispatch_resolution_source": latest_deploy_failure_detail.get(
+                    "workflow_dispatch_resolution_source"
+                ),
+                "last_deploy_failure_dispatch_service_reason_code": latest_deploy_failure_detail.get(
+                    "dispatch_service_reason_code"
+                ),
+                "last_deploy_failure_workflow_conformance_status": latest_deploy_failure_detail.get(
+                    "workflow_conformance_status"
+                ),
+                "last_deploy_failure_workflow_conformance_reasons": latest_deploy_failure_detail.get(
+                    "workflow_conformance_reasons"
+                ),
+                "last_deploy_failure_resolved_workflow_source": latest_deploy_failure_detail.get(
+                    "resolved_workflow_source"
+                ),
+                "last_deploy_failure_target_environment_key": latest_deploy_failure_detail.get(
+                    "target_environment_key"
+                ),
+                "last_deploy_failure_target_environment_source": latest_deploy_failure_detail.get(
+                    "target_environment_source"
+                ),
                 "last_draft_generation_status": draft_diagnostics.get("last_status"),
                 "last_draft_failure_category": draft_diagnostics.get("last_failure_category"),
                 "last_draft_failure_reason": draft_diagnostics.get("last_failure_reason"),
@@ -6472,6 +6540,7 @@ class SEOMigrationService:
         last_failure_message: str | None = None
         last_failure_reason: str | None = None
         last_failure_stage: str | None = None
+        last_failure_remediation_hint: str | None = None
         for item in reversed(normalized_history):
             if str(item.get("action") or "").strip().lower() != target_action:
                 continue
@@ -6491,6 +6560,17 @@ class SEOMigrationService:
                 ) or _normalize_string(item.get("error"), max_length=300)
                 last_failure_reason = _normalize_deploy_failure_reason_code(item.get("failure_reason"))
                 last_failure_stage = _normalize_deploy_failure_stage(item.get("failure_stage"))
+                last_failure_remediation_hint = _normalize_string(
+                    item.get("failure_remediation_hint"),
+                    max_length=240,
+                )
+                if last_failure_remediation_hint is None:
+                    last_failure_remediation_hint = _derive_deploy_failure_remediation_hint(
+                        failure_reason=last_failure_reason,
+                        failure_stage=last_failure_stage,
+                        workflow_exists=item.get("workflow_exists"),
+                        dispatch_service_reason_code=item.get("dispatch_service_reason_code"),
+                    )
                 break
         return {
             "last_status": last_status,
@@ -6498,7 +6578,88 @@ class SEOMigrationService:
             "last_failure_message": last_failure_message,
             "last_failure_reason": last_failure_reason,
             "last_failure_stage": last_failure_stage,
+            "last_failure_remediation_hint": last_failure_remediation_hint,
         }
+
+    @staticmethod
+    def _derive_latest_deploy_failure_detail(*, history: object) -> dict[str, object]:
+        normalized_history = _normalize_history_list(history)
+        for item in reversed(normalized_history):
+            if str(item.get("action") or "").strip().lower() != "deploy":
+                continue
+            if str(item.get("status") or "").strip().lower() != "failed":
+                continue
+            workflow_file_path = _normalize_workflow_path_for_deploy(
+                item.get("workflow_file_path")
+            ) or _normalize_workflow_path_for_deploy(item.get("workflow_path"))
+            workflow_identifier_requested = _normalize_string(
+                item.get("workflow_identifier_requested"),
+                max_length=200,
+            ) or _normalize_string(item.get("workflow_id"), max_length=160)
+            workflow_identifier_used = _normalize_string(
+                item.get("workflow_identifier_used"),
+                max_length=200,
+            ) or _normalize_string(item.get("workflow_id"), max_length=160)
+            workflow_conformance_reasons = _normalize_string_list(
+                item.get("workflow_conformance_reasons"),
+                max_items=10,
+                max_item_length=120,
+            )
+            failure_reason = _normalize_deploy_failure_reason_code(item.get("failure_reason"))
+            failure_stage = _normalize_deploy_failure_stage(item.get("failure_stage"))
+            failure_remediation_hint = _normalize_string(
+                item.get("failure_remediation_hint"),
+                max_length=240,
+            ) or _derive_deploy_failure_remediation_hint(
+                failure_reason=failure_reason,
+                failure_stage=failure_stage,
+                workflow_exists=item.get("workflow_exists"),
+                dispatch_service_reason_code=item.get("dispatch_service_reason_code"),
+            )
+            return {
+                "failure_category": _normalize_string(item.get("failure_category"), max_length=40),
+                "failure_reason": failure_reason,
+                "failure_stage": failure_stage,
+                "failure_message": _normalize_string(
+                    item.get("error_summary"),
+                    max_length=300,
+                )
+                or _normalize_string(item.get("error"), max_length=300),
+                "workflow_identifier_requested": workflow_identifier_requested,
+                "workflow_identifier_used": workflow_identifier_used,
+                "workflow_file_path": workflow_file_path,
+                "workflow_dispatch_resolution_source": _normalize_string(
+                    item.get("workflow_dispatch_resolution_source"),
+                    max_length=80,
+                ),
+                "workflow_exists": (
+                    bool(item.get("workflow_exists"))
+                    if isinstance(item.get("workflow_exists"), bool)
+                    else None
+                ),
+                "dispatch_service_reason_code": _normalize_dispatch_service_reason_code(
+                    item.get("dispatch_service_reason_code")
+                ),
+                "workflow_conformance_status": _normalize_string(
+                    item.get("workflow_conformance_status"),
+                    max_length=80,
+                ),
+                "workflow_conformance_reasons": workflow_conformance_reasons,
+                "resolved_workflow_source": _normalize_string(
+                    item.get("resolved_workflow_source"),
+                    max_length=40,
+                ),
+                "target_environment_key": _normalize_string(
+                    item.get("target_environment_key"),
+                    max_length=80,
+                ),
+                "target_environment_source": _normalize_string(
+                    item.get("target_environment_source"),
+                    max_length=80,
+                ),
+                "failure_remediation_hint": failure_remediation_hint,
+            }
+        return {}
 
     @staticmethod
     def _derive_latest_deploy_traceability(
@@ -6848,6 +7009,9 @@ class SEOMigrationService:
             history=workspace.deploy_history_json,
             artifact_version_id=artifact.id if artifact is not None else None,
         )
+        latest_failure_detail = self._derive_latest_deploy_failure_detail(
+            history=workspace.deploy_history_json,
+        )
         if workflow_identifier is None:
             workflow_identifier = _derive_workflow_identifier(
                 workflow_id=target_summary.get("workflow_id"),
@@ -6902,6 +7066,66 @@ class SEOMigrationService:
             latest_traceability.get("workflow_conformance_evidence_summary"),
             max_length=240,
         ) or _normalize_string(target_summary.get("workflow_conformance_evidence_summary"), max_length=240)
+        last_failure_category = _normalize_string(
+            latest_failure_detail.get("failure_category"),
+            max_length=40,
+        )
+        last_failure_reason = _normalize_deploy_failure_reason_code(
+            latest_failure_detail.get("failure_reason")
+        )
+        last_failure_stage = _normalize_deploy_failure_stage(
+            latest_failure_detail.get("failure_stage")
+        )
+        last_failure_message = _normalize_string(
+            latest_failure_detail.get("failure_message"),
+            max_length=300,
+        )
+        last_failure_remediation_hint = _normalize_string(
+            latest_failure_detail.get("failure_remediation_hint"),
+            max_length=240,
+        )
+        last_failure_workflow_identifier_requested = _normalize_string(
+            latest_failure_detail.get("workflow_identifier_requested"),
+            max_length=200,
+        )
+        last_failure_workflow_identifier_used = _normalize_string(
+            latest_failure_detail.get("workflow_identifier_used"),
+            max_length=200,
+        )
+        last_failure_workflow_file_path = _normalize_workflow_path_for_deploy(
+            latest_failure_detail.get("workflow_file_path")
+        )
+        last_failure_workflow_dispatch_resolution_source = _normalize_string(
+            latest_failure_detail.get("workflow_dispatch_resolution_source"),
+            max_length=80,
+        )
+        last_failure_dispatch_service_reason_code = _normalize_dispatch_service_reason_code(
+            latest_failure_detail.get("dispatch_service_reason_code")
+        )
+        last_failure_workflow_conformance_status = _normalize_string(
+            latest_failure_detail.get("workflow_conformance_status"),
+            max_length=80,
+        )
+        last_failure_workflow_conformance_reasons = _normalize_string_list(
+            latest_failure_detail.get("workflow_conformance_reasons")
+        )
+        last_failure_resolved_workflow_source = _normalize_string(
+            latest_failure_detail.get("resolved_workflow_source"),
+            max_length=40,
+        )
+        last_failure_target_environment_key = _normalize_string(
+            latest_failure_detail.get("target_environment_key"),
+            max_length=80,
+        )
+        last_failure_target_environment_source = _normalize_string(
+            latest_failure_detail.get("target_environment_source"),
+            max_length=80,
+        )
+        last_failure_workflow_exists = (
+            bool(latest_failure_detail.get("workflow_exists"))
+            if isinstance(latest_failure_detail.get("workflow_exists"), bool)
+            else None
+        )
         failure_category: str | None = None
         if reasons:
             failure_category = self._categorize_readiness_failure(
@@ -6931,6 +7155,22 @@ class SEOMigrationService:
             "workflow_conformance_status": workflow_conformance_status,
             "workflow_conformance_reasons": workflow_conformance_reasons,
             "workflow_conformance_evidence_summary": workflow_conformance_evidence_summary,
+            "last_failure_category": last_failure_category,
+            "last_failure_reason": last_failure_reason,
+            "last_failure_stage": last_failure_stage,
+            "last_failure_message": last_failure_message,
+            "last_failure_remediation_hint": last_failure_remediation_hint,
+            "last_failure_workflow_identifier_requested": last_failure_workflow_identifier_requested,
+            "last_failure_workflow_identifier_used": last_failure_workflow_identifier_used,
+            "last_failure_workflow_file_path": last_failure_workflow_file_path,
+            "last_failure_workflow_exists": last_failure_workflow_exists,
+            "last_failure_workflow_dispatch_resolution_source": last_failure_workflow_dispatch_resolution_source,
+            "last_failure_dispatch_service_reason_code": last_failure_dispatch_service_reason_code,
+            "last_failure_workflow_conformance_status": last_failure_workflow_conformance_status,
+            "last_failure_workflow_conformance_reasons": last_failure_workflow_conformance_reasons,
+            "last_failure_resolved_workflow_source": last_failure_resolved_workflow_source,
+            "last_failure_target_environment_key": last_failure_target_environment_key,
+            "last_failure_target_environment_source": last_failure_target_environment_source,
             "last_deploy_trace_id": latest_traceability.get("deploy_trace_id"),
             "last_dispatch_attempted": latest_traceability.get("dispatch_attempted"),
             "last_dispatch_result_stage": latest_traceability.get("dispatch_result_stage"),
@@ -7540,6 +7780,36 @@ def _derive_dispatch_service_reason_code(
     if normalized_failure_stage in {"repo_lookup", "ref_lookup", "workflow_lookup"}:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_METADATA_MISSING
     return _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE
+
+
+def _derive_deploy_failure_remediation_hint(
+    *,
+    failure_reason: object,
+    failure_stage: object,
+    workflow_exists: object,
+    dispatch_service_reason_code: object,
+) -> str | None:
+    normalized_reason = _normalize_deploy_failure_reason_code(failure_reason)
+    normalized_stage = _normalize_deploy_failure_stage(failure_stage)
+    normalized_dispatch_reason = _normalize_dispatch_service_reason_code(dispatch_service_reason_code)
+    workflow_exists_bool = bool(workflow_exists) if isinstance(workflow_exists, bool) else None
+
+    if (
+        normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE
+        and normalized_stage == "workflow_lookup"
+        and workflow_exists_bool is True
+    ):
+        return "Selected workflow exists but is not dispatchable for this deploy target."
+    if normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND and normalized_stage == "workflow_lookup":
+        return "Selected workflow file could not be found in the target repository/ref."
+    if normalized_reason == _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED:
+        return "Selected workflow does not support workflow_dispatch for this target."
+    if (
+        normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID
+        and normalized_stage == "workflow_lookup"
+    ):
+        return "Deploy target configuration resolved to a workflow or target that is not usable."
+    return None
 
 
 def _resolve_publish_history_workflow_identity(

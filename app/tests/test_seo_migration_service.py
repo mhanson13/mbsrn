@@ -3595,14 +3595,44 @@ def test_deploy_prefers_site_specific_workflow_even_when_non_dispatchable(db_ses
     assert last_failure.get("failure_reason") == "workflow_not_dispatchable"
     assert last_failure.get("failure_stage") == "workflow_lookup"
     assert last_failure.get("workflow_exists") is True
+    assert (
+        last_failure.get("failure_remediation_hint")
+        == "Selected workflow exists but is not dispatchable for this deploy target."
+    )
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     deploy_readiness = summary.deploy_readiness
     assert deploy_readiness.get("last_failure_reason") == "workflow_not_dispatchable"
     assert deploy_readiness.get("last_failure_stage") == "workflow_lookup"
     assert deploy_readiness.get("last_workflow_exists") is True
+    assert (
+        deploy_readiness.get("last_failure_remediation_hint")
+        == "Selected workflow exists but is not dispatchable for this deploy target."
+    )
+    assert (
+        deploy_readiness.get("last_failure_workflow_identifier_requested")
+        == "deploy-tnmfire-www-prod.yml"
+    )
+    assert (
+        deploy_readiness.get("last_failure_workflow_file_path")
+        == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    )
+    assert deploy_readiness.get("last_failure_workflow_exists") is True
     assert deploy_readiness.get("workflow_identifier_requested") == "deploy-tnmfire-www-prod.yml"
     assert deploy_readiness.get("workflow_identifier_used") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert (
+        diagnostics.get("last_deploy_failure_remediation_hint")
+        == "Selected workflow exists but is not dispatchable for this deploy target."
+    )
+    assert (
+        diagnostics.get("last_deploy_failure_workflow_identifier_requested")
+        == "deploy-tnmfire-www-prod.yml"
+    )
+    assert (
+        diagnostics.get("last_deploy_failure_workflow_file_path")
+        == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    )
 
 
 @pytest.mark.parametrize(
@@ -3687,6 +3717,60 @@ def test_deploy_failure_reason_codes_are_recorded(
     assert dispatch_failure_logs
     assert dispatch_failure_logs[-1].get("failure_reason_code") == reason_code
     assert dispatch_failure_logs[-1].get("failure_stage") == failure_stage
+
+
+def test_deploy_failure_without_known_mapping_omits_remediation_hint(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        fail_deploy=True,
+        deploy_error_code="github_request_failed",
+        deploy_error_message="Simulated deploy failure.",
+        deploy_error_stage="workflow_dispatch",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    with pytest.raises(SEOMigrationValidationError, match="Simulated deploy failure."):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness
+    assert deploy_readiness.get("last_failure_remediation_hint") is None
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("last_deploy_failure_remediation_hint") is None
 
 
 def test_publish_retry_after_failure_is_deterministic(db_session) -> None:

@@ -1591,6 +1591,7 @@ export function MigrationWorkspacePanel({
   const deployRuntimeStatusMessage = asStringOrNull(deployConfigPrerequisites.github_publisher_status_message);
   const deployPrimaryBlockerMessage = toDeployBlockerMessage(deployBlockerCodes);
   const contextSummary = asRecord(summary?.context_summary);
+  const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
   const currentSiteUrl = asStringOrNull(sourceSnapshot?.final_url) || asStringOrNull(summary?.workspace.source_url);
   const destinationSummary = deriveMigrationDestinationSummary({
     contextSummary,
@@ -1614,7 +1615,9 @@ export function MigrationWorkspacePanel({
     asStringOrNull(deployReadiness.workflow_identifier) ||
     asStringOrNull(deployTarget.workflow_id);
   const deployWorkflowIdentifierRequested =
+    asStringOrNull(deployReadiness.last_failure_workflow_identifier_requested) ||
     asStringOrNull(latestDeployHistoryRecord.workflow_identifier_requested) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_failure_workflow_identifier_requested) ||
     asStringOrNull(deployReadiness.workflow_identifier_requested) ||
     asStringOrNull(deployTarget.workflow_id);
   const deployWorkflowIdentifierTypeRequested =
@@ -1624,10 +1627,14 @@ export function MigrationWorkspacePanel({
     asStringOrNull(latestDeployHistoryRecord.workflow_identifier_type_used) ||
     asStringOrNull(deployReadiness.workflow_identifier_type_used);
   const deployWorkflowDispatchResolutionSource =
+    asStringOrNull(deployReadiness.last_failure_workflow_dispatch_resolution_source) ||
     asStringOrNull(latestDeployHistoryRecord.workflow_dispatch_resolution_source) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_failure_workflow_dispatch_resolution_source) ||
     asStringOrNull(deployReadiness.workflow_dispatch_resolution_source);
   const deployWorkflowFilePath =
+    asStringOrNull(deployReadiness.last_failure_workflow_file_path) ||
     asStringOrNull(latestDeployHistoryRecord.workflow_file_path) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_failure_workflow_file_path) ||
     asStringOrNull(deployReadiness.workflow_file_path) ||
     asStringOrNull(deployTarget.resolved_workflow_path);
   const deployWorkflowName =
@@ -1672,18 +1679,29 @@ export function MigrationWorkspacePanel({
     asBooleanOrNull(latestDeployHistoryRecord.dispatch_service_availability) ??
     asBooleanOrNull(deployReadiness.dispatch_service_availability);
   const dispatchServiceReasonCode =
+    asStringOrNull(deployReadiness.last_failure_dispatch_service_reason_code) ||
     asStringOrNull(latestDeployHistoryRecord.dispatch_service_reason_code) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_failure_dispatch_service_reason_code) ||
     asStringOrNull(deployReadiness.dispatch_service_reason_code);
   const workflowConformanceChecked =
     asBooleanOrNull(latestDeployHistoryRecord.workflow_conformance_checked) ??
     asBooleanOrNull(deployReadiness.workflow_conformance_checked);
   const workflowConformanceStatus =
+    asStringOrNull(deployReadiness.last_failure_workflow_conformance_status) ||
     asStringOrNull(latestDeployHistoryRecord.workflow_conformance_status) ||
     asStringOrNull(deployReadiness.workflow_conformance_status);
   const workflowConformanceReasons = (() => {
     const historyReasons = asStringList(latestDeployHistoryRecord.workflow_conformance_reasons);
     if (historyReasons.length > 0) {
       return historyReasons;
+    }
+    const failureReasons = asStringList(deployReadiness.last_failure_workflow_conformance_reasons);
+    if (failureReasons.length > 0) {
+      return failureReasons;
+    }
+    const diagnosticReasons = asStringList(migrationDiagnostics.last_deploy_failure_workflow_conformance_reasons);
+    if (diagnosticReasons.length > 0) {
+      return diagnosticReasons;
     }
     return asStringList(deployReadiness.workflow_conformance_reasons);
   })();
@@ -1718,15 +1736,21 @@ export function MigrationWorkspacePanel({
     asStringOrNull(deployReadiness.last_workflow_run_conclusion);
   const deployFailureReasonCode =
     asStringOrNull(deployReadiness.last_failure_reason) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_failure_reason) ||
     asStringOrNull(latestDeployHistoryRecord.failure_reason);
   const deployFailureStage =
     asStringOrNull(deployReadiness.last_failure_stage) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_failure_stage) ||
     asStringOrNull(latestDeployHistoryRecord.failure_stage) ||
     asStringOrNull(latestDeployHistoryRecord.dispatch_result_stage);
   const deployWorkflowExists =
+    asBooleanOrNull(deployReadiness.last_failure_workflow_exists) ??
     asBooleanOrNull(latestDeployHistoryRecord.workflow_exists) ??
     asBooleanOrNull(deployReadiness.last_workflow_exists);
-  const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
+  const deployFailureRemediationHint =
+    asStringOrNull(deployReadiness.last_failure_remediation_hint) ||
+    asStringOrNull(latestDeployHistoryRecord.failure_remediation_hint) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_failure_remediation_hint);
   const draftReadiness = parseDraftReadiness(contextSummary);
   const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
   const draftGenerationState = parseDraftGenerationState({
@@ -3108,7 +3132,16 @@ export function MigrationWorkspacePanel({
             {deployFailureCategory ? (
               <span className="hint warning">Last failure category: {toFailureCategoryLabel(deployFailureCategory)}</span>
             ) : null}
+            {deployFailureReasonCode ? (
+              <span className="hint warning">Last failure reason: {formatReasonCodeLabel(deployFailureReasonCode)}</span>
+            ) : null}
+            {deployFailureStage ? (
+              <span className="hint warning">Last failure stage: {formatDispatchStageLabel(deployFailureStage)}</span>
+            ) : null}
             {deployFailureMessage ? <span className="hint warning">{deployFailureMessage}</span> : null}
+            {deployFailureRemediationHint ? (
+              <span className="hint warning">Remediation hint: {deployFailureRemediationHint}</span>
+            ) : null}
             <WorkspaceMetadataGrid data-testid="migration-deploy-traceability">
               <WorkspaceMetadataItem label="Repository">
                 {deployTraceRepo || "Not available"}
@@ -3315,10 +3348,24 @@ export function MigrationWorkspacePanel({
               <ul>
                 {deployHistory.slice(-10).reverse().map((item, index) => {
                   const record = asRecord(item);
+                  const status = asString(record.status) || "unknown";
+                  const failureReason = asStringOrNull(record.failure_reason);
+                  const failureStage = asStringOrNull(record.failure_stage);
+                  const remediationHint = asStringOrNull(record.failure_remediation_hint);
                   return (
                     <li key={`deploy-history-${index}`}>
-                      {asString(record.timestamp) || "n/a"} - {asString(record.status) || "unknown"} - artifact{" "}
+                      {asString(record.timestamp) || "n/a"} - {status} - artifact{" "}
                       {asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a"}
+                      {status.toLowerCase() === "failed" && (failureReason || failureStage) ? (
+                        <span className="hint warning">
+                          {" "}
+                          ({failureStage ? formatDispatchStageLabel(failureStage) : "failure"}:{" "}
+                          {failureReason ? formatReasonCodeLabel(failureReason) : "unknown"})
+                        </span>
+                      ) : null}
+                      {status.toLowerCase() === "failed" && remediationHint ? (
+                        <span className="hint warning"> - {remediationHint}</span>
+                      ) : null}
                     </li>
                   );
                 })}
@@ -3394,6 +3441,9 @@ export function MigrationWorkspacePanel({
                   Dispatch service reason: {formatReasonCodeLabel(dispatchServiceReasonCode)}
                 </span>
                 {deployFailureMessage ? <span className="hint warning">{deployFailureMessage}</span> : null}
+                {deployFailureRemediationHint ? (
+                  <span className="hint warning">Remediation hint: {deployFailureRemediationHint}</span>
+                ) : null}
               </div>
             </div>
 

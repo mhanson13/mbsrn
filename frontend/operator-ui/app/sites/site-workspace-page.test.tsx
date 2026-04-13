@@ -3596,6 +3596,8 @@ describe("site workspace migration tab", () => {
           last_workflow_run_conclusion: null,
           last_failure_reason: "workflow_dispatch_not_supported",
           last_failure_stage: "workflow_lookup",
+          last_failure_remediation_hint:
+            "Selected workflow exists but is not dispatchable for this deploy target.",
           last_workflow_exists: false,
         },
       }),
@@ -3635,6 +3637,8 @@ describe("site workspace migration tab", () => {
           workflow_exists: false,
           failure_reason: "workflow_dispatch_not_supported",
           failure_stage: "workflow_lookup",
+          failure_remediation_hint:
+            "Selected workflow exists but is not dispatchable for this deploy target.",
           workflow_run_id: 987654,
           workflow_run_status: "in_progress",
           workflow_run_conclusion: null,
@@ -3676,6 +3680,9 @@ describe("site workspace migration tab", () => {
     expect(deployDiagnosticsPanel).toHaveTextContent("Workflow exists: No");
     expect(deployDiagnosticsPanel).toHaveTextContent("Workflow resolution source: workflow_file_path");
     expect(deployDiagnosticsPanel).toHaveTextContent("Dispatch service reason: runtime publisher unavailable");
+    expect(deployDiagnosticsPanel).toHaveTextContent(
+      "Remediation hint: Selected workflow exists but is not dispatchable for this deploy target.",
+    );
     expect(screen.getByText(
       "Expected URL is guidance only. Confirmed live URL appears only after explicit deploy/workflow evidence.",
     )).toBeInTheDocument();

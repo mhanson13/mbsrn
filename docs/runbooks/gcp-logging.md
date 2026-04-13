@@ -233,6 +233,7 @@ Key non-secret fields:
 - `target.resolved_workflow_source` (`publish_history_workflow`, `workspace_config_workflow`, `default_workflow`)
 - `failure_reason_code` / `target.failure_reason_code`
 - `failure_stage` (`repo_lookup`, `ref_lookup`, `workflow_lookup`, `workflow_dispatch`)
+- `failure_remediation_hint` (deterministic advisory summary derived from failure reason/stage evidence)
 - `workflow_id`, optional `workflow_path`, `ref`, `repo_owner`, `repo_name`
 - `workflow_identifier_requested`, `workflow_identifier_used`
 - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
@@ -270,6 +271,7 @@ Workflow lookup failure quick triage:
   - `failure_reason_code=workflow_not_dispatchable` with `dispatch_service_reason_code=target_configuration_invalid` means the selected workflow identity resolved, but the workflow is not deploy-dispatchable for the managed path.
   - `workflow_exists=false` means lookup failed for the selected identifier/path on the target ref.
   - `workflow_identifier_requested=deploy-www-prod.yml` while a site-specific workflow should be used indicates workflow-selection/target-mapping drift that should be corrected before retry.
+  - `failure_remediation_hint` is advisory only and deterministic; it summarizes existing staged evidence and does not represent an additional runtime probe.
 
 Reason-code guidance:
 
@@ -397,8 +399,8 @@ Live URL confirmation guidance:
 
 Local-only validation note:
 
-- For optional local verification against GitHub APIs, use `GITHUB_TEST_PUBLISH_TOKEN` from local environment only.
-- Never print/log/commit token values and never replace production runtime token wiring (`MIGRATION_GITHUB_TOKEN`) with local test token usage.
+- For optional local verification against GitHub APIs, use `MIGRATION_GITHUB_TOKEN` with a local test token value in local environment only.
+- Never print/log/commit token values. Production runtime should continue using infrastructure-managed `MIGRATION_GITHUB_TOKEN` wiring.
 
 ## Local Live Validation (Migration /responses)
 

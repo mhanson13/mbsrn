@@ -671,7 +671,7 @@ Migration publish/deploy runtime configuration is environment-driven:
 Notes:
 - token is only read from runtime environment, never persisted in workspace rows
 - production deployment wiring injects `MIGRATION_GITHUB_TOKEN` into `mbsrn-api` from the `mbsrn-api-auth` Kubernetes secret (`secretKeyRef` key `MIGRATION_GITHUB_TOKEN`)
-- optional local GitHub control-plane validation may use `GITHUB_TEST_PUBLISH_TOKEN` from developer environment only; it is never a production runtime input
+- optional local GitHub control-plane validation should use `MIGRATION_GITHUB_TOKEN` (with a local test token value if needed); this keeps local/test/runtime naming consistent while remaining a non-production credential input
 - per-site publish/deploy target details are stored in workspace config JSON fields
 - runtime config is validated at action/readiness time for migration publish/deploy (feature-scoped validation); unrelated app features continue running when migration config is missing
 - publish readiness now distinguishes metadata readiness from runtime publisher capability:
@@ -929,8 +929,14 @@ In **Advanced Diagnostics -> Deploy Diagnostics**, operator-safe failure evidenc
 - workflow existence (`Yes` / `No`) at the selected target
 - workflow resolution source
 - dispatch service reason code
+- remediation hint (`deploy_failure_remediation_hint`) derived deterministically from failure reason/stage evidence when a known mapping applies
 
 Use this block to diagnose workflow-lookup failures without relying only on coarse `target invalid` category labels.
+
+Deploy history and latest failure summary preserve the same deploy truth model:
+- latest failure summary (`deploy_readiness.last_failure_*`) carries reason/stage plus requested vs resolved workflow evidence when available
+- deploy history failed entries include the same fields and may include a remediation hint
+- if no deterministic mapping applies, remediation hint is omitted rather than guessed
 
 If dispatch was accepted but run evidence is not yet present, the workspace shows a no-run-yet message and instructs operators to use **Refresh deploy status** after eventual consistency delay.
 
