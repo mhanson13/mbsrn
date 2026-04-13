@@ -268,6 +268,7 @@ Reason-code guidance:
 Dispatch-stage interpretation note:
 - if target-readiness preflight already logged `repo_exists=true`, `ref_exists=true`, `workflow_exists=true`, and a later `workflow_dispatch` call fails, prefer workflow dispatchability troubleshooting before assuming branch/ref drift.
 - if `workflow_dispatch_supported=true` but `dispatch_service_availability=false`, treat this as service/function readiness unavailability (not workflow identity/trigger mismatch).
+- if `workflow_dispatch_supported=true` and `dispatch_service_availability=true`, this still only proves control-plane dispatch readiness; it does not by itself prove that target-repo GitHub Actions has all required GKE deploy prerequisites (workflow logic/secrets/permissions/cluster access).
 
 ### Production Verification Checklist (TnM Fire)
 
@@ -293,6 +294,66 @@ Use this sequence for one bounded production deploy validation:
    - `expected_publish_url` may be present as guidance
    - `resolved_live_url` is only confirmed when explicit evidence is present with `url_source=workflow_output` or `url_source=deploy_result`
 8. If deploy still fails, route by `failure_stage` + `failure_reason_code` without guessing at hidden causes.
+
+### TnM Fire Outcome Decision Tree
+
+Use the latest `deploy_trace_id` from the workspace traceability grid and evaluate outcomes in this order:
+
+1. **Run created successfully**
+   - Signals:
+     - `dispatch_attempted=true`
+     - `workflow_run_id` is present
+   - Interpretation:
+     - Dispatch succeeded and run evidence exists.
+   - Next check:
+     - Wait for completion evidence (`workflow_run_status`, `workflow_run_conclusion`) and optional `resolved_live_url`.
+
+2. **Dispatch attempted but rejected**
+   - Signals:
+     - `dispatch_attempted=true`
+     - deploy action status is failed
+     - `failure_stage=workflow_dispatch`
+   - Interpretation:
+     - Target preflight passed but GitHub dispatch failed.
+   - Route by reason code:
+     - `workflow_not_dispatchable`
+     - `workflow_dispatch_not_supported`
+     - `branch_not_found_or_ref_invalid`
+     - `token_not_authorized`
+
+3. **Dispatch accepted but no run discovered yet**
+   - Signals:
+     - `dispatch_attempted=true`
+     - deploy action completed
+     - `workflow_run_id` absent
+     - workspace hint: `Dispatch was accepted, but no workflow run evidence is available yet`
+   - Interpretation:
+     - Eventual-consistency window; run lookup has not found evidence yet.
+   - Action:
+     - Wait briefly, then run **Refresh deploy status** and re-check `workflow_run_id/status/conclusion`.
+
+4. **Run discovered but no confirmed live URL yet**
+   - Signals:
+     - `workflow_run_id` present
+     - `resolved_live_url` absent
+   - Interpretation:
+     - Run evidence exists, but no explicit URL evidence has been captured yet.
+   - Contract reminder:
+     - `expected_publish_url` is guidance only.
+   - Confirmed live URL appears only when explicit evidence sets `resolved_live_url` with `url_source=workflow_output` or `url_source=deploy_result`.
+
+5. **Dispatch succeeds but deployment still does not reach GKE**
+   - Signals:
+     - `dispatch_attempted=true`
+     - workflow run exists (`workflow_run_id` present)
+     - repo/ref/workflow preflight passed
+     - no successful deployment-side evidence (and/or workflow run fails downstream)
+   - Interpretation:
+     - Control plane is ready, but target-repo GitHub Actions runtime prerequisites are incomplete or failing.
+   - Verify in target repository/workflow:
+     - required workflow implementation is present (not placeholder-only)
+     - required GitHub Actions secrets/variables exist
+     - GCP/GKE auth and cluster permissions are valid for the workflow identity
 
 Live URL confirmation guidance:
 

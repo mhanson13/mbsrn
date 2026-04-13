@@ -760,11 +760,21 @@ function buildMigrationWorkspaceSummary(
       reasons: ["Publish target is not enabled."],
       target: {},
     },
-    deploy_readiness: {
-      ready: false,
-      reasons: ["Deploy target is not enabled."],
-      target: {},
-    },
+          deploy_readiness: {
+            ready: false,
+            reasons: ["Deploy target is not enabled."],
+            target: {
+              enabled: false,
+              repo_owner: "mhanson13",
+              repo_name: "tnmfire",
+              workflow_id: "deploy-tnmfire-www-prod.yml",
+              ref: "main",
+              deploy_workflow_mode: "site_repo_template_v1",
+              target_environment_key: "gke_prod",
+              target_environment_source: "admin_config",
+              site_workflow_file_path: ".github/workflows/deploy-tnmfire-www-prod.yml",
+            },
+          },
     publish_history: [],
     deploy_history: [],
     draft_only_notice: "Draft artifacts only. Not published and not deployed.",
@@ -3063,6 +3073,11 @@ describe("site workspace migration tab", () => {
     expect(await screen.findByTestId("migration-deploy-target-admin-boundary")).toHaveTextContent(
       "Admin controls deploy repository/workflow routing.",
     );
+    expect(await screen.findByText("Workflow mode")).toBeInTheDocument();
+    expect(screen.getByText("site_repo_template_v1")).toBeInTheDocument();
+    expect(screen.getByText("gke_prod")).toBeInTheDocument();
+    expect(screen.getByText("admin_config")).toBeInTheDocument();
+    expect(screen.getByText(".github/workflows/deploy-tnmfire-www-prod.yml")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save Deploy Availability" }));
     await waitFor(() =>
       expect(mockUpdateMigrationDeployConfig).toHaveBeenCalledWith(

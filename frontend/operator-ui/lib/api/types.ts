@@ -123,6 +123,9 @@ export interface GitHubPublishConfig {
   repository?: string;
   default_branch: string;
   base_path: string;
+  deploy_workflow_mode: string;
+  target_environment_key: string;
+  target_environment_source: string;
   enabled: boolean;
   created_at?: string | null;
   updated_at?: string | null;
@@ -133,6 +136,8 @@ export interface GitHubPublishConfigUpdateRequest {
   repository?: string | null;
   default_branch?: string | null;
   base_path?: string | null;
+  deploy_workflow_mode?: string | null;
+  target_environment_key?: string | null;
   enabled: boolean;
 }
 

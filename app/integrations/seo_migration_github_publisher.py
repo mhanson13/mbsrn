@@ -89,6 +89,9 @@ class SEOMigrationGitHubWorkflowProvisionResult:
     workflow_path: str
     provisioned: bool
     commit_sha: str | None
+    deploy_workflow_mode: str | None = None
+    target_environment_key: str | None = None
+    target_environment_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -159,7 +162,12 @@ class SEOMigrationGitHubPublisher:
         branch: str,
         workflow_id: str,
         dry_run: bool,
+        deploy_workflow_mode: str | None = None,
+        target_environment_key: str | None = None,
+        target_environment_source: str | None = None,
+        site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
+        del deploy_workflow_mode, target_environment_key, target_environment_source, site_id
         workflow_path = _workflow_repo_path(workflow_id)
         return SEOMigrationGitHubWorkflowProvisionResult(
             repo_owner=repo_owner,
@@ -169,6 +177,9 @@ class SEOMigrationGitHubPublisher:
             workflow_path=workflow_path,
             provisioned=False,
             commit_sha=None,
+            deploy_workflow_mode="site_repo_template_v1",
+            target_environment_key="gke_prod",
+            target_environment_source="admin_config",
         )
 
     def check_deploy_target_readiness(
@@ -1078,6 +1089,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         branch: str,
         workflow_id: str,
         dry_run: bool,
+        deploy_workflow_mode: str | None = None,
+        target_environment_key: str | None = None,
+        target_environment_source: str | None = None,
+        site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         normalized_workflow_id = str(workflow_id or "").strip()
         if not normalized_workflow_id:
@@ -1085,6 +1100,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 code="github_workflow_invalid",
                 safe_message="Deploy workflow target is invalid.",
             )
+        normalized_workflow_mode = _normalize_deploy_workflow_mode(deploy_workflow_mode)
+        normalized_target_environment_key = _normalize_target_environment_key(target_environment_key)
+        normalized_target_environment_source = _normalize_target_environment_source(target_environment_source)
         workflow_path = _workflow_repo_path(normalized_workflow_id)
         self._ensure_repo_exists(repo_owner=repo_owner, repo_name=repo_name)
         self._ensure_ref_exists(
@@ -1108,6 +1126,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 workflow_path=workflow_path,
                 provisioned=False,
                 commit_sha=existing_sha,
+                deploy_workflow_mode=normalized_workflow_mode,
+                target_environment_key=normalized_target_environment_key,
+                target_environment_source=normalized_target_environment_source,
             )
         if dry_run:
             return SEOMigrationGitHubWorkflowProvisionResult(
@@ -1118,10 +1139,22 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 workflow_path=workflow_path,
                 provisioned=False,
                 commit_sha=None,
+                deploy_workflow_mode=normalized_workflow_mode,
+                target_environment_key=normalized_target_environment_key,
+                target_environment_source=normalized_target_environment_source,
             )
 
         encoded_content = base64.b64encode(
-            _default_deploy_workflow_yaml(workflow_id=normalized_workflow_id).encode("utf-8")
+            _render_managed_deploy_workflow_yaml(
+                workflow_id=normalized_workflow_id,
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=branch,
+                deploy_workflow_mode=normalized_workflow_mode,
+                target_environment_key=normalized_target_environment_key,
+                target_environment_source=normalized_target_environment_source,
+                site_id=site_id,
+            ).encode("utf-8")
         ).decode("ascii")
         response_payload = self._request_json(
             method="PUT",
@@ -1166,6 +1199,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_path=workflow_path,
             provisioned=True,
             commit_sha=verified_sha or commit_sha,
+            deploy_workflow_mode=normalized_workflow_mode,
+            target_environment_key=normalized_target_environment_key,
+            target_environment_source=normalized_target_environment_source,
         )
 
     def check_deploy_target_readiness(
@@ -1412,10 +1448,89 @@ def _workflow_repo_path(workflow_id: str) -> str:
     return _join_repo_path(".github/workflows", normalized)
 
 
-def _default_deploy_workflow_yaml(*, workflow_id: str) -> str:
+def _normalize_deploy_workflow_mode(value: object) -> str:
+    normalized = _coerce_string(value) or "site_repo_template_v1"
+    normalized_lower = normalized.strip().lower()
+    if normalized_lower not in {"site_repo_template_v1"}:
+        return "site_repo_template_v1"
+    return normalized_lower
+
+
+def _normalize_target_environment_key(value: object) -> str:
+    normalized = _coerce_string(value) or "gke_prod"
+    normalized_lower = normalized.strip().lower()
+    if not normalized_lower:
+        return "gke_prod"
+    return normalized_lower[:80]
+
+
+def _normalize_target_environment_source(value: object) -> str:
+    normalized = _coerce_string(value) or "admin_config"
+    normalized_lower = normalized.strip().lower()
+    if not normalized_lower:
+        return "admin_config"
+    return normalized_lower[:60]
+
+
+def _safe_identifier_fragment(value: object, *, fallback: str, max_length: int = 80) -> str:
+    raw = _coerce_string(value) or ""
+    cleaned = "".join(
+        character.lower() if character.isalnum() else "-"
+        for character in raw
+    )
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    cleaned = cleaned.strip("-")
+    if not cleaned:
+        cleaned = fallback
+    return cleaned[:max_length]
+
+
+def _render_managed_deploy_workflow_yaml(
+    *,
+    workflow_id: str,
+    repo_owner: str,
+    repo_name: str,
+    branch: str,
+    deploy_workflow_mode: str,
+    target_environment_key: str,
+    target_environment_source: str,
+    site_id: str | None = None,
+) -> str:
     normalized_workflow_id = str(workflow_id or "").strip() or "deploy-www-prod.yml"
+    normalized_mode = _normalize_deploy_workflow_mode(deploy_workflow_mode)
+    normalized_environment_key = _safe_identifier_fragment(
+        target_environment_key,
+        fallback="gke-prod",
+        max_length=60,
+    )
+    normalized_environment_source = _normalize_target_environment_source(target_environment_source)
+    normalized_repo_fragment = _safe_identifier_fragment(repo_name, fallback="site")
+    normalized_site_fragment = _safe_identifier_fragment(site_id, fallback="workspace")
+    normalized_name = f"MBSRN Deploy {normalized_repo_fragment}"
+    if normalized_mode == "site_repo_template_v1":
+        return (
+            f"name: {normalized_name}\n"
+            "\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            f"    environment: {normalized_environment_key}\n"
+            "    steps:\n"
+            "      - name: MBSRN managed deploy placeholder\n"
+            "        run: |\n"
+            f"          echo \"MBSRN managed deploy workflow: {normalized_workflow_id}\"\n"
+            f"          echo \"Repository: {repo_owner}/{repo_name}\"\n"
+            f"          echo \"Branch: {branch}\"\n"
+            f"          echo \"Target environment key: {normalized_environment_key}\"\n"
+            f"          echo \"Target environment source: {normalized_environment_source}\"\n"
+            f"          echo \"Site identity: {normalized_site_fragment}\"\n"
+        )
     return (
-        "name: Deploy Site\n"
+        f"name: {normalized_name}\n"
         "\n"
         "on:\n"
         "  workflow_dispatch:\n"
@@ -1425,7 +1540,7 @@ def _default_deploy_workflow_yaml(*, workflow_id: str) -> str:
         "    runs-on: ubuntu-latest\n"
         "    steps:\n"
         "      - name: Placeholder deploy\n"
-        f"        run: echo \"Deploy workflow ({normalized_workflow_id}) provisioned; customize before production rollout.\"\n"
+        f"        run: echo \"Deploy workflow ({normalized_workflow_id}) provisioned in mode {normalized_mode}.\"\n"
     )
 
 

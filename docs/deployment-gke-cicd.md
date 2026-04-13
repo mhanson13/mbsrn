@@ -119,6 +119,20 @@ This produces OCI-compatible images suitable for containerd on GKE.
   - Redis workload/service name: `mbsrn-redis`
   - API Redis URL: `redis://mbsrn-redis:6379/0`
 
+### SEO Migration Managed Target Repo Contract
+
+For migration-driven site repos, MBSRN acts as a control-plane orchestrator:
+
+- one site targets one repo/workflow tuple in the destination repository.
+- non-dry-run migration publish ensures the site workflow file exists at:
+  - `.github/workflows/<workflow_id>`
+- the workflow file is generated from an approved MBSRN-managed template mode (`deploy_workflow_mode`), currently `site_repo_template_v1`.
+- admin-owned environment mapping metadata (`target_environment_key`, `target_environment_source`) is injected as template metadata; operators cannot edit these deploy routing controls from workspace UI.
+- deploy execution remains in the target repo via GitHub Actions dispatch; MBSRN does not directly execute GKE deployment steps.
+
+Operational implication:
+- a repo can contain published artifact files but is not considered deploy-ready until workflow provisioning/verification succeeds on the target ref.
+
 ## Required GitHub Secrets/Variables
 
 GitHub variable:

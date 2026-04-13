@@ -221,6 +221,8 @@ It transforms a business's website and market context into structured insights a
 - Deploy routing trust boundary is now explicit:
 - Admin owns raw deploy workflow control-plane fields (`repo_owner`, `repo_name`, `workflow_id`, `ref`, `inputs`).
 - Operator workspace keeps those values read-only and only exposes bounded deploy availability toggling plus staged deploy diagnostics.
+- Migration publish now provisions site-specific deploy workflows from an approved MBSRN-managed template mode and records the effective workflow path in publish history for deploy traceability.
+- Admin controls deploy template/environment mapping metadata (`deploy_workflow_mode`, `target_environment_key`, `target_environment_source`); operators can view the effective values read-only in workspace diagnostics.
 - Readiness explicitly distinguishes merged metadata readiness from runtime publisher capability (for example credential unavailable vs runtime integration unavailable) so publish blockers map to the correct actor.
 - Deploy readiness now exposes explicit blocker classes (`published_artifact_missing`, deploy target config missing/invalid, deploy runtime/integration unavailable) so deploy blockers map to the correct actor without generic "runtime missing" ambiguity.
 - Runtime publisher credentials remain environment-managed (`MIGRATION_GITHUB_TOKEN`) and are never exposed through Admin/workspace payloads.
@@ -237,6 +239,7 @@ It transforms a business's website and market context into structured insights a
 - deploy target lookup failures are now classified with non-secret reason codes (`repo_not_found`, `workflow_not_found`, `branch_not_found_or_ref_invalid`, `workflow_not_dispatchable`, `workflow_dispatch_not_supported`, `token_not_authorized`) for clearer control-plane troubleshooting.
 - deploy now emits an explicit managed-target readiness preflight (`seo_migration_target_readiness_check`) for the authoritative tuple (repo owner/name, ref, workflow id/path) so dispatch never relies on implicit repo/ref/workflow assumptions.
 - deploy diagnostics now model a distinct dispatch-service availability stage (`dispatch_service_availability`, `dispatch_service_reason_code`) so operators can distinguish workflow identity/trigger support from downstream service/function readiness before dispatch.
+- deploy diagnostics now explicitly separate control-plane dispatch readiness from downstream target-repo workflow/runtime readiness, so a dispatchable workflow target is not over-interpreted as guaranteed GKE rollout success.
 - migration workspace deploy traceability now emphasizes a copy-friendly `deploy_trace_id` plus stage-aligned status hints (`dispatch_result_stage`, no-run-yet eventual consistency guidance) to speed production log correlation during real deploy checks.
 - deploy dispatch classification now preserves preflight context so post-preflight dispatch failures are treated as workflow dispatchability problems when appropriate, instead of being mislabeled as branch/ref missing.
 - workspace now surfaces effective migration destinations with explicit URL states (expected published URL vs resolved live URL), deterministic URL source labeling, and clear draft/expected/live distinction for pre-execution trust.

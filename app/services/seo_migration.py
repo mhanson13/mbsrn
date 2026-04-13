@@ -176,6 +176,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE = "runtime_unavailable"
 _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID = "target_configuration_invalid"
 _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_DISABLED = "target_disabled"
 _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_METADATA_MISSING = "target_metadata_missing"
+_DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 = "site_repo_template_v1"
+_DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
+_DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY = "gke_prod"
 
 _DRAFT_PROVIDER_COMPAT_REASON_CODES = {
     "supported",
@@ -940,6 +943,19 @@ class SEOMigrationService:
         expected_publish_url_source_detail: str | None = None
         duplicate_publish_repaired = False
         publish_result: SEOMigrationGitHubPublishResult | None = None
+        admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
+        deploy_workflow_mode = _normalize_string(
+            admin_deploy_metadata.get("deploy_workflow_mode"),
+            max_length=60,
+        ) or _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
+        target_environment_key = _normalize_string(
+            admin_deploy_metadata.get("target_environment_key"),
+            max_length=80,
+        ) or _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY
+        target_environment_source = _normalize_string(
+            admin_deploy_metadata.get("target_environment_source"),
+            max_length=60,
+        ) or _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN
         try:
             deploy_target_for_workflow: dict[str, object] | None = None
             try:
@@ -985,6 +1001,10 @@ class SEOMigrationService:
                     branch=workflow_ref,
                     workflow_id=workflow_identifier,
                     dry_run=False,
+                    deploy_workflow_mode=deploy_workflow_mode,
+                    target_environment_key=target_environment_key,
+                    target_environment_source=target_environment_source,
+                    site_id=site.id,
                 )
                 workflow_provisioning_verified = True
                 workflow_path = deploy_workflow_provision_result.workflow_path
@@ -1006,6 +1026,9 @@ class SEOMigrationService:
                     workflow_path=workflow_path,
                     status=workflow_provisioning_status,
                     remediation_mode=workflow_provisioning_remediation_mode,
+                    deploy_workflow_mode=deploy_workflow_mode,
+                    target_environment_key=target_environment_key,
+                    target_environment_source=target_environment_source,
                     commit_sha=deploy_workflow_provision_result.commit_sha,
                     verified=True,
                 )
@@ -1022,6 +1045,9 @@ class SEOMigrationService:
                     workflow_path=workflow_path,
                     status="verified",
                     remediation_mode=workflow_provisioning_remediation_mode,
+                    deploy_workflow_mode=deploy_workflow_mode,
+                    target_environment_key=target_environment_key,
+                    target_environment_source=target_environment_source,
                     commit_sha=deploy_workflow_provision_result.commit_sha,
                     verified=True,
                 )
@@ -1141,6 +1167,9 @@ class SEOMigrationService:
                     workflow_path=workflow_path,
                     status="failed",
                     remediation_mode=workflow_provisioning_remediation_mode,
+                    deploy_workflow_mode=deploy_workflow_mode,
+                    target_environment_key=target_environment_key,
+                    target_environment_source=target_environment_source,
                     verified=workflow_provisioning_verified,
                     error_code=exc.code,
                     error_message=exc.safe_message,
@@ -1264,6 +1293,9 @@ class SEOMigrationService:
             "workflow_provisioning_status": workflow_provisioning_status,
             "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
             "workflow_provisioning_verified": workflow_provisioning_verified,
+            "deploy_workflow_mode": deploy_workflow_mode,
+            "target_environment_key": target_environment_key,
+            "target_environment_source": target_environment_source,
             "deploy_workflow_provisioned": bool(
                 not dry_run
                 and deploy_workflow_provision_result is not None
@@ -1273,6 +1305,7 @@ class SEOMigrationService:
         if not dry_run and deploy_workflow_provision_result is not None:
             history_payload["deploy_workflow_id"] = deploy_workflow_provision_result.workflow_id
             history_payload["deploy_workflow_path"] = deploy_workflow_provision_result.workflow_path
+            history_payload["site_workflow_file_path"] = deploy_workflow_provision_result.workflow_path
         workspace.publish_history_json = _append_history_item(
             workspace.publish_history_json,
             history_payload,
@@ -1305,6 +1338,9 @@ class SEOMigrationService:
                 "workflow_provisioning_status": workflow_provisioning_status,
                 "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
                 "workflow_provisioning_verified": workflow_provisioning_verified,
+                "deploy_workflow_mode": deploy_workflow_mode,
+                "target_environment_key": target_environment_key,
+                "target_environment_source": target_environment_source,
             },
             duration_ms=self._duration_ms(started_at),
         )
@@ -5238,6 +5274,9 @@ class SEOMigrationService:
             "workflow_id": provision_result.workflow_id,
             "workflow_path": provision_result.workflow_path,
             "commit_sha": provision_result.commit_sha,
+            "deploy_workflow_mode": provision_result.deploy_workflow_mode,
+            "target_environment_key": provision_result.target_environment_key,
+            "target_environment_source": provision_result.target_environment_source,
         }
         self._emit_structured_service_log(
             payload=payload,
@@ -5260,6 +5299,9 @@ class SEOMigrationService:
         workflow_path: str,
         status: str,
         remediation_mode: str,
+        deploy_workflow_mode: str | None = None,
+        target_environment_key: str | None = None,
+        target_environment_source: str | None = None,
         commit_sha: str | None = None,
         verified: bool | None = None,
         error_code: str | None = None,
@@ -5281,6 +5323,15 @@ class SEOMigrationService:
             "status": _normalize_string(status, max_length=40) or "unknown",
             "remediation_mode": _normalize_string(remediation_mode, max_length=60) or "unknown",
         }
+        normalized_workflow_mode = _normalize_string(deploy_workflow_mode, max_length=60)
+        if normalized_workflow_mode:
+            payload["deploy_workflow_mode"] = normalized_workflow_mode
+        normalized_target_environment_key = _normalize_string(target_environment_key, max_length=80)
+        if normalized_target_environment_key:
+            payload["target_environment_key"] = normalized_target_environment_key
+        normalized_target_environment_source = _normalize_string(target_environment_source, max_length=60)
+        if normalized_target_environment_source:
+            payload["target_environment_source"] = normalized_target_environment_source
         normalized_sha = _normalize_string(commit_sha, max_length=80)
         if normalized_sha:
             payload["commit_sha"] = normalized_sha
@@ -5427,6 +5478,41 @@ class SEOMigrationService:
             normalized = normalized.split("/", 1)[0].strip()
         return normalized
 
+    def _resolve_admin_deploy_template_metadata(self) -> dict[str, str]:
+        deploy_workflow_mode = _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
+        target_environment_key = _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY
+        target_environment_source = _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN
+        if self.github_publish_config_service is None:
+            return {
+                "deploy_workflow_mode": deploy_workflow_mode,
+                "target_environment_key": target_environment_key,
+                "target_environment_source": target_environment_source,
+            }
+        admin_config = self.github_publish_config_service.get()
+        candidate_mode = _normalize_string(
+            getattr(admin_config, "deploy_workflow_mode", None),
+            max_length=60,
+        )
+        if candidate_mode == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1:
+            deploy_workflow_mode = candidate_mode
+        candidate_environment_key = _normalize_string(
+            getattr(admin_config, "target_environment_key", None),
+            max_length=80,
+        )
+        if candidate_environment_key:
+            target_environment_key = candidate_environment_key
+        candidate_source = _normalize_string(
+            getattr(admin_config, "target_environment_source", None),
+            max_length=60,
+        )
+        if candidate_source:
+            target_environment_source = candidate_source
+        return {
+            "deploy_workflow_mode": deploy_workflow_mode,
+            "target_environment_key": target_environment_key,
+            "target_environment_source": target_environment_source,
+        }
+
     @staticmethod
     def _is_default_workspace_publish_config(config: dict[str, object]) -> bool:
         return (
@@ -5508,12 +5594,19 @@ class SEOMigrationService:
             require_admin=False,
         )
         fallback_publish = self._safe_publish_target_summary(effective_publish_config)
+        admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
+        workflow_id = str(normalized.get("workflow_id") or self.deploy_default_workflow_id).strip()
+        workflow_path = _normalize_workflow_path_for_deploy(f".github/workflows/{workflow_id}")
         return {
             "enabled": bool(normalized.get("enabled")),
             "repo_owner": str(normalized.get("repo_owner") or fallback_publish.get("repo_owner") or "").strip(),
             "repo_name": str(normalized.get("repo_name") or fallback_publish.get("repo_name") or "").strip(),
-            "workflow_id": str(normalized.get("workflow_id") or self.deploy_default_workflow_id).strip(),
+            "workflow_id": workflow_id,
             "ref": str(normalized.get("ref") or self.deploy_default_ref).strip(),
+            "deploy_workflow_mode": admin_deploy_metadata.get("deploy_workflow_mode"),
+            "target_environment_key": admin_deploy_metadata.get("target_environment_key"),
+            "target_environment_source": admin_deploy_metadata.get("target_environment_source"),
+            "site_workflow_file_path": workflow_path,
         }
 
     def _resolve_deploy_target_with_workflow_precedence(
@@ -5554,10 +5647,21 @@ class SEOMigrationService:
             default_workflow_id=self.deploy_default_workflow_id,
             default_ref=self.deploy_default_ref,
         )
+        resolved_workflow_path = (
+            history_workflow_path
+            if resolved_source == _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY and history_workflow_path
+            else _normalize_workflow_path_for_deploy(
+                f".github/workflows/{str(resolved_target.get('workflow_id') or '').strip()}"
+            )
+        )
+        admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
         resolution = {
             "source": resolved_source,
             "workflow_id": str(resolved_target.get("workflow_id") or "").strip(),
-            "workflow_path": history_workflow_path if resolved_source == _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY else None,
+            "workflow_path": resolved_workflow_path,
+            "deploy_workflow_mode": admin_deploy_metadata.get("deploy_workflow_mode"),
+            "target_environment_key": admin_deploy_metadata.get("target_environment_key"),
+            "target_environment_source": admin_deploy_metadata.get("target_environment_source"),
         }
         return resolved_target, resolution
 

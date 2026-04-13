@@ -188,8 +188,24 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         branch: str,
         workflow_id: str,
         dry_run: bool,
+        deploy_workflow_mode: str | None = None,
+        target_environment_key: str | None = None,
+        target_environment_source: str | None = None,
+        site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
-        self.workflow_provision_calls.append((repo_owner, repo_name, branch, workflow_id, dry_run))
+        self.workflow_provision_calls.append(
+            (
+                repo_owner,
+                repo_name,
+                branch,
+                workflow_id,
+                dry_run,
+                deploy_workflow_mode,
+                target_environment_key,
+                target_environment_source,
+                site_id,
+            )
+        )
         if self.fail_workflow_provision:
             raise SEOMigrationGitHubPublisherError(
                 code="workflow_provision_failed",
@@ -206,6 +222,9 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_path=f".github/workflows/{workflow_id}",
             provisioned=provisioned,
             commit_sha="wf123" if provisioned else None,
+            deploy_workflow_mode=deploy_workflow_mode,
+            target_environment_key=target_environment_key,
+            target_environment_source=target_environment_source,
         )
 
 

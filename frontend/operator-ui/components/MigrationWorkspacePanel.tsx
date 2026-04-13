@@ -1635,6 +1635,19 @@ export function MigrationWorkspacePanel({
   const deployResolvedWorkflowSource =
     asStringOrNull(latestDeployHistoryRecord.resolved_workflow_source) ||
     asStringOrNull(deployTarget.resolved_workflow_source);
+  const deployWorkflowMode =
+    asStringOrNull(latestDeployHistoryRecord.deploy_workflow_mode) ||
+    asStringOrNull(deployTarget.deploy_workflow_mode);
+  const deployTargetEnvironmentKey =
+    asStringOrNull(latestDeployHistoryRecord.target_environment_key) ||
+    asStringOrNull(deployTarget.target_environment_key);
+  const deployTargetEnvironmentSource =
+    asStringOrNull(latestDeployHistoryRecord.target_environment_source) ||
+    asStringOrNull(deployTarget.target_environment_source);
+  const deploySiteWorkflowFilePath =
+    asStringOrNull(latestDeployHistoryRecord.site_workflow_file_path) ||
+    asStringOrNull(deployTarget.site_workflow_file_path) ||
+    deployWorkflowFilePath;
   const deployTraceRepoOwner =
     asStringOrNull(latestDeployHistoryRecord.repo_owner) || asStringOrNull(deployTarget.repo_owner);
   const deployTraceRepoName =
@@ -2971,6 +2984,18 @@ export function MigrationWorkspacePanel({
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Workflow source">
                 {deployResolvedWorkflowSource || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow mode">
+                {deployWorkflowMode || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Site workflow file">
+                {deploySiteWorkflowFilePath || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Target environment key">
+                {deployTargetEnvironmentKey || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Target environment source">
+                {deployTargetEnvironmentSource || "Not available"}
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Workflow inputs">
                 {(() => {

@@ -366,6 +366,9 @@ describe("admin route", () => {
       repository: "mhanson13",
       default_branch: "main",
       base_path: "/",
+      deploy_workflow_mode: "site_repo_template_v1",
+      target_environment_key: "gke_prod",
+      target_environment_source: "admin_config",
       enabled: true,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
@@ -376,6 +379,9 @@ describe("admin route", () => {
       repository: "mhanson13",
       default_branch: "release",
       base_path: "/site/content",
+      deploy_workflow_mode: "site_repo_template_v1",
+      target_environment_key: "gke_prod_blue",
+      target_environment_source: "admin_config",
       enabled: true,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
@@ -400,15 +406,23 @@ describe("admin route", () => {
     expect(defaultBranchInput).toHaveValue("main");
     const basePathInput = screen.getByLabelText("Base Path");
     expect(basePathInput).toHaveValue("/");
+    const deployWorkflowModeInput = screen.getByLabelText("Deploy Workflow Mode");
+    expect(deployWorkflowModeInput).toHaveValue("site_repo_template_v1");
+    const targetEnvironmentKeyInput = screen.getByLabelText("Target Environment Key");
+    expect(targetEnvironmentKeyInput).toHaveValue("gke_prod");
     const enabledToggle = screen.getByLabelText("Enable migration GitHub publish target");
     expect(enabledToggle).toBeChecked();
     const preview = screen.getByTestId("github-publish-effective-preview");
     expect(preview).toHaveTextContent("mhanson13");
     expect(preview).toHaveTextContent("main");
     expect(preview).toHaveTextContent("/");
+    expect(preview).toHaveTextContent("site_repo_template_v1");
+    expect(preview).toHaveTextContent("gke_prod");
+    expect(preview).toHaveTextContent("admin_config");
 
     fireEvent.change(defaultBranchInput, { target: { value: "release" } });
     fireEvent.change(basePathInput, { target: { value: "site//content/" } });
+    fireEvent.change(targetEnvironmentKeyInput, { target: { value: "gke_prod_blue" } });
     expect(screen.getByTestId("github-publish-effective-preview")).toHaveTextContent("/site/content");
     fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
 
@@ -419,6 +433,8 @@ describe("admin route", () => {
       owner: "mhanson13",
       default_branch: "release",
       base_path: "/site/content",
+      deploy_workflow_mode: "site_repo_template_v1",
+      target_environment_key: "gke_prod_blue",
       enabled: true,
     });
     expect(await screen.findByLabelText("Default Branch")).toHaveValue("release");

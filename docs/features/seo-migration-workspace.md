@@ -605,6 +605,7 @@ Publish behavior:
 - dry-run publish records history but does not overwrite prior successful publish commit metadata
 - workflow provisioning is idempotent: existing workflow files are never overwritten
 - auto-provisioned workflow uses a minimal `workflow_dispatch` placeholder job and is intended to be customized by platform teams.
+- auto-provisioned placeholder workflows are dispatchable by contract, but are not automatically equivalent to a production-ready GKE rollout workflow (platform teams must supply target-repo workflow logic + required GitHub/GCP secrets/variables).
 
 ### GitHub Publish Configuration (Admin)
 Migration publish now depends on an admin-managed GitHub target baseline:
@@ -615,6 +616,9 @@ Migration publish now depends on an admin-managed GitHub target baseline:
   - `default_branch`
   - `base_path` (`/` for repo root, optional subpath like `/site`)
   - `enabled`
+  - `deploy_workflow_mode` (`site_repo_template_v1` currently supported)
+  - `target_environment_key` (admin-owned environment mapping key, for example `gke_prod`)
+  - `target_environment_source` (`admin_config`, read-only provenance marker)
 
 Operational behavior:
 - this config is metadata only; no secrets are stored in the database
@@ -623,14 +627,21 @@ Operational behavior:
 - site workspace shows merged effective target summary/readiness (Admin owner + workspace repo/branch)
 - site workspace does not expose editable raw deploy workflow routing controls (`repo_owner`, `repo_name`, `workflow_id`, `ref`, `inputs`) for operators
 - migration workspace keeps deploy routing values visible as read-only diagnostics and only allows bounded deploy availability toggle at workspace level
+- each site target repo receives a site-specific workflow file path (`.github/workflows/<workflow_id>`) provisioned from an MBSRN-managed template mode
+- template variable/environment mapping for that workflow is sourced from Admin-owned deploy metadata (`deploy_workflow_mode`, `target_environment_key`, `target_environment_source`) and is not operator-editable
 - admin UI now validates obvious issues before save:
   - owner must match GitHub account/org shape
   - default branch is required/validated when enabled
   - base path is normalized/validated (`/` or `/subpath`)
+  - deploy workflow mode is constrained to approved template modes
+  - target environment key is normalized/validated and persisted as admin-owned metadata
 - admin UI shows an effective target preview with normalized values:
   - owner
   - default branch
   - normalized base path
+  - deploy workflow mode
+  - target environment key
+  - target environment source
 - migration publish/deploy readiness includes admin config prerequisites (`admin_publish_config_*`)
 - publish/deploy readiness reasons now call out the required actor/action more explicitly:
   - `Admin must configure a GitHub publish target before publish is available.`
@@ -683,6 +694,9 @@ Deploy target ownership is split for safety:
   - `repo_owner`, `repo_name`
   - `workflow_id`, `ref`
   - bounded workflow `inputs`
+  - `deploy_workflow_mode`
+  - `target_environment_key`
+  - `target_environment_source`
 - Operator workspace controls:
   - `enabled` toggle only
   - read-only effective deploy target diagnostics (repo/ref/workflow identity + staged readiness/traceability)
@@ -795,6 +809,10 @@ This keeps trigger-level and service-level readiness distinct:
 - workflow trigger support: `workflow_dispatch_supported`, `workflow_trigger_types`
 - deployment-side service/function availability: `dispatch_service_availability`, `dispatch_service_reason_code`
 - dispatch outcome evidence: `dispatch_attempted`, `dispatch_result_stage`, `workflow_run_id`
+
+Scope note:
+- `dispatch_service_availability` is a control-plane readiness signal (runtime publisher wiring + target tuple validity + target enabled).
+- it does **not** prove downstream GitHub Actions environment readiness inside the target repo (for example missing deploy workflow implementation details, missing Actions secrets/variables, or missing GCP/GKE permissions).
 
 ## Structured Logging
 Migration control-plane actions emit structured logs (`event=seo_migration_control_plane_action`) for:

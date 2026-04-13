@@ -52,6 +52,21 @@ GitHub push/workflow_dispatch
   -> update deployment images + verify rollout
 ```
 
+### 2.1 Migration-Managed Target Repo Prerequisites
+
+When SEO migration publishes/deploys to a site-specific target repo, the control-plane contract is:
+
+- MBSRN publish provisions/verifies a site workflow file at:
+  - `.github/workflows/<workflow_id>`
+- workflow content is generated from approved template mode metadata (`deploy_workflow_mode`), currently `site_repo_template_v1`.
+- deployment environment mapping is Admin-owned (`target_environment_key`, `target_environment_source`) and not operator-editable.
+- operators can trigger bounded deploy actions and read diagnostics, but cannot redefine repo/ref/workflow routing or arbitrary workflow inputs.
+
+Target repo owners must still supply runtime GitHub Actions prerequisites for the selected environment key:
+- required repository or environment secrets/variables for GCP auth
+- GKE target permissions and cluster access for the workflow runtime identity
+- any environment-specific deployment bindings required by the managed workflow template.
+
 ## 3) Google Cloud Resource Setup (Step-By-Step)
 Each required resource below uses the same pattern:
 - Console path

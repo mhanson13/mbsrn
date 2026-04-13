@@ -87,6 +87,8 @@ const GCP_LOGS_SAMPLE_FILTER =
 const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 const GITHUB_BRANCH_PATTERN = /^[A-Za-z0-9._/-]{1,120}$/;
 const GITHUB_BASE_PATH_PATTERN = /^\/[A-Za-z0-9._/-]{0,159}$/;
+const GITHUB_TARGET_ENVIRONMENT_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
+const GITHUB_DEPLOY_WORKFLOW_MODE_OPTIONS = ["site_repo_template_v1"] as const;
 
 type AdminPageMode = "all" | "admin" | "userMgmt";
 
@@ -105,9 +107,13 @@ interface GitHubPublishConfigValidationResult {
   owner: string;
   defaultBranch: string;
   basePath: string;
+  deployWorkflowMode: string;
+  targetEnvironmentKey: string;
   ownerError: string | null;
   defaultBranchError: string | null;
   basePathError: string | null;
+  deployWorkflowModeError: string | null;
+  targetEnvironmentKeyError: string | null;
   basePathWarning: string | null;
   blockingError: string | null;
 }
@@ -615,21 +621,30 @@ function validateGitHubPublishConfigInputs({
   ownerInput,
   defaultBranchInput,
   basePathInput,
+  deployWorkflowModeInput,
+  targetEnvironmentKeyInput,
   enabled,
 }: {
   ownerInput: string;
   defaultBranchInput: string;
   basePathInput: string;
+  deployWorkflowModeInput: string;
+  targetEnvironmentKeyInput: string;
   enabled: boolean;
 }): GitHubPublishConfigValidationResult {
   const owner = ownerInput.trim();
   const rawDefaultBranch = defaultBranchInput.trim();
   const defaultBranch = rawDefaultBranch || "main";
   const basePath = normalizeGitHubPublishBasePath(basePathInput);
+  const deployWorkflowMode =
+    deployWorkflowModeInput.trim().toLowerCase() || GITHUB_DEPLOY_WORKFLOW_MODE_OPTIONS[0];
+  const targetEnvironmentKey = targetEnvironmentKeyInput.trim().toLowerCase() || "gke_prod";
 
   let ownerError: string | null = null;
   let defaultBranchError: string | null = null;
   let basePathError: string | null = null;
+  let deployWorkflowModeError: string | null = null;
+  let targetEnvironmentKeyError: string | null = null;
   let basePathWarning: string | null = null;
 
   if (enabled && !owner) {
@@ -659,14 +674,33 @@ function validateGitHubPublishConfigInputs({
     }
   }
 
-  const blockingError = ownerError || defaultBranchError || basePathError || null;
+  if (!GITHUB_DEPLOY_WORKFLOW_MODE_OPTIONS.includes(deployWorkflowMode as (typeof GITHUB_DEPLOY_WORKFLOW_MODE_OPTIONS)[number])) {
+    deployWorkflowModeError =
+      "Deploy workflow mode is invalid. Use an approved platform-managed template mode.";
+  }
+  if (!GITHUB_TARGET_ENVIRONMENT_KEY_PATTERN.test(targetEnvironmentKey)) {
+    targetEnvironmentKeyError =
+      "Target environment key is invalid. Use lowercase letters, numbers, '-' or '_' only.";
+  }
+
+  const blockingError =
+    ownerError ||
+    defaultBranchError ||
+    basePathError ||
+    deployWorkflowModeError ||
+    targetEnvironmentKeyError ||
+    null;
   return {
     owner,
     defaultBranch,
     basePath,
+    deployWorkflowMode,
+    targetEnvironmentKey,
     ownerError,
     defaultBranchError,
     basePathError,
+    deployWorkflowModeError,
+    targetEnvironmentKeyError,
     basePathWarning,
     blockingError,
   };
@@ -705,12 +739,16 @@ function applyGitHubPublishConfigInputs(
     setOwner: (value: string) => void;
     setDefaultBranch: (value: string) => void;
     setBasePath: (value: string) => void;
+    setDeployWorkflowMode: (value: string) => void;
+    setTargetEnvironmentKey: (value: string) => void;
     setEnabled: (value: boolean) => void;
   },
 ): void {
   setters.setOwner(config.owner || config.repository || "");
   setters.setDefaultBranch(config.default_branch || "main");
   setters.setBasePath(config.base_path || "/");
+  setters.setDeployWorkflowMode(config.deploy_workflow_mode || "site_repo_template_v1");
+  setters.setTargetEnvironmentKey(config.target_environment_key || "gke_prod");
   setters.setEnabled(Boolean(config.enabled));
 }
 
@@ -793,6 +831,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [githubPublishOwnerInput, setGitHubPublishOwnerInput] = useState("");
   const [githubPublishDefaultBranchInput, setGitHubPublishDefaultBranchInput] = useState("main");
   const [githubPublishBasePathInput, setGitHubPublishBasePathInput] = useState("/");
+  const [githubPublishDeployWorkflowModeInput, setGitHubPublishDeployWorkflowModeInput] = useState(
+    "site_repo_template_v1",
+  );
+  const [githubPublishTargetEnvironmentKeyInput, setGitHubPublishTargetEnvironmentKeyInput] = useState(
+    "gke_prod",
+  );
   const [githubPublishEnabled, setGitHubPublishEnabled] = useState(false);
   const [githubPublishConfigLoading, setGitHubPublishConfigLoading] = useState(false);
   const [githubPublishConfigSubmitting, setGitHubPublishConfigSubmitting] = useState(false);
@@ -827,13 +871,17 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         ownerInput: githubPublishOwnerInput,
         defaultBranchInput: githubPublishDefaultBranchInput,
         basePathInput: githubPublishBasePathInput,
+        deployWorkflowModeInput: githubPublishDeployWorkflowModeInput,
+        targetEnvironmentKeyInput: githubPublishTargetEnvironmentKeyInput,
         enabled: githubPublishEnabled,
       }),
     [
       githubPublishBasePathInput,
+      githubPublishDeployWorkflowModeInput,
       githubPublishDefaultBranchInput,
       githubPublishEnabled,
       githubPublishOwnerInput,
+      githubPublishTargetEnvironmentKeyInput,
     ],
   );
   const githubPublishPreviewOwner = githubPublishValidation.owner || "Not configured";
@@ -991,6 +1039,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             setOwner: setGitHubPublishOwnerInput,
             setDefaultBranch: setGitHubPublishDefaultBranchInput,
             setBasePath: setGitHubPublishBasePathInput,
+            setDeployWorkflowMode: setGitHubPublishDeployWorkflowModeInput,
+            setTargetEnvironmentKey: setGitHubPublishTargetEnvironmentKeyInput,
             setEnabled: setGitHubPublishEnabled,
           });
         } else {
@@ -1374,6 +1424,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       ownerInput: githubPublishOwnerInput,
       defaultBranchInput: githubPublishDefaultBranchInput,
       basePathInput: githubPublishBasePathInput,
+      deployWorkflowModeInput: githubPublishDeployWorkflowModeInput,
+      targetEnvironmentKeyInput: githubPublishTargetEnvironmentKeyInput,
       enabled: githubPublishEnabled,
     });
     if (validation.blockingError) {
@@ -1387,12 +1439,16 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         owner: validation.owner || "",
         default_branch: validation.defaultBranch,
         base_path: validation.basePath,
+        deploy_workflow_mode: validation.deployWorkflowMode,
+        target_environment_key: validation.targetEnvironmentKey,
         enabled: githubPublishEnabled,
       });
       applyGitHubPublishConfigInputs(updated, {
         setOwner: setGitHubPublishOwnerInput,
         setDefaultBranch: setGitHubPublishDefaultBranchInput,
         setBasePath: setGitHubPublishBasePathInput,
+        setDeployWorkflowMode: setGitHubPublishDeployWorkflowModeInput,
+        setTargetEnvironmentKey: setGitHubPublishTargetEnvironmentKeyInput,
         setEnabled: setGitHubPublishEnabled,
       });
       setGitHubPublishConfigMessage("GitHub publish configuration updated.");
@@ -2301,7 +2357,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="GitHub Publish Configuration"
-            subtitle="Set the admin-owned GitHub account/owner, branch fallback, and base path used by migration publish readiness and execution."
+            subtitle="Set the admin-owned GitHub account/owner, branch fallback, deploy template mode, and target environment mapping used by migration publish/deploy control-plane orchestration."
             headingLevel={2}
             variant="support"
           />
@@ -2351,6 +2407,38 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               <p className="hint warning">{githubPublishValidation.basePathWarning}</p>
             ) : null}
 
+            <label htmlFor="github-publish-deploy-workflow-mode">Deploy Workflow Mode</label>
+            <select
+              id="github-publish-deploy-workflow-mode"
+              value={githubPublishDeployWorkflowModeInput}
+              onChange={(event) => setGitHubPublishDeployWorkflowModeInput(event.target.value)}
+              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+            >
+              <option value="site_repo_template_v1">site_repo_template_v1</option>
+            </select>
+            <p className="hint muted">
+              Platform-managed template mode for per-site workflow generation in each target repository.
+            </p>
+            {githubPublishValidation.deployWorkflowModeError ? (
+              <p className="hint error">{githubPublishValidation.deployWorkflowModeError}</p>
+            ) : null}
+
+            <label htmlFor="github-publish-target-environment-key">Target Environment Key</label>
+            <input
+              id="github-publish-target-environment-key"
+              type="text"
+              value={githubPublishTargetEnvironmentKeyInput}
+              onChange={(event) => setGitHubPublishTargetEnvironmentKeyInput(event.target.value)}
+              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              placeholder="gke_prod"
+            />
+            <p className="hint muted">
+              Admin-owned deployment environment mapping key used by workflow template generation.
+            </p>
+            {githubPublishValidation.targetEnvironmentKeyError ? (
+              <p className="hint error">{githubPublishValidation.targetEnvironmentKeyError}</p>
+            ) : null}
+
             <label htmlFor="github-publish-enabled" className="checkbox-chip">
               <input
                 id="github-publish-enabled"
@@ -2377,6 +2465,15 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Base path">
                   <code>{githubPublishValidation.basePath}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Deploy workflow mode">
+                  <code>{githubPublishValidation.deployWorkflowMode}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Target environment key">
+                  <code>{githubPublishValidation.targetEnvironmentKey}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Target environment source">
+                  <code>admin_config</code>
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Enabled">
                   <span>{githubPublishEnabled ? "Yes" : "No"}</span>

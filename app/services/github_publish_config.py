@@ -14,6 +14,13 @@ from app.schemas.github_publish_config import GitHubPublishConfigUpdateRequest
 _VALID_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 _VALID_BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]{1,120}$")
 _VALID_BASE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9._/-]{0,159}$")
+_VALID_TARGET_ENVIRONMENT_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
+_DEFAULT_DEPLOY_WORKFLOW_MODE = "site_repo_template_v1"
+_DEFAULT_TARGET_ENVIRONMENT_KEY = "gke_prod"
+_TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
+_ALLOWED_DEPLOY_WORKFLOW_MODES = {
+    "site_repo_template_v1",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +59,9 @@ class GitHubPublishConfigService:
             repository="",
             default_branch="main",
             base_path="/",
+            deploy_workflow_mode=_DEFAULT_DEPLOY_WORKFLOW_MODE,
+            target_environment_key=_DEFAULT_TARGET_ENVIRONMENT_KEY,
+            target_environment_source=_TARGET_ENVIRONMENT_SOURCE_ADMIN,
             enabled=False,
         )
 
@@ -74,6 +84,13 @@ class GitHubPublishConfigService:
         raw_default_branch = (payload.default_branch or "").strip()
         default_branch = raw_default_branch or "main"
         base_path = _normalize_base_path(payload.base_path)
+        deploy_workflow_mode = (
+            str(payload.deploy_workflow_mode or "").strip().lower() or _DEFAULT_DEPLOY_WORKFLOW_MODE
+        )
+        target_environment_key = (
+            str(payload.target_environment_key or "").strip().lower() or _DEFAULT_TARGET_ENVIRONMENT_KEY
+        )
+        target_environment_source = _TARGET_ENVIRONMENT_SOURCE_ADMIN
         enabled = bool(payload.enabled)
 
         if enabled and not owner:
@@ -102,18 +119,38 @@ class GitHubPublishConfigService:
             raise GitHubPublishConfigValidationError(
                 "Base path is invalid. Use '/' or '/subpath' with letters, numbers, -, _, ., and /."
             )
+        if deploy_workflow_mode not in _ALLOWED_DEPLOY_WORKFLOW_MODES:
+            raise GitHubPublishConfigValidationError(
+                "Deploy workflow mode is invalid. Use an approved platform-managed template mode."
+            )
+        if not _VALID_TARGET_ENVIRONMENT_KEY_PATTERN.fullmatch(target_environment_key):
+            raise GitHubPublishConfigValidationError(
+                "Target environment key is invalid. Use lowercase letters, numbers, '-' or '_'."
+            )
 
         existing = self.repository.get_singleton()
         previous_values = {
             "owner": (existing.repository if existing is not None else ""),
             "default_branch": (existing.default_branch if existing is not None else "main"),
             "base_path": (existing.base_path if existing is not None else "/"),
+            "deploy_workflow_mode": (
+                existing.deploy_workflow_mode if existing is not None else _DEFAULT_DEPLOY_WORKFLOW_MODE
+            ),
+            "target_environment_key": (
+                existing.target_environment_key if existing is not None else _DEFAULT_TARGET_ENVIRONMENT_KEY
+            ),
+            "target_environment_source": (
+                existing.target_environment_source if existing is not None else _TARGET_ENVIRONMENT_SOURCE_ADMIN
+            ),
             "enabled": bool(existing.enabled) if existing is not None else False,
         }
         updated_values = {
             "owner": owner,
             "default_branch": default_branch,
             "base_path": base_path,
+            "deploy_workflow_mode": deploy_workflow_mode,
+            "target_environment_key": target_environment_key,
+            "target_environment_source": target_environment_source,
             "enabled": enabled,
         }
 
@@ -122,19 +159,33 @@ class GitHubPublishConfigService:
                 repository=owner,
                 default_branch=default_branch,
                 base_path=base_path,
+                deploy_workflow_mode=deploy_workflow_mode,
+                target_environment_key=target_environment_key,
+                target_environment_source=target_environment_source,
                 enabled=enabled,
             )
         else:
             existing.repository = owner
             existing.default_branch = default_branch
             existing.base_path = base_path
+            existing.deploy_workflow_mode = deploy_workflow_mode
+            existing.target_environment_key = target_environment_key
+            existing.target_environment_source = target_environment_source
             existing.enabled = enabled
         self.repository.save(existing)
         self.session.commit()
         self.session.refresh(existing)
         changed_fields = [
             field_name
-            for field_name in ("owner", "default_branch", "base_path", "enabled")
+            for field_name in (
+                "owner",
+                "default_branch",
+                "base_path",
+                "deploy_workflow_mode",
+                "target_environment_key",
+                "target_environment_source",
+                "enabled",
+            )
             if previous_values.get(field_name) != updated_values.get(field_name)
         ]
         changed_values = {
@@ -157,6 +208,9 @@ class GitHubPublishConfigService:
                     "repository": existing.repository,
                     "default_branch": existing.default_branch,
                     "base_path": existing.base_path,
+                    "deploy_workflow_mode": existing.deploy_workflow_mode,
+                    "target_environment_key": existing.target_environment_key,
+                    "target_environment_source": existing.target_environment_source,
                     "enabled": bool(existing.enabled),
                 },
             },

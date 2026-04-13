@@ -274,8 +274,24 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         branch: str,
         workflow_id: str,
         dry_run: bool,
+        deploy_workflow_mode: str | None = None,
+        target_environment_key: str | None = None,
+        target_environment_source: str | None = None,
+        site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
-        self.workflow_provision_calls.append((repo_owner, repo_name, branch, workflow_id, dry_run))
+        self.workflow_provision_calls.append(
+            (
+                repo_owner,
+                repo_name,
+                branch,
+                workflow_id,
+                dry_run,
+                deploy_workflow_mode,
+                target_environment_key,
+                target_environment_source,
+                site_id,
+            )
+        )
         if self.fail_workflow_provision:
             raise SEOMigrationGitHubPublisherError(
                 code="workflow_provision_failed",
@@ -293,6 +309,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_path=f".github/workflows/{workflow_id}",
             provisioned=provisioned,
             commit_sha=commit_sha,
+            deploy_workflow_mode=deploy_workflow_mode,
+            target_environment_key=target_environment_key,
+            target_environment_source=target_environment_source,
         )
 
     def check_deploy_target_readiness(
@@ -2663,7 +2682,17 @@ def test_publish_provisions_missing_deploy_workflow_once(db_session, caplog) -> 
         principal_id="principal-1",
     )
     assert publisher.workflow_provision_calls == [
-        ("acme", "tnmfire-site", "main", "deploy-tnmfire-www-prod.yml", False)
+        (
+            "acme",
+            "tnmfire-site",
+            "main",
+            "deploy-tnmfire-www-prod.yml",
+            False,
+            "site_repo_template_v1",
+            "gke_prod",
+            "admin_config",
+            site_id,
+        )
     ]
     assert result.result.get("deploy_workflow_provisioned") is True
     assert result.result.get("deploy_workflow_id") == "deploy-tnmfire-www-prod.yml"
@@ -2725,7 +2754,17 @@ def test_publish_does_not_overwrite_existing_deploy_workflow(db_session, caplog)
         principal_id="principal-1",
     )
     assert publisher.workflow_provision_calls == [
-        ("acme", "tnmfire-site", "main", "deploy-tnmfire-www-prod.yml", False)
+        (
+            "acme",
+            "tnmfire-site",
+            "main",
+            "deploy-tnmfire-www-prod.yml",
+            False,
+            "site_repo_template_v1",
+            "gke_prod",
+            "admin_config",
+            site_id,
+        )
     ]
     assert result.result.get("deploy_workflow_provisioned") is False
     provision_logs = [

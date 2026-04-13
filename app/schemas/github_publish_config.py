@@ -36,6 +36,9 @@ class GitHubPublishConfigRead(BaseModel):
     repository: str | None = None
     default_branch: str = "main"
     base_path: str = "/"
+    deploy_workflow_mode: str = "site_repo_template_v1"
+    target_environment_key: str = "gke_prod"
+    target_environment_source: str = "admin_config"
     enabled: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -46,6 +49,8 @@ class GitHubPublishConfigUpdateRequest(BaseModel):
     repository: str | None = Field(default=None, max_length=255)
     default_branch: str | None = Field(default="main", max_length=120)
     base_path: str | None = Field(default="/", max_length=160)
+    deploy_workflow_mode: str | None = Field(default="site_repo_template_v1", max_length=60)
+    target_environment_key: str | None = Field(default="gke_prod", max_length=80)
     enabled: bool = False
 
     @field_validator("owner", mode="before")
@@ -67,3 +72,15 @@ class GitHubPublishConfigUpdateRequest(BaseModel):
     @classmethod
     def _normalize_base_path_value(cls, value: object) -> str:
         return _normalize_base_path(value)
+
+    @field_validator("deploy_workflow_mode", mode="before")
+    @classmethod
+    def _normalize_deploy_workflow_mode(cls, value: object) -> str | None:
+        normalized = _normalize_optional_text(value, max_length=60)
+        return normalized.lower() if normalized else None
+
+    @field_validator("target_environment_key", mode="before")
+    @classmethod
+    def _normalize_target_environment_key(cls, value: object) -> str | None:
+        normalized = _normalize_optional_text(value, max_length=80)
+        return normalized.lower() if normalized else None

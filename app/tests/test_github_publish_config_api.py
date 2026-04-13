@@ -63,6 +63,9 @@ def test_get_github_publish_config_returns_defaults_when_unset(db_session, seede
     assert payload["repository"] == ""
     assert payload["default_branch"] == "main"
     assert payload["base_path"] == "/"
+    assert payload["deploy_workflow_mode"] == "site_repo_template_v1"
+    assert payload["target_environment_key"] == "gke_prod"
+    assert payload["target_environment_source"] == "admin_config"
     assert payload["enabled"] is False
 
 
@@ -75,6 +78,8 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
             "owner": "mhanson13",
             "default_branch": "main",
             "base_path": "/site",
+            "deploy_workflow_mode": "site_repo_template_v1",
+            "target_environment_key": "gke_prod_us_central1",
             "enabled": True,
         },
     )
@@ -84,6 +89,9 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert updated["repository"] == "mhanson13"
     assert updated["default_branch"] == "main"
     assert updated["base_path"] == "/site"
+    assert updated["deploy_workflow_mode"] == "site_repo_template_v1"
+    assert updated["target_environment_key"] == "gke_prod_us_central1"
+    assert updated["target_environment_source"] == "admin_config"
     assert updated["enabled"] is True
 
     get_response = client.get("/api/admin/github-publish-config")
@@ -93,6 +101,9 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert fetched["repository"] == "mhanson13"
     assert fetched["default_branch"] == "main"
     assert fetched["base_path"] == "/site"
+    assert fetched["deploy_workflow_mode"] == "site_repo_template_v1"
+    assert fetched["target_environment_key"] == "gke_prod_us_central1"
+    assert fetched["target_environment_source"] == "admin_config"
     assert fetched["enabled"] is True
 
 
@@ -145,6 +156,42 @@ def test_put_github_publish_config_rejects_empty_default_branch_when_enabled(db_
 
     assert response.status_code == 422
     assert "Default branch is required" in response.json()["detail"]
+
+
+def test_put_github_publish_config_rejects_invalid_deploy_workflow_mode(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "owner": "mhanson13",
+            "default_branch": "main",
+            "base_path": "/",
+            "deploy_workflow_mode": "unknown_mode_v9",
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Deploy workflow mode is invalid" in response.json()["detail"]
+
+
+def test_put_github_publish_config_rejects_invalid_target_environment_key(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "owner": "mhanson13",
+            "default_branch": "main",
+            "base_path": "/",
+            "target_environment_key": "BAD KEY",
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Target environment key is invalid" in response.json()["detail"]
 
 
 def test_put_github_publish_config_normalizes_base_path(db_session, seeded_business) -> None:
