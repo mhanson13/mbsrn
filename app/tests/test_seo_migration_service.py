@@ -151,7 +151,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         readiness_workflow_trigger_types: tuple[str, ...] | None = None,
         readiness_dispatch_service_availability: bool = True,
         readiness_dispatch_service_reason_code: str | None = "available",
-        readiness_dispatch_identifier_type: str = "workflow_id",
+        readiness_dispatch_identifier_type: str | None = None,
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
@@ -324,6 +324,14 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         remediation_mode: str = "none",
     ) -> SEOMigrationGitHubTargetReadinessResult:
         del allow_ref_repair, allow_workflow_repair, dry_run
+        workflow_path = (
+            target.workflow_id
+            if str(target.workflow_id or "").startswith(".github/workflows/")
+            else f".github/workflows/{target.workflow_id}"
+        )
+        dispatch_identifier_type = self.readiness_dispatch_identifier_type or (
+            "workflow_file_path" if workflow_path == target.workflow_id else "workflow_id"
+        )
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
             repo_name=target.repo_name,
@@ -331,7 +339,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             resolved_ref=target.ref,
             ref_source="requested",
             workflow_id=target.workflow_id,
-            workflow_path=f".github/workflows/{target.workflow_id}",
+            workflow_path=workflow_path,
             repo_exists=True,
             ref_exists=True,
             workflow_exists=True,
@@ -340,7 +348,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_trigger_types=tuple(self.readiness_workflow_trigger_types),
             dispatch_service_availability=self.readiness_dispatch_service_availability,
             dispatch_service_reason_code=self.readiness_dispatch_service_reason_code,
-            dispatch_identifier_type=self.readiness_dispatch_identifier_type,
+            dispatch_identifier_type=dispatch_identifier_type,
             remediation_mode=remediation_mode.strip() or "none",
         )
 
@@ -3272,14 +3280,14 @@ def test_deploy_uses_publish_history_workflow_when_workspace_config_is_stale(db_
 
     assert publisher.deploy_calls
     deploy_target, _ = publisher.deploy_calls[-1]
-    assert deploy_target.workflow_id == "deploy-tnmfire-www-prod.yml"
+    assert deploy_target.workflow_id == ".github/workflows/deploy-tnmfire-www-prod.yml"
 
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     deploy_history = workspace.deploy_history_json or []
     assert deploy_history
     last_deploy = deploy_history[-1]
     assert last_deploy.get("resolved_workflow_source") == "publish_history_workflow"
-    assert last_deploy.get("workflow_id") == "deploy-tnmfire-www-prod.yml"
+    assert last_deploy.get("workflow_id") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert last_deploy.get("workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
 
     resolution_payloads = [
@@ -3290,7 +3298,7 @@ def test_deploy_uses_publish_history_workflow_when_workspace_config_is_stale(db_
     ]
     assert resolution_payloads
     assert resolution_payloads[-1].get("resolved_workflow_source") == "publish_history_workflow"
-    assert resolution_payloads[-1].get("workflow_id") == "deploy-tnmfire-www-prod.yml"
+    assert resolution_payloads[-1].get("workflow_id") == "stale-workflow.yml"
 
 
 def test_deploy_prefers_publish_history_workflow_path_when_history_workflow_id_is_stale(db_session, caplog) -> None:
@@ -3354,14 +3362,16 @@ def test_deploy_prefers_publish_history_workflow_path_when_history_workflow_id_i
 
     assert publisher.deploy_calls
     deploy_target, _ = publisher.deploy_calls[-1]
-    assert deploy_target.workflow_id == "deploy-tnmfire-www-prod.yml"
-    assert action_result.result.get("workflow_identifier_requested") == "stale-workflow-id.yml"
-    assert action_result.result.get("workflow_identifier_used") == "deploy-tnmfire-www-prod.yml"
+    assert deploy_target.workflow_id == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("workflow_identifier_requested") == "deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("workflow_identifier_used") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("workflow_identifier_type_requested") == "workflow_id"
     assert action_result.result.get("workflow_identifier_type_used") == "workflow_file_path"
     assert action_result.result.get("workflow_dispatch_resolution_source") == "workflow_file_path"
     assert action_result.result.get("workflow_file_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("workflow_name") == "deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("actual_dispatch_identifier_sent") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("actual_dispatch_identifier_type_sent") == "workflow_file_path"
 
     accepted_payloads = [
         record.__dict__.get("json_fields")
@@ -3370,10 +3380,21 @@ def test_deploy_prefers_publish_history_workflow_path_when_history_workflow_id_i
         and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_dispatch_accepted"
     ]
     assert accepted_payloads
-    assert accepted_payloads[-1].get("workflow_identifier_requested") == "stale-workflow-id.yml"
-    assert accepted_payloads[-1].get("workflow_identifier_used") == "deploy-tnmfire-www-prod.yml"
+    assert accepted_payloads[-1].get("workflow_identifier_requested") == "deploy-tnmfire-www-prod.yml"
+    assert accepted_payloads[-1].get("workflow_identifier_used") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert accepted_payloads[-1].get("workflow_identifier_type_used") == "workflow_file_path"
     assert accepted_payloads[-1].get("workflow_dispatch_resolution_source") == "workflow_file_path"
+    assert accepted_payloads[-1].get("actual_dispatch_identifier_sent") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert accepted_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_file_path"
+    preflight_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_dispatch_preflight"
+    ]
+    assert preflight_payloads
+    assert preflight_payloads[-1].get("actual_dispatch_identifier_sent") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert preflight_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_file_path"
 
 
 def test_deploy_keeps_requested_workflow_identifier_when_history_workflow_path_missing(db_session) -> None:
@@ -3436,10 +3457,10 @@ def test_deploy_keeps_requested_workflow_identifier_when_history_workflow_path_m
 
     assert publisher.deploy_calls
     deploy_target, _ = publisher.deploy_calls[-1]
-    assert deploy_target.workflow_id == "stale-workflow-id.yml"
-    assert action_result.result.get("workflow_identifier_requested") == "stale-workflow-id.yml"
-    assert action_result.result.get("workflow_identifier_used") == "stale-workflow-id.yml"
-    assert action_result.result.get("workflow_dispatch_resolution_source") == "workflow_id"
+    assert deploy_target.workflow_id == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("workflow_identifier_requested") == "deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("workflow_identifier_used") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert action_result.result.get("workflow_dispatch_resolution_source") == "workflow_file_path"
 
 
 @pytest.mark.parametrize(
@@ -3630,7 +3651,7 @@ def test_deploy_retry_after_failure_preserves_publish_state(db_session) -> None:
     last_failure = deploy_history[-1]
     assert last_failure.get("action") == "deploy"
     assert last_failure.get("status") == "failed"
-    assert last_failure.get("workflow_id") == "deploy-www-prod.yml"
+    assert last_failure.get("workflow_id") == ".github/workflows/deploy-www-prod.yml"
     assert last_failure.get("ref") == "main"
     assert last_failure.get("error_summary") == "Simulated deploy failure."
 
@@ -3737,12 +3758,12 @@ def test_deploy_uses_publish_history_workflow_when_workspace_workflow_path_is_in
 
     assert publisher.deploy_calls
     deploy_target, _ = publisher.deploy_calls[-1]
-    assert deploy_target.workflow_id == "deploy-www-prod.yml"
+    assert deploy_target.workflow_id == ".github/workflows/deploy-www-prod.yml"
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     deploy_history = workspace.deploy_history_json or []
     assert deploy_history
     assert deploy_history[-1].get("resolved_workflow_source") == "publish_history_workflow"
-    assert deploy_history[-1].get("workflow_id") == "deploy-www-prod.yml"
+    assert deploy_history[-1].get("workflow_id") == ".github/workflows/deploy-www-prod.yml"
 
 
 def test_publish_analytics_insertion_collapses_duplicate_placeholders(db_session) -> None:
@@ -4289,7 +4310,7 @@ def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -
         payload.get("action") == "deploy"
         and payload.get("status") == "completed"
         and isinstance(payload.get("target"), dict)
-        and payload.get("target", {}).get("workflow_id") == "deploy-www-prod.yml"
+        and payload.get("target", {}).get("workflow_id") == ".github/workflows/deploy-www-prod.yml"
         and "resolved_live_url" in payload.get("target", {})
         and "url_source" in payload.get("target", {})
         for payload in payloads
@@ -4312,7 +4333,7 @@ def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -
         and payload.get("workflow_dispatch_ready") is True
         and payload.get("workflow_dispatch_supported") is True
         and "workflow_dispatch" in (payload.get("workflow_trigger_types") or [])
-        and payload.get("dispatch_identifier_type") == "workflow_id"
+        and payload.get("dispatch_identifier_type") == "workflow_file_path"
         and payload.get("remediation_mode") == "none"
         for payload in readiness_events
     )
@@ -4456,7 +4477,7 @@ def test_deploy_logs_distinguish_trigger_support_from_dispatch_service_availabil
         and "workflow_dispatch" in (payload.get("workflow_trigger_types") or [])
         and payload.get("dispatch_service_availability") is False
         and payload.get("dispatch_service_reason_code") == "runtime_unavailable"
-        and payload.get("dispatch_identifier_type") == "workflow_id"
+        and payload.get("dispatch_identifier_type") == "workflow_file_path"
         for payload in readiness_events
     )
 

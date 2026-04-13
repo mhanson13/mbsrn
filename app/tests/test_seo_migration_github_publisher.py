@@ -53,6 +53,16 @@ def _dispatch_target() -> SEOMigrationGitHubDeployTarget:
     )
 
 
+def _dispatch_target_with_workflow_path() -> SEOMigrationGitHubDeployTarget:
+    return SEOMigrationGitHubDeployTarget(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        workflow_id=".github/workflows/deploy-tnmfire-www-prod.yml",
+        ref="main",
+        inputs={"site_id": "site-1"},
+    )
+
+
 def _install_urlopen_stub(monkeypatch, responses, calls):
     queue = list(responses)
 
@@ -110,6 +120,43 @@ def test_dispatch_deploy_classifies_workflow_not_found(monkeypatch) -> None:
     assert exc_info.value.code == "workflow_not_found"
     assert exc_info.value.stage == "workflow_lookup"
     assert len(calls) == 4
+
+
+def test_dispatch_deploy_uses_workflow_file_path_identifier_when_provided(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "wfsha"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(status=204),
+            _FakeHTTPResponse(status=200, body=json.dumps({"workflow_runs": []})),
+            _FakeHTTPResponse(status=200, body=json.dumps([])),
+            _FakeHTTPResponse(status=200, body=json.dumps([])),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.dispatch_deploy(target=_dispatch_target_with_workflow_path(), dry_run=False)
+    assert result.workflow_id == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert any(
+        call[1].endswith("/actions/workflows/.github%2Fworkflows%2Fdeploy-tnmfire-www-prod.yml/dispatches")
+        for call in calls
+    )
+    assert any(
+        call[1].endswith("/actions/workflows/.github%2Fworkflows%2Fdeploy-tnmfire-www-prod.yml")
+        for call in calls
+    )
 
 
 def test_dispatch_deploy_classifies_ref_invalid(monkeypatch) -> None:

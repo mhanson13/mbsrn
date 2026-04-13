@@ -1536,6 +1536,8 @@ class SEOMigrationService:
             workflow_identifier_type_used
             or _infer_dispatch_identifier_type(workflow_identifier_used or deploy_target.get("workflow_id"))
         )
+        actual_dispatch_identifier_sent: str | None = None
+        actual_dispatch_identifier_type_sent: str | None = None
         dispatch_attempted = False
         dispatch_result_stage: str | None = None
         deploy_inputs = dict(deploy_target["inputs"])
@@ -1658,6 +1660,44 @@ class SEOMigrationService:
                     deploy_trace_id=deploy_trace_id,
                     remediation_mode=target_readiness.remediation_mode,
                 )
+                deploy_target_for_dispatch = SEOMigrationGitHubDeployTarget(
+                    repo_owner=deploy_target_for_dispatch.repo_owner,
+                    repo_name=deploy_target_for_dispatch.repo_name,
+                    workflow_id=(workflow_identifier_used or deploy_target_for_dispatch.workflow_id),
+                    ref=deploy_target_for_dispatch.ref,
+                    inputs=deploy_inputs,
+                )
+            actual_dispatch_identifier_sent = _normalize_string(deploy_target_for_dispatch.workflow_id, max_length=200)
+            actual_dispatch_identifier_type_sent = _normalize_string(dispatch_identifier_type, max_length=80) or _infer_dispatch_identifier_type(
+                actual_dispatch_identifier_sent
+            )
+            self._emit_structured_service_log(
+                payload={
+                    "event": "seo_migration_deploy_dispatch_preflight",
+                    "business_id": business_id,
+                    "site_id": site_id,
+                    "workspace_id": workspace.id,
+                    "artifact_version_id": artifact.id,
+                    "repo_owner": deploy_target_for_dispatch.repo_owner,
+                    "repo_name": deploy_target_for_dispatch.repo_name,
+                    "requested_ref": requested_ref,
+                    "resolved_ref": resolved_ref,
+                    "ref_source": ref_source,
+                    "workflow_identifier_requested": workflow_identifier_requested,
+                    "workflow_identifier_used": workflow_identifier_used,
+                    "workflow_identifier_type_requested": workflow_identifier_type_requested,
+                    "workflow_identifier_type_used": workflow_identifier_type_used,
+                    "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
+                    "workflow_file_path": workflow_file_path,
+                    "workflow_name": workflow_name,
+                    "dispatch_identifier_type": dispatch_identifier_type,
+                    "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
+                    "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
+                    "deploy_trace_id": deploy_trace_id,
+                },
+                fallback_message="seo_migration_deploy_dispatch_preflight",
+                level=logging.INFO,
+            )
             deploy_result = self.github_publisher.dispatch_deploy(
                 target=deploy_target_for_dispatch,
                 dry_run=dry_run,
@@ -1799,6 +1839,8 @@ class SEOMigrationService:
                     "workflow_identifier_type_used": workflow_identifier_type_used,
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_name": workflow_name,
+                    "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
+                    "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_target["ref"],
                     "requested_ref": requested_ref,
                     "resolved_ref": resolved_ref,
@@ -1867,6 +1909,8 @@ class SEOMigrationService:
                     "workflow_identifier_type_used": workflow_identifier_type_used,
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_name": workflow_name,
+                    "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
+                    "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_target["ref"],
                     "requested_ref": requested_ref,
                     "resolved_ref": resolved_ref,
@@ -1925,6 +1969,8 @@ class SEOMigrationService:
                     "workflow_identifier_type_used": workflow_identifier_type_used,
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_name": workflow_name,
+                    "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
+                    "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_target["ref"],
                     "requested_ref": requested_ref,
                     "resolved_ref": resolved_ref,
@@ -1979,6 +2025,8 @@ class SEOMigrationService:
                 "workflow_identifier_type_used": workflow_identifier_type_used,
                 "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                 "workflow_name": workflow_name,
+                "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
+                "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                 "ref": deploy_result.ref,
                 "requested_ref": requested_ref,
                 "resolved_ref": resolved_ref,
@@ -2016,6 +2064,8 @@ class SEOMigrationService:
                 "workflow_identifier_type_used": workflow_identifier_type_used,
                 "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                 "workflow_name": workflow_name,
+                "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
+                "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                 "ref": deploy_result.ref,
                 "requested_ref": requested_ref,
                 "resolved_ref": resolved_ref,
@@ -2048,6 +2098,8 @@ class SEOMigrationService:
                     "workflow_identifier_type_used": workflow_identifier_type_used,
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_name": workflow_name,
+                    "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
+                    "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_result.ref,
                     "requested_ref": requested_ref,
                     "resolved_ref": resolved_ref,
@@ -2081,6 +2133,8 @@ class SEOMigrationService:
                     "workflow_identifier_type_used": workflow_identifier_type_used,
                     "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                     "workflow_name": workflow_name,
+                    "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
+                    "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_result.ref,
                     "requested_ref": requested_ref,
                     "resolved_ref": resolved_ref,
@@ -2133,6 +2187,8 @@ class SEOMigrationService:
             "workflow_identifier_type_used": workflow_identifier_type_used,
             "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
             "workflow_name": workflow_name,
+            "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
+            "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
             "workflow_path": (
                 workflow_file_path
                 or (
@@ -2206,6 +2262,8 @@ class SEOMigrationService:
                 "workflow_identifier_type_used": workflow_identifier_type_used,
                 "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
                 "workflow_name": workflow_name,
+                "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
+                "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                 "workflow_path": (
                     workflow_file_path
                     or (
@@ -2390,7 +2448,14 @@ class SEOMigrationService:
 
         repo_owner = _normalize_string(target_history_item.get("repo_owner"), max_length=80)
         repo_name = _normalize_string(target_history_item.get("repo_name"), max_length=120)
-        workflow_id = _normalize_workflow_id_for_deploy(target_history_item.get("workflow_id"))
+        workflow_id = (
+            _normalize_workflow_path_for_deploy(target_history_item.get("actual_dispatch_identifier_sent"))
+            or _normalize_workflow_path_for_deploy(target_history_item.get("workflow_identifier_used"))
+            or _normalize_workflow_path_for_deploy(target_history_item.get("workflow_id"))
+            or _normalize_workflow_id_for_deploy(target_history_item.get("actual_dispatch_identifier_sent"))
+            or _normalize_workflow_id_for_deploy(target_history_item.get("workflow_identifier_used"))
+            or _normalize_workflow_id_for_deploy(target_history_item.get("workflow_id"))
+        )
         ref = _normalize_string(target_history_item.get("ref"), max_length=120)
         if not repo_owner or not repo_name or not workflow_id or not ref:
             return self._build_deploy_refresh_no_change_result(
@@ -5617,6 +5682,11 @@ class SEOMigrationService:
         artifact_version_id: str | None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         normalized_deploy_config = _normalize_deploy_config(workspace.deploy_config_json)
+        configured_workflow_path = _normalize_workflow_path_for_deploy(normalized_deploy_config.get("workflow_id"))
+        if configured_workflow_path:
+            configured_workflow_id = _workflow_id_from_path_for_deploy(configured_workflow_path)
+            if configured_workflow_id:
+                normalized_deploy_config["workflow_id"] = configured_workflow_id
         publish_target = _resolve_publish_target(effective_publish_config)
         candidate_owner = str(
             normalized_deploy_config.get("repo_owner") or publish_target.get("repo_owner") or ""
@@ -5634,31 +5704,27 @@ class SEOMigrationService:
         )
 
         resolved_source = _DEPLOY_WORKFLOW_SOURCE_DEFAULT
-        deploy_config_for_resolution = dict(normalized_deploy_config)
-        if history_workflow_id:
-            deploy_config_for_resolution["workflow_id"] = history_workflow_id
-            resolved_source = _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY
-        elif str(normalized_deploy_config.get("workflow_id") or "").strip():
+        if str(normalized_deploy_config.get("workflow_id") or "").strip():
             resolved_source = _DEPLOY_WORKFLOW_SOURCE_WORKSPACE_CONFIG
 
         resolved_target = _resolve_deploy_target(
-            deploy_config=deploy_config_for_resolution,
+            deploy_config=normalized_deploy_config,
             publish_config=effective_publish_config,
             default_workflow_id=self.deploy_default_workflow_id,
             default_ref=self.deploy_default_ref,
         )
-        resolved_workflow_path = (
-            history_workflow_path
-            if resolved_source == _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY and history_workflow_path
-            else _normalize_workflow_path_for_deploy(
-                f".github/workflows/{str(resolved_target.get('workflow_id') or '').strip()}"
-            )
+        resolved_workflow_path = _normalize_workflow_path_for_deploy(
+            f".github/workflows/{str(resolved_target.get('workflow_id') or '').strip()}"
         )
+        if history_workflow_path:
+            resolved_workflow_path = history_workflow_path
+            resolved_source = _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
         resolution = {
             "source": resolved_source,
             "workflow_id": str(resolved_target.get("workflow_id") or "").strip(),
             "workflow_path": resolved_workflow_path,
+            "history_workflow_id": history_workflow_id,
             "deploy_workflow_mode": admin_deploy_metadata.get("deploy_workflow_mode"),
             "target_environment_key": admin_deploy_metadata.get("target_environment_key"),
             "target_environment_source": admin_deploy_metadata.get("target_environment_source"),
@@ -6997,6 +7063,9 @@ def _normalize_workflow_trigger_types_for_summary(value: object) -> list[str]:
 
 
 def _infer_dispatch_identifier_type(workflow_id: object) -> str:
+    normalized_workflow_path = _normalize_workflow_path_for_deploy(workflow_id)
+    if normalized_workflow_path:
+        return "workflow_file_path"
     normalized_workflow_id = _normalize_workflow_id_for_deploy(workflow_id)
     if normalized_workflow_id is None:
         normalized_workflow_id = _normalize_string(workflow_id, max_length=160) or ""
@@ -7023,27 +7092,29 @@ def _resolve_workflow_dispatch_identifier(
     requested_identifier = _normalize_string(workflow_id, max_length=160)
     normalized_workflow_id = _normalize_workflow_id_for_deploy(workflow_id) or requested_identifier
     normalized_workflow_path = _normalize_workflow_path_for_deploy(workflow_path)
-    workflow_name_from_path = _workflow_id_from_path_for_deploy(normalized_workflow_path)
+    normalized_requested_path = _normalize_workflow_path_for_deploy(requested_identifier)
+    workflow_name_from_path = _workflow_id_from_path_for_deploy(normalized_workflow_path or normalized_requested_path)
     workflow_name_from_identifier = _workflow_id_from_path_for_deploy(normalized_workflow_id)
 
-    used_identifier = normalized_workflow_id
+    used_identifier: str | None = None
     workflow_dispatch_resolution_source = "workflow_id"
-    workflow_identifier_type_used = _infer_dispatch_identifier_type(used_identifier)
-    if workflow_name_from_path:
-        if not normalized_workflow_id or workflow_name_from_path != normalized_workflow_id:
-            used_identifier = workflow_name_from_path
-            workflow_dispatch_resolution_source = "workflow_file_path"
-            workflow_identifier_type_used = "workflow_file_path"
-    elif workflow_name_from_identifier and workflow_name_from_identifier != normalized_workflow_id:
+    workflow_identifier_type_used = "workflow_id"
+    if normalized_workflow_path:
+        used_identifier = normalized_workflow_path
+        workflow_dispatch_resolution_source = "workflow_file_path"
+        workflow_identifier_type_used = "workflow_file_path"
+    elif normalized_requested_path:
+        used_identifier = normalized_requested_path
+        workflow_dispatch_resolution_source = "workflow_file_path"
+        workflow_identifier_type_used = "workflow_file_path"
+    elif normalized_workflow_id:
+        used_identifier = normalized_workflow_id
+        workflow_dispatch_resolution_source = "workflow_id"
+        workflow_identifier_type_used = _infer_dispatch_identifier_type(used_identifier)
+    elif workflow_name_from_identifier:
         used_identifier = workflow_name_from_identifier
         workflow_dispatch_resolution_source = "workflow_id_path_normalized"
-        workflow_identifier_type_used = "workflow_file_path"
-
-    if not used_identifier:
-        used_identifier = workflow_name_from_path or workflow_name_from_identifier
-        if used_identifier:
-            workflow_dispatch_resolution_source = "workflow_file_path"
-            workflow_identifier_type_used = "workflow_file_path"
+        workflow_identifier_type_used = _infer_dispatch_identifier_type(used_identifier)
 
     return {
         "workflow_identifier_requested": requested_identifier or normalized_workflow_id,
@@ -7051,7 +7122,7 @@ def _resolve_workflow_dispatch_identifier(
         "workflow_identifier_type_requested": _infer_dispatch_identifier_type(requested_identifier),
         "workflow_identifier_type_used": workflow_identifier_type_used,
         "workflow_dispatch_resolution_source": workflow_dispatch_resolution_source,
-        "workflow_file_path": normalized_workflow_path,
+        "workflow_file_path": normalized_workflow_path or normalized_requested_path,
         "workflow_name": workflow_name_from_path or workflow_name_from_identifier,
     }
 
@@ -7256,6 +7327,16 @@ def _workflow_id_from_path_for_deploy(path: str | None) -> str | None:
     return _normalize_workflow_id_for_deploy(workflow_id)
 
 
+def _canonical_dispatch_workflow_identifier(value: object) -> str | None:
+    normalized_path = _normalize_workflow_path_for_deploy(value)
+    if normalized_path:
+        return normalized_path
+    normalized_workflow_id = _normalize_workflow_id_for_deploy(value)
+    if normalized_workflow_id:
+        return _normalize_workflow_path_for_deploy(f".github/workflows/{normalized_workflow_id}")
+    return _normalize_string(value, max_length=200)
+
+
 def _normalize_history_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
@@ -7330,6 +7411,13 @@ def _is_duplicate_deploy_attempt(
 ) -> bool:
     normalized = _normalize_history_list(history)
     expected_inputs = _normalize_history_inputs(target.get("inputs"))
+    target_workflow_identifier = _canonical_dispatch_workflow_identifier(
+        target.get("actual_dispatch_identifier_sent")
+        or target.get("workflow_identifier_used")
+        or target.get("workflow_path")
+        or target.get("workflow_file_path")
+        or target.get("workflow_id")
+    )
     for item in reversed(normalized):
         if str(item.get("action") or "").strip().lower() != "deploy":
             continue
@@ -7344,7 +7432,14 @@ def _is_duplicate_deploy_attempt(
             continue
         if str(item.get("repo_name") or "").strip() != str(target.get("repo_name") or "").strip():
             continue
-        if str(item.get("workflow_id") or "").strip() != str(target.get("workflow_id") or "").strip():
+        item_workflow_identifier = _canonical_dispatch_workflow_identifier(
+            item.get("actual_dispatch_identifier_sent")
+            or item.get("workflow_identifier_used")
+            or item.get("workflow_id")
+        )
+        if not item_workflow_identifier or not target_workflow_identifier:
+            continue
+        if item_workflow_identifier != target_workflow_identifier:
             continue
         if str(item.get("ref") or "").strip() != str(target.get("ref") or "").strip():
             continue

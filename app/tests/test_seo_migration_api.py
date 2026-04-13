@@ -539,6 +539,8 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert "workflow_identifier_type_requested" in deploy_result
     assert "workflow_identifier_type_used" in deploy_result
     assert "workflow_dispatch_resolution_source" in deploy_result
+    assert "actual_dispatch_identifier_sent" in deploy_result
+    assert "actual_dispatch_identifier_type_sent" in deploy_result
     assert isinstance(deploy_result.get("workflow_trigger_types"), list)
     assert "dispatch_service_availability" in deploy_result
     assert "dispatch_service_reason_code" in deploy_result

@@ -1445,6 +1445,10 @@ def _workflow_repo_path(workflow_id: str) -> str:
             code="github_workflow_invalid",
             safe_message="Deploy workflow target is invalid.",
         )
+    if normalized.lower().startswith(".github/workflows/"):
+        return normalized
+    if normalized.lower().startswith("github/workflows/"):
+        return f".{normalized}"
     return _join_repo_path(".github/workflows", normalized)
 
 
@@ -1643,6 +1647,10 @@ def _workflow_dispatch_identifier_type(workflow_id: str) -> str:
     normalized = str(workflow_id or "").strip()
     if normalized.isdigit():
         return "workflow_numeric_id"
-    if "/" in normalized or normalized.lower().endswith(".yml") or normalized.lower().endswith(".yaml"):
+    if normalized.lower().startswith(".github/workflows/") or normalized.lower().startswith("github/workflows/"):
+        return "workflow_file_path"
+    if "/" in normalized:
+        return "workflow_file_path"
+    if normalized.lower().endswith(".yml") or normalized.lower().endswith(".yaml"):
         return "workflow_id"
     return "workflow_id"
