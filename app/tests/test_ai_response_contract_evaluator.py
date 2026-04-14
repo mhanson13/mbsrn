@@ -94,6 +94,21 @@ def test_migration_contract_rejects_structural_missing_files_as_non_retryable() 
     assert evaluation.retry_likelihood == "unlikely_without_contract_fix"
 
 
+def test_migration_contract_rejects_density_only_as_conditionally_retryable() -> None:
+    evaluation = evaluate_migration_artifact_response(
+        strategy_summary="Draft strategy",
+        generated_files=[{"path": "index.html", "media_type": "text/html", "content": None}],
+        raw_generated_file_count=1,
+        page_map_count=1,
+    )
+    assert evaluation.status == "rejected"
+    assert "insufficient_content_density" in evaluation.reasons
+    assert "missing_required_artifact_files" not in evaluation.reasons
+    assert evaluation.valid_item_count == 1
+    assert evaluation.retryable is True
+    assert evaluation.retry_likelihood == "conditionally_useful"
+
+
 def test_competitor_contract_accepts_valid_candidates() -> None:
     rows = [
         SimpleNamespace(

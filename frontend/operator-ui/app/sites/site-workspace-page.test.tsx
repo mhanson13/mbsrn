@@ -3980,6 +3980,55 @@ describe("site workspace migration tab", () => {
       "Failure source: AI provider rejected request",
     );
   });
+
+  it("renders structured draft contract diagnostics for operator troubleshooting", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          migration_diagnostics: {
+            last_draft_generation_status: "failed",
+            last_draft_failure_category: "artifact_invalid",
+            last_draft_failure_reason: "validation_failed",
+            last_draft_failure_message: "Generated draft artifacts were not usable.",
+            last_draft_failure_source: "local_validation",
+            last_draft_contract_status: "rejected",
+            last_draft_contract_reason_codes: ["missing_required_artifact_files", "insufficient_content_density"],
+            last_draft_contract_warning_codes: ["partial_artifact_only"],
+            last_draft_contract_retry_likelihood: "unlikely_without_contract_fix",
+            last_draft_contract_candidate_item_count: 10,
+            last_draft_contract_normalized_item_count: 0,
+            last_draft_contract_dropped_item_count: 10,
+            last_draft_contract_required_artifact_files_expected: ["index.html"],
+            last_draft_contract_required_artifact_files_present: [],
+            last_draft_contract_missing_required_artifact_files: ["index.html"],
+            last_draft_contract_content_density_failures_by_file: [],
+            last_draft_contract_parser_rejection_reason_counts: { invalid_path: 8, empty_content: 2 },
+            last_draft_contract_artifact_primary_file_detected: false,
+          },
+        },
+      }),
+    );
+    render(<SiteWorkspacePage />);
+
+    await switchToMigrationTab(user);
+    await user.click(screen.getByText("Show detailed migration failure diagnostics"));
+
+    const draftDiagnostics = await screen.findByTestId("migration-draft-diagnostics");
+    expect(draftDiagnostics).toHaveTextContent("Draft contract status: rejected");
+    expect(draftDiagnostics).toHaveTextContent(
+      "Contract diagnosis: Parser/path normalization rejected draft items before contract validation.",
+    );
+    expect(draftDiagnostics).toHaveTextContent(
+      "Retry guidance: Retry is unlikely to help without prompt/contract/parser alignment.",
+    );
+    expect(draftDiagnostics).toHaveTextContent("Candidate items: 10; normalized: 0; dropped: 10");
+    expect(draftDiagnostics).toHaveTextContent("Missing required files: index.html");
+    expect(draftDiagnostics).toHaveTextContent("Parser rejection reasons: empty_content: 2, invalid_path: 8");
+    expect(draftDiagnostics).not.toHaveTextContent("RAW_MODEL_OUTPUT");
+    expect(draftDiagnostics).not.toHaveTextContent("SYSTEM_PROMPT_TEXT");
+  });
 });
 
 describe("site workspace timeline controls", () => {

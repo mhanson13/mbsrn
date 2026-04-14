@@ -1651,6 +1651,59 @@ def test_generate_artifacts_normalizes_absolute_and_root_paths(db_session) -> No
     assert any(item.get("path") == "assets/site.css" for item in files if isinstance(item, dict))
 
 
+def test_generate_artifacts_root_path_normalization_keeps_forbidden_and_traversal_blocks(db_session) -> None:
+    output = SEOMigrationArtifactGenerationOutput(
+        strategy_summary="Draft strategy",
+        page_map=[{"path": "/", "title": "Home"}],
+        homepage_structure=[],
+        service_page_suggestions=[],
+        cta_contact_structure={},
+        seo_meta_suggestions={},
+        redirect_suggestions=[],
+        analytics_placeholders=[],
+        generated_files=[
+            SEOMigrationGeneratedFileOutput(
+                path="/index.html",
+                media_type="text/html",
+                content="<html><body><h1>Valid Home Content Block</h1></body></html>",
+            ),
+            SEOMigrationGeneratedFileOutput(
+                path="/../../escape.html",
+                media_type="text/html",
+                content="<html><body>bad</body></html>",
+            ),
+            SEOMigrationGeneratedFileOutput(
+                path="/.github/workflows/evil.yml",
+                media_type="text/yaml",
+                content="name: bad",
+            ),
+            SEOMigrationGeneratedFileOutput(
+                path="https://tnmfire.example/.git/config",
+                media_type="text/plain",
+                content="[core]",
+            ),
+        ],
+        provider_name="mock",
+        model_name="mock-seo-migration-v1",
+        prompt_version="seo-migration-v1",
+    )
+    service = _build_service(db_session, _StaticMigrationProvider(output))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    files = artifact.generated_files_json or []
+    paths = {str(item["path"]) for item in files if isinstance(item, dict)}
+    assert paths == {"index.html"}
+    warnings = artifact.parse_warnings_json or []
+    assert any("invalid path" in warning for warning in warnings)
+    assert any("forbidden generated path" in warning for warning in warnings)
+
+
 def test_generate_artifacts_rejection_emits_contract_diagnostics(db_session, caplog) -> None:
     output = SEOMigrationArtifactGenerationOutput(
         strategy_summary="Draft strategy",

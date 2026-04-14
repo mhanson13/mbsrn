@@ -1246,6 +1246,19 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_draft_failure_model_used" in migration_diagnostics
     assert "last_draft_failure_timeout_seconds" in migration_diagnostics
     assert "last_draft_failure_timeout_source" in migration_diagnostics
+    assert "last_draft_contract_status" in migration_diagnostics
+    assert "last_draft_contract_reason_codes" in migration_diagnostics
+    assert "last_draft_contract_warning_codes" in migration_diagnostics
+    assert "last_draft_contract_retry_likelihood" in migration_diagnostics
+    assert "last_draft_contract_candidate_item_count" in migration_diagnostics
+    assert "last_draft_contract_normalized_item_count" in migration_diagnostics
+    assert "last_draft_contract_dropped_item_count" in migration_diagnostics
+    assert "last_draft_contract_required_artifact_files_expected" in migration_diagnostics
+    assert "last_draft_contract_required_artifact_files_present" in migration_diagnostics
+    assert "last_draft_contract_missing_required_artifact_files" in migration_diagnostics
+    assert "last_draft_contract_content_density_failures_by_file" in migration_diagnostics
+    assert "last_draft_contract_parser_rejection_reason_counts" in migration_diagnostics
+    assert "last_draft_contract_artifact_primary_file_detected" in migration_diagnostics
     assert "last_draft_execution_duration_ms" in migration_diagnostics
     assert "last_draft_request_contract_status" in migration_diagnostics
     assert "last_draft_provider_execution_status" in migration_diagnostics
@@ -1681,6 +1694,18 @@ def test_generate_draft_contract_rejection_exposes_structural_retry_hint(db_sess
     assert diagnostics.get("last_draft_contract_status") == "rejected"
     assert diagnostics.get("last_draft_contract_retry_likelihood") == "unlikely_without_contract_fix"
     assert diagnostics.get("last_draft_contract_missing_required_artifact_files") == ["index.html"]
+    assert diagnostics.get("last_draft_contract_candidate_item_count") == 1
+    assert diagnostics.get("last_draft_contract_normalized_item_count") == 0
+    assert diagnostics.get("last_draft_contract_dropped_item_count") == 1
+    assert diagnostics.get("last_draft_contract_required_artifact_files_expected") == ["index.html"]
+    assert diagnostics.get("last_draft_contract_required_artifact_files_present") == []
+    assert diagnostics.get("last_draft_contract_content_density_failures_by_file") == []
+    assert diagnostics.get("last_draft_contract_artifact_primary_file_detected") is False
+    parser_rejections = diagnostics.get("last_draft_contract_parser_rejection_reason_counts") or {}
+    assert isinstance(parser_rejections, dict)
+    assert parser_rejections.get("invalid_path", 0) >= 1
+    assert "prompt" not in diagnostics
+    assert "raw_model_output" not in diagnostics
 
 
 def test_generate_draft_provider_config_failure_returns_config_missing(db_session) -> None:

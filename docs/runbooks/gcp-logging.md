@@ -73,6 +73,17 @@ Draft contract interpretation:
 - `retry_likelihood=unlikely_without_contract_fix` means blind retries are typically low-value until contract/parser alignment is fixed.
 - `retry_likelihood=likely_useful` means retry may recover transient generation gaps.
 
+Quick triage examples:
+- parser/path normalization issue:
+  - pattern: `normalized_item_count=0`, high `dropped_item_count`, non-empty `parser_rejection_reason_counts`
+  - action: fix contract/parser/path assumptions first, then retry.
+- real missing required files:
+  - pattern: `missing_required_artifact_files=["index.html"]`
+  - action: fix prompt/contract alignment for required file presence before retrying.
+- density-only weakness:
+  - pattern: required files present, `content_density_failures_by_file` populated
+  - action: improve draft content depth; retry can be conditionally useful.
+
 ## Migration Provider Compatibility Queries
 
 For migration draft preflight compatibility troubleshooting:

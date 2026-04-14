@@ -513,6 +513,80 @@ function formatDispatchStageLabel(value: string | null): string {
   return normalized.replace(/_/g, " ");
 }
 
+function parseStringNumberMap(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const parsed: Record<string, number> = {};
+  for (const [rawKey, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const key = String(rawKey || "").trim();
+    if (!key) {
+      continue;
+    }
+    const numeric = typeof rawValue === "number" && Number.isFinite(rawValue) ? Math.max(0, Math.round(rawValue)) : null;
+    if (numeric === null) {
+      continue;
+    }
+    parsed[key] = numeric;
+  }
+  return parsed;
+}
+
+function formatParserRejectionReasonCounts(value: Record<string, number>): string {
+  const entries = Object.entries(value).filter(([, count]) => count > 0);
+  if (entries.length === 0) {
+    return "None";
+  }
+  return entries
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([key, count]) => `${key}: ${count}`)
+    .join(", ");
+}
+
+function toDraftRetryLikelihoodGuidance(value: string | null): string | null {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "likely_useful") {
+    return "Retry is likely useful for this failure class.";
+  }
+  if (normalized === "conditionally_useful") {
+    return "Retry may help, but review draft content quality and structure first.";
+  }
+  if (normalized === "unlikely_without_contract_fix") {
+    return "Retry is unlikely to help without prompt/contract/parser alignment.";
+  }
+  return "Retry guidance is unknown for this failure class.";
+}
+
+function deriveDraftContractIssueFocus(params: {
+  missingRequiredFiles: string[];
+  densityFailuresByFile: string[];
+  parserRejectionReasonCounts: Record<string, number>;
+  normalizedItemCount: number | null;
+  droppedItemCount: number | null;
+}): string | null {
+  const {
+    missingRequiredFiles,
+    densityFailuresByFile,
+    parserRejectionReasonCounts,
+    normalizedItemCount,
+    droppedItemCount,
+  } = params;
+  const parserDrops = Object.values(parserRejectionReasonCounts).reduce((sum, count) => sum + count, 0);
+  if (parserDrops > 0 && ((normalizedItemCount ?? 0) === 0 || (droppedItemCount ?? 0) > 0)) {
+    return "Parser/path normalization rejected draft items before contract validation.";
+  }
+  if (missingRequiredFiles.length > 0) {
+    return `Required artifact files are missing: ${missingRequiredFiles.join(", ")}.`;
+  }
+  if (densityFailuresByFile.length > 0) {
+    return "Required files were detected, but content density is below the minimum threshold.";
+  }
+  return null;
+}
+
 function parseInputsText(value: string): Record<string, string> {
   const lines = splitLines(value);
   const result: Record<string, string> = {};
@@ -1816,6 +1890,54 @@ export function MigrationWorkspacePanel({
   const draftAIExecution = parseDraftAIExecutionSummary(contextSummary, migrationDiagnostics);
   const draftFailureSourceLabel = toDraftFailureSourceLabel(
     asStringOrNull(migrationDiagnostics.last_draft_failure_source) || draftAIExecution.failureSource,
+  );
+  const draftContractStatus = asStringOrNull(migrationDiagnostics.last_draft_contract_status);
+  const draftContractReasonCodes = asStringList(migrationDiagnostics.last_draft_contract_reason_codes);
+  const draftContractWarningCodes = asStringList(migrationDiagnostics.last_draft_contract_warning_codes);
+  const draftContractRetryLikelihood = asStringOrNull(migrationDiagnostics.last_draft_contract_retry_likelihood);
+  const draftContractCandidateItemCount =
+    typeof migrationDiagnostics.last_draft_contract_candidate_item_count === "number" &&
+    Number.isFinite(migrationDiagnostics.last_draft_contract_candidate_item_count)
+      ? Math.max(0, Math.round(migrationDiagnostics.last_draft_contract_candidate_item_count))
+      : null;
+  const draftContractNormalizedItemCount =
+    typeof migrationDiagnostics.last_draft_contract_normalized_item_count === "number" &&
+    Number.isFinite(migrationDiagnostics.last_draft_contract_normalized_item_count)
+      ? Math.max(0, Math.round(migrationDiagnostics.last_draft_contract_normalized_item_count))
+      : null;
+  const draftContractDroppedItemCount =
+    typeof migrationDiagnostics.last_draft_contract_dropped_item_count === "number" &&
+    Number.isFinite(migrationDiagnostics.last_draft_contract_dropped_item_count)
+      ? Math.max(0, Math.round(migrationDiagnostics.last_draft_contract_dropped_item_count))
+      : null;
+  const draftContractRequiredFilesExpected = asStringList(
+    migrationDiagnostics.last_draft_contract_required_artifact_files_expected,
+  );
+  const draftContractRequiredFilesPresent = asStringList(
+    migrationDiagnostics.last_draft_contract_required_artifact_files_present,
+  );
+  const draftContractMissingRequiredFiles = asStringList(
+    migrationDiagnostics.last_draft_contract_missing_required_artifact_files,
+  );
+  const draftContractContentDensityFailuresByFile = asStringList(
+    migrationDiagnostics.last_draft_contract_content_density_failures_by_file,
+  );
+  const draftContractParserRejectionReasonCounts = parseStringNumberMap(
+    migrationDiagnostics.last_draft_contract_parser_rejection_reason_counts,
+  );
+  const draftContractPrimaryFileDetected = asBooleanOrNull(
+    migrationDiagnostics.last_draft_contract_artifact_primary_file_detected,
+  );
+  const draftContractIssueFocus = deriveDraftContractIssueFocus({
+    missingRequiredFiles: draftContractMissingRequiredFiles,
+    densityFailuresByFile: draftContractContentDensityFailuresByFile,
+    parserRejectionReasonCounts: draftContractParserRejectionReasonCounts,
+    normalizedItemCount: draftContractNormalizedItemCount,
+    droppedItemCount: draftContractDroppedItemCount,
+  });
+  const draftContractRetryGuidance = toDraftRetryLikelihoodGuidance(draftContractRetryLikelihood);
+  const draftContractParserRejectionSummary = formatParserRejectionReasonCounts(
+    draftContractParserRejectionReasonCounts,
   );
   const requestContractStatusLabel = toRequestContractStatusLabel(draftAIExecution.requestContractStatus);
   const aiExecutionSummaryLabel = `${
@@ -3591,6 +3713,68 @@ export function MigrationWorkspacePanel({
               ) : null}
               {draftFailureSourceLabel ? (
                 <span className="hint warning">Draft failure source: {draftFailureSourceLabel}</span>
+              ) : null}
+              {draftContractStatus ? (
+                <span className="hint">Draft contract status: {draftContractStatus.replace(/_/g, " ")}</span>
+              ) : null}
+              {draftContractIssueFocus ? (
+                <span className="hint warning" data-testid="migration-draft-contract-issue-focus">
+                  Contract diagnosis: {draftContractIssueFocus}
+                </span>
+              ) : null}
+              {draftContractRetryGuidance ? (
+                <span className="hint warning" data-testid="migration-draft-contract-retry-guidance">
+                  Retry guidance: {draftContractRetryGuidance}
+                </span>
+              ) : null}
+              {draftContractReasonCodes.length > 0 ? (
+                <span className="hint">
+                  Contract reason codes: {draftContractReasonCodes.map((item) => formatReasonCodeLabel(item)).join(", ")}
+                </span>
+              ) : null}
+              {draftContractWarningCodes.length > 0 ? (
+                <span className="hint">
+                  Contract warning codes: {draftContractWarningCodes.map((item) => formatReasonCodeLabel(item)).join(", ")}
+                </span>
+              ) : null}
+              {draftContractCandidateItemCount !== null ||
+              draftContractNormalizedItemCount !== null ||
+              draftContractDroppedItemCount !== null ? (
+                <span className="hint">
+                  Candidate items: {draftContractCandidateItemCount ?? "n/a"}; normalized:{" "}
+                  {draftContractNormalizedItemCount ?? "n/a"}; dropped: {draftContractDroppedItemCount ?? "n/a"}
+                </span>
+              ) : null}
+              {draftContractRequiredFilesExpected.length > 0 ? (
+                <span className="hint">
+                  Required files expected: {draftContractRequiredFilesExpected.join(", ")}
+                </span>
+              ) : null}
+              {draftContractRequiredFilesPresent.length > 0 ? (
+                <span className="hint">
+                  Required files present: {draftContractRequiredFilesPresent.join(", ")}
+                </span>
+              ) : null}
+              {draftContractMissingRequiredFiles.length > 0 ? (
+                <span className="hint warning">
+                  Missing required files: {draftContractMissingRequiredFiles.join(", ")}
+                </span>
+              ) : null}
+              {draftContractContentDensityFailuresByFile.length > 0 ? (
+                <span className="hint warning">
+                  Content density failures by file: {draftContractContentDensityFailuresByFile.join(", ")}
+                </span>
+              ) : null}
+              {Object.keys(draftContractParserRejectionReasonCounts).length > 0 ? (
+                <span className="hint warning">
+                  Parser rejection reasons: {draftContractParserRejectionSummary}
+                </span>
+              ) : null}
+              {draftContractPrimaryFileDetected !== null ? (
+                <span className="hint">
+                  Primary file detected:{" "}
+                  {formatBooleanStateLabel(draftContractPrimaryFileDetected, { trueLabel: "Yes", falseLabel: "No" })}
+                </span>
               ) : null}
             </div>
           </div>

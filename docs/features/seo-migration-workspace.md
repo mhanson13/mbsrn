@@ -594,6 +594,17 @@ Retry guidance:
 - `retry_likelihood=conditionally_useful` means retry may help, but content quality/shape should be reviewed.
 - `retry_likelihood=unlikely_without_contract_fix` (for example structural missing required files) means retries alone are unlikely to succeed without prompt/contract/parser alignment.
 
+Operational examples:
+- Parser false-negative path issue:
+  - signals: high `dropped_item_count`, populated `parser_rejection_reason_counts`, `normalized_item_count=0`
+  - operator/admin action: do not spam retries; inspect parser/path diagnostics first, then retry after correction.
+- Real missing required files:
+  - signals: `missing_required_artifact_files` includes `index.html`
+  - operator/admin action: treat as contract/prompt/normalization mismatch; fix generation shape before retry.
+- Density-only rejection:
+  - signals: `content_density_failures_by_file` populated with required files present
+  - operator/admin action: improve generated content depth; retry is conditionally useful once content shape is improved.
+
 ## Publish Workflow (GitHub)
 GitHub publish target configuration is split across Admin + workspace ownership:
 
