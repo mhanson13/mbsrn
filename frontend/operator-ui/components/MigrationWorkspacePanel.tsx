@@ -1756,7 +1756,7 @@ export function MigrationWorkspacePanel({
     if (readinessKeys.length > 0) {
       return readinessKeys;
     }
-    return ["live_url", "resolved_live_url", "deployed_url"];
+    return ["resolved_live_url", "live_url", "deployed_url"];
   })();
   const deployEvidenceContractStatus =
     asStringOrNull(latestDeployHistoryRecord.deploy_evidence_contract_status) ||

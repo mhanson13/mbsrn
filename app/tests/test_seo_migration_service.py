@@ -2435,7 +2435,7 @@ def test_deploy_records_resolved_live_url_from_workflow_output(db_session) -> No
     assert deploy_result.result.get("resolved_live_url") == "https://workflow-live.tnmfire.com"
     assert deploy_result.result.get("url_source") == "workflow_output"
     assert deploy_result.result.get("url_source_detail") == "workflow_output:live_url"
-    assert deploy_result.result.get("expected_workflow_outputs") == ["live_url", "resolved_live_url", "deployed_url"]
+    assert deploy_result.result.get("expected_workflow_outputs") == ["resolved_live_url", "live_url", "deployed_url"]
     assert deploy_result.result.get("deploy_evidence_contract_status") == "confirmed_live_evidence"
     assert deploy_result.result.get("workflow_contract_advisory") is None
 
@@ -2444,6 +2444,165 @@ def test_deploy_records_resolved_live_url_from_workflow_output(db_session) -> No
     deploy_destination = destination.get("deploy_destination") or {}
     assert deploy_destination.get("state") == "active_live"
     assert deploy_destination.get("active_url") == "https://workflow-live.tnmfire.com"
+
+
+def test_deploy_prefers_resolved_live_url_over_live_url_and_deployed_url(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_output={
+            "live_url": "https://workflow-live.tnmfire.com",
+            "resolved_live_url": "https://resolved-live.tnmfire.com",
+            "deployed_url": "https://deployed-live.tnmfire.com",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("resolved_live_url") == "https://resolved-live.tnmfire.com"
+    assert deploy_result.result.get("url_source") == "workflow_output"
+    assert deploy_result.result.get("url_source_detail") == "workflow_output:resolved_live_url"
+
+
+def test_deploy_uses_deployed_url_when_higher_priority_workflow_output_keys_absent(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_output={"deployed_url": "https://deployed-live.tnmfire.com"},
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("resolved_live_url") == "https://deployed-live.tnmfire.com"
+    assert deploy_result.result.get("url_source") == "workflow_output"
+    assert deploy_result.result.get("url_source_detail") == "workflow_output:deployed_url"
+
+
+@pytest.mark.parametrize("workflow_id", ["deploy-tnmfire-www-prod.yml", "deploy-www-prod.yml"])
+def test_deploy_consumes_pages_evidence_contract_identically_for_site_specific_and_fallback_workflows(
+    db_session,
+    workflow_id: str,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_output={"resolved_live_url": "https://resolved-live.tnmfire.com"},
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id=workflow_id,
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("resolved_live_url") == "https://resolved-live.tnmfire.com"
+    assert deploy_result.result.get("url_source") == "workflow_output"
+    assert deploy_result.result.get("url_source_detail") == "workflow_output:resolved_live_url"
 
 
 def test_deploy_does_not_treat_request_inputs_as_confirmed_live_url(db_session) -> None:

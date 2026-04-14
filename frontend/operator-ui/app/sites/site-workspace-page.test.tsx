@@ -3591,7 +3591,7 @@ describe("site workspace migration tab", () => {
           last_workflow_run_found: true,
           last_workflow_job_failure_detected: false,
           last_post_dispatch_state: "workflow_run_in_progress",
-          expected_workflow_outputs: ["live_url", "resolved_live_url", "deployed_url"],
+          expected_workflow_outputs: ["resolved_live_url", "live_url", "deployed_url"],
           last_deploy_evidence_contract_status: "workflow_contract_incomplete_advisory",
           last_deploy_evidence_contract_reasons: ["workflow_contract_incomplete"],
           last_workflow_contract_advisory:
@@ -3653,7 +3653,7 @@ describe("site workspace migration tab", () => {
           workflow_run_found: true,
           workflow_job_failure_detected: false,
           post_dispatch_state: "workflow_run_in_progress",
-          expected_workflow_outputs: ["live_url", "resolved_live_url", "deployed_url"],
+          expected_workflow_outputs: ["resolved_live_url", "live_url", "deployed_url"],
           deploy_evidence_contract_status: "workflow_contract_incomplete_advisory",
           deploy_evidence_contract_reasons: ["workflow_contract_incomplete"],
           workflow_contract_advisory:
@@ -3729,7 +3729,7 @@ describe("site workspace migration tab", () => {
       "Deploy evidence contract reasons: workflow_contract_incomplete",
     );
     expect(deployDiagnosticsPanel).toHaveTextContent(
-      "Expected workflow outputs: live_url, resolved_live_url, deployed_url",
+      "Expected workflow outputs: resolved_live_url, live_url, deployed_url",
     );
     expect(deployDiagnosticsPanel).toHaveTextContent(
       "Workflow contract advisory: Selected workflow is dispatchable but missing managed deploy contract markers for explicit deploy evidence.",
@@ -3831,7 +3831,7 @@ describe("site workspace migration tab", () => {
           last_workflow_run_found: true,
           last_workflow_job_failure_detected: false,
           last_post_dispatch_state: "workflow_run_succeeded_without_live_url",
-          expected_workflow_outputs: ["live_url", "resolved_live_url", "deployed_url"],
+          expected_workflow_outputs: ["resolved_live_url", "live_url", "deployed_url"],
           last_deploy_evidence_contract_status: "workflow_succeeded_without_explicit_evidence",
           last_deploy_evidence_contract_reasons: ["workflow_run_succeeded_without_live_url"],
           last_workflow_contract_advisory:
@@ -3864,7 +3864,7 @@ describe("site workspace migration tab", () => {
           workflow_run_id: 123456,
           workflow_run_status: "completed",
           workflow_run_conclusion: "success",
-          expected_workflow_outputs: ["live_url", "resolved_live_url", "deployed_url"],
+          expected_workflow_outputs: ["resolved_live_url", "live_url", "deployed_url"],
           deploy_evidence_contract_status: "workflow_succeeded_without_explicit_evidence",
           deploy_evidence_contract_reasons: ["workflow_run_succeeded_without_live_url"],
           workflow_contract_advisory:

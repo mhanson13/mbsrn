@@ -168,8 +168,8 @@ _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT = "workflow_output"
 _MIGRATION_URL_SOURCE_DEPLOY_RESULT = "deploy_result"
 _MIGRATION_URL_SOURCE_UNKNOWN = "unknown"
 _DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS: tuple[str, ...] = (
-    "live_url",
     "resolved_live_url",
+    "live_url",
     "deployed_url",
 )
 _DEPLOY_EVIDENCE_CONTRACT_STATUS_CONFIRMED = "confirmed_live_evidence"
@@ -6719,10 +6719,6 @@ class SEOMigrationService:
         expected_publish_url_source: str,
         expected_publish_url_source_detail: str | None,
     ) -> tuple[str | None, str, str | None]:
-        explicit_live_url = _normalize_url_candidate(getattr(deploy_result, "live_url", None))
-        if explicit_live_url:
-            return explicit_live_url, _MIGRATION_URL_SOURCE_DEPLOY_RESULT, "deploy_result:live_url"
-
         workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "workflow_output", {}))
         if not workflow_output_payload:
             workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "workflow_outputs", {}))
@@ -6737,6 +6733,10 @@ class SEOMigrationService:
             if detail.startswith("deploy_input:"):
                 detail = detail.replace("deploy_input:", "workflow_output:", 1)
             return metadata_live_url, _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT, detail
+
+        explicit_live_url = _normalize_url_candidate(getattr(deploy_result, "live_url", None))
+        if explicit_live_url:
+            return explicit_live_url, _MIGRATION_URL_SOURCE_DEPLOY_RESULT, "deploy_result:live_url"
 
         if expected_publish_url:
             return expected_publish_url, expected_publish_url_source, expected_publish_url_source_detail

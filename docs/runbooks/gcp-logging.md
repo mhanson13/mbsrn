@@ -319,7 +319,13 @@ Deploy evidence contract interpretation:
 - `workflow_run_failed_without_explicit_evidence` means run failed before explicit evidence capture.
 - `evidence_pending` means dispatch/run evidence is still pending.
 - `evidence_not_attempted` means dispatch was blocked/not attempted.
-- `expected_workflow_outputs` lists currently supported explicit workflow output keys (`live_url`, `resolved_live_url`, `deployed_url`).
+- `expected_workflow_outputs` lists currently supported explicit workflow output keys (`resolved_live_url`, `live_url`, `deployed_url`).
+- URL evidence precedence is deterministic:
+  1. `resolved_live_url`
+  2. `live_url`
+  3. `deployed_url`
+  4. `deploy_result.live_url` fallback
+- Site-specific and fallback workflows are expected to emit the same explicit Pages evidence keys.
 
 Dispatch-stage interpretation note:
 - if target-readiness preflight already logged `repo_exists=true`, `ref_exists=true`, `workflow_exists=true`, and a later `workflow_dispatch` call fails, prefer workflow dispatchability troubleshooting before assuming branch/ref drift.
@@ -404,6 +410,14 @@ Use the latest `deploy_trace_id` from the workspace traceability grid and evalua
      - `deploy_evidence_contract_status` and `workflow_contract_advisory` explain whether run success still lacks required explicit evidence.
      - compare workflow output payload keys against `expected_workflow_outputs`.
    - Confirmed live URL appears only when explicit evidence sets `resolved_live_url` with `url_source=workflow_output` or `url_source=deploy_result`.
+
+Explicit evidence troubleshooting quick guide:
+- Explicit evidence found:
+  - `resolved_live_url` present and `url_source=workflow_output` (or `deploy_result`) means confirmed live deployment evidence.
+- Workflow succeeded but evidence absent:
+  - `post_dispatch_state=workflow_run_succeeded_without_live_url` with `resolved_live_url` absent means run success did not emit required evidence keys.
+- Fallback workflow handling:
+  - if fallback workflow is selected, evidence handling is identical; `resolved_live_url` is still confirmed only from explicit evidence keys.
 
 5. **Dispatch succeeds but deployment still does not reach GKE**
    - Signals:

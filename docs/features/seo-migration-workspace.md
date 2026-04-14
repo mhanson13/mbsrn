@@ -833,10 +833,18 @@ MBSRN now distinguishes control-plane success from target-repo deploy confirmati
 
 Required explicit evidence paths for confirmed live deployment:
 - `workflow_output` evidence that includes a live URL key from:
-  - `live_url`
   - `resolved_live_url`
+  - `live_url`
   - `deployed_url`
 - `deploy_result` evidence that explicitly includes `live_url`
+
+Workflow-output key precedence is deterministic:
+1. `resolved_live_url`
+2. `live_url`
+3. `deployed_url`
+4. `deploy_result.live_url` fallback (when workflow-output URL keys are absent)
+
+Both site-specific and fallback target-repo workflows are expected to emit the same GitHub Pages evidence contract keys.
 
 Advisory-only contract fields surfaced in deploy readiness/history/diagnostics:
 - `expected_workflow_outputs`
