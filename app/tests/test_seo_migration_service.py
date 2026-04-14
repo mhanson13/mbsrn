@@ -1610,6 +1610,101 @@ def test_generate_artifacts_rejects_when_no_valid_files_remain(db_session) -> No
         )
 
 
+def test_generate_artifacts_normalizes_absolute_and_root_paths(db_session) -> None:
+    output = SEOMigrationArtifactGenerationOutput(
+        strategy_summary="Draft strategy",
+        page_map=[{"path": "/", "title": "Home"}],
+        homepage_structure=[],
+        service_page_suggestions=[],
+        cta_contact_structure={},
+        seo_meta_suggestions={},
+        redirect_suggestions=[],
+        analytics_placeholders=[],
+        generated_files=[
+            SEOMigrationGeneratedFileOutput(
+                path="https://tnmfire.example/index.html",
+                media_type="text/html",
+                content="<html><head></head><body><h1>Draft Home Content Block</h1></body></html>",
+            ),
+            SEOMigrationGeneratedFileOutput(
+                path="/assets/site.css",
+                media_type="text/css",
+                content="body { color: #111; max-width: 72rem; margin: 0 auto; }",
+            ),
+        ],
+        provider_name="mock",
+        model_name="mock-seo-migration-v1",
+        prompt_version="seo-migration-v1",
+    )
+    service = _build_service(db_session, _StaticMigrationProvider(output))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    assert artifact.status in {"completed", "partial"}
+    files = artifact.generated_files_json or []
+    assert any(item.get("path") == "index.html" for item in files if isinstance(item, dict))
+    assert any(item.get("path") == "assets/site.css" for item in files if isinstance(item, dict))
+
+
+def test_generate_artifacts_rejection_emits_contract_diagnostics(db_session, caplog) -> None:
+    output = SEOMigrationArtifactGenerationOutput(
+        strategy_summary="Draft strategy",
+        page_map=[],
+        homepage_structure=[],
+        service_page_suggestions=[],
+        cta_contact_structure={},
+        seo_meta_suggestions={},
+        redirect_suggestions=[],
+        analytics_placeholders=[],
+        generated_files=[
+            SEOMigrationGeneratedFileOutput(path="https://tnmfire.example", media_type="text/html", content=" "),
+            SEOMigrationGeneratedFileOutput(path="app/main.py", media_type="text/plain", content="forbidden"),
+        ],
+        provider_name="mock",
+        model_name="mock-seo-migration-v1",
+        prompt_version="seo-migration-v1",
+    )
+    service = _build_service(db_session, _StaticMigrationProvider(output))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    error = exc_info.value
+    assert error.failure_category == "artifact_invalid"
+    assert error.failure_reason == "validation_failed"
+    assert error.retryable is False
+
+    payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_draft_contract_evaluation"
+    ]
+    assert payloads
+    latest = payloads[-1]
+    assert latest.get("evaluation_status") == "rejected"
+    assert latest.get("candidate_item_count") == 2
+    assert latest.get("normalized_item_count") == 0
+    assert latest.get("dropped_item_count") == 2
+    assert latest.get("missing_required_artifact_files") == ["index.html"]
+    assert latest.get("artifact_primary_file_detected") is False
+    assert latest.get("retry_likelihood") == "unlikely_without_contract_fix"
+    parser_rejections = latest.get("parser_rejection_reason_counts") or {}
+    assert isinstance(parser_rejections, dict)
+    assert parser_rejections.get("invalid_path", 0) >= 1
+
+
 def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_session) -> None:
     provider_error = SEOMigrationArtifactProviderError(
         code="timeout",

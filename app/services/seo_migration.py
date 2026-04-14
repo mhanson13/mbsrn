@@ -3907,7 +3907,9 @@ class SEOMigrationService:
                 timeout_source=draft_timeout_source,
             ) from exc
 
-        normalized_files, file_warnings = self._validate_and_normalize_files(provider_output.generated_files)
+        normalized_files, file_warnings, file_validation_diagnostics = self._validate_and_normalize_files(
+            provider_output.generated_files
+        )
         parse_warnings.extend(file_warnings)
         draft_contract_evaluation = evaluate_migration_artifact_response(
             strategy_summary=provider_output.strategy_summary,
@@ -3923,6 +3925,7 @@ class SEOMigrationService:
             provider_name=str(provider_output.provider_name or self.provider_name),
             model_name=str(provider_output.model_name or self.provider_model_name),
             evaluation=draft_contract_evaluation,
+            file_validation_diagnostics=file_validation_diagnostics,
         )
         parse_warnings.extend(self._draft_contract_warnings(evaluation=draft_contract_evaluation))
         if draft_contract_evaluation.status == "salvaged" and generation_status == "completed":
@@ -3933,6 +3936,10 @@ class SEOMigrationService:
         if draft_contract_evaluation.status == "rejected" or not normalized_files:
             reason_code = (
                 draft_contract_evaluation.reasons[0] if draft_contract_evaluation.reasons else "validation_failed"
+            )
+            draft_contract_diagnostics = self._build_draft_contract_diagnostics(
+                evaluation=draft_contract_evaluation,
+                file_validation_diagnostics=file_validation_diagnostics,
             )
             draft_failure = SEOMigrationDraftFailure(
                 failure_category="artifact_invalid",
@@ -3961,6 +3968,7 @@ class SEOMigrationService:
                 duration_ms=self._duration_ms(started_at),
                 timeout_seconds=draft_timeout_seconds,
                 timeout_source=draft_timeout_source,
+                draft_contract_diagnostics=draft_contract_diagnostics,
             )
             self._log_draft_generation_event(
                 status="failed",
@@ -4353,6 +4361,33 @@ class SEOMigrationService:
                 "last_draft_failure_model_used": draft_diagnostics.get("last_failure_model_used"),
                 "last_draft_failure_timeout_seconds": draft_diagnostics.get("last_failure_timeout_seconds"),
                 "last_draft_failure_timeout_source": draft_diagnostics.get("last_failure_timeout_source"),
+                "last_draft_contract_status": draft_diagnostics.get("last_contract_status"),
+                "last_draft_contract_reason_codes": draft_diagnostics.get("last_contract_reason_codes"),
+                "last_draft_contract_warning_codes": draft_diagnostics.get("last_contract_warning_codes"),
+                "last_draft_contract_retry_likelihood": draft_diagnostics.get("last_contract_retry_likelihood"),
+                "last_draft_contract_candidate_item_count": draft_diagnostics.get("last_contract_candidate_item_count"),
+                "last_draft_contract_normalized_item_count": draft_diagnostics.get(
+                    "last_contract_normalized_item_count"
+                ),
+                "last_draft_contract_dropped_item_count": draft_diagnostics.get("last_contract_dropped_item_count"),
+                "last_draft_contract_required_artifact_files_expected": draft_diagnostics.get(
+                    "last_contract_required_artifact_files_expected"
+                ),
+                "last_draft_contract_required_artifact_files_present": draft_diagnostics.get(
+                    "last_contract_required_artifact_files_present"
+                ),
+                "last_draft_contract_missing_required_artifact_files": draft_diagnostics.get(
+                    "last_contract_missing_required_artifact_files"
+                ),
+                "last_draft_contract_content_density_failures_by_file": draft_diagnostics.get(
+                    "last_contract_content_density_failures_by_file"
+                ),
+                "last_draft_contract_parser_rejection_reason_counts": draft_diagnostics.get(
+                    "last_contract_parser_rejection_reason_counts"
+                ),
+                "last_draft_contract_artifact_primary_file_detected": draft_diagnostics.get(
+                    "last_contract_artifact_primary_file_detected"
+                ),
                 "last_draft_execution_duration_ms": ai_execution_summary.get("duration_ms"),
                 "last_draft_request_contract_status": ai_execution_summary.get("request_contract_status"),
                 "last_draft_provider_execution_status": ai_execution_summary.get("provider_execution_status"),
@@ -4426,11 +4461,27 @@ class SEOMigrationService:
                 "last_failure_model_used": None,
                 "last_failure_timeout_seconds": None,
                 "last_failure_timeout_source": None,
+                "last_contract_status": None,
+                "last_contract_reason_codes": [],
+                "last_contract_warning_codes": [],
+                "last_contract_retry_likelihood": None,
+                "last_contract_candidate_item_count": None,
+                "last_contract_normalized_item_count": None,
+                "last_contract_dropped_item_count": None,
+                "last_contract_required_artifact_files_expected": [],
+                "last_contract_required_artifact_files_present": [],
+                "last_contract_missing_required_artifact_files": [],
+                "last_contract_content_density_failures_by_file": [],
+                "last_contract_parser_rejection_reason_counts": {},
+                "last_contract_artifact_primary_file_detected": None,
             }
 
         diagnostics_payload = {}
         if isinstance(artifact.context_json, dict):
             diagnostics_payload = _normalize_json_dict(artifact.context_json.get("draft_generation_failure"))
+        contract_payload = {}
+        if isinstance(artifact.context_json, dict):
+            contract_payload = _normalize_json_dict(artifact.context_json.get("draft_contract_evaluation"))
         status_value = _normalize_string(artifact.status, max_length=40)
         failure_category = _normalize_string(diagnostics_payload.get("failure_category"), max_length=40)
         if failure_category not in _MIGRATION_FAILURE_CATEGORY_VALUES:
@@ -4461,6 +4512,62 @@ class SEOMigrationService:
         timeout_source = _normalize_string(diagnostics_payload.get("timeout_source"), max_length=20)
         if timeout_source not in {"admin", "default"}:
             timeout_source = None
+        contract_status = _normalize_string(contract_payload.get("evaluation_status"), max_length=40)
+        contract_reason_codes = _normalize_string_list(
+            contract_payload.get("reason_codes"), max_items=12, max_item_length=80
+        )
+        contract_warning_codes = _normalize_string_list(
+            contract_payload.get("warning_codes"), max_items=12, max_item_length=80
+        )
+        contract_retry_likelihood = _normalize_string(
+            contract_payload.get("retry_likelihood"),
+            max_length=80,
+        )
+        candidate_item_count_raw = contract_payload.get("candidate_item_count")
+        candidate_item_count = (
+            max(0, int(candidate_item_count_raw)) if isinstance(candidate_item_count_raw, int) else None
+        )
+        normalized_item_count_raw = contract_payload.get("normalized_item_count")
+        normalized_item_count = (
+            max(0, int(normalized_item_count_raw)) if isinstance(normalized_item_count_raw, int) else None
+        )
+        dropped_item_count_raw = contract_payload.get("dropped_item_count")
+        dropped_item_count = (
+            max(0, int(dropped_item_count_raw)) if isinstance(dropped_item_count_raw, int) else None
+        )
+        required_files_expected = _normalize_string_list(
+            contract_payload.get("required_artifact_files_expected"),
+            max_items=12,
+            max_item_length=160,
+        )
+        required_files_present = _normalize_string_list(
+            contract_payload.get("required_artifact_files_present"),
+            max_items=12,
+            max_item_length=160,
+        )
+        missing_required_files = _normalize_string_list(
+            contract_payload.get("missing_required_artifact_files"),
+            max_items=12,
+            max_item_length=160,
+        )
+        content_density_failures_by_file = _normalize_string_list(
+            contract_payload.get("content_density_failures_by_file"),
+            max_items=20,
+            max_item_length=200,
+        )
+        parser_rejection_reason_counts_raw = contract_payload.get("parser_rejection_reason_counts")
+        parser_rejection_reason_counts: dict[str, int] = {}
+        if isinstance(parser_rejection_reason_counts_raw, dict):
+            for raw_key, raw_value in parser_rejection_reason_counts_raw.items():
+                key = _normalize_string(raw_key, max_length=80)
+                if key is None or not isinstance(raw_value, int):
+                    continue
+                parser_rejection_reason_counts[key] = max(0, int(raw_value))
+        artifact_primary_file_detected = (
+            bool(contract_payload.get("artifact_primary_file_detected"))
+            if isinstance(contract_payload.get("artifact_primary_file_detected"), bool)
+            else None
+        )
         return {
             "last_status": status_value,
             "last_failure_category": failure_category,
@@ -4480,6 +4587,19 @@ class SEOMigrationService:
             "last_failure_model_used": model_used,
             "last_failure_timeout_seconds": timeout_seconds,
             "last_failure_timeout_source": timeout_source,
+            "last_contract_status": contract_status,
+            "last_contract_reason_codes": contract_reason_codes,
+            "last_contract_warning_codes": contract_warning_codes,
+            "last_contract_retry_likelihood": contract_retry_likelihood,
+            "last_contract_candidate_item_count": candidate_item_count,
+            "last_contract_normalized_item_count": normalized_item_count,
+            "last_contract_dropped_item_count": dropped_item_count,
+            "last_contract_required_artifact_files_expected": required_files_expected,
+            "last_contract_required_artifact_files_present": required_files_present,
+            "last_contract_missing_required_artifact_files": missing_required_files,
+            "last_contract_content_density_failures_by_file": content_density_failures_by_file,
+            "last_contract_parser_rejection_reason_counts": parser_rejection_reason_counts,
+            "last_contract_artifact_primary_file_detected": artifact_primary_file_detected,
         }
 
     def _build_draft_generation_state(
@@ -5093,6 +5213,7 @@ class SEOMigrationService:
         duration_ms: int | None = None,
         timeout_seconds: int | None = None,
         timeout_source: str | None = None,
+        draft_contract_diagnostics: dict[str, object] | None = None,
     ) -> SEOMigrationArtifactVersion:
         artifact_version_number = self.seo_migration_repository.next_artifact_version_number(workspace.id)
         failure_context = self._build_draft_failure_context(
@@ -5106,6 +5227,7 @@ class SEOMigrationService:
             duration_ms=duration_ms,
             timeout_seconds=timeout_seconds,
             timeout_source=timeout_source,
+            draft_contract_diagnostics=draft_contract_diagnostics,
         )
         artifact = SEOMigrationArtifactVersion(
             id=str(uuid4()),
@@ -5165,6 +5287,7 @@ class SEOMigrationService:
         duration_ms: int | None = None,
         timeout_seconds: int | None = None,
         timeout_source: str | None = None,
+        draft_contract_diagnostics: dict[str, object] | None = None,
     ) -> dict[str, object]:
         normalized_failure_source = _normalize_string(failure_source, max_length=40)
         if normalized_failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
@@ -5221,6 +5344,9 @@ class SEOMigrationService:
             "timeout_source": normalized_timeout_source,
             "recorded_at": utc_now().isoformat(),
         }
+        normalized_contract_diagnostics = _normalize_json_dict(draft_contract_diagnostics)
+        if normalized_contract_diagnostics:
+            payload["draft_contract_evaluation"] = normalized_contract_diagnostics
         return payload
 
     @staticmethod
@@ -5810,7 +5936,12 @@ class SEOMigrationService:
         provider_name: str,
         model_name: str,
         evaluation: AIResponseContractEvaluation,
+        file_validation_diagnostics: dict[str, object] | None = None,
     ) -> None:
+        merged_diagnostics = self._build_draft_contract_diagnostics(
+            evaluation=evaluation,
+            file_validation_diagnostics=file_validation_diagnostics,
+        )
         payload: dict[str, object] = {
             "event": _DRAFT_CONTRACT_EVALUATION_LOG_EVENT,
             "timestamp": utc_now().isoformat(),
@@ -5828,6 +5959,17 @@ class SEOMigrationService:
             "dropped_item_count": max(0, int(evaluation.dropped_item_count)),
             "required_fields_present": bool(evaluation.required_fields_present),
             "retryable": evaluation.retryable if isinstance(evaluation.retryable, bool) else None,
+            "retry_likelihood": _normalize_string(evaluation.retry_likelihood, max_length=80),
+            "candidate_item_count": max(0, int(evaluation.candidate_item_count)),
+            "normalized_item_count": max(0, int(evaluation.normalized_item_count)),
+            "required_artifact_files_expected": list(evaluation.required_artifact_files_expected),
+            "required_artifact_files_present": list(evaluation.required_artifact_files_present),
+            "missing_required_artifact_files": list(evaluation.missing_required_artifact_files),
+            "content_density_failures_by_file": list(evaluation.content_density_failures_by_file),
+            "artifact_primary_file_detected": bool(evaluation.artifact_primary_file_detected),
+            "parser_rejection_reason_counts": _normalize_json_dict(
+                merged_diagnostics.get("parser_rejection_reason_counts")
+            ),
         }
         level = logging.INFO if evaluation.status != "rejected" else logging.WARNING
         self._emit_structured_service_log(
@@ -5835,6 +5977,42 @@ class SEOMigrationService:
             fallback_message=_DRAFT_CONTRACT_EVALUATION_LOG_EVENT,
             level=level,
         )
+
+    @staticmethod
+    def _build_draft_contract_diagnostics(
+        *,
+        evaluation: AIResponseContractEvaluation,
+        file_validation_diagnostics: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        parser_rejection_reason_counts_raw: object = (
+            _normalize_json_dict(file_validation_diagnostics).get("parser_rejection_reason_counts")
+            if isinstance(file_validation_diagnostics, dict)
+            else {}
+        )
+        parser_rejection_reason_counts: dict[str, int] = {}
+        if isinstance(parser_rejection_reason_counts_raw, dict):
+            for raw_key, raw_value in parser_rejection_reason_counts_raw.items():
+                key = _normalize_string(raw_key, max_length=80)
+                if key is None or not isinstance(raw_value, int):
+                    continue
+                parser_rejection_reason_counts[key] = max(0, int(raw_value))
+        return {
+            "evaluation_status": _normalize_string(evaluation.status, max_length=40),
+            "evaluation_score": max(0, int(evaluation.score)),
+            "reason_codes": list(evaluation.reasons),
+            "warning_codes": list(evaluation.warnings),
+            "retryable": evaluation.retryable if isinstance(evaluation.retryable, bool) else None,
+            "retry_likelihood": _normalize_string(evaluation.retry_likelihood, max_length=80),
+            "candidate_item_count": max(0, int(evaluation.candidate_item_count)),
+            "normalized_item_count": max(0, int(evaluation.normalized_item_count)),
+            "dropped_item_count": max(0, int(evaluation.dropped_item_count)),
+            "required_artifact_files_expected": list(evaluation.required_artifact_files_expected),
+            "required_artifact_files_present": list(evaluation.required_artifact_files_present),
+            "missing_required_artifact_files": list(evaluation.missing_required_artifact_files),
+            "content_density_failures_by_file": list(evaluation.content_density_failures_by_file),
+            "artifact_primary_file_detected": bool(evaluation.artifact_primary_file_detected),
+            "parser_rejection_reason_counts": parser_rejection_reason_counts,
+        }
 
     @staticmethod
     def _draft_contract_warnings(*, evaluation: AIResponseContractEvaluation) -> list[str]:
@@ -7768,39 +7946,53 @@ class SEOMigrationService:
     def _validate_and_normalize_files(
         self,
         files: list,
-    ) -> tuple[list[dict[str, object]], list[str]]:
+    ) -> tuple[list[dict[str, object]], list[str], dict[str, object]]:
         warnings: list[str] = []
+        parser_rejection_reason_counts: dict[str, int] = {}
+
+        def _increment_reason(reason_code: str) -> None:
+            parser_rejection_reason_counts[reason_code] = parser_rejection_reason_counts.get(reason_code, 0) + 1
+
         if len(files) > _MAX_GENERATED_FILES:
             warnings.append("Generated file list exceeded max count and was truncated.")
+            _increment_reason("max_file_count_truncated")
         normalized: list[dict[str, object]] = []
         seen_paths: set[str] = set()
         total_bytes = 0
+        candidate_item_count = max(0, int(len(files)))
         for raw_file in files[:_MAX_GENERATED_FILES]:
             path = _normalize_generated_path(getattr(raw_file, "path", None))
             if path is None:
                 warnings.append("Dropped generated file with invalid path.")
+                _increment_reason("invalid_path")
                 continue
             if path in seen_paths:
                 warnings.append(f"Dropped duplicate generated path '{path}'.")
+                _increment_reason("duplicate_path")
                 continue
             if _is_forbidden_path(path):
                 warnings.append(f"Dropped forbidden generated path '{path}'.")
+                _increment_reason("forbidden_path")
                 continue
             if not path.endswith(_ALLOWED_FILE_EXTENSIONS):
                 warnings.append(f"Dropped generated path outside static package boundary '{path}'.")
+                _increment_reason("disallowed_extension")
                 continue
             content = _normalize_generated_content(getattr(raw_file, "content", None))
             if content is None:
                 warnings.append(f"Dropped generated path '{path}' due to empty content.")
+                _increment_reason("empty_content")
                 continue
             if len(content.encode("utf-8")) > _MAX_FILE_BYTES:
                 warnings.append(f"Dropped generated path '{path}' due to file size limit.")
+                _increment_reason("file_too_large")
                 continue
             media_type = _normalize_media_type(path=path, value=getattr(raw_file, "media_type", None))
             normalized_content = _normalize_analytics_placeholders(path=path, content=content)
             content_bytes = len(normalized_content.encode("utf-8"))
             if total_bytes + content_bytes > _MAX_TOTAL_BYTES:
                 warnings.append("Generated file payload exceeded aggregate size limit and was truncated.")
+                _increment_reason("aggregate_size_limit")
                 break
             total_bytes += content_bytes
             seen_paths.add(path)
@@ -7812,7 +8004,24 @@ class SEOMigrationService:
                     "size_bytes": content_bytes,
                 }
             )
-        return normalized, warnings
+        required_files_expected = ["index.html"]
+        required_files_present = (
+            ["index.html"]
+            if any(str(item.get("path") or "").strip().lower() == "index.html" for item in normalized)
+            else []
+        )
+        missing_required_files = [item for item in required_files_expected if item not in required_files_present]
+        diagnostics = {
+            "candidate_item_count": candidate_item_count,
+            "normalized_item_count": max(0, int(len(normalized))),
+            "dropped_item_count": max(0, int(candidate_item_count - len(normalized))),
+            "required_artifact_files_expected": required_files_expected,
+            "required_artifact_files_present": required_files_present,
+            "missing_required_artifact_files": missing_required_files,
+            "artifact_primary_file_detected": bool(required_files_present),
+            "parser_rejection_reason_counts": parser_rejection_reason_counts,
+        }
+        return normalized, warnings, diagnostics
 
     def _salvage_provider_error_output(
         self,
@@ -8841,11 +9050,28 @@ def _prepare_publish_files(
 def _normalize_generated_path(value: object) -> str | None:
     if value is None:
         return None
-    normalized = str(value).strip().replace("\\", "/")
+    raw_value = str(value).strip()
+    if not raw_value:
+        return None
+    normalized = raw_value.replace("\\", "/")
+    parsed_url = urlsplit(normalized)
+    if parsed_url.scheme in {"http", "https"} and parsed_url.netloc:
+        normalized = parsed_url.path.strip()
     if not normalized:
         return None
-    if normalized.startswith("/"):
+    if "?" in normalized:
+        normalized = normalized.split("?", 1)[0]
+    if "#" in normalized:
+        normalized = normalized.split("#", 1)[0]
+    normalized = normalized.replace("\\", "/").strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized = normalized.lstrip("/")
+    if not normalized:
         return None
+    if "//" in normalized:
+        while "//" in normalized:
+            normalized = normalized.replace("//", "/")
     if ".." in normalized:
         return None
     if not _VALID_RELATIVE_PATH_PATTERN.fullmatch(normalized):

@@ -54,7 +54,24 @@ Useful fields:
 - `evaluation_score`
 - `reason_codes`
 - `warning_codes`
+- `candidate_item_count`
+- `normalized_item_count`
+- `dropped_item_count`
+- `required_artifact_files_expected`
+- `required_artifact_files_present`
+- `missing_required_artifact_files`
+- `content_density_failures_by_file`
+- `parser_rejection_reason_counts`
+- `artifact_primary_file_detected`
+- `retry_likelihood`
 - scoped identifiers (`business_id`, `site_id`, run/workspace ids)
+
+Draft contract interpretation:
+- `missing_required_artifact_files` means normalized artifact output did not contain required files (currently `index.html`).
+- `insufficient_content_density` means normalized files were present but failed minimum content density checks.
+- high `dropped_item_count` plus populated `parser_rejection_reason_counts` usually indicates parser/normalizer rejection (path/content/safety rules), not provider transport rejection.
+- `retry_likelihood=unlikely_without_contract_fix` means blind retries are typically low-value until contract/parser alignment is fixed.
+- `retry_likelihood=likely_useful` means retry may recover transient generation gaps.
 
 ## Migration Provider Compatibility Queries
 
@@ -336,28 +353,30 @@ Dispatch-stage interpretation note:
 
 Use this sequence for one bounded production deploy validation:
 
-1. In the migration workspace, choose the latest published artifact for `mhanson13/tnmfire` (`ref=main`).
-2. Submit deploy and capture `Deploy trace ID` from the Deploy Readiness traceability grid.
-3. Query deploy control-plane events using trace id correlation:
+1. Confirm target repository Pages setting is **Source = GitHub Actions** and selected workflow emits explicit output evidence keys (`resolved_live_url`, `live_url`, `deployed_url`) on successful deploy.
+2. In the migration workspace, choose the latest published artifact for `mhanson13/tnmfire` (`ref=main`).
+3. Submit deploy and capture `Deploy trace ID` from the Deploy Readiness traceability grid.
+4. Query deploy control-plane events using trace id correlation:
    - `jsonPayload.event="seo_migration_control_plane_action"`
    - `jsonPayload.action="deploy"`
    - `jsonPayload.target.deploy_trace_id="<trace-id>"`
-4. Confirm staged evidence progression in logs:
+5. Confirm staged evidence progression in logs:
    - readiness/preflight fields (`workflow_identifier`, `workflow_identifier_requested`, `workflow_identifier_used`, `workflow_dispatch_supported`, `dispatch_service_availability`)
    - dispatch attempt fields (`dispatch_attempted=true`, `dispatch_result_stage`)
    - run evidence fields (`workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`) when available
    - identifier-resolution fields (`workflow_dispatch_resolution_source`, `workflow_identifier_type_used`) show selected/provenance workflow identity.
    - outbound dispatch fields (`actual_dispatch_identifier_sent`, `actual_dispatch_identifier_type_sent`) show the exact identifier value/type sent to the GitHub dispatch API.
    - conformance fields (`workflow_conformance_status`, `workflow_conformance_reasons`) indicate whether selected workflow content is deploy-capable for managed migration deploy.
-5. If UI shows `Dispatch was accepted, but no workflow run evidence is available yet`, wait for eventual consistency and run **Refresh deploy status**.
-6. Re-query refresh events by trace id:
+6. If UI shows `Dispatch was accepted, but no workflow run evidence is available yet`, wait for eventual consistency and run **Refresh deploy status**.
+7. Re-query refresh events by trace id:
    - `jsonPayload.event="seo_migration_deploy_status_refresh_requested"`
    - `jsonPayload.event="seo_migration_workflow_run_refresh_result_captured"`
    - `jsonPayload.event="seo_migration_deploy_status_refresh_completed"`
-7. Confirm URL evidence contract:
+8. Confirm URL evidence contract:
    - `expected_publish_url` may be present as guidance
    - `resolved_live_url` is only confirmed when explicit evidence is present with `url_source=workflow_output` or `url_source=deploy_result`
-8. If deploy still fails, route by `failure_stage` + `failure_reason_code` without guessing at hidden causes.
+9. If deploy still fails, route by `failure_stage` + `failure_reason_code` without guessing at hidden causes.
+10. When `resolved_live_url` is present with explicit evidence source, open it and confirm the deployed site loads successfully.
 
 ### TnM Fire Outcome Decision Tree
 

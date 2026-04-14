@@ -19,6 +19,14 @@ class AIResponseContractEvaluation:
     dropped_item_count: int
     required_fields_present: bool
     retryable: bool | None
+    retry_likelihood: str | None = None
+    candidate_item_count: int = 0
+    normalized_item_count: int = 0
+    required_artifact_files_expected: tuple[str, ...] = ()
+    required_artifact_files_present: tuple[str, ...] = ()
+    missing_required_artifact_files: tuple[str, ...] = ()
+    content_density_failures_by_file: tuple[str, ...] = ()
+    artifact_primary_file_detected: bool = False
 
     @property
     def is_accepted(self) -> bool:
@@ -115,8 +123,11 @@ def evaluate_migration_artifact_response(
     raw_generated_file_count: int,
     page_map_count: int,
 ) -> AIResponseContractEvaluation:
+    required_artifact_files_expected = ("index.html",)
     valid_item_count = max(0, int(len(generated_files)))
     dropped_item_count = max(0, int(raw_generated_file_count) - valid_item_count)
+    candidate_item_count = max(0, int(raw_generated_file_count))
+    normalized_item_count = valid_item_count
 
     reasons: list[str] = []
     warnings: list[str] = []
@@ -125,15 +136,27 @@ def evaluate_migration_artifact_response(
     has_summary = summary_text is not None
     has_index_html = any(_normalized_path(item.get("path")) == "index.html" for item in generated_files)
     has_any_html = any(_normalized_path(item.get("path")).endswith(".html") for item in generated_files)
+    required_artifact_files_present = (
+        ("index.html",)
+        if has_index_html
+        else ()
+    )
+    missing_required_artifact_files = tuple(
+        item for item in required_artifact_files_expected if item not in required_artifact_files_present
+    )
 
     non_empty_content_count = 0
     total_content_chars = 0
+    content_density_failures_by_file: list[str] = []
     for item in generated_files:
         content = _clean_optional_text(item.get("content"))
         if content is None:
             continue
         non_empty_content_count += 1
         total_content_chars += len(content)
+        normalized_path = _normalized_path(item.get("path"))
+        if normalized_path and len(content) < _MIGRATION_MIN_AVG_CONTENT_LEN:
+            content_density_failures_by_file.append(normalized_path)
     avg_content_len = int(total_content_chars / non_empty_content_count) if non_empty_content_count > 0 else 0
 
     required_fields_present = bool(has_summary and valid_item_count > 0 and has_any_html)
@@ -177,6 +200,25 @@ def evaluate_migration_artifact_response(
     else:
         status = "accepted"
 
+    retry_likelihood: str | None = None
+    retryable: bool | None = None
+    if status == "rejected":
+        if "empty_artifact_package" in reasons_tuple:
+            retry_likelihood = "likely_useful"
+            retryable = True
+        elif "insufficient_content_density" in reasons_tuple and valid_item_count > 0:
+            retry_likelihood = "conditionally_useful"
+            retryable = True
+        elif (
+            "missing_required_artifact_files" in reasons_tuple
+            or "invalid_artifact_structure" in reasons_tuple
+        ):
+            retry_likelihood = "unlikely_without_contract_fix"
+            retryable = False
+        else:
+            retry_likelihood = "unknown"
+            retryable = False
+
     return AIResponseContractEvaluation(
         status=status,
         score=score,
@@ -185,7 +227,15 @@ def evaluate_migration_artifact_response(
         valid_item_count=valid_item_count,
         dropped_item_count=dropped_item_count,
         required_fields_present=required_fields_present,
-        retryable=(True if status == "rejected" else None),
+        retryable=retryable,
+        retry_likelihood=retry_likelihood,
+        candidate_item_count=candidate_item_count,
+        normalized_item_count=normalized_item_count,
+        required_artifact_files_expected=required_artifact_files_expected,
+        required_artifact_files_present=required_artifact_files_present,
+        missing_required_artifact_files=missing_required_artifact_files,
+        content_density_failures_by_file=_stable_codes(content_density_failures_by_file),
+        artifact_primary_file_detected=has_index_html,
     )
 
 

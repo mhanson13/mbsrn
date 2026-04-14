@@ -21,6 +21,7 @@ from app.integrations.seo_migration_artifact_provider import (
     SEOMigrationArtifactGenerationOutput,
     SEOMigrationArtifactGenerationProvider,
     SEOMigrationArtifactProviderError,
+    SEOMigrationGeneratedFileOutput,
     SEOMigrationProviderCompatibilityResult,
 )
 from app.integrations.seo_migration_github_publisher import (
@@ -242,6 +243,15 @@ class _RaisingMigrationArtifactProvider(SEOMigrationArtifactGenerationProvider):
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         del migration_context
         raise self.error
+
+
+class _StaticMigrationArtifactProvider(SEOMigrationArtifactGenerationProvider):
+    def __init__(self, output: SEOMigrationArtifactGenerationOutput) -> None:
+        self.output = output
+
+    def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
+        del migration_context
+        return self.output
 
 
 class _IncompatibleMigrationArtifactProvider(SEOMigrationArtifactGenerationProvider):
@@ -1616,6 +1626,61 @@ def test_generate_draft_malformed_provider_output_returns_artifact_invalid(db_se
     assert detail.get("failure_category") == "artifact_invalid"
     assert detail.get("failure_reason") == "malformed_response"
     assert detail.get("retryable") is True
+
+
+def test_generate_draft_contract_rejection_exposes_structural_retry_hint(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    output = SEOMigrationArtifactGenerationOutput(
+        strategy_summary="Draft strategy",
+        page_map=[],
+        homepage_structure=[],
+        service_page_suggestions=[],
+        cta_contact_structure={},
+        seo_meta_suggestions={},
+        redirect_suggestions=[],
+        analytics_placeholders=[],
+        generated_files=[
+            SEOMigrationGeneratedFileOutput(
+                path="https://tnmfire.example",
+                media_type="text/html",
+                content="",
+            )
+        ],
+        provider_name="mock",
+        model_name="mock-seo-migration-v1",
+        prompt_version="seo-migration-v1",
+    )
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        artifact_provider=_StaticMigrationArtifactProvider(output),
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 422
+    detail = generate_response.json().get("detail") or {}
+    assert detail.get("failure_category") == "artifact_invalid"
+    assert detail.get("failure_reason") == "validation_failed"
+    assert detail.get("retryable") is False
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    diagnostics = summary_response.json().get("context_summary", {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("last_draft_contract_status") == "rejected"
+    assert diagnostics.get("last_draft_contract_retry_likelihood") == "unlikely_without_contract_fix"
+    assert diagnostics.get("last_draft_contract_missing_required_artifact_files") == ["index.html"]
 
 
 def test_generate_draft_provider_config_failure_returns_config_missing(db_session) -> None:

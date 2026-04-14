@@ -560,12 +560,39 @@ Representative migration reason/warning codes:
 - `insufficient_content_density`
 - `partial_artifact_only`
 
+Required migration artifact file contract (current):
+- `index.html` is required.
+- generated file paths are normalized before validation (including bounded handling for absolute URL paths and leading `/` paths).
+- if normalization drops all candidates or no normalized file resolves to `index.html`, the evaluator rejects with `missing_required_artifact_files`.
+
+`insufficient_content_density` meaning:
+- evaluator computes per-file content length on normalized artifact files.
+- low-content HTML/content files can trigger `insufficient_content_density` even when structural files are present.
+- this is a deterministic contract check, not a provider transport error.
+
+Draft rejection diagnostics now include bounded counts and file-level clues:
+- `candidate_item_count`
+- `normalized_item_count`
+- `dropped_item_count`
+- `required_artifact_files_expected`
+- `required_artifact_files_present`
+- `missing_required_artifact_files`
+- `content_density_failures_by_file`
+- `parser_rejection_reason_counts`
+- `artifact_primary_file_detected`
+- `retry_likelihood`
+
 Operator/API behavior:
 - only `accepted`, `accepted_with_warnings`, and `salvaged` draft outputs are persisted as successful draft versions
 - `rejected` outputs persist as failed draft generations with normalized failure fields
 - operator-visible errors stay sanitized; raw provider payloads and prompts remain hidden
 - operator UI surfaces a compact quality indicator for partial/salvaged output (`Partial draft generated.`)
 - internal reason/warning code arrays stay in logs/diagnostics, not operator-facing debug dumps
+
+Retry guidance:
+- `retry_likelihood=likely_useful` (for example `empty_artifact_package`) means a retry may recover transient generation gaps.
+- `retry_likelihood=conditionally_useful` means retry may help, but content quality/shape should be reviewed.
+- `retry_likelihood=unlikely_without_contract_fix` (for example structural missing required files) means retries alone are unlikely to succeed without prompt/contract/parser alignment.
 
 ## Publish Workflow (GitHub)
 GitHub publish target configuration is split across Admin + workspace ownership:
@@ -992,18 +1019,21 @@ If dispatch was accepted but run evidence is not yet present, the workspace show
 ## Controlled Production Exercise Checklist
 Use this checklist for a bounded real-world migration exercise:
 1. Confirm migration runtime config is present (`MIGRATION_GITHUB_TOKEN` and related `MIGRATION_*` values).
-2. Confirm publish target repo/branch/artifact-root is intentional for this site workspace.
-3. Confirm preflight readiness is `ready` or `ready_with_warnings` and `hard_blocked=false`.
-4. If warnings exist, confirm operator accepts quality tradeoff before generation.
-5. Confirm the selected artifact version is explicitly approved.
-6. Confirm analytics insertion mode (`publish_only` vs `publish_and_deploy`) and measurement id are intentional.
-7. Run publish, then verify summary/readiness state and latest publish history entry (`status`, target, commit identifiers).
-8. Run deploy, then verify summary/readiness state and latest deploy history entry (`status`, workflow/ref, dispatch timestamp).
-9. Confirm diagnostics fields report expected values after each action (`last_publish_status`, `last_publish_failure_category/message`, `last_deploy_status`, `last_deploy_failure_category/message`).
-10. For migration draft generation, confirm `context_summary.ai_execution.request_contract_status`, `provider_execution_status`, `artifact_result`, and `duration_ms` align with the expected run outcome.
-11. Confirm traceability fields are present across logs/history (`business_id`, `site_id`, `workspace_id`, `artifact_version_id`, action/status, target summary, failure category, timestamp).
-12. Confirm DNS/A-record cutover remains manual and outside the app.
-13. Confirm rollback path: select prior stable artifact, re-approve, then explicitly re-publish and re-deploy.
+2. Confirm the target site repository uses GitHub Pages with **Source = GitHub Actions** for the selected deploy workflow path.
+3. Confirm selected workflow contract emits explicit deploy evidence keys (`resolved_live_url`, `live_url`, `deployed_url`) on successful deploy.
+4. Confirm publish target repo/branch/artifact-root is intentional for this site workspace.
+5. Confirm preflight readiness is `ready` or `ready_with_warnings` and `hard_blocked=false`.
+6. If warnings exist, confirm operator accepts quality tradeoff before generation.
+7. Confirm the selected artifact version is explicitly approved.
+8. Confirm analytics insertion mode (`publish_only` vs `publish_and_deploy`) and measurement id are intentional.
+9. Run publish, then verify summary/readiness state and latest publish history entry (`status`, target, commit identifiers).
+10. Run deploy, then verify summary/readiness state and latest deploy history entry (`status`, workflow/ref, dispatch timestamp).
+11. Confirm diagnostics fields report expected values after each action (`last_publish_status`, `last_publish_failure_category/message`, `last_deploy_status`, `last_deploy_failure_category/message`).
+12. For migration draft generation, confirm `context_summary.ai_execution.request_contract_status`, `provider_execution_status`, `artifact_result`, and `duration_ms` align with the expected run outcome.
+13. Confirm traceability fields are present across logs/history (`business_id`, `site_id`, `workspace_id`, `artifact_version_id`, action/status, target summary, failure category, timestamp).
+14. Confirm `resolved_live_url` is shown only when explicit deploy evidence exists and that URL loads successfully in-browser.
+15. Confirm DNS/A-record cutover remains manual and outside the app.
+16. Confirm rollback path: select prior stable artifact, re-approve, then explicitly re-publish and re-deploy.
 
 ## Troubleshooting and Rollback
 Publish failures:

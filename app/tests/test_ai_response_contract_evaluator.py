@@ -38,6 +38,12 @@ def test_migration_contract_accepts_complete_package() -> None:
     assert evaluation.status == "accepted"
     assert evaluation.reasons == ()
     assert evaluation.valid_item_count == 2
+    assert evaluation.candidate_item_count == 2
+    assert evaluation.normalized_item_count == 2
+    assert evaluation.required_artifact_files_expected == ("index.html",)
+    assert evaluation.required_artifact_files_present == ("index.html",)
+    assert evaluation.missing_required_artifact_files == ()
+    assert evaluation.artifact_primary_file_detected is True
 
 
 def test_migration_contract_marks_partial_salvage_when_files_dropped() -> None:
@@ -52,6 +58,8 @@ def test_migration_contract_marks_partial_salvage_when_files_dropped() -> None:
     assert evaluation.status == "salvaged"
     assert evaluation.dropped_item_count == 2
     assert "partial_artifact_only" in evaluation.warnings
+    assert evaluation.retryable is None
+    assert evaluation.retry_likelihood is None
 
 
 def test_migration_contract_rejects_empty_package() -> None:
@@ -64,6 +72,26 @@ def test_migration_contract_rejects_empty_package() -> None:
     assert evaluation.status == "rejected"
     assert "empty_artifact_package" in evaluation.reasons
     assert "missing_required_artifact_files" in evaluation.reasons
+    assert evaluation.retryable is True
+    assert evaluation.retry_likelihood == "likely_useful"
+    assert evaluation.required_artifact_files_expected == ("index.html",)
+    assert evaluation.required_artifact_files_present == ()
+    assert evaluation.missing_required_artifact_files == ("index.html",)
+
+
+def test_migration_contract_rejects_structural_missing_files_as_non_retryable() -> None:
+    evaluation = evaluate_migration_artifact_response(
+        strategy_summary="Draft strategy",
+        generated_files=[],
+        raw_generated_file_count=10,
+        page_map_count=0,
+    )
+    assert evaluation.status == "rejected"
+    assert "missing_required_artifact_files" in evaluation.reasons
+    assert evaluation.valid_item_count == 0
+    assert evaluation.dropped_item_count == 10
+    assert evaluation.retryable is False
+    assert evaluation.retry_likelihood == "unlikely_without_contract_fix"
 
 
 def test_competitor_contract_accepts_valid_candidates() -> None:
