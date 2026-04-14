@@ -3584,6 +3584,18 @@ describe("site workspace migration tab", () => {
           workflow_trigger_types: ["workflow_dispatch"],
           dispatch_service_availability: false,
           dispatch_service_reason_code: "runtime_publisher_unavailable",
+          last_dispatch_ref_sent: "main",
+          last_workflow_inputs_configured_keys: ["site_url"],
+          last_workflow_inputs_sent_keys: ["site_url"],
+          last_workflow_run_lookup_attempted: true,
+          last_workflow_run_found: true,
+          last_workflow_job_failure_detected: false,
+          last_post_dispatch_state: "workflow_run_in_progress",
+          expected_workflow_outputs: ["live_url", "resolved_live_url", "deployed_url"],
+          last_deploy_evidence_contract_status: "workflow_contract_incomplete_advisory",
+          last_deploy_evidence_contract_reasons: ["workflow_contract_incomplete"],
+          last_workflow_contract_advisory:
+            "Selected workflow is dispatchable but missing managed deploy contract markers for explicit deploy evidence.",
           workflow_conformance_checked: true,
           workflow_conformance_status: "workflow_contract_incomplete",
           workflow_conformance_reasons: ["managed_deploy_contract_markers_missing"],
@@ -3634,6 +3646,18 @@ describe("site workspace migration tab", () => {
           dispatch_identifier_type: "workflow_id",
           dispatch_attempted: true,
           dispatch_result_stage: "workflow_dispatch",
+          dispatch_ref_sent: "main",
+          workflow_inputs_configured_keys: ["site_url"],
+          workflow_inputs_sent_keys: ["site_url"],
+          workflow_run_lookup_attempted: true,
+          workflow_run_found: true,
+          workflow_job_failure_detected: false,
+          post_dispatch_state: "workflow_run_in_progress",
+          expected_workflow_outputs: ["live_url", "resolved_live_url", "deployed_url"],
+          deploy_evidence_contract_status: "workflow_contract_incomplete_advisory",
+          deploy_evidence_contract_reasons: ["workflow_contract_incomplete"],
+          workflow_contract_advisory:
+            "Selected workflow is dispatchable but missing managed deploy contract markers for explicit deploy evidence.",
           workflow_exists: false,
           failure_reason: "workflow_dispatch_not_supported",
           failure_stage: "workflow_lookup",
@@ -3667,6 +3691,17 @@ describe("site workspace migration tab", () => {
     expect(traceabilityPanel).toHaveTextContent("managed_deploy_contract_markers_missing");
     expect(traceabilityPanel).toHaveTextContent("workflow dispatch");
     expect(traceabilityPanel).toHaveTextContent("workflow dispatch not supported");
+    expect(traceabilityPanel).toHaveTextContent("site_url");
+    expect(traceabilityPanel).toHaveTextContent("Workflow run lookup attempted");
+    expect(traceabilityPanel).toHaveTextContent("Workflow run found");
+    expect(traceabilityPanel).toHaveTextContent("Post-dispatch state");
+    expect(traceabilityPanel).toHaveTextContent("workflow_run_in_progress");
+    expect(traceabilityPanel).toHaveTextContent("Deploy evidence contract status");
+    expect(traceabilityPanel).toHaveTextContent("workflow_contract_incomplete_advisory");
+    expect(traceabilityPanel).toHaveTextContent("Deploy evidence contract reasons");
+    expect(traceabilityPanel).toHaveTextContent("workflow_contract_incomplete");
+    expect(traceabilityPanel).toHaveTextContent("Expected workflow outputs");
+    expect(traceabilityPanel).toHaveTextContent("live_url");
     expect(traceabilityPanel).toHaveTextContent("987654");
     expect(traceabilityPanel).toHaveTextContent("in_progress");
     expect(traceabilityPanel).toHaveTextContent("Not yet confirmed");
@@ -3680,6 +3715,25 @@ describe("site workspace migration tab", () => {
     expect(deployDiagnosticsPanel).toHaveTextContent("Workflow exists: No");
     expect(deployDiagnosticsPanel).toHaveTextContent("Workflow resolution source: workflow_file_path");
     expect(deployDiagnosticsPanel).toHaveTextContent("Dispatch service reason: runtime publisher unavailable");
+    expect(deployDiagnosticsPanel).toHaveTextContent("Dispatch ref sent: main");
+    expect(deployDiagnosticsPanel).toHaveTextContent("Workflow input keys (configured): site_url");
+    expect(deployDiagnosticsPanel).toHaveTextContent("Workflow input keys (sent): site_url");
+    expect(deployDiagnosticsPanel).toHaveTextContent("Workflow run lookup attempted: Yes");
+    expect(deployDiagnosticsPanel).toHaveTextContent("Workflow run found: Yes");
+    expect(deployDiagnosticsPanel).toHaveTextContent("Workflow job failure detected: No");
+    expect(deployDiagnosticsPanel).toHaveTextContent("Post-dispatch state: workflow_run_in_progress");
+    expect(deployDiagnosticsPanel).toHaveTextContent(
+      "Deploy evidence contract status: workflow_contract_incomplete_advisory",
+    );
+    expect(deployDiagnosticsPanel).toHaveTextContent(
+      "Deploy evidence contract reasons: workflow_contract_incomplete",
+    );
+    expect(deployDiagnosticsPanel).toHaveTextContent(
+      "Expected workflow outputs: live_url, resolved_live_url, deployed_url",
+    );
+    expect(deployDiagnosticsPanel).toHaveTextContent(
+      "Workflow contract advisory: Selected workflow is dispatchable but missing managed deploy contract markers for explicit deploy evidence.",
+    );
     expect(deployDiagnosticsPanel).toHaveTextContent(
       "Remediation hint: Selected workflow exists but is not dispatchable for this deploy target.",
     );
@@ -3711,6 +3765,9 @@ describe("site workspace migration tab", () => {
           last_deploy_trace_id: "deploy-trace-no-run",
           last_dispatch_attempted: true,
           last_dispatch_result_stage: "workflow_dispatch",
+          last_workflow_run_lookup_attempted: true,
+          last_workflow_run_found: false,
+          last_post_dispatch_state: "dispatch_accepted_no_run",
           last_workflow_run_id: null,
           last_workflow_run_status: null,
           last_workflow_run_conclusion: null,
@@ -3732,6 +3789,9 @@ describe("site workspace migration tab", () => {
           deploy_trace_id: "deploy-trace-no-run",
           dispatch_attempted: true,
           dispatch_result_stage: "workflow_dispatch",
+          workflow_run_lookup_attempted: true,
+          workflow_run_found: false,
+          post_dispatch_state: "dispatch_accepted_no_run",
         },
       ],
       total: 1,
@@ -3743,6 +3803,89 @@ describe("site workspace migration tab", () => {
     expect(await screen.findByTestId("migration-dispatch-state-hint")).toHaveTextContent(
       'Dispatch was accepted, but no workflow run evidence is available yet. Use "Refresh deploy status" after eventual consistency delay.',
     );
+  });
+
+  it("shows contract advisory hint when workflow run succeeds without explicit live URL evidence", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        deploy_readiness: {
+          ready: true,
+          reasons: [],
+          blocker_codes: [],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            workflow_id: "deploy-tnmfire-www-prod.yml",
+            ref: "main",
+          },
+          workflow_identifier: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          workflow_dispatch_supported: true,
+          workflow_trigger_types: ["workflow_dispatch"],
+          dispatch_service_availability: true,
+          last_deploy_trace_id: "deploy-trace-live-evidence",
+          last_dispatch_attempted: true,
+          last_dispatch_result_stage: "workflow_dispatch",
+          last_workflow_run_lookup_attempted: true,
+          last_workflow_run_found: true,
+          last_workflow_job_failure_detected: false,
+          last_post_dispatch_state: "workflow_run_succeeded_without_live_url",
+          expected_workflow_outputs: ["live_url", "resolved_live_url", "deployed_url"],
+          last_deploy_evidence_contract_status: "workflow_succeeded_without_explicit_evidence",
+          last_deploy_evidence_contract_reasons: ["workflow_run_succeeded_without_live_url"],
+          last_workflow_contract_advisory:
+            "Workflow run completed but did not emit explicit live URL evidence.",
+          last_workflow_run_id: 123456,
+          last_workflow_run_status: "completed",
+          last_workflow_run_conclusion: "success",
+        },
+      }),
+    );
+    mockFetchMigrationDeployHistory.mockResolvedValue({
+      items: [
+        {
+          timestamp: "2026-03-21T00:14:00Z",
+          action: "deploy",
+          status: "deploy_requested",
+          artifact_version: "1",
+          repo_owner: "mhanson13",
+          repo_name: "tnmfire",
+          ref: "main",
+          workflow_id: "deploy-tnmfire-www-prod.yml",
+          workflow_identifier: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          deploy_trace_id: "deploy-trace-live-evidence",
+          dispatch_attempted: true,
+          dispatch_result_stage: "workflow_dispatch",
+          workflow_run_lookup_attempted: true,
+          workflow_run_found: true,
+          workflow_job_failure_detected: false,
+          post_dispatch_state: "workflow_run_succeeded_without_live_url",
+          workflow_run_id: 123456,
+          workflow_run_status: "completed",
+          workflow_run_conclusion: "success",
+          expected_workflow_outputs: ["live_url", "resolved_live_url", "deployed_url"],
+          deploy_evidence_contract_status: "workflow_succeeded_without_explicit_evidence",
+          deploy_evidence_contract_reasons: ["workflow_run_succeeded_without_live_url"],
+          workflow_contract_advisory:
+            "Workflow run completed but did not emit explicit live URL evidence.",
+        },
+      ],
+      total: 1,
+    });
+
+    render(<SiteWorkspacePage />);
+    await switchToMigrationTab(user);
+
+    expect(await screen.findByTestId("migration-dispatch-live-evidence-hint")).toHaveTextContent(
+      "Workflow run completed, but live deployment is not confirmed.",
+    );
+    expect(screen.getByTestId("migration-dispatch-live-evidence-hint")).toHaveTextContent(
+      "Target repo workflow may be placeholder or missing explicit live URL outputs.",
+    );
+    const traceabilityPanel = screen.getByTestId("migration-deploy-traceability");
+    expect(traceabilityPanel).toHaveTextContent("workflow_succeeded_without_explicit_evidence");
+    expect(traceabilityPanel).toHaveTextContent("Workflow run completed but did not emit explicit live URL evidence.");
   });
 
   it("renders structured draft generation failure details with retry hint", async () => {

@@ -575,6 +575,17 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert "workflow_dispatch_resolution_source" in deploy_result
     assert "actual_dispatch_identifier_sent" in deploy_result
     assert "actual_dispatch_identifier_type_sent" in deploy_result
+    assert "dispatch_ref_sent" in deploy_result
+    assert "workflow_inputs_configured_keys" in deploy_result
+    assert "workflow_inputs_sent_keys" in deploy_result
+    assert "workflow_run_lookup_attempted" in deploy_result
+    assert "workflow_run_found" in deploy_result
+    assert "workflow_job_failure_detected" in deploy_result
+    assert "post_dispatch_state" in deploy_result
+    assert "expected_workflow_outputs" in deploy_result
+    assert "deploy_evidence_contract_status" in deploy_result
+    assert "deploy_evidence_contract_reasons" in deploy_result
+    assert "workflow_contract_advisory" in deploy_result
     assert isinstance(deploy_result.get("workflow_trigger_types"), list)
     assert "dispatch_service_availability" in deploy_result
     assert "dispatch_service_reason_code" in deploy_result
@@ -1150,6 +1161,17 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "workflow_identifier_used" in payload["deploy_readiness"]
     assert "workflow_dispatch_resolution_source" in payload["deploy_readiness"]
     assert "dispatch_service_reason_code" in payload["deploy_readiness"]
+    assert "last_dispatch_ref_sent" in payload["deploy_readiness"]
+    assert "last_workflow_inputs_configured_keys" in payload["deploy_readiness"]
+    assert "last_workflow_inputs_sent_keys" in payload["deploy_readiness"]
+    assert "last_workflow_run_lookup_attempted" in payload["deploy_readiness"]
+    assert "last_workflow_run_found" in payload["deploy_readiness"]
+    assert "last_workflow_job_failure_detected" in payload["deploy_readiness"]
+    assert "last_post_dispatch_state" in payload["deploy_readiness"]
+    assert "expected_workflow_outputs" in payload["deploy_readiness"]
+    assert "last_deploy_evidence_contract_status" in payload["deploy_readiness"]
+    assert "last_deploy_evidence_contract_reasons" in payload["deploy_readiness"]
+    assert "last_workflow_contract_advisory" in payload["deploy_readiness"]
     assert "last_workflow_exists" in payload["deploy_readiness"]
     migration_diagnostics = payload.get("context_summary", {}).get("migration_diagnostics")
     assert isinstance(migration_diagnostics, dict)

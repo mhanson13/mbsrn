@@ -1717,6 +1717,60 @@ export function MigrationWorkspacePanel({
   const dispatchResultStage =
     asStringOrNull(latestDeployHistoryRecord.dispatch_result_stage) ||
     asStringOrNull(deployReadiness.last_dispatch_result_stage);
+  const dispatchRefSent =
+    asStringOrNull(latestDeployHistoryRecord.dispatch_ref_sent) ||
+    asStringOrNull(deployReadiness.last_dispatch_ref_sent) ||
+    deployTraceRef;
+  const workflowInputsConfiguredKeys = (() => {
+    const historyKeys = asStringList(latestDeployHistoryRecord.workflow_inputs_configured_keys);
+    if (historyKeys.length > 0) {
+      return historyKeys;
+    }
+    return asStringList(deployReadiness.last_workflow_inputs_configured_keys);
+  })();
+  const workflowInputsSentKeys = (() => {
+    const historyKeys = asStringList(latestDeployHistoryRecord.workflow_inputs_sent_keys);
+    if (historyKeys.length > 0) {
+      return historyKeys;
+    }
+    return asStringList(deployReadiness.last_workflow_inputs_sent_keys);
+  })();
+  const workflowRunLookupAttempted =
+    asBooleanOrNull(latestDeployHistoryRecord.workflow_run_lookup_attempted) ??
+    asBooleanOrNull(deployReadiness.last_workflow_run_lookup_attempted);
+  const workflowRunFound =
+    asBooleanOrNull(latestDeployHistoryRecord.workflow_run_found) ??
+    asBooleanOrNull(deployReadiness.last_workflow_run_found);
+  const workflowJobFailureDetected =
+    asBooleanOrNull(latestDeployHistoryRecord.workflow_job_failure_detected) ??
+    asBooleanOrNull(deployReadiness.last_workflow_job_failure_detected);
+  const postDispatchState =
+    asStringOrNull(latestDeployHistoryRecord.post_dispatch_state) ||
+    asStringOrNull(deployReadiness.last_post_dispatch_state);
+  const expectedWorkflowOutputs = (() => {
+    const historyKeys = asStringList(latestDeployHistoryRecord.expected_workflow_outputs);
+    if (historyKeys.length > 0) {
+      return historyKeys;
+    }
+    const readinessKeys = asStringList(deployReadiness.expected_workflow_outputs);
+    if (readinessKeys.length > 0) {
+      return readinessKeys;
+    }
+    return ["live_url", "resolved_live_url", "deployed_url"];
+  })();
+  const deployEvidenceContractStatus =
+    asStringOrNull(latestDeployHistoryRecord.deploy_evidence_contract_status) ||
+    asStringOrNull(deployReadiness.last_deploy_evidence_contract_status);
+  const deployEvidenceContractReasons = (() => {
+    const historyReasons = asStringList(latestDeployHistoryRecord.deploy_evidence_contract_reasons);
+    if (historyReasons.length > 0) {
+      return historyReasons;
+    }
+    return asStringList(deployReadiness.last_deploy_evidence_contract_reasons);
+  })();
+  const workflowContractAdvisory =
+    asStringOrNull(latestDeployHistoryRecord.workflow_contract_advisory) ||
+    asStringOrNull(deployReadiness.last_workflow_contract_advisory);
   const workflowRunId = (() => {
     const fromHistory = latestDeployHistoryRecord.workflow_run_id;
     if (typeof fromHistory === "number" && Number.isFinite(fromHistory)) {
@@ -3218,6 +3272,39 @@ export function MigrationWorkspacePanel({
               <WorkspaceMetadataItem label="Dispatch result reason">
                 {formatReasonCodeLabel(deployFailureReasonCode)}
               </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Dispatch ref sent">
+                {dispatchRefSent || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow input keys (configured)">
+                {workflowInputsConfiguredKeys.length > 0 ? workflowInputsConfiguredKeys.join(", ") : "None"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow input keys (sent)">
+                {workflowInputsSentKeys.length > 0 ? workflowInputsSentKeys.join(", ") : "None"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow run lookup attempted">
+                {formatBooleanStateLabel(workflowRunLookupAttempted)}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow run found">
+                {formatBooleanStateLabel(workflowRunFound)}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow job failure detected">
+                {formatBooleanStateLabel(workflowJobFailureDetected)}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Post-dispatch state">
+                {postDispatchState || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Deploy evidence contract status">
+                {deployEvidenceContractStatus || "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Deploy evidence contract reasons">
+                {deployEvidenceContractReasons.length > 0 ? deployEvidenceContractReasons.join(", ") : "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Expected workflow outputs">
+                {expectedWorkflowOutputs.length > 0 ? expectedWorkflowOutputs.join(", ") : "Not available"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Workflow contract advisory">
+                {workflowContractAdvisory || "Not available"}
+              </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Workflow run ID">
                 {workflowRunId || "Not available"}
               </WorkspaceMetadataItem>
@@ -3242,10 +3329,24 @@ export function MigrationWorkspacePanel({
               <span className="hint warning" data-testid="migration-dispatch-state-hint">
                 Dispatch was not attempted because deploy readiness failed. Resolve blockers and retry deploy.
               </span>
-            ) : dispatchAttempted === true && !workflowRunId ? (
+            ) : (dispatchAttempted === true || workflowRunLookupAttempted === true) &&
+              (workflowRunFound === false || (!workflowRunId && workflowRunFound !== true)) ? (
               <span className="hint warning" data-testid="migration-dispatch-state-hint">
                 Dispatch was accepted, but no workflow run evidence is available yet. Use &quot;Refresh deploy status&quot; after
                 eventual consistency delay.
+              </span>
+            ) : workflowJobFailureDetected === true ? (
+              <span className="hint warning" data-testid="migration-dispatch-job-failure-hint">
+                Workflow run evidence exists and indicates a failed/non-success completion. Review workflow jobs in GitHub Actions.
+              </span>
+            ) : postDispatchState === "workflow_run_succeeded_without_live_url" ? (
+              <span className="hint warning" data-testid="migration-dispatch-live-evidence-hint">
+                Workflow run completed, but live deployment is not confirmed. Target repo workflow may be placeholder or
+                missing explicit live URL outputs.
+              </span>
+            ) : workflowContractAdvisory ? (
+              <span className="hint warning" data-testid="migration-workflow-contract-advisory">
+                {workflowContractAdvisory}
               </span>
             ) : null}
           </div>
@@ -3440,6 +3541,35 @@ export function MigrationWorkspacePanel({
                 <span className="hint">
                   Dispatch service reason: {formatReasonCodeLabel(dispatchServiceReasonCode)}
                 </span>
+                <span className="hint">Dispatch ref sent: {dispatchRefSent || "Not available"}</span>
+                <span className="hint">
+                  Workflow input keys (configured):{" "}
+                  {workflowInputsConfiguredKeys.length > 0 ? workflowInputsConfiguredKeys.join(", ") : "None"}
+                </span>
+                <span className="hint">
+                  Workflow input keys (sent): {workflowInputsSentKeys.length > 0 ? workflowInputsSentKeys.join(", ") : "None"}
+                </span>
+                <span className="hint">
+                  Workflow run lookup attempted: {formatBooleanStateLabel(workflowRunLookupAttempted)}
+                </span>
+                <span className="hint">Workflow run found: {formatBooleanStateLabel(workflowRunFound)}</span>
+                <span className="hint">
+                  Workflow job failure detected: {formatBooleanStateLabel(workflowJobFailureDetected)}
+                </span>
+                <span className="hint">Post-dispatch state: {postDispatchState || "Not available"}</span>
+                <span className="hint">
+                  Deploy evidence contract status: {deployEvidenceContractStatus || "Not available"}
+                </span>
+                <span className="hint">
+                  Deploy evidence contract reasons:{" "}
+                  {deployEvidenceContractReasons.length > 0 ? deployEvidenceContractReasons.join(", ") : "Not available"}
+                </span>
+                <span className="hint">
+                  Expected workflow outputs: {expectedWorkflowOutputs.length > 0 ? expectedWorkflowOutputs.join(", ") : "Not available"}
+                </span>
+                {workflowContractAdvisory ? (
+                  <span className="hint warning">Workflow contract advisory: {workflowContractAdvisory}</span>
+                ) : null}
                 {deployFailureMessage ? <span className="hint warning">{deployFailureMessage}</span> : null}
                 {deployFailureRemediationHint ? (
                   <span className="hint warning">Remediation hint: {deployFailureRemediationHint}</span>

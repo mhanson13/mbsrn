@@ -167,6 +167,19 @@ _MIGRATION_URL_SOURCE_DETERMINISTIC_TARGET_CONFIG = "deterministic_target_config
 _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT = "workflow_output"
 _MIGRATION_URL_SOURCE_DEPLOY_RESULT = "deploy_result"
 _MIGRATION_URL_SOURCE_UNKNOWN = "unknown"
+_DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS: tuple[str, ...] = (
+    "live_url",
+    "resolved_live_url",
+    "deployed_url",
+)
+_DEPLOY_EVIDENCE_CONTRACT_STATUS_CONFIRMED = "confirmed_live_evidence"
+_DEPLOY_EVIDENCE_CONTRACT_STATUS_PLACEHOLDER = "workflow_placeholder_advisory"
+_DEPLOY_EVIDENCE_CONTRACT_STATUS_CONTRACT_INCOMPLETE = "workflow_contract_incomplete_advisory"
+_DEPLOY_EVIDENCE_CONTRACT_STATUS_SUCCEEDED_NO_EVIDENCE = "workflow_succeeded_without_explicit_evidence"
+_DEPLOY_EVIDENCE_CONTRACT_STATUS_RUN_FAILED = "workflow_run_failed_without_explicit_evidence"
+_DEPLOY_EVIDENCE_CONTRACT_STATUS_PENDING = "evidence_pending"
+_DEPLOY_EVIDENCE_CONTRACT_STATUS_NOT_ATTEMPTED = "evidence_not_attempted"
+_DEPLOY_EVIDENCE_CONTRACT_STATUS_UNKNOWN = "unknown"
 _DEPLOY_TARGET_REASON_REPO_NOT_FOUND = "repo_not_found"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND = "workflow_not_found"
 _DEPLOY_TARGET_REASON_REF_INVALID = "branch_not_found_or_ref_invalid"
@@ -1548,12 +1561,24 @@ class SEOMigrationService:
         )
         actual_dispatch_identifier_sent: str | None = None
         actual_dispatch_identifier_type_sent: str | None = None
+        dispatch_ref_sent: str | None = None
+        workflow_inputs_configured_keys = _normalize_dispatch_input_keys(deploy_target.get("inputs"))
+        workflow_inputs_sent_keys: list[str] = []
+        workflow_run_lookup_attempted: bool | None = None
+        workflow_run_found: bool | None = None
+        workflow_job_failure_detected: bool | None = None
+        post_dispatch_state: str | None = None
+        expected_workflow_outputs = list(_DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS)
+        deploy_evidence_contract_status = _DEPLOY_EVIDENCE_CONTRACT_STATUS_UNKNOWN
+        deploy_evidence_contract_reasons: list[str] = []
+        workflow_contract_advisory: str | None = None
         dispatch_attempted = False
         dispatch_result_stage: str | None = None
         # Keep workflow_dispatch payload contract bounded to explicitly configured deploy inputs.
         # Implicit runtime metadata (site_id/artifact_version/ga_measurement_id/etc.) should not
         # be auto-injected because GitHub rejects undeclared workflow_dispatch inputs.
         deploy_inputs = dict(deploy_target["inputs"])
+        workflow_inputs_sent_keys = _normalize_dispatch_input_keys(deploy_inputs)
         analytics_config = _normalize_analytics_config(workspace.analytics_config_json)
         analytics_insertion_mode = str(analytics_config.get("insertion_mode") or "publish_and_deploy")
         effective_ga_measurement_id = _resolve_effective_ga_measurement_id(
@@ -1688,6 +1713,7 @@ class SEOMigrationService:
             actual_dispatch_identifier_type_sent = _infer_dispatch_identifier_type(actual_dispatch_identifier_sent)
             if not actual_dispatch_identifier_type_sent:
                 actual_dispatch_identifier_type_sent = _normalize_string(dispatch_identifier_type, max_length=80)
+            dispatch_ref_sent = _normalize_string(deploy_target_for_dispatch.ref, max_length=120)
             self._emit_structured_service_log(
                 payload={
                     "event": "seo_migration_deploy_dispatch_preflight",
@@ -1714,6 +1740,9 @@ class SEOMigrationService:
                     "dispatch_identifier_type": dispatch_identifier_type,
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
+                    "dispatch_ref_sent": dispatch_ref_sent,
+                    "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                    "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                     "deploy_trace_id": deploy_trace_id,
                 },
                 fallback_message="seo_migration_deploy_dispatch_preflight",
@@ -1725,6 +1754,12 @@ class SEOMigrationService:
             )
             dispatch_attempted = not dry_run
             dispatch_result_stage = "workflow_dispatch" if not dry_run else "dry_run"
+            workflow_run_lookup_attempted = not dry_run
+            workflow_run_found = _coerce_int(getattr(deploy_result, "workflow_run_id", None)) is not None
+            workflow_job_failure_detected = _derive_workflow_job_failure_detected(
+                workflow_run_status=getattr(deploy_result, "workflow_run_status", None),
+                workflow_run_conclusion=getattr(deploy_result, "workflow_run_conclusion", None),
+            )
             if dispatch_service_availability is None:
                 if dry_run:
                     runtime_diagnostics = self._runtime_publisher_diagnostics(action="deploy")
@@ -1750,6 +1785,11 @@ class SEOMigrationService:
             failure_stage = _normalize_deploy_failure_stage(exc.stage)
             dispatch_attempted = failure_stage == "workflow_dispatch"
             dispatch_result_stage = failure_stage or "workflow_dispatch"
+            workflow_run_lookup_attempted = False
+            workflow_run_found = False
+            workflow_job_failure_detected = False
+            if dispatch_ref_sent is None:
+                dispatch_ref_sent = _normalize_string(deploy_target.get("ref"), max_length=120)
             if not dry_run:
                 repo_exists = failure_stage not in {"repo_lookup"}
                 ref_exists = failure_stage not in {"repo_lookup", "ref_lookup"}
@@ -1867,6 +1907,24 @@ class SEOMigrationService:
                 workflow_exists=workflow_exists if not dry_run else None,
                 dispatch_service_reason_code=dispatch_service_reason_code,
             )
+            post_dispatch_state = _derive_post_dispatch_state(
+                dispatch_attempted=dispatch_attempted,
+                dispatch_result_stage=dispatch_result_stage,
+                workflow_run_id=None,
+                workflow_run_status=None,
+                workflow_run_conclusion=None,
+                resolved_live_url=None,
+            )
+            (
+                deploy_evidence_contract_status,
+                deploy_evidence_contract_reasons,
+                workflow_contract_advisory,
+            ) = _derive_deploy_evidence_contract(
+                workflow_conformance_status=workflow_conformance_status,
+                post_dispatch_state=post_dispatch_state,
+                resolved_live_url=None,
+                url_source=expected_publish_url_source,
+            )
             artifact.deploy_status = "deploy_failed"
             artifact.last_deploy_error_summary = exc.safe_message
             workspace.deploy_status = "deploy_failed"
@@ -1901,10 +1959,13 @@ class SEOMigrationService:
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_target["ref"],
+                    "dispatch_ref_sent": dispatch_ref_sent,
                     "requested_ref": requested_ref,
                     "resolved_ref": resolved_ref,
                     "ref_source": ref_source,
                     "inputs": deploy_inputs,
+                    "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                    "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                     "analytics_measurement_id": effective_ga_measurement_id,
                     "analytics_insertion_mode": analytics_insertion_mode,
                     "expected_publish_url": expected_publish_url,
@@ -1919,6 +1980,14 @@ class SEOMigrationService:
                     "dispatch_identifier_type": dispatch_identifier_type,
                     "dispatch_attempted": dispatch_attempted,
                     "dispatch_result_stage": dispatch_result_stage,
+                    "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                    "workflow_run_found": workflow_run_found,
+                    "workflow_job_failure_detected": workflow_job_failure_detected,
+                    "post_dispatch_state": post_dispatch_state,
+                    "expected_workflow_outputs": expected_workflow_outputs,
+                    "deploy_evidence_contract_status": deploy_evidence_contract_status,
+                    "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+                    "workflow_contract_advisory": workflow_contract_advisory,
                     "repo_exists": repo_exists if not dry_run else None,
                     "ref_exists": ref_exists if not dry_run else None,
                     "workflow_exists": workflow_exists if not dry_run else None,
@@ -1980,9 +2049,12 @@ class SEOMigrationService:
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_target["ref"],
+                    "dispatch_ref_sent": dispatch_ref_sent,
                     "requested_ref": requested_ref,
                     "resolved_ref": resolved_ref,
                     "ref_source": ref_source,
+                    "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                    "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                     "resolved_workflow_source": workflow_resolution.get("source"),
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
@@ -1992,6 +2064,14 @@ class SEOMigrationService:
                     "dispatch_identifier_type": dispatch_identifier_type,
                     "dispatch_attempted": dispatch_attempted,
                     "dispatch_result_stage": dispatch_result_stage,
+                    "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                    "workflow_run_found": workflow_run_found,
+                    "workflow_job_failure_detected": workflow_job_failure_detected,
+                    "post_dispatch_state": post_dispatch_state,
+                    "expected_workflow_outputs": expected_workflow_outputs,
+                    "deploy_evidence_contract_status": deploy_evidence_contract_status,
+                    "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+                    "workflow_contract_advisory": workflow_contract_advisory,
                     "failure_reason_code": failure_reason_code,
                     "failure_stage": failure_stage,
                     "failure_remediation_hint": failure_remediation_hint,
@@ -2045,9 +2125,12 @@ class SEOMigrationService:
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_target["ref"],
+                    "dispatch_ref_sent": dispatch_ref_sent,
                     "requested_ref": requested_ref,
                     "resolved_ref": resolved_ref,
                     "ref_source": ref_source,
+                    "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                    "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                     "resolved_workflow_source": workflow_resolution.get("source"),
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
@@ -2057,6 +2140,14 @@ class SEOMigrationService:
                     "dispatch_identifier_type": dispatch_identifier_type,
                     "dispatch_attempted": dispatch_attempted,
                     "dispatch_result_stage": dispatch_result_stage,
+                    "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                    "workflow_run_found": workflow_run_found,
+                    "workflow_job_failure_detected": workflow_job_failure_detected,
+                    "post_dispatch_state": post_dispatch_state,
+                    "expected_workflow_outputs": expected_workflow_outputs,
+                    "deploy_evidence_contract_status": deploy_evidence_contract_status,
+                    "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+                    "workflow_contract_advisory": workflow_contract_advisory,
                     "failure_reason_code": failure_reason_code,
                     "failure_stage": failure_stage,
                     "failure_category": failure_category,
@@ -2082,6 +2173,24 @@ class SEOMigrationService:
             expected_publish_url_source=expected_publish_url_source,
             expected_publish_url_source_detail=expected_publish_url_source_detail,
         )
+        post_dispatch_state = _derive_post_dispatch_state(
+            dispatch_attempted=dispatch_attempted,
+            dispatch_result_stage=dispatch_result_stage,
+            workflow_run_id=getattr(deploy_result, "workflow_run_id", None),
+            workflow_run_status=getattr(deploy_result, "workflow_run_status", None),
+            workflow_run_conclusion=getattr(deploy_result, "workflow_run_conclusion", None),
+            resolved_live_url=resolved_live_url,
+        )
+        (
+            deploy_evidence_contract_status,
+            deploy_evidence_contract_reasons,
+            workflow_contract_advisory,
+        ) = _derive_deploy_evidence_contract(
+            workflow_conformance_status=workflow_conformance_status,
+            post_dispatch_state=post_dispatch_state,
+            resolved_live_url=resolved_live_url,
+            url_source=resolved_live_url_source,
+        )
         self._emit_structured_service_log(
             payload={
                 "event": "seo_migration_deploy_dispatch_accepted",
@@ -2106,9 +2215,12 @@ class SEOMigrationService:
                 "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                 "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                 "ref": deploy_result.ref,
+                "dispatch_ref_sent": dispatch_ref_sent,
                 "requested_ref": requested_ref,
                 "resolved_ref": resolved_ref,
                 "ref_source": ref_source,
+                "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": list(workflow_trigger_types),
@@ -2117,6 +2229,14 @@ class SEOMigrationService:
                 "dispatch_identifier_type": dispatch_identifier_type,
                 "dispatch_attempted": dispatch_attempted,
                 "dispatch_result_stage": dispatch_result_stage,
+                "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                "workflow_run_found": workflow_run_found,
+                "workflow_job_failure_detected": workflow_job_failure_detected,
+                "post_dispatch_state": post_dispatch_state,
+                "expected_workflow_outputs": expected_workflow_outputs,
+                "deploy_evidence_contract_status": deploy_evidence_contract_status,
+                "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+                "workflow_contract_advisory": workflow_contract_advisory,
                 "dispatched_at": deploy_result.dispatched_at,
                 "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                 "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
@@ -2149,12 +2269,23 @@ class SEOMigrationService:
                 "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                 "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                 "ref": deploy_result.ref,
+                "dispatch_ref_sent": dispatch_ref_sent,
                 "requested_ref": requested_ref,
                 "resolved_ref": resolved_ref,
                 "ref_source": ref_source,
+                "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                 "deploy_trace_id": deploy_trace_id,
                 "dispatch_attempted": dispatch_attempted,
                 "dispatch_result_stage": dispatch_result_stage,
+                "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                "workflow_run_found": workflow_run_found,
+                "workflow_job_failure_detected": workflow_job_failure_detected,
+                "post_dispatch_state": post_dispatch_state,
+                "expected_workflow_outputs": expected_workflow_outputs,
+                "deploy_evidence_contract_status": deploy_evidence_contract_status,
+                "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+                "workflow_contract_advisory": workflow_contract_advisory,
                 "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                 "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                 "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -2187,10 +2318,21 @@ class SEOMigrationService:
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_result.ref,
+                    "dispatch_ref_sent": dispatch_ref_sent,
                     "requested_ref": requested_ref,
                     "resolved_ref": resolved_ref,
                     "ref_source": ref_source,
+                    "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                    "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                     "deploy_trace_id": deploy_trace_id,
+                    "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                    "workflow_run_found": workflow_run_found,
+                    "workflow_job_failure_detected": workflow_job_failure_detected,
+                    "post_dispatch_state": post_dispatch_state,
+                    "expected_workflow_outputs": expected_workflow_outputs,
+                    "deploy_evidence_contract_status": deploy_evidence_contract_status,
+                    "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+                    "workflow_contract_advisory": workflow_contract_advisory,
                     "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                     "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                     "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -2226,10 +2368,21 @@ class SEOMigrationService:
                     "actual_dispatch_identifier_sent": actual_dispatch_identifier_sent,
                     "actual_dispatch_identifier_type_sent": actual_dispatch_identifier_type_sent,
                     "ref": deploy_result.ref,
+                    "dispatch_ref_sent": dispatch_ref_sent,
                     "requested_ref": requested_ref,
                     "resolved_ref": resolved_ref,
                     "ref_source": ref_source,
+                    "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                    "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                     "deploy_trace_id": deploy_trace_id,
+                    "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                    "workflow_run_found": workflow_run_found,
+                    "workflow_job_failure_detected": workflow_job_failure_detected,
+                    "post_dispatch_state": post_dispatch_state,
+                    "expected_workflow_outputs": expected_workflow_outputs,
+                    "deploy_evidence_contract_status": deploy_evidence_contract_status,
+                    "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+                    "workflow_contract_advisory": workflow_contract_advisory,
                     "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                     "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                     "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -2300,10 +2453,13 @@ class SEOMigrationService:
                 )
             ),
             "ref": deploy_result.ref,
+            "dispatch_ref_sent": dispatch_ref_sent,
             "requested_ref": requested_ref,
             "resolved_ref": resolved_ref,
             "ref_source": ref_source,
             "inputs": deploy_result.inputs,
+            "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+            "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
             "deploy_trace_id": deploy_trace_id,
             "workflow_dispatch_supported": workflow_dispatch_supported,
             "workflow_trigger_types": list(workflow_trigger_types),
@@ -2312,6 +2468,14 @@ class SEOMigrationService:
             "dispatch_identifier_type": dispatch_identifier_type,
             "dispatch_attempted": dispatch_attempted,
             "dispatch_result_stage": dispatch_result_stage,
+            "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+            "workflow_run_found": workflow_run_found,
+            "workflow_job_failure_detected": workflow_job_failure_detected,
+            "post_dispatch_state": post_dispatch_state,
+            "expected_workflow_outputs": expected_workflow_outputs,
+            "deploy_evidence_contract_status": deploy_evidence_contract_status,
+            "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+            "workflow_contract_advisory": workflow_contract_advisory,
             "repo_exists": target_readiness.repo_exists if target_readiness is not None else None,
             "ref_exists": target_readiness.ref_exists if target_readiness is not None else None,
             "workflow_exists": target_readiness.workflow_exists if target_readiness is not None else None,
@@ -2383,9 +2547,12 @@ class SEOMigrationService:
                     )
                 ),
                 "ref": deploy_result.ref,
+                "dispatch_ref_sent": dispatch_ref_sent,
                 "requested_ref": requested_ref,
                 "resolved_ref": resolved_ref,
                 "ref_source": ref_source,
+                "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                 "resolved_workflow_source": workflow_resolution.get("source"),
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
@@ -2395,6 +2562,14 @@ class SEOMigrationService:
                 "dispatch_identifier_type": dispatch_identifier_type,
                 "dispatch_attempted": dispatch_attempted,
                 "dispatch_result_stage": dispatch_result_stage,
+                "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                "workflow_run_found": workflow_run_found,
+                "workflow_job_failure_detected": workflow_job_failure_detected,
+                "post_dispatch_state": post_dispatch_state,
+                "expected_workflow_outputs": expected_workflow_outputs,
+                "deploy_evidence_contract_status": deploy_evidence_contract_status,
+                "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+                "workflow_contract_advisory": workflow_contract_advisory,
                 "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                 "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                 "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -2524,6 +2699,32 @@ class SEOMigrationService:
             else None
         )
         dispatch_result_stage = _normalize_string(target_history_item.get("dispatch_result_stage"), max_length=40)
+        dispatch_ref_sent = _normalize_string(target_history_item.get("dispatch_ref_sent"), max_length=120) or _normalize_string(
+            target_history_item.get("ref"),
+            max_length=120,
+        )
+        workflow_inputs_configured_keys = _normalize_dispatch_input_keys(
+            target_history_item.get("workflow_inputs_configured_keys")
+        ) or _normalize_dispatch_input_keys(target_history_item.get("inputs"))
+        workflow_inputs_sent_keys = _normalize_dispatch_input_keys(
+            target_history_item.get("workflow_inputs_sent_keys")
+        ) or _normalize_dispatch_input_keys(target_history_item.get("inputs"))
+        workflow_run_lookup_attempted = (
+            bool(target_history_item.get("workflow_run_lookup_attempted"))
+            if isinstance(target_history_item.get("workflow_run_lookup_attempted"), bool)
+            else None
+        )
+        workflow_run_found = (
+            bool(target_history_item.get("workflow_run_found"))
+            if isinstance(target_history_item.get("workflow_run_found"), bool)
+            else None
+        )
+        workflow_job_failure_detected = (
+            bool(target_history_item.get("workflow_job_failure_detected"))
+            if isinstance(target_history_item.get("workflow_job_failure_detected"), bool)
+            else None
+        )
+        post_dispatch_state = _normalize_string(target_history_item.get("post_dispatch_state"), max_length=80)
         workflow_dispatch_supported = (
             bool(target_history_item.get("workflow_dispatch_supported"))
             if isinstance(target_history_item.get("workflow_dispatch_supported"), bool)
@@ -2601,6 +2802,9 @@ class SEOMigrationService:
                 "workflow_file_path": workflow_file_path,
                 "workflow_name": workflow_name,
                 "ref": ref,
+                "dispatch_ref_sent": dispatch_ref_sent,
+                "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": workflow_trigger_types,
@@ -2609,6 +2813,10 @@ class SEOMigrationService:
                 "dispatch_identifier_type": dispatch_identifier_type,
                 "dispatch_attempted": dispatch_attempted,
                 "dispatch_result_stage": dispatch_result_stage,
+                "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                "workflow_run_found": workflow_run_found,
+                "workflow_job_failure_detected": workflow_job_failure_detected,
+                "post_dispatch_state": post_dispatch_state,
                 "workflow_run_id": workflow_run_id,
             },
             fallback_message="seo_migration_workflow_run_refresh_lookup_attempted",
@@ -2647,6 +2855,9 @@ class SEOMigrationService:
                     "workflow_file_path": workflow_file_path,
                     "workflow_name": workflow_name,
                     "ref": ref,
+                    "dispatch_ref_sent": dispatch_ref_sent,
+                    "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                    "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
                     "workflow_trigger_types": workflow_trigger_types,
@@ -2655,6 +2866,10 @@ class SEOMigrationService:
                     "dispatch_identifier_type": dispatch_identifier_type,
                     "dispatch_attempted": dispatch_attempted,
                     "dispatch_result_stage": dispatch_result_stage,
+                    "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                    "workflow_run_found": workflow_run_found,
+                    "workflow_job_failure_detected": workflow_job_failure_detected,
+                    "post_dispatch_state": post_dispatch_state,
                     "workflow_run_id": workflow_run_id,
                     "resolved_workflow_source": target_history_item.get("resolved_workflow_source"),
                     "failure_reason_code": failure_reason_code,
@@ -2684,6 +2899,9 @@ class SEOMigrationService:
                     "workflow_file_path": workflow_file_path,
                     "workflow_name": workflow_name,
                     "ref": ref,
+                    "dispatch_ref_sent": dispatch_ref_sent,
+                    "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                    "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
                     "workflow_trigger_types": workflow_trigger_types,
@@ -2692,6 +2910,10 @@ class SEOMigrationService:
                     "dispatch_identifier_type": dispatch_identifier_type,
                     "dispatch_attempted": dispatch_attempted,
                     "dispatch_result_stage": dispatch_result_stage,
+                    "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                    "workflow_run_found": workflow_run_found,
+                    "workflow_job_failure_detected": workflow_job_failure_detected,
+                    "post_dispatch_state": post_dispatch_state,
                     "workflow_run_id": workflow_run_id,
                     "failure_category": failure_category,
                     "failure_reason_code": failure_reason_code,
@@ -2726,10 +2948,22 @@ class SEOMigrationService:
 
         next_item = dict(target_history_item)
         updated = False
+        workflow_run_lookup_attempted = True
+        workflow_run_found = _coerce_int(refresh_result.workflow_run_id) is not None
+        workflow_job_failure_detected = _derive_workflow_job_failure_detected(
+            workflow_run_status=refresh_result.workflow_run_status,
+            workflow_run_conclusion=refresh_result.workflow_run_conclusion,
+        )
         for field_name, field_value in (
             ("workflow_run_id", refresh_result.workflow_run_id),
             ("workflow_run_status", _normalize_string(refresh_result.workflow_run_status, max_length=40)),
             ("workflow_run_conclusion", _normalize_string(refresh_result.workflow_run_conclusion, max_length=40)),
+            ("dispatch_ref_sent", dispatch_ref_sent),
+            ("workflow_inputs_configured_keys", workflow_inputs_configured_keys),
+            ("workflow_inputs_sent_keys", workflow_inputs_sent_keys),
+            ("workflow_run_lookup_attempted", workflow_run_lookup_attempted),
+            ("workflow_run_found", workflow_run_found),
+            ("workflow_job_failure_detected", workflow_job_failure_detected),
         ):
             if next_item.get(field_name) != field_value:
                 next_item[field_name] = field_value
@@ -2788,6 +3022,37 @@ class SEOMigrationService:
                         fallback_message="seo_migration_workflow_output_url_captured_via_refresh",
                         level=logging.INFO,
                     )
+
+        post_dispatch_state = _derive_post_dispatch_state(
+            dispatch_attempted=dispatch_attempted,
+            dispatch_result_stage=dispatch_result_stage,
+            workflow_run_id=refresh_result.workflow_run_id,
+            workflow_run_status=refresh_result.workflow_run_status,
+            workflow_run_conclusion=refresh_result.workflow_run_conclusion,
+            resolved_live_url=existing_live_url,
+        )
+        if next_item.get("post_dispatch_state") != post_dispatch_state:
+            next_item["post_dispatch_state"] = post_dispatch_state
+            updated = True
+        (
+            deploy_evidence_contract_status,
+            deploy_evidence_contract_reasons,
+            workflow_contract_advisory,
+        ) = _derive_deploy_evidence_contract(
+            workflow_conformance_status=next_item.get("workflow_conformance_status"),
+            post_dispatch_state=post_dispatch_state,
+            resolved_live_url=existing_live_url,
+            url_source=existing_url_source,
+        )
+        if next_item.get("deploy_evidence_contract_status") != deploy_evidence_contract_status:
+            next_item["deploy_evidence_contract_status"] = deploy_evidence_contract_status
+            updated = True
+        if next_item.get("deploy_evidence_contract_reasons") != deploy_evidence_contract_reasons:
+            next_item["deploy_evidence_contract_reasons"] = list(deploy_evidence_contract_reasons)
+            updated = True
+        if next_item.get("workflow_contract_advisory") != workflow_contract_advisory:
+            next_item["workflow_contract_advisory"] = workflow_contract_advisory
+            updated = True
 
         refresh_status = "updated" if updated else "no_change"
         no_change_reason = None
@@ -2851,6 +3116,9 @@ class SEOMigrationService:
                 max_length=240,
             ),
             "ref": ref,
+            "dispatch_ref_sent": dispatch_ref_sent,
+            "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+            "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
             "deploy_trace_id": deploy_trace_id,
             "resolved_workflow_source": next_item.get("resolved_workflow_source"),
             "workflow_dispatch_supported": workflow_dispatch_supported,
@@ -2860,6 +3128,19 @@ class SEOMigrationService:
             "dispatch_identifier_type": dispatch_identifier_type,
             "dispatch_attempted": dispatch_attempted,
             "dispatch_result_stage": dispatch_result_stage,
+            "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+            "workflow_run_found": workflow_run_found,
+            "workflow_job_failure_detected": workflow_job_failure_detected,
+            "post_dispatch_state": post_dispatch_state,
+            "expected_workflow_outputs": _normalize_string_list(
+                next_item.get("expected_workflow_outputs"),
+                max_items=8,
+                max_item_length=80,
+            )
+            or list(_DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS),
+            "deploy_evidence_contract_status": deploy_evidence_contract_status,
+            "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+            "workflow_contract_advisory": workflow_contract_advisory,
             "workflow_run_id": refresh_result.workflow_run_id,
             "workflow_run_status": refresh_result.workflow_run_status,
             "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
@@ -2896,6 +3177,9 @@ class SEOMigrationService:
                 "workflow_conformance_reasons": result_payload.get("workflow_conformance_reasons"),
                 "workflow_conformance_evidence_summary": result_payload.get("workflow_conformance_evidence_summary"),
                 "ref": ref,
+                "dispatch_ref_sent": dispatch_ref_sent,
+                "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": workflow_trigger_types,
@@ -2904,6 +3188,14 @@ class SEOMigrationService:
                 "dispatch_identifier_type": dispatch_identifier_type,
                 "dispatch_attempted": dispatch_attempted,
                 "dispatch_result_stage": dispatch_result_stage,
+                "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                "workflow_run_found": workflow_run_found,
+                "workflow_job_failure_detected": workflow_job_failure_detected,
+                "post_dispatch_state": post_dispatch_state,
+                "expected_workflow_outputs": result_payload.get("expected_workflow_outputs"),
+                "deploy_evidence_contract_status": result_payload.get("deploy_evidence_contract_status"),
+                "deploy_evidence_contract_reasons": result_payload.get("deploy_evidence_contract_reasons"),
+                "workflow_contract_advisory": result_payload.get("workflow_contract_advisory"),
                 "workflow_run_id": refresh_result.workflow_run_id,
                 "workflow_run_status": refresh_result.workflow_run_status,
                 "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
@@ -2942,6 +3234,9 @@ class SEOMigrationService:
                 "workflow_conformance_reasons": result_payload.get("workflow_conformance_reasons"),
                 "workflow_conformance_evidence_summary": result_payload.get("workflow_conformance_evidence_summary"),
                 "ref": ref,
+                "dispatch_ref_sent": dispatch_ref_sent,
+                "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
+                "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": workflow_trigger_types,
@@ -2950,6 +3245,14 @@ class SEOMigrationService:
                 "dispatch_identifier_type": dispatch_identifier_type,
                 "dispatch_attempted": dispatch_attempted,
                 "dispatch_result_stage": dispatch_result_stage,
+                "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                "workflow_run_found": workflow_run_found,
+                "workflow_job_failure_detected": workflow_job_failure_detected,
+                "post_dispatch_state": post_dispatch_state,
+                "expected_workflow_outputs": result_payload.get("expected_workflow_outputs"),
+                "deploy_evidence_contract_status": result_payload.get("deploy_evidence_contract_status"),
+                "deploy_evidence_contract_reasons": result_payload.get("deploy_evidence_contract_reasons"),
+                "workflow_contract_advisory": result_payload.get("workflow_contract_advisory"),
                 "resolved_workflow_source": next_item.get("resolved_workflow_source"),
                 "workflow_run_id": refresh_result.workflow_run_id,
                 "workflow_run_status": refresh_result.workflow_run_status,
@@ -3056,6 +3359,14 @@ class SEOMigrationService:
                 max_length=240,
             ),
             "ref": _normalize_string(history_item.get("ref"), max_length=120),
+            "dispatch_ref_sent": _normalize_string(history_item.get("dispatch_ref_sent"), max_length=120)
+            or _normalize_string(history_item.get("ref"), max_length=120),
+            "workflow_inputs_configured_keys": _normalize_dispatch_input_keys(
+                history_item.get("workflow_inputs_configured_keys")
+            )
+            or _normalize_dispatch_input_keys(history_item.get("inputs")),
+            "workflow_inputs_sent_keys": _normalize_dispatch_input_keys(history_item.get("workflow_inputs_sent_keys"))
+            or _normalize_dispatch_input_keys(history_item.get("inputs")),
             "deploy_trace_id": _normalize_string(history_item.get("deploy_trace_id"), max_length=80),
             "resolved_workflow_source": _normalize_string(history_item.get("resolved_workflow_source"), max_length=40),
             "workflow_dispatch_supported": (
@@ -3081,13 +3392,77 @@ class SEOMigrationService:
                 else None
             ),
             "dispatch_result_stage": _normalize_string(history_item.get("dispatch_result_stage"), max_length=40),
+            "workflow_run_lookup_attempted": (
+                bool(history_item.get("workflow_run_lookup_attempted"))
+                if isinstance(history_item.get("workflow_run_lookup_attempted"), bool)
+                else None
+            ),
+            "workflow_run_found": (
+                bool(history_item.get("workflow_run_found"))
+                if isinstance(history_item.get("workflow_run_found"), bool)
+                else None
+            ),
+            "workflow_job_failure_detected": (
+                bool(history_item.get("workflow_job_failure_detected"))
+                if isinstance(history_item.get("workflow_job_failure_detected"), bool)
+                else _derive_workflow_job_failure_detected(
+                    workflow_run_status=history_item.get("workflow_run_status"),
+                    workflow_run_conclusion=history_item.get("workflow_run_conclusion"),
+                )
+            ),
             "workflow_run_id": _coerce_int(history_item.get("workflow_run_id")),
             "workflow_run_status": _normalize_string(history_item.get("workflow_run_status"), max_length=40),
             "workflow_run_conclusion": _normalize_string(history_item.get("workflow_run_conclusion"), max_length=40),
             "resolved_live_url": _normalize_url_candidate(history_item.get("resolved_live_url")),
             "url_source": _normalize_migration_url_source(history_item.get("url_source")),
             "url_source_detail": _normalize_string(history_item.get("url_source_detail"), max_length=120),
+            "post_dispatch_state": _normalize_string(history_item.get("post_dispatch_state"), max_length=80)
+            or _derive_post_dispatch_state(
+                dispatch_attempted=history_item.get("dispatch_attempted"),
+                dispatch_result_stage=history_item.get("dispatch_result_stage"),
+                workflow_run_id=history_item.get("workflow_run_id"),
+                workflow_run_status=history_item.get("workflow_run_status"),
+                workflow_run_conclusion=history_item.get("workflow_run_conclusion"),
+                resolved_live_url=history_item.get("resolved_live_url"),
+            ),
         }
+        deploy_evidence_contract_status = _normalize_deploy_evidence_contract_status(
+            history_item.get("deploy_evidence_contract_status")
+        )
+        deploy_evidence_contract_reasons = _normalize_string_list(
+            history_item.get("deploy_evidence_contract_reasons"),
+            max_items=8,
+            max_item_length=120,
+        )
+        workflow_contract_advisory = _normalize_string(
+            history_item.get("workflow_contract_advisory"),
+            max_length=240,
+        )
+        if deploy_evidence_contract_status is None:
+            (
+                deploy_evidence_contract_status,
+                derived_reasons,
+                derived_advisory,
+            ) = _derive_deploy_evidence_contract(
+                workflow_conformance_status=result_payload.get("workflow_conformance_status"),
+                post_dispatch_state=result_payload.get("post_dispatch_state"),
+                resolved_live_url=result_payload.get("resolved_live_url"),
+                url_source=result_payload.get("url_source"),
+            )
+            if not deploy_evidence_contract_reasons:
+                deploy_evidence_contract_reasons = derived_reasons
+            if workflow_contract_advisory is None:
+                workflow_contract_advisory = derived_advisory
+        result_payload["expected_workflow_outputs"] = _normalize_string_list(
+            history_item.get("expected_workflow_outputs"),
+            max_items=8,
+            max_item_length=80,
+        ) or list(_DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS)
+        result_payload["deploy_evidence_contract_status"] = (
+            deploy_evidence_contract_status or _DEPLOY_EVIDENCE_CONTRACT_STATUS_UNKNOWN
+        )
+        result_payload["deploy_evidence_contract_reasons"] = deploy_evidence_contract_reasons
+        result_payload["workflow_contract_advisory"] = workflow_contract_advisory
         self._emit_structured_service_log(
             payload={
                 "event": "seo_migration_deploy_status_refresh_no_change",
@@ -3114,6 +3489,9 @@ class SEOMigrationService:
                 "workflow_conformance_reasons": result_payload.get("workflow_conformance_reasons"),
                 "workflow_conformance_evidence_summary": result_payload.get("workflow_conformance_evidence_summary"),
                 "ref": result_payload.get("ref"),
+                "dispatch_ref_sent": result_payload.get("dispatch_ref_sent"),
+                "workflow_inputs_configured_keys": result_payload.get("workflow_inputs_configured_keys"),
+                "workflow_inputs_sent_keys": result_payload.get("workflow_inputs_sent_keys"),
                 "deploy_trace_id": result_payload.get("deploy_trace_id"),
                 "workflow_dispatch_supported": result_payload.get("workflow_dispatch_supported"),
                 "workflow_trigger_types": result_payload.get("workflow_trigger_types"),
@@ -3122,6 +3500,14 @@ class SEOMigrationService:
                 "dispatch_identifier_type": result_payload.get("dispatch_identifier_type"),
                 "dispatch_attempted": result_payload.get("dispatch_attempted"),
                 "dispatch_result_stage": result_payload.get("dispatch_result_stage"),
+                "workflow_run_lookup_attempted": result_payload.get("workflow_run_lookup_attempted"),
+                "workflow_run_found": result_payload.get("workflow_run_found"),
+                "workflow_job_failure_detected": result_payload.get("workflow_job_failure_detected"),
+                "post_dispatch_state": result_payload.get("post_dispatch_state"),
+                "expected_workflow_outputs": result_payload.get("expected_workflow_outputs"),
+                "deploy_evidence_contract_status": result_payload.get("deploy_evidence_contract_status"),
+                "deploy_evidence_contract_reasons": result_payload.get("deploy_evidence_contract_reasons"),
+                "workflow_contract_advisory": result_payload.get("workflow_contract_advisory"),
                 "workflow_run_id": result_payload.get("workflow_run_id"),
                 "workflow_run_status": result_payload.get("workflow_run_status"),
                 "workflow_run_conclusion": result_payload.get("workflow_run_conclusion"),
@@ -3157,6 +3543,9 @@ class SEOMigrationService:
                 "workflow_conformance_reasons": result_payload.get("workflow_conformance_reasons"),
                 "workflow_conformance_evidence_summary": result_payload.get("workflow_conformance_evidence_summary"),
                 "ref": result_payload.get("ref"),
+                "dispatch_ref_sent": result_payload.get("dispatch_ref_sent"),
+                "workflow_inputs_configured_keys": result_payload.get("workflow_inputs_configured_keys"),
+                "workflow_inputs_sent_keys": result_payload.get("workflow_inputs_sent_keys"),
                 "deploy_trace_id": result_payload.get("deploy_trace_id"),
                 "workflow_dispatch_supported": result_payload.get("workflow_dispatch_supported"),
                 "workflow_trigger_types": result_payload.get("workflow_trigger_types"),
@@ -3165,6 +3554,14 @@ class SEOMigrationService:
                 "dispatch_identifier_type": result_payload.get("dispatch_identifier_type"),
                 "dispatch_attempted": result_payload.get("dispatch_attempted"),
                 "dispatch_result_stage": result_payload.get("dispatch_result_stage"),
+                "workflow_run_lookup_attempted": result_payload.get("workflow_run_lookup_attempted"),
+                "workflow_run_found": result_payload.get("workflow_run_found"),
+                "workflow_job_failure_detected": result_payload.get("workflow_job_failure_detected"),
+                "post_dispatch_state": result_payload.get("post_dispatch_state"),
+                "expected_workflow_outputs": result_payload.get("expected_workflow_outputs"),
+                "deploy_evidence_contract_status": result_payload.get("deploy_evidence_contract_status"),
+                "deploy_evidence_contract_reasons": result_payload.get("deploy_evidence_contract_reasons"),
+                "workflow_contract_advisory": result_payload.get("workflow_contract_advisory"),
                 "workflow_run_id": result_payload.get("workflow_run_id"),
             },
             duration_ms=self._duration_ms(started_at),
@@ -6333,7 +6730,7 @@ class SEOMigrationService:
             workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "outputs", {}))
         metadata_live_url, metadata_source_detail = self._resolve_url_candidate_from_inputs(
             workflow_output_payload,
-            preferred_keys=("live_url", "resolved_live_url", "deployed_url"),
+            preferred_keys=_DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS,
         )
         if metadata_live_url:
             detail = metadata_source_detail or "workflow_output:live_url"
@@ -6676,6 +7073,9 @@ class SEOMigrationService:
             workflow_conformance_checked = item.get("workflow_conformance_checked")
             workflow_conformance_reasons = item.get("workflow_conformance_reasons")
             dispatch_attempted = item.get("dispatch_attempted")
+            workflow_run_lookup_attempted = item.get("workflow_run_lookup_attempted")
+            workflow_run_found = item.get("workflow_run_found")
+            workflow_job_failure_detected = item.get("workflow_job_failure_detected")
             workflow_file_path = _normalize_workflow_path_for_deploy(item.get("workflow_file_path")) or _normalize_workflow_path_for_deploy(
                 item.get("workflow_path")
             )
@@ -6688,6 +7088,45 @@ class SEOMigrationService:
                 workflow_identifier_requested = _normalize_string(item.get("workflow_id"), max_length=160)
             if workflow_identifier_used is None:
                 workflow_identifier_used = _normalize_string(item.get("workflow_id"), max_length=160)
+            workflow_run_id = _coerce_int(item.get("workflow_run_id"))
+            workflow_run_status = _normalize_string(item.get("workflow_run_status"), max_length=40)
+            workflow_run_conclusion = _normalize_string(item.get("workflow_run_conclusion"), max_length=40)
+            resolved_live_url = _normalize_url_candidate(item.get("resolved_live_url"))
+            post_dispatch_state = _normalize_string(item.get("post_dispatch_state"), max_length=80) or _derive_post_dispatch_state(
+                dispatch_attempted=dispatch_attempted,
+                dispatch_result_stage=item.get("dispatch_result_stage"),
+                workflow_run_id=workflow_run_id,
+                workflow_run_status=workflow_run_status,
+                workflow_run_conclusion=workflow_run_conclusion,
+                resolved_live_url=resolved_live_url,
+            )
+            deploy_evidence_contract_status = _normalize_deploy_evidence_contract_status(
+                item.get("deploy_evidence_contract_status")
+            )
+            deploy_evidence_contract_reasons = _normalize_string_list(
+                item.get("deploy_evidence_contract_reasons"),
+                max_items=8,
+                max_item_length=120,
+            )
+            workflow_contract_advisory = _normalize_string(
+                item.get("workflow_contract_advisory"),
+                max_length=240,
+            )
+            if deploy_evidence_contract_status is None:
+                (
+                    deploy_evidence_contract_status,
+                    derived_reasons,
+                    derived_advisory,
+                ) = _derive_deploy_evidence_contract(
+                    workflow_conformance_status=item.get("workflow_conformance_status"),
+                    post_dispatch_state=post_dispatch_state,
+                    resolved_live_url=resolved_live_url,
+                    url_source=item.get("url_source"),
+                )
+                if not deploy_evidence_contract_reasons:
+                    deploy_evidence_contract_reasons = derived_reasons
+                if workflow_contract_advisory is None:
+                    workflow_contract_advisory = derived_advisory
             return {
                 "deploy_trace_id": _normalize_string(item.get("deploy_trace_id"), max_length=80),
                 "workflow_identifier": _derive_workflow_identifier(
@@ -6748,6 +7187,42 @@ class SEOMigrationService:
                 "dispatch_identifier_type": _normalize_string(item.get("dispatch_identifier_type"), max_length=80),
                 "dispatch_attempted": bool(dispatch_attempted) if isinstance(dispatch_attempted, bool) else None,
                 "dispatch_result_stage": _normalize_string(item.get("dispatch_result_stage"), max_length=40),
+                "dispatch_ref_sent": _normalize_string(item.get("dispatch_ref_sent"), max_length=120)
+                or _normalize_string(item.get("ref"), max_length=120),
+                "workflow_inputs_configured_keys": _normalize_dispatch_input_keys(
+                    item.get("workflow_inputs_configured_keys")
+                )
+                or _normalize_dispatch_input_keys(item.get("inputs")),
+                "workflow_inputs_sent_keys": _normalize_dispatch_input_keys(item.get("workflow_inputs_sent_keys"))
+                or _normalize_dispatch_input_keys(item.get("inputs")),
+                "workflow_run_lookup_attempted": (
+                    bool(workflow_run_lookup_attempted)
+                    if isinstance(workflow_run_lookup_attempted, bool)
+                    else None
+                ),
+                "workflow_run_found": (
+                    bool(workflow_run_found) if isinstance(workflow_run_found, bool) else None
+                ),
+                "workflow_job_failure_detected": (
+                    bool(workflow_job_failure_detected)
+                    if isinstance(workflow_job_failure_detected, bool)
+                    else _derive_workflow_job_failure_detected(
+                        workflow_run_status=workflow_run_status,
+                        workflow_run_conclusion=workflow_run_conclusion,
+                    )
+                ),
+                "post_dispatch_state": post_dispatch_state,
+                "expected_workflow_outputs": _normalize_string_list(
+                    item.get("expected_workflow_outputs"),
+                    max_items=8,
+                    max_item_length=80,
+                )
+                or list(_DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS),
+                "deploy_evidence_contract_status": (
+                    deploy_evidence_contract_status or _DEPLOY_EVIDENCE_CONTRACT_STATUS_UNKNOWN
+                ),
+                "deploy_evidence_contract_reasons": deploy_evidence_contract_reasons,
+                "workflow_contract_advisory": workflow_contract_advisory,
                 "repo_exists": (
                     bool(item.get("repo_exists")) if isinstance(item.get("repo_exists"), bool) else None
                 ),
@@ -6762,9 +7237,9 @@ class SEOMigrationService:
                     if isinstance(item.get("workflow_dispatch_ready"), bool)
                     else None
                 ),
-                "workflow_run_id": _coerce_int(item.get("workflow_run_id")),
-                "workflow_run_status": _normalize_string(item.get("workflow_run_status"), max_length=40),
-                "workflow_run_conclusion": _normalize_string(item.get("workflow_run_conclusion"), max_length=40),
+                "workflow_run_id": workflow_run_id,
+                "workflow_run_status": workflow_run_status,
+                "workflow_run_conclusion": workflow_run_conclusion,
             }
         return {}
 
@@ -7170,6 +7645,19 @@ class SEOMigrationService:
             "last_deploy_trace_id": latest_traceability.get("deploy_trace_id"),
             "last_dispatch_attempted": latest_traceability.get("dispatch_attempted"),
             "last_dispatch_result_stage": latest_traceability.get("dispatch_result_stage"),
+            "last_dispatch_ref_sent": latest_traceability.get("dispatch_ref_sent"),
+            "last_workflow_inputs_configured_keys": latest_traceability.get("workflow_inputs_configured_keys")
+            or [],
+            "last_workflow_inputs_sent_keys": latest_traceability.get("workflow_inputs_sent_keys") or [],
+            "last_workflow_run_lookup_attempted": latest_traceability.get("workflow_run_lookup_attempted"),
+            "last_workflow_run_found": latest_traceability.get("workflow_run_found"),
+            "last_workflow_job_failure_detected": latest_traceability.get("workflow_job_failure_detected"),
+            "last_post_dispatch_state": latest_traceability.get("post_dispatch_state"),
+            "expected_workflow_outputs": latest_traceability.get("expected_workflow_outputs")
+            or list(_DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS),
+            "last_deploy_evidence_contract_status": latest_traceability.get("deploy_evidence_contract_status"),
+            "last_deploy_evidence_contract_reasons": latest_traceability.get("deploy_evidence_contract_reasons") or [],
+            "last_workflow_contract_advisory": latest_traceability.get("workflow_contract_advisory"),
             "last_repo_exists": latest_traceability.get("repo_exists"),
             "last_ref_exists": latest_traceability.get("ref_exists"),
             "last_workflow_exists": latest_traceability.get("workflow_exists"),
@@ -7666,6 +8154,154 @@ def _normalize_workflow_trigger_types_for_summary(value: object) -> list[str]:
             continue
         normalized.append(candidate.lower())
     return _dedupe_strings(normalized)
+
+
+def _normalize_dispatch_input_keys(value: object) -> list[str]:
+    raw_values: list[object] = []
+    if isinstance(value, dict):
+        raw_values = list(value.keys())
+    elif isinstance(value, (list, tuple, set)):
+        raw_values = list(value)
+    normalized: list[str] = []
+    for item in raw_values:
+        candidate = _normalize_string(item, max_length=80)
+        if candidate:
+            normalized.append(candidate)
+    return _dedupe_strings(normalized)
+
+
+def _derive_workflow_job_failure_detected(
+    *,
+    workflow_run_status: object,
+    workflow_run_conclusion: object,
+) -> bool | None:
+    status = _normalize_string(workflow_run_status, max_length=40)
+    conclusion = _normalize_string(workflow_run_conclusion, max_length=40)
+    if status is None and conclusion is None:
+        return None
+    if (status or "").strip().lower() != "completed":
+        return False
+    normalized_conclusion = (conclusion or "").strip().lower()
+    if not normalized_conclusion:
+        return False
+    return normalized_conclusion != "success"
+
+
+def _derive_post_dispatch_state(
+    *,
+    dispatch_attempted: object,
+    dispatch_result_stage: object,
+    workflow_run_id: object,
+    workflow_run_status: object,
+    workflow_run_conclusion: object,
+    resolved_live_url: object,
+) -> str:
+    attempted = dispatch_attempted if isinstance(dispatch_attempted, bool) else None
+    result_stage = _normalize_deploy_failure_stage(dispatch_result_stage)
+    run_id = _coerce_int(workflow_run_id)
+    run_status = (_normalize_string(workflow_run_status, max_length=40) or "").strip().lower()
+    run_conclusion = (_normalize_string(workflow_run_conclusion, max_length=40) or "").strip().lower()
+    confirmed_live_url = _normalize_url_candidate(resolved_live_url)
+
+    if attempted is False:
+        return "dispatch_not_attempted"
+    if run_id is None:
+        if attempted is True:
+            return "dispatch_accepted_no_run"
+        if result_stage:
+            return f"dispatch_blocked_{result_stage}"
+        return "dispatch_not_attempted"
+    if run_status in {"queued", "waiting", "requested", "pending"}:
+        return "workflow_run_pending"
+    if run_status in {"in_progress", "running"}:
+        return "workflow_run_in_progress"
+    if run_status == "completed":
+        if run_conclusion == "success":
+            if confirmed_live_url:
+                return "workflow_run_succeeded_with_live_url"
+            return "workflow_run_succeeded_without_live_url"
+        if run_conclusion:
+            return "workflow_run_failed"
+        return "workflow_run_completed"
+    if confirmed_live_url:
+        return "workflow_run_succeeded_with_live_url"
+    return "workflow_run_observed"
+
+
+def _normalize_deploy_evidence_contract_status(value: object) -> str | None:
+    normalized = (_normalize_string(value, max_length=80) or "").strip().lower()
+    if normalized in {
+        _DEPLOY_EVIDENCE_CONTRACT_STATUS_CONFIRMED,
+        _DEPLOY_EVIDENCE_CONTRACT_STATUS_PLACEHOLDER,
+        _DEPLOY_EVIDENCE_CONTRACT_STATUS_CONTRACT_INCOMPLETE,
+        _DEPLOY_EVIDENCE_CONTRACT_STATUS_SUCCEEDED_NO_EVIDENCE,
+        _DEPLOY_EVIDENCE_CONTRACT_STATUS_RUN_FAILED,
+        _DEPLOY_EVIDENCE_CONTRACT_STATUS_PENDING,
+        _DEPLOY_EVIDENCE_CONTRACT_STATUS_NOT_ATTEMPTED,
+        _DEPLOY_EVIDENCE_CONTRACT_STATUS_UNKNOWN,
+    }:
+        return normalized
+    return None
+
+
+def _derive_deploy_evidence_contract(
+    *,
+    workflow_conformance_status: object,
+    post_dispatch_state: object,
+    resolved_live_url: object,
+    url_source: object,
+) -> tuple[str, list[str], str | None]:
+    conformance_status = _normalize_string(workflow_conformance_status, max_length=80)
+    post_state = _normalize_string(post_dispatch_state, max_length=80)
+    resolved_live = _normalize_url_candidate(resolved_live_url)
+    normalized_url_source = _normalize_migration_url_source(url_source)
+
+    if resolved_live and normalized_url_source in {
+        _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT,
+        _MIGRATION_URL_SOURCE_DEPLOY_RESULT,
+    }:
+        return (
+            _DEPLOY_EVIDENCE_CONTRACT_STATUS_CONFIRMED,
+            ["explicit_live_url_evidence_captured"],
+            None,
+        )
+    if conformance_status == "workflow_placeholder_detected":
+        return (
+            _DEPLOY_EVIDENCE_CONTRACT_STATUS_PLACEHOLDER,
+            ["workflow_placeholder_detected"],
+            "Selected workflow appears placeholder/non-deploying and may not emit explicit deploy evidence.",
+        )
+    if conformance_status == "workflow_contract_incomplete":
+        return (
+            _DEPLOY_EVIDENCE_CONTRACT_STATUS_CONTRACT_INCOMPLETE,
+            ["workflow_contract_incomplete"],
+            "Selected workflow is dispatchable but missing managed deploy contract markers for explicit deploy evidence.",
+        )
+    if post_state == "workflow_run_succeeded_without_live_url":
+        return (
+            _DEPLOY_EVIDENCE_CONTRACT_STATUS_SUCCEEDED_NO_EVIDENCE,
+            ["workflow_run_succeeded_without_live_url"],
+            "Workflow run completed but did not emit explicit live URL evidence.",
+        )
+    if post_state == "workflow_run_failed":
+        return (
+            _DEPLOY_EVIDENCE_CONTRACT_STATUS_RUN_FAILED,
+            ["workflow_run_failed"],
+            "Workflow run failed before explicit live URL evidence was captured.",
+        )
+    if post_state in {"dispatch_accepted_no_run", "workflow_run_pending", "workflow_run_in_progress"}:
+        return (
+            _DEPLOY_EVIDENCE_CONTRACT_STATUS_PENDING,
+            [post_state],
+            "Workflow run evidence is still pending; live deployment is not yet confirmed.",
+        )
+    if post_state == "dispatch_not_attempted" or (post_state and post_state.startswith("dispatch_blocked_")):
+        return (
+            _DEPLOY_EVIDENCE_CONTRACT_STATUS_NOT_ATTEMPTED,
+            [post_state or "dispatch_not_attempted"],
+            "Deploy dispatch was not completed; live deployment evidence cannot be confirmed yet.",
+        )
+    return (_DEPLOY_EVIDENCE_CONTRACT_STATUS_UNKNOWN, [], None)
 
 
 def _infer_dispatch_identifier_type(workflow_id: object) -> str:

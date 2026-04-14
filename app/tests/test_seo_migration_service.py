@@ -2150,7 +2150,7 @@ def test_deploy_dispatch_payload_uses_explicit_configured_inputs_only(db_session
         analytics_measurement_id=None,
         principal_id="principal-1",
     )
-    service.deploy_artifact_version(
+    deploy_result = service.deploy_artifact_version(
         business_id=business_id,
         site_id=site_id,
         artifact_version_id=artifact.id,
@@ -2161,6 +2161,8 @@ def test_deploy_dispatch_payload_uses_explicit_configured_inputs_only(db_session
     assert publisher.deploy_calls
     deploy_target, _ = publisher.deploy_calls[-1]
     assert deploy_target.inputs == {"site_url": "https://www.tnmfire.com"}
+    assert deploy_result.result.get("workflow_inputs_configured_keys") == ["site_url"]
+    assert deploy_result.result.get("workflow_inputs_sent_keys") == ["site_url"]
 
 
 def test_publish_records_expected_publish_url_when_determinable(db_session) -> None:
@@ -2433,6 +2435,9 @@ def test_deploy_records_resolved_live_url_from_workflow_output(db_session) -> No
     assert deploy_result.result.get("resolved_live_url") == "https://workflow-live.tnmfire.com"
     assert deploy_result.result.get("url_source") == "workflow_output"
     assert deploy_result.result.get("url_source_detail") == "workflow_output:live_url"
+    assert deploy_result.result.get("expected_workflow_outputs") == ["live_url", "resolved_live_url", "deployed_url"]
+    assert deploy_result.result.get("deploy_evidence_contract_status") == "confirmed_live_evidence"
+    assert deploy_result.result.get("workflow_contract_advisory") is None
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     destination = (summary.context_summary or {}).get("destination_summary") or {}
@@ -2494,6 +2499,13 @@ def test_deploy_does_not_treat_request_inputs_as_confirmed_live_url(db_session) 
     assert deploy_result.result.get("resolved_live_url") is None
     assert deploy_result.result.get("url_source") == "unknown"
     assert deploy_result.result.get("url_source_detail") is None
+    assert deploy_result.result.get("workflow_inputs_configured_keys") == ["live_url"]
+    assert deploy_result.result.get("workflow_inputs_sent_keys") == ["live_url"]
+    assert deploy_result.result.get("workflow_run_lookup_attempted") is True
+    assert deploy_result.result.get("workflow_run_found") is False
+    assert deploy_result.result.get("post_dispatch_state") == "dispatch_accepted_no_run"
+    assert deploy_result.result.get("deploy_evidence_contract_status") == "evidence_pending"
+    assert deploy_result.result.get("deploy_evidence_contract_reasons") == ["dispatch_accepted_no_run"]
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     destination = (summary.context_summary or {}).get("destination_summary") or {}
@@ -2502,6 +2514,179 @@ def test_deploy_does_not_treat_request_inputs_as_confirmed_live_url(db_session) 
     assert deploy_destination.get("active_url") is None
     assert deploy_destination.get("resolved_live_url") is None
 
+
+def test_deploy_records_run_failure_without_live_url_confirmation(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=556677,
+        deploy_workflow_run_status="completed",
+        deploy_workflow_run_conclusion="failure",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("workflow_run_id") == 556677
+    assert deploy_result.result.get("workflow_run_status") == "completed"
+    assert deploy_result.result.get("workflow_run_conclusion") == "failure"
+    assert deploy_result.result.get("workflow_run_lookup_attempted") is True
+    assert deploy_result.result.get("workflow_run_found") is True
+    assert deploy_result.result.get("workflow_job_failure_detected") is True
+    assert deploy_result.result.get("post_dispatch_state") == "workflow_run_failed"
+    assert deploy_result.result.get("deploy_evidence_contract_status") == "workflow_run_failed_without_explicit_evidence"
+    assert deploy_result.result.get("workflow_contract_advisory") == (
+        "Workflow run failed before explicit live URL evidence was captured."
+    )
+    assert deploy_result.result.get("resolved_live_url") is None
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("last_workflow_run_lookup_attempted") is True
+    assert deploy_readiness.get("last_workflow_run_found") is True
+    assert deploy_readiness.get("last_workflow_job_failure_detected") is True
+    assert deploy_readiness.get("last_post_dispatch_state") == "workflow_run_failed"
+    assert deploy_readiness.get("last_deploy_evidence_contract_status") == "workflow_run_failed_without_explicit_evidence"
+
+
+def test_deploy_completed_without_explicit_live_url_evidence_is_advisory(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=112233,
+        deploy_workflow_run_status="completed",
+        deploy_workflow_run_conclusion="success",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("workflow_run_id") == 112233
+    assert deploy_result.result.get("workflow_run_status") == "completed"
+    assert deploy_result.result.get("workflow_run_conclusion") == "success"
+    assert deploy_result.result.get("resolved_live_url") is None
+    assert deploy_result.result.get("post_dispatch_state") == "workflow_run_succeeded_without_live_url"
+    assert deploy_result.result.get("deploy_evidence_contract_status") == "workflow_succeeded_without_explicit_evidence"
+    assert deploy_result.result.get("workflow_contract_advisory") == (
+        "Workflow run completed but did not emit explicit live URL evidence."
+    )
+
+
+def test_deploy_placeholder_workflow_sets_contract_advisory_without_blocking_dispatch(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        readiness_workflow_conformance_status="workflow_placeholder_detected",
+        readiness_workflow_conformance_reasons=("placeholder_workflow_content_detected",),
+        readiness_workflow_conformance_evidence_summary="workflow_dispatch=true;placeholder_markers=placeholder",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("dispatch_attempted") is True
+    assert deploy_result.result.get("workflow_conformance_status") == "workflow_placeholder_detected"
+    assert deploy_result.result.get("deploy_evidence_contract_status") == "workflow_placeholder_advisory"
+    assert deploy_result.result.get("deploy_evidence_contract_reasons") == ["workflow_placeholder_detected"]
+    assert deploy_result.result.get("workflow_contract_advisory") == (
+        "Selected workflow appears placeholder/non-deploying and may not emit explicit deploy evidence."
+    )
 
 def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output_url(db_session, caplog) -> None:
     publisher = _RecordingGitHubPublisher(
@@ -2568,6 +2753,10 @@ def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output
     assert refresh_result.result.get("workflow_run_conclusion") == "success"
     assert refresh_result.result.get("resolved_live_url") == "https://refresh-live.tnmfire.com"
     assert refresh_result.result.get("url_source") == "workflow_output"
+    assert refresh_result.result.get("workflow_run_lookup_attempted") is True
+    assert refresh_result.result.get("workflow_run_found") is True
+    assert refresh_result.result.get("workflow_job_failure_detected") is False
+    assert refresh_result.result.get("post_dispatch_state") == "workflow_run_succeeded_with_live_url"
     assert refresh_result.result.get("deploy_trace_id") == deploy_result.result.get("deploy_trace_id")
     assert publisher.refresh_calls
 
@@ -2579,6 +2768,10 @@ def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output
     assert latest_entry.get("workflow_run_conclusion") == "success"
     assert latest_entry.get("resolved_live_url") == "https://refresh-live.tnmfire.com"
     assert latest_entry.get("url_source") == "workflow_output"
+    assert latest_entry.get("workflow_run_lookup_attempted") is True
+    assert latest_entry.get("workflow_run_found") is True
+    assert latest_entry.get("workflow_job_failure_detected") is False
+    assert latest_entry.get("post_dispatch_state") == "workflow_run_succeeded_with_live_url"
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     destination = (summary.context_summary or {}).get("destination_summary") or {}
@@ -2643,6 +2836,10 @@ def test_refresh_deploy_status_is_noop_without_workflow_run_metadata(db_session)
     )
     assert refresh_result.result.get("status") == "no_change"
     assert refresh_result.result.get("no_change_reason") == "workflow_run_metadata_missing"
+    assert refresh_result.result.get("dispatch_attempted") is True
+    assert refresh_result.result.get("workflow_run_lookup_attempted") is True
+    assert refresh_result.result.get("workflow_run_found") is False
+    assert refresh_result.result.get("post_dispatch_state") == "dispatch_accepted_no_run"
     assert publisher.refresh_calls == []
 
 
@@ -4648,6 +4845,12 @@ def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -
         payload.get("event") == "seo_migration_workflow_run_lookup_attempted"
         and payload.get("workflow_run_id") is not None
         and payload.get("workflow_run_status")
+        and payload.get("workflow_inputs_configured_keys") == []
+        and payload.get("workflow_inputs_sent_keys") == []
+        and payload.get("workflow_run_lookup_attempted") is True
+        and payload.get("workflow_run_found") is True
+        and payload.get("workflow_job_failure_detected") is False
+        and payload.get("post_dispatch_state") == "workflow_run_succeeded_with_live_url"
         for payload in service_events
     )
     assert any(

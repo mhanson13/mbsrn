@@ -805,6 +805,15 @@ Deploy diagnostics now track explicit staged evidence:
 6. `workflow_run_evidence`
 7. `resolved_live_url_evidence`
 
+Post-dispatch evidence fields are now explicitly tracked so transport acceptance and execution evidence are not collapsed:
+- `dispatch_ref_sent`
+- `workflow_inputs_configured_keys`
+- `workflow_inputs_sent_keys`
+- `workflow_run_lookup_attempted`
+- `workflow_run_found`
+- `workflow_job_failure_detected`
+- `post_dispatch_state` (for example `dispatch_not_attempted`, `dispatch_accepted_no_run`, `workflow_run_pending`, `workflow_run_in_progress`, `workflow_run_failed`, `workflow_run_succeeded_without_live_url`, `workflow_run_succeeded_with_live_url`)
+
 This keeps trigger-level and service-level readiness distinct:
 - workflow trigger support: `workflow_dispatch_supported`, `workflow_trigger_types`
 - workflow conformance support: `workflow_conformance_checked`, `workflow_conformance_status`, `workflow_conformance_reasons`
@@ -818,6 +827,37 @@ Workflow conformance semantics:
 - `workflow_contract_incomplete`: workflow is dispatchable but missing required managed deploy contract markers
 - `workflow_unreadable`: workflow file exists but content could not be decoded/read for conformance checks
 - `workflow_missing`: workflow payload was unavailable during conformance evaluation
+
+## Target Repo Deploy Contract
+MBSRN now distinguishes control-plane success from target-repo deploy confirmation using an explicit deploy evidence contract.
+
+Required explicit evidence paths for confirmed live deployment:
+- `workflow_output` evidence that includes a live URL key from:
+  - `live_url`
+  - `resolved_live_url`
+  - `deployed_url`
+- `deploy_result` evidence that explicitly includes `live_url`
+
+Advisory-only contract fields surfaced in deploy readiness/history/diagnostics:
+- `expected_workflow_outputs`
+- `deploy_evidence_contract_status`
+- `deploy_evidence_contract_reasons`
+- `workflow_contract_advisory`
+
+Contract status meanings:
+- `confirmed_live_evidence`: explicit URL evidence captured from `workflow_output` or `deploy_result`
+- `workflow_placeholder_advisory`: workflow appears placeholder/non-deploying
+- `workflow_contract_incomplete_advisory`: workflow dispatches but misses managed deploy contract markers
+- `workflow_succeeded_without_explicit_evidence`: run succeeded but emitted no explicit live URL evidence
+- `workflow_run_failed_without_explicit_evidence`: run failed before explicit evidence was captured
+- `evidence_pending`: dispatch accepted, run evidence still pending
+- `evidence_not_attempted`: dispatch was blocked/not attempted
+- `unknown`: insufficient evidence to classify
+
+Important boundary:
+- `expected_publish_url` is guidance only.
+- `resolved_live_url` is confirmed only from explicit evidence (`workflow_output` or `deploy_result`).
+- repo/branch/domain naming or operator request inputs never confirm live deployment.
 
 Safety boundary:
 - workflow conformance diagnostics are deterministic and content-based.
@@ -918,8 +958,9 @@ Publish/deploy controls:
 In the Deploy Readiness traceability grid, use these fields for production verification:
 - `Deploy trace ID`: correlation handle for control-plane and refresh logs.
 - `Workflow identifier (requested vs used)`, `Ref / branch`, `Workflow source`: confirms which workflow target was requested, what was dispatched, and why.
+- `Dispatch ref sent`, `Workflow input keys (configured)`, `Workflow input keys (sent)`: confirms payload key-set truth for dispatch contract validation.
 - `Trigger support` and `Service/function availability`: separates workflow trigger compatibility from runtime service readiness.
-- `Dispatch result stage` and `Dispatch result reason`: identifies the exact stage that blocked/failed.
+- `Dispatch result stage`, `Workflow run lookup attempted`, `Workflow run found`, `Workflow job failure detected`, and `Post-dispatch state`: separates accepted-no-run eventual consistency from run-failed and run-in-progress outcomes.
 - `Workflow run ID` and `Workflow run state`: confirms when run evidence exists.
 - `Expected URL` vs `Confirmed live URL`: expected URL is guidance; confirmed URL appears only from explicit deploy/workflow evidence.
 

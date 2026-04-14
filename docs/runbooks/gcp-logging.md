@@ -239,8 +239,15 @@ Key non-secret fields:
 - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
 - `workflow_dispatch_resolution_source`, `workflow_file_path`, `workflow_name`
 - `actual_dispatch_identifier_sent`, `actual_dispatch_identifier_type_sent`
+- `dispatch_ref_sent`
+- `workflow_inputs_configured_keys`, `workflow_inputs_sent_keys`
 - `workflow_conformance_checked`, `workflow_conformance_status`
 - `workflow_conformance_reasons`, `workflow_conformance_evidence_summary`
+- `workflow_run_lookup_attempted`, `workflow_run_found`, `workflow_job_failure_detected`
+- `post_dispatch_state`
+- `expected_workflow_outputs`
+- `deploy_evidence_contract_status`, `deploy_evidence_contract_reasons`
+- `workflow_contract_advisory`
 - `workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`
 - `resolved_live_url`, `url_source`, `url_source_detail`
 - readiness check fields:
@@ -295,6 +302,24 @@ Dispatch-support interpretation:
 - `workflow_exists=true` with `workflow_dispatch_supported=false` means the selected workflow file resolved, but trigger-level manual dispatch support could not be confirmed (for example `workflow_dispatch` missing).
 - `workflow_conformance_status=workflow_placeholder_detected` or `workflow_contract_incomplete` is advisory for managed-deploy quality and is surfaced separately from trigger-level dispatch support.
 - Dispatch payload contract is bounded to explicitly configured deploy inputs (`deploy_config.inputs`) to avoid GitHub `workflow_dispatch` input-contract rejections from undeclared implicit fields.
+
+Post-dispatch state interpretation:
+- `post_dispatch_state=dispatch_not_attempted` means readiness/preflight blocked dispatch.
+- `post_dispatch_state=dispatch_accepted_no_run` means dispatch transport accepted but no workflow run evidence is available yet.
+- `post_dispatch_state=workflow_run_pending` or `workflow_run_in_progress` means run evidence exists and execution is not terminal.
+- `post_dispatch_state=workflow_run_failed` means run evidence exists with non-success terminal conclusion.
+- `post_dispatch_state=workflow_run_succeeded_without_live_url` means run completed successfully but no explicit live URL evidence has been captured.
+- `post_dispatch_state=workflow_run_succeeded_with_live_url` means explicit live URL evidence is present.
+
+Deploy evidence contract interpretation:
+- `deploy_evidence_contract_status=confirmed_live_evidence` means explicit deploy evidence set `resolved_live_url`.
+- `workflow_placeholder_advisory` means selected workflow appears placeholder/non-deploying.
+- `workflow_contract_incomplete_advisory` means workflow is dispatchable but missing managed contract markers for explicit evidence capture.
+- `workflow_succeeded_without_explicit_evidence` means run succeeded but did not emit expected explicit URL output evidence.
+- `workflow_run_failed_without_explicit_evidence` means run failed before explicit evidence capture.
+- `evidence_pending` means dispatch/run evidence is still pending.
+- `evidence_not_attempted` means dispatch was blocked/not attempted.
+- `expected_workflow_outputs` lists currently supported explicit workflow output keys (`live_url`, `resolved_live_url`, `deployed_url`).
 
 Dispatch-stage interpretation note:
 - if target-readiness preflight already logged `repo_exists=true`, `ref_exists=true`, `workflow_exists=true`, and a later `workflow_dispatch` call fails, prefer workflow dispatchability troubleshooting before assuming branch/ref drift.
@@ -373,9 +398,11 @@ Use the latest `deploy_trace_id` from the workspace traceability grid and evalua
      - `workflow_run_id` present
      - `resolved_live_url` absent
    - Interpretation:
-     - Run evidence exists, but no explicit URL evidence has been captured yet.
+   - Run evidence exists, but no explicit URL evidence has been captured yet.
    - Contract reminder:
      - `expected_publish_url` is guidance only.
+     - `deploy_evidence_contract_status` and `workflow_contract_advisory` explain whether run success still lacks required explicit evidence.
+     - compare workflow output payload keys against `expected_workflow_outputs`.
    - Confirmed live URL appears only when explicit evidence sets `resolved_live_url` with `url_source=workflow_output` or `url_source=deploy_result`.
 
 5. **Dispatch succeeds but deployment still does not reach GKE**
