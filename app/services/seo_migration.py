@@ -1550,12 +1550,10 @@ class SEOMigrationService:
         actual_dispatch_identifier_type_sent: str | None = None
         dispatch_attempted = False
         dispatch_result_stage: str | None = None
+        # Keep workflow_dispatch payload contract bounded to explicitly configured deploy inputs.
+        # Implicit runtime metadata (site_id/artifact_version/ga_measurement_id/etc.) should not
+        # be auto-injected because GitHub rejects undeclared workflow_dispatch inputs.
         deploy_inputs = dict(deploy_target["inputs"])
-        deploy_inputs.setdefault("site_id", site.id)
-        deploy_inputs.setdefault("artifact_version", str(artifact.version))
-        deploy_inputs.setdefault("artifact_version_id", artifact.id)
-        if workspace.last_published_commit_sha:
-            deploy_inputs.setdefault("published_commit_sha", workspace.last_published_commit_sha)
         analytics_config = _normalize_analytics_config(workspace.analytics_config_json)
         analytics_insertion_mode = str(analytics_config.get("insertion_mode") or "publish_and_deploy")
         effective_ga_measurement_id = _resolve_effective_ga_measurement_id(
@@ -1564,8 +1562,6 @@ class SEOMigrationService:
             override_measurement_id=None,
             phase="deploy",
         )
-        if effective_ga_measurement_id:
-            deploy_inputs.setdefault("ga_measurement_id", effective_ga_measurement_id)
         if not dry_run and _is_duplicate_deploy_attempt(
             history=workspace.deploy_history_json,
             artifact_version_id=artifact.id,

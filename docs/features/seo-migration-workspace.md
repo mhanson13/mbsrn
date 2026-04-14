@@ -982,6 +982,7 @@ Deploy failures:
   - `workflow_dispatch_supported=false` means trigger-level dispatch support is missing/invalid for the target ref
   - `workflow_conformance_status=workflow_placeholder_detected` or `workflow_contract_incomplete` indicates managed-template quality warnings while trigger-level dispatch support is reported separately
   - mismatched `requested_ref` vs `resolved_ref` indicates ref resolution drift
+  - dispatch payload inputs are taken from explicit `deploy_config.inputs` only (no implicit auto-injected workflow inputs), keeping GitHub `workflow_dispatch` input contracts deterministic
 
 Verification checklist:
 - publish success:

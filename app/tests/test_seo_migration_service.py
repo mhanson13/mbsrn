@@ -2084,7 +2084,83 @@ def test_publish_and_deploy_flow_records_status_and_analytics(db_session) -> Non
     assert deploy_result.workspace.deploy_status == "deploy_requested"
     assert publisher.deploy_calls
     deploy_target, _ = publisher.deploy_calls[-1]
-    assert deploy_target.inputs.get("ga_measurement_id") == "G-WORK1234"
+    assert "ga_measurement_id" not in deploy_target.inputs
+
+
+def test_deploy_dispatch_payload_uses_explicit_configured_inputs_only(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session, ga_measurement_id="G-SITE1234")
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    service.update_publish_config(
+        business_id=business_id,
+        site_id=site_id,
+        publish_config={
+            "enabled": True,
+            "repo_owner": "acme",
+            "repo_name": "tnmfire-site",
+            "branch": "main",
+            "artifact_root": "sites/tnmfire",
+        },
+        principal_id="principal-1",
+    )
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "workflow_id": "deploy-www-prod.yml",
+            "ref": "main",
+            "inputs": {"site_url": "https://www.tnmfire.com"},
+        },
+        principal_id="principal-1",
+    )
+    service.update_analytics_config(
+        business_id=business_id,
+        site_id=site_id,
+        analytics_config={
+            "enabled": True,
+            "ga_measurement_id": "G-WORK1234",
+            "insertion_mode": "publish_and_deploy",
+        },
+        principal_id="principal-1",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes="Approved for publish",
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message="Publish migration",
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.deploy_calls
+    deploy_target, _ = publisher.deploy_calls[-1]
+    assert deploy_target.inputs == {"site_url": "https://www.tnmfire.com"}
 
 
 def test_publish_records_expected_publish_url_when_determinable(db_session) -> None:
