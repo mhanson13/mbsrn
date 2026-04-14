@@ -291,6 +291,10 @@ Workflow conformance status guidance:
 - `workflow_unreadable`: workflow file existed but content could not be decoded/read safely for conformance checks.
 - `workflow_missing`: workflow file payload was unavailable during conformance evaluation.
 
+Dispatch-support interpretation:
+- `workflow_exists=true` with `workflow_dispatch_supported=false` means the selected workflow file resolved, but trigger-level manual dispatch support could not be confirmed (for example `workflow_dispatch` missing).
+- `workflow_conformance_status=workflow_placeholder_detected` or `workflow_contract_incomplete` is advisory for managed-deploy quality and is surfaced separately from trigger-level dispatch support.
+
 Dispatch-stage interpretation note:
 - if target-readiness preflight already logged `repo_exists=true`, `ref_exists=true`, `workflow_exists=true`, and a later `workflow_dispatch` call fails, prefer workflow dispatchability troubleshooting before assuming branch/ref drift.
 - if `workflow_dispatch_supported=true` but `dispatch_service_availability=false`, treat this as service/function readiness unavailability (not workflow identity/trigger mismatch).

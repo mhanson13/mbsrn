@@ -226,6 +226,13 @@ describe("admin route", () => {
     expect(
       screen.getByText('severity="ERROR" resource.labels.namespace_name="mbsrn" -textPayload =~ "INFO*"'),
     ).toBeInTheDocument();
+    const runQueryButton = screen.getByRole("button", { name: "Run Query" });
+    const nextPageButton = screen.getByRole("button", { name: "Next Page" });
+    const useExampleButton = screen.getByRole("button", { name: "Use example" });
+    const gcpActionRow = runQueryButton.closest(".form-actions");
+    expect(gcpActionRow).not.toBeNull();
+    expect(nextPageButton.closest(".form-actions")).toBe(gcpActionRow);
+    expect(useExampleButton.closest(".form-actions")).toBe(gcpActionRow);
   });
 
   it("shows lightweight Search Console property format hint for obvious invalid input", async () => {

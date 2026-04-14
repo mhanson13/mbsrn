@@ -969,11 +969,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_file_payload=workflow_file_payload,
             workflow_trigger_types=trigger_types,
         )
-        if conformance.conformance_status in {
-            _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_DISPATCH_MISSING,
-            _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_PLACEHOLDER_DETECTED,
-            _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_CONTRACT_INCOMPLETE,
-        }:
+        if conformance.conformance_status == _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_DISPATCH_MISSING:
             raise SEOMigrationGitHubPublisherError(
                 code="workflow_not_dispatchable",
                 safe_message="GitHub workflow is not dispatchable for the deploy target.",

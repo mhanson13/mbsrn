@@ -980,6 +980,7 @@ Deploy failures:
   - `workflow_exists=false` means workflow bootstrap/repair did not verify on target ref
   - `workflow_dispatch_ready=false` means workflow metadata exists but is not dispatchable on target ref
   - `workflow_dispatch_supported=false` means trigger-level dispatch support is missing/invalid for the target ref
+  - `workflow_conformance_status=workflow_placeholder_detected` or `workflow_contract_incomplete` indicates managed-template quality warnings while trigger-level dispatch support is reported separately
   - mismatched `requested_ref` vs `resolved_ref` indicates ref resolution drift
 
 Verification checklist:

@@ -2729,12 +2729,23 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             >
               Next Page
             </button>
+            <button
+              type="button"
+              className="button button-tertiary"
+              onClick={() => setGcpLogsFilterInput(GCP_LOGS_SAMPLE_FILTER)}
+              disabled={gcpLogsLoading}
+            >
+              Use example
+            </button>
           </div>
 
           <p className="hint muted">
             Scope: <code>{gcpLogsResourceScope.length > 0 ? gcpLogsResourceScope.join(", ") : "configured project"}</code>
             {" | "}
             Order: <code>{gcpLogsOrderBy}</code>
+          </p>
+          <p className="hint muted">
+            Example filter: <code>{GCP_LOGS_SAMPLE_FILTER}</code>
           </p>
           {gcpLogsHasExecuted && gcpLogsEffectiveFilter ? (
             <p className="hint muted">
@@ -2749,18 +2760,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             <p className="hint muted">No entries returned for the current filter and page.</p>
           ) : null}
         </FormContainer>
-
-        <p className="hint muted">
-          Example filter: <code>{GCP_LOGS_SAMPLE_FILTER}</code>{" "}
-          <button
-            type="button"
-            className="button button-tertiary button-inline"
-            onClick={() => setGcpLogsFilterInput(GCP_LOGS_SAMPLE_FILTER)}
-            disabled={gcpLogsLoading}
-          >
-            Use example
-          </button>
-        </p>
 
         <div className="table-container">
           <table className="table">

@@ -385,7 +385,7 @@ def test_check_deploy_target_readiness_marks_workflow_conformant_when_managed_co
     assert len(calls) == 4
 
 
-def test_check_deploy_target_readiness_classifies_placeholder_workflow_as_not_dispatchable(monkeypatch) -> None:
+def test_check_deploy_target_readiness_preserves_placeholder_conformance_without_blocking_dispatch(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     encoded_workflow = _encode_workflow_yaml(
         (
@@ -428,15 +428,18 @@ def test_check_deploy_target_readiness_classifies_placeholder_workflow_as_not_di
         calls,
     )
     publisher = GitHubSEOMigrationPublisher(token="test-token")
-    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
-        publisher.check_deploy_target_readiness(
-            target=_dispatch_target(),
-            allow_ref_repair=False,
-            allow_workflow_repair=False,
-            dry_run=False,
-        )
-    assert exc_info.value.code == "workflow_not_dispatchable"
-    assert exc_info.value.stage == "workflow_lookup"
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+    assert readiness.workflow_dispatch_ready is True
+    assert readiness.workflow_dispatch_supported is True
+    assert readiness.workflow_conformance_checked is True
+    assert readiness.workflow_conformance_status == "workflow_placeholder_detected"
+    assert readiness.workflow_conformance_reasons == ("placeholder_workflow_content_detected",)
+    assert "placeholder_markers" in str(readiness.workflow_conformance_evidence_summary or "")
     assert len(calls) == 4
 
 
