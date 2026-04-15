@@ -16,8 +16,9 @@ Compatibility route:
 - Google Profile connection/reconnect state
 - location verification workflow state
 - GA4 property setup for the selected site
+- site-wide migration analytics insertion rules (`enabled`, measurement id, insertion mode)
 
-GA4 setup was intentionally moved out of the site workspace so migration/recommendation workflow surfaces stay focused on execution.
+GA4 setup and analytics insertion rules were intentionally moved out of the site workspace/migration route so execution surfaces stay focused on migration and recommendation actions.
 
 ## Boundary
 - No secrets or credential values are exposed in UI.

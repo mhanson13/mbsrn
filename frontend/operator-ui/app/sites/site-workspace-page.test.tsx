@@ -644,6 +644,172 @@ describe("site migration workflow route", () => {
       expect.stringContaining("Artifact Two Home"),
     );
   });
+
+  it("keeps draft review actions in Section D and out of publish/deploy controls", async () => {
+    render(<SiteMigrationWorkflowPage />);
+
+    const reviewSection = await screen.findByTestId("migration-artifact-review-section");
+    expect(within(reviewSection).getByTestId("migration-preview-draft-button")).toBeInTheDocument();
+    expect(within(reviewSection).getByTestId("migration-approve-draft-button")).toBeInTheDocument();
+    expect(within(reviewSection).getByTestId("migration-delete-draft-button")).toBeInTheDocument();
+
+    const publishDeploySection = screen.getByTestId("migration-publish-deploy-section");
+    expect(within(publishDeploySection).queryByTestId("migration-approve-draft-button")).not.toBeInTheDocument();
+    expect(within(publishDeploySection).queryByTestId("migration-delete-draft-button")).not.toBeInTheDocument();
+  });
+
+  it("renders a combined page and generated-file inspection surface for selected artifacts", async () => {
+    const user = userEvent.setup();
+    render(<SiteMigrationWorkflowPage />);
+
+    const inspectionSurface = await screen.findByTestId("migration-draft-inspection-surface");
+    expect(within(inspectionSurface).getByText("Page & File Inspection")).toBeInTheDocument();
+    expect(within(inspectionSurface).getByTestId("migration-page-map-list")).toBeInTheDocument();
+
+    await user.click(within(inspectionSurface).getByRole("button", { name: "index.html" }));
+    expect(within(inspectionSurface).getByText("Selected file: index.html")).toBeInTheDocument();
+    expect(within(inspectionSurface).getByTestId("migration-file-preview-iframe")).toBeInTheDocument();
+  });
+
+  it("consolidates destination metadata labels and removes analytics insertion rules from migration route", async () => {
+    render(<SiteMigrationWorkflowPage />);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    expect(within(destinationSummary).getByTestId("migration-destination-admin-block")).toBeInTheDocument();
+    expect(within(destinationSummary).getByTestId("migration-destination-operator-block")).toBeInTheDocument();
+    expect(within(destinationSummary).getByTestId("migration-destination-derived-block")).toBeInTheDocument();
+    expect(within(destinationSummary).getByTestId("migration-destination-runtime-block")).toBeInTheDocument();
+    expect(within(destinationSummary).getAllByText("Admin-set").length).toBeGreaterThan(0);
+    expect(within(destinationSummary).getAllByText("Runtime").length).toBeGreaterThan(0);
+
+    const publishReadiness = screen.getByTestId("migration-publish-readiness");
+    const deployReadiness = screen.getByTestId("migration-deploy-readiness");
+    expect(within(publishReadiness).queryByText("GitHub account/owner")).not.toBeInTheDocument();
+    expect(within(deployReadiness).queryByText("Workflow identifier")).not.toBeInTheDocument();
+    expect(within(publishReadiness).queryByText(/Runtime publisher:/i)).not.toBeInTheDocument();
+    expect(within(deployReadiness).queryByText(/Runtime publisher:/i)).not.toBeInTheDocument();
+
+    expect(screen.queryByText("Analytics Insertion Rules")).not.toBeInTheDocument();
+  });
+
+  it("keeps destination blockers always visible and secondary diagnostics behind disclosure", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        publish_readiness: {
+          ready: false,
+          reasons: ["Publish target is not enabled."],
+          target: {},
+          last_failure_category: "config_missing",
+          last_failure_reason: "authentication_failed",
+          last_failure_stage: "config_validation",
+          last_failure_message: "GitHub publish/deploy authentication failed.",
+        },
+        deploy_readiness: {
+          ready: false,
+          reasons: ["Deploy target is not enabled."],
+          target: {
+            enabled: false,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            workflow_id: "deploy-tnmfire-www-prod.yml",
+            ref: "main",
+            deploy_workflow_mode: "site_repo_template_v1",
+            target_environment_key: "gke_prod",
+            target_environment_source: "admin_config",
+            site_workflow_file_path: ".github/workflows/deploy-tnmfire-www-prod.yml",
+          },
+          last_failure_category: "target_invalid",
+          last_failure_reason: "workflow_not_dispatchable",
+          last_failure_stage: "workflow_lookup",
+          last_failure_message: "GitHub repository or workflow target was not found.",
+        },
+      }),
+    );
+    render(<SiteMigrationWorkflowPage />);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    expect(within(destinationSummary).getByTestId("migration-destination-blockers")).toBeInTheDocument();
+    expect(within(destinationSummary).getByTestId("migration-destination-publish-failure-category")).toHaveTextContent(
+      /Category:\s*config missing/i,
+    );
+    expect(within(destinationSummary).getByTestId("migration-destination-publish-failure-reason")).toHaveTextContent(
+      /Reason:\s*authentication failed/i,
+    );
+    expect(within(destinationSummary).getByTestId("migration-destination-publish-failure-stage")).toHaveTextContent(
+      /Stage:\s*config validation/i,
+    );
+    expect(within(destinationSummary).getByTestId("migration-destination-deploy-failure-category")).toHaveTextContent(
+      /Category:\s*target invalid/i,
+    );
+    expect(within(destinationSummary).getByTestId("migration-destination-deploy-failure-reason")).toHaveTextContent(
+      /Reason:\s*workflow not dispatchable/i,
+    );
+    expect(within(destinationSummary).getByTestId("migration-destination-deploy-failure-stage")).toHaveTextContent(
+      /Stage:\s*workflow lookup/i,
+    );
+    expect(within(destinationSummary).getByText(/GitHub publish\/deploy authentication failed\./i)).toBeInTheDocument();
+    expect(within(destinationSummary).getByText(/GitHub repository or workflow target was not found\./i)).toBeInTheDocument();
+
+    const secondaryDetails = within(destinationSummary).getByTestId("migration-destination-secondary-details");
+    expect(secondaryDetails).not.toHaveAttribute("open");
+
+    const collapsedUrlSource = within(destinationSummary).getByText("URL source");
+    expect(collapsedUrlSource).not.toBeVisible();
+    await user.click(within(destinationSummary).getByText("Show additional destination diagnostics"));
+    expect(secondaryDetails).toHaveAttribute("open");
+    expect(within(destinationSummary).getByText("Draft entry file")).toBeVisible();
+    expect(within(destinationSummary).getByText("URL source")).toBeVisible();
+  });
+
+  it("shows operator-set destination labels when repository overrides are configured", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          publish_config_json: {
+            enabled: true,
+            repo_owner: null,
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+          },
+        }),
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    expect(within(destinationSummary).getAllByText("Operator-set").length).toBeGreaterThan(0);
+    expect(within(destinationSummary).getByText("mhanson13/tnmfire")).toBeInTheDocument();
+  });
+
+  it("renders advanced diagnostics and history with collapsible publish/deploy history panels", async () => {
+    const user = userEvent.setup();
+    render(<SiteMigrationWorkflowPage />);
+
+    expect(await screen.findByRole("heading", { name: "Advanced Diagnostics & History" })).toBeInTheDocument();
+    await user.click(screen.getByText("Show detailed migration failure diagnostics"));
+    expect(screen.getByText("Show publish history")).toBeInTheDocument();
+    expect(screen.getByText("Show deploy history")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Show publish history"));
+    expect(await screen.findByTestId("migration-publish-history")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Show deploy history"));
+    expect(await screen.findByTestId("migration-deploy-history")).toBeInTheDocument();
+  });
 });
 
 function buildSite(overrides: Partial<SEOSite> = {}): SEOSite {

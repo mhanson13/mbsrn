@@ -14,11 +14,14 @@ import {
   disconnectGoogleBusinessProfile,
   fetchGoogleBusinessProfileConnection,
   fetchGoogleBusinessProfileLocations,
+  fetchMigrationWorkspaceSummary,
   fetchGoogleBusinessProfileVerificationStatus,
   retryGoogleBusinessProfileLocationVerification,
   startGoogleBusinessProfileConnect,
   startGoogleBusinessProfileLocationVerification,
+  updateMigrationAnalyticsConfig,
   updateSite,
+  upsertMigrationWorkspace,
 } from "../../lib/api/client";
 import type {
   GoogleBusinessProfileConnectionStatusResponse,
@@ -58,6 +61,13 @@ export default function BusinessProfilePage() {
   const [ga4SaveMessage, setGa4SaveMessage] = useState<string | null>(null);
   const [ga4SaveError, setGa4SaveError] = useState<string | null>(null);
   const [ga4SaveLoading, setGa4SaveLoading] = useState(false);
+  const [analyticsEnabled, setAnalyticsEnabled] = useState(true);
+  const [analyticsMeasurementId, setAnalyticsMeasurementId] = useState("");
+  const [analyticsMode, setAnalyticsMode] = useState<"publish_only" | "publish_and_deploy">("publish_and_deploy");
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsSaveMessage, setAnalyticsSaveMessage] = useState<string | null>(null);
+  const [analyticsSaveError, setAnalyticsSaveError] = useState<string | null>(null);
+  const [analyticsSaveLoading, setAnalyticsSaveLoading] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!context.token || !context.businessId) {
@@ -179,6 +189,68 @@ export default function BusinessProfilePage() {
   useEffect(() => {
     setGa4PropertyIdInput(selectedSite?.ga4_property_id?.trim() || "");
   }, [selectedSite?.ga4_property_id, selectedSite?.id]);
+
+  useEffect(() => {
+    if (!context.token || !context.businessId || !selectedSite) {
+      setAnalyticsEnabled(true);
+      setAnalyticsMeasurementId("");
+      setAnalyticsMode("publish_and_deploy");
+      setAnalyticsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const loadAnalyticsSettings = async () => {
+      setAnalyticsLoading(true);
+      setAnalyticsSaveError(null);
+      setAnalyticsSaveMessage(null);
+      try {
+        const summary = await fetchMigrationWorkspaceSummary(context.token, context.businessId, selectedSite.id);
+        const analyticsConfig =
+          summary.workspace.analytics_config_json && typeof summary.workspace.analytics_config_json === "object"
+            ? (summary.workspace.analytics_config_json as Record<string, unknown>)
+            : {};
+        const publishReadiness =
+          summary.publish_readiness && typeof summary.publish_readiness === "object"
+            ? (summary.publish_readiness as Record<string, unknown>)
+            : {};
+        const deployReadiness =
+          summary.deploy_readiness && typeof summary.deploy_readiness === "object"
+            ? (summary.deploy_readiness as Record<string, unknown>)
+            : {};
+        const workspaceMeasurement = String(analyticsConfig.ga_measurement_id || "").trim();
+        const readinessWorkspaceMeasurement =
+          String(publishReadiness.workspace_ga_measurement_id || "").trim()
+          || String(deployReadiness.workspace_ga_measurement_id || "").trim();
+        const readinessSiteMeasurement =
+          String(publishReadiness.site_ga_measurement_id || "").trim()
+          || String(deployReadiness.site_ga_measurement_id || "").trim();
+        const nextMode = String(analyticsConfig.insertion_mode || "").trim();
+        if (!cancelled) {
+          setAnalyticsEnabled(analyticsConfig.enabled !== false);
+          setAnalyticsMeasurementId(workspaceMeasurement || readinessWorkspaceMeasurement || readinessSiteMeasurement);
+          setAnalyticsMode(nextMode === "publish_only" ? "publish_only" : "publish_and_deploy");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          if (err instanceof ApiRequestError && err.status === 404) {
+            setAnalyticsEnabled(true);
+            setAnalyticsMeasurementId("");
+            setAnalyticsMode("publish_and_deploy");
+          } else {
+            setAnalyticsSaveError(err instanceof Error ? err.message : "Failed to load analytics insertion settings.");
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setAnalyticsLoading(false);
+        }
+      }
+    };
+    void loadAnalyticsSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, [context.businessId, context.token, selectedSite]);
 
   async function handleConnect() {
     if (!context.token || !context.businessId) {
@@ -317,6 +389,42 @@ export default function BusinessProfilePage() {
       setGa4SaveError(err instanceof Error ? err.message : "Failed to save GA4 property.");
     } finally {
       setGa4SaveLoading(false);
+    }
+  }
+
+  async function handleSaveAnalyticsSettings() {
+    if (!context.token || !context.businessId || !selectedSite) {
+      return;
+    }
+    setAnalyticsSaveLoading(true);
+    setAnalyticsSaveError(null);
+    setAnalyticsSaveMessage(null);
+    const payload = {
+      analytics_config: {
+        enabled: analyticsEnabled,
+        ga_measurement_id: analyticsMeasurementId.trim() || null,
+        insertion_mode: analyticsMode,
+      },
+    } as const;
+    try {
+      await updateMigrationAnalyticsConfig(context.token, context.businessId, selectedSite.id, payload);
+      setAnalyticsSaveMessage("Analytics insertion rules saved.");
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 404) {
+        try {
+          await upsertMigrationWorkspace(context.token, context.businessId, selectedSite.id, {});
+          await updateMigrationAnalyticsConfig(context.token, context.businessId, selectedSite.id, payload);
+          setAnalyticsSaveMessage("Analytics insertion rules saved.");
+        } catch (retryError) {
+          setAnalyticsSaveError(
+            retryError instanceof Error ? retryError.message : "Failed to save analytics insertion settings.",
+          );
+        }
+      } else {
+        setAnalyticsSaveError(err instanceof Error ? err.message : "Failed to save analytics insertion settings.");
+      }
+    } finally {
+      setAnalyticsSaveLoading(false);
     }
   }
 
@@ -476,6 +584,79 @@ export default function BusinessProfilePage() {
         ) : (
           <p className="hint muted">
             Select a site in the global site selector to configure GA4 property connection.
+          </p>
+        )}
+      </SectionCard>
+
+      <SectionCard variant="summary" className="role-surface-support">
+        <SectionHeader
+          title="Analytics Insertion Rules"
+          subtitle="Configure site-wide migration analytics insertion from the Google Profile surface."
+          headingLevel={2}
+          variant="support"
+        />
+        {selectedSite ? (
+          <div className="stack-tight">
+            <p className="hint muted">
+              Site: <strong>{selectedSite.display_name}</strong> ({selectedSite.normalized_domain})
+            </p>
+            {analyticsLoading ? <p className="hint muted">Loading analytics insertion settings...</p> : null}
+            <label className="link-row">
+              <input
+                type="checkbox"
+                checked={analyticsEnabled}
+                onChange={(event) => setAnalyticsEnabled(event.target.checked)}
+                disabled={analyticsLoading || analyticsSaveLoading}
+              />
+              <span>Enable controlled analytics insertion for migration publish/deploy</span>
+            </label>
+            <label className="stack-tight" htmlFor="google-profile-analytics-measurement-id">
+              <span className="hint muted">GA measurement ID</span>
+              <input
+                id="google-profile-analytics-measurement-id"
+                value={analyticsMeasurementId}
+                onChange={(event) => {
+                  setAnalyticsMeasurementId(event.target.value);
+                  setAnalyticsSaveError(null);
+                  setAnalyticsSaveMessage(null);
+                }}
+                placeholder="G-XXXXXXX"
+                disabled={analyticsLoading || analyticsSaveLoading}
+              />
+            </label>
+            <label className="stack-tight" htmlFor="google-profile-analytics-mode">
+              <span className="hint muted">Insertion mode</span>
+              <select
+                id="google-profile-analytics-mode"
+                value={analyticsMode}
+                onChange={(event) =>
+                  setAnalyticsMode(event.target.value === "publish_only" ? "publish_only" : "publish_and_deploy")
+                }
+                disabled={analyticsLoading || analyticsSaveLoading}
+              >
+                <option value="publish_and_deploy">Insert during publish and deploy</option>
+                <option value="publish_only">Insert during publish only</option>
+              </select>
+            </label>
+            <p className="hint muted">
+              These settings are site-wide and used by migration publish/deploy controls.
+            </p>
+            {analyticsSaveMessage ? <p className="hint success">{analyticsSaveMessage}</p> : null}
+            {analyticsSaveError ? <p className="hint error">{analyticsSaveError}</p> : null}
+            <div className="row-wrap-tight">
+              <button
+                className="button button-primary"
+                type="button"
+                onClick={() => void handleSaveAnalyticsSettings()}
+                disabled={analyticsLoading || analyticsSaveLoading}
+              >
+                {analyticsSaveLoading ? "Saving..." : "Save Analytics Rules"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="hint muted">
+            Select a site in the global site selector to configure analytics insertion rules.
           </p>
         )}
       </SectionCard>

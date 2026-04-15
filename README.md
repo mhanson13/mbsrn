@@ -36,7 +36,7 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 - Recommendation apply outcome visibility v1 (compact workspace outcome card showing what changed, current apply visibility state, and expected refresh timing)
 - Recommendation outcome snapshot standardization across recommendation-facing routes (dashboard guidance + queue/detail/run summary-first status/change/follow-up/visibility cues)
 - Recommendation decisiveness + rationale/evidence compression pass for dashboard/queue/detail surfaces (why-now/actionable/blocking/after-action cues, compact choice-support tags, lifecycle-stage/revisit cues, freshness/review posture + refresh-check cues, and trust-safe evidence preview wording)
-- Google Profile surface now owns Google integrations (including GA4 property setup) with direct navigation from site workspace
+- Google Profile surface now owns Google integrations (including GA4 property setup and site-wide analytics insertion rules) with direct navigation from site workspace
 - Site workspace tabs now prioritize `Recommendations` and `Activity` while migration runs on its dedicated route
 
 ## Trust Boundary

@@ -65,7 +65,7 @@ Operator UI now uses a tighter dashboard hierarchy for migration review without 
   3. `C. Artifact Quality Summary`
   4. `D. Artifact Review`
   5. `E. Approval / Publish / Deploy`
-  6. `F. Advanced Diagnostics`
+  6. `F. Advanced Diagnostics & History`
 
 Purpose:
 - improve <10-second scanability for operators
@@ -86,6 +86,7 @@ Site operator page information architecture update:
 - embedded migration workflow content was removed from the main site workspace.
 - migration now opens in its own dedicated workflow route (`/sites/[site_id]/migration`).
 - GA4 setup was moved out of the site workspace and into Google Profile.
+- analytics insertion rules were also moved out of migration and into Google Profile because they are site-wide controls.
 - this is presentation and information-hierarchy only; migration workflow semantics are unchanged.
 - site workspace hero actions use a shared route-level action cluster pattern:
   - secondary navigation actions (sites/audits)
@@ -126,6 +127,16 @@ Destination and preview trust additions:
   - expected publish destination (owner/repo/branch/path and derived repository tree URL when determinable)
   - expected published site URL (`expected_publish_url`) when deterministic from target config
   - resolved live URL (`resolved_live_url`) when deploy metadata/runtime result provides a concrete URL
+- destination summary scanability is grouped into compact blocks:
+  - Admin-controlled destination
+  - Operator-controlled destination
+  - Derived URLs / publish target
+  - Runtime / evidence state
+  - lower-value troubleshooting metadata is available under `Show additional destination diagnostics`
+- blocker visibility rule:
+  - publish/deploy blockers stay visible without expansion
+  - degraded-state blocker rows show compact failure identifiers (`category`, `reason`, `stage`) when available
+  - readiness cards remain concise and point back to the destination summary for authoritative destination/runtime metadata
 - URL source metadata now uses stable values:
   - `deterministic_target_config` (derived from configured deploy target inputs)
   - `workflow_output` (explicit URL captured from GitHub workflow completion metadata)
@@ -153,11 +164,18 @@ Destination and preview trust additions:
     - latest summary fields only fill truly missing values
   - fallback usage is explicitly called out in diagnostics when selected-attempt fields are incomplete so operators do not mistake summary values for selected-attempt evidence
   - when no publish/deploy attempt is selected, diagnostics intentionally use latest summary context
+  - publish/deploy history now appears under `Advanced Diagnostics & History` as collapsible troubleshooting sections
 - draft website preview is available before publish/deploy from the selected artifact version:
   - rendered in a sandboxed, read-only iframe
   - explicitly labeled as draft-only (`not published`, `not deployed`)
   - supports whole-site preview across generated HTML pages via a page selector when multiple pages exist
   - unavailable state is explicit when artifact HTML is missing
+- Section D now owns review-stage draft actions:
+  - `Preview Draft`
+  - `Approve Selected Draft`
+  - `Delete Selected Draft` (eligibility rules unchanged)
+  - this keeps Section E focused on publish/deploy execution controls
+- page map, generated files, and selected-file preview are presented in one combined inspection surface
 - artifact file preview now supports explicit hide/show controls so operators can collapse preview content without losing selected file context
 - draft lifecycle cleanup now includes single-draft deletion:
   - eligible unpublished drafts can be deleted from the migration workflow

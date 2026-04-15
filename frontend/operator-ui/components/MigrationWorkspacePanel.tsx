@@ -21,14 +21,12 @@ import {
   publishMigrationArtifactVersion,
   refreshMigrationDeployStatus,
   updateMigrationPublishConfig,
-  updateMigrationAnalyticsConfig,
   updateMigrationDeployConfig,
   updateMigrationEnrichedContent,
   updateMigrationRequirements,
   upsertMigrationWorkspace,
 } from "../lib/api/client";
 import type {
-  MigrationAnalyticsConfig,
   MigrationArtifactVersion,
   MigrationDeployConfig,
   MigrationEnrichedContentNotes,
@@ -50,7 +48,6 @@ type BusyAction =
   | "save_enriched"
   | "save_publish_config"
   | "save_deploy_config"
-  | "save_analytics_config"
   | "generate"
   | "approve"
   | "publish"
@@ -86,12 +83,6 @@ const EMPTY_PUBLISH_CONFIG: MigrationPublishConfig = {
   repo_name: null,
   branch: null,
   artifact_root: null,
-};
-
-const EMPTY_ANALYTICS_CONFIG: MigrationAnalyticsConfig = {
-  enabled: true,
-  ga_measurement_id: null,
-  insertion_mode: "publish_and_deploy",
 };
 
 type MigrationFailureCategory =
@@ -1627,10 +1618,6 @@ export function MigrationWorkspacePanel({
 
   const [deployEnabled, setDeployEnabled] = useState(false);
 
-  const [analyticsEnabled, setAnalyticsEnabled] = useState(true);
-  const [analyticsMeasurementId, setAnalyticsMeasurementId] = useState("");
-  const [analyticsMode, setAnalyticsMode] = useState<"publish_only" | "publish_and_deploy">("publish_and_deploy");
-
   const [selectedArtifactVersionId, setSelectedArtifactVersionId] = useState("");
   const [approvalNotes, setApprovalNotes] = useState("");
   const [publishDryRun, setPublishDryRun] = useState(true);
@@ -1749,6 +1736,27 @@ export function MigrationWorkspacePanel({
     effectivePublishArtifactRoot,
     currentSiteUrl,
   });
+  const publishReadinessReasons = asStringList(publishReadiness.reasons);
+  const deployReadinessReasons = asStringList(deployReadiness.reasons);
+  const publishPrimaryBlockerMessage = !Boolean(publishReadiness.ready)
+    ? publishFailureMessage || publishRuntimeStatusMessage || publishReadinessReasons[0] || "Publish target is not ready."
+    : null;
+  const deploySummaryBlockerMessage = !Boolean(deployReadiness.ready)
+    ? deployFailureMessage || deployPrimaryBlockerMessage || deployRuntimeStatusMessage || deployReadinessReasons[0] || "Deploy target is not ready."
+    : null;
+  const hasDestinationBlockers = Boolean(publishPrimaryBlockerMessage || deploySummaryBlockerMessage);
+  const publishTargetStateLabel = toDestinationStateLabel(destinationSummary.publishState);
+  const deployTargetStateLabel = toDestinationStateLabel(destinationSummary.deployState);
+  const hasDestinationAdditionalDiagnostics =
+    Boolean(destinationSummary.draftPreviewState) ||
+    Boolean(destinationSummary.draftPreviewEntryPath) ||
+    Boolean(destinationSummary.currentSiteUrl) ||
+    Boolean(destinationSummary.publishRepositoryUrl) ||
+    Boolean(destinationSummary.publishExpectedPublishedUrl) ||
+    Boolean(destinationSummary.publishUrlSource) ||
+    Boolean(destinationSummary.publishUrlSourceDetail) ||
+    Boolean(destinationSummary.deployUrlSource) ||
+    Boolean(destinationSummary.deployUrlSourceDetail);
   const publishHistoryRecords = useMemo(
     () => publishHistory.map((item) => asRecord(item)),
     [publishHistory],
@@ -1788,11 +1796,19 @@ export function MigrationWorkspacePanel({
     asStringOrNull(migrationDiagnostics.last_publish_failure_reason) ||
     asStringOrNull(publishReadiness.last_failure_reason);
   const publishDiagnosticsFailureReasonCode = publishFailureReasonCodeFromSelected || publishFailureReasonCodeFromSummary;
+  const publishFailureStageFromSelected =
+    asStringOrNull(selectedPublishHistoryRecord.failure_stage) ||
+    asStringOrNull(selectedPublishHistoryRecord.dispatch_result_stage);
+  const publishFailureStageFromSummary =
+    asStringOrNull(migrationDiagnostics.last_publish_failure_stage) ||
+    asStringOrNull(publishReadiness.last_failure_stage);
+  const publishDiagnosticsFailureStage = publishFailureStageFromSelected || publishFailureStageFromSummary;
   const publishDiagnosticsUsingSummaryFallback =
     hasSelectedPublishAttempt &&
     ((!publishFailureCategoryFromSelected && !!publishFailureCategoryFromSummary) ||
       (!publishFailureMessageFromSelected && !!publishFailureMessageFromSummary) ||
-      (!publishFailureReasonCodeFromSelected && !!publishFailureReasonCodeFromSummary));
+      (!publishFailureReasonCodeFromSelected && !!publishFailureReasonCodeFromSummary) ||
+      (!publishFailureStageFromSelected && !!publishFailureStageFromSummary));
 
   const deployTraceId =
     asStringOrNull(selectedDeployHistoryRecord.deploy_trace_id) ||
@@ -2220,24 +2236,6 @@ export function MigrationWorkspacePanel({
     const rawDeployConfig = asRecord(workspace.deploy_config_json);
     setDeployEnabled(Boolean(rawDeployConfig.enabled));
 
-    const rawAnalyticsConfig = asRecord(workspace.analytics_config_json);
-    const publishReadiness = asRecord(nextSummary.publish_readiness);
-    const deployReadiness = asRecord(nextSummary.deploy_readiness);
-    const workspaceMeasurementId = asString(rawAnalyticsConfig.ga_measurement_id).trim();
-    const derivedWorkspaceMeasurementId =
-      asString(publishReadiness.workspace_ga_measurement_id).trim() ||
-      asString(deployReadiness.workspace_ga_measurement_id).trim();
-    const siteMeasurementId =
-      asString(publishReadiness.site_ga_measurement_id).trim() ||
-      asString(deployReadiness.site_ga_measurement_id).trim();
-    setAnalyticsEnabled(rawAnalyticsConfig.enabled !== false);
-    setAnalyticsMeasurementId(workspaceMeasurementId || derivedWorkspaceMeasurementId || siteMeasurementId);
-    const mode = asString(rawAnalyticsConfig.insertion_mode);
-    if (mode === "publish_only" || mode === "publish_and_deploy") {
-      setAnalyticsMode(mode);
-    } else {
-      setAnalyticsMode("publish_and_deploy");
-    }
   }, []);
 
   const loadWorkspaceData = useCallback(
@@ -2502,31 +2500,6 @@ export function MigrationWorkspacePanel({
     } catch (error) {
       setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save deploy target."));
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const handleSaveAnalyticsConfig = async (): Promise<void> => {
-    const payload: MigrationAnalyticsConfig = {
-      ...EMPTY_ANALYTICS_CONFIG,
-      enabled: analyticsEnabled,
-      ga_measurement_id: asStringOrNull(analyticsMeasurementId),
-      insertion_mode: analyticsMode,
-    };
-    setBusyAction("save_analytics_config");
-    setErrorMessage(null);
-    setErrorHint(null);
-    setStatusMessage(null);
-    try {
-      await updateMigrationAnalyticsConfig(token, businessId, siteId, {
-        analytics_config: payload,
-      });
-      setStatusMessage("Analytics insertion rules saved.");
-      await loadWorkspaceData(false);
-    } catch (error) {
-      setErrorHint(null);
-      setErrorMessage(toErrorMessage(error, "Failed to save analytics rules."));
     } finally {
       setBusyAction(null);
     }
@@ -2832,68 +2805,241 @@ export function MigrationWorkspacePanel({
           Draft preview, publish target, and deploy target are shown separately so operators can validate destination intent
           before execution.
         </span>
-        <WorkspaceMetadataGrid>
-          <WorkspaceMetadataItem label="Draft preview">
-            {toDestinationStateLabel(destinationSummary.draftPreviewState)}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Draft entry file">
-            {destinationSummary.draftPreviewEntryPath || "Not available"}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Publish target state">
-            {toDestinationStateLabel(destinationSummary.publishState)}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Expected publish location">
-            {destinationSummary.publishExpectedLocation || "Not yet determinable"}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Repository publish URL">
-            {destinationSummary.publishRepositoryUrl ? (
-              <a href={destinationSummary.publishRepositoryUrl} target="_blank" rel="noreferrer">
-                {destinationSummary.publishRepositoryUrl}
-              </a>
-            ) : (
-              "Not yet determinable"
-            )}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Expected published site URL">
-            {destinationSummary.publishExpectedPublishedUrl ? (
-              <a href={destinationSummary.publishExpectedPublishedUrl} target="_blank" rel="noreferrer">
-                {destinationSummary.publishExpectedPublishedUrl}
-              </a>
-            ) : (
-              "Not determinable from current configuration"
-            )}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Deploy URL state">
-            {toDestinationStateLabel(destinationSummary.deployState)}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Expected post-deploy site URL">
-            {destinationSummary.deployExpectedPublishUrl ? (
-              <a href={destinationSummary.deployExpectedPublishUrl} target="_blank" rel="noreferrer">
-                {destinationSummary.deployExpectedPublishUrl}
-              </a>
-            ) : (
-              "Not determinable from current configuration"
-            )}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Live URL (confirmed)">
-            {destinationSummary.deployResolvedLiveUrl ? (
-              <a href={destinationSummary.deployResolvedLiveUrl} target="_blank" rel="noreferrer">
-                {destinationSummary.deployResolvedLiveUrl}
-              </a>
-            ) : (
-              "Not yet confirmed"
-            )}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Current site URL">
-            {destinationSummary.currentSiteUrl || "Not available"}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="URL source">
-            {destinationSummary.deployUrlSource || destinationSummary.publishUrlSource || "unknown"}
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="URL source detail">
-            {destinationSummary.deployUrlSourceDetail || destinationSummary.publishUrlSourceDetail || "Not available"}
-          </WorkspaceMetadataItem>
-        </WorkspaceMetadataGrid>
+        {hasDestinationBlockers ? (
+          <div className="workspace-status-callout stack-tight" data-testid="migration-destination-blockers">
+            {publishPrimaryBlockerMessage ? (
+              <div className="stack-tight" data-testid="migration-destination-publish-blocker">
+                <div className="row-wrap-tight">
+                  <strong className="hint warning">Publish blocked</strong>
+                  {publishFailureCategory ? (
+                    <span className="badge badge-warn" data-testid="migration-destination-publish-failure-category">
+                      Category: {toFailureCategoryLabel(publishFailureCategory)}
+                    </span>
+                  ) : null}
+                  {publishDiagnosticsFailureReasonCode ? (
+                    <span className="badge badge-warn" data-testid="migration-destination-publish-failure-reason">
+                      Reason: {formatReasonCodeLabel(publishDiagnosticsFailureReasonCode)}
+                    </span>
+                  ) : null}
+                  {publishDiagnosticsFailureStage ? (
+                    <span className="badge badge-warn" data-testid="migration-destination-publish-failure-stage">
+                      Stage: {formatDispatchStageLabel(publishDiagnosticsFailureStage)}
+                    </span>
+                  ) : null}
+                </div>
+                <span className="hint warning">{publishPrimaryBlockerMessage}</span>
+              </div>
+            ) : null}
+            {deploySummaryBlockerMessage ? (
+              <div className="stack-tight" data-testid="migration-destination-deploy-blocker">
+                <div className="row-wrap-tight">
+                  <strong className="hint warning">Deploy blocked</strong>
+                  {deployFailureCategory ? (
+                    <span className="badge badge-warn" data-testid="migration-destination-deploy-failure-category">
+                      Category: {toFailureCategoryLabel(deployFailureCategory)}
+                    </span>
+                  ) : null}
+                  {deployFailureReasonCode ? (
+                    <span className="badge badge-warn" data-testid="migration-destination-deploy-failure-reason">
+                      Reason: {formatReasonCodeLabel(deployFailureReasonCode)}
+                    </span>
+                  ) : null}
+                  {deployFailureStage ? (
+                    <span className="badge badge-warn" data-testid="migration-destination-deploy-failure-stage">
+                      Stage: {formatDispatchStageLabel(deployFailureStage)}
+                    </span>
+                  ) : null}
+                </div>
+                <span className="hint warning">{deploySummaryBlockerMessage}</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="grid grid-2 migration-destination-summary-grid">
+          <div className="panel panel-compact stack-tight" data-testid="migration-destination-admin-block">
+            <strong>Admin-controlled destination</strong>
+            <WorkspaceMetadataGrid>
+              {(effectivePublishRepoOwner || !publishReadiness.ready) ? (
+                <WorkspaceMetadataItem label="GitHub account/owner">
+                  {effectivePublishRepoOwner ? (
+                    <span className="row-wrap-tight">
+                      <span className="badge badge-muted">Admin-set</span>
+                      <span>{effectivePublishRepoOwner}</span>
+                    </span>
+                  ) : (
+                    "Not configured"
+                  )}
+                </WorkspaceMetadataItem>
+              ) : null}
+              {deployWorkflowMode ? (
+                <WorkspaceMetadataItem label="Deploy workflow mode">
+                  <span className="row-wrap-tight">
+                    <span className="badge badge-muted">Admin-set</span>
+                    <span>{deployWorkflowMode}</span>
+                  </span>
+                </WorkspaceMetadataItem>
+              ) : null}
+              {deployTargetEnvironmentKey ? (
+                <WorkspaceMetadataItem label="Target environment key">
+                  <span className="row-wrap-tight">
+                    <span className="badge badge-muted">Admin-set</span>
+                    <span>{deployTargetEnvironmentKey}</span>
+                  </span>
+                </WorkspaceMetadataItem>
+              ) : null}
+              {deployTargetEnvironmentSource ? (
+                <WorkspaceMetadataItem label="Target environment source">
+                  <span className="row-wrap-tight">
+                    <span className="badge badge-muted">Admin-set</span>
+                    <span>{deployTargetEnvironmentSource}</span>
+                  </span>
+                </WorkspaceMetadataItem>
+              ) : null}
+            </WorkspaceMetadataGrid>
+          </div>
+
+          <div className="panel panel-compact stack-tight" data-testid="migration-destination-operator-block">
+            <strong>Operator-controlled destination</strong>
+            <WorkspaceMetadataGrid>
+              {(effectivePublishRepository || !publishReadiness.ready) ? (
+                <WorkspaceMetadataItem label="Effective repository">
+                  {effectivePublishRepository ? (
+                    <span className="row-wrap-tight">
+                      <span className="badge badge-muted">Operator-set</span>
+                      <span>{effectivePublishRepository}</span>
+                    </span>
+                  ) : (
+                    "Not configured"
+                  )}
+                </WorkspaceMetadataItem>
+              ) : null}
+              {(effectivePublishRepository || !publishReadiness.ready) ? (
+                <WorkspaceMetadataItem label="Effective branch / ref">
+                  {effectivePublishRepository ? (
+                    <span className="row-wrap-tight">
+                      <span className="badge badge-muted">Operator-set</span>
+                      <span>{effectivePublishBranch}</span>
+                    </span>
+                  ) : (
+                    "Not configured"
+                  )}
+                </WorkspaceMetadataItem>
+              ) : null}
+              {effectivePublishRepository ? (
+                <WorkspaceMetadataItem label="Artifact root">
+                  <span className="row-wrap-tight">
+                    <span className="badge badge-muted">Derived</span>
+                    <span>{effectivePublishArtifactRoot}</span>
+                  </span>
+                </WorkspaceMetadataItem>
+              ) : null}
+            </WorkspaceMetadataGrid>
+          </div>
+
+          <div className="panel panel-compact stack-tight" data-testid="migration-destination-derived-block">
+            <strong>Derived URLs &amp; publish target</strong>
+            <WorkspaceMetadataGrid>
+              <WorkspaceMetadataItem label="Publish target state">
+                {publishTargetStateLabel}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Expected publish location">
+                {destinationSummary.publishExpectedLocation || "Not yet determinable"}
+              </WorkspaceMetadataItem>
+              {destinationSummary.publishRepositoryUrl ? (
+                <WorkspaceMetadataItem label="Repository publish URL">
+                  <a href={destinationSummary.publishRepositoryUrl} target="_blank" rel="noreferrer">
+                    {destinationSummary.publishRepositoryUrl}
+                  </a>
+                </WorkspaceMetadataItem>
+              ) : null}
+              {destinationSummary.publishExpectedPublishedUrl ? (
+                <WorkspaceMetadataItem label="Expected published site URL">
+                  <a href={destinationSummary.publishExpectedPublishedUrl} target="_blank" rel="noreferrer">
+                    {destinationSummary.publishExpectedPublishedUrl}
+                  </a>
+                </WorkspaceMetadataItem>
+              ) : null}
+              <WorkspaceMetadataItem label="Expected post-deploy site URL">
+                {destinationSummary.deployExpectedPublishUrl ? (
+                  <a href={destinationSummary.deployExpectedPublishUrl} target="_blank" rel="noreferrer">
+                    {destinationSummary.deployExpectedPublishUrl}
+                  </a>
+                ) : (
+                  "Not determinable from current configuration"
+                )}
+              </WorkspaceMetadataItem>
+            </WorkspaceMetadataGrid>
+          </div>
+
+          <div className="panel panel-compact stack-tight" data-testid="migration-destination-runtime-block">
+            <strong>Runtime &amp; evidence state</strong>
+            <WorkspaceMetadataGrid>
+              <WorkspaceMetadataItem label="Publish runtime">
+                <span className="row-wrap-tight">
+                  <span className="badge badge-muted">Runtime</span>
+                  <span>{publishRuntimeStatusLabel}</span>
+                </span>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Deploy runtime">
+                <span className="row-wrap-tight">
+                  <span className="badge badge-muted">Runtime</span>
+                  <span>{deployRuntimeStatusLabel}</span>
+                </span>
+              </WorkspaceMetadataItem>
+              {(deployWorkflowIdentifier || !deployReadiness.ready) ? (
+                <WorkspaceMetadataItem label="Workflow identifier / path">
+                  {deployWorkflowIdentifier || "Not configured"}
+                </WorkspaceMetadataItem>
+              ) : null}
+              {deploySiteWorkflowFilePath ? (
+                <WorkspaceMetadataItem label="Site workflow file">
+                  <span className="row-wrap-tight">
+                    <span className="badge badge-muted">Derived</span>
+                    <span>{deploySiteWorkflowFilePath}</span>
+                  </span>
+                </WorkspaceMetadataItem>
+              ) : null}
+              <WorkspaceMetadataItem label="Deploy URL state">
+                {deployTargetStateLabel}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Live URL (confirmed)">
+                {destinationSummary.deployResolvedLiveUrl ? (
+                  <a href={destinationSummary.deployResolvedLiveUrl} target="_blank" rel="noreferrer">
+                    {destinationSummary.deployResolvedLiveUrl}
+                  </a>
+                ) : (
+                  "Not yet confirmed"
+                )}
+              </WorkspaceMetadataItem>
+            </WorkspaceMetadataGrid>
+          </div>
+        </div>
+        {hasDestinationAdditionalDiagnostics ? (
+          <details className="workspace-details-shell" data-testid="migration-destination-secondary-details">
+            <summary className="hint muted">Show additional destination diagnostics</summary>
+            <div className="panel panel-compact stack-tight">
+              <WorkspaceMetadataGrid>
+                <WorkspaceMetadataItem label="Draft preview">
+                  {toDestinationStateLabel(destinationSummary.draftPreviewState)}
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Draft entry file">
+                  {destinationSummary.draftPreviewEntryPath || "Not available"}
+                </WorkspaceMetadataItem>
+                {destinationSummary.currentSiteUrl ? (
+                  <WorkspaceMetadataItem label="Current site URL">
+                    {destinationSummary.currentSiteUrl}
+                  </WorkspaceMetadataItem>
+                ) : null}
+                <WorkspaceMetadataItem label="URL source">
+                  {destinationSummary.deployUrlSource || destinationSummary.publishUrlSource || "unknown"}
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="URL source detail">
+                  {destinationSummary.deployUrlSourceDetail || destinationSummary.publishUrlSourceDetail || "Not available"}
+                </WorkspaceMetadataItem>
+              </WorkspaceMetadataGrid>
+            </div>
+          </details>
+        ) : null}
       </div>
 
       <h3 className="hint muted migration-section-title">A. Migration Overview</h3>
@@ -3236,10 +3382,10 @@ export function MigrationWorkspacePanel({
 
       <h3 className="hint muted migration-section-title">D. Artifact Review</h3>
       <p className="hint muted migration-section-subtitle">
-        Review strategy, page map, and generated files before approval.
+        Review strategy, inspect generated pages/files, and decide draft actions before publish.
       </p>
 
-      <div className="panel stack workspace-section-block">
+      <div className="panel stack workspace-section-block" data-testid="migration-artifact-review-section">
         <h3>Draft Artifact Review</h3>
         {selectedArtifact ? (
           <>
@@ -3259,6 +3405,41 @@ export function MigrationWorkspacePanel({
                   : draftPreview.reason || "Preview unavailable for this artifact."}
               </span>
             </WorkspaceActionBar>
+            <div className="panel panel-compact stack-tight" data-testid="migration-draft-review-actions">
+              <strong>Draft Review Actions</strong>
+              <span className="hint muted">
+                Approve or delete the selected draft after review. Publish and deploy remain explicit in Section E.
+              </span>
+              <textarea
+                value={approvalNotes}
+                onChange={(event) => setApprovalNotes(event.target.value)}
+                rows={3}
+                placeholder="Approval notes (optional)"
+              />
+              <div className="row-wrap-tight">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => void handleApproveSelectedArtifact()}
+                  disabled={isActionInFlight || !canApproveSelectedArtifact}
+                  data-testid="migration-approve-draft-button"
+                >
+                  {busyAction === "approve" ? "Approving..." : "Approve Selected Draft"}
+                </button>
+                <button
+                  type="button"
+                  className="button button-tertiary"
+                  onClick={() => void handleDeleteSelectedArtifact()}
+                  disabled={isActionInFlight || !canDeleteSelectedArtifact}
+                  data-testid="migration-delete-draft-button"
+                >
+                  {busyAction === "delete_draft" ? "Deleting..." : "Delete Selected Draft"}
+                </button>
+              </div>
+              {!canDeleteSelectedArtifact && selectedArtifact ? (
+                <span className="hint muted">{selectedArtifactDeleteBlockedReason}</span>
+              ) : null}
+            </div>
             {draftPreviewOpen && draftPreview.available ? (
               <div className="panel panel-compact stack-tight migration-draft-preview-surface" data-testid="migration-draft-preview-surface">
                 <strong>Draft Preview (Read-only)</strong>
@@ -3301,78 +3482,109 @@ export function MigrationWorkspacePanel({
                 </span>
               ) : null}
             </div>
-            <div className="panel panel-compact stack-tight">
-              <strong>Page Map</strong>
-              {Array.isArray(selectedArtifact.page_map_json) && selectedArtifact.page_map_json.length > 0 ? (
-                <ul>
-                  {selectedArtifact.page_map_json.slice(0, 12).map((item, index) => {
-                    const row = asRecord(item);
-                    const path = asString(row.path) || "-";
-                    const title = asString(row.title) || asString(row.name) || "Untitled";
-                    return <li key={`page-map-${index}`}>{path} - {title}</li>;
-                  })}
-                </ul>
-              ) : (
-                <p className="hint muted">No page map entries.</p>
-              )}
-            </div>
-            <div className="grid grid-2 migration-artifact-review-grid">
-              <div className="panel panel-compact stack-tight migration-file-tree-panel" data-testid="migration-file-tree">
-                <strong>Generated Files</strong>
-                {filePaths.length > 0 ? (
-                  filePaths.map((path) => (
-                    <button
-                      key={path}
-                      type="button"
-                      className={path === selectedFilePath ? "button button-tertiary button-inline active" : "button button-tertiary button-inline"}
-                      onClick={() => void handleSelectArtifactFile(path)}
-                    >
-                      {path}
-                    </button>
-                  ))
-                ) : (
-                  <WorkspaceEmptyStateCard compact={true}>
-                    <p className="hint muted">No files available.</p>
-                  </WorkspaceEmptyStateCard>
-                )}
-              </div>
-              <div className="panel panel-compact stack-tight migration-file-preview-panel" data-testid="migration-file-preview">
-                <div className="workspace-section-header workspace-section-header-compact">
-                  <div className="workspace-section-header-main">
-                    <strong>File Preview</strong>
-                  </div>
-                  <div className="workspace-section-actions">
-                    {filePreviewOpen ? (
+            <div className="panel panel-compact stack-tight migration-draft-inspection-surface" data-testid="migration-draft-inspection-surface">
+              <strong>Page &amp; File Inspection</strong>
+              <span className="hint muted">
+                Inspect page-map structure and generated files from one surface. HTML previews are sandboxed and read-only.
+              </span>
+              <div className="grid grid-2 migration-artifact-review-grid">
+                <div className="panel panel-compact stack-tight migration-file-tree-panel" data-testid="migration-file-tree">
+                  <strong>Pages &amp; Generated Files</strong>
+                  {Array.isArray(selectedArtifact.page_map_json) && selectedArtifact.page_map_json.length > 0 ? (
+                    <ul className="stack-tight" data-testid="migration-page-map-list">
+                      {selectedArtifact.page_map_json.slice(0, 12).map((item, index) => {
+                        const row = asRecord(item);
+                        const path = asString(row.path) || "-";
+                        const title = asString(row.title) || asString(row.name) || "Untitled";
+                        const canPreviewPath = path !== "-" && filePaths.includes(path);
+                        return (
+                          <li key={`page-map-${index}`}>
+                            {canPreviewPath ? (
+                              <button
+                                type="button"
+                                className={path === selectedFilePath ? "button button-tertiary button-inline active" : "button button-tertiary button-inline"}
+                                onClick={() => void handleSelectArtifactFile(path)}
+                              >
+                                {path} - {title}
+                              </button>
+                            ) : (
+                              <span className="hint">{path} - {title}</span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="hint muted">No page map entries.</p>
+                  )}
+                  <strong className="hint muted">Generated file paths</strong>
+                  {filePaths.length > 0 ? (
+                    filePaths.map((path) => (
                       <button
+                        key={path}
                         type="button"
-                        className="button button-tertiary button-inline"
-                        onClick={() => setFilePreviewOpen(false)}
-                        data-testid="migration-file-preview-hide"
+                        className={path === selectedFilePath ? "button button-tertiary button-inline active" : "button button-tertiary button-inline"}
+                        onClick={() => void handleSelectArtifactFile(path)}
                       >
-                        Hide preview
+                        {path}
                       </button>
-                    ) : selectedFilePath ? (
-                      <button
-                        type="button"
-                        className="button button-tertiary button-inline"
-                        onClick={() => setFilePreviewOpen(true)}
-                        data-testid="migration-file-preview-show"
-                      >
-                        Show preview
-                      </button>
-                    ) : null}
-                  </div>
+                    ))
+                  ) : (
+                    <WorkspaceEmptyStateCard compact={true}>
+                      <p className="hint muted">No files available.</p>
+                    </WorkspaceEmptyStateCard>
+                  )}
                 </div>
-                <span className="hint muted">
-                  {filePreviewOpen
-                    ? filePreviewMediaType || "text/plain"
-                    : selectedFilePath
-                      ? `Preview hidden for ${selectedFilePath}.`
-                      : "Select a file to preview."}
-                </span>
-                {filePreviewOpen ? (
-                  <pre className="migration-file-preview-content">{filePreviewContent || ""}</pre>
-                ) : null}
+                <div className="panel panel-compact stack-tight migration-file-preview-panel" data-testid="migration-file-preview">
+                  <div className="workspace-section-header workspace-section-header-compact">
+                    <div className="workspace-section-header-main">
+                      <strong>Selected File Preview</strong>
+                    </div>
+                    <div className="workspace-section-actions">
+                      {filePreviewOpen ? (
+                        <button
+                          type="button"
+                          className="button button-tertiary button-inline"
+                          onClick={() => setFilePreviewOpen(false)}
+                          data-testid="migration-file-preview-hide"
+                        >
+                          Hide preview
+                        </button>
+                      ) : selectedFilePath ? (
+                        <button
+                          type="button"
+                          className="button button-tertiary button-inline"
+                          onClick={() => setFilePreviewOpen(true)}
+                          data-testid="migration-file-preview-show"
+                        >
+                          Show preview
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <span className="hint muted">
+                    {selectedFilePath ? `Selected file: ${selectedFilePath}` : "Select a generated file to inspect."}
+                  </span>
+                  <span className="hint muted">
+                    {filePreviewOpen
+                      ? filePreviewMediaType || "text/plain"
+                      : selectedFilePath
+                        ? `Preview hidden for ${selectedFilePath}.`
+                        : "Select a file to preview."}
+                  </span>
+                  {filePreviewOpen && filePreviewMediaType.toLowerCase().includes("html") ? (
+                    <iframe
+                      title="Migration generated file preview"
+                      className="migration-draft-preview-frame"
+                      sandbox=""
+                      srcDoc={filePreviewContent || ""}
+                      referrerPolicy="no-referrer"
+                      data-testid="migration-file-preview-iframe"
+                    />
+                  ) : filePreviewOpen ? (
+                    <pre className="migration-file-preview-content">{filePreviewContent || ""}</pre>
+                  ) : null}
+                </div>
               </div>
             </div>
           </>
@@ -3388,7 +3600,7 @@ export function MigrationWorkspacePanel({
         Approval, publish, and deploy remain explicit and unchanged.
       </p>
 
-      <div className="panel stack workspace-section-block">
+      <div className="panel stack workspace-section-block" data-testid="migration-publish-deploy-section">
         <h3>Publish and Deploy Controls</h3>
         <div className="workspace-status-callout stack-tight">
           <span className="hint muted">
@@ -3425,23 +3637,6 @@ export function MigrationWorkspacePanel({
             >
               {busyAction === "save_publish_config" ? "Saving..." : "Save Publish Repository"}
             </button>
-            <WorkspaceMetadataGrid>
-              <WorkspaceMetadataItem label="GitHub account/owner">
-                {effectivePublishRepoOwner || "Not configured"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Effective repository">
-                {effectivePublishRepository || "Not configured"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Effective branch">
-                {effectivePublishRepository ? effectivePublishBranch : "n/a"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Artifact root">
-                {effectivePublishRepository ? effectivePublishArtifactRoot : "n/a"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Target status">
-                {Boolean(publishTarget.enabled) ? "Enabled" : "Disabled"}
-              </WorkspaceMetadataItem>
-            </WorkspaceMetadataGrid>
           </div>
 
           <div className="panel panel-compact stack">
@@ -3501,42 +3696,11 @@ export function MigrationWorkspacePanel({
           </div>
         </div>
 
-        <div className="panel panel-compact stack">
-          <strong>Analytics Insertion Rules</strong>
-          <label className="link-row">
-            <input type="checkbox" checked={analyticsEnabled} onChange={(event) => setAnalyticsEnabled(event.target.checked)} />
-            <span>Enable controlled GA4 insertion</span>
-          </label>
-          <input
-            value={analyticsMeasurementId}
-            onChange={(event) => setAnalyticsMeasurementId(event.target.value)}
-            placeholder="GA measurement ID (G-XXXX)"
-          />
-          <select
-            value={analyticsMode}
-            onChange={(event) =>
-              setAnalyticsMode(event.target.value === "publish_only" ? "publish_only" : "publish_and_deploy")
-            }
-          >
-            <option value="publish_and_deploy">Insert during publish and deploy</option>
-            <option value="publish_only">Insert during publish only</option>
-          </select>
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={() => void handleSaveAnalyticsConfig()}
-            disabled={busyAction === "save_analytics_config" || busyAction === "load"}
-          >
-            {busyAction === "save_analytics_config" ? "Saving..." : "Save Analytics Rules"}
-          </button>
-        </div>
-
         <div className="grid grid-2">
           <div className="panel panel-compact stack" data-testid="migration-publish-readiness">
             <strong>Publish Readiness</strong>
             <span className="hint">Ready: {Boolean(publishReadiness.ready) ? "Yes" : "No"}</span>
-            <span className="hint">Runtime publisher: {publishRuntimeStatusLabel}</span>
-            {publishRuntimeStatusMessage ? <span className="hint muted">{publishRuntimeStatusMessage}</span> : null}
+            <span className="hint muted">Destination/runtime metadata is shown above in Effective Publish/Deploy Destinations.</span>
             {Array.isArray(publishReadiness.reasons) && publishReadiness.reasons.length > 0 ? (
               <ul>
                 {(publishReadiness.reasons as unknown[]).map((reason, index) => (
@@ -3552,8 +3716,7 @@ export function MigrationWorkspacePanel({
           <div className="panel panel-compact stack" data-testid="migration-deploy-readiness">
             <strong>Deploy Readiness</strong>
             <span className="hint">Ready: {Boolean(deployReadiness.ready) ? "Yes" : "No"}</span>
-            <span className="hint">Runtime publisher: {deployRuntimeStatusLabel}</span>
-            {deployRuntimeStatusMessage ? <span className="hint muted">{deployRuntimeStatusMessage}</span> : null}
+            <span className="hint muted">Destination/runtime metadata is shown above in Effective Publish/Deploy Destinations.</span>
             {deployPrimaryBlockerMessage ? <span className="hint warning">{deployPrimaryBlockerMessage}</span> : null}
             {Array.isArray(deployReadiness.reasons) && deployReadiness.reasons.length > 0 ? (
               <ul>
@@ -3575,135 +3738,6 @@ export function MigrationWorkspacePanel({
             {deployFailureRemediationHint ? (
               <span className="hint warning">Remediation hint: {deployFailureRemediationHint}</span>
             ) : null}
-            <WorkspaceMetadataGrid data-testid="migration-deploy-traceability">
-              <WorkspaceMetadataItem label="Repository">
-                {deployTraceRepo || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Ref / branch">
-                {deployTraceRef || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow identifier">
-                {deployWorkflowIdentifier || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow identifier requested">
-                {deployWorkflowIdentifierRequested || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow identifier type (requested)">
-                {deployWorkflowIdentifierTypeRequested || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow identifier type (used)">
-                {deployWorkflowIdentifierTypeUsed || dispatchIdentifierType || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow dispatch resolution">
-                {deployWorkflowDispatchResolutionSource || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow file path">
-                {deployWorkflowFilePath || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow name">
-                {deployWorkflowName || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow source">
-                {deployResolvedWorkflowSource || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Deploy trace ID">
-                {deployTraceId ? <code data-testid="migration-deploy-trace-id">{deployTraceId}</code> : "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Trigger support">
-                {formatBooleanStateLabel(workflowDispatchSupported, {
-                  trueLabel: "Supported",
-                  falseLabel: "Not supported",
-                })}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Trigger types">
-                {workflowTriggerTypes.length > 0 ? workflowTriggerTypes.join(", ") : "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Dispatch identifier type">
-                {dispatchIdentifierType || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Service/function availability">
-                {formatBooleanStateLabel(dispatchServiceAvailability, {
-                  trueLabel: "Available",
-                  falseLabel: "Unavailable",
-                })}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Service availability reason">
-                {formatReasonCodeLabel(dispatchServiceReasonCode)}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow conformance checked">
-                {formatBooleanStateLabel(workflowConformanceChecked)}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow conformance status">
-                {workflowConformanceStatus || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow conformance reasons">
-                {workflowConformanceReasons.length > 0 ? workflowConformanceReasons.join(", ") : "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow conformance evidence">
-                {workflowConformanceEvidenceSummary || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Dispatch attempted">
-                {formatBooleanStateLabel(dispatchAttempted)}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Dispatch result stage">
-                {formatDispatchStageLabel(dispatchResultStage)}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Dispatch result reason">
-                {formatReasonCodeLabel(deployFailureReasonCode)}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Dispatch ref sent">
-                {dispatchRefSent || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow input keys (configured)">
-                {workflowInputsConfiguredKeys.length > 0 ? workflowInputsConfiguredKeys.join(", ") : "None"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow input keys (sent)">
-                {workflowInputsSentKeys.length > 0 ? workflowInputsSentKeys.join(", ") : "None"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow run lookup attempted">
-                {formatBooleanStateLabel(workflowRunLookupAttempted)}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow run found">
-                {formatBooleanStateLabel(workflowRunFound)}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow job failure detected">
-                {formatBooleanStateLabel(workflowJobFailureDetected)}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Post-dispatch state">
-                {postDispatchState || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Deploy evidence contract status">
-                {deployEvidenceContractStatus || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Deploy evidence contract reasons">
-                {deployEvidenceContractReasons.length > 0 ? deployEvidenceContractReasons.join(", ") : "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Expected workflow outputs">
-                {expectedWorkflowOutputs.length > 0 ? expectedWorkflowOutputs.join(", ") : "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow contract advisory">
-                {workflowContractAdvisory || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow run ID">
-                {workflowRunId || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow run state">
-                {workflowRunStatus
-                  ? workflowRunConclusion
-                    ? `${workflowRunStatus} (${workflowRunConclusion})`
-                    : workflowRunStatus
-                  : "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Expected URL">
-                {destinationSummary.deployExpectedPublishUrl || "Not determinable"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Confirmed live URL">
-                {destinationSummary.deployResolvedLiveUrl || "Not yet confirmed"}
-              </WorkspaceMetadataItem>
-            </WorkspaceMetadataGrid>
-            <span className="hint muted">
-              Expected URL is guidance only. Confirmed live URL appears only after explicit deploy/workflow evidence.
-            </span>
             {dispatchAttempted === false ? (
               <span className="hint warning" data-testid="migration-dispatch-state-hint">
                 Dispatch was not attempted because deploy readiness failed. Resolve blockers and retry deploy.
@@ -3731,36 +3765,7 @@ export function MigrationWorkspacePanel({
           </div>
         </div>
 
-        <div className="grid grid-3">
-          <div className="panel panel-compact stack">
-            <strong>Approve</strong>
-            <textarea
-              value={approvalNotes}
-              onChange={(event) => setApprovalNotes(event.target.value)}
-              rows={3}
-              placeholder="Approval notes (optional)"
-            />
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => void handleApproveSelectedArtifact()}
-              disabled={isActionInFlight || !canApproveSelectedArtifact}
-            >
-              {busyAction === "approve" ? "Approving..." : "Approve Selected Draft"}
-            </button>
-            <button
-              type="button"
-              className="button button-tertiary"
-              onClick={() => void handleDeleteSelectedArtifact()}
-              disabled={isActionInFlight || !canDeleteSelectedArtifact}
-              data-testid="migration-delete-draft-button"
-            >
-              {busyAction === "delete_draft" ? "Deleting..." : "Delete Selected Draft"}
-            </button>
-            {!canDeleteSelectedArtifact && selectedArtifact ? (
-              <span className="hint muted">{selectedArtifactDeleteBlockedReason}</span>
-            ) : null}
-          </div>
+        <div className="grid grid-2">
           <div className="panel panel-compact stack">
             <strong>Publish</strong>
             <label className="link-row">
@@ -3814,132 +3819,15 @@ export function MigrationWorkspacePanel({
             </span>
           </div>
         </div>
-
-        <div className="grid grid-2">
-          <div className="panel panel-compact stack" data-testid="migration-publish-history">
-            <strong>Publish History</strong>
-            {publishHistoryRecords.length > 0 ? (
-              <label className="stack-tight">
-                <span className="hint muted">Selected publish attempt diagnostics</span>
-                <select
-                  value={selectedPublishHistoryIdentity}
-                  onChange={(event) => setSelectedPublishHistoryIdentity(event.target.value)}
-                  data-testid="migration-publish-history-select"
-                >
-                  {publishHistoryRecords
-                    .slice(-10)
-                    .reverse()
-                    .map((record, index) => {
-                      const identity = historyRecordIdentity(record);
-                      const timestamp = asString(record.timestamp) || "n/a";
-                      const status = asString(record.status) || "unknown";
-                      const artifactVersion = asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a";
-                      return (
-                        <option key={`publish-history-select-${identity}-${index}`} value={identity}>
-                          {timestamp} - {status} - artifact {artifactVersion}
-                        </option>
-                      );
-                    })}
-                </select>
-              </label>
-            ) : null}
-            {publishHistoryRecords.length > 0 ? (
-              <span className="hint muted" data-testid="migration-publish-diagnostics-scope">
-                Showing diagnostics for selected publish attempt:{" "}
-                {asString(selectedPublishHistoryRecord.timestamp) || "n/a"} ·{" "}
-                {asString(selectedPublishHistoryRecord.status) || "unknown"}.
-              </span>
-            ) : null}
-            {publishHistory.length > 0 ? (
-              <ul>
-                {publishHistory.slice(-10).reverse().map((item, index) => {
-                  const record = asRecord(item);
-                  return (
-                    <li key={`publish-history-${index}`}>
-                      {asString(record.timestamp) || "n/a"} - {asString(record.status) || "unknown"} - artifact{" "}
-                      {asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a"}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <span className="hint muted">No publish actions yet.</span>
-            )}
-          </div>
-          <div className="panel panel-compact stack" data-testid="migration-deploy-history">
-            <strong>Deploy History</strong>
-            {deployHistoryRecords.length > 0 ? (
-              <label className="stack-tight">
-                <span className="hint muted">Selected deploy attempt diagnostics</span>
-                <select
-                  value={selectedDeployHistoryIdentity}
-                  onChange={(event) => setSelectedDeployHistoryIdentity(event.target.value)}
-                  data-testid="migration-deploy-history-select"
-                >
-                  {deployHistoryRecords
-                    .slice(-10)
-                    .reverse()
-                    .map((record, index) => {
-                      const identity = historyRecordIdentity(record);
-                      const timestamp = asString(record.timestamp) || "n/a";
-                      const status = asString(record.status) || "unknown";
-                      const artifactVersion = asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a";
-                      return (
-                        <option key={`deploy-history-select-${identity}-${index}`} value={identity}>
-                          {timestamp} - {status} - artifact {artifactVersion}
-                        </option>
-                      );
-                    })}
-                </select>
-              </label>
-            ) : null}
-            {deployHistoryRecords.length > 0 ? (
-              <span className="hint muted" data-testid="migration-deploy-diagnostics-scope">
-                Showing diagnostics for selected deploy attempt:{" "}
-                {asString(selectedDeployHistoryRecord.timestamp) || "n/a"} ·{" "}
-                {asString(selectedDeployHistoryRecord.status) || "unknown"}.
-              </span>
-            ) : null}
-            {deployHistory.length > 0 ? (
-              <ul>
-                {deployHistory.slice(-10).reverse().map((item, index) => {
-                  const record = asRecord(item);
-                  const status = asString(record.status) || "unknown";
-                  const failureReason = asStringOrNull(record.failure_reason);
-                  const failureStage = asStringOrNull(record.failure_stage);
-                  const remediationHint = asStringOrNull(record.failure_remediation_hint);
-                  return (
-                    <li key={`deploy-history-${index}`}>
-                      {asString(record.timestamp) || "n/a"} - {status} - artifact{" "}
-                      {asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a"}
-                      {status.toLowerCase() === "failed" && (failureReason || failureStage) ? (
-                        <span className="hint warning">
-                          {" "}
-                          ({failureStage ? formatDispatchStageLabel(failureStage) : "failure"}:{" "}
-                          {failureReason ? formatReasonCodeLabel(failureReason) : "unknown"})
-                        </span>
-                      ) : null}
-                      {status.toLowerCase() === "failed" && remediationHint ? (
-                        <span className="hint warning"> - {remediationHint}</span>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <span className="hint muted">No deploy actions yet.</span>
-            )}
-          </div>
-        </div>
       </div>
 
-      <h3 className="hint muted migration-section-title">F. Advanced Diagnostics</h3>
+      <h3 className="hint muted migration-section-title">F. Advanced Diagnostics &amp; History</h3>
       <p className="hint muted migration-section-subtitle">
-        Use detailed diagnostics only when troubleshooting failures.
+        Use detailed diagnostics and attempt history only when troubleshooting.
       </p>
 
       <div className="panel stack workspace-section-block">
-        <h3>Advanced Diagnostics</h3>
+        <h3>Advanced Diagnostics &amp; History</h3>
         <details className="migration-advanced-details workspace-details-shell">
           <summary className="hint muted">Show detailed migration failure diagnostics</summary>
           <div className="stack">
@@ -3951,6 +3839,128 @@ export function MigrationWorkspacePanel({
               <span className="hint">Last publish status: {asString(migrationDiagnostics.last_publish_status) || "n/a"}</span>
               <span className="hint">Last deploy status: {asString(migrationDiagnostics.last_deploy_status) || "n/a"}</span>
             </div>
+
+            <details className="workspace-details-shell">
+              <summary className="hint muted">Show publish history</summary>
+              <div className="panel panel-compact stack" data-testid="migration-publish-history">
+                <strong>Publish History</strong>
+                {publishHistoryRecords.length > 0 ? (
+                  <label className="stack-tight">
+                    <span className="hint muted">Selected publish attempt diagnostics</span>
+                    <select
+                      value={selectedPublishHistoryIdentity}
+                      onChange={(event) => setSelectedPublishHistoryIdentity(event.target.value)}
+                      data-testid="migration-publish-history-select"
+                    >
+                      {publishHistoryRecords
+                        .slice(-10)
+                        .reverse()
+                        .map((record, index) => {
+                          const identity = historyRecordIdentity(record);
+                          const timestamp = asString(record.timestamp) || "n/a";
+                          const status = asString(record.status) || "unknown";
+                          const artifactVersion = asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a";
+                          return (
+                            <option key={`publish-history-select-${identity}-${index}`} value={identity}>
+                              {timestamp} - {status} - artifact {artifactVersion}
+                            </option>
+                          );
+                        })}
+                    </select>
+                  </label>
+                ) : null}
+                {publishHistoryRecords.length > 0 ? (
+                  <span className="hint muted" data-testid="migration-publish-diagnostics-scope">
+                    Showing diagnostics for selected publish attempt:{" "}
+                    {asString(selectedPublishHistoryRecord.timestamp) || "n/a"} ·{" "}
+                    {asString(selectedPublishHistoryRecord.status) || "unknown"}.
+                  </span>
+                ) : null}
+                {publishHistory.length > 0 ? (
+                  <ul>
+                    {publishHistory.slice(-10).reverse().map((item, index) => {
+                      const record = asRecord(item);
+                      return (
+                        <li key={`publish-history-${index}`}>
+                          {asString(record.timestamp) || "n/a"} - {asString(record.status) || "unknown"} - artifact{" "}
+                          {asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a"}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <span className="hint muted">No publish actions yet.</span>
+                )}
+              </div>
+            </details>
+
+            <details className="workspace-details-shell">
+              <summary className="hint muted">Show deploy history</summary>
+              <div className="panel panel-compact stack" data-testid="migration-deploy-history">
+                <strong>Deploy History</strong>
+                {deployHistoryRecords.length > 0 ? (
+                  <label className="stack-tight">
+                    <span className="hint muted">Selected deploy attempt diagnostics</span>
+                    <select
+                      value={selectedDeployHistoryIdentity}
+                      onChange={(event) => setSelectedDeployHistoryIdentity(event.target.value)}
+                      data-testid="migration-deploy-history-select"
+                    >
+                      {deployHistoryRecords
+                        .slice(-10)
+                        .reverse()
+                        .map((record, index) => {
+                          const identity = historyRecordIdentity(record);
+                          const timestamp = asString(record.timestamp) || "n/a";
+                          const status = asString(record.status) || "unknown";
+                          const artifactVersion = asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a";
+                          return (
+                            <option key={`deploy-history-select-${identity}-${index}`} value={identity}>
+                              {timestamp} - {status} - artifact {artifactVersion}
+                            </option>
+                          );
+                        })}
+                    </select>
+                  </label>
+                ) : null}
+                {deployHistoryRecords.length > 0 ? (
+                  <span className="hint muted" data-testid="migration-deploy-diagnostics-scope">
+                    Showing diagnostics for selected deploy attempt:{" "}
+                    {asString(selectedDeployHistoryRecord.timestamp) || "n/a"} ·{" "}
+                    {asString(selectedDeployHistoryRecord.status) || "unknown"}.
+                  </span>
+                ) : null}
+                {deployHistory.length > 0 ? (
+                  <ul>
+                    {deployHistory.slice(-10).reverse().map((item, index) => {
+                      const record = asRecord(item);
+                      const status = asString(record.status) || "unknown";
+                      const failureReason = asStringOrNull(record.failure_reason);
+                      const failureStage = asStringOrNull(record.failure_stage);
+                      const remediationHint = asStringOrNull(record.failure_remediation_hint);
+                      return (
+                        <li key={`deploy-history-${index}`}>
+                          {asString(record.timestamp) || "n/a"} - {status} - artifact{" "}
+                          {asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a"}
+                          {status.toLowerCase() === "failed" && (failureReason || failureStage) ? (
+                            <span className="hint warning">
+                              {" "}
+                              ({failureStage ? formatDispatchStageLabel(failureStage) : "failure"}:{" "}
+                              {failureReason ? formatReasonCodeLabel(failureReason) : "unknown"})
+                            </span>
+                          ) : null}
+                          {status.toLowerCase() === "failed" && remediationHint ? (
+                            <span className="hint warning"> - {remediationHint}</span>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <span className="hint muted">No deploy actions yet.</span>
+                )}
+              </div>
+            </details>
 
             <div className="grid grid-2">
               <div className="panel panel-compact stack-tight" data-testid="migration-publish-diagnostics">
