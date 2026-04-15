@@ -16,7 +16,7 @@ const links = [
   { href: "/competitors", label: "Competitors" },
   { href: "/recommendations", label: "Recommendations" },
   { href: "/automation", label: "Automation" },
-  { href: "/business-profile", label: "Business Profile" },
+  { href: "/google-profile", label: "Google Profile" },
   { href: "/admin", label: "Admin", adminOnly: true },
   { href: "/user-mgmt", label: "User Mgmt", adminOnly: true },
 ];
@@ -42,7 +42,22 @@ const WORKFLOW_SITE_SELECTOR_PATH_PREFIXES = [
   "/recommendations",
   "/automation",
   "/business-profile",
+  "/google-profile",
 ] as const;
+
+function isAliasPath(pathname: string, basePath: string): boolean {
+  return pathname === basePath || pathname.startsWith(`${basePath}/`);
+}
+
+function isNavLinkActive(pathname: string, href: string): boolean {
+  if (isAliasPath(pathname, href)) {
+    return true;
+  }
+  if (href === "/google-profile" && isAliasPath(pathname, "/business-profile")) {
+    return true;
+  }
+  return false;
+}
 
 function resolveShellRouteContext(pathname: string): ShellRouteContext {
   if (pathname.startsWith("/sites/")) {
@@ -108,12 +123,12 @@ function resolveShellRouteContext(pathname: string): ShellRouteContext {
       badgeClass: "badge-muted",
     };
   }
-  if (pathname.startsWith("/business-profile")) {
+  if (pathname.startsWith("/google-profile") || pathname.startsWith("/business-profile")) {
     return {
-      label: "Business profile",
+      label: "Google profile",
       summary: "Maintain profile and location context so downstream recommendations stay grounded.",
-      quickHref: "/business-profile",
-      quickLabel: "Open profile",
+      quickHref: "/google-profile",
+      quickLabel: "Open Google Profile",
       badgeClass: "badge-muted",
     };
   }
@@ -160,13 +175,14 @@ function parseSiteIdFromSitePath(pathname: string): string | null {
     return null;
   }
   const suffix = pathname.slice("/sites/".length);
-  if (!suffix || suffix.includes("/")) {
+  const [candidateSiteId] = suffix.split("/", 1);
+  if (!candidateSiteId) {
     return null;
   }
   try {
-    return decodeURIComponent(suffix);
+    return decodeURIComponent(candidateSiteId);
   } catch {
-    return suffix;
+    return candidateSiteId;
   }
 }
 
@@ -272,7 +288,10 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
     setContextSelectedSiteId(siteId);
 
     if (pathname.startsWith("/sites/")) {
-      const nextPath = `/sites/${encodeURIComponent(siteId)}`;
+      const suffix = pathname.slice("/sites/".length);
+      const segments = suffix.split("/");
+      const remaining = segments.length > 1 ? `/${segments.slice(1).join("/")}` : "";
+      const nextPath = `/sites/${encodeURIComponent(siteId)}${remaining}`;
       if (typeof window === "undefined" || window.location.pathname !== nextPath) {
         router.replace(nextPath);
       }
@@ -420,7 +439,7 @@ export function NavShell({ children }: { children: React.ReactNode }) {
               {links
                 .filter((link) => !link.adminOnly || resolvedPrincipal?.role === "admin")
                 .map((link) => {
-                  const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
+                  const active = isNavLinkActive(pathname, link.href);
                   return (
                     <Link
                       key={link.href}

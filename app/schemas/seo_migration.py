@@ -434,6 +434,12 @@ class SEOMigrationDeployActionRead(BaseModel):
     result: dict[str, object]
 
 
+class SEOMigrationArtifactDeleteActionRead(BaseModel):
+    workspace: SEOMigrationWorkspaceRead
+    deleted_artifact_version_id: str
+    deleted_artifact_version_number: int
+
+
 class SEOMigrationHistoryListRead(BaseModel):
     items: list[dict[str, object]]
     total: int

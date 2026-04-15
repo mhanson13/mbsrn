@@ -11,6 +11,7 @@ from app.api.deps import (
 from app.schemas.seo_migration import (
     SEOMigrationAnalyticsConfigUpdateRequest,
     SEOMigrationArtifactApproveRequest,
+    SEOMigrationArtifactDeleteActionRead,
     SEOMigrationArtifactFilePreviewRead,
     SEOMigrationArtifactVersionListResponse,
     SEOMigrationArtifactVersionRead,
@@ -472,6 +473,39 @@ def approve_seo_migration_artifact_version(
     except SEOMigrationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return _to_artifact_read(artifact)
+
+
+@router.delete(
+    "/sites/{site_id}/migration/artifact-versions/{artifact_version_id}",
+    response_model=SEOMigrationArtifactDeleteActionRead,
+)
+def delete_seo_migration_artifact_version(
+    business_id: str,
+    site_id: str,
+    artifact_version_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationArtifactDeleteActionRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        action_result = migration_service.delete_artifact_version(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            artifact_version_id=artifact_version_id,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+    return SEOMigrationArtifactDeleteActionRead(
+        workspace=_to_workspace_read(action_result.workspace),
+        deleted_artifact_version_id=action_result.deleted_artifact_version_id,
+        deleted_artifact_version_number=action_result.deleted_artifact_version_number,
+    )
 
 
 @router.post("/sites/{site_id}/migration/publish", response_model=SEOMigrationPublishActionRead)

@@ -30,7 +30,13 @@ State/order invariants:
 - UI readiness indicators are derived from persisted workspace/artifact state returned by backend summary/readiness payloads
 
 ## Operator Workflow
-Primary workflow in site workspace `Migration` tab:
+Primary workflow now runs on the dedicated route:
+
+`/sites/[site_id]/migration`
+
+The main site workspace remains recommendation-first and provides a migration status + launch CTA.
+
+Migration workflow on the dedicated page:
 1. Create/manage workspace and set `source_url`.
 2. Run bounded source ingest.
 3. Capture requirements and enriched replacement content.
@@ -48,12 +54,12 @@ Important operator cue:
 ## Operator UI Layout (Dashboard Pass)
 Operator UI now uses a tighter dashboard hierarchy for migration review without changing workflow behavior:
 - global header branding adds a left-aligned MBSRN logo anchor linked to `/dashboard`
-- migration tab starts with a compact summary band for:
+- dedicated migration route starts with a compact summary band for:
   - migration state
   - next action
   - latest draft version/status
   - artifact quality status
-- migration workspace sections are presented in this order:
+- migration route sections are presented in this order:
   1. `A. Migration Overview`
   2. `B. Draft / Version Status`
   3. `C. Artifact Quality Summary`
@@ -72,20 +78,20 @@ No workflow changes:
 - artifact quality remains advisory only
 
 Site operator page information architecture update:
-- the site operator route now separates domains with explicit content tabs:
-  - `Operator Focus`
-  - `Recommendations`
-  - `Migration`
-  - `Activity`
-- migration is explicitly promoted as a first-class workflow in operator focus with a direct action to open the migration tab
-- the site route now starts with a decision-first control surface (`OperatorPageHero`) that keeps migration visibility and migration-open actions near the top of the page
-- workflow tab metadata now includes quick-open shortcuts so migration stays discoverable from any active workspace lane
-- competitor/profile context is presented as supporting context instead of co-equal primary workflow content
-- this is presentation and information-hierarchy only; migration workflow semantics are unchanged
-- site workspace hero actions now use a shared route-level action cluster pattern:
+- the site operator route now keeps a smaller, decision-first structure:
+  - summary/hero
+  - recommendation workflow area
+  - supporting snapshot/activity
+  - migration launch surface
+- embedded migration workflow content was removed from the main site workspace.
+- migration now opens in its own dedicated workflow route (`/sites/[site_id]/migration`).
+- GA4 setup was moved out of the site workspace and into Google Profile.
+- this is presentation and information-hierarchy only; migration workflow semantics are unchanged.
+- site workspace hero actions use a shared route-level action cluster pattern:
   - secondary navigation actions (sites/audits)
   - contextual shortcuts (competitor workspace/recommendation queue)
-  - this keeps migration discoverability strong while aligning action framing with other upgraded operator routes
+  - migration workflow launch
+  - this keeps migration discoverability strong while aligning action framing with other upgraded operator routes.
 
 Second-pass polish refinements:
 - summary band cards now use consistent label/value hierarchy and spacing, with a stronger visual emphasis on `Next action`
@@ -137,12 +143,27 @@ Destination and preview trust additions:
   - confirmed live URL is promoted only when new explicit workflow completion evidence is found
   - common no-op states are surfaced explicitly (`workflow_run_metadata_missing`, `deploy_record_missing`, `deploy_target_metadata_missing`)
 - destination values are labeled as configured/expected/live/unknown; URLs are only shown when derivable from existing config or recorded deploy metadata
+- diagnostics are run-bound, not floating snapshot-only:
+  - publish diagnostics can be viewed for a selected publish attempt
+  - deploy diagnostics can be viewed for a selected deploy attempt
+  - draft diagnostics are scoped to the selected artifact version when available
+  - labels indicate whether diagnostics are from selected context vs latest summary fallback
+  - precedence is field-level and deterministic:
+    - selected attempt fields are authoritative when present
+    - latest summary fields only fill truly missing values
+  - fallback usage is explicitly called out in diagnostics when selected-attempt fields are incomplete so operators do not mistake summary values for selected-attempt evidence
+  - when no publish/deploy attempt is selected, diagnostics intentionally use latest summary context
 - draft website preview is available before publish/deploy from the selected artifact version:
   - rendered in a sandboxed, read-only iframe
   - explicitly labeled as draft-only (`not published`, `not deployed`)
   - supports whole-site preview across generated HTML pages via a page selector when multiple pages exist
   - unavailable state is explicit when artifact HTML is missing
 - artifact file preview now supports explicit hide/show controls so operators can collapse preview content without losing selected file context
+- draft lifecycle cleanup now includes single-draft deletion:
+  - eligible unpublished drafts can be deleted from the migration workflow
+  - deletion is blocked for published artifacts and for artifacts referenced by publish/deploy history
+  - blocked deletes surface deterministic operator-safe reasons (for example: referenced by publish history)
+  - deletion recalculates workspace pointers/readiness and keeps history integrity intact
 
 ## Reused Context Availability Semantics
 Migration reused-context cards use best-available signal, not strict completeness.

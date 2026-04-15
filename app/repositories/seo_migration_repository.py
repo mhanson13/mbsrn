@@ -39,6 +39,10 @@ class SEOMigrationRepository:
         self.session.flush()
         return artifact_version
 
+    def delete_artifact_version(self, artifact_version: SEOMigrationArtifactVersion) -> None:
+        self.session.delete(artifact_version)
+        self.session.flush()
+
     def list_artifact_versions_for_business_site(
         self,
         business_id: str,

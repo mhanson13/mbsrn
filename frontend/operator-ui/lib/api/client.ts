@@ -20,6 +20,7 @@ import type {
   PrincipalListResponse,
   MigrationArtifactFilePreview,
   MigrationArtifactApproveRequest,
+  MigrationArtifactDeleteActionResponse,
   MigrationArtifactVersion,
   MigrationArtifactVersionListResponse,
   MigrationAnalyticsConfigUpdateRequest,
@@ -474,6 +475,21 @@ export async function approveMigrationArtifactVersion(
       method: "POST",
       token,
       body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteMigrationArtifactVersion(
+  token: string,
+  businessId: string,
+  siteId: string,
+  artifactVersionId: string,
+): Promise<MigrationArtifactDeleteActionResponse> {
+  return apiRequest<MigrationArtifactDeleteActionResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/artifact-versions/${artifactVersionId}`,
+    {
+      method: "DELETE",
+      token,
     },
   );
 }

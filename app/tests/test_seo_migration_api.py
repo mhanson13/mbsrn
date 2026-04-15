@@ -639,6 +639,90 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert publisher.deploy_calls
 
 
+def test_delete_migration_artifact_version_allows_eligible_draft(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id, github_publisher=_StubMigrationGitHubPublisher())
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 201
+    artifact_id = generate_response.json()["id"]
+
+    delete_response = client.delete(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}",
+    )
+    assert delete_response.status_code == 200
+    payload = delete_response.json()
+    assert payload["deleted_artifact_version_id"] == artifact_id
+    assert payload["workspace"]["latest_generated_artifact_version_id"] is None
+    assert payload["workspace"]["migration_status"] == "draft"
+
+    artifact_versions_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions",
+    )
+    assert artifact_versions_response.status_code == 200
+    assert artifact_versions_response.json()["total"] == 0
+
+
+def test_delete_migration_artifact_version_blocks_published_artifact(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id, github_publisher=_StubMigrationGitHubPublisher())
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_owner": "acme",
+                "repo_name": "tnmfire-site",
+                "branch": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 201
+    artifact_id = generate_response.json()["id"]
+
+    approve_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
+        json={"approval_notes": "Approved"},
+    )
+    assert approve_response.status_code == 200
+
+    publish_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish",
+        json={"artifact_version_id": artifact_id, "dry_run": False},
+    )
+    assert publish_response.status_code == 200
+
+    delete_response = client.delete(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}",
+    )
+    assert delete_response.status_code == 422
+    detail = delete_response.json().get("detail") or {}
+    assert detail.get("error_code") == "artifact_already_published"
+
+
 def test_migration_summary_requires_existing_workspace(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"

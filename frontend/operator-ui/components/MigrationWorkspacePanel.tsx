@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { WorkspaceActionBar } from "./layout/WorkspaceActionBar";
 import { WorkspaceEmptyStateCard } from "./layout/WorkspaceEmptyStateCard";
@@ -9,6 +9,7 @@ import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "./layout/Workspace
 import {
   ApiRequestError,
   approveMigrationArtifactVersion,
+  deleteMigrationArtifactVersion,
   deployMigrationArtifactVersion,
   fetchMigrationArtifactFilePreview,
   fetchMigrationArtifactVersions,
@@ -55,6 +56,7 @@ type BusyAction =
   | "publish"
   | "deploy"
   | "refresh_deploy_status"
+  | "delete_draft"
   | null;
 
 const EMPTY_REQUIREMENTS: MigrationOperatorRequirements = {
@@ -650,6 +652,43 @@ function resolveSelectedArtifactVersionId(params: {
     }
   }
   return artifactVersions[0]?.id || "";
+}
+
+function historyRecordIdentity(record: Record<string, unknown>): string {
+  const traceId =
+    asStringOrNull(record.deploy_trace_id)
+    || asStringOrNull(record.publish_trace_id)
+    || asStringOrNull(record.trace_id);
+  if (traceId) {
+    return `trace:${traceId}`;
+  }
+  const action = asStringOrNull(record.action) || "unknown";
+  const artifactVersionId = asStringOrNull(record.artifact_version_id) || "unknown";
+  const timestamp = asStringOrNull(record.timestamp) || "unknown";
+  const status = asStringOrNull(record.status) || "unknown";
+  const workflowIdentifier = asStringOrNull(record.workflow_identifier_used)
+    || asStringOrNull(record.workflow_identifier)
+    || asStringOrNull(record.workflow_id)
+    || "none";
+  return `${action}:${artifactVersionId}:${timestamp}:${status}:${workflowIdentifier}`;
+}
+
+function resolveSelectedHistoryRecord(
+  history: Array<Record<string, unknown>>,
+  selectedIdentity: string,
+): Record<string, unknown> {
+  if (history.length === 0) {
+    return {};
+  }
+  const trimmedIdentity = selectedIdentity.trim();
+  if (!trimmedIdentity) {
+    return asRecord(history[history.length - 1]);
+  }
+  const selected = history.find((item) => historyRecordIdentity(asRecord(item)) === trimmedIdentity);
+  if (selected) {
+    return asRecord(selected);
+  }
+  return asRecord(history[history.length - 1]);
 }
 
 function parseDraftReadinessReason(value: unknown): DraftReadinessReason | null {
@@ -1605,6 +1644,9 @@ export function MigrationWorkspacePanel({
   const [filePreviewOpen, setFilePreviewOpen] = useState(false);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
   const [selectedDraftPreviewPath, setSelectedDraftPreviewPath] = useState("");
+  const [selectedPublishHistoryIdentity, setSelectedPublishHistoryIdentity] = useState("");
+  const [selectedDeployHistoryIdentity, setSelectedDeployHistoryIdentity] = useState("");
+  const draftPreviewFrameRef = useRef<HTMLIFrameElement | null>(null);
 
   const selectedArtifact = useMemo(() => {
     if (!selectedArtifactVersionId) {
@@ -1635,6 +1677,36 @@ export function MigrationWorkspacePanel({
     selectedArtifact !== null &&
     Boolean(deployReadiness.ready) &&
     (!deployReadinessArtifactVersionId || deployReadinessArtifactVersionId === selectedArtifactVersionIdTrimmed);
+  const selectedArtifactReferencedByPublishHistory =
+    selectedArtifactVersionIdTrimmed.length > 0
+      ? publishHistory.some((item) => asString(asRecord(item).artifact_version_id).trim() === selectedArtifactVersionIdTrimmed)
+      : false;
+  const selectedArtifactReferencedByDeployHistory =
+    selectedArtifactVersionIdTrimmed.length > 0
+      ? deployHistory.some((item) => asString(asRecord(item).artifact_version_id).trim() === selectedArtifactVersionIdTrimmed)
+      : false;
+  const selectedArtifactDeleteBlockedReason = (() => {
+    if (!selectedArtifact) {
+      return "Select an artifact version to delete.";
+    }
+    if (selectedArtifact.publish_status === "published") {
+      return "Published artifacts cannot be deleted.";
+    }
+    if (summary?.workspace.last_published_artifact_version_id === selectedArtifact.id) {
+      return "Artifacts referenced by publish history cannot be deleted.";
+    }
+    if (summary?.workspace.last_deployed_artifact_version_id === selectedArtifact.id) {
+      return "Artifacts referenced by deploy history cannot be deleted.";
+    }
+    if (selectedArtifactReferencedByPublishHistory) {
+      return "Artifacts referenced by publish history cannot be deleted.";
+    }
+    if (selectedArtifactReferencedByDeployHistory) {
+      return "Artifacts referenced by deploy history cannot be deleted.";
+    }
+    return null;
+  })();
+  const canDeleteSelectedArtifact = Boolean(selectedArtifact && !selectedArtifactDeleteBlockedReason);
   const publishConfigPrerequisites = asRecord(publishReadiness.config_prerequisites);
   const deployConfigPrerequisites = asRecord(deployReadiness.config_prerequisites);
   const deployBlockerCodes = parseBlockerCodes(deployReadiness.blocker_codes);
@@ -1677,95 +1749,156 @@ export function MigrationWorkspacePanel({
     effectivePublishArtifactRoot,
     currentSiteUrl,
   });
-  const latestDeployHistoryRecord =
-    deployHistory.length > 0 ? asRecord(deployHistory[deployHistory.length - 1]) : {};
+  const publishHistoryRecords = useMemo(
+    () => publishHistory.map((item) => asRecord(item)),
+    [publishHistory],
+  );
+  const deployHistoryRecords = useMemo(
+    () => deployHistory.map((item) => asRecord(item)),
+    [deployHistory],
+  );
+  const selectedPublishHistoryRecord = resolveSelectedHistoryRecord(
+    publishHistoryRecords,
+    selectedPublishHistoryIdentity,
+  );
+  const selectedDeployHistoryRecord = resolveSelectedHistoryRecord(
+    deployHistoryRecords,
+    selectedDeployHistoryIdentity,
+  );
+  const hasSelectedPublishAttempt = publishHistoryRecords.length > 0;
+  const hasSelectedDeployAttempt = deployHistoryRecords.length > 0;
+  const latestGeneratedArtifactId = asStringOrNull(summary?.workspace.latest_generated_artifact_version_id);
+
+  // Diagnostics precedence:
+  // 1) selected record context (publish/deploy row, selected draft artifact)
+  // 2) latest summary diagnostics only for fields missing on selected context
+  const publishFailureCategoryFromSelected = asStringOrNull(selectedPublishHistoryRecord.failure_category);
+  const publishFailureCategoryFromSummary =
+    asStringOrNull(migrationDiagnostics.last_publish_failure_category) ||
+    asStringOrNull(publishReadiness.last_failure_category) ||
+    asStringOrNull(publishReadiness.failure_category);
+  const publishDiagnosticsFailureCategory = publishFailureCategoryFromSelected || publishFailureCategoryFromSummary;
+  const publishFailureMessageFromSelected = asStringOrNull(selectedPublishHistoryRecord.failure_message);
+  const publishFailureMessageFromSummary =
+    asStringOrNull(migrationDiagnostics.last_publish_failure_message) ||
+    asStringOrNull(publishReadiness.last_failure_message);
+  const publishDiagnosticsFailureMessage = publishFailureMessageFromSelected || publishFailureMessageFromSummary;
+  const publishFailureReasonCodeFromSelected = asStringOrNull(selectedPublishHistoryRecord.failure_reason);
+  const publishFailureReasonCodeFromSummary =
+    asStringOrNull(migrationDiagnostics.last_publish_failure_reason) ||
+    asStringOrNull(publishReadiness.last_failure_reason);
+  const publishDiagnosticsFailureReasonCode = publishFailureReasonCodeFromSelected || publishFailureReasonCodeFromSummary;
+  const publishDiagnosticsUsingSummaryFallback =
+    hasSelectedPublishAttempt &&
+    ((!publishFailureCategoryFromSelected && !!publishFailureCategoryFromSummary) ||
+      (!publishFailureMessageFromSelected && !!publishFailureMessageFromSummary) ||
+      (!publishFailureReasonCodeFromSelected && !!publishFailureReasonCodeFromSummary));
+
   const deployTraceId =
-    asStringOrNull(latestDeployHistoryRecord.deploy_trace_id) ||
+    asStringOrNull(selectedDeployHistoryRecord.deploy_trace_id) ||
     asStringOrNull(deployReadiness.last_deploy_trace_id);
   const deployWorkflowIdentifier =
-    asStringOrNull(latestDeployHistoryRecord.workflow_identifier_used) ||
-    asStringOrNull(latestDeployHistoryRecord.workflow_identifier) ||
+    asStringOrNull(selectedDeployHistoryRecord.workflow_identifier_used) ||
+    asStringOrNull(selectedDeployHistoryRecord.workflow_identifier) ||
     asStringOrNull(deployReadiness.workflow_identifier_used) ||
     asStringOrNull(deployReadiness.workflow_identifier) ||
     asStringOrNull(deployTarget.workflow_id);
-  const deployWorkflowIdentifierRequested =
+  const deployFailureCategoryFromSelected = asStringOrNull(selectedDeployHistoryRecord.failure_category);
+  const deployFailureCategoryFromSummary =
+    asStringOrNull(deployReadiness.last_failure_category) ||
+    asStringOrNull(deployReadiness.failure_category);
+  const deployDiagnosticsFailureCategory = deployFailureCategoryFromSelected || deployFailureCategoryFromSummary;
+  const deployWorkflowIdentifierRequestedFromSelected = asStringOrNull(
+    selectedDeployHistoryRecord.workflow_identifier_requested,
+  );
+  const deployWorkflowIdentifierRequestedFromSummary =
     asStringOrNull(deployReadiness.last_failure_workflow_identifier_requested) ||
-    asStringOrNull(latestDeployHistoryRecord.workflow_identifier_requested) ||
     asStringOrNull(migrationDiagnostics.last_deploy_failure_workflow_identifier_requested) ||
     asStringOrNull(deployReadiness.workflow_identifier_requested) ||
     asStringOrNull(deployTarget.workflow_id);
+  const deployWorkflowIdentifierRequested =
+    deployWorkflowIdentifierRequestedFromSelected || deployWorkflowIdentifierRequestedFromSummary;
   const deployWorkflowIdentifierTypeRequested =
-    asStringOrNull(latestDeployHistoryRecord.workflow_identifier_type_requested) ||
+    asStringOrNull(selectedDeployHistoryRecord.workflow_identifier_type_requested) ||
     asStringOrNull(deployReadiness.workflow_identifier_type_requested);
   const deployWorkflowIdentifierTypeUsed =
-    asStringOrNull(latestDeployHistoryRecord.workflow_identifier_type_used) ||
+    asStringOrNull(selectedDeployHistoryRecord.workflow_identifier_type_used) ||
     asStringOrNull(deployReadiness.workflow_identifier_type_used);
-  const deployWorkflowDispatchResolutionSource =
+  const deployWorkflowDispatchResolutionSourceFromSelected = asStringOrNull(
+    selectedDeployHistoryRecord.workflow_dispatch_resolution_source,
+  );
+  const deployWorkflowDispatchResolutionSourceFromSummary =
     asStringOrNull(deployReadiness.last_failure_workflow_dispatch_resolution_source) ||
-    asStringOrNull(latestDeployHistoryRecord.workflow_dispatch_resolution_source) ||
     asStringOrNull(migrationDiagnostics.last_deploy_failure_workflow_dispatch_resolution_source) ||
     asStringOrNull(deployReadiness.workflow_dispatch_resolution_source);
-  const deployWorkflowFilePath =
+  const deployWorkflowDispatchResolutionSource =
+    deployWorkflowDispatchResolutionSourceFromSelected || deployWorkflowDispatchResolutionSourceFromSummary;
+  const deployWorkflowFilePathFromSelected = asStringOrNull(selectedDeployHistoryRecord.workflow_file_path);
+  const deployWorkflowFilePathFromSummary =
     asStringOrNull(deployReadiness.last_failure_workflow_file_path) ||
-    asStringOrNull(latestDeployHistoryRecord.workflow_file_path) ||
     asStringOrNull(migrationDiagnostics.last_deploy_failure_workflow_file_path) ||
     asStringOrNull(deployReadiness.workflow_file_path) ||
     asStringOrNull(deployTarget.resolved_workflow_path);
+  const deployWorkflowFilePath = deployWorkflowFilePathFromSelected || deployWorkflowFilePathFromSummary;
   const deployWorkflowName =
-    asStringOrNull(latestDeployHistoryRecord.workflow_name) || asStringOrNull(deployReadiness.workflow_name);
+    asStringOrNull(selectedDeployHistoryRecord.workflow_name) || asStringOrNull(deployReadiness.workflow_name);
   const deployResolvedWorkflowSource =
-    asStringOrNull(latestDeployHistoryRecord.resolved_workflow_source) ||
+    asStringOrNull(selectedDeployHistoryRecord.resolved_workflow_source) ||
     asStringOrNull(deployTarget.resolved_workflow_source);
   const deployWorkflowMode =
-    asStringOrNull(latestDeployHistoryRecord.deploy_workflow_mode) ||
+    asStringOrNull(selectedDeployHistoryRecord.deploy_workflow_mode) ||
     asStringOrNull(deployTarget.deploy_workflow_mode);
   const deployTargetEnvironmentKey =
-    asStringOrNull(latestDeployHistoryRecord.target_environment_key) ||
+    asStringOrNull(selectedDeployHistoryRecord.target_environment_key) ||
     asStringOrNull(deployTarget.target_environment_key);
   const deployTargetEnvironmentSource =
-    asStringOrNull(latestDeployHistoryRecord.target_environment_source) ||
+    asStringOrNull(selectedDeployHistoryRecord.target_environment_source) ||
     asStringOrNull(deployTarget.target_environment_source);
   const deploySiteWorkflowFilePath =
-    asStringOrNull(latestDeployHistoryRecord.site_workflow_file_path) ||
+    asStringOrNull(selectedDeployHistoryRecord.site_workflow_file_path) ||
     asStringOrNull(deployTarget.site_workflow_file_path) ||
     deployWorkflowFilePath;
   const deployTraceRepoOwner =
-    asStringOrNull(latestDeployHistoryRecord.repo_owner) || asStringOrNull(deployTarget.repo_owner);
+    asStringOrNull(selectedDeployHistoryRecord.repo_owner) || asStringOrNull(deployTarget.repo_owner);
   const deployTraceRepoName =
-    asStringOrNull(latestDeployHistoryRecord.repo_name) || asStringOrNull(deployTarget.repo_name);
+    asStringOrNull(selectedDeployHistoryRecord.repo_name) || asStringOrNull(deployTarget.repo_name);
   const deployTraceRepo =
     deployTraceRepoOwner && deployTraceRepoName ? `${deployTraceRepoOwner}/${deployTraceRepoName}` : null;
   const deployTraceRef =
-    asStringOrNull(latestDeployHistoryRecord.resolved_ref) ||
-    asStringOrNull(latestDeployHistoryRecord.ref) ||
+    asStringOrNull(selectedDeployHistoryRecord.resolved_ref) ||
+    asStringOrNull(selectedDeployHistoryRecord.ref) ||
     asStringOrNull(deployTarget.ref);
   const workflowDispatchSupported =
-    asBooleanOrNull(latestDeployHistoryRecord.workflow_dispatch_supported) ??
+    asBooleanOrNull(selectedDeployHistoryRecord.workflow_dispatch_supported) ??
     asBooleanOrNull(deployReadiness.workflow_dispatch_supported);
   const workflowTriggerTypes = (() => {
-    const historyTriggerTypes = asStringList(latestDeployHistoryRecord.workflow_trigger_types);
+    const historyTriggerTypes = asStringList(selectedDeployHistoryRecord.workflow_trigger_types);
     if (historyTriggerTypes.length > 0) {
       return historyTriggerTypes;
     }
     return asStringList(deployReadiness.workflow_trigger_types);
   })();
   const dispatchServiceAvailability =
-    asBooleanOrNull(latestDeployHistoryRecord.dispatch_service_availability) ??
+    asBooleanOrNull(selectedDeployHistoryRecord.dispatch_service_availability) ??
     asBooleanOrNull(deployReadiness.dispatch_service_availability);
-  const dispatchServiceReasonCode =
+  const dispatchServiceReasonCodeFromSelected = asStringOrNull(
+    selectedDeployHistoryRecord.dispatch_service_reason_code,
+  );
+  const dispatchServiceReasonCodeFromSummary =
     asStringOrNull(deployReadiness.last_failure_dispatch_service_reason_code) ||
-    asStringOrNull(latestDeployHistoryRecord.dispatch_service_reason_code) ||
     asStringOrNull(migrationDiagnostics.last_deploy_failure_dispatch_service_reason_code) ||
     asStringOrNull(deployReadiness.dispatch_service_reason_code);
+  const dispatchServiceReasonCode = dispatchServiceReasonCodeFromSelected || dispatchServiceReasonCodeFromSummary;
   const workflowConformanceChecked =
-    asBooleanOrNull(latestDeployHistoryRecord.workflow_conformance_checked) ??
+    asBooleanOrNull(selectedDeployHistoryRecord.workflow_conformance_checked) ??
     asBooleanOrNull(deployReadiness.workflow_conformance_checked);
-  const workflowConformanceStatus =
+  const workflowConformanceStatusFromSelected = asStringOrNull(selectedDeployHistoryRecord.workflow_conformance_status);
+  const workflowConformanceStatusFromSummary =
     asStringOrNull(deployReadiness.last_failure_workflow_conformance_status) ||
-    asStringOrNull(latestDeployHistoryRecord.workflow_conformance_status) ||
     asStringOrNull(deployReadiness.workflow_conformance_status);
+  const workflowConformanceStatus = workflowConformanceStatusFromSelected || workflowConformanceStatusFromSummary;
   const workflowConformanceReasons = (() => {
-    const historyReasons = asStringList(latestDeployHistoryRecord.workflow_conformance_reasons);
+    const historyReasons = asStringList(selectedDeployHistoryRecord.workflow_conformance_reasons);
     if (historyReasons.length > 0) {
       return historyReasons;
     }
@@ -1780,49 +1913,49 @@ export function MigrationWorkspacePanel({
     return asStringList(deployReadiness.workflow_conformance_reasons);
   })();
   const workflowConformanceEvidenceSummary =
-    asStringOrNull(latestDeployHistoryRecord.workflow_conformance_evidence_summary) ||
+    asStringOrNull(selectedDeployHistoryRecord.workflow_conformance_evidence_summary) ||
     asStringOrNull(deployReadiness.workflow_conformance_evidence_summary);
   const dispatchIdentifierType =
-    asStringOrNull(latestDeployHistoryRecord.dispatch_identifier_type) ||
+    asStringOrNull(selectedDeployHistoryRecord.dispatch_identifier_type) ||
     asStringOrNull(deployReadiness.dispatch_identifier_type);
   const dispatchAttempted =
-    asBooleanOrNull(latestDeployHistoryRecord.dispatch_attempted) ??
+    asBooleanOrNull(selectedDeployHistoryRecord.dispatch_attempted) ??
     asBooleanOrNull(deployReadiness.last_dispatch_attempted);
   const dispatchResultStage =
-    asStringOrNull(latestDeployHistoryRecord.dispatch_result_stage) ||
+    asStringOrNull(selectedDeployHistoryRecord.dispatch_result_stage) ||
     asStringOrNull(deployReadiness.last_dispatch_result_stage);
   const dispatchRefSent =
-    asStringOrNull(latestDeployHistoryRecord.dispatch_ref_sent) ||
+    asStringOrNull(selectedDeployHistoryRecord.dispatch_ref_sent) ||
     asStringOrNull(deployReadiness.last_dispatch_ref_sent) ||
     deployTraceRef;
   const workflowInputsConfiguredKeys = (() => {
-    const historyKeys = asStringList(latestDeployHistoryRecord.workflow_inputs_configured_keys);
+    const historyKeys = asStringList(selectedDeployHistoryRecord.workflow_inputs_configured_keys);
     if (historyKeys.length > 0) {
       return historyKeys;
     }
     return asStringList(deployReadiness.last_workflow_inputs_configured_keys);
   })();
   const workflowInputsSentKeys = (() => {
-    const historyKeys = asStringList(latestDeployHistoryRecord.workflow_inputs_sent_keys);
+    const historyKeys = asStringList(selectedDeployHistoryRecord.workflow_inputs_sent_keys);
     if (historyKeys.length > 0) {
       return historyKeys;
     }
     return asStringList(deployReadiness.last_workflow_inputs_sent_keys);
   })();
   const workflowRunLookupAttempted =
-    asBooleanOrNull(latestDeployHistoryRecord.workflow_run_lookup_attempted) ??
+    asBooleanOrNull(selectedDeployHistoryRecord.workflow_run_lookup_attempted) ??
     asBooleanOrNull(deployReadiness.last_workflow_run_lookup_attempted);
   const workflowRunFound =
-    asBooleanOrNull(latestDeployHistoryRecord.workflow_run_found) ??
+    asBooleanOrNull(selectedDeployHistoryRecord.workflow_run_found) ??
     asBooleanOrNull(deployReadiness.last_workflow_run_found);
   const workflowJobFailureDetected =
-    asBooleanOrNull(latestDeployHistoryRecord.workflow_job_failure_detected) ??
+    asBooleanOrNull(selectedDeployHistoryRecord.workflow_job_failure_detected) ??
     asBooleanOrNull(deployReadiness.last_workflow_job_failure_detected);
   const postDispatchState =
-    asStringOrNull(latestDeployHistoryRecord.post_dispatch_state) ||
+    asStringOrNull(selectedDeployHistoryRecord.post_dispatch_state) ||
     asStringOrNull(deployReadiness.last_post_dispatch_state);
   const expectedWorkflowOutputs = (() => {
-    const historyKeys = asStringList(latestDeployHistoryRecord.expected_workflow_outputs);
+    const historyKeys = asStringList(selectedDeployHistoryRecord.expected_workflow_outputs);
     if (historyKeys.length > 0) {
       return historyKeys;
     }
@@ -1833,20 +1966,20 @@ export function MigrationWorkspacePanel({
     return ["resolved_live_url", "live_url", "deployed_url"];
   })();
   const deployEvidenceContractStatus =
-    asStringOrNull(latestDeployHistoryRecord.deploy_evidence_contract_status) ||
+    asStringOrNull(selectedDeployHistoryRecord.deploy_evidence_contract_status) ||
     asStringOrNull(deployReadiness.last_deploy_evidence_contract_status);
   const deployEvidenceContractReasons = (() => {
-    const historyReasons = asStringList(latestDeployHistoryRecord.deploy_evidence_contract_reasons);
+    const historyReasons = asStringList(selectedDeployHistoryRecord.deploy_evidence_contract_reasons);
     if (historyReasons.length > 0) {
       return historyReasons;
     }
     return asStringList(deployReadiness.last_deploy_evidence_contract_reasons);
   })();
   const workflowContractAdvisory =
-    asStringOrNull(latestDeployHistoryRecord.workflow_contract_advisory) ||
+    asStringOrNull(selectedDeployHistoryRecord.workflow_contract_advisory) ||
     asStringOrNull(deployReadiness.last_workflow_contract_advisory);
   const workflowRunId = (() => {
-    const fromHistory = latestDeployHistoryRecord.workflow_run_id;
+    const fromHistory = selectedDeployHistoryRecord.workflow_run_id;
     if (typeof fromHistory === "number" && Number.isFinite(fromHistory)) {
       return String(Math.trunc(fromHistory));
     }
@@ -1857,28 +1990,46 @@ export function MigrationWorkspacePanel({
     return asStringOrNull(fromHistory) || asStringOrNull(fromReadiness);
   })();
   const workflowRunStatus =
-    asStringOrNull(latestDeployHistoryRecord.workflow_run_status) ||
+    asStringOrNull(selectedDeployHistoryRecord.workflow_run_status) ||
     asStringOrNull(deployReadiness.last_workflow_run_status);
   const workflowRunConclusion =
-    asStringOrNull(latestDeployHistoryRecord.workflow_run_conclusion) ||
+    asStringOrNull(selectedDeployHistoryRecord.workflow_run_conclusion) ||
     asStringOrNull(deployReadiness.last_workflow_run_conclusion);
-  const deployFailureReasonCode =
+  const deployFailureReasonCodeFromSelected = asStringOrNull(selectedDeployHistoryRecord.failure_reason);
+  const deployFailureReasonCodeFromSummary =
     asStringOrNull(deployReadiness.last_failure_reason) ||
-    asStringOrNull(migrationDiagnostics.last_deploy_failure_reason) ||
-    asStringOrNull(latestDeployHistoryRecord.failure_reason);
-  const deployFailureStage =
+    asStringOrNull(migrationDiagnostics.last_deploy_failure_reason);
+  const deployFailureReasonCode = deployFailureReasonCodeFromSelected || deployFailureReasonCodeFromSummary;
+  const deployFailureStageFromSelected =
+    asStringOrNull(selectedDeployHistoryRecord.failure_stage) ||
+    asStringOrNull(selectedDeployHistoryRecord.dispatch_result_stage);
+  const deployFailureStageFromSummary =
     asStringOrNull(deployReadiness.last_failure_stage) ||
-    asStringOrNull(migrationDiagnostics.last_deploy_failure_stage) ||
-    asStringOrNull(latestDeployHistoryRecord.failure_stage) ||
-    asStringOrNull(latestDeployHistoryRecord.dispatch_result_stage);
-  const deployWorkflowExists =
+    asStringOrNull(migrationDiagnostics.last_deploy_failure_stage);
+  const deployFailureStage = deployFailureStageFromSelected || deployFailureStageFromSummary;
+  const deployWorkflowExistsFromSelected = asBooleanOrNull(selectedDeployHistoryRecord.workflow_exists);
+  const deployWorkflowExistsFromSummary =
     asBooleanOrNull(deployReadiness.last_failure_workflow_exists) ??
-    asBooleanOrNull(latestDeployHistoryRecord.workflow_exists) ??
     asBooleanOrNull(deployReadiness.last_workflow_exists);
-  const deployFailureRemediationHint =
+  const deployWorkflowExists = deployWorkflowExistsFromSelected ?? deployWorkflowExistsFromSummary;
+  const deployFailureRemediationHintFromSelected = asStringOrNull(selectedDeployHistoryRecord.failure_remediation_hint);
+  const deployFailureRemediationHintFromSummary =
     asStringOrNull(deployReadiness.last_failure_remediation_hint) ||
-    asStringOrNull(latestDeployHistoryRecord.failure_remediation_hint) ||
     asStringOrNull(migrationDiagnostics.last_deploy_failure_remediation_hint);
+  const deployFailureRemediationHint =
+    deployFailureRemediationHintFromSelected || deployFailureRemediationHintFromSummary;
+  const deployDiagnosticsUsingSummaryFallback =
+    hasSelectedDeployAttempt &&
+    ((!deployFailureCategoryFromSelected && !!deployFailureCategoryFromSummary) ||
+      (!deployFailureReasonCodeFromSelected && !!deployFailureReasonCodeFromSummary) ||
+      (!deployFailureStageFromSelected && !!deployFailureStageFromSummary) ||
+      (!deployWorkflowIdentifierRequestedFromSelected && !!deployWorkflowIdentifierRequestedFromSummary) ||
+      (!deployWorkflowFilePathFromSelected && !!deployWorkflowFilePathFromSummary) ||
+      (!deployWorkflowDispatchResolutionSourceFromSelected && !!deployWorkflowDispatchResolutionSourceFromSummary) ||
+      (!dispatchServiceReasonCodeFromSelected && !!dispatchServiceReasonCodeFromSummary) ||
+      (!workflowConformanceStatusFromSelected && !!workflowConformanceStatusFromSummary) ||
+      (deployWorkflowExistsFromSelected === null && deployWorkflowExistsFromSummary !== null) ||
+      (!deployFailureRemediationHintFromSelected && !!deployFailureRemediationHintFromSummary));
   const draftReadiness = parseDraftReadiness(contextSummary);
   const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
   const draftGenerationState = parseDraftGenerationState({
@@ -1891,6 +2042,13 @@ export function MigrationWorkspacePanel({
   const draftFailureSourceLabel = toDraftFailureSourceLabel(
     asStringOrNull(migrationDiagnostics.last_draft_failure_source) || draftAIExecution.failureSource,
   );
+  const selectedArtifactFailureMessage = asStringOrNull(selectedArtifact?.error_summary);
+  const draftFailureMessage = selectedArtifactFailureMessage || asStringOrNull(migrationDiagnostics.last_draft_failure_message);
+  const draftDiagnosticsUsingSummaryFallback =
+    Boolean(selectedArtifact) &&
+    latestGeneratedArtifactId !== null &&
+    selectedArtifact?.id !== latestGeneratedArtifactId &&
+    !selectedArtifactFailureMessage;
   const draftContractStatus = asStringOrNull(migrationDiagnostics.last_draft_contract_status);
   const draftContractReasonCodes = asStringList(migrationDiagnostics.last_draft_contract_reason_codes);
   const draftContractWarningCodes = asStringList(migrationDiagnostics.last_draft_contract_warning_codes);
@@ -2127,6 +2285,32 @@ export function MigrationWorkspacePanel({
   }, [loadWorkspaceData]);
 
   useEffect(() => {
+    setSelectedPublishHistoryIdentity((current) => {
+      const trimmed = current.trim();
+      if (publishHistoryRecords.length === 0) {
+        return "";
+      }
+      if (trimmed && publishHistoryRecords.some((item) => historyRecordIdentity(item) === trimmed)) {
+        return trimmed;
+      }
+      return historyRecordIdentity(publishHistoryRecords[publishHistoryRecords.length - 1]);
+    });
+  }, [publishHistoryRecords]);
+
+  useEffect(() => {
+    setSelectedDeployHistoryIdentity((current) => {
+      const trimmed = current.trim();
+      if (deployHistoryRecords.length === 0) {
+        return "";
+      }
+      if (trimmed && deployHistoryRecords.some((item) => historyRecordIdentity(item) === trimmed)) {
+        return trimmed;
+      }
+      return historyRecordIdentity(deployHistoryRecords[deployHistoryRecords.length - 1]);
+    });
+  }, [deployHistoryRecords]);
+
+  useEffect(() => {
     setDraftPreviewOpen(false);
     setSelectedDraftPreviewPath("");
     setFilePreviewOpen(false);
@@ -2148,6 +2332,45 @@ export function MigrationWorkspacePanel({
       return draftPreview.entryPath || draftPreview.pages[0]?.path || "";
     });
   }, [draftPreview]);
+
+  useEffect(() => {
+    if (!draftPreviewOpen || draftPreview.pages.length === 0) {
+      return;
+    }
+    const knownPaths = new Set(draftPreview.pages.map((page) => page.path));
+    let lastObservedHash = "";
+    const syncPreviewPathFromHash = () => {
+      const frame = draftPreviewFrameRef.current;
+      if (!frame?.contentWindow) {
+        return;
+      }
+      const hash = String(frame.contentWindow.location.hash || "").trim();
+      if (!hash || hash === lastObservedHash) {
+        return;
+      }
+      lastObservedHash = hash;
+      if (!hash.startsWith("#draft-preview-page=")) {
+        return;
+      }
+      const encodedPath = hash.slice("#draft-preview-page=".length);
+      if (!encodedPath) {
+        return;
+      }
+      try {
+        const decodedPath = decodeURIComponent(encodedPath).trim();
+        if (!decodedPath || !knownPaths.has(decodedPath)) {
+          return;
+        }
+        setSelectedDraftPreviewPath((current) => (current === decodedPath ? current : decodedPath));
+      } catch {
+        return;
+      }
+    };
+    const timerId = window.setInterval(syncPreviewPathFromHash, 300);
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [draftPreview.pages, draftPreviewOpen]);
 
   const handleIngestSource = async (): Promise<void> => {
     setBusyAction("ingest");
@@ -2364,6 +2587,39 @@ export function MigrationWorkspacePanel({
       const category = parseFailureCategory(error, baseMessage, "approve");
       setErrorHint(null);
       setErrorMessage(formatActionFailureMessage("approve", category, baseMessage));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleDeleteSelectedArtifact = async (): Promise<void> => {
+    if (!selectedArtifactVersionIdTrimmed) {
+      setErrorHint(null);
+      setErrorMessage("Select a draft artifact before deleting.");
+      return;
+    }
+    if (!canDeleteSelectedArtifact) {
+      setErrorHint(null);
+      setErrorMessage(selectedArtifactDeleteBlockedReason || "Selected artifact cannot be deleted.");
+      return;
+    }
+    if (!window.confirm("Delete the selected draft artifact? This cannot be undone.")) {
+      return;
+    }
+    setBusyAction("delete_draft");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const result = await deleteMigrationArtifactVersion(token, businessId, siteId, selectedArtifactVersionIdTrimmed);
+      setStatusMessage(
+        `Draft artifact v${result.deleted_artifact_version_number} deleted.`,
+      );
+      await loadWorkspaceData(false);
+    } catch (error) {
+      const baseMessage = toErrorMessage(error, "Failed to delete draft artifact.");
+      setErrorHint(null);
+      setErrorMessage(baseMessage);
     } finally {
       setBusyAction(null);
     }
@@ -3026,6 +3282,7 @@ export function MigrationWorkspacePanel({
                   </label>
                 ) : null}
                 <iframe
+                  ref={draftPreviewFrameRef}
                   title="Migration draft preview"
                   className="migration-draft-preview-frame"
                   sandbox=""
@@ -3491,6 +3748,18 @@ export function MigrationWorkspacePanel({
             >
               {busyAction === "approve" ? "Approving..." : "Approve Selected Draft"}
             </button>
+            <button
+              type="button"
+              className="button button-tertiary"
+              onClick={() => void handleDeleteSelectedArtifact()}
+              disabled={isActionInFlight || !canDeleteSelectedArtifact}
+              data-testid="migration-delete-draft-button"
+            >
+              {busyAction === "delete_draft" ? "Deleting..." : "Delete Selected Draft"}
+            </button>
+            {!canDeleteSelectedArtifact && selectedArtifact ? (
+              <span className="hint muted">{selectedArtifactDeleteBlockedReason}</span>
+            ) : null}
           </div>
           <div className="panel panel-compact stack">
             <strong>Publish</strong>
@@ -3549,6 +3818,38 @@ export function MigrationWorkspacePanel({
         <div className="grid grid-2">
           <div className="panel panel-compact stack" data-testid="migration-publish-history">
             <strong>Publish History</strong>
+            {publishHistoryRecords.length > 0 ? (
+              <label className="stack-tight">
+                <span className="hint muted">Selected publish attempt diagnostics</span>
+                <select
+                  value={selectedPublishHistoryIdentity}
+                  onChange={(event) => setSelectedPublishHistoryIdentity(event.target.value)}
+                  data-testid="migration-publish-history-select"
+                >
+                  {publishHistoryRecords
+                    .slice(-10)
+                    .reverse()
+                    .map((record, index) => {
+                      const identity = historyRecordIdentity(record);
+                      const timestamp = asString(record.timestamp) || "n/a";
+                      const status = asString(record.status) || "unknown";
+                      const artifactVersion = asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a";
+                      return (
+                        <option key={`publish-history-select-${identity}-${index}`} value={identity}>
+                          {timestamp} - {status} - artifact {artifactVersion}
+                        </option>
+                      );
+                    })}
+                </select>
+              </label>
+            ) : null}
+            {publishHistoryRecords.length > 0 ? (
+              <span className="hint muted" data-testid="migration-publish-diagnostics-scope">
+                Showing diagnostics for selected publish attempt:{" "}
+                {asString(selectedPublishHistoryRecord.timestamp) || "n/a"} ·{" "}
+                {asString(selectedPublishHistoryRecord.status) || "unknown"}.
+              </span>
+            ) : null}
             {publishHistory.length > 0 ? (
               <ul>
                 {publishHistory.slice(-10).reverse().map((item, index) => {
@@ -3567,6 +3868,38 @@ export function MigrationWorkspacePanel({
           </div>
           <div className="panel panel-compact stack" data-testid="migration-deploy-history">
             <strong>Deploy History</strong>
+            {deployHistoryRecords.length > 0 ? (
+              <label className="stack-tight">
+                <span className="hint muted">Selected deploy attempt diagnostics</span>
+                <select
+                  value={selectedDeployHistoryIdentity}
+                  onChange={(event) => setSelectedDeployHistoryIdentity(event.target.value)}
+                  data-testid="migration-deploy-history-select"
+                >
+                  {deployHistoryRecords
+                    .slice(-10)
+                    .reverse()
+                    .map((record, index) => {
+                      const identity = historyRecordIdentity(record);
+                      const timestamp = asString(record.timestamp) || "n/a";
+                      const status = asString(record.status) || "unknown";
+                      const artifactVersion = asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a";
+                      return (
+                        <option key={`deploy-history-select-${identity}-${index}`} value={identity}>
+                          {timestamp} - {status} - artifact {artifactVersion}
+                        </option>
+                      );
+                    })}
+                </select>
+              </label>
+            ) : null}
+            {deployHistoryRecords.length > 0 ? (
+              <span className="hint muted" data-testid="migration-deploy-diagnostics-scope">
+                Showing diagnostics for selected deploy attempt:{" "}
+                {asString(selectedDeployHistoryRecord.timestamp) || "n/a"} ·{" "}
+                {asString(selectedDeployHistoryRecord.status) || "unknown"}.
+              </span>
+            ) : null}
             {deployHistory.length > 0 ? (
               <ul>
                 {deployHistory.slice(-10).reverse().map((item, index) => {
@@ -3622,23 +3955,51 @@ export function MigrationWorkspacePanel({
             <div className="grid grid-2">
               <div className="panel panel-compact stack-tight" data-testid="migration-publish-diagnostics">
                 <strong>Publish Diagnostics</strong>
-                {asString(migrationDiagnostics.last_publish_failure_category) ? (
+                <span className="hint muted">
+                  {publishHistoryRecords.length > 0
+                    ? "Context: selected publish attempt"
+                    : "Context: latest publish summary"}
+                </span>
+                {publishDiagnosticsUsingSummaryFallback ? (
+                  <span className="hint muted" data-testid="migration-publish-diagnostics-fallback-note">
+                    Missing selected-attempt fields are filled from latest publish summary diagnostics.
+                  </span>
+                ) : null}
+                {publishDiagnosticsFailureCategory ? (
                   <span className="hint warning">
-                    Publish failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_publish_failure_category))}
+                    Publish failure category:{" "}
+                    {toFailureCategoryLabel(publishDiagnosticsFailureCategory)}
                   </span>
                 ) : (
                   <span className="hint muted">No publish failure recorded.</span>
                 )}
-                {asString(migrationDiagnostics.last_publish_failure_message) ? (
-                  <span className="hint warning">{asString(migrationDiagnostics.last_publish_failure_message)}</span>
+                {publishDiagnosticsFailureMessage ? (
+                  <span className="hint warning">
+                    {publishDiagnosticsFailureMessage}
+                  </span>
+                ) : null}
+                {publishDiagnosticsFailureReasonCode ? (
+                  <span className="hint warning">
+                    Publish failure reason: {formatReasonCodeLabel(publishDiagnosticsFailureReasonCode)}
+                  </span>
                 ) : null}
               </div>
 
               <div className="panel panel-compact stack-tight" data-testid="migration-deploy-diagnostics">
                 <strong>Deploy Diagnostics</strong>
+                <span className="hint muted">
+                  {deployHistoryRecords.length > 0
+                    ? "Context: selected deploy attempt"
+                    : "Context: latest deploy summary"}
+                </span>
+                {deployDiagnosticsUsingSummaryFallback ? (
+                  <span className="hint muted" data-testid="migration-deploy-diagnostics-fallback-note">
+                    Missing selected-attempt fields are filled from latest deploy summary diagnostics.
+                  </span>
+                ) : null}
                 <span className="hint">
                   Deploy failure category:{" "}
-                  {deployFailureCategory ? toFailureCategoryLabel(deployFailureCategory) : "Not available"}
+                  {deployDiagnosticsFailureCategory ? toFailureCategoryLabel(deployDiagnosticsFailureCategory) : "Not available"}
                 </span>
                 <span className="hint">
                   Deploy failure reason: {deployFailureReasonCode ? formatReasonCodeLabel(deployFailureReasonCode) : "Not available"}
@@ -3701,6 +4062,16 @@ export function MigrationWorkspacePanel({
 
             <div className="panel panel-compact stack-tight" data-testid="migration-draft-diagnostics">
               <strong>Draft Diagnostics</strong>
+              <span className="hint muted">
+                {selectedArtifact
+                  ? `Context: selected draft artifact v${selectedArtifact.version}`
+                  : "Context: latest draft summary"}
+              </span>
+              {draftDiagnosticsUsingSummaryFallback ? (
+                <span className="hint muted" data-testid="migration-draft-diagnostics-fallback-note">
+                  Selected artifact lacks draft-failure details; showing latest draft summary diagnostics.
+                </span>
+              ) : null}
               {asString(migrationDiagnostics.last_draft_failure_category) ? (
                 <span className="hint warning">
                   Draft failure category: {toFailureCategoryLabel(asString(migrationDiagnostics.last_draft_failure_category))}
@@ -3708,8 +4079,8 @@ export function MigrationWorkspacePanel({
               ) : (
                 <span className="hint muted">No draft failure recorded.</span>
               )}
-              {asString(migrationDiagnostics.last_draft_failure_message) ? (
-                <span className="hint warning">{asString(migrationDiagnostics.last_draft_failure_message)}</span>
+              {draftFailureMessage ? (
+                <span className="hint warning">{draftFailureMessage}</span>
               ) : null}
               {draftFailureSourceLabel ? (
                 <span className="hint warning">Draft failure source: {draftFailureSourceLabel}</span>
@@ -3783,3 +4154,4 @@ export function MigrationWorkspacePanel({
     </div>
   );
 }
+

@@ -341,6 +341,13 @@ class SEOMigrationDeployActionResult:
 
 
 @dataclass(frozen=True)
+class SEOMigrationArtifactDeleteResult:
+    workspace: SEOMigrationWorkspace
+    deleted_artifact_version_id: str
+    deleted_artifact_version_number: int
+
+
+@dataclass(frozen=True)
 class SEOMigrationDraftFailure:
     failure_category: str
     failure_reason: str
@@ -4151,6 +4158,115 @@ class SEOMigrationService:
         if artifact is None:
             raise SEOMigrationNotFoundError("Migration artifact version not found")
         return artifact
+
+    def delete_artifact_version(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        artifact_version_id: str,
+        principal_id: str | None = None,
+    ) -> SEOMigrationArtifactDeleteResult:
+        workspace = self.get_workspace(business_id=business_id, site_id=site_id)
+        site = self._require_site(business_id=business_id, site_id=site_id)
+        artifact = self.get_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact_version_id,
+        )
+
+        if artifact.publish_status == "published":
+            raise SEOMigrationValidationError(
+                "Published artifacts cannot be deleted.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code="artifact_already_published",
+                artifact_version_id=artifact.id,
+                workspace_id=workspace.id,
+            )
+
+        if artifact.id == workspace.last_published_artifact_version_id or artifact.id == workspace.last_deployed_artifact_version_id:
+            raise SEOMigrationValidationError(
+                "Artifacts referenced by publish/deploy pointers cannot be deleted.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code="artifact_delete_integrity_blocked",
+                artifact_version_id=artifact.id,
+                workspace_id=workspace.id,
+            )
+
+        if _history_references_artifact(
+            history=workspace.publish_history_json,
+            artifact_version_id=artifact.id,
+            action="publish",
+        ):
+            raise SEOMigrationValidationError(
+                "Artifacts referenced by publish history cannot be deleted.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code="artifact_referenced_by_publish_history",
+                artifact_version_id=artifact.id,
+                workspace_id=workspace.id,
+            )
+
+        if _history_references_artifact(
+            history=workspace.deploy_history_json,
+            artifact_version_id=artifact.id,
+            action="deploy",
+        ):
+            raise SEOMigrationValidationError(
+                "Artifacts referenced by deploy history cannot be deleted.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code="artifact_delete_integrity_blocked",
+                artifact_version_id=artifact.id,
+                workspace_id=workspace.id,
+            )
+
+        deleted_artifact_id = artifact.id
+        deleted_artifact_version = int(artifact.version)
+        self.seo_migration_repository.delete_artifact_version(artifact)
+
+        remaining_versions = self.seo_migration_repository.list_artifact_versions_for_business_site(
+            business_id,
+            site_id,
+            limit=100,
+        )
+        latest_generated = remaining_versions[0] if remaining_versions else None
+        latest_approved = next((item for item in remaining_versions if item.approval_status == "approved"), None)
+
+        workspace.latest_generated_artifact_version_id = latest_generated.id if latest_generated else None
+        workspace.latest_generated_artifact_version_number = latest_generated.version if latest_generated else None
+        workspace.latest_approved_artifact_version_id = latest_approved.id if latest_approved else None
+        workspace.latest_approved_artifact_version_number = latest_approved.version if latest_approved else None
+        if latest_generated is None:
+            workspace.migration_status = "draft"
+        elif latest_approved is not None:
+            workspace.migration_status = "draft_approved"
+        else:
+            workspace.migration_status = "draft_generated"
+        workspace.updated_by_principal_id = principal_id
+        self._update_workspace_readiness_statuses(workspace=workspace, site=site)
+        self.seo_migration_repository.save_workspace(workspace)
+        self.session.commit()
+        self.session.refresh(workspace)
+        logger.info(
+            "seo_migration_artifact_deleted",
+            extra={
+                "event": "seo_migration_artifact_deleted",
+                "business_id": business_id,
+                "site_id": site_id,
+                "workspace_id": workspace.id,
+                "artifact_version_id": deleted_artifact_id,
+                "artifact_version_number": deleted_artifact_version,
+                "principal_id": _normalize_string(principal_id, max_length=64),
+            },
+        )
+        return SEOMigrationArtifactDeleteResult(
+            workspace=workspace,
+            deleted_artifact_version_id=deleted_artifact_id,
+            deleted_artifact_version_number=deleted_artifact_version,
+        )
 
     def preview_artifact_file(
         self,
@@ -8853,6 +8969,21 @@ def _append_history_item(current: object, item: dict[str, object]) -> list[dict[
     if len(normalized) > _MAX_HISTORY_ITEMS:
         return normalized[-_MAX_HISTORY_ITEMS:]
     return normalized
+
+
+def _history_references_artifact(*, history: object, artifact_version_id: str, action: str) -> bool:
+    artifact_id = str(artifact_version_id or "").strip()
+    expected_action = str(action or "").strip().lower()
+    if not artifact_id or not expected_action:
+        return False
+    normalized = _normalize_history_list(history)
+    for item in normalized:
+        if str(item.get("action") or "").strip().lower() != expected_action:
+            continue
+        if str(item.get("artifact_version_id") or "").strip() != artifact_id:
+            continue
+        return True
+    return False
 
 
 def _find_latest_deploy_history_index_for_refresh(*, history: list[dict[str, object]], artifact_version_id: str) -> int | None:

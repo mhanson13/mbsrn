@@ -12,14 +12,12 @@ A bounded operator-journey pass aligned site-level recommendation flows across:
 
 ### What changed
 
-- Site operator page content tabs were clarified to:
-  - `Operator Focus`
-  - `Recommendations`
-  - `Migration`
-  - `Activity`
-- `Operator Focus` was reframed as summary/next-step context (not the primary recommendation execution workflow).
-- Migration was promoted with explicit first-class framing and direct open action in the focus surface.
-- Competitor context was reframed as supporting context and visually de-emphasized relative to recommendation and migration execution domains.
+- Site operator page was simplified to avoid duplicated recommendation framing.
+- Recommendation execution remains the single primary workflow lane in the site workspace.
+- Migration was moved out of the main site workspace into the dedicated route:
+  - `/sites/[site_id]/migration`
+- Site workspace now keeps a concise migration status + launch CTA instead of an embedded migration console.
+- Competitor context remains supporting information and is visually de-emphasized relative to recommendation execution.
 - Recommendation detail/run/narrative pages were aligned to the shared page composition rhythm using:
   - `OperatorPageHero`
   - `OperatorPageSectionStack`
@@ -112,9 +110,9 @@ Boundary:
 The site operator route (`/sites/[site_id]`) now frames recommendation execution as a distinct operational lane:
 
 - top-level hero/control surface communicates current urgency and recommended next action
-- recommendation execution remains in the dedicated `Recommendations` workflow section/tab
+- recommendation execution remains the primary workflow lane on the page
 - supporting context (competitor/trust/activity) remains visible but visually secondary to recommendation execution
-- quick tab-lane shortcuts are available to move directly between recommendation and migration workflows
+- migration is launched from a dedicated CTA to `/sites/[site_id]/migration` instead of an embedded tab
 
 This is still presentation-only:
 - recommendation generation, run/narrative behavior, action semantics, and polling contracts are unchanged.

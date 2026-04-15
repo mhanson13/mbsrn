@@ -208,6 +208,7 @@ describe("NavShell", () => {
       </NavShell>,
     );
     expect(document.querySelector(".operator-shell-main-inner-wide")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Google Profile" })).toHaveClass("is-active");
 
     mockUsePathname.mockReturnValue("/admin");
     rerender(

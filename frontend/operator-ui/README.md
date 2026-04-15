@@ -57,9 +57,10 @@ This stores publish target metadata only. GitHub credentials remain environment-
 
 Migration workspace boundary:
 - Admin owns GitHub account/owner and runtime credential boundary.
-- site workspace migration panel does not provide editable Admin-owned owner/base-path controls.
+- migration workflow runs on the dedicated route `/sites/[site_id]/migration`; the main site workspace provides status + launch only.
+- migration workflow does not provide editable Admin-owned owner/base-path controls.
 - operators configure workspace repository name plus optional branch override.
-- workspace surfaces a merged effective target/readiness summary (admin owner + workspace repo/branch) without exposing credential material.
+- migration route surfaces a merged effective target/readiness summary (admin owner + workspace repo/branch) without exposing credential material.
 - deploy routing controls are Admin-owned:
   - `repo_owner`, `repo_name`, `workflow_id`, `ref`, `inputs`
 - site workspace shows those deploy routing values as read-only diagnostics and only allows bounded deploy availability toggling.
@@ -90,7 +91,13 @@ Migration workspace boundary:
 - migration draft preview is rendered from selected artifact content in a sandboxed iframe and is always labeled as draft-only (not published, not deployed).
 - draft preview supports whole-site navigation through generated HTML pages when the artifact includes multiple pages.
 - artifact file preview supports explicit hide/show controls so operators can collapse preview output without losing selected file context.
+- eligible unpublished draft artifacts can be deleted from the migration route; artifacts referenced by publish/deploy history or already published remain protected.
 - migration analytics rules hydrate from authoritative workspace/site GA values and persist after save/reload.
+
+Google Profile naming and placement:
+- top-level navigation and page labels use `Google Profile`.
+- `/google-profile` is the primary route; `/business-profile` remains compatibility path.
+- GA4 property setup is owned by Google Profile and removed from the site workspace surface.
 
 ## Shared workspace/page composition primitives
 

@@ -637,6 +637,12 @@ export interface MigrationDeployActionResponse {
   result: Record<string, unknown>;
 }
 
+export interface MigrationArtifactDeleteActionResponse {
+  workspace: MigrationWorkspace;
+  deleted_artifact_version_id: string;
+  deleted_artifact_version_number: number;
+}
+
 export interface MigrationHistoryListResponse {
   items: Array<Record<string, unknown>>;
   total: number;

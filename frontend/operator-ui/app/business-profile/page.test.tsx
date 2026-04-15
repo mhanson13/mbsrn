@@ -86,7 +86,7 @@ describe("business profile callback notice UX", () => {
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
     expect(screen.queryByLabelText("Site")).not.toBeInTheDocument();
     expect(
-      await screen.findByText("Google Business Profile connected successfully."),
+      await screen.findByText("Google Profile connected successfully."),
     ).toBeInTheDocument();
   });
 
@@ -103,7 +103,7 @@ describe("business profile callback notice UX", () => {
       expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1"),
     );
     expect(
-      await screen.findByText("Google Business Profile connection requires reauthorization. Please reconnect."),
+      await screen.findByText("Google Profile connection requires reauthorization. Please reconnect."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/token_exchange_failed/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/provider_detail/i)).not.toBeInTheDocument();
@@ -122,7 +122,7 @@ describe("business profile callback notice UX", () => {
       expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1"),
     );
     expect(
-      await screen.findByText("Google Business Profile connection did not complete. Please try connecting again."),
+      await screen.findByText("Google Profile connection did not complete. Please try connecting again."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/raw_oauth_error/i)).not.toBeInTheDocument();
   });
@@ -135,13 +135,13 @@ describe("business profile callback notice UX", () => {
     await waitFor(() =>
       expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1"),
     );
-    await screen.findByRole("heading", { name: "Google Business Profile" });
-    expect(screen.queryByText("Google Business Profile connected successfully.")).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Google Profile" });
+    expect(screen.queryByText("Google Profile connected successfully.")).not.toBeInTheDocument();
     expect(
-      screen.queryByText("Google Business Profile connection did not complete. Please try connecting again."),
+      screen.queryByText("Google Profile connection did not complete. Please try connecting again."),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText("Google Business Profile connection requires reauthorization. Please reconnect."),
+      screen.queryByText("Google Profile connection requires reauthorization. Please reconnect."),
     ).not.toBeInTheDocument();
   });
 });

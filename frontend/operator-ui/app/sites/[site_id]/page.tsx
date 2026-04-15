@@ -5,7 +5,6 @@ import { useParams } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import { ActionControls } from "../../../components/action-execution/ActionControls";
-import { MigrationWorkspacePanel } from "../../../components/MigrationWorkspacePanel";
 import { OutputReview } from "../../../components/action-execution/OutputReview";
 import {
   OperatorPageHero,
@@ -191,7 +190,7 @@ type SiteTimelineEventType =
   | "comparison_run"
   | "recommendation_run"
   | "narrative";
-type WorkspaceContentTab = "summary" | "recommendations" | "migration" | "activity";
+type WorkspaceContentTab = "recommendations" | "activity";
 
 const TIMELINE_EVENT_TYPE_OPTIONS: Array<{ value: SiteTimelineEventType; label: string }> = [
   { value: "audit_run", label: "Audit Runs" },
@@ -1563,7 +1562,7 @@ function normalizeRecommendationApplyOutcomePresentation(
       : "Expected visibility: Reflected in the latest workspace analysis.";
   const sourceGuidance =
     applyOutcome.source === "manual"
-      ? "Next step: Review in Business Profile."
+      ? "Next step: Review in Google Profile."
       : applyOutcome.source === "recommendation"
         ? "Source: Recommendation-guided update."
         : null;
@@ -1600,10 +1599,10 @@ function buildOperatorPrimaryAction(params: {
       priorityCode: "gbp_not_connected",
       urgencyLabel: "Action needed",
       urgencyBadgeClass: "badge badge-critical",
-      title: "Connect Google Business Profile",
-      reason: "Business Profile data is not connected for this business yet.",
-      actionLabel: "Connect Google Business Profile",
-      actionHref: "/business-profile",
+      title: "Connect Google Profile",
+      reason: "Google Profile data is not connected for this business yet.",
+      actionLabel: "Connect Google Profile",
+      actionHref: "/google-profile",
       actionKind: "navigate",
       actionTargetId: null,
       contextHint: "Until this is connected, profile and location-backed workflows stay limited.",
@@ -1614,10 +1613,10 @@ function buildOperatorPrimaryAction(params: {
       priorityCode: "gbp_action_needed",
       urgencyLabel: "Action needed",
       urgencyBadgeClass: "badge badge-critical",
-      title: "Reconnect Google Business Profile",
+      title: "Reconnect Google Profile",
       reason: "The connection exists but needs reauthorization before it is fully usable.",
-      actionLabel: "Reconnect Google Business Profile",
-      actionHref: "/business-profile",
+      actionLabel: "Reconnect Google Profile",
+      actionHref: "/google-profile",
       actionKind: "navigate",
       actionTargetId: null,
       contextHint: "Reconnect first so location and profile data can be used reliably.",
@@ -1703,10 +1702,10 @@ function buildOperatorPrimaryAction(params: {
       priorityCode: "review_required",
       urgencyLabel: "Review",
       urgencyBadgeClass: "badge badge-warn",
-      title: "Review Business Profile connection status",
+      title: "Review Google Profile connection status",
       reason: googleBusinessProfileStatus.detail,
-      actionLabel: "Open Business Profile",
-      actionHref: "/business-profile",
+      actionLabel: "Open Google Profile",
+      actionHref: "/google-profile",
       actionKind: "navigate",
       actionTargetId: null,
       contextHint: "Status data was unavailable, so verify integration health directly.",
@@ -1889,7 +1888,7 @@ function normalizeGoogleBusinessProfileWorkspaceStatus(
     return {
       stateCode: "status_unavailable",
       stateLabel: "Status unavailable",
-      detail: "We could not load Google Business Profile integration status right now.",
+      detail: "We could not load Google Profile integration status right now.",
       nextActionLabel: "Review integration status",
       tone: "warning",
       badgeClass: "badge badge-warn",
@@ -1899,8 +1898,8 @@ function normalizeGoogleBusinessProfileWorkspaceStatus(
     return {
       stateCode: "not_connected",
       stateLabel: "Not connected",
-      detail: "Connect Google Business Profile to load account and location access.",
-      nextActionLabel: "Connect Google Business Profile",
+      detail: "Connect Google Profile to load account and location access.",
+      nextActionLabel: "Connect Google Profile",
       tone: "neutral",
       badgeClass: "badge badge-muted",
     };
@@ -1917,7 +1916,7 @@ function normalizeGoogleBusinessProfileWorkspaceStatus(
       stateCode: "connected_action_needed",
       stateLabel: "Action needed",
       detail: "Connection exists, but reauthorization or scope review is required before data access is reliable.",
-      nextActionLabel: "Reconnect Google Business Profile",
+      nextActionLabel: "Reconnect Google Profile",
       tone: "warning",
       badgeClass: "badge badge-warn",
     };
@@ -1926,7 +1925,7 @@ function normalizeGoogleBusinessProfileWorkspaceStatus(
   return {
     stateCode: "connected_usable",
     stateLabel: "Connected and usable",
-    detail: "Google Business Profile access is healthy for this business.",
+    detail: "Google Profile access is healthy for this business.",
     nextActionLabel: "Review integration status",
     tone: "success",
     badgeClass: "badge badge-success",
@@ -4072,10 +4071,6 @@ export default function SiteWorkspacePage() {
   const [siteAnalyticsError, setSiteAnalyticsError] = useState<string | null>(null);
   const [ga4OnboardingStatus, setGa4OnboardingStatus] = useState<GA4SiteOnboardingStatusResponse | null>(null);
   const [ga4OnboardingError, setGa4OnboardingError] = useState<string | null>(null);
-  const [ga4PropertyInput, setGa4PropertyInput] = useState("");
-  const [ga4PropertySavePending, setGa4PropertySavePending] = useState(false);
-  const [ga4PropertySaveError, setGa4PropertySaveError] = useState<string | null>(null);
-  const [ga4PropertySaveMessage, setGa4PropertySaveMessage] = useState<string | null>(null);
   const [searchConsoleSiteSummary, setSearchConsoleSiteSummary] = useState<SearchConsoleSiteSummaryResponse | null>(null);
   const [searchConsoleSiteSummaryError, setSearchConsoleSiteSummaryError] = useState<string | null>(null);
   const [recommendationGenerationInFlight, setRecommendationGenerationInFlight] = useState(false);
@@ -4195,7 +4190,7 @@ export default function SiteWorkspacePage() {
   );
   const [activeStatuses, setActiveStatuses] = useState<Set<string>>(() => new Set());
   const [expandedTimeline, setExpandedTimeline] = useState(false);
-  const [activeWorkspaceContentTab, setActiveWorkspaceContentTab] = useState<WorkspaceContentTab>("summary");
+  const [activeWorkspaceContentTab, setActiveWorkspaceContentTab] = useState<WorkspaceContentTab>("recommendations");
 
   const latestCompetitorProfileRun = useMemo(
     () => {
@@ -5162,21 +5157,6 @@ export default function SiteWorkspacePage() {
     setLatestCompletedRecommendationsError(null);
   }
 
-  const selectedSiteIdForGa4Input = selectedSite?.id || null;
-  const selectedSiteGa4PropertyIdForInput = selectedSite?.ga4_property_id || "";
-
-  useEffect(() => {
-    if (!selectedSiteIdForGa4Input) {
-      setGa4PropertyInput("");
-      setGa4PropertySaveError(null);
-      setGa4PropertySaveMessage(null);
-      return;
-    }
-    setGa4PropertyInput(normalizeGa4PropertyInput(selectedSiteGa4PropertyIdForInput));
-    setGa4PropertySaveError(null);
-    setGa4PropertySaveMessage(null);
-  }, [selectedSiteIdForGa4Input, selectedSiteGa4PropertyIdForInput]);
-
   useEffect(() => {
     if (!selectedSite) {
       return;
@@ -5242,47 +5222,6 @@ export default function SiteWorkspacePage() {
       setZipCaptureError("Unable to save ZIP right now. Try again or skip for now.");
     } finally {
       setZipCaptureSaving(false);
-    }
-  }
-
-  async function handleSaveGa4Property(): Promise<void> {
-    if (!selectedSite) {
-      return;
-    }
-    const normalizedProperty = normalizeGa4PropertyInput(ga4PropertyInput);
-    if (normalizedProperty && !looksLikeGa4PropertyId(normalizedProperty)) {
-      setGa4PropertySaveError("Use only the numeric GA4 property ID (for example, 123456789).");
-      return;
-    }
-
-    setGa4PropertySavePending(true);
-    setGa4PropertySaveError(null);
-    setGa4PropertySaveMessage(null);
-    try {
-      await updateSite(context.token, context.businessId, selectedSite.id, {
-        ga4_property_id: normalizedProperty || null,
-      });
-      await context.refreshSites();
-      setWorkspaceRefreshNonce((current) => current + 1);
-      if (normalizedProperty) {
-        setGa4PropertySaveMessage("GA4 property saved. Connection status will refresh shortly.");
-      } else {
-        setGa4PropertySaveMessage("GA4 property cleared for this site.");
-      }
-    } catch (error) {
-      if (error instanceof ApiRequestError) {
-        if (error.status === 403) {
-          setGa4PropertySaveError("Only admin users can update GA4 property settings.");
-        } else if (error.status === 422) {
-          setGa4PropertySaveError("Invalid GA4 property value. Use only the numeric GA4 property ID.");
-        } else {
-          setGa4PropertySaveError("Unable to save GA4 property right now. Try again.");
-        }
-      } else {
-        setGa4PropertySaveError("Unable to save GA4 property right now. Try again.");
-      }
-    } finally {
-      setGa4PropertySavePending(false);
     }
   }
 
@@ -6364,7 +6303,7 @@ export default function SiteWorkspacePage() {
         setGoogleBusinessProfileConnection(null);
         setGoogleBusinessProfileConnectionError(
           safeSectionErrorMessage(
-            "Google Business Profile integration status",
+            "Google Profile integration status",
             googleBusinessProfileConnectionResult.reason,
           ),
         );
@@ -6816,17 +6755,9 @@ export default function SiteWorkspacePage() {
     );
   }
 
-  const showSummaryTab = activeWorkspaceContentTab === "summary";
   const showRecommendationsTab = activeWorkspaceContentTab === "recommendations";
-  const showMigrationTab = activeWorkspaceContentTab === "migration";
   const showActivityTab = activeWorkspaceContentTab === "activity";
-  const activeWorkspaceViewLabel = showSummaryTab
-    ? "Operator Focus"
-    : showRecommendationsTab
-      ? "Recommendations"
-      : showMigrationTab
-        ? "Migration"
-        : "Activity";
+  const activeWorkspaceViewLabel = showRecommendationsTab ? "Recommendations" : "Activity";
   const operatorPrimaryActionTone: "neutral" | "success" | "warning" | "danger" =
     operatorPrimaryAction.urgencyBadgeClass.includes("critical")
       ? "danger"
@@ -6835,8 +6766,8 @@ export default function SiteWorkspacePage() {
         : operatorPrimaryAction.urgencyBadgeClass.includes("success")
           ? "success"
           : "neutral";
-  const showSupportingContextSections = showSummaryTab || showActivityTab;
-  const showRecommendationSections = showSummaryTab || showRecommendationsTab;
+  const showSupportingContextSections = showRecommendationsTab || showActivityTab;
+  const showRecommendationSections = showRecommendationsTab;
   const latestAuditRun = auditRuns[0] || null;
   const compactAuditStatus = latestAuditRun?.status || selectedSite.last_audit_status || "No audit run yet";
   const compactAuditCompletedAt = latestAuditRun?.completed_at || selectedSite.last_audit_completed_at;
@@ -6971,13 +6902,6 @@ export default function SiteWorkspacePage() {
     || (ga4ConnectivityStatus === "connected"
       ? "GA4 measurements are being read successfully for this site."
       : "GA4 connection diagnostics are unavailable.");
-  const normalizedGa4PropertyInput = normalizeGa4PropertyInput(ga4PropertyInput);
-  const normalizedSavedGa4PropertyInput = normalizeGa4PropertyInput(selectedSite?.ga4_property_id || "");
-  const ga4PropertyChanged = normalizedGa4PropertyInput !== normalizedSavedGa4PropertyInput;
-  const ga4PropertyInputFormatWarning = normalizedGa4PropertyInput && !looksLikeGa4PropertyId(normalizedGa4PropertyInput)
-    ? "Use only the numeric GA4 property ID (for example, 123456789)."
-    : null;
-  const ga4PropertySaveDisabled = ga4PropertySavePending || Boolean(ga4PropertyInputFormatWarning) || !ga4PropertyChanged;
   const ga4OnboardingStatusCode = ga4OnboardingStatus?.ga4_onboarding_status || "unavailable";
   const ga4OnboardingValue = (() => {
     if (ga4OnboardingStatusCode === "stream_configured" || ga4OnboardingStatusCode === "property_configured") {
@@ -7198,8 +7122,8 @@ export default function SiteWorkspacePage() {
         ? (ga4DiagnosticReasonMessage(ga4ConnectivityReason)
           || "GA4 connection failed. Verify property access and try again.")
         : "Add this site’s GA4 property ID to enable traffic visibility context.",
-      actionHref: "#workspace-ga4-connect-panel",
-      actionLabel: "Save GA4 property",
+      actionHref: "/google-profile",
+      actionLabel: "Open Google Profile",
     },
     {
       key: "search_console",
@@ -7717,9 +7641,9 @@ export default function SiteWorkspacePage() {
             />
             <SummaryStatCard
               label="Migration workflow"
-              value={showMigrationTab ? "In focus" : "Ready"}
-              detail="Draft-first workflow before publish/deploy"
-              tone={showMigrationTab ? "success" : "neutral"}
+              value="Dedicated route"
+              detail="Use the migration page for draft review, publish, and deploy."
+              tone="neutral"
               variant="elevated"
               data-testid="workspace-hero-summary-migration"
             />
@@ -7736,7 +7660,7 @@ export default function SiteWorkspacePage() {
       >
         <div className="site-workspace-hero-control-grid" data-testid="site-workspace-control-grid">
           <div className="panel panel-compact stack-tight site-workspace-hero-control-card site-workspace-hero-control-card-primary">
-            <span className="hint muted">Primary operator action</span>
+            <span className="hint muted">Recommendation action surface</span>
             <div className="link-row operator-focus-status-row">
               <span
                 className={operatorPrimaryAction.urgencyBadgeClass}
@@ -7789,14 +7713,13 @@ export default function SiteWorkspacePage() {
               Review and approve migration artifacts before explicit publish or deploy actions.
             </span>
             <WorkspaceActionBar variant="secondary">
-              <button
-                type="button"
+              <Link
+                href={`/sites/${encodeURIComponent(selectedSite.id)}/migration`}
                 className="button button-secondary button-inline"
-                onClick={() => setActiveWorkspaceContentTab("migration")}
                 data-testid="workspace-hero-open-migration-button"
               >
                 Open Migration Workflow
-              </button>
+              </Link>
             </WorkspaceActionBar>
           </div>
         </div>
@@ -7894,12 +7817,12 @@ export default function SiteWorkspacePage() {
             data-testid="workspace-summary-readiness"
           />
           <SummaryStatCard
-            label="Google Business Profile"
+            label="Google Profile"
             value={googleBusinessProfileWorkspaceStatus.stateLabel}
             detail={(
               <>
                 {googleBusinessProfileWorkspaceStatus.detail}{" "}
-                <Link href="/business-profile">{googleBusinessProfileWorkspaceStatus.nextActionLabel}</Link>
+                <Link href="/google-profile">{googleBusinessProfileWorkspaceStatus.nextActionLabel}</Link>
               </>
             )}
             tone={googleBusinessProfileWorkspaceStatus.tone}
@@ -7930,264 +7853,11 @@ export default function SiteWorkspacePage() {
             ))}
           </div>
         </div>
-        <div id="workspace-ga4-connect-panel" className="panel panel-compact stack-tight" data-testid="workspace-ga4-connect-panel">
-          <div className="link-row">
-            <strong>Connect GA4</strong>
-            <span className={ga4ConnectivityBadgeClass} data-testid="workspace-ga4-connection-status">
-              {ga4ConnectivityLabel}
-            </span>
-          </div>
-          <span className="hint">
-            Configure this site&rsquo;s GA4 property to power traffic measurement in this workspace.
-          </span>
-          <label className="stack-tight">
-            <span className="hint muted">GA4 property ID</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={ga4PropertyInput}
-              onChange={(event) => {
-                setGa4PropertyInput(normalizeGa4PropertyInput(event.target.value));
-                setGa4PropertySaveError(null);
-                setGa4PropertySaveMessage(null);
-              }}
-              placeholder="123456789"
-              aria-label="GA4 property ID"
-              data-testid="workspace-ga4-property-input"
-            />
-          </label>
-          <span className="hint muted">
-            Enter your GA4 Property ID (numeric, for example 123456789). You do not need a measurement ID (G-XXXX).
-          </span>
-          {ga4PropertyInputFormatWarning ? <span className="hint warning">{ga4PropertyInputFormatWarning}</span> : null}
-          <span
-            className={ga4ConnectivityStatus === "error" ? "hint warning" : "hint muted"}
-            data-testid="workspace-ga4-diagnostic"
-          >
-            {ga4ConnectivityDetail}
-          </span>
-          {ga4PropertySaveError ? (
-            <span className="hint warning" data-testid="workspace-ga4-save-error">{ga4PropertySaveError}</span>
-          ) : null}
-          {ga4PropertySaveMessage ? (
-            <span className="hint muted" data-testid="workspace-ga4-save-message">{ga4PropertySaveMessage}</span>
-          ) : null}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => void handleSaveGa4Property()}
-              disabled={ga4PropertySaveDisabled}
-              data-testid="workspace-ga4-save-button"
-            >
-              {ga4PropertySavePending ? "Saving..." : "Save GA4 property"}
-            </button>
-          </div>
-        </div>
       </SectionCard>
-
-        <SectionCard
-          className="operator-shell-insights operator-shell-primary-zone"
-          variant="primary"
-          data-testid="operator-focus-zone"
-        >
-        <SectionHeader
-          title="Operator Focus"
-          subtitle="What changed, what needs attention, and what to do next."
-          headingLevel={2}
-          variant="focus"
-          data-testid="top-insights-header"
-        />
-        <div className="operator-focus-grid">
-          <div className="operator-focus-main stack">
-            <div className="panel panel-compact stack-tight operator-focus-callout" data-testid="operator-focus-callout">
-              <span className="operator-focus-kicker">What to do now</span>
-              <div className="link-row operator-focus-status-row">
-                <span
-                  className={operatorPrimaryAction.urgencyBadgeClass}
-                  data-testid="operator-focus-urgency-badge"
-                >
-                  {operatorPrimaryAction.urgencyLabel}
-                </span>
-                {recommendationSectionFreshness?.refreshExpected || competitorSectionFreshness?.refreshExpected ? (
-                  <span className="badge badge-warn">Refresh expected</span>
-                ) : null}
-              </div>
-              <strong>{operatorPrimaryAction.title}</strong>
-              <span className="hint">{operatorPrimaryAction.reason}</span>
-              {operatorPrimaryAction.contextHint ? (
-                <span className="hint muted">{operatorPrimaryAction.contextHint}</span>
-              ) : null}
-              <div className="form-actions">
-                {operatorPrimaryAction.actionKind === "navigate" ? (
-                  <Link
-                    href={operatorPrimaryAction.actionHref}
-                    className="button button-primary"
-                    data-testid="operator-focus-primary-action-link"
-                  >
-                    {operatorPrimaryAction.actionLabel}
-                  </Link>
-                ) : (
-                  <button
-                    type="button"
-                    className="button button-primary"
-                    data-testid="operator-focus-primary-action-button"
-                    onClick={() => {
-                      if (operatorPrimaryAction.actionTargetId) {
-                        focusActionTarget(operatorPrimaryAction.actionTargetId);
-                      }
-                    }}
-                  >
-                    {operatorPrimaryAction.actionLabel}
-                  </button>
-                )}
-              </div>
-              {latestWorkflowChangeNote ? <span className="hint muted">{latestWorkflowChangeNote}</span> : null}
-            </div>
-
-            <div className="panel panel-compact stack operator-focus-next-step" data-testid="start-here-section">
-              <span className="hint muted">Next best step</span>
-              <strong>{startHereAction.title}</strong>
-              <span className="hint">{startHereAction.detail}</span>
-              <span className="hint muted">Why this first: {startHereAction.whyThisFirst}</span>
-              {startHereAction.kind !== "none" ? (
-                <button type="button" className="button button-primary" onClick={() => void handleStartHereAction()}>
-                  {startHereAction.buttonLabel}
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="operator-focus-support stack">
-            <div className="metrics-grid operator-focus-metrics">
-              <div className="panel panel-compact">
-                <strong>{actionableRecommendationCount} recommendations are ready to act on</strong>
-              </div>
-              <div className="panel panel-compact">
-                <strong>{latestCompletedTuningSuggestions.length} tuning suggestions are available</strong>
-              </div>
-              <div className="panel panel-compact">
-                <strong>
-                  {latestPreviewInsight || "Preview a tuning suggestion to see expected impact"}
-                </strong>
-              </div>
-            </div>
-
-            <div
-              className="panel panel-compact stack-tight operator-summary-callout"
-              data-testid="workspace-gbp-integration-status"
-            >
-              <span className="hint muted">Google Business Profile integration</span>
-              <div className="link-row">
-                <span className={googleBusinessProfileWorkspaceStatus.badgeClass}>
-                  {googleBusinessProfileWorkspaceStatus.stateLabel}
-                </span>
-              </div>
-              <span className="hint">{googleBusinessProfileWorkspaceStatus.detail}</span>
-              <Link href="/business-profile">{googleBusinessProfileWorkspaceStatus.nextActionLabel}</Link>
-            </div>
-
-            {recommendationApplyOutcome ? (
-              <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="operator-focus-latest-change">
-                <span className="hint muted">Latest change</span>
-                {recommendationApplyOutcome.appliedRecommendationTitle ? (
-                  <span className="hint">
-                    Applied recommendation: {recommendationApplyOutcome.appliedRecommendationTitle}
-                  </span>
-                ) : null}
-                {recommendationApplyOutcome.appliedChangeSummary ? (
-                  <span className="hint muted">What changed: {recommendationApplyOutcome.appliedChangeSummary}</span>
-                ) : null}
-                {recommendationApplyOutcome.nextRefreshExpectation ? (
-                  <span className="hint muted">Next refresh: {recommendationApplyOutcome.nextRefreshExpectation}</span>
-                ) : null}
-              </div>
-            ) : null}
-
-            {workspaceTrustSummary ? (
-              <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="workspace-trust-summary">
-                <span className="hint muted">Trust signals</span>
-                {workspaceTrustSummary.latestCompetitorStatus ? (
-                  <span className="hint">
-                    Latest competitor status:{" "}
-                    {formatCompetitorOutcomeStatusLevel(workspaceTrustSummary.latestCompetitorStatus)}
-                  </span>
-                ) : null}
-                {workspaceTrustSummary.usedGooglePlacesSeeds !== null ? (
-                  <span className="hint muted">
-                    Nearby seed discovery used: {workspaceTrustSummary.usedGooglePlacesSeeds ? "yes" : "no"}.
-                  </span>
-                ) : null}
-                {workspaceTrustSummary.usedSyntheticFallback !== null ? (
-                  <span className={workspaceTrustSummary.usedSyntheticFallback ? "hint warning" : "hint muted"}>
-                    Synthetic fallback used: {workspaceTrustSummary.usedSyntheticFallback ? "yes" : "no"}.
-                  </span>
-                ) : null}
-                {workspaceTrustSummary.latestRecommendationApplyTitle ? (
-                  <span className="hint">
-                    Latest applied recommendation: {workspaceTrustSummary.latestRecommendationApplyTitle}.
-                  </span>
-                ) : null}
-                {workspaceTrustSummary.latestRecommendationApplyChangeSummary ? (
-                  <span className="hint muted">
-                    Latest applied change: {workspaceTrustSummary.latestRecommendationApplyChangeSummary}
-                  </span>
-                ) : null}
-                {workspaceTrustSummary.nextRefreshExpectation ? (
-                  <span className="hint muted">Next refresh: {workspaceTrustSummary.nextRefreshExpectation}</span>
-                ) : null}
-                {workspaceTrustSummary.freshnessNote ? (
-                  <span className="hint muted">Freshness: {workspaceTrustSummary.freshnessNote}</span>
-                ) : null}
-              </div>
-            ) : null}
-
-            {recommendationThemeStartHere ? (
-              <div
-                className="panel panel-compact stack-tight operator-summary-callout"
-                data-testid="start-here-theme-helper"
-              >
-                <span className="hint muted">Suggested focus area</span>
-                <strong>{recommendationThemeStartHere.themeLabel}</strong>
-                <span className="hint">{recommendationThemeStartHere.title}</span>
-                <span className="hint muted">{recommendationThemeStartHere.reason}</span>
-                <div className="link-row">
-                  {recommendationThemeStartHere.hasCompetitorBackedContext ? (
-                    <span className="badge badge-muted">Competitor-backed</span>
-                  ) : null}
-                  {recommendationThemeStartHere.hasPendingRefreshContext ? (
-                    <span className="badge badge-warn">Refresh pending</span>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  className="button button-secondary button-inline"
-                  onClick={() => focusActionTarget(recommendationRowId(recommendationThemeStartHere.recommendation_id))}
-                >
-                  Jump to recommendation
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-        </SectionCard>
       </OperatorPageSectionStack>
 
       <SectionCard className="operator-shell-section operator-shell-secondary-zone workspace-content-tab-shell site-workspace-tab-shell">
         <div className="workspace-subtabs site-workspace-subtabs" role="tablist" aria-label="Workspace content views">
-          <button
-            type="button"
-            id="workspace-content-tab-summary"
-            role="tab"
-            className={`button button-secondary workspace-subtab-button ${
-              activeWorkspaceContentTab === "summary" ? "workspace-subtab-button-active" : ""
-            }`}
-            aria-selected={activeWorkspaceContentTab === "summary"}
-            aria-controls="workspace-content-summary-panel"
-            onClick={() => setActiveWorkspaceContentTab("summary")}
-          >
-            Operator Focus
-          </button>
           <button
             type="button"
             id="workspace-content-tab-recommendations"
@@ -8200,19 +7870,6 @@ export default function SiteWorkspacePage() {
             onClick={() => setActiveWorkspaceContentTab("recommendations")}
           >
             Recommendations
-          </button>
-          <button
-            type="button"
-            id="workspace-content-tab-migration"
-            role="tab"
-            className={`button button-secondary workspace-subtab-button ${
-              activeWorkspaceContentTab === "migration" ? "workspace-subtab-button-active" : ""
-            }`}
-            aria-selected={activeWorkspaceContentTab === "migration"}
-            aria-controls="workspace-content-migration-panel"
-            onClick={() => setActiveWorkspaceContentTab("migration")}
-          >
-            Migration
           </button>
           <button
             type="button"
@@ -8229,14 +7886,9 @@ export default function SiteWorkspacePage() {
           </button>
         </div>
         <p className="hint muted">
-          {activeWorkspaceContentTab === "migration"
-            ? "Migration is first-class and uses a controlled draft workflow before publish/deploy."
-            : activeWorkspaceContentTab === "activity"
-              ? "Activity keeps timeline and full history tables separated from decision-first workflow surfaces."
-              : activeWorkspaceContentTab === "recommendations"
-                ? "Recommendations is the primary execution workflow for queue review, runs, and narratives."
-                : "Operator Focus keeps next-step decisions and supporting context visible before workflow execution."
-          }
+          {activeWorkspaceContentTab === "activity"
+            ? "Activity keeps timeline and full history tables separated from decision-first workflow surfaces."
+            : "Recommendations is the primary execution workflow for queue review, runs, and narratives."}
         </p>
         <div className="site-workspace-tab-meta" data-testid="workspace-content-tab-meta">
           <WorkspaceActionBar variant="secondary" className="row-wrap-tight">
@@ -8244,16 +7896,6 @@ export default function SiteWorkspacePage() {
             <span className={operatorPrimaryAction.urgencyBadgeClass}>
               Next action: {operatorPrimaryAction.urgencyLabel}
             </span>
-            {!showMigrationTab ? (
-              <button
-                type="button"
-                className="button button-secondary button-inline"
-                onClick={() => setActiveWorkspaceContentTab("migration")}
-                data-testid="workspace-open-migration-shortcut"
-              >
-                Open Migration Workflow
-              </button>
-            ) : null}
             {!showRecommendationsTab ? (
               <button
                 type="button"
@@ -8264,196 +7906,16 @@ export default function SiteWorkspacePage() {
                 Open Recommendations Workflow
               </button>
             ) : null}
+            <Link
+              href={`/sites/${encodeURIComponent(selectedSite.id)}/migration`}
+              className="button button-secondary button-inline"
+              data-testid="workspace-open-migration-shortcut"
+            >
+              Open Migration Workflow
+            </Link>
           </WorkspaceActionBar>
         </div>
       </SectionCard>
-
-      {showSummaryTab ? (
-        <SectionCard
-          className="operator-shell-section operator-shell-secondary-zone"
-          role="tabpanel"
-          id="workspace-content-summary-panel"
-          aria-labelledby="workspace-content-tab-summary"
-          data-testid="workspace-summary-tab-panel"
-        >
-          <SectionHeader
-            title="Operator Focus and Supporting Context"
-            subtitle="Decision-first view with recommendation execution signals, migration access, and supporting context."
-            headingLevel={2}
-          />
-          <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="workspace-migration-priority-callout">
-            <span className="hint muted">Migration workflow</span>
-            <strong>Migration is a first-class operator workflow for replacement-site drafts.</strong>
-            <span className="hint muted">
-              Use migration when replacement-site strategy and draft artifacts need review before publish/deploy.
-            </span>
-            <WorkspaceActionBar variant="primary">
-              <button
-                type="button"
-                className="button button-primary"
-                onClick={() => setActiveWorkspaceContentTab("migration")}
-              >
-                Open Migration Workflow
-              </button>
-            </WorkspaceActionBar>
-          </div>
-          <div className="workspace-summary-strip" data-testid="workspace-operational-summary">
-            <SummaryStatCard
-              label="Last audit"
-              value={compactAuditStatus}
-              detail={compactAuditCompletedAt ? formatDateTime(compactAuditCompletedAt) : "No completed audit yet"}
-              tone={compactAuditStatus === "completed" ? "success" : compactAuditStatus === "failed" ? "warning" : "neutral"}
-              variant="elevated"
-              data-testid="summary-audit-status"
-            />
-            <SummaryStatCard
-              label="Pages crawled"
-              value={compactAuditPagesCrawled ?? "-"}
-              detail={compactAuditErrors !== undefined && compactAuditErrors !== null ? `Errors: ${compactAuditErrors}` : "No audit metrics yet"}
-              tone={compactAuditErrors && compactAuditErrors > 0 ? "warning" : "neutral"}
-              variant="elevated"
-              data-testid="summary-audit-metrics"
-            />
-            <SummaryStatCard
-              label="Competitor readiness"
-              value={workspaceReadinessMessage}
-              detail={`${activeCompetitorSetCount} active sets · ${activeCompetitorDomainCount} active domains`}
-              tone={activeCompetitorSetCount > 0 ? "success" : "neutral"}
-              variant="elevated"
-              data-testid="summary-competitor-readiness"
-            />
-            <SummaryStatCard
-              label="Latest comparison activity"
-              value={latestComparisonRun ? latestComparisonRun.status : "No comparison run yet"}
-              detail={
-                latestComparisonRun
-                  ? formatDateTime(latestComparisonRun.completed_at || latestComparisonRun.updated_at)
-                  : "Run competitor comparison to populate"
-              }
-              tone={latestComparisonRun?.status === "completed" ? "neutral" : "warning"}
-              variant="elevated"
-              data-testid="summary-comparison-activity"
-            />
-          </div>
-          <div className="panel panel-compact stack-tight operator-summary-callout" data-testid="workspace-automation-status-summary">
-            <span className="hint muted">Automation status and outcomes</span>
-            <span className="hint muted" data-testid="workspace-automation-non-publishing-banner">
-              This automation analyzes your site and generates recommendations. It does not make changes to your website.
-            </span>
-            <div className="link-row">
-              <span className={`badge ${latestAutomationStatusBadgeClass}`}>{latestAutomationStatus}</span>
-              {latestAutomationCompleteness ? (
-                <span className={`badge ${latestAutomationCompleteness.badgeClass}`}>{latestAutomationCompleteness.label}</span>
-              ) : null}
-              <span className={latestAutomationActionPresentation?.badgeClass || latestAutomationActionState.badgeClass}>
-                {latestAutomationActionPresentation?.label || latestAutomationActionState.label}
-              </span>
-              <span className="badge badge-muted">Trigger: {latestAutomationTriggerSource}</span>
-              {latestAutomationRun ? <span className="badge badge-muted">Run: {latestAutomationRun.id}</span> : null}
-            </div>
-            <span className="hint">{latestAutomationOutcomeCue}</span>
-            {latestAutomationCompleteness?.hint ? (
-              <span className="hint muted">{latestAutomationCompleteness.hint}</span>
-            ) : null}
-            <span className="hint muted">{latestAutomationActionPresentation?.outcome || latestAutomationActionState.outcome}</span>
-            <span className="hint muted">
-              Next step: {latestAutomationOutcomeSummary ? deriveAutomationRunNextStep(latestAutomationRun) : latestAutomationActionPresentation?.nextStep || latestAutomationActionState.nextStep}
-            </span>
-            {latestAutomationOutcomeSummary ? (
-              <div className="link-row">
-                <span className={`badge ${automationTerminalOutcomeBadgeClass(latestAutomationOutcomeSummary.terminal_outcome)}`}>
-                  {formatAutomationTerminalOutcomeLabel(latestAutomationOutcomeSummary.terminal_outcome)}
-                </span>
-                <span className="badge badge-muted">
-                  {latestAutomationOutcomeSummary.steps_completed_count} completed
-                </span>
-                <span className="badge badge-muted">
-                  {latestAutomationOutcomeSummary.steps_skipped_count} skipped
-                </span>
-                <span className="badge badge-muted">
-                  {latestAutomationOutcomeSummary.steps_failed_count} failed
-                </span>
-              </div>
-            ) : null}
-            {latestAutomationActionControls.length > 0 ? (
-              <ActionControls
-                controls={latestAutomationActionControls}
-                resolveHref={(control) =>
-                  resolveWorkspaceAutomationControlHref({
-                    control,
-                    siteId: selectedSite.id,
-                    linkedRecommendationRunOutputId: latestAutomationRecommendationRunOutputId,
-                  })}
-                data-testid="workspace-automation-action-controls"
-              />
-            ) : null}
-            {effectiveLatestAutomationActionExecutionItem ? (
-              <OutputReview
-                item={effectiveLatestAutomationActionExecutionItem}
-                stateLabel={latestAutomationActionPresentation?.label || latestAutomationActionState.label}
-                stateBadgeClass={latestAutomationActionPresentation?.badgeClass || latestAutomationActionState.badgeClass}
-                outcome={latestAutomationActionPresentation?.outcome || latestAutomationActionState.outcome}
-                nextStep={latestAutomationActionPresentation?.nextStep || latestAutomationActionState.nextStep}
-                onDecision={(decision) => handleWorkspaceAutomationDecision(effectiveLatestAutomationActionExecutionItem.id, decision)}
-                resolveOutputHref={(outputId) => buildRecommendationRunHref(outputId, selectedSite.id)}
-                data-testid="workspace-automation-output-review"
-              />
-            ) : null}
-            {workspaceExecutionPollingActive ? (
-              <span className="hint muted" data-testid="workspace-automation-execution-polling-status">
-                Automation execution is in progress. Status refreshes automatically every few seconds.
-              </span>
-            ) : null}
-            {latestAutomationRun ? (
-              <span className="hint muted">
-                Started: {formatDateTime(latestAutomationRun.started_at)} · Finished: {formatDateTime(latestAutomationRun.finished_at)}
-              </span>
-            ) : null}
-            {automationRunError ? <span className="hint warning">{automationRunError}</span> : null}
-            <div className="toolbar-row toolbar-row-links">
-              <Link href={`/automation?site_id=${encodeURIComponent(selectedSite.id)}`}>Review automation runs</Link>
-              {latestAutomationRecommendationRunOutputId ? (
-                <Link href={buildRecommendationRunHref(latestAutomationRecommendationRunOutputId, selectedSite.id)}>
-                  Review recommendation run output
-                </Link>
-              ) : null}
-              {latestAutomationRecommendationRunOutputId && latestAutomationRecommendationNarrativeOutputId ? (
-                <Link
-                  href={buildNarrativeDetailHref(
-                    latestAutomationRecommendationRunOutputId,
-                    latestAutomationRecommendationNarrativeOutputId,
-                    selectedSite.id,
-                  )}
-                >
-                  Review recommendation narrative output
-                </Link>
-              ) : null}
-            </div>
-          </div>
-        </SectionCard>
-      ) : null}
-
-      {showMigrationTab ? (
-        <SectionCard
-          className="operator-shell-section operator-shell-primary-zone site-workspace-migration-zone"
-          variant="primary"
-          role="tabpanel"
-          id="workspace-content-migration-panel"
-          aria-labelledby="workspace-content-tab-migration"
-          data-testid="workspace-migration-tab-panel"
-        >
-          <SectionHeader
-            title="Migration"
-            subtitle="Controlled operator workflow for replacing weak incumbent sites with draft-only structured artifacts."
-            headingLevel={2}
-          />
-          <MigrationWorkspacePanel
-            token={context.token}
-            businessId={context.businessId}
-            siteId={selectedSite.id}
-          />
-        </SectionCard>
-      ) : null}
 
       {showZipCaptureModal ? (
         <div className="workspace-modal-backdrop" data-testid="zip-capture-modal">
@@ -9980,7 +9442,7 @@ export default function SiteWorkspacePage() {
                   <span className="hint muted">{recommendationApplyOutcomePresentation.sourceGuidance}</span>
                 ) : null}
                 {recommendationApplyOutcome.source === "manual" ? (
-                  <Link href="/business-profile">Review in Business Profile</Link>
+                  <Link href="/google-profile">Review in Google Profile</Link>
                 ) : null}
                 {recommendationApplyOutcome.appliedAt ? (
                   <span className="hint muted">Applied at: {formatDateTime(recommendationApplyOutcome.appliedAt)}</span>

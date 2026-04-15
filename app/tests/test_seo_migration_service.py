@@ -5039,6 +5039,65 @@ def test_workspace_summary_handles_legacy_history_without_url_fields(db_session)
     assert deploy_destination.get("url_source") == "unknown"
 
 
+def test_delete_artifact_version_deletes_eligible_draft_and_recomputes_workspace(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    result = service.delete_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+
+    assert result.deleted_artifact_version_id == artifact.id
+    assert result.deleted_artifact_version_number == artifact.version
+    workspace = result.workspace
+    assert workspace.latest_generated_artifact_version_id is None
+    assert workspace.latest_generated_artifact_version_number is None
+    assert workspace.latest_approved_artifact_version_id is None
+    assert workspace.latest_approved_artifact_version_number is None
+    assert workspace.migration_status == "draft"
+    artifacts = service.list_artifact_versions(business_id=business_id, site_id=site_id)
+    assert artifacts == []
+
+
+def test_delete_artifact_version_blocks_when_publish_history_references_artifact(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.publish_history_json = [
+        {
+            "action": "publish",
+            "artifact_version_id": artifact.id,
+            "status": "failed",
+            "timestamp": utc_now().isoformat(),
+        }
+    ]
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    with pytest.raises(SEOMigrationValidationError, match="publish history cannot be deleted"):
+        service.delete_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            principal_id="principal-1",
+        )
+
+
 def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_output={"live_url": "https://workflow-live.tnmfire.com"},

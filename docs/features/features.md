@@ -204,6 +204,7 @@ It transforms a business's website and market context into structured insights a
 - Captures bounded source-site signals plus operator overrides and enriched replacement content
 - Reuses existing audit/recommendation/competitor summaries as migration context
 - Generates draft-only static-site artifacts for operator review
+- Runs migration workflow on a dedicated route (`/sites/[site_id]/migration`) instead of embedding migration controls in the main site workspace
 - Supports explicit operator approval, GitHub publish, and GKE deploy request flows
 - Preserves publish/deploy history and readiness traceability
 
@@ -253,6 +254,7 @@ It transforms a business's website and market context into structured insights a
 - migration workspace includes a manual `Refresh Deploy Status` action so operators/admins can re-check workflow-run completion metadata later without re-dispatching deploy.
 - refresh updates run status/conclusion and only promotes confirmed live URL when new explicit workflow output evidence is available.
 - operators can open a sandboxed draft preview of selected migration artifact content before publish/deploy; preview is explicitly read-only and non-live, supports multi-page draft navigation when artifact HTML pages are available, and keeps file preview hide/show controls in the review pane.
+- operators can delete eligible unpublished draft artifacts directly from the migration workflow; deletion is blocked for published/history-anchored artifacts to preserve traceability.
 - migration analytics insertion controls now hydrate from authoritative workspace/site GA state and persist across save/reload without introducing a second source of truth.
 
 ### Operator value
@@ -288,12 +290,9 @@ It transforms a business's website and market context into structured insights a
 ## 13. Site Operator Journey and Recommendation Detail Consistency
 
 ### What it does
-- Restructures the site operator route into clearer domain surfaces:
-  - `Operator Focus`
-  - `Recommendations`
-  - `Migration`
-  - `Activity`
-- Promotes migration as a first-class operator workflow area on the site route.
+- Simplifies the site operator route into a recommendation-first workspace with a dedicated migration launch surface.
+- Removes duplicated `Operator Focus` recommendation framing from the main site route.
+- Moves full migration workflow execution to `/sites/[site_id]/migration`.
 - Aligns recommendation detail/run/narrative pages to the same page-composition rhythm used on top-level operator routes.
 
 ### Key capability
@@ -302,7 +301,7 @@ It transforms a business's website and market context into structured insights a
 - TailAdmin inspiration is visual only; implementation remains MBSRN-native.
 
 ### Operator value
-> "I can move from site-level decisions to recommendation detail review without relearning the page structure on every route."
+> "I can move from site-level decisions to recommendation detail review, then into migration, without competing workflow surfaces on one page."
 
 ---
 
@@ -310,12 +309,12 @@ It transforms a business's website and market context into structured insights a
 
 ### What it does
 - Upgrades `/sites/[site_id]` with a stronger workspace control surface using existing MBSRN-native primitives.
-- Promotes migration and recommendation execution as first-class workflow lanes near the top of the route.
+- Keeps recommendation execution primary on the site page and promotes migration via a dedicated status/launch CTA.
 - Clarifies page scan order as:
   - top control surface (status + next action)
-  - operational snapshot + operator focus
-  - workflow tabs
-  - domain execution/detail sections
+  - recommendation workflow lane
+  - supporting snapshot/activity context
+  - migration route launch
 
 ### Key capability
 - Reuses shared primitives (`OperatorPageHero`, `OperatorPageSectionStack`, `WorkspaceActionBar`, `OperatorRouteSupportState`) instead of page-local framing patterns.
@@ -323,7 +322,7 @@ It transforms a business's website and market context into structured insights a
 - TailAdmin remains inspiration-only; implementation stays within internal MBSRN CSS/components.
 
 ### Operator value
-> "I can immediately see what matters now, what to do next, and where migration and recommendations stand."
+> "I can immediately see what matters now, run recommendation actions, and jump into migration when needed."
 
 ---
 

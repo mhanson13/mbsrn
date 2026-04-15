@@ -6,7 +6,7 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 
 ## What Is Shipped
 - Business-scoped operator auth (Google identity exchange to internal principal authorization)
-- Google Business Profile OAuth callback completion redirects browser flows back into the operator app (`/business-profile`) instead of ending on raw API JSON
+- Google Profile OAuth callback completion redirects browser flows back into the operator app (`/google-profile`, with `/business-profile` compatibility) instead of ending on raw API JSON
 - SEO site management, deterministic audit runs, and findings/reporting
 - Competitor intelligence runs and comparison reporting
 - AI-assisted competitor profile draft generation with strict review gating
@@ -14,29 +14,30 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 - Deterministic recommendation runs with AI narrative overlays and bounded tuning suggestions
 - Business-admin configurable default AI model override (`default_ai_model`) with deterministic runtime precedence (`explicit/requested -> admin default -> AI_MODEL_NAME env fallback -> provider fallback`)
 - Controlled migration workspace for weak incumbent SMB sites (bounded source ingest, operator overrides, draft artifact generation, explicit approval, GitHub publish, and explicit deploy request)
+- Dedicated migration workflow route (`/sites/[site_id]/migration`) with run-bound draft/publish/deploy diagnostics, full draft preview navigation, and safe draft deletion for eligible unpublished artifacts
 - Automation lifecycle/outcome visibility across Automation, Sites workspace, and Recommendation run surfaces (including step-level status and linked recommendation artifact navigation when available)
 - Operator-facing action-state + next-step cues across recommendations, recommendation-run detail, site workspace, and automation surfaces (presentation-only deterministic read-model mapping)
 - Manual, confirmed tuning apply flow (no automatic settings mutation)
 - Operator Shell v4 workspace presentation (workflow emphasis for attention/recency/next-action cues on top of v3 visual-token and density standardization)
 - Shared role-aware dashboard shell uplift (admin/operator/user pages now share reusable panel/header/stat variants with stronger admin-console page chrome and hierarchy, presentation-only)
 - Phase-2 cross-route UI consistency uplift for high-traffic secondary operator routes (`audits`, `automation`, `competitors`, `recommendations`) including standardized loading/error/empty/no-data support states
-- Phase-3 detail-route consistency uplift for deeper workspace views (`audits/[run_id]`, competitor run/set detail routes, recommendation detail) plus shared support-state framing on secondary cross-role surfaces (`dashboard`, `business-profile`)
+- Phase-3 detail-route consistency uplift for deeper workspace views (`audits/[run_id]`, competitor run/set detail routes, recommendation detail) plus shared support-state framing on secondary cross-role surfaces (`dashboard`, `google-profile`)
 - Phase-4 recommendation-flow detail consistency uplift for recommendation run and narrative routes (`recommendations/runs/[run_id]`, narrative history, narrative detail) with shared hero/summary/support-state framing
 - Deep workflow context continuity uplift across audit/competitor/recommendation detail routes with clearer lineage back-links and adjacent next-step guidance
 - Summary-before-detail refinement on recommendation/competitor deep routes (top takeaway + likely next action before dense supporting detail)
-- Action-driven site workspace Operator Focus (deterministic top-priority next step with direct operator action links)
+- Decision-first site workspace with recommendation-first action flow and explicit migration launch CTA
 - Recommendation Presentation v1 (visual action-state buckets: ready/applied/pending/informational using existing recommendation semantics)
 - Recommendation Detail Clarity v2 (per-item observed pattern/gap/action/supporting-context blocks for faster operator understanding without changing recommendation logic)
 - Shared operational-item quick-scan pattern across dense operator flows (recommendations, competitors, audits, automation) with progressive disclosure for deeper detail
-- Controlled workspace/layout width modes (`default` / `wide` / `full`) to reduce wasted horizontal space on dense operator pages while preserving safe padding and rhythm, now applied consistently across site workspace, business profile, admin, and future operator-shell routes by default
+- Controlled workspace/layout width modes (`default` / `wide` / `full`) to reduce wasted horizontal space on dense operator pages while preserving safe padding and rhythm, now applied consistently across site workspace, google profile, admin, and future operator-shell routes by default
 - Site workspace recommendation tables now use a bounded support-rail row layout so dense metadata/evidence/status cues stay grouped and scannable
 - Frontend consistency cleanup now standardizes operator select/dropdown controls and renders expanded recommendation table detail in full-width bounded panels (outside narrow table-cell constraints) while keeping left-side narrative and right-side signal rails distinct
 - Workspace Copy + Label Tuning v1 (operator-facing wording refinement across recommendation/focus surfaces with unchanged behavior/semantics)
 - Recommendation apply outcome visibility v1 (compact workspace outcome card showing what changed, current apply visibility state, and expected refresh timing)
 - Recommendation outcome snapshot standardization across recommendation-facing routes (dashboard guidance + queue/detail/run summary-first status/change/follow-up/visibility cues)
 - Recommendation decisiveness + rationale/evidence compression pass for dashboard/queue/detail surfaces (why-now/actionable/blocking/after-action cues, compact choice-support tags, lifecycle-stage/revisit cues, freshness/review posture + refresh-check cues, and trust-safe evidence preview wording)
-- Site workspace Google Business Profile integration visibility (connected/action-needed/not-connected/status-unavailable) with direct connect/reconnect navigation to `/business-profile`
-- Site workspace sub-tabs for content priority (`Summary` default, `Recommendations`, and `Activity`) with detailed operational history moved to `Activity`
+- Google Profile surface now owns Google integrations (including GA4 property setup) with direct navigation from site workspace
+- Site workspace tabs now prioritize `Recommendations` and `Activity` while migration runs on its dedicated route
 
 ## Trust Boundary
 AI features are advisory only:

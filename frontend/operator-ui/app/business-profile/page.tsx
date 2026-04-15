@@ -18,6 +18,7 @@ import {
   retryGoogleBusinessProfileLocationVerification,
   startGoogleBusinessProfileConnect,
   startGoogleBusinessProfileLocationVerification,
+  updateSite,
 } from "../../lib/api/client";
 import type {
   GoogleBusinessProfileConnectionStatusResponse,
@@ -53,6 +54,10 @@ export default function BusinessProfilePage() {
   const [verificationErrorGuidance, setVerificationErrorGuidance] = useState<GoogleBusinessProfileVerificationGuidance | null>(null);
   const [selectedOptionId, setSelectedOptionId] = useState<string>("");
   const [verificationCode, setVerificationCode] = useState("");
+  const [ga4PropertyIdInput, setGa4PropertyIdInput] = useState("");
+  const [ga4SaveMessage, setGa4SaveMessage] = useState<string | null>(null);
+  const [ga4SaveError, setGa4SaveError] = useState<string | null>(null);
+  const [ga4SaveLoading, setGa4SaveLoading] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!context.token || !context.businessId) {
@@ -70,7 +75,7 @@ export default function BusinessProfilePage() {
         setLocations([]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load Google Business Profile status.");
+      setError(err instanceof Error ? err.message : "Failed to load Google Profile status.");
     } finally {
       setLoading(false);
     }
@@ -138,7 +143,7 @@ export default function BusinessProfilePage() {
     if (status === "success") {
       setCallbackNotice({
         className: "hint success",
-        message: "Google Business Profile connected successfully.",
+        message: "Google Profile connected successfully.",
       });
       return;
     }
@@ -148,8 +153,8 @@ export default function BusinessProfilePage() {
       setCallbackNotice({
         className: "hint error",
         message: reconnectRequired
-          ? "Google Business Profile connection requires reauthorization. Please reconnect."
-          : "Google Business Profile connection did not complete. Please try connecting again.",
+          ? "Google Profile connection requires reauthorization. Please reconnect."
+          : "Google Profile connection did not complete. Please try connecting again.",
       });
       return;
     }
@@ -161,6 +166,19 @@ export default function BusinessProfilePage() {
     () => locations.find((location) => location.location_id === selectedLocationId) ?? null,
     [locations, selectedLocationId],
   );
+  const selectedSite = useMemo(
+    () =>
+      context.sites.find((site) => site.id === context.selectedSiteId)
+      || context.sites.find((site) => site.business_id === context.businessId)
+      || null,
+    [context.businessId, context.selectedSiteId, context.sites],
+  );
+  const normalizedGa4PropertyId = ga4PropertyIdInput.trim();
+  const ga4PropertyFormatInvalid = normalizedGa4PropertyId.length > 0 && !/^\d{4,20}$/.test(normalizedGa4PropertyId);
+
+  useEffect(() => {
+    setGa4PropertyIdInput(selectedSite?.ga4_property_id?.trim() || "");
+  }, [selectedSite?.ga4_property_id, selectedSite?.id]);
 
   async function handleConnect() {
     if (!context.token || !context.businessId) {
@@ -172,7 +190,7 @@ export default function BusinessProfilePage() {
       const start = await startGoogleBusinessProfileConnect(context.token);
       window.location.assign(start.authorization_url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start Google Business Profile connection.");
+      setError(err instanceof Error ? err.message : "Failed to start Google Profile connection.");
       setActionLoading(false);
     }
   }
@@ -192,7 +210,7 @@ export default function BusinessProfilePage() {
       setVerificationError(null);
       setVerificationErrorGuidance(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to disconnect Google Business Profile.");
+      setError(err instanceof Error ? err.message : "Failed to disconnect Google Profile.");
     } finally {
       setActionLoading(false);
     }
@@ -277,12 +295,37 @@ export default function BusinessProfilePage() {
     }
   }
 
+  async function handleSaveGa4PropertyId() {
+    if (!context.token || !context.businessId || !selectedSite) {
+      return;
+    }
+    if (ga4PropertyFormatInvalid) {
+      setGa4SaveError("Use only the numeric GA4 property ID (for example, 123456789).");
+      setGa4SaveMessage(null);
+      return;
+    }
+    setGa4SaveLoading(true);
+    setGa4SaveError(null);
+    setGa4SaveMessage(null);
+    try {
+      await updateSite(context.token, context.businessId, selectedSite.id, {
+        ga4_property_id: normalizedGa4PropertyId || null,
+      });
+      await context.refreshSites();
+      setGa4SaveMessage("GA4 property saved.");
+    } catch (err) {
+      setGa4SaveError(err instanceof Error ? err.message : "Failed to save GA4 property.");
+    } finally {
+      setGa4SaveLoading(false);
+    }
+  }
+
   if (context.loading || loading) {
     return (
       <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
-            title="Google Business Profile"
+            title="Google Profile"
             subtitle="Loading connection and verification state."
             headingLevel={1}
             variant="support"
@@ -296,7 +339,7 @@ export default function BusinessProfilePage() {
       <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
-            title="Google Business Profile"
+            title="Google Profile"
             subtitle={`Error: ${context.error}`}
             headingLevel={1}
             variant="support"
@@ -310,7 +353,7 @@ export default function BusinessProfilePage() {
       <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
-            title="Google Business Profile"
+            title="Google Profile"
             subtitle="Business context is unavailable for this session."
             headingLevel={1}
             variant="support"
@@ -325,8 +368,8 @@ export default function BusinessProfilePage() {
       <div className="role-dashboard-landing">
         <SectionCard variant="primary" className="role-dashboard-hero">
           <SectionHeader
-            title="Google Business Profile"
-            subtitle="Connect, verify, and monitor Google Business Profile readiness for this business."
+            title="Google Profile"
+            subtitle="Connect, verify, and monitor Google Profile readiness for this business."
             headingLevel={1}
             variant="hero"
           />
@@ -361,7 +404,7 @@ export default function BusinessProfilePage() {
           </p>
           <div className="row-wrap-tight">
             <button className="primary" onClick={() => void handleConnect()} disabled={actionLoading}>
-              {connectionUiState === "connected" ? "Reconnect Google" : "Connect Google Business Profile"}
+              {connectionUiState === "connected" ? "Reconnect Google Profile" : "Connect Google Profile"}
             </button>
             {connectionUiState === "connected" ? (
               <button onClick={() => void handleDisconnect()} disabled={actionLoading}>
@@ -374,16 +417,68 @@ export default function BusinessProfilePage() {
           </div>
           {connectionUiState === "needs_reconnect" ? (
             <p className="hint warning">
-              This connection needs reauthorization before Google Business Profile data can be used.
+              This connection needs reauthorization before Google Profile data can be used.
             </p>
           ) : null}
           {connectionUiState === "not_connected" ? (
-            <p className="hint muted">No Google Business Profile connection exists.</p>
+            <p className="hint muted">No Google Profile connection exists.</p>
           ) : null}
           {callbackNotice ? <p className={callbackNotice.className}>{callbackNotice.message}</p> : null}
           {error ? <p className="hint error">{error}</p> : null}
         </SectionCard>
       </div>
+
+      <SectionCard variant="summary" className="role-surface-support">
+        <SectionHeader
+          title="GA4 Setup"
+          subtitle="Configure GA4 property connection for the currently selected site from the Google Profile surface."
+          headingLevel={2}
+          variant="support"
+        />
+        {selectedSite ? (
+          <div className="stack-tight">
+            <p className="hint muted">
+              Site: <strong>{selectedSite.display_name}</strong> ({selectedSite.normalized_domain})
+            </p>
+            <label className="stack-tight" htmlFor="google-profile-ga4-property-id">
+              <span className="hint muted">GA4 property ID (numeric)</span>
+              <input
+                id="google-profile-ga4-property-id"
+                type="text"
+                value={ga4PropertyIdInput}
+                onChange={(event) => {
+                  setGa4PropertyIdInput(event.target.value);
+                  setGa4SaveError(null);
+                  setGa4SaveMessage(null);
+                }}
+                placeholder="123456789"
+              />
+            </label>
+            <p className="hint muted">
+              Enter the numeric GA4 property ID for this site (not the G- measurement ID).
+            </p>
+            {ga4PropertyFormatInvalid ? (
+              <p className="hint warning">Use only the numeric GA4 property ID (for example, 123456789).</p>
+            ) : null}
+            {ga4SaveMessage ? <p className="hint success">{ga4SaveMessage}</p> : null}
+            {ga4SaveError ? <p className="hint error">{ga4SaveError}</p> : null}
+            <div className="row-wrap-tight">
+              <button
+                className="button button-primary"
+                type="button"
+                onClick={() => void handleSaveGa4PropertyId()}
+                disabled={ga4SaveLoading || ga4PropertyFormatInvalid}
+              >
+                {ga4SaveLoading ? "Saving..." : "Save GA4 Property"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="hint muted">
+            Select a site in the global site selector to configure GA4 property connection.
+          </p>
+        )}
+      </SectionCard>
 
       <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader
@@ -393,9 +488,9 @@ export default function BusinessProfilePage() {
           variant="support"
         />
         {connectionUiState !== "connected" ? (
-          <p className="hint muted">Connect Google Business Profile to load locations.</p>
+          <p className="hint muted">Connect Google Profile to load locations.</p>
         ) : locations.length === 0 ? (
-          <p className="hint muted">No locations were returned for this Google Business Profile account.</p>
+          <p className="hint muted">No locations were returned for this Google Profile account.</p>
         ) : (
           <div className="table-container">
             <table className="table">
