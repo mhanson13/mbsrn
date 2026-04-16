@@ -762,6 +762,10 @@ Operational behavior:
 - migration workspace keeps deploy routing values visible as read-only diagnostics and only allows bounded deploy availability toggle at workspace level
 - each site target repo receives a site-specific workflow file path (`.github/workflows/<workflow_id>`) provisioned from an MBSRN-managed template mode
 - template variable/environment mapping for that workflow is sourced from Admin-owned deploy metadata (`deploy_workflow_mode`, `target_environment_key`, `target_environment_source`) and is not operator-editable
+- each site target repo now receives deterministic namespace isolation for platform-managed GKE manifests/workflow:
+  - namespace is platform-derived (not operator freeform) from trusted target metadata
+  - examples: `tnmfire` -> `tnmfire`, `lars-construction` -> `lars-construction`
+  - namespace source is recorded (`repo_name` or `site_id` fallback) for diagnostics/traceability
 - admin UI now validates obvious issues before save:
   - owner must match GitHub account/org shape
   - default branch is required/validated when enabled
@@ -838,6 +842,10 @@ Deploy behavior:
 - explicit operator-triggered action only
 - approved + published artifact required
 - readiness/state tracked separately from publish state
+- platform-managed namespace isolation is part of the deploy contract:
+  - deterministic namespace derivation (`kubernetes_namespace`) from trusted target metadata
+  - platform-managed workflow + manifests must align on the same namespace
+  - namespace is not operator-authored YAML input
 - deploy target readiness is explicit for managed bootstrap targets (repo/ref/workflow):
   - repo must exist
   - target ref must exist
@@ -852,6 +860,12 @@ Deploy behavior:
   - `workflow_identifier_used` / `workflow_identifier_type_used`
   - `workflow_dispatch_resolution_source` (`workflow_id`, `workflow_file_path`, `workflow_id_path_normalized`)
   - when publish history contains a verified workflow file path, dispatch prefers the file-derived workflow identifier to avoid stale id drift
+- readiness/diagnostics include namespace model alignment metadata for managed templates:
+  - `kubernetes_namespace`
+  - `namespace_source`
+  - `namespace_model_status` (`aligned`, `misaligned`, `unknown`)
+  - `workflow_namespace_aligned`
+  - `manifest_namespace_aligned`
 - deployment history captured with status/result metadata
 - duplicate non-dry-run deploy requests for the same artifact+target+inputs are rejected with operator-readable validation errors
 - retry after a failed deploy is supported and recorded as a new history event

@@ -186,6 +186,15 @@ interface MigrationDestinationSummaryEvaluation {
   deployState: string;
   deployUrlSource: string | null;
   deployUrlSourceDetail: string | null;
+  deployWorkflowMode: string | null;
+  deployTargetEnvironmentKey: string | null;
+  deployTargetEnvironmentSource: string | null;
+  deploySiteWorkflowFilePath: string | null;
+  deployKubernetesNamespace: string | null;
+  deployNamespaceSource: string | null;
+  deployNamespaceModelStatus: string | null;
+  deployWorkflowNamespaceAligned: boolean | null;
+  deployManifestNamespaceAligned: boolean | null;
   currentSiteUrl: string | null;
 }
 
@@ -1399,6 +1408,35 @@ function deriveMigrationDestinationSummary(params: {
     deployUrlSource === "deploy_result" || deployUrlSource === "workflow_output"
       ? deployResolvedLiveCandidate
       : asStringOrNull(deployDestination.active_url);
+  const deployWorkflowMode =
+    asStringOrNull(deployDestination.deploy_workflow_mode) ||
+    asStringOrNull(params.deployTarget.deploy_workflow_mode);
+  const deployTargetEnvironmentKey =
+    asStringOrNull(deployDestination.target_environment_key) ||
+    asStringOrNull(params.deployTarget.target_environment_key);
+  const deployTargetEnvironmentSource =
+    asStringOrNull(deployDestination.target_environment_source) ||
+    asStringOrNull(params.deployTarget.target_environment_source);
+  const deploySiteWorkflowFilePath =
+    asStringOrNull(deployDestination.site_workflow_file_path) ||
+    asStringOrNull(deployDestination.resolved_workflow_path) ||
+    asStringOrNull(params.deployTarget.site_workflow_file_path) ||
+    asStringOrNull(params.deployTarget.resolved_workflow_path);
+  const deployKubernetesNamespace =
+    asStringOrNull(deployDestination.kubernetes_namespace) ||
+    asStringOrNull(params.deployTarget.kubernetes_namespace);
+  const deployNamespaceSource =
+    asStringOrNull(deployDestination.namespace_source) ||
+    asStringOrNull(params.deployTarget.namespace_source);
+  const deployNamespaceModelStatus =
+    asStringOrNull(deployDestination.namespace_model_status) ||
+    asStringOrNull(params.deployTarget.namespace_model_status);
+  const deployWorkflowNamespaceAligned =
+    asBooleanOrNull(deployDestination.workflow_namespace_aligned) ??
+    asBooleanOrNull(params.deployTarget.workflow_namespace_aligned);
+  const deployManifestNamespaceAligned =
+    asBooleanOrNull(deployDestination.manifest_namespace_aligned) ??
+    asBooleanOrNull(params.deployTarget.manifest_namespace_aligned);
 
   return {
     draftPreviewState: asStringOrNull(draftPreview.state) || "unavailable",
@@ -1417,6 +1455,15 @@ function deriveMigrationDestinationSummary(params: {
     deployState: asStringOrNull(deployDestination.state) || (deployExpectedPublishUrl ? "expected_after_deploy" : "unknown"),
     deployUrlSource,
     deployUrlSourceDetail,
+    deployWorkflowMode,
+    deployTargetEnvironmentKey,
+    deployTargetEnvironmentSource,
+    deploySiteWorkflowFilePath,
+    deployKubernetesNamespace,
+    deployNamespaceSource,
+    deployNamespaceModelStatus,
+    deployWorkflowNamespaceAligned,
+    deployManifestNamespaceAligned,
     currentSiteUrl: asStringOrNull(destinationSummary.current_site_url) || params.currentSiteUrl,
   };
 }
@@ -1863,17 +1910,41 @@ export function MigrationWorkspacePanel({
     asStringOrNull(deployTarget.resolved_workflow_source);
   const deployWorkflowMode =
     asStringOrNull(selectedDeployHistoryRecord.deploy_workflow_mode) ||
-    asStringOrNull(deployTarget.deploy_workflow_mode);
+    asStringOrNull(deployTarget.deploy_workflow_mode) ||
+    destinationSummary.deployWorkflowMode;
   const deployTargetEnvironmentKey =
     asStringOrNull(selectedDeployHistoryRecord.target_environment_key) ||
-    asStringOrNull(deployTarget.target_environment_key);
+    asStringOrNull(deployTarget.target_environment_key) ||
+    destinationSummary.deployTargetEnvironmentKey;
   const deployTargetEnvironmentSource =
     asStringOrNull(selectedDeployHistoryRecord.target_environment_source) ||
-    asStringOrNull(deployTarget.target_environment_source);
+    asStringOrNull(deployTarget.target_environment_source) ||
+    destinationSummary.deployTargetEnvironmentSource;
   const deploySiteWorkflowFilePath =
     asStringOrNull(selectedDeployHistoryRecord.site_workflow_file_path) ||
     asStringOrNull(deployTarget.site_workflow_file_path) ||
+    destinationSummary.deploySiteWorkflowFilePath ||
     deployWorkflowFilePath;
+  const deployKubernetesNamespace =
+    asStringOrNull(selectedDeployHistoryRecord.kubernetes_namespace) ||
+    asStringOrNull(deployTarget.kubernetes_namespace) ||
+    destinationSummary.deployKubernetesNamespace;
+  const deployNamespaceSource =
+    asStringOrNull(selectedDeployHistoryRecord.namespace_source) ||
+    asStringOrNull(deployTarget.namespace_source) ||
+    destinationSummary.deployNamespaceSource;
+  const deployNamespaceModelStatus =
+    asStringOrNull(selectedDeployHistoryRecord.namespace_model_status) ||
+    asStringOrNull(deployTarget.namespace_model_status) ||
+    destinationSummary.deployNamespaceModelStatus;
+  const deployWorkflowNamespaceAligned =
+    asBooleanOrNull(selectedDeployHistoryRecord.workflow_namespace_aligned) ??
+    asBooleanOrNull(deployTarget.workflow_namespace_aligned) ??
+    destinationSummary.deployWorkflowNamespaceAligned;
+  const deployManifestNamespaceAligned =
+    asBooleanOrNull(selectedDeployHistoryRecord.manifest_namespace_aligned) ??
+    asBooleanOrNull(deployTarget.manifest_namespace_aligned) ??
+    destinationSummary.deployManifestNamespaceAligned;
   const deployTraceRepoOwner =
     asStringOrNull(selectedDeployHistoryRecord.repo_owner) || asStringOrNull(deployTarget.repo_owner);
   const deployTraceRepoName =
@@ -3012,6 +3083,40 @@ export function MigrationWorkspacePanel({
                     <span className="badge badge-muted">Derived</span>
                     <span>{deploySiteWorkflowFilePath}</span>
                   </span>
+                </WorkspaceMetadataItem>
+              ) : null}
+              {deployKubernetesNamespace ? (
+                <WorkspaceMetadataItem label="Kubernetes namespace">
+                  <span className="row-wrap-tight">
+                    <span className="badge badge-muted">Derived</span>
+                    <span>{deployKubernetesNamespace}</span>
+                  </span>
+                </WorkspaceMetadataItem>
+              ) : null}
+              {deployNamespaceSource ? (
+                <WorkspaceMetadataItem label="Namespace source">
+                  <span className="row-wrap-tight">
+                    <span className="badge badge-muted">Derived</span>
+                    <span>{deployNamespaceSource}</span>
+                  </span>
+                </WorkspaceMetadataItem>
+              ) : null}
+              {deployNamespaceModelStatus ? (
+                <WorkspaceMetadataItem label="Namespace model status">
+                  <span className="row-wrap-tight">
+                    <span className="badge badge-muted">Runtime</span>
+                    <span>{deployNamespaceModelStatus}</span>
+                  </span>
+                </WorkspaceMetadataItem>
+              ) : null}
+              {deployWorkflowNamespaceAligned !== null ? (
+                <WorkspaceMetadataItem label="Workflow namespace aligned">
+                  {formatBooleanStateLabel(deployWorkflowNamespaceAligned)}
+                </WorkspaceMetadataItem>
+              ) : null}
+              {deployManifestNamespaceAligned !== null ? (
+                <WorkspaceMetadataItem label="Manifest namespace aligned">
+                  {formatBooleanStateLabel(deployManifestNamespaceAligned)}
                 </WorkspaceMetadataItem>
               ) : null}
               <WorkspaceMetadataItem label="Deploy URL state">

@@ -372,6 +372,12 @@ Key non-secret fields:
 - `workflow_inputs_configured_keys`, `workflow_inputs_sent_keys`
 - `workflow_conformance_checked`, `workflow_conformance_status`
 - `workflow_conformance_reasons`, `workflow_conformance_evidence_summary`
+- namespace isolation/readiness fields:
+  - `kubernetes_namespace`
+  - `namespace_source`
+  - `namespace_model_status`
+  - `workflow_namespace_aligned`
+  - `manifest_namespace_aligned`
 - `workflow_run_lookup_attempted`, `workflow_run_found`, `workflow_job_failure_detected`
 - `post_dispatch_state`
 - `expected_workflow_outputs`
@@ -387,6 +393,8 @@ Key non-secret fields:
   - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
   - `workflow_dispatch_resolution_source`, `workflow_file_path`, `workflow_name`
   - `dispatch_service_availability`, `dispatch_service_reason_code`
+  - `kubernetes_namespace`, `namespace_source`
+  - `namespace_model_status`, `workflow_namespace_aligned`, `manifest_namespace_aligned`
   - `deploy_trace_id`
   - `remediation_mode`
 - workflow provisioning fields:
@@ -462,6 +470,7 @@ Dispatch-stage interpretation note:
 - if target-readiness preflight already logged `repo_exists=true`, `ref_exists=true`, `workflow_exists=true`, and a later `workflow_dispatch` call fails, prefer workflow dispatchability troubleshooting before assuming branch/ref drift.
 - if `workflow_dispatch_supported=true` but `dispatch_service_availability=false`, treat this as service/function readiness unavailability (not workflow identity/trigger mismatch).
 - if `workflow_dispatch_supported=true` and `dispatch_service_availability=true`, this still only proves control-plane dispatch readiness; it does not by itself prove that target-repo GitHub Actions has all required GKE deploy prerequisites (workflow logic/secrets/permissions/cluster access).
+- if `namespace_model_status=misaligned`, managed workflow/manifests no longer agree on the derived namespace; treat this as `target_configuration_invalid` and re-run managed workflow provisioning from publish before retrying deploy.
 
 ### Production Verification Checklist (TnM Fire)
 

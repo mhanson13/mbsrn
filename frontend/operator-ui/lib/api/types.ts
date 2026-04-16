@@ -580,6 +580,16 @@ export interface MigrationDestinationDeploySummary {
   last_deployed_at?: string | null;
   target_repository?: string | null;
   workflow_id?: string | null;
+  resolved_workflow_path?: string | null;
+  deploy_workflow_mode?: string | null;
+  target_environment_key?: string | null;
+  target_environment_source?: string | null;
+  site_workflow_file_path?: string | null;
+  kubernetes_namespace?: string | null;
+  namespace_source?: string | null;
+  namespace_model_status?: string | null;
+  workflow_namespace_aligned?: boolean | null;
+  manifest_namespace_aligned?: boolean | null;
   ref?: string | null;
 }
 

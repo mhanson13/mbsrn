@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import base64
 import json
+import re
 import socket
 import time
 import urllib.error
@@ -92,6 +93,10 @@ class SEOMigrationGitHubWorkflowProvisionResult:
     deploy_workflow_mode: str | None = None
     target_environment_key: str | None = None
     target_environment_source: str | None = None
+    kubernetes_namespace: str | None = None
+    namespace_source: str | None = None
+    managed_manifest_paths: tuple[str, ...] = ()
+    namespace_model_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,11 @@ class SEOMigrationGitHubTargetReadinessResult:
     workflow_conformance_status: str = "workflow_conformance_unknown"
     workflow_conformance_reasons: tuple[str, ...] = ()
     workflow_conformance_evidence_summary: str | None = None
+    kubernetes_namespace: str | None = None
+    namespace_source: str | None = None
+    workflow_namespace_aligned: bool | None = None
+    manifest_namespace_aligned: bool | None = None
+    namespace_model_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -912,6 +922,30 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             return None
         return payload
 
+    def _evaluate_manifest_namespace_alignment(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        kubernetes_namespace: str,
+    ) -> tuple[bool, dict[str, bool]]:
+        alignment_by_path: dict[str, bool] = {}
+        for manifest_path in _MBSRN_MANAGED_MANIFEST_PATHS:
+            payload = self._fetch_workflow_file_payload_on_ref(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                ref=ref,
+                workflow_path=manifest_path,
+            )
+            manifest_content = _decode_workflow_file_content(payload)
+            alignment_by_path[manifest_path] = _manifest_content_matches_namespace(
+                manifest_path=manifest_path,
+                manifest_content=manifest_content,
+                kubernetes_namespace=kubernetes_namespace,
+            )
+        return all(alignment_by_path.values()), alignment_by_path
+
     def _ensure_workflow_dispatch_ready_for_target(
         self,
         *,
@@ -1128,6 +1162,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         normalized_workflow_mode = _normalize_deploy_workflow_mode(deploy_workflow_mode)
         normalized_target_environment_key = _normalize_target_environment_key(target_environment_key)
         normalized_target_environment_source = _normalize_target_environment_source(target_environment_source)
+        derived_namespace, namespace_source = derive_site_kubernetes_namespace(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
         workflow_path = _workflow_repo_path(normalized_workflow_id)
         self._ensure_repo_exists(repo_owner=repo_owner, repo_name=repo_name)
         self._ensure_ref_exists(
@@ -1136,25 +1174,78 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             ref=branch,
             allow_repair=not dry_run,
         )
-        existing_sha = self._fetch_existing_sha(
+        workflow_yaml = _render_managed_deploy_workflow_yaml(
+            workflow_id=normalized_workflow_id,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            deploy_workflow_mode=normalized_workflow_mode,
+            target_environment_key=normalized_target_environment_key,
+            target_environment_source=normalized_target_environment_source,
+            kubernetes_namespace=derived_namespace,
+            namespace_source=namespace_source,
+            site_id=site_id,
+        )
+        manifest_file_payloads = _render_managed_gke_manifest_files(
+            repo_name=repo_name,
+            target_environment_key=normalized_target_environment_key,
+            target_environment_source=normalized_target_environment_source,
+            kubernetes_namespace=derived_namespace,
+            namespace_source=namespace_source,
+            site_id=site_id,
+        )
+        managed_manifest_paths = tuple(manifest_file_payloads.keys())
+
+        commit_sha: str | None = None
+        any_file_updated = False
+        file_sha_by_path: dict[str, str | None] = {}
+        workflow_updated, workflow_sha = self._upsert_managed_repo_file(
             repo_owner=repo_owner,
             repo_name=repo_name,
             branch=branch,
             path=workflow_path,
+            content=workflow_yaml,
+            marker=_MBSRN_MANAGED_WORKFLOW_MARKER,
+            commit_message=f"chore(migration): provision deploy workflow {normalized_workflow_id}",
+            dry_run=dry_run,
         )
-        if existing_sha:
-            return SEOMigrationGitHubWorkflowProvisionResult(
+        any_file_updated = any_file_updated or workflow_updated
+        file_sha_by_path[workflow_path] = workflow_sha
+        if workflow_sha:
+            commit_sha = workflow_sha
+
+        for manifest_path, manifest_content in manifest_file_payloads.items():
+            manifest_updated, manifest_sha = self._upsert_managed_repo_file(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
                 branch=branch,
-                workflow_id=normalized_workflow_id,
-                workflow_path=workflow_path,
-                provisioned=False,
-                commit_sha=existing_sha,
-                deploy_workflow_mode=normalized_workflow_mode,
-                target_environment_key=normalized_target_environment_key,
-                target_environment_source=normalized_target_environment_source,
+                path=manifest_path,
+                content=manifest_content,
+                marker=_MBSRN_MANAGED_MANIFEST_MARKER,
+                commit_message=f"chore(migration): provision managed k8s manifest {manifest_path}",
+                dry_run=dry_run,
             )
+            any_file_updated = any_file_updated or manifest_updated
+            file_sha_by_path[manifest_path] = manifest_sha
+            if manifest_sha:
+                commit_sha = manifest_sha
+
+        verified_workflow_sha = file_sha_by_path.get(workflow_path)
+        namespace_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_NAMESPACE_FILE_PATH)
+        deployment_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_DEPLOYMENT_FILE_PATH)
+        service_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_SERVICE_FILE_PATH)
+        ingress_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_INGRESS_FILE_PATH)
+        namespace_model_status = (
+            _NAMESPACE_MODEL_STATUS_ALIGNED
+            if (
+                verified_workflow_sha
+                and namespace_manifest_sha
+                and deployment_manifest_sha
+                and service_manifest_sha
+                and ingress_manifest_sha
+            )
+            else _NAMESPACE_MODEL_STATUS_UNKNOWN
+        )
         if dry_run:
             return SEOMigrationGitHubWorkflowProvisionResult(
                 repo_owner=repo_owner,
@@ -1163,54 +1254,22 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 workflow_id=normalized_workflow_id,
                 workflow_path=workflow_path,
                 provisioned=False,
-                commit_sha=None,
+                commit_sha=commit_sha or verified_workflow_sha,
                 deploy_workflow_mode=normalized_workflow_mode,
                 target_environment_key=normalized_target_environment_key,
                 target_environment_source=normalized_target_environment_source,
+                kubernetes_namespace=derived_namespace,
+                namespace_source=namespace_source,
+                managed_manifest_paths=managed_manifest_paths,
+                namespace_model_status=namespace_model_status,
             )
-
-        encoded_content = base64.b64encode(
-            _render_managed_deploy_workflow_yaml(
-                workflow_id=normalized_workflow_id,
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                branch=branch,
-                deploy_workflow_mode=normalized_workflow_mode,
-                target_environment_key=normalized_target_environment_key,
-                target_environment_source=normalized_target_environment_source,
-                site_id=site_id,
-            ).encode("utf-8")
-        ).decode("ascii")
-        response_payload = self._request_json(
-            method="PUT",
-            path=(
-                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
-                f"/contents/{urllib.parse.quote(workflow_path, safe='/')}"
-            ),
-            payload={
-                "message": f"chore(migration): provision deploy workflow {normalized_workflow_id}",
-                "content": encoded_content,
-                "branch": branch,
-                "committer": {
-                    "name": self.committer_name,
-                    "email": self.committer_email,
-                },
-            },
-        )
-        commit_sha: str | None = None
-        if isinstance(response_payload, dict):
-            commit_payload = response_payload.get("commit")
-            if isinstance(commit_payload, dict):
-                candidate = str(commit_payload.get("sha") or "").strip()
-                if candidate:
-                    commit_sha = candidate
-        verified_sha = self._fetch_existing_sha(
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            branch=branch,
-            path=workflow_path,
-        )
-        if not verified_sha:
+        if (
+            not verified_workflow_sha
+            or not namespace_manifest_sha
+            or not deployment_manifest_sha
+            or not service_manifest_sha
+            or not ingress_manifest_sha
+        ):
             raise SEOMigrationGitHubPublisherError(
                 code="workflow_provisioning_failed",
                 safe_message="Deploy workflow provisioning could not be verified.",
@@ -1222,11 +1281,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             branch=branch,
             workflow_id=normalized_workflow_id,
             workflow_path=workflow_path,
-            provisioned=True,
-            commit_sha=verified_sha or commit_sha,
+            provisioned=any_file_updated,
+            commit_sha=commit_sha or verified_workflow_sha,
             deploy_workflow_mode=normalized_workflow_mode,
             target_environment_key=normalized_target_environment_key,
             target_environment_source=normalized_target_environment_source,
+            kubernetes_namespace=derived_namespace,
+            namespace_source=namespace_source,
+            managed_manifest_paths=managed_manifest_paths,
+            namespace_model_status=namespace_model_status,
         )
 
     def check_deploy_target_readiness(
@@ -1282,6 +1345,36 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             target=target,
             workflow_file_payload=workflow_file_payload,
         )
+        derived_namespace, namespace_source = derive_site_kubernetes_namespace(
+            repo_name=target.repo_name,
+            site_id=None,
+        )
+        workflow_content = _decode_workflow_file_content(workflow_file_payload) or ""
+        managed_workflow = _MBSRN_MANAGED_WORKFLOW_MARKER in workflow_content.lower()
+        workflow_namespace_aligned: bool | None = None
+        manifest_namespace_aligned: bool | None = None
+        namespace_model_status = _NAMESPACE_MODEL_STATUS_UNKNOWN
+        if managed_workflow:
+            workflow_namespace_aligned = _workflow_content_matches_namespace(
+                workflow_content=workflow_content,
+                kubernetes_namespace=derived_namespace,
+            )
+            manifest_namespace_aligned, _ = self._evaluate_manifest_namespace_alignment(
+                repo_owner=target.repo_owner,
+                repo_name=target.repo_name,
+                ref=target.ref,
+                kubernetes_namespace=derived_namespace,
+            )
+            namespace_model_status = (
+                _NAMESPACE_MODEL_STATUS_ALIGNED
+                if workflow_namespace_aligned and manifest_namespace_aligned
+                else _NAMESPACE_MODEL_STATUS_MISALIGNED
+            )
+        dispatch_service_availability = True
+        dispatch_service_reason_code = "available"
+        if managed_workflow and namespace_model_status == _NAMESPACE_MODEL_STATUS_MISALIGNED:
+            dispatch_service_availability = False
+            dispatch_service_reason_code = "target_configuration_invalid"
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
             repo_name=target.repo_name,
@@ -1296,14 +1389,19 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_dispatch_ready=bool(workflow_dispatch_ready),
             workflow_dispatch_supported=True,
             workflow_trigger_types=workflow_trigger_types,
-            dispatch_service_availability=True,
-            dispatch_service_reason_code="available",
+            dispatch_service_availability=dispatch_service_availability,
+            dispatch_service_reason_code=dispatch_service_reason_code,
             dispatch_identifier_type=_workflow_dispatch_identifier_type(target.workflow_id),
             remediation_mode=remediation_mode.strip() or "none",
             workflow_conformance_checked=True,
             workflow_conformance_status=workflow_conformance.conformance_status,
             workflow_conformance_reasons=workflow_conformance.conformance_reasons,
             workflow_conformance_evidence_summary=workflow_conformance.evidence_summary,
+            kubernetes_namespace=derived_namespace,
+            namespace_source=namespace_source,
+            workflow_namespace_aligned=workflow_namespace_aligned if managed_workflow else None,
+            manifest_namespace_aligned=manifest_namespace_aligned if managed_workflow else None,
+            namespace_model_status=namespace_model_status,
         )
 
     def _fetch_existing_sha(
@@ -1314,6 +1412,25 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         branch: str,
         path: str,
     ) -> str | None:
+        response_payload = self._fetch_existing_file_payload(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            path=path,
+        )
+        if not isinstance(response_payload, dict):
+            return None
+        sha = str(response_payload.get("sha") or "").strip()
+        return sha or None
+
+    def _fetch_existing_file_payload(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        path: str,
+    ) -> dict[str, object] | None:
         response_payload = self._request_json(
             method="GET",
             path=(
@@ -1323,10 +1440,85 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             expected_statuses=(200,),
             allow_404=True,
         )
-        if not isinstance(response_payload, dict):
-            return None
-        sha = str(response_payload.get("sha") or "").strip()
-        return sha or None
+        if isinstance(response_payload, dict):
+            return response_payload
+        return None
+
+    def _is_managed_file_payload(self, *, file_payload: dict[str, object] | None, marker: str) -> bool:
+        if not isinstance(file_payload, dict):
+            return False
+        decoded = _decode_workflow_file_content(file_payload)
+        if not decoded:
+            return False
+        return marker in decoded.lower()
+
+    def _upsert_managed_repo_file(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        path: str,
+        content: str,
+        marker: str,
+        commit_message: str,
+        dry_run: bool,
+    ) -> tuple[bool, str | None]:
+        existing_payload = self._fetch_existing_file_payload(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            path=path,
+        )
+        existing_sha = (
+            _coerce_string(existing_payload.get("sha")) if isinstance(existing_payload, dict) else None
+        )
+        should_write = existing_payload is None
+        if isinstance(existing_payload, dict) and self._is_managed_file_payload(
+            file_payload=existing_payload,
+            marker=marker.lower(),
+        ):
+            existing_decoded = _decode_workflow_file_content(existing_payload) or ""
+            should_write = existing_decoded.strip() != content.strip()
+
+        if not should_write:
+            return False, existing_sha
+        if dry_run:
+            return False, existing_sha
+
+        encoded_content = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        payload: dict[str, object] = {
+            "message": commit_message,
+            "content": encoded_content,
+            "branch": branch,
+            "committer": {
+                "name": self.committer_name,
+                "email": self.committer_email,
+            },
+        }
+        if existing_sha:
+            payload["sha"] = existing_sha
+        response_payload = self._request_json(
+            method="PUT",
+            path=(
+                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                f"/contents/{urllib.parse.quote(path, safe='/')}"
+            ),
+            payload=payload,
+        )
+        commit_sha: str | None = None
+        if isinstance(response_payload, dict):
+            commit_payload = response_payload.get("commit")
+            if isinstance(commit_payload, dict):
+                commit_sha = _coerce_string(commit_payload.get("sha"))
+        verified_sha = self._fetch_existing_sha(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            path=path,
+        )
+        del commit_sha
+        return True, verified_sha
 
     def _request_json(
         self,
@@ -1521,6 +1713,25 @@ def _normalize_target_environment_source(value: object) -> str:
     return normalized_lower[:60]
 
 
+_MBSRN_MANAGED_TEMPLATE_VERSION = "site_repo_template_v1"
+_MBSRN_MANAGED_WORKFLOW_MARKER = f"mbsrn-managed-template:{_MBSRN_MANAGED_TEMPLATE_VERSION}"
+_MBSRN_MANAGED_MANIFEST_MARKER = f"mbsrn-managed-manifest:{_MBSRN_MANAGED_TEMPLATE_VERSION}"
+_MBSRN_MANAGED_LABEL = "mbsrn"
+_MBSRN_MANAGED_NAMESPACE_FILE_PATH = "k8s/namespace.yaml"
+_MBSRN_MANAGED_DEPLOYMENT_FILE_PATH = "k8s/deployment.yaml"
+_MBSRN_MANAGED_SERVICE_FILE_PATH = "k8s/service.yaml"
+_MBSRN_MANAGED_INGRESS_FILE_PATH = "k8s/ingress.yaml"
+_MBSRN_MANAGED_MANIFEST_PATHS: tuple[str, ...] = (
+    _MBSRN_MANAGED_NAMESPACE_FILE_PATH,
+    _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH,
+    _MBSRN_MANAGED_SERVICE_FILE_PATH,
+    _MBSRN_MANAGED_INGRESS_FILE_PATH,
+)
+_NAMESPACE_MODEL_STATUS_ALIGNED = "aligned"
+_NAMESPACE_MODEL_STATUS_MISALIGNED = "misaligned"
+_NAMESPACE_MODEL_STATUS_UNKNOWN = "unknown"
+
+
 def _safe_identifier_fragment(value: object, *, fallback: str, max_length: int = 80) -> str:
     raw = _coerce_string(value) or ""
     cleaned = "".join(character.lower() if character.isalnum() else "-" for character in raw)
@@ -1532,6 +1743,20 @@ def _safe_identifier_fragment(value: object, *, fallback: str, max_length: int =
     return cleaned[:max_length]
 
 
+def derive_site_kubernetes_namespace(*, repo_name: object, site_id: object | None = None) -> tuple[str, str]:
+    primary = _safe_identifier_fragment(repo_name, fallback="", max_length=63).strip("-")
+    if primary:
+        return primary, "repo_name"
+    secondary = _safe_identifier_fragment(site_id, fallback="", max_length=63).strip("-")
+    if secondary:
+        return secondary, "site_id"
+    raise SEOMigrationGitHubPublisherError(
+        code="namespace_invalid",
+        safe_message="Kubernetes namespace could not be derived from deploy target metadata.",
+        stage="workflow_provisioning",
+    )
+
+
 def _render_managed_deploy_workflow_yaml(
     *,
     workflow_id: str,
@@ -1541,6 +1766,8 @@ def _render_managed_deploy_workflow_yaml(
     deploy_workflow_mode: str,
     target_environment_key: str,
     target_environment_source: str,
+    kubernetes_namespace: str,
+    namespace_source: str,
     site_id: str | None = None,
 ) -> str:
     normalized_workflow_id = str(workflow_id or "").strip() or "deploy-www-prod.yml"
@@ -1553,24 +1780,55 @@ def _render_managed_deploy_workflow_yaml(
     normalized_environment_source = _normalize_target_environment_source(target_environment_source)
     normalized_repo_fragment = _safe_identifier_fragment(repo_name, fallback="site")
     normalized_site_fragment = _safe_identifier_fragment(site_id, fallback="workspace")
+    normalized_namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=normalized_repo_fragment, max_length=63)
+    normalized_namespace_source = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     normalized_name = f"MBSRN Deploy {normalized_repo_fragment}"
     if normalized_mode == "site_repo_template_v1":
         return (
+            f"# {_MBSRN_MANAGED_WORKFLOW_MARKER}\n"
             f"name: {normalized_name}\n"
             "\n"
             "on:\n"
             "  workflow_dispatch:\n"
             "\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "  id-token: write\n"
+            "\n"
             "jobs:\n"
             "  deploy:\n"
             "    runs-on: ubuntu-latest\n"
             f"    environment: {normalized_environment_key}\n"
+            "    env:\n"
+            f"      K8S_NAMESPACE: {normalized_namespace}\n"
+            f"      MBSRN_NAMESPACE_SOURCE: {normalized_namespace_source}\n"
+            f"      MBSRN_TARGET_ENVIRONMENT_KEY: {normalized_environment_key}\n"
+            f"      MBSRN_TARGET_ENVIRONMENT_SOURCE: {normalized_environment_source}\n"
+            f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
             "    steps:\n"
-            "      - name: MBSRN managed deploy placeholder\n"
+            "      - uses: actions/checkout@v4\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "        with:\n"
+            "          workload_identity_provider: ${{ secrets.OIDC_WORKLOAD_IDENTITY_PROVIDER }}\n"
+            "          service_account: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}\n"
+            "      - uses: google-github-actions/get-gke-credentials@v2\n"
+            "        with:\n"
+            "          cluster_name: ${{ secrets.KUBERNETES_CLUSTER_NAME }}\n"
+            "          location: ${{ secrets.KUBERNETES_CLUSTER_LOCATION }}\n"
+            "      - name: Ensure namespace exists\n"
+            "        run: kubectl apply -f k8s/namespace.yaml\n"
+            "      - name: Apply namespaced resources\n"
+            "        run: |\n"
+            "          kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml -f k8s/service.yaml -f k8s/ingress.yaml\n"
+            "      - name: Verify rollout\n"
+            "        run: kubectl rollout status deployment/site-web --namespace \"$K8S_NAMESPACE\" --timeout=180s\n"
+            "      - name: Emit managed deployment metadata\n"
             "        run: |\n"
             f'          echo "MBSRN managed deploy workflow: {normalized_workflow_id}"\n'
             f'          echo "Repository: {repo_owner}/{repo_name}"\n'
             f'          echo "Branch: {branch}"\n'
+            f'          echo "Kubernetes namespace: {normalized_namespace}"\n'
+            f'          echo "Namespace source: {normalized_namespace_source}"\n'
             f'          echo "Target environment key: {normalized_environment_key}"\n'
             f'          echo "Target environment source: {normalized_environment_source}"\n'
             f'          echo "Site identity: {normalized_site_fragment}"\n'
@@ -1588,6 +1846,122 @@ def _render_managed_deploy_workflow_yaml(
         "      - name: Placeholder deploy\n"
         f'        run: echo "Deploy workflow ({normalized_workflow_id}) provisioned in mode {normalized_mode}."\n'
     )
+
+
+def _render_managed_gke_manifest_files(
+    *,
+    repo_name: str,
+    target_environment_key: str,
+    target_environment_source: str,
+    kubernetes_namespace: str,
+    namespace_source: str,
+    site_id: str | None,
+) -> dict[str, str]:
+    repo_fragment = _safe_identifier_fragment(repo_name, fallback="site", max_length=40)
+    env_key = _safe_identifier_fragment(target_environment_key, fallback="gke-prod", max_length=40)
+    env_source = _safe_identifier_fragment(target_environment_source, fallback="admin-config", max_length=40)
+    namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=repo_fragment, max_length=63)
+    namespace_origin = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
+    site_fragment = _safe_identifier_fragment(site_id, fallback="workspace", max_length=60)
+
+    labels = (
+        f"    app.kubernetes.io/managed-by: {_MBSRN_MANAGED_LABEL}\n"
+        f"    app.kubernetes.io/name: site-web\n"
+        f"    mbsrn.io/repo: {repo_fragment}\n"
+        f"    mbsrn.io/environment-key: {env_key}\n"
+        f"    mbsrn.io/environment-source: {env_source}\n"
+        f"    mbsrn.io/site-id: {site_fragment}\n"
+        f"    mbsrn.io/namespace-source: {namespace_origin}\n"
+    )
+
+    namespace_manifest = (
+        f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+        "apiVersion: v1\n"
+        "kind: Namespace\n"
+        "metadata:\n"
+        f"  name: {namespace}\n"
+        "  labels:\n"
+        f"{labels}"
+    )
+    deployment_manifest = (
+        f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "metadata:\n"
+        "  name: site-web\n"
+        f"  namespace: {namespace}\n"
+        "  labels:\n"
+        f"{labels}"
+        "spec:\n"
+        "  replicas: 1\n"
+        "  selector:\n"
+        "    matchLabels:\n"
+        "      app.kubernetes.io/name: site-web\n"
+        "  template:\n"
+        "    metadata:\n"
+        "      labels:\n"
+        "        app.kubernetes.io/name: site-web\n"
+        f"        app.kubernetes.io/managed-by: {_MBSRN_MANAGED_LABEL}\n"
+        "    spec:\n"
+        "      containers:\n"
+        "        - name: site-web\n"
+        "          image: ghcr.io/mbsrn/site-web:latest\n"
+        "          imagePullPolicy: IfNotPresent\n"
+        "          ports:\n"
+        "            - containerPort: 80\n"
+        "          readinessProbe:\n"
+        "            httpGet:\n"
+        "              path: /\n"
+        "              port: 80\n"
+        "            initialDelaySeconds: 5\n"
+        "            periodSeconds: 10\n"
+    )
+    service_manifest = (
+        f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+        "apiVersion: v1\n"
+        "kind: Service\n"
+        "metadata:\n"
+        "  name: site-web\n"
+        f"  namespace: {namespace}\n"
+        "  labels:\n"
+        f"{labels}"
+        "spec:\n"
+        "  selector:\n"
+        "    app.kubernetes.io/name: site-web\n"
+        "  ports:\n"
+        "    - name: http\n"
+        "      port: 80\n"
+        "      targetPort: 80\n"
+        "  type: ClusterIP\n"
+    )
+    ingress_manifest = (
+        f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+        "apiVersion: networking.k8s.io/v1\n"
+        "kind: Ingress\n"
+        "metadata:\n"
+        "  name: site-web\n"
+        f"  namespace: {namespace}\n"
+        "  labels:\n"
+        f"{labels}"
+        "spec:\n"
+        "  ingressClassName: gce\n"
+        "  rules:\n"
+        "    - http:\n"
+        "        paths:\n"
+        "          - path: /\n"
+        "            pathType: Prefix\n"
+        "            backend:\n"
+        "              service:\n"
+        "                name: site-web\n"
+        "                port:\n"
+        "                  number: 80\n"
+    )
+    return {
+        _MBSRN_MANAGED_NAMESPACE_FILE_PATH: namespace_manifest,
+        _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH: deployment_manifest,
+        _MBSRN_MANAGED_SERVICE_FILE_PATH: service_manifest,
+        _MBSRN_MANAGED_INGRESS_FILE_PATH: ingress_manifest,
+    }
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:
@@ -1652,6 +2026,37 @@ def _normalize_url(value: str | None) -> str | None:
     if lowered.startswith("http://") or lowered.startswith("https://"):
         return candidate
     return None
+
+
+def _workflow_content_matches_namespace(*, workflow_content: str, kubernetes_namespace: str) -> bool:
+    lowered_content = str(workflow_content or "").lower()
+    namespace = str(kubernetes_namespace or "").strip().lower()
+    if not lowered_content or not namespace:
+        return False
+    return (
+        f"k8s_namespace: {namespace}" in lowered_content
+        or f'k8s_namespace="{namespace}"' in lowered_content
+        or f'--namespace "{namespace}"' in lowered_content
+        or f"--namespace {namespace}" in lowered_content
+    )
+
+
+def _manifest_content_matches_namespace(
+    *,
+    manifest_path: str,
+    manifest_content: str | None,
+    kubernetes_namespace: str,
+) -> bool:
+    content = str(manifest_content or "").lower()
+    namespace = str(kubernetes_namespace or "").strip().lower()
+    if not content or not namespace:
+        return False
+    normalized_path = str(manifest_path or "").strip().lower()
+    if normalized_path.endswith("namespace.yaml"):
+        pattern = rf"(?m)^\s*name:\s*[\"']?{re.escape(namespace)}[\"']?\s*$"
+        return re.search(pattern, content) is not None
+    pattern = rf"(?m)^\s*namespace:\s*[\"']?{re.escape(namespace)}[\"']?\s*$"
+    return re.search(pattern, content) is not None
 
 
 def _status_links_to_workflow_run(*, status_item: dict[str, object], workflow_run_id: int) -> bool:

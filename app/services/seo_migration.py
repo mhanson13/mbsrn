@@ -30,6 +30,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublisherError,
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
+    derive_site_kubernetes_namespace,
     normalize_workflow_dispatch_identifier_for_api,
 )
 from app.models.business import Business
@@ -1073,6 +1074,10 @@ class SEOMigrationService:
                     deploy_workflow_mode=deploy_workflow_mode,
                     target_environment_key=target_environment_key,
                     target_environment_source=target_environment_source,
+                    kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
+                    namespace_source=deploy_workflow_provision_result.namespace_source,
+                    namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
+                    managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
                     commit_sha=deploy_workflow_provision_result.commit_sha,
                     verified=True,
                 )
@@ -1092,6 +1097,10 @@ class SEOMigrationService:
                     deploy_workflow_mode=deploy_workflow_mode,
                     target_environment_key=target_environment_key,
                     target_environment_source=target_environment_source,
+                    kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
+                    namespace_source=deploy_workflow_provision_result.namespace_source,
+                    namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
+                    managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
                     commit_sha=deploy_workflow_provision_result.commit_sha,
                     verified=True,
                 )
@@ -1211,6 +1220,26 @@ class SEOMigrationService:
                     deploy_workflow_mode=deploy_workflow_mode,
                     target_environment_key=target_environment_key,
                     target_environment_source=target_environment_source,
+                    kubernetes_namespace=(
+                        deploy_workflow_provision_result.kubernetes_namespace
+                        if deploy_workflow_provision_result is not None
+                        else _safe_derive_kubernetes_namespace_for_summary(repo_name=workflow_repo)[0]
+                    ),
+                    namespace_source=(
+                        deploy_workflow_provision_result.namespace_source
+                        if deploy_workflow_provision_result is not None
+                        else _safe_derive_kubernetes_namespace_for_summary(repo_name=workflow_repo)[1]
+                    ),
+                    namespace_model_status=(
+                        deploy_workflow_provision_result.namespace_model_status
+                        if deploy_workflow_provision_result is not None
+                        else None
+                    ),
+                    managed_manifest_paths=(
+                        deploy_workflow_provision_result.managed_manifest_paths
+                        if deploy_workflow_provision_result is not None
+                        else ()
+                    ),
                     verified=workflow_provisioning_verified,
                     error_code=exc.code,
                     error_message=exc.safe_message,
@@ -1265,6 +1294,17 @@ class SEOMigrationService:
                     "failure_reason_code": _normalize_string(exc.code, max_length=80),
                     "workflow_provisioning_status": workflow_provisioning_status,
                     "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+                    "kubernetes_namespace": (
+                        deploy_workflow_provision_result.kubernetes_namespace
+                        if deploy_workflow_provision_result is not None
+                        else _safe_derive_kubernetes_namespace_for_summary(
+                            repo_name=(
+                                deploy_target_for_workflow.get("repo_name")
+                                if isinstance(deploy_target_for_workflow, dict)
+                                else target.get("repo_name")
+                            )
+                        )[0]
+                    ),
                 },
                 failure_category=failure_category,
                 failure_reason=exc.safe_message,
@@ -1339,6 +1379,26 @@ class SEOMigrationService:
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
             "target_environment_source": target_environment_source,
+            "kubernetes_namespace": (
+                deploy_workflow_provision_result.kubernetes_namespace
+                if deploy_workflow_provision_result is not None
+                else _safe_derive_kubernetes_namespace_for_summary(repo_name=publish_result.repo_name)[0]
+            ),
+            "namespace_source": (
+                deploy_workflow_provision_result.namespace_source
+                if deploy_workflow_provision_result is not None
+                else _safe_derive_kubernetes_namespace_for_summary(repo_name=publish_result.repo_name)[1]
+            ),
+            "namespace_model_status": (
+                deploy_workflow_provision_result.namespace_model_status
+                if deploy_workflow_provision_result is not None
+                else None
+            ),
+            "managed_manifest_paths": list(
+                deploy_workflow_provision_result.managed_manifest_paths
+                if deploy_workflow_provision_result is not None
+                else ()
+            ),
             "deploy_workflow_provisioned": bool(
                 not dry_run
                 and deploy_workflow_provision_result is not None
@@ -1384,6 +1444,9 @@ class SEOMigrationService:
                 "deploy_workflow_mode": deploy_workflow_mode,
                 "target_environment_key": target_environment_key,
                 "target_environment_source": target_environment_source,
+                "kubernetes_namespace": history_payload.get("kubernetes_namespace"),
+                "namespace_source": history_payload.get("namespace_source"),
+                "namespace_model_status": history_payload.get("namespace_model_status"),
             },
             duration_ms=self._duration_ms(started_at),
         )
@@ -1728,6 +1791,11 @@ class SEOMigrationService:
                     workflow_conformance_status=target_readiness.workflow_conformance_status,
                     workflow_conformance_reasons=target_readiness.workflow_conformance_reasons,
                     workflow_conformance_evidence_summary=target_readiness.workflow_conformance_evidence_summary,
+                    kubernetes_namespace=target_readiness.kubernetes_namespace,
+                    namespace_source=target_readiness.namespace_source,
+                    namespace_model_status=target_readiness.namespace_model_status,
+                    workflow_namespace_aligned=target_readiness.workflow_namespace_aligned,
+                    manifest_namespace_aligned=target_readiness.manifest_namespace_aligned,
                     deploy_trace_id=deploy_trace_id,
                     remediation_mode=target_readiness.remediation_mode,
                 )
@@ -1926,6 +1994,31 @@ class SEOMigrationService:
                     workflow_conformance_status=workflow_conformance_status,
                     workflow_conformance_reasons=workflow_conformance_reasons,
                     workflow_conformance_evidence_summary=workflow_conformance_evidence_summary,
+                    kubernetes_namespace=(
+                        target_readiness.kubernetes_namespace
+                        if target_readiness is not None
+                        else _normalize_string(workflow_resolution.get("kubernetes_namespace"), max_length=63)
+                    ),
+                    namespace_source=(
+                        target_readiness.namespace_source
+                        if target_readiness is not None
+                        else _normalize_string(workflow_resolution.get("namespace_source"), max_length=60)
+                    ),
+                    namespace_model_status=(
+                        target_readiness.namespace_model_status
+                        if target_readiness is not None
+                        else _normalize_string(workflow_resolution.get("namespace_model_status"), max_length=40)
+                    ),
+                    workflow_namespace_aligned=(
+                        target_readiness.workflow_namespace_aligned
+                        if target_readiness is not None
+                        else None
+                    ),
+                    manifest_namespace_aligned=(
+                        target_readiness.manifest_namespace_aligned
+                        if target_readiness is not None
+                        else None
+                    ),
                     deploy_trace_id=deploy_trace_id,
                     remediation_mode="none",
                 )
@@ -2041,6 +2134,31 @@ class SEOMigrationService:
                     "error": exc.safe_message,
                     "error_summary": exc.safe_message,
                     "resolved_workflow_source": workflow_resolution.get("source"),
+                    "deploy_workflow_mode": workflow_resolution.get("deploy_workflow_mode"),
+                    "target_environment_key": workflow_resolution.get("target_environment_key"),
+                    "target_environment_source": workflow_resolution.get("target_environment_source"),
+                    "site_workflow_file_path": workflow_resolution.get("site_specific_workflow_path"),
+                    "kubernetes_namespace": (
+                        target_readiness.kubernetes_namespace
+                        if target_readiness is not None
+                        else workflow_resolution.get("kubernetes_namespace")
+                    ),
+                    "namespace_source": (
+                        target_readiness.namespace_source
+                        if target_readiness is not None
+                        else workflow_resolution.get("namespace_source")
+                    ),
+                    "namespace_model_status": (
+                        target_readiness.namespace_model_status
+                        if target_readiness is not None
+                        else workflow_resolution.get("namespace_model_status")
+                    ),
+                    "workflow_namespace_aligned": (
+                        target_readiness.workflow_namespace_aligned if target_readiness is not None else None
+                    ),
+                    "manifest_namespace_aligned": (
+                        target_readiness.manifest_namespace_aligned if target_readiness is not None else None
+                    ),
                 },
             )
             self._update_workspace_readiness_statuses(workspace=workspace, site=site)
@@ -2098,6 +2216,31 @@ class SEOMigrationService:
                     "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
                     "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                     "resolved_workflow_source": workflow_resolution.get("source"),
+                    "deploy_workflow_mode": workflow_resolution.get("deploy_workflow_mode"),
+                    "target_environment_key": workflow_resolution.get("target_environment_key"),
+                    "target_environment_source": workflow_resolution.get("target_environment_source"),
+                    "site_workflow_file_path": workflow_resolution.get("site_specific_workflow_path"),
+                    "kubernetes_namespace": (
+                        target_readiness.kubernetes_namespace
+                        if target_readiness is not None
+                        else workflow_resolution.get("kubernetes_namespace")
+                    ),
+                    "namespace_source": (
+                        target_readiness.namespace_source
+                        if target_readiness is not None
+                        else workflow_resolution.get("namespace_source")
+                    ),
+                    "namespace_model_status": (
+                        target_readiness.namespace_model_status
+                        if target_readiness is not None
+                        else workflow_resolution.get("namespace_model_status")
+                    ),
+                    "workflow_namespace_aligned": (
+                        target_readiness.workflow_namespace_aligned if target_readiness is not None else None
+                    ),
+                    "manifest_namespace_aligned": (
+                        target_readiness.manifest_namespace_aligned if target_readiness is not None else None
+                    ),
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
                     "workflow_trigger_types": list(workflow_trigger_types),
@@ -2174,6 +2317,31 @@ class SEOMigrationService:
                     "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
                     "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                     "resolved_workflow_source": workflow_resolution.get("source"),
+                    "deploy_workflow_mode": workflow_resolution.get("deploy_workflow_mode"),
+                    "target_environment_key": workflow_resolution.get("target_environment_key"),
+                    "target_environment_source": workflow_resolution.get("target_environment_source"),
+                    "site_workflow_file_path": workflow_resolution.get("site_specific_workflow_path"),
+                    "kubernetes_namespace": (
+                        target_readiness.kubernetes_namespace
+                        if target_readiness is not None
+                        else workflow_resolution.get("kubernetes_namespace")
+                    ),
+                    "namespace_source": (
+                        target_readiness.namespace_source
+                        if target_readiness is not None
+                        else workflow_resolution.get("namespace_source")
+                    ),
+                    "namespace_model_status": (
+                        target_readiness.namespace_model_status
+                        if target_readiness is not None
+                        else workflow_resolution.get("namespace_model_status")
+                    ),
+                    "workflow_namespace_aligned": (
+                        target_readiness.workflow_namespace_aligned if target_readiness is not None else None
+                    ),
+                    "manifest_namespace_aligned": (
+                        target_readiness.manifest_namespace_aligned if target_readiness is not None else None
+                    ),
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
                     "workflow_trigger_types": list(workflow_trigger_types),
@@ -2526,6 +2694,31 @@ class SEOMigrationService:
             "analytics_applied": bool(effective_ga_measurement_id),
             "dispatched_at": deploy_result.dispatched_at,
             "resolved_workflow_source": workflow_resolution.get("source"),
+            "deploy_workflow_mode": workflow_resolution.get("deploy_workflow_mode"),
+            "target_environment_key": workflow_resolution.get("target_environment_key"),
+            "target_environment_source": workflow_resolution.get("target_environment_source"),
+            "site_workflow_file_path": workflow_resolution.get("site_specific_workflow_path"),
+            "kubernetes_namespace": (
+                target_readiness.kubernetes_namespace
+                if target_readiness is not None
+                else workflow_resolution.get("kubernetes_namespace")
+            ),
+            "namespace_source": (
+                target_readiness.namespace_source
+                if target_readiness is not None
+                else workflow_resolution.get("namespace_source")
+            ),
+            "namespace_model_status": (
+                target_readiness.namespace_model_status
+                if target_readiness is not None
+                else workflow_resolution.get("namespace_model_status")
+            ),
+            "workflow_namespace_aligned": (
+                target_readiness.workflow_namespace_aligned if target_readiness is not None else None
+            ),
+            "manifest_namespace_aligned": (
+                target_readiness.manifest_namespace_aligned if target_readiness is not None else None
+            ),
             "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
             "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
             "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -2595,6 +2788,31 @@ class SEOMigrationService:
                 "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
                 "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
                 "resolved_workflow_source": workflow_resolution.get("source"),
+                "deploy_workflow_mode": workflow_resolution.get("deploy_workflow_mode"),
+                "target_environment_key": workflow_resolution.get("target_environment_key"),
+                "target_environment_source": workflow_resolution.get("target_environment_source"),
+                "site_workflow_file_path": workflow_resolution.get("site_specific_workflow_path"),
+                "kubernetes_namespace": (
+                    target_readiness.kubernetes_namespace
+                    if target_readiness is not None
+                    else workflow_resolution.get("kubernetes_namespace")
+                ),
+                "namespace_source": (
+                    target_readiness.namespace_source
+                    if target_readiness is not None
+                    else workflow_resolution.get("namespace_source")
+                ),
+                "namespace_model_status": (
+                    target_readiness.namespace_model_status
+                    if target_readiness is not None
+                    else workflow_resolution.get("namespace_model_status")
+                ),
+                "workflow_namespace_aligned": (
+                    target_readiness.workflow_namespace_aligned if target_readiness is not None else None
+                ),
+                "manifest_namespace_aligned": (
+                    target_readiness.manifest_namespace_aligned if target_readiness is not None else None
+                ),
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": list(workflow_trigger_types),
@@ -3164,6 +3382,26 @@ class SEOMigrationService:
             "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
             "deploy_trace_id": deploy_trace_id,
             "resolved_workflow_source": next_item.get("resolved_workflow_source"),
+            "deploy_workflow_mode": _normalize_string(next_item.get("deploy_workflow_mode"), max_length=60),
+            "target_environment_key": _normalize_string(next_item.get("target_environment_key"), max_length=80),
+            "target_environment_source": _normalize_string(
+                next_item.get("target_environment_source"),
+                max_length=80,
+            ),
+            "site_workflow_file_path": _normalize_workflow_path_for_deploy(next_item.get("site_workflow_file_path")),
+            "kubernetes_namespace": _normalize_string(next_item.get("kubernetes_namespace"), max_length=63),
+            "namespace_source": _normalize_string(next_item.get("namespace_source"), max_length=60),
+            "namespace_model_status": _normalize_string(next_item.get("namespace_model_status"), max_length=40),
+            "workflow_namespace_aligned": (
+                bool(next_item.get("workflow_namespace_aligned"))
+                if isinstance(next_item.get("workflow_namespace_aligned"), bool)
+                else None
+            ),
+            "manifest_namespace_aligned": (
+                bool(next_item.get("manifest_namespace_aligned"))
+                if isinstance(next_item.get("manifest_namespace_aligned"), bool)
+                else None
+            ),
             "workflow_dispatch_supported": workflow_dispatch_supported,
             "workflow_trigger_types": workflow_trigger_types,
             "dispatch_service_availability": dispatch_service_availability,
@@ -3412,6 +3650,28 @@ class SEOMigrationService:
             or _normalize_dispatch_input_keys(history_item.get("inputs")),
             "deploy_trace_id": _normalize_string(history_item.get("deploy_trace_id"), max_length=80),
             "resolved_workflow_source": _normalize_string(history_item.get("resolved_workflow_source"), max_length=40),
+            "deploy_workflow_mode": _normalize_string(history_item.get("deploy_workflow_mode"), max_length=60),
+            "target_environment_key": _normalize_string(history_item.get("target_environment_key"), max_length=80),
+            "target_environment_source": _normalize_string(
+                history_item.get("target_environment_source"),
+                max_length=80,
+            ),
+            "site_workflow_file_path": _normalize_workflow_path_for_deploy(
+                history_item.get("site_workflow_file_path")
+            ),
+            "kubernetes_namespace": _normalize_string(history_item.get("kubernetes_namespace"), max_length=63),
+            "namespace_source": _normalize_string(history_item.get("namespace_source"), max_length=60),
+            "namespace_model_status": _normalize_string(history_item.get("namespace_model_status"), max_length=40),
+            "workflow_namespace_aligned": (
+                bool(history_item.get("workflow_namespace_aligned"))
+                if isinstance(history_item.get("workflow_namespace_aligned"), bool)
+                else None
+            ),
+            "manifest_namespace_aligned": (
+                bool(history_item.get("manifest_namespace_aligned"))
+                if isinstance(history_item.get("manifest_namespace_aligned"), bool)
+                else None
+            ),
             "workflow_dispatch_supported": (
                 bool(history_item.get("workflow_dispatch_supported"))
                 if isinstance(history_item.get("workflow_dispatch_supported"), bool)
@@ -6513,6 +6773,10 @@ class SEOMigrationService:
             "deploy_workflow_mode": provision_result.deploy_workflow_mode,
             "target_environment_key": provision_result.target_environment_key,
             "target_environment_source": provision_result.target_environment_source,
+            "kubernetes_namespace": provision_result.kubernetes_namespace,
+            "namespace_source": provision_result.namespace_source,
+            "managed_manifest_paths": list(provision_result.managed_manifest_paths or ()),
+            "namespace_model_status": provision_result.namespace_model_status,
         }
         self._emit_structured_service_log(
             payload=payload,
@@ -6538,6 +6802,10 @@ class SEOMigrationService:
         deploy_workflow_mode: str | None = None,
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
+        kubernetes_namespace: str | None = None,
+        namespace_source: str | None = None,
+        namespace_model_status: str | None = None,
+        managed_manifest_paths: tuple[str, ...] | list[str] | None = None,
         commit_sha: str | None = None,
         verified: bool | None = None,
         error_code: str | None = None,
@@ -6568,6 +6836,23 @@ class SEOMigrationService:
         normalized_target_environment_source = _normalize_string(target_environment_source, max_length=60)
         if normalized_target_environment_source:
             payload["target_environment_source"] = normalized_target_environment_source
+        normalized_kubernetes_namespace = _normalize_string(kubernetes_namespace, max_length=63)
+        if normalized_kubernetes_namespace:
+            payload["kubernetes_namespace"] = normalized_kubernetes_namespace
+        normalized_namespace_source = _normalize_string(namespace_source, max_length=60)
+        if normalized_namespace_source:
+            payload["namespace_source"] = normalized_namespace_source
+        normalized_namespace_model_status = _normalize_string(namespace_model_status, max_length=40)
+        if normalized_namespace_model_status:
+            payload["namespace_model_status"] = normalized_namespace_model_status
+        normalized_manifest_paths: list[str] = []
+        if isinstance(managed_manifest_paths, (tuple, list)):
+            for item in managed_manifest_paths:
+                normalized = _normalize_string(item, max_length=180)
+                if normalized:
+                    normalized_manifest_paths.append(normalized)
+        if normalized_manifest_paths:
+            payload["managed_manifest_paths"] = normalized_manifest_paths
         normalized_sha = _normalize_string(commit_sha, max_length=80)
         if normalized_sha:
             payload["commit_sha"] = normalized_sha
@@ -6619,6 +6904,11 @@ class SEOMigrationService:
         workflow_conformance_status: str | None = None,
         workflow_conformance_reasons: tuple[str, ...] | list[str] | None = None,
         workflow_conformance_evidence_summary: str | None = None,
+        kubernetes_namespace: str | None = None,
+        namespace_source: str | None = None,
+        namespace_model_status: str | None = None,
+        workflow_namespace_aligned: bool | None = None,
+        manifest_namespace_aligned: bool | None = None,
         deploy_trace_id: str | None = None,
         remediation_mode: str,
     ) -> None:
@@ -6691,6 +6981,19 @@ class SEOMigrationService:
         )
         if normalized_conformance_evidence_summary:
             payload["workflow_conformance_evidence_summary"] = normalized_conformance_evidence_summary
+        normalized_kubernetes_namespace = _normalize_string(kubernetes_namespace, max_length=63)
+        if normalized_kubernetes_namespace:
+            payload["kubernetes_namespace"] = normalized_kubernetes_namespace
+        normalized_namespace_source = _normalize_string(namespace_source, max_length=60)
+        if normalized_namespace_source:
+            payload["namespace_source"] = normalized_namespace_source
+        normalized_namespace_model_status = _normalize_string(namespace_model_status, max_length=40)
+        if normalized_namespace_model_status:
+            payload["namespace_model_status"] = normalized_namespace_model_status
+        if workflow_namespace_aligned is not None:
+            payload["workflow_namespace_aligned"] = bool(workflow_namespace_aligned)
+        if manifest_namespace_aligned is not None:
+            payload["manifest_namespace_aligned"] = bool(manifest_namespace_aligned)
         if dispatch_service_availability is not None:
             payload["dispatch_service_availability"] = bool(dispatch_service_availability)
         normalized_dispatch_service_reason = _normalize_dispatch_service_reason_code(dispatch_service_reason_code)
@@ -6856,16 +7159,24 @@ class SEOMigrationService:
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
         workflow_id = str(normalized.get("workflow_id") or self.deploy_default_workflow_id).strip()
         workflow_path = _normalize_workflow_path_for_deploy(f".github/workflows/{workflow_id}")
+        repo_name = str(normalized.get("repo_name") or fallback_publish.get("repo_name") or "").strip()
+        kubernetes_namespace, namespace_source = _safe_derive_kubernetes_namespace_for_summary(
+            repo_name=repo_name,
+            site_id=workspace.site_id,
+        )
         return {
             "enabled": bool(normalized.get("enabled")),
             "repo_owner": str(normalized.get("repo_owner") or fallback_publish.get("repo_owner") or "").strip(),
-            "repo_name": str(normalized.get("repo_name") or fallback_publish.get("repo_name") or "").strip(),
+            "repo_name": repo_name,
             "workflow_id": workflow_id,
             "ref": str(normalized.get("ref") or self.deploy_default_ref).strip(),
             "deploy_workflow_mode": admin_deploy_metadata.get("deploy_workflow_mode"),
             "target_environment_key": admin_deploy_metadata.get("target_environment_key"),
             "target_environment_source": admin_deploy_metadata.get("target_environment_source"),
             "site_workflow_file_path": workflow_path,
+            "kubernetes_namespace": kubernetes_namespace,
+            "namespace_source": namespace_source,
+            "namespace_model_status": "unknown",
         }
 
     def _resolve_deploy_target_with_workflow_precedence(
@@ -6999,6 +7310,10 @@ class SEOMigrationService:
         selected_workflow_path = _normalize_workflow_path_for_deploy(selected_candidate.get("workflow_path"))
         if selected_workflow_id:
             resolved_target["workflow_id"] = selected_workflow_id
+        resolved_namespace, resolved_namespace_source = _safe_derive_kubernetes_namespace_for_summary(
+            repo_name=resolved_target.get("repo_name"),
+            site_id=workspace.site_id,
+        )
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
         resolution = {
             "source": str(selected_candidate.get("source") or fallback_source),
@@ -7010,6 +7325,9 @@ class SEOMigrationService:
             "deploy_workflow_mode": admin_deploy_metadata.get("deploy_workflow_mode"),
             "target_environment_key": admin_deploy_metadata.get("target_environment_key"),
             "target_environment_source": admin_deploy_metadata.get("target_environment_source"),
+            "kubernetes_namespace": resolved_namespace,
+            "namespace_source": resolved_namespace_source,
+            "namespace_model_status": "unknown",
         }
         return resolved_target, resolution
 
@@ -7070,6 +7388,36 @@ class SEOMigrationService:
     ) -> dict[str, object]:
         publish_target = _normalize_json_dict(publish_readiness.get("target"))
         deploy_target = _normalize_json_dict(deploy_readiness.get("target"))
+        deploy_namespace = _normalize_string(
+            deploy_target.get("kubernetes_namespace"),
+            max_length=63,
+        ) or _normalize_string(deploy_readiness.get("kubernetes_namespace"), max_length=63)
+        deploy_namespace_source = _normalize_string(
+            deploy_target.get("namespace_source"),
+            max_length=60,
+        ) or _normalize_string(deploy_readiness.get("namespace_source"), max_length=60)
+        deploy_namespace_model_status = _normalize_string(
+            deploy_target.get("namespace_model_status"),
+            max_length=40,
+        ) or _normalize_string(deploy_readiness.get("namespace_model_status"), max_length=40)
+        deploy_workflow_namespace_aligned = (
+            bool(deploy_target.get("workflow_namespace_aligned"))
+            if isinstance(deploy_target.get("workflow_namespace_aligned"), bool)
+            else (
+                bool(deploy_readiness.get("workflow_namespace_aligned"))
+                if isinstance(deploy_readiness.get("workflow_namespace_aligned"), bool)
+                else None
+            )
+        )
+        deploy_manifest_namespace_aligned = (
+            bool(deploy_target.get("manifest_namespace_aligned"))
+            if isinstance(deploy_target.get("manifest_namespace_aligned"), bool)
+            else (
+                bool(deploy_readiness.get("manifest_namespace_aligned"))
+                if isinstance(deploy_readiness.get("manifest_namespace_aligned"), bool)
+                else None
+            )
+        )
         publish_owner = _normalize_string(publish_target.get("repo_owner"), max_length=80)
         publish_repo = _normalize_string(publish_target.get("repo_name"), max_length=120)
         publish_branch = _normalize_string(publish_target.get("branch"), max_length=120) or "main"
@@ -7169,6 +7517,26 @@ class SEOMigrationService:
                 ).strip("/")
                 or None,
                 "workflow_id": _normalize_string(deploy_target.get("workflow_id"), max_length=160),
+                "resolved_workflow_path": _normalize_workflow_path_for_deploy(
+                    deploy_target.get("resolved_workflow_path")
+                ),
+                "deploy_workflow_mode": _normalize_string(deploy_target.get("deploy_workflow_mode"), max_length=60),
+                "target_environment_key": _normalize_string(
+                    deploy_target.get("target_environment_key"),
+                    max_length=80,
+                ),
+                "target_environment_source": _normalize_string(
+                    deploy_target.get("target_environment_source"),
+                    max_length=60,
+                ),
+                "site_workflow_file_path": _normalize_workflow_path_for_deploy(
+                    deploy_target.get("site_workflow_file_path")
+                ),
+                "kubernetes_namespace": deploy_namespace,
+                "namespace_source": deploy_namespace_source,
+                "namespace_model_status": deploy_namespace_model_status,
+                "workflow_namespace_aligned": deploy_workflow_namespace_aligned,
+                "manifest_namespace_aligned": deploy_manifest_namespace_aligned,
                 "ref": _normalize_string(deploy_target.get("ref"), max_length=120),
             },
             "current_site_url": _normalize_string(site.base_url, max_length=2048),
@@ -7598,6 +7966,19 @@ class SEOMigrationService:
                     item.get("target_environment_source"),
                     max_length=80,
                 ),
+                "kubernetes_namespace": _normalize_string(item.get("kubernetes_namespace"), max_length=63),
+                "namespace_source": _normalize_string(item.get("namespace_source"), max_length=60),
+                "namespace_model_status": _normalize_string(item.get("namespace_model_status"), max_length=40),
+                "workflow_namespace_aligned": (
+                    bool(item.get("workflow_namespace_aligned"))
+                    if isinstance(item.get("workflow_namespace_aligned"), bool)
+                    else None
+                ),
+                "manifest_namespace_aligned": (
+                    bool(item.get("manifest_namespace_aligned"))
+                    if isinstance(item.get("manifest_namespace_aligned"), bool)
+                    else None
+                ),
                 "failure_remediation_hint": failure_remediation_hint,
             }
         return {}
@@ -7778,6 +8159,19 @@ class SEOMigrationService:
                 "workflow_run_id": workflow_run_id,
                 "workflow_run_status": workflow_run_status,
                 "workflow_run_conclusion": workflow_run_conclusion,
+                "kubernetes_namespace": _normalize_string(item.get("kubernetes_namespace"), max_length=63),
+                "namespace_source": _normalize_string(item.get("namespace_source"), max_length=60),
+                "namespace_model_status": _normalize_string(item.get("namespace_model_status"), max_length=40),
+                "workflow_namespace_aligned": (
+                    bool(item.get("workflow_namespace_aligned"))
+                    if isinstance(item.get("workflow_namespace_aligned"), bool)
+                    else None
+                ),
+                "manifest_namespace_aligned": (
+                    bool(item.get("manifest_namespace_aligned"))
+                    if isinstance(item.get("manifest_namespace_aligned"), bool)
+                    else None
+                ),
             }
         return {}
 
@@ -7943,6 +8337,13 @@ class SEOMigrationService:
                     "ref": target["ref"],
                     "inputs": target["inputs"],
                     "resolved_workflow_source": workflow_resolution.get("source"),
+                    "deploy_workflow_mode": workflow_resolution.get("deploy_workflow_mode"),
+                    "target_environment_key": workflow_resolution.get("target_environment_key"),
+                    "target_environment_source": workflow_resolution.get("target_environment_source"),
+                    "site_workflow_file_path": workflow_resolution.get("site_specific_workflow_path"),
+                    "kubernetes_namespace": workflow_resolution.get("kubernetes_namespace"),
+                    "namespace_source": workflow_resolution.get("namespace_source"),
+                    "namespace_model_status": workflow_resolution.get("namespace_model_status"),
                 }
                 if workflow_resolution.get("workflow_path"):
                     target_summary["resolved_workflow_path"] = workflow_resolution.get("workflow_path")
@@ -8137,6 +8538,52 @@ class SEOMigrationService:
             latest_failure_detail.get("target_environment_source"),
             max_length=80,
         )
+        kubernetes_namespace = _normalize_string(
+            latest_traceability.get("kubernetes_namespace"),
+            max_length=63,
+        ) or _normalize_string(target_summary.get("kubernetes_namespace"), max_length=63)
+        namespace_source = _normalize_string(
+            latest_traceability.get("namespace_source"),
+            max_length=60,
+        ) or _normalize_string(target_summary.get("namespace_source"), max_length=60)
+        namespace_model_status = _normalize_string(
+            latest_traceability.get("namespace_model_status"),
+            max_length=40,
+        ) or _normalize_string(target_summary.get("namespace_model_status"), max_length=40)
+        workflow_namespace_aligned = (
+            bool(latest_traceability.get("workflow_namespace_aligned"))
+            if isinstance(latest_traceability.get("workflow_namespace_aligned"), bool)
+            else (
+                bool(target_summary.get("workflow_namespace_aligned"))
+                if isinstance(target_summary.get("workflow_namespace_aligned"), bool)
+                else None
+            )
+        )
+        manifest_namespace_aligned = (
+            bool(latest_traceability.get("manifest_namespace_aligned"))
+            if isinstance(latest_traceability.get("manifest_namespace_aligned"), bool)
+            else (
+                bool(target_summary.get("manifest_namespace_aligned"))
+                if isinstance(target_summary.get("manifest_namespace_aligned"), bool)
+                else None
+            )
+        )
+        if kubernetes_namespace and not _normalize_string(target_summary.get("kubernetes_namespace"), max_length=63):
+            target_summary["kubernetes_namespace"] = kubernetes_namespace
+        if namespace_source and not _normalize_string(target_summary.get("namespace_source"), max_length=60):
+            target_summary["namespace_source"] = namespace_source
+        if namespace_model_status and not _normalize_string(target_summary.get("namespace_model_status"), max_length=40):
+            target_summary["namespace_model_status"] = namespace_model_status
+        if (
+            workflow_namespace_aligned is not None
+            and not isinstance(target_summary.get("workflow_namespace_aligned"), bool)
+        ):
+            target_summary["workflow_namespace_aligned"] = workflow_namespace_aligned
+        if (
+            manifest_namespace_aligned is not None
+            and not isinstance(target_summary.get("manifest_namespace_aligned"), bool)
+        ):
+            target_summary["manifest_namespace_aligned"] = manifest_namespace_aligned
         last_failure_workflow_exists = (
             bool(latest_failure_detail.get("workflow_exists"))
             if isinstance(latest_failure_detail.get("workflow_exists"), bool)
@@ -8187,6 +8634,11 @@ class SEOMigrationService:
             "last_failure_resolved_workflow_source": last_failure_resolved_workflow_source,
             "last_failure_target_environment_key": last_failure_target_environment_key,
             "last_failure_target_environment_source": last_failure_target_environment_source,
+            "kubernetes_namespace": kubernetes_namespace,
+            "namespace_source": namespace_source,
+            "namespace_model_status": namespace_model_status,
+            "workflow_namespace_aligned": workflow_namespace_aligned,
+            "manifest_namespace_aligned": manifest_namespace_aligned,
             "last_deploy_trace_id": latest_traceability.get("deploy_trace_id"),
             "last_dispatch_attempted": latest_traceability.get("dispatch_attempted"),
             "last_dispatch_result_stage": latest_traceability.get("dispatch_result_stage"),
@@ -9164,6 +9616,23 @@ def _derive_site_specific_workflow_id_for_repo_name(repo_name: object) -> str | 
     if not slug:
         return None
     return _normalize_workflow_id_for_deploy(f"deploy-{slug}-www-prod.yml")
+
+
+def _safe_derive_kubernetes_namespace_for_summary(
+    *,
+    repo_name: object,
+    site_id: object | None = None,
+) -> tuple[str | None, str | None]:
+    try:
+        namespace, source = derive_site_kubernetes_namespace(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
+    except (SEOMigrationGitHubPublisherError, ValueError):
+        return None, None
+    normalized_namespace = _normalize_string(namespace, max_length=63)
+    normalized_source = _normalize_string(source, max_length=60)
+    return normalized_namespace, normalized_source
 
 
 def _normalize_workflow_id_for_deploy(value: object) -> str | None:
