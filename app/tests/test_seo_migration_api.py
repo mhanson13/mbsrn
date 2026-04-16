@@ -983,7 +983,8 @@ def test_refresh_migration_deploy_status_is_noop_without_workflow_run_metadata(d
     refresh_payload = refresh_response.json()
     refresh_result = refresh_payload.get("result") or {}
     assert refresh_result.get("status") == "no_change"
-    assert refresh_result.get("no_change_reason") == "workflow_run_metadata_missing"
+    assert refresh_result.get("no_change_reason") == "no_run_observed_after_refresh"
+    assert refresh_result.get("dispatch_verification_state") == "unverified_dispatch_no_run_observed"
     assert not publisher.refresh_calls
 
 

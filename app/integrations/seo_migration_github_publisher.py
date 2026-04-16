@@ -196,6 +196,15 @@ class SEOMigrationGitHubPublisher:
     ) -> SEOMigrationGitHubDeployRunStatusResult:
         raise NotImplementedError
 
+    def lookup_deploy_run_status_after_dispatch(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        dispatched_at: str | None = None,
+    ) -> SEOMigrationGitHubDeployRunStatusResult | None:
+        del target, dispatched_at
+        return None
+
     def ensure_deploy_workflow(
         self,
         *,
@@ -307,6 +316,18 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         dispatched_at: str | None = None,
     ) -> SEOMigrationGitHubDeployRunStatusResult:
         del target, workflow_run_id, dispatched_at
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
+    def lookup_deploy_run_status_after_dispatch(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        dispatched_at: str | None = None,
+    ) -> SEOMigrationGitHubDeployRunStatusResult | None:
+        del target, dispatched_at
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -584,6 +605,30 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_run_failure_stage=workflow_run_failure_stage,
             workflow_run_failure_step=workflow_run_failure_step,
             refreshed_at=refreshed_at,
+        )
+
+    def lookup_deploy_run_status_after_dispatch(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        dispatched_at: str | None = None,
+    ) -> SEOMigrationGitHubDeployRunStatusResult | None:
+        dispatched_at_candidate = _coerce_string(dispatched_at)
+        if not dispatched_at_candidate:
+            return None
+        run_payload = self._find_recent_workflow_run_for_dispatch(
+            target=target,
+            dispatched_at=dispatched_at_candidate,
+        )
+        if not isinstance(run_payload, dict):
+            return None
+        workflow_run_id = _coerce_int(run_payload.get("id"))
+        if workflow_run_id is None:
+            return None
+        return self.refresh_deploy_run_status(
+            target=target,
+            workflow_run_id=workflow_run_id,
+            dispatched_at=dispatched_at_candidate,
         )
 
     def _try_capture_post_dispatch_workflow_result(

@@ -885,9 +885,10 @@ Deploy behavior:
   - `managed_namespace_policies_aligned`
 - deployment history captured with status/result metadata
 - duplicate non-dry-run deploy requests are blocked only when the same artifact+target+inputs already has an active in-flight deploy attempt
-  - active blockers include non-terminal states such as `dispatch_accepted_no_run`, `workflow_run_pending`, and `workflow_run_in_progress`
+  - active blockers include confirmed non-terminal run states such as `workflow_run_pending`, `workflow_run_in_progress`, and `workflow_run_observed` (run-id backed)
+  - unverified dispatch states without run evidence (`dispatch_accepted_no_run` / `dispatch_unverified_no_run`) are weak blockers with a short 2-minute stale window
   - terminal/stale historical records (`workflow_run_failed`, `workflow_run_succeeded_without_live_url`, `workflow_run_succeeded_with_live_url`, cancelled/completed non-active, or stale no-run records) do not block a new deploy retry
-  - stale no-run detection uses deterministic activity precedence: `refreshed_at` -> `dispatched_at` -> `occurred_at` -> `timestamp` with a 30-minute threshold
+  - stale no-run detection uses deterministic activity precedence: `refreshed_at` -> `dispatched_at` -> `occurred_at` -> `timestamp` with a 2-minute threshold for unverified dispatch records
 - retry after a failed deploy is supported and recorded as a new history event
 - deploy dry-run records history but does not overwrite prior successful deploy request markers
 - platform-managed deploy workflow now performs a real GKE apply/rollout path for managed site workloads:
@@ -1039,7 +1040,7 @@ Post-dispatch evidence fields are now explicitly tracked so transport acceptance
 - `workflow_run_lookup_attempted`
 - `workflow_run_found`
 - `workflow_job_failure_detected`
-- `post_dispatch_state` (for example `dispatch_not_attempted`, `dispatch_accepted_no_run`, `workflow_run_pending`, `workflow_run_in_progress`, `workflow_run_failed`, `workflow_run_succeeded_without_live_url`, `workflow_run_succeeded_with_live_url`)
+- `post_dispatch_state` (for example `dispatch_not_attempted`, `dispatch_accepted_no_run`, `dispatch_unverified_no_run`, `workflow_run_pending`, `workflow_run_in_progress`, `workflow_run_failed`, `workflow_run_succeeded_without_live_url`, `workflow_run_succeeded_with_live_url`)
 
 This keeps trigger-level and service-level readiness distinct:
 - workflow trigger support: `workflow_dispatch_supported`, `workflow_trigger_types`

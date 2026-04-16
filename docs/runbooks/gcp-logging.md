@@ -462,6 +462,7 @@ Dispatch-support interpretation:
 Post-dispatch state interpretation:
 - `post_dispatch_state=dispatch_not_attempted` means readiness/preflight blocked dispatch.
 - `post_dispatch_state=dispatch_accepted_no_run` means dispatch transport accepted but no workflow run evidence is available yet.
+- `post_dispatch_state=dispatch_unverified_no_run` means refresh rechecked dispatch metadata and still found no workflow run evidence.
 - `post_dispatch_state=workflow_run_pending` or `workflow_run_in_progress` means run evidence exists and execution is not terminal.
 - `post_dispatch_state=workflow_run_failed` means run evidence exists with non-success terminal conclusion.
 - `post_dispatch_state=workflow_run_succeeded_without_live_url` means run completed successfully but no explicit live URL evidence has been captured.
@@ -476,11 +477,15 @@ Duplicate deploy blocking interpretation:
   - else `dispatched_at`
   - else `occurred_at`
   - else `timestamp`
-  - with a 30-minute stale threshold for `dispatch_accepted_no_run` blockers
+  - with a 2-minute stale threshold for unverified dispatch blockers (`dispatch_accepted_no_run` / `dispatch_unverified_no_run`)
 - quick triage:
   - use `target.blocking_post_dispatch_state` and blocker run fields to confirm whether the prior attempt is still active.
   - use `target.blocking_stale_reference_field`, `target.blocking_stale_reference_at`, `target.blocking_stale_age_seconds`, and `target.blocking_stale_threshold_seconds` to validate stale classification.
-  - if blocker state is `dispatch_accepted_no_run`, run **Refresh Deploy Status** and retry after status transitions to terminal/stale.
+  - if blocker state is `dispatch_accepted_no_run` or `dispatch_unverified_no_run`, run **Refresh Deploy Status** and retry after status transitions to terminal/stale.
+  - observe unverified-dispatch reconciliation events:
+    - `dispatch_attempted_without_run`
+    - `no_run_observed_after_refresh`
+    - `downgrade_to_stale_unverified_dispatch`
 
 Deploy evidence contract interpretation:
 - `deploy_evidence_contract_status=confirmed_live_evidence` means explicit deploy evidence set `resolved_live_url`.

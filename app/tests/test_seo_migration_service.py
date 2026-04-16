@@ -158,6 +158,17 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         refresh_workflow_run_failure_reason_code: str | None = None,
         refresh_workflow_run_failure_stage: str | None = None,
         refresh_workflow_run_failure_step: str | None = None,
+        lookup_workflow_run_id: int | None = None,
+        lookup_workflow_run_status: str | None = None,
+        lookup_workflow_run_conclusion: str | None = None,
+        lookup_workflow_output: dict[str, str] | None = None,
+        lookup_workflow_run_failure_reason_code: str | None = None,
+        lookup_workflow_run_failure_stage: str | None = None,
+        lookup_workflow_run_failure_step: str | None = None,
+        fail_lookup: bool = False,
+        lookup_error_code: str | None = None,
+        lookup_error_message: str | None = None,
+        lookup_error_stage: str | None = None,
         fail_refresh: bool = False,
         refresh_error_code: str | None = None,
         refresh_error_message: str | None = None,
@@ -197,6 +208,17 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.refresh_workflow_run_failure_reason_code = refresh_workflow_run_failure_reason_code
         self.refresh_workflow_run_failure_stage = refresh_workflow_run_failure_stage
         self.refresh_workflow_run_failure_step = refresh_workflow_run_failure_step
+        self.lookup_workflow_run_id = lookup_workflow_run_id
+        self.lookup_workflow_run_status = lookup_workflow_run_status
+        self.lookup_workflow_run_conclusion = lookup_workflow_run_conclusion
+        self.lookup_workflow_output = dict(lookup_workflow_output or {})
+        self.lookup_workflow_run_failure_reason_code = lookup_workflow_run_failure_reason_code
+        self.lookup_workflow_run_failure_stage = lookup_workflow_run_failure_stage
+        self.lookup_workflow_run_failure_step = lookup_workflow_run_failure_step
+        self.fail_lookup = fail_lookup
+        self.lookup_error_code = lookup_error_code
+        self.lookup_error_message = lookup_error_message
+        self.lookup_error_stage = lookup_error_stage
         self.fail_refresh = fail_refresh
         self.refresh_error_code = refresh_error_code
         self.refresh_error_message = refresh_error_message
@@ -235,6 +257,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         ] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
+        self.lookup_calls: list[tuple[SEOMigrationGitHubDeployTarget, str | None]] = []
         self.workflow_provision_calls: list[
             tuple[
                 str,
@@ -334,6 +357,36 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_run_failure_reason_code=self.refresh_workflow_run_failure_reason_code,
             workflow_run_failure_stage=self.refresh_workflow_run_failure_stage,
             workflow_run_failure_step=self.refresh_workflow_run_failure_step,
+            refreshed_at="2026-04-07T12:15:00+00:00",
+        )
+
+    def lookup_deploy_run_status_after_dispatch(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        dispatched_at: str | None = None,
+    ) -> SEOMigrationGitHubDeployRunStatusResult | None:
+        self.lookup_calls.append((target, dispatched_at))
+        if self.fail_lookup:
+            raise SEOMigrationGitHubPublisherError(
+                code=self.lookup_error_code or "workflow_not_found",
+                safe_message=self.lookup_error_message or "Simulated workflow run lookup failure.",
+                stage=self.lookup_error_stage or "workflow_run_lookup",
+            )
+        if self.lookup_workflow_run_id is None:
+            return None
+        return SEOMigrationGitHubDeployRunStatusResult(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            workflow_id=target.workflow_id,
+            ref=target.ref,
+            workflow_run_id=self.lookup_workflow_run_id,
+            workflow_run_status=self.lookup_workflow_run_status,
+            workflow_run_conclusion=self.lookup_workflow_run_conclusion,
+            workflow_output=dict(self.lookup_workflow_output),
+            workflow_run_failure_reason_code=self.lookup_workflow_run_failure_reason_code,
+            workflow_run_failure_stage=self.lookup_workflow_run_failure_stage,
+            workflow_run_failure_step=self.lookup_workflow_run_failure_step,
             refreshed_at="2026-04-07T12:15:00+00:00",
         )
 
@@ -2946,9 +2999,10 @@ def test_deploy_does_not_treat_request_inputs_as_confirmed_live_url(db_session) 
     assert deploy_result.result.get("workflow_inputs_sent_keys") == ["live_url"]
     assert deploy_result.result.get("workflow_run_lookup_attempted") is True
     assert deploy_result.result.get("workflow_run_found") is False
-    assert deploy_result.result.get("post_dispatch_state") == "dispatch_accepted_no_run"
+    assert deploy_result.result.get("dispatch_verification_state") == "unverified_dispatch_no_run_observed"
+    assert deploy_result.result.get("post_dispatch_state") == "dispatch_unverified_no_run"
     assert deploy_result.result.get("deploy_evidence_contract_status") == "evidence_pending"
-    assert deploy_result.result.get("deploy_evidence_contract_reasons") == ["dispatch_accepted_no_run"]
+    assert deploy_result.result.get("deploy_evidence_contract_reasons") == ["dispatch_unverified_no_run"]
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     destination = (summary.context_summary or {}).get("destination_summary") or {}
@@ -3332,7 +3386,8 @@ def test_refresh_deploy_status_records_run_failure_classification(db_session) ->
     )
 
 
-def test_refresh_deploy_status_is_noop_without_workflow_run_metadata(db_session) -> None:
+def test_refresh_deploy_status_is_noop_without_workflow_run_metadata(db_session, caplog) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
         db_session,
@@ -3379,12 +3434,16 @@ def test_refresh_deploy_status_is_noop_without_workflow_run_metadata(db_session)
         principal_id="principal-1",
     )
     assert refresh_result.result.get("status") == "no_change"
-    assert refresh_result.result.get("no_change_reason") == "workflow_run_metadata_missing"
+    assert refresh_result.result.get("no_change_reason") == "no_run_observed_after_refresh"
     assert refresh_result.result.get("dispatch_attempted") is True
     assert refresh_result.result.get("workflow_run_lookup_attempted") is True
     assert refresh_result.result.get("workflow_run_found") is False
-    assert refresh_result.result.get("post_dispatch_state") == "dispatch_accepted_no_run"
+    assert refresh_result.result.get("dispatch_verification_state") == "unverified_dispatch_no_run_observed"
+    assert refresh_result.result.get("post_dispatch_state") == "dispatch_unverified_no_run"
     assert publisher.refresh_calls == []
+    assert len(publisher.lookup_calls) == 1
+    refresh_logs = [record.msg for record in caplog.records if isinstance(record.msg, str)]
+    assert any('"event": "no_run_observed_after_refresh"' in item for item in refresh_logs)
 
 
 def test_refresh_deploy_status_preserves_stronger_existing_confirmed_url(db_session) -> None:
@@ -4033,7 +4092,7 @@ def test_duplicate_publish_rejection_still_allows_deploy(db_session) -> None:
 
 
 def test_deploy_duplicate_non_dry_run_is_rejected(db_session, caplog) -> None:
-    caplog.set_level("WARNING", logger="app.services.seo_migration")
+    caplog.set_level("INFO", logger="app.services.seo_migration")
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
         db_session,
@@ -4095,6 +4154,9 @@ def test_deploy_duplicate_non_dry_run_is_rejected(db_session, caplog) -> None:
     assert "blocking_deploy_trace_id" in duplicate_target
     assert "blocking_stale_reference_field" in duplicate_target
     assert "blocking_stale_threshold_seconds" in duplicate_target
+    assert duplicate_target.get("blocking_stale_threshold_seconds") == 120
+    deploy_logs = [record.msg for record in caplog.records if isinstance(record.msg, str)]
+    assert any('"event": "dispatch_attempted_without_run"' in item for item in deploy_logs)
 
 
 @pytest.mark.parametrize(
@@ -4315,7 +4377,8 @@ def test_deploy_retry_allowed_after_completed_run_without_conclusion(db_session)
     assert len(publisher.deploy_calls) == 2
 
 
-def test_deploy_retry_allowed_when_no_run_record_is_stale(db_session) -> None:
+def test_deploy_retry_allowed_when_no_run_record_is_stale(db_session, caplog) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
         db_session,
@@ -4396,6 +4459,8 @@ def test_deploy_retry_allowed_when_no_run_record_is_stale(db_session) -> None:
         principal_id="principal-1",
     )
     assert len(publisher.deploy_calls) == 2
+    deploy_logs = [record.msg for record in caplog.records if isinstance(record.msg, str)]
+    assert any('"event": "downgrade_to_stale_unverified_dispatch"' in item for item in deploy_logs)
 
 
 def test_deploy_duplicate_no_run_uses_most_recent_activity_timestamp(db_session) -> None:
