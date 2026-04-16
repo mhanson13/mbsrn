@@ -10,7 +10,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.integrations.ai_execution_core import normalize_provider_failure
+from app.integrations.ai_execution_core import build_ai_diagnostics_summary, normalize_provider_failure
 from app.integrations.seo_recommendation_narrative_provider import SEORecommendationNarrativeProviderError
 from app.integrations.seo_summary_provider import SEORecommendationNarrativeProvider
 from app.models.business import Business
@@ -718,6 +718,21 @@ class SEORecommendationNarrativeService:
             "failure_hint": failure_hint,
             "provider_attempt_count": (
                 max(1, int(error.attempt_count)) if isinstance(error.attempt_count, int) else None
+            ),
+            "ai_diagnostics_summary": build_ai_diagnostics_summary(
+                failure_category=normalized_failure_category,
+                failure_reason=normalized_failure_reason,
+                failure_source=normalized_failure_source,
+                retryable=bool(normalized_retryable),
+                hint=failure_hint,
+                budget_outcome=error.budget_outcome,
+                retry_suppressed=error.retry_suppressed,
+                trimming_pass_count=error.trimming_pass_count,
+                difficulty_score=error.difficulty_score,
+                original_input_size=error.original_input_size,
+                final_input_size=error.final_input_size,
+                trimmed_bytes=error.trimmed_bytes,
+                degraded_state=error.degraded_state,
             ),
         }
 

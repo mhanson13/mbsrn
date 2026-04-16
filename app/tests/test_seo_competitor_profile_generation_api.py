@@ -2139,6 +2139,19 @@ def test_execute_run_emits_response_contract_evaluation_and_persists_summary(
         "summary": "Limited number of strong competitors identified.",
         "retryable": True,
     }
+    assert detail_payload["ai_diagnostics_summary"] == {
+        "failure_category": None,
+        "failure_reason": None,
+        "failure_source": None,
+        "retryable": None,
+        "hint": None,
+        "budget_outcome": "provider_submission",
+        "retry_suppressed": False,
+        "trimming_pass_count": None,
+        "difficulty_bucket": None,
+        "input_size_bucket": None,
+        "degraded_state": "normal",
+    }
     assert "reason_codes" not in detail_payload["response_contract_summary"]
     assert "warning_codes" not in detail_payload["response_contract_summary"]
 

@@ -11,6 +11,11 @@ import urllib.request
 
 _DEFAULT_MAX_ATTEMPTS = 1
 _DEFAULT_RETRY_BACKOFF_SECONDS = 0.0
+_INPUT_SIZE_BUCKET_SMALL_MAX = 20_000
+_INPUT_SIZE_BUCKET_MEDIUM_MAX = 60_000
+_INPUT_SIZE_BUCKET_LARGE_MAX = 120_000
+_DIFFICULTY_BUCKET_LOW_MAX = 34
+_DIFFICULTY_BUCKET_MEDIUM_MAX = 69
 
 logger = logging.getLogger(__name__)
 
@@ -566,6 +571,73 @@ def normalize_provider_failure(
     )
 
 
+def build_ai_diagnostics_summary(
+    *,
+    failure_category: str | None = None,
+    failure_reason: str | None = None,
+    failure_source: str | None = None,
+    retryable: bool | None = None,
+    hint: str | None = None,
+    budget_outcome: str | None = None,
+    retry_suppressed: bool | None = None,
+    trimming_pass_count: int | None = None,
+    difficulty_score: int | None = None,
+    original_input_size: int | None = None,
+    final_input_size: int | None = None,
+    trimmed_bytes: int | None = None,
+    degraded_state: str | None = None,
+) -> dict[str, object]:
+    normalized_failure_category = _clean_optional_value(failure_category)
+    normalized_failure_reason = _clean_optional_value(failure_reason)
+    normalized_failure_source = _clean_optional_value(failure_source)
+    normalized_hint = _clean_optional_value(hint)
+    normalized_degraded_state = _clean_optional_value(degraded_state)
+
+    retryable_value = retryable if isinstance(retryable, bool) else None
+    original_input_size_value = _coerce_optional_non_negative_int(original_input_size)
+    final_input_size_value = _coerce_optional_non_negative_int(final_input_size)
+    trimmed_bytes_value = _coerce_optional_non_negative_int(trimmed_bytes)
+    trimming_pass_count_value = _coerce_optional_non_negative_int(trimming_pass_count)
+    difficulty_score_value = _coerce_optional_non_negative_int(difficulty_score)
+    if isinstance(difficulty_score_value, int):
+        difficulty_score_value = max(0, min(100, difficulty_score_value))
+
+    retry_suppressed_value = (
+        bool(retry_suppressed)
+        if isinstance(retry_suppressed, bool)
+        else normalized_failure_reason == "request_too_large_or_complex"
+    )
+    normalized_budget_outcome = _normalize_budget_outcome(
+        budget_outcome=budget_outcome,
+        retry_suppressed=retry_suppressed_value,
+        failure_reason=normalized_failure_reason,
+        trimming_pass_count=trimming_pass_count_value,
+        trimmed_bytes=trimmed_bytes_value,
+        final_input_size=final_input_size_value,
+    )
+    input_size_bucket = _bucket_input_size(
+        final_input_size_value
+        if isinstance(final_input_size_value, int)
+        else original_input_size_value
+    )
+    difficulty_bucket = _bucket_difficulty(difficulty_score_value)
+
+    payload: dict[str, object] = {
+        "failure_category": normalized_failure_category,
+        "failure_reason": normalized_failure_reason,
+        "failure_source": normalized_failure_source,
+        "retryable": retryable_value,
+        "hint": normalized_hint,
+        "budget_outcome": normalized_budget_outcome,
+        "retry_suppressed": retry_suppressed_value,
+        "trimming_pass_count": trimming_pass_count_value,
+        "difficulty_bucket": difficulty_bucket,
+        "input_size_bucket": input_size_bucket,
+        "degraded_state": normalized_degraded_state,
+    }
+    return payload
+
+
 def _normalize_http_failure(*, http_status: int) -> AINormalizedFailure:
     if http_status in {401, 403}:
         return AINormalizedFailure(
@@ -607,6 +679,55 @@ def _normalize_http_failure(*, http_status: int) -> AINormalizedFailure:
         retryable=True,
         http_status=http_status,
     )
+
+
+def _normalize_budget_outcome(
+    *,
+    budget_outcome: str | None,
+    retry_suppressed: bool,
+    failure_reason: str | None,
+    trimming_pass_count: int | None,
+    trimmed_bytes: int | None,
+    final_input_size: int | None,
+) -> str | None:
+    normalized = _clean_optional_value(budget_outcome)
+    if normalized:
+        return normalized
+    if retry_suppressed:
+        return "retry_suppressed"
+    if failure_reason == "request_too_large":
+        return "precall_rejected"
+    if isinstance(final_input_size, int):
+        if (isinstance(trimming_pass_count, int) and trimming_pass_count > 0) or (
+            isinstance(trimmed_bytes, int) and trimmed_bytes > 0
+        ):
+            return "trimmed_provider_submission"
+        return "provider_submission"
+    return None
+
+
+def _bucket_input_size(value: int | None) -> str | None:
+    if not isinstance(value, int):
+        return None
+    normalized = max(0, value)
+    if normalized <= _INPUT_SIZE_BUCKET_SMALL_MAX:
+        return "small"
+    if normalized <= _INPUT_SIZE_BUCKET_MEDIUM_MAX:
+        return "medium"
+    if normalized <= _INPUT_SIZE_BUCKET_LARGE_MAX:
+        return "large"
+    return "very_large"
+
+
+def _bucket_difficulty(value: int | None) -> str | None:
+    if not isinstance(value, int):
+        return None
+    normalized = max(0, min(100, value))
+    if normalized <= _DIFFICULTY_BUCKET_LOW_MAX:
+        return "low"
+    if normalized <= _DIFFICULTY_BUCKET_MEDIUM_MAX:
+        return "medium"
+    return "high"
 
 
 def _default_safe_message_for_failure(*, failure: AINormalizedFailure) -> str:
@@ -659,6 +780,16 @@ def _coerce_non_negative_int(value: object, *, fallback: int) -> int:
     return max(0, parsed)
 
 
+def _coerce_optional_non_negative_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0, parsed)
+
+
 def _request_payload_size(*, request: urllib.request.Request) -> int:
     data = getattr(request, "data", None)
     if isinstance(data, bytes):
@@ -689,6 +820,11 @@ def _derive_difficulty_score(
 
 def _normalize_code(value: str | None) -> str:
     return str(value or "").strip().lower()
+
+
+def _clean_optional_value(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
 
 
 def _infer_timeout_type(value: str) -> str:

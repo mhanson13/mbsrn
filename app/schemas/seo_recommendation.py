@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.action_chaining import ActionLineageResponse
+from app.schemas.ai_diagnostics import AIDiagnosticsSummaryRead
 from app.schemas.ai_prompt import AIPromptPreviewRead
 
 SEORecommendationRunStatus = Literal["queued", "running", "completed", "failed"]
@@ -4327,6 +4328,7 @@ class SEORecommendationNarrativeRead(BaseModel):
     top_themes_json: list[str] = Field(default_factory=list)
     sections_json: dict[str, object] | None
     response_contract_summary: SEORecommendationResponseContractSummaryRead | None = None
+    ai_diagnostics_summary: AIDiagnosticsSummaryRead | None = None
     competitor_influence: "SEORecommendationCompetitorInfluenceRead | None" = None
     signal_summary: SEORecommendationSignalSummaryRead | None = None
     action_summary: SEORecommendationActionSummaryRead | None = None
@@ -4544,6 +4546,41 @@ class SEORecommendationNarrativeRead(BaseModel):
             sanitized_sections = dict(sections)
             sanitized_sections.pop("response_contract", None)
             self.sections_json = sanitized_sections
+        return self
+
+    @model_validator(mode="after")
+    def derive_ai_diagnostics_summary(self) -> "SEORecommendationNarrativeRead":
+        if self.ai_diagnostics_summary is not None:
+            return self
+        sections = self.sections_json if isinstance(self.sections_json, dict) else {}
+        raw_summary = sections.get("ai_diagnostics_summary")
+        if not isinstance(raw_summary, dict):
+            fallback_failure_category = _strip_or_none(str(sections.get("normalized_failure_category") or ""))
+            fallback_failure_reason = _strip_or_none(str(sections.get("normalized_failure_reason") or ""))
+            fallback_failure_source = _strip_or_none(str(sections.get("normalized_failure_source") or ""))
+            fallback_hint = _strip_or_none(str(sections.get("failure_hint") or ""))
+            fallback_retryable = sections.get("normalized_retryable")
+            if not isinstance(fallback_retryable, bool):
+                fallback_retryable = sections.get("retryable")
+            if (
+                fallback_failure_category is None
+                and fallback_failure_reason is None
+                and fallback_failure_source is None
+                and fallback_hint is None
+                and not isinstance(fallback_retryable, bool)
+            ):
+                return self
+            raw_summary = {
+                "failure_category": fallback_failure_category,
+                "failure_reason": fallback_failure_reason,
+                "failure_source": fallback_failure_source,
+                "retryable": fallback_retryable if isinstance(fallback_retryable, bool) else None,
+                "hint": fallback_hint,
+            }
+        try:
+            self.ai_diagnostics_summary = AIDiagnosticsSummaryRead.model_validate(raw_summary)
+        except Exception:  # noqa: BLE001
+            self.ai_diagnostics_summary = None
         return self
 
     @staticmethod

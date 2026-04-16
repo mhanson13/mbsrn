@@ -3379,6 +3379,19 @@ describe("site workspace ai competitor profile drafts", () => {
         summary: "Limited number of strong competitors identified.",
         retryable: false,
       },
+      ai_diagnostics_summary: {
+        failure_category: "remote_timeout",
+        failure_reason: "provider_timeout",
+        failure_source: "remote_provider",
+        retryable: true,
+        hint: "Provider timeout",
+        budget_outcome: "trimmed_provider_submission",
+        retry_suppressed: false,
+        trimming_pass_count: 1,
+        difficulty_bucket: "medium",
+        input_size_bucket: "medium",
+        degraded_state: "degraded",
+      },
     });
 
     render(<SiteWorkspacePage />);
@@ -3471,6 +3484,9 @@ describe("site workspace ai competitor profile drafts", () => {
     ).toBeInTheDocument();
     expect(within(outcomeSummary).getByTestId("competitor-response-contract-summary")).toHaveTextContent(
       "Quality gate: Accepted with warnings. Results refined for quality. Limited number of strong competitors identified.",
+    );
+    expect(within(outcomeSummary).getByTestId("competitor-ai-diagnostics-summary")).toHaveTextContent(
+      "AI diagnostics: remote_timeout / provider_timeout — Provider timeout (retryable: yes)",
     );
     expect(within(outcomeSummary).getByText(/Only 1 valid competitor remained after filtering\./i)).toHaveTextContent(
       "strict validation filtered weak candidates",
@@ -4010,6 +4026,36 @@ describe("site workspace ai competitor profile drafts", () => {
     await user.click(enabledRejectButton as HTMLButtonElement);
     await screen.findByText("Draft rejected. No competitor record was created.");
     expect(mockRejectCompetitorProfileDraft).toHaveBeenCalled();
+  });
+
+  it("renders recommendation narrative ai diagnostics summary when available", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        latest_narrative: buildRecommendationNarrative({
+          ai_diagnostics_summary: {
+            failure_category: "remote_timeout",
+            failure_reason: "provider_timeout",
+            failure_source: "remote_provider",
+            retryable: true,
+            hint: "Provider timeout",
+            budget_outcome: "provider_submission",
+            retry_suppressed: false,
+            trimming_pass_count: null,
+            difficulty_bucket: "medium",
+            input_size_bucket: "medium",
+            degraded_state: "degraded",
+          },
+        }),
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const summary = await screen.findByTestId("recommendation-ai-diagnostics-summary");
+    expect(summary).toHaveTextContent(
+      "AI diagnostics: remote_timeout / provider_timeout — Provider timeout (retryable: yes)",
+    );
   });
 
   it("removes legacy recommendation metadata table headers from the workspace recommendation surface", async () => {

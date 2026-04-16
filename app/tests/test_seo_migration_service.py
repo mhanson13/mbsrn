@@ -1824,6 +1824,13 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
     assert migration_diagnostics.get("last_failure_normalized_retryable") is True
     assert migration_diagnostics.get("last_failure_provider_attempt_count") == 2
     assert migration_diagnostics.get("last_draft_failure_hint") == "Try again later"
+    draft_ai_summary = migration_diagnostics.get("last_draft_ai_diagnostics_summary")
+    assert isinstance(draft_ai_summary, dict)
+    assert draft_ai_summary.get("failure_category") == "remote_timeout"
+    assert draft_ai_summary.get("failure_reason") == "provider_timeout"
+    assert draft_ai_summary.get("failure_source") == "remote_provider"
+    assert draft_ai_summary.get("retryable") is True
+    assert draft_ai_summary.get("hint") == "Try again later"
     assert migration_diagnostics.get("draft_timeout_seconds") == 120
     assert migration_diagnostics.get("draft_timeout_source") == "default"
     assert migration_diagnostics.get("last_draft_failure_model_requested") is None
@@ -1889,6 +1896,15 @@ def test_generate_artifacts_request_too_large_persists_non_retryable_hint(db_ses
     assert migration_diagnostics.get("last_failure_normalized_source") == "local_validation"
     assert migration_diagnostics.get("last_failure_normalized_retryable") is False
     assert migration_diagnostics.get("last_draft_failure_hint") == "Input too large"
+    draft_ai_summary = migration_diagnostics.get("last_draft_ai_diagnostics_summary")
+    assert isinstance(draft_ai_summary, dict)
+    assert draft_ai_summary.get("failure_category") == "local_validation_failure"
+    assert draft_ai_summary.get("failure_reason") == "request_too_large_or_complex"
+    assert draft_ai_summary.get("failure_source") == "local_validation"
+    assert draft_ai_summary.get("retryable") is False
+    assert draft_ai_summary.get("hint") == "Input too large"
+    assert draft_ai_summary.get("budget_outcome") == "retry_suppressed"
+    assert draft_ai_summary.get("retry_suppressed") is True
 
 
 def test_generate_artifacts_success_state_overrides_stale_failure_messaging(db_session) -> None:

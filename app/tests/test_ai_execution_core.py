@@ -11,6 +11,7 @@ from app.integrations.ai_execution_core import (
     AIExecutionError,
     AIExecutionPolicy,
     apply_request_budget,
+    build_ai_diagnostics_summary,
     execute_json_request,
     normalize_provider_failure,
 )
@@ -267,3 +268,38 @@ def test_normalize_provider_failure_maps_to_shared_taxonomy(
 ) -> None:
     failure = normalize_provider_failure(code=code)
     assert failure.category == expected_category
+
+
+def test_build_ai_diagnostics_summary_maps_size_and_difficulty_buckets() -> None:
+    summary = build_ai_diagnostics_summary(
+        failure_category="remote_timeout",
+        failure_reason="provider_timeout",
+        failure_source="remote_provider",
+        retryable=True,
+        hint="Try again later",
+        original_input_size=100_000,
+        final_input_size=58_000,
+        trimmed_bytes=42_000,
+        trimming_pass_count=3,
+        difficulty_score=82,
+    )
+
+    assert summary["failure_category"] == "remote_timeout"
+    assert summary["retryable"] is True
+    assert summary["budget_outcome"] == "trimmed_provider_submission"
+    assert summary["input_size_bucket"] == "medium"
+    assert summary["difficulty_bucket"] == "high"
+    assert summary["retry_suppressed"] is False
+
+
+def test_build_ai_diagnostics_summary_marks_retry_suppressed_timeouts() -> None:
+    summary = build_ai_diagnostics_summary(
+        failure_category="local_validation_failure",
+        failure_reason="request_too_large_or_complex",
+        failure_source="local_validation",
+        retryable=False,
+        hint="Input too large",
+    )
+
+    assert summary["budget_outcome"] == "retry_suppressed"
+    assert summary["retry_suppressed"] is True

@@ -151,6 +151,7 @@ import type {
   RecommendationRun,
   RecommendationTuningSuggestion,
   RecommendationWorkspaceSummaryResponse,
+  AIDiagnosticsSummary,
   OperatorResponseContractSummary,
   SearchConsoleSiteSummaryResponse,
   SiteAnalyticsSummaryResponse,
@@ -884,6 +885,58 @@ function normalizeOperatorResponseContractSummary(value: unknown): OperatorRespo
     summary,
     retryable: typeof candidate.retryable === "boolean" ? candidate.retryable : false,
   };
+}
+
+function normalizeAIDiagnosticsSummary(value: unknown): AIDiagnosticsSummary | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  const normalizeString = (key: string, maxLength = 220): string | null => {
+    const raw = typeof candidate[key] === "string" ? candidate[key].trim() : "";
+    if (!raw) {
+      return null;
+    }
+    return raw.length > maxLength ? `${raw.slice(0, maxLength - 3)}...` : raw;
+  };
+  const normalizeBoolean = (key: string): boolean | null =>
+    typeof candidate[key] === "boolean" ? candidate[key] : null;
+  const normalizeNumber = (key: string): number | null => {
+    if (typeof candidate[key] !== "number" || !Number.isFinite(candidate[key])) {
+      return null;
+    }
+    return Math.max(0, Math.round(candidate[key] as number));
+  };
+
+  const summary: AIDiagnosticsSummary = {
+    failure_category: normalizeString("failure_category", 80),
+    failure_reason: normalizeString("failure_reason", 120),
+    failure_source: normalizeString("failure_source", 80),
+    retryable: normalizeBoolean("retryable"),
+    hint: normalizeString("hint", 220),
+    budget_outcome: normalizeString("budget_outcome", 80),
+    retry_suppressed: normalizeBoolean("retry_suppressed"),
+    trimming_pass_count: normalizeNumber("trimming_pass_count"),
+    difficulty_bucket: normalizeString("difficulty_bucket", 32),
+    input_size_bucket: normalizeString("input_size_bucket", 32),
+    degraded_state: normalizeString("degraded_state", 120),
+  };
+  if (
+    !summary.failure_category &&
+    !summary.failure_reason &&
+    !summary.failure_source &&
+    summary.retryable === null &&
+    !summary.hint &&
+    !summary.budget_outcome &&
+    summary.retry_suppressed === null &&
+    summary.trimming_pass_count === null &&
+    !summary.difficulty_bucket &&
+    !summary.input_size_bucket &&
+    !summary.degraded_state
+  ) {
+    return null;
+  }
+  return summary;
 }
 
 function responseContractSummaryHintClass(summary: OperatorResponseContractSummary | null): string {
@@ -4168,6 +4221,8 @@ export default function SiteWorkspacePage() {
   const [competitorOutcomeSummary, setCompetitorOutcomeSummary] = useState<CompetitorRunOutcomeSummary | null>(null);
   const [competitorResponseContractSummary, setCompetitorResponseContractSummary] =
     useState<OperatorResponseContractSummary | null>(null);
+  const [competitorAIDiagnosticsSummary, setCompetitorAIDiagnosticsSummary] =
+    useState<AIDiagnosticsSummary | null>(null);
   const [competitorProfileLoading, setCompetitorProfileLoading] = useState(false);
   const [competitorProfileError, setCompetitorProfileError] = useState<string | null>(null);
   const [competitorProfileSummaryError, setCompetitorProfileSummaryError] = useState<string | null>(null);
@@ -4784,6 +4839,10 @@ export default function SiteWorkspacePage() {
     () => normalizeOperatorResponseContractSummary(latestCompletedRecommendationNarrative?.response_contract_summary),
     [latestCompletedRecommendationNarrative],
   );
+  const narrativeAIDiagnosticsSummary = useMemo(
+    () => normalizeAIDiagnosticsSummary(latestCompletedRecommendationNarrative?.ai_diagnostics_summary),
+    [latestCompletedRecommendationNarrative],
+  );
 
   const recommendationApplyOutcome = useMemo(
     () => normalizeRecommendationApplyOutcome(latestRecommendationApplyOutcome),
@@ -5124,6 +5183,7 @@ export default function SiteWorkspacePage() {
     setCompetitorProviderAttempts([]);
     setCompetitorOutcomeSummary(null);
     setCompetitorResponseContractSummary(null);
+    setCompetitorAIDiagnosticsSummary(null);
   }, []);
 
   function applyWorkspaceSummary(summary: RecommendationWorkspaceSummaryResponse): void {
@@ -5663,6 +5723,7 @@ export default function SiteWorkspacePage() {
       setCompetitorResponseContractSummary(
         normalizeOperatorResponseContractSummary(detail.response_contract_summary),
       );
+      setCompetitorAIDiagnosticsSummary(normalizeAIDiagnosticsSummary(detail.ai_diagnostics_summary));
       const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
       setCompetitorProfileActionMessage(
         terminalMessage ||
@@ -5727,6 +5788,7 @@ export default function SiteWorkspacePage() {
       setCompetitorResponseContractSummary(
         normalizeOperatorResponseContractSummary(detail.response_contract_summary),
       );
+      setCompetitorAIDiagnosticsSummary(normalizeAIDiagnosticsSummary(detail.ai_diagnostics_summary));
       const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
       setCompetitorProfileActionMessage(
         terminalMessage ||
@@ -6487,6 +6549,7 @@ export default function SiteWorkspacePage() {
             setCompetitorResponseContractSummary(
               normalizeOperatorResponseContractSummary(detail.response_contract_summary),
             );
+            setCompetitorAIDiagnosticsSummary(normalizeAIDiagnosticsSummary(detail.ai_diagnostics_summary));
             setCompetitorProfileError(null);
           } catch (error) {
             if (cancelled) {
@@ -6647,6 +6710,7 @@ export default function SiteWorkspacePage() {
         setCompetitorResponseContractSummary(
           normalizeOperatorResponseContractSummary(detail.response_contract_summary),
         );
+        setCompetitorAIDiagnosticsSummary(normalizeAIDiagnosticsSummary(detail.ai_diagnostics_summary));
         setCompetitorProfileError(null);
         if (isCompetitorProfileRunTerminalStatus(detail.run.status)) {
           const terminalMessage = competitorProfileTerminalMessage(detail.run.status);
@@ -8458,6 +8522,18 @@ export default function SiteWorkspacePage() {
                   {competitorResponseContractSummary.summary}
                 </p>
               ) : null}
+              {competitorAIDiagnosticsSummary ? (
+                <p className="hint muted" data-testid="competitor-ai-diagnostics-summary">
+                  <strong>AI diagnostics:</strong> {competitorAIDiagnosticsSummary.failure_category || "n/a"}
+                  {competitorAIDiagnosticsSummary.failure_reason
+                    ? ` / ${competitorAIDiagnosticsSummary.failure_reason}`
+                    : ""}
+                  {competitorAIDiagnosticsSummary.hint ? ` — ${competitorAIDiagnosticsSummary.hint}` : ""}
+                  {typeof competitorAIDiagnosticsSummary.retryable === "boolean"
+                    ? ` (retryable: ${competitorAIDiagnosticsSummary.retryable ? "yes" : "no"})`
+                    : ""}
+                </p>
+              ) : null}
               {competitorOutcomeSummary?.used_timeout_recovery ? (
                 <p className="hint muted">Recovered after provider timeout during this run.</p>
               ) : null}
@@ -9630,6 +9706,7 @@ export default function SiteWorkspacePage() {
                   : null
               }
               narrativeResponseContractSummary={narrativeResponseContractSummary}
+              narrativeAIDiagnosticsSummary={narrativeAIDiagnosticsSummary}
               narrativeActionSummary={narrativeActionSummary}
               narrativeEEATFocusCategories={narrativeEEATFocusCategories}
               narrativeCompetitorInfluence={narrativeCompetitorInfluence}

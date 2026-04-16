@@ -1331,6 +1331,7 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_draft_failure_model_used" in migration_diagnostics
     assert "last_draft_failure_timeout_seconds" in migration_diagnostics
     assert "last_draft_failure_timeout_source" in migration_diagnostics
+    assert "last_draft_ai_diagnostics_summary" in migration_diagnostics
     assert "last_draft_contract_status" in migration_diagnostics
     assert "last_draft_contract_reason_codes" in migration_diagnostics
     assert "last_draft_contract_warning_codes" in migration_diagnostics

@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import type {
+  AIDiagnosticsSummary,
   OperatorResponseContractSummary,
   RecommendationEEATCategory,
   RecommendationNarrative,
@@ -80,6 +81,7 @@ interface RecommendationNarrativeOverlayPanelProps {
   latestCompletedRecommendationNarrative: RecommendationNarrative | null;
   latestNarrativeDetailHref: string | null;
   narrativeResponseContractSummary: OperatorResponseContractSummary | null;
+  narrativeAIDiagnosticsSummary: AIDiagnosticsSummary | null;
   narrativeActionSummary: NarrativeActionSummaryViewLike | null;
   narrativeEEATFocusCategories: RecommendationEEATCategory[];
   narrativeCompetitorInfluence: NarrativeCompetitorInfluenceViewLike | null;
@@ -127,6 +129,7 @@ export function RecommendationNarrativeOverlayPanel({
   latestCompletedRecommendationNarrative,
   latestNarrativeDetailHref,
   narrativeResponseContractSummary,
+  narrativeAIDiagnosticsSummary,
   narrativeActionSummary,
   narrativeEEATFocusCategories,
   narrativeCompetitorInfluence,
@@ -194,6 +197,17 @@ export function RecommendationNarrativeOverlayPanel({
               {narrativeResponseContractSummary.retryable
               && narrativeResponseContractSummary.status !== "accepted"
                 ? " This looks retryable."
+                : ""}
+            </p>
+          ) : null}
+          {narrativeAIDiagnosticsSummary ? (
+            <p className="hint muted" data-testid="recommendation-ai-diagnostics-summary">
+              <strong>AI diagnostics:</strong>{" "}
+              {narrativeAIDiagnosticsSummary.failure_category || "n/a"}
+              {narrativeAIDiagnosticsSummary.failure_reason ? ` / ${narrativeAIDiagnosticsSummary.failure_reason}` : ""}
+              {narrativeAIDiagnosticsSummary.hint ? ` — ${narrativeAIDiagnosticsSummary.hint}` : ""}
+              {typeof narrativeAIDiagnosticsSummary.retryable === "boolean"
+                ? ` (retryable: ${narrativeAIDiagnosticsSummary.retryable ? "yes" : "no"})`
                 : ""}
             </p>
           ) : null}

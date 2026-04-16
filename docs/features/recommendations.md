@@ -99,6 +99,24 @@ Maintainer tuning guidance:
   - `_RECOMMENDATION_OPTIONAL_TRIM_ORDER`
 - keep required context stable and trim optional enrichment first; update tests before promoting optional sections to required.
 
+Operator-visible AI diagnostics summary:
+- recommendation narrative payloads now include a bounded summary at:
+  - `latest_narrative.ai_diagnostics_summary` (workspace/detail consumers)
+- surfaced fields:
+  - `failure_category`
+  - `failure_reason`
+  - `failure_source`
+  - `retryable`
+  - `hint`
+  - `budget_outcome`
+  - `retry_suppressed`
+  - `trimming_pass_count`
+  - `difficulty_bucket`
+  - `input_size_bucket`
+  - `degraded_state`
+- goal: quick triage (`Input too large`, `Provider timeout`, `Invalid provider response`, `Configuration issue`) without opening logs first.
+- deep request/transport traces stay log-only for admin/support runbook workflows.
+
 ## Route-Level Action Cluster Consistency
 
 Recommendation routes now use a shared route-level action cluster near hero/control surfaces to keep action hierarchy consistent across:

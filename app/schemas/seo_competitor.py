@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas.ai_diagnostics import AIDiagnosticsSummaryRead
+
 SEOCompetitorRunStatus = Literal["queued", "running", "completed", "failed"]
 SEOCompetitorProfileGenerationRunStatus = Literal["queued", "running", "completed", "failed"]
 SEOCompetitorProfileFailureCategory = Literal[
@@ -667,6 +669,7 @@ class SEOCompetitorProfileGenerationRunDetailRead(BaseModel):
     candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummaryRead | None = None
     outcome_summary: SEOCompetitorProfileOutcomeSummaryRead | None = None
     response_contract_summary: "SEOAIResponseContractSummaryRead | None" = None
+    ai_diagnostics_summary: AIDiagnosticsSummaryRead | None = None
     provider_attempt_count: int = Field(default=0, ge=0)
     provider_degraded_retry_used: bool = False
     provider_attempts: list[SEOCompetitorProfileProviderAttemptRead] = Field(default_factory=list)

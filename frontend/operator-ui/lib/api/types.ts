@@ -1068,6 +1068,20 @@ export interface OperatorResponseContractSummary {
   retryable: boolean;
 }
 
+export interface AIDiagnosticsSummary {
+  failure_category?: string | null;
+  failure_reason?: string | null;
+  failure_source?: string | null;
+  retryable?: boolean | null;
+  hint?: string | null;
+  budget_outcome?: string | null;
+  retry_suppressed?: boolean | null;
+  trimming_pass_count?: number | null;
+  difficulty_bucket?: string | null;
+  input_size_bucket?: string | null;
+  degraded_state?: string | null;
+}
+
 export interface CompetitorProfileGenerationRunDetailResponse {
   run: CompetitorProfileGenerationRun;
   drafts: CompetitorProfileDraft[];
@@ -1080,6 +1094,7 @@ export interface CompetitorProfileGenerationRunDetailResponse {
   candidate_pipeline_summary?: CompetitorCandidatePipelineSummary | null;
   outcome_summary?: CompetitorRunOutcomeSummary | null;
   response_contract_summary?: OperatorResponseContractSummary | null;
+  ai_diagnostics_summary?: AIDiagnosticsSummary | null;
   provider_attempt_count?: number;
   provider_degraded_retry_used?: boolean;
   provider_attempts?: CompetitorProviderAttemptDebug[];
@@ -1348,6 +1363,7 @@ export interface RecommendationNarrative {
   top_themes_json: string[];
   sections_json: Record<string, unknown> | null;
   response_contract_summary?: OperatorResponseContractSummary | null;
+  ai_diagnostics_summary?: AIDiagnosticsSummary | null;
   provider_name: string;
   model_name: string;
   prompt_version: string;

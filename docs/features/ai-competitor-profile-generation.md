@@ -117,6 +117,23 @@ Maintainer tuning guidance:
   - `_COMPETITOR_OPTIONAL_TRIM_ORDER`
 - keep required sections minimal and trim breadth-first optional context (`existing_domains`, then `seed_candidates`) unless tests and production telemetry justify a policy change.
 
+Operator-visible AI diagnostics summary:
+- competitor run-detail payloads now include:
+  - `ai_diagnostics_summary`
+- surfaced fields:
+  - `failure_category`
+  - `failure_reason`
+  - `failure_source`
+  - `retryable`
+  - `hint`
+  - `budget_outcome`
+  - `retry_suppressed`
+  - `trimming_pass_count`
+  - `difficulty_bucket`
+  - `input_size_bucket`
+  - `degraded_state`
+- this is bounded triage context for operator/admin UI surfaces; raw provider payloads and deep execution traces remain log-only.
+
 ## Architecture / Flow
 
 ### Generation flow

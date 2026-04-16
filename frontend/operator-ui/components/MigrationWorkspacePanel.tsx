@@ -2058,6 +2058,21 @@ export function MigrationWorkspacePanel({
   const draftFailureSourceLabel = toDraftFailureSourceLabel(
     asStringOrNull(migrationDiagnostics.last_draft_failure_source) || draftAIExecution.failureSource,
   );
+  const draftAIDiagnosticsSummary = asRecord(migrationDiagnostics.last_draft_ai_diagnostics_summary);
+  const draftAIFailureCategory = asStringOrNull(draftAIDiagnosticsSummary.failure_category);
+  const draftAIFailureReason = asStringOrNull(draftAIDiagnosticsSummary.failure_reason);
+  const draftAIFailureSource = asStringOrNull(draftAIDiagnosticsSummary.failure_source);
+  const draftAIRetryable = asBooleanOrNull(draftAIDiagnosticsSummary.retryable);
+  const draftAIHint = asStringOrNull(draftAIDiagnosticsSummary.hint);
+  const draftAIBudgetOutcome = asStringOrNull(draftAIDiagnosticsSummary.budget_outcome);
+  const draftAIRetrySuppressed = asBooleanOrNull(draftAIDiagnosticsSummary.retry_suppressed);
+  const draftAITrimmingPassCount =
+    typeof draftAIDiagnosticsSummary.trimming_pass_count === "number"
+      ? Math.max(0, Math.round(draftAIDiagnosticsSummary.trimming_pass_count))
+      : null;
+  const draftAIDifficultyBucket = asStringOrNull(draftAIDiagnosticsSummary.difficulty_bucket);
+  const draftAIInputSizeBucket = asStringOrNull(draftAIDiagnosticsSummary.input_size_bucket);
+  const draftAIDegradedState = asStringOrNull(draftAIDiagnosticsSummary.degraded_state);
   const selectedArtifactFailureMessage = asStringOrNull(selectedArtifact?.error_summary);
   const draftFailureMessage = selectedArtifactFailureMessage || asStringOrNull(migrationDiagnostics.last_draft_failure_message);
   const draftDiagnosticsUsingSummaryFallback =
@@ -4094,6 +4109,27 @@ export function MigrationWorkspacePanel({
               ) : null}
               {draftFailureSourceLabel ? (
                 <span className="hint warning">Draft failure source: {draftFailureSourceLabel}</span>
+              ) : null}
+              {draftAIFailureCategory || draftAIFailureReason || draftAIHint ? (
+                <span className="hint">
+                  AI diagnostics: {draftAIFailureCategory ? toFailureCategoryLabel(draftAIFailureCategory) : "n/a"}
+                  {draftAIFailureReason ? ` / ${formatReasonCodeLabel(draftAIFailureReason)}` : ""}
+                  {draftAIHint ? ` — ${draftAIHint}` : ""}
+                </span>
+              ) : null}
+              {draftAIFailureSource || draftAIBudgetOutcome || draftAIRetrySuppressed !== null ? (
+                <span className="hint muted">
+                  AI execution: source {draftAIFailureSource ? formatReasonCodeLabel(draftAIFailureSource) : "n/a"}
+                  {draftAIBudgetOutcome ? `; budget ${formatReasonCodeLabel(draftAIBudgetOutcome)}` : ""}
+                  {draftAIRetrySuppressed !== null
+                    ? `; retry suppressed ${draftAIRetrySuppressed ? "yes" : "no"}`
+                    : ""}
+                  {draftAITrimmingPassCount !== null ? `; trim passes ${draftAITrimmingPassCount}` : ""}
+                  {draftAIDifficultyBucket ? `; difficulty ${formatReasonCodeLabel(draftAIDifficultyBucket)}` : ""}
+                  {draftAIInputSizeBucket ? `; input ${formatReasonCodeLabel(draftAIInputSizeBucket)}` : ""}
+                  {draftAIDegradedState ? `; degraded ${formatReasonCodeLabel(draftAIDegradedState)}` : ""}
+                  {draftAIRetryable !== null ? `; retryable ${draftAIRetryable ? "yes" : "no"}` : ""}
+                </span>
               ) : null}
               {draftContractStatus ? (
                 <span className="hint">Draft contract status: {draftContractStatus.replace(/_/g, " ")}</span>

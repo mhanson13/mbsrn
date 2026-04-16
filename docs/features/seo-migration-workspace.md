@@ -336,6 +336,23 @@ Migration-specific degraded behavior remains strict:
 - artifact trust boundaries are unchanged (approval/publish/deploy gates remain explicit)
 - unchanged oversized/complex timeout payloads are not blindly retried (`request_too_large_or_complex`)
 
+Operator-visible AI diagnostics summary:
+- migration summary now exposes a bounded AI diagnostics block at:
+  - `context_summary.migration_diagnostics.last_draft_ai_diagnostics_summary`
+- surfaced fields:
+  - `failure_category`
+  - `failure_reason`
+  - `failure_source`
+  - `retryable`
+  - `hint`
+  - `budget_outcome`
+  - `retry_suppressed`
+  - `trimming_pass_count`
+  - `difficulty_bucket`
+  - `input_size_bucket`
+  - `degraded_state`
+- this summary is intentionally bounded for operators/admins; full provider/request telemetry remains log-only.
+
 Structured logging:
 - shared execution-core lifecycle emits:
   - `event=ai_execution_preflight`

@@ -33,6 +33,7 @@ from app.api.deps import (
     get_tenant_context,
     resolve_tenant_business_id,
 )
+from app.integrations.ai_execution_core import build_ai_diagnostics_summary
 from app.models.principal import Principal, PrincipalRole
 from app.models.seo_audit_page import SEOAuditPage
 from app.models.seo_competitor_tuning_preview_event import SEOCompetitorTuningPreviewEvent
@@ -5026,6 +5027,12 @@ def _to_competitor_profile_generation_run_detail_response(
     provider_degraded_retry_used: bool = False,
     provider_attempts=None,
 ) -> SEOCompetitorProfileGenerationRunDetailRead:
+    provider_attempt_items = list(provider_attempts or [])
+    ai_diagnostics_summary = _derive_competitor_ai_diagnostics_summary(
+        run=run,
+        provider_attempts=provider_attempt_items,
+        outcome_summary=outcome_summary,
+    )
     serialized_drafts = [SEOCompetitorProfileDraftRead.model_validate(item) for item in drafts]
     serialized_rejected_candidates = [
         SEOCompetitorProfileRejectedCandidateRead.model_validate(item) for item in (rejected_candidates or [])
@@ -5052,10 +5059,122 @@ def _to_competitor_profile_generation_run_detail_response(
         ),
         outcome_summary=outcome_summary,
         response_contract_summary=response_contract_summary,
+        ai_diagnostics_summary=ai_diagnostics_summary,
         provider_attempt_count=max(0, int(provider_attempt_count)),
         provider_degraded_retry_used=bool(provider_degraded_retry_used),
-        provider_attempts=list(provider_attempts or []),
+        provider_attempts=provider_attempt_items,
     )
+
+
+def _derive_competitor_ai_diagnostics_summary(
+    *,
+    run,
+    provider_attempts: list[object],
+    outcome_summary,
+) -> dict[str, object] | None:
+    latest_attempt_payload: dict[str, object] = {}
+    if provider_attempts:
+        latest_attempt = provider_attempts[-1]
+        if hasattr(latest_attempt, "model_dump"):
+            latest_attempt_payload = latest_attempt.model_dump(mode="json")
+        elif isinstance(latest_attempt, dict):
+            latest_attempt_payload = latest_attempt
+
+    normalized_failure_category = _clean_optional(
+        latest_attempt_payload.get("normalized_failure_category"),
+    )
+    normalized_failure_reason = _clean_optional(
+        latest_attempt_payload.get("normalized_failure_reason"),
+    )
+    normalized_failure_source = _clean_optional(
+        latest_attempt_payload.get("normalized_failure_source"),
+    )
+    normalized_retryable = latest_attempt_payload.get("normalized_retryable")
+    retryable_value = normalized_retryable if isinstance(normalized_retryable, bool) else None
+
+    run_failure_category = _clean_optional(getattr(run, "failure_category", None))
+    if not normalized_failure_category:
+        if run_failure_category == "timeout":
+            normalized_failure_category = "remote_timeout"
+            normalized_failure_reason = normalized_failure_reason or "provider_timeout"
+            normalized_failure_source = normalized_failure_source or "remote_provider"
+        elif run_failure_category == "provider_config":
+            normalized_failure_category = "configuration_invalid"
+            normalized_failure_reason = normalized_failure_reason or "provider_auth_or_configuration_invalid"
+            normalized_failure_source = normalized_failure_source or "local_configuration"
+        elif run_failure_category == "provider_request":
+            normalized_failure_category = "remote_unavailable"
+            normalized_failure_reason = normalized_failure_reason or "provider_transport_error"
+            normalized_failure_source = normalized_failure_source or "remote_provider"
+        elif run_failure_category in {"malformed_output", "schema_validation"}:
+            normalized_failure_category = "remote_invalid_response"
+            normalized_failure_reason = normalized_failure_reason or "provider_invalid_response"
+            normalized_failure_source = normalized_failure_source or "remote_provider"
+
+    if retryable_value is None and normalized_failure_category in {"remote_timeout", "remote_rate_limited"}:
+        retryable_value = True
+
+    hint: str | None = None
+    if normalized_failure_reason in {"request_too_large", "request_too_large_or_complex"}:
+        hint = "Input too large"
+    elif normalized_failure_category == "remote_timeout":
+        hint = "Provider timeout"
+    elif normalized_failure_category in {"configuration_missing", "configuration_invalid"}:
+        hint = "Configuration issue"
+    elif normalized_failure_category == "remote_invalid_response":
+        hint = "Invalid provider response"
+    elif normalized_failure_category == "remote_unavailable":
+        hint = "Try again later"
+
+    prompt_total_chars = latest_attempt_payload.get("prompt_total_chars")
+    prompt_chars_value = (
+        max(0, int(prompt_total_chars)) if isinstance(prompt_total_chars, (int, float)) else None
+    )
+    prompt_size_risk = _clean_optional(latest_attempt_payload.get("prompt_size_risk"))
+    difficulty_score: int | None = None
+    if prompt_size_risk == "high":
+        difficulty_score = 85
+    elif prompt_size_risk == "medium":
+        difficulty_score = 55
+    elif prompt_size_risk == "low":
+        difficulty_score = 25
+
+    normalized_failure_reason_value = normalized_failure_reason or ""
+    retry_suppressed = (
+        normalized_failure_reason_value == "request_too_large_or_complex"
+        if normalized_failure_reason_value
+        else None
+    )
+    budget_outcome = (
+        "retry_suppressed"
+        if retry_suppressed is True
+        else ("provider_submission" if provider_attempts else None)
+    )
+    degraded_state = _clean_optional(getattr(outcome_summary, "status_level", None)) if outcome_summary else None
+
+    summary = build_ai_diagnostics_summary(
+        failure_category=normalized_failure_category or run_failure_category,
+        failure_reason=normalized_failure_reason,
+        failure_source=normalized_failure_source,
+        retryable=retryable_value,
+        hint=hint,
+        budget_outcome=budget_outcome,
+        retry_suppressed=retry_suppressed,
+        trimming_pass_count=None,
+        difficulty_score=difficulty_score,
+        original_input_size=prompt_chars_value,
+        final_input_size=prompt_chars_value,
+        trimmed_bytes=None,
+        degraded_state=degraded_state,
+    )
+    if not any(value is not None for value in summary.values()):
+        return None
+    return summary
+
+
+def _clean_optional(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
 
 
 @router.post(

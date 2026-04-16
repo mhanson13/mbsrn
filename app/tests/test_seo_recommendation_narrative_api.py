@@ -39,6 +39,7 @@ NARRATIVE_RESPONSE_KEYS = {
     "top_themes_json",
     "sections_json",
     "response_contract_summary",
+    "ai_diagnostics_summary",
     "competitor_influence",
     "signal_summary",
     "action_summary",
@@ -418,6 +419,7 @@ def test_recommendation_narrative_manual_trigger_success_and_retrieval(db_sessio
     assert narrative["prompt_version"]
     assert narrative["error_message"] is None
     assert narrative["response_contract_summary"] is not None
+    assert narrative["ai_diagnostics_summary"] is None
     assert set(narrative["response_contract_summary"].keys()) == {"status", "summary", "retryable"}
     assert "reason_codes" not in narrative["response_contract_summary"]
     assert "warning_codes" not in narrative["response_contract_summary"]
@@ -663,6 +665,25 @@ def test_recommendation_narrative_structured_output_failure_is_safe_and_auditabl
     assert narratives[0].sections_json["normalized_failure_source"] == "local_validation"
     assert narratives[0].sections_json["normalized_retryable"] is False
     assert narratives[0].sections_json["failure_hint"] is None
+    latest_payload = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/narratives/latest"
+    )
+    assert latest_payload.status_code == 200
+    latest_narrative = latest_payload.json()
+    assert latest_narrative["status"] == "failed"
+    assert latest_narrative["ai_diagnostics_summary"] == {
+        "failure_category": "local_validation_failure",
+        "failure_reason": "response_schema_validation_failed",
+        "failure_source": "local_validation",
+        "retryable": False,
+        "hint": None,
+        "budget_outcome": None,
+        "retry_suppressed": False,
+        "trimming_pass_count": None,
+        "difficulty_bucket": None,
+        "input_size_bucket": None,
+        "degraded_state": None,
+    }
 
     recs_after = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"

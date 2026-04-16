@@ -98,6 +98,14 @@ class SEORecommendationNarrativeProviderError(RuntimeError):
     normalized_failure_source: str | None = None
     normalized_retryable: bool | None = None
     attempt_count: int | None = None
+    original_input_size: int | None = None
+    final_input_size: int | None = None
+    trimmed_bytes: int | None = None
+    trimming_pass_count: int | None = None
+    difficulty_score: int | None = None
+    budget_outcome: str | None = None
+    retry_suppressed: bool | None = None
+    degraded_state: str | None = None
 
     def __str__(self) -> str:
         return self.safe_message
@@ -439,6 +447,32 @@ class OpenAISEORecommendationNarrativeProvider:
                 normalized_failure_source=exc.normalized_failure.source,
                 normalized_retryable=bool(exc.normalized_failure.retryable),
                 attempt_count=max(1, int(exc.attempt_count)),
+                original_input_size=exc.original_input_size,
+                final_input_size=exc.final_input_size,
+                trimmed_bytes=exc.trimmed_bytes,
+                trimming_pass_count=exc.trimming_pass_count,
+                difficulty_score=exc.difficulty_score,
+                budget_outcome=(
+                    "retry_suppressed"
+                    if exc.normalized_failure.reason == "request_too_large_or_complex"
+                    else (
+                        "precall_rejected"
+                        if exc.normalized_failure.reason == "request_too_large"
+                        else (
+                            "trimmed_provider_submission"
+                            if (
+                                isinstance(exc.trimming_pass_count, int)
+                                and exc.trimming_pass_count > 0
+                            )
+                            or (
+                                isinstance(exc.trimmed_bytes, int)
+                                and exc.trimmed_bytes > 0
+                            )
+                            else "provider_submission"
+                        )
+                    )
+                ),
+                retry_suppressed=exc.normalized_failure.reason == "request_too_large_or_complex",
             ) from exc
 
     def _build_request_payload(
@@ -1013,6 +1047,14 @@ class OpenAISEORecommendationNarrativeProvider:
         normalized_failure_source: str | None = None,
         normalized_retryable: bool | None = None,
         attempt_count: int | None = None,
+        original_input_size: int | None = None,
+        final_input_size: int | None = None,
+        trimmed_bytes: int | None = None,
+        trimming_pass_count: int | None = None,
+        difficulty_score: int | None = None,
+        budget_outcome: str | None = None,
+        retry_suppressed: bool | None = None,
+        degraded_state: str | None = None,
     ) -> SEORecommendationNarrativeProviderError:
         return SEORecommendationNarrativeProviderError(
             code=code,
@@ -1026,6 +1068,20 @@ class OpenAISEORecommendationNarrativeProvider:
             normalized_failure_source=_clean_optional_value(normalized_failure_source),
             normalized_retryable=(bool(normalized_retryable) if isinstance(normalized_retryable, bool) else None),
             attempt_count=(max(1, int(attempt_count)) if isinstance(attempt_count, int) else None),
+            original_input_size=(
+                max(0, int(original_input_size)) if isinstance(original_input_size, int) else None
+            ),
+            final_input_size=(
+                max(0, int(final_input_size)) if isinstance(final_input_size, int) else None
+            ),
+            trimmed_bytes=(max(0, int(trimmed_bytes)) if isinstance(trimmed_bytes, int) else None),
+            trimming_pass_count=(
+                max(0, int(trimming_pass_count)) if isinstance(trimming_pass_count, int) else None
+            ),
+            difficulty_score=(max(0, min(100, int(difficulty_score))) if isinstance(difficulty_score, int) else None),
+            budget_outcome=_clean_optional_value(budget_outcome),
+            retry_suppressed=(bool(retry_suppressed) if isinstance(retry_suppressed, bool) else None),
+            degraded_state=_clean_optional_value(degraded_state),
         )
 
 

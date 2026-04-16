@@ -157,6 +157,19 @@ It transforms a business's website and market context into structured insights a
     - `seo_migration_draft_request_budget`
     - `recommendation_narrative_request_budget`
     - `competitor_request_budget`
+  - bounded operator/admin diagnostics summary now surfaced consistently across migration/recommendation/competitor payloads:
+    - `failure_category`
+    - `failure_reason`
+    - `failure_source`
+    - `retryable`
+    - `hint`
+    - `budget_outcome`
+    - `retry_suppressed`
+    - `trimming_pass_count`
+    - `difficulty_bucket`
+    - `input_size_bucket`
+    - `degraded_state`
+  - full transport/request telemetry remains log-only (runbook-driven), not UI payload detail.
 
 ### Operator value
 > "The system works reliably, even when AI tools are limited."

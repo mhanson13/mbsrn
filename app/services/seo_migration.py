@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
+from app.integrations.ai_execution_core import build_ai_diagnostics_summary
 from app.integrations.seo_migration_artifact_provider import (
     MisconfiguredSEOMigrationArtifactGenerationProvider,
     SEOMigrationArtifactGenerationOutput,
@@ -368,6 +369,14 @@ class SEOMigrationDraftFailure:
     normalized_failure_source: str | None = None
     normalized_retryable: bool | None = None
     provider_attempt_count: int | None = None
+    original_input_size: int | None = None
+    final_input_size: int | None = None
+    trimmed_bytes: int | None = None
+    trimming_pass_count: int | None = None
+    difficulty_score: int | None = None
+    budget_outcome: str | None = None
+    retry_suppressed: bool | None = None
+    degraded_state: str | None = None
 
 
 @dataclass(frozen=True)
@@ -4502,6 +4511,7 @@ class SEOMigrationService:
                 "last_draft_failure_hint": draft_diagnostics.get("last_failure_hint"),
                 "last_draft_failure_timeout_seconds": draft_diagnostics.get("last_failure_timeout_seconds"),
                 "last_draft_failure_timeout_source": draft_diagnostics.get("last_failure_timeout_source"),
+                "last_draft_ai_diagnostics_summary": draft_diagnostics.get("last_draft_ai_diagnostics_summary"),
                 "last_draft_contract_status": draft_diagnostics.get("last_contract_status"),
                 "last_draft_contract_reason_codes": draft_diagnostics.get("last_contract_reason_codes"),
                 "last_draft_contract_warning_codes": draft_diagnostics.get("last_contract_warning_codes"),
@@ -4608,6 +4618,15 @@ class SEOMigrationService:
                 "last_failure_hint": None,
                 "last_failure_timeout_seconds": None,
                 "last_failure_timeout_source": None,
+                "last_failure_original_input_size": None,
+                "last_failure_final_input_size": None,
+                "last_failure_trimmed_bytes": None,
+                "last_failure_trimming_pass_count": None,
+                "last_failure_difficulty_score": None,
+                "last_failure_budget_outcome": None,
+                "last_failure_retry_suppressed": None,
+                "last_failure_degraded_state": None,
+                "last_draft_ai_diagnostics_summary": None,
                 "last_contract_status": None,
                 "last_contract_reason_codes": [],
                 "last_contract_warning_codes": [],
@@ -4677,6 +4696,27 @@ class SEOMigrationService:
         timeout_source = _normalize_string(diagnostics_payload.get("timeout_source"), max_length=20)
         if timeout_source not in {"admin", "default"}:
             timeout_source = None
+        original_input_size_raw = diagnostics_payload.get("original_input_size")
+        original_input_size = max(0, int(original_input_size_raw)) if isinstance(original_input_size_raw, int) else None
+        final_input_size_raw = diagnostics_payload.get("final_input_size")
+        final_input_size = max(0, int(final_input_size_raw)) if isinstance(final_input_size_raw, int) else None
+        trimmed_bytes_raw = diagnostics_payload.get("trimmed_bytes")
+        trimmed_bytes = max(0, int(trimmed_bytes_raw)) if isinstance(trimmed_bytes_raw, int) else None
+        trimming_pass_count_raw = diagnostics_payload.get("trimming_pass_count")
+        trimming_pass_count = (
+            max(0, int(trimming_pass_count_raw)) if isinstance(trimming_pass_count_raw, int) else None
+        )
+        difficulty_score_raw = diagnostics_payload.get("difficulty_score")
+        difficulty_score = (
+            max(0, min(100, int(difficulty_score_raw))) if isinstance(difficulty_score_raw, int) else None
+        )
+        budget_outcome = _normalize_string(diagnostics_payload.get("budget_outcome"), max_length=80)
+        retry_suppressed = (
+            bool(diagnostics_payload.get("retry_suppressed"))
+            if isinstance(diagnostics_payload.get("retry_suppressed"), bool)
+            else None
+        )
+        degraded_state = _normalize_string(diagnostics_payload.get("degraded_state"), max_length=120)
         contract_status = _normalize_string(contract_payload.get("evaluation_status"), max_length=40)
         contract_reason_codes = _normalize_string_list(
             contract_payload.get("reason_codes"), max_items=12, max_item_length=80
@@ -4731,6 +4771,23 @@ class SEOMigrationService:
             if isinstance(contract_payload.get("artifact_primary_file_detected"), bool)
             else None
         )
+        ai_diagnostics_summary = build_ai_diagnostics_summary(
+            failure_category=normalized_failure_category or failure_category,
+            failure_reason=normalized_failure_reason or failure_reason,
+            failure_source=normalized_failure_source or failure_source,
+            retryable=normalized_failure_retryable if isinstance(normalized_failure_retryable, bool) else retryable_flag,
+            hint=failure_hint,
+            budget_outcome=budget_outcome,
+            retry_suppressed=retry_suppressed,
+            trimming_pass_count=trimming_pass_count,
+            difficulty_score=difficulty_score,
+            original_input_size=original_input_size,
+            final_input_size=final_input_size,
+            trimmed_bytes=trimmed_bytes,
+            degraded_state=degraded_state,
+        )
+        if not any(value is not None for value in ai_diagnostics_summary.values()):
+            ai_diagnostics_summary = None
         return {
             "last_status": status_value,
             "last_failure_category": failure_category,
@@ -4756,6 +4813,15 @@ class SEOMigrationService:
             "last_failure_hint": failure_hint,
             "last_failure_timeout_seconds": timeout_seconds,
             "last_failure_timeout_source": timeout_source,
+            "last_failure_original_input_size": original_input_size,
+            "last_failure_final_input_size": final_input_size,
+            "last_failure_trimmed_bytes": trimmed_bytes,
+            "last_failure_trimming_pass_count": trimming_pass_count,
+            "last_failure_difficulty_score": difficulty_score,
+            "last_failure_budget_outcome": budget_outcome,
+            "last_failure_retry_suppressed": retry_suppressed,
+            "last_failure_degraded_state": degraded_state,
+            "last_draft_ai_diagnostics_summary": ai_diagnostics_summary,
             "last_contract_status": contract_status,
             "last_contract_reason_codes": contract_reason_codes,
             "last_contract_warning_codes": contract_warning_codes,
@@ -5527,6 +5593,24 @@ class SEOMigrationService:
             "model_used": _normalize_string(model_used, max_length=128),
             "timeout_seconds": resolved_timeout_seconds,
             "timeout_source": normalized_timeout_source,
+            "original_input_size": (
+                max(0, int(failure.original_input_size)) if isinstance(failure.original_input_size, int) else None
+            ),
+            "final_input_size": (
+                max(0, int(failure.final_input_size)) if isinstance(failure.final_input_size, int) else None
+            ),
+            "trimmed_bytes": max(0, int(failure.trimmed_bytes)) if isinstance(failure.trimmed_bytes, int) else None,
+            "trimming_pass_count": (
+                max(0, int(failure.trimming_pass_count)) if isinstance(failure.trimming_pass_count, int) else None
+            ),
+            "difficulty_score": (
+                max(0, min(100, int(failure.difficulty_score))) if isinstance(failure.difficulty_score, int) else None
+            ),
+            "budget_outcome": _normalize_string(failure.budget_outcome, max_length=80),
+            "retry_suppressed": (
+                bool(failure.retry_suppressed) if isinstance(failure.retry_suppressed, bool) else None
+            ),
+            "degraded_state": _normalize_string(failure.degraded_state, max_length=120),
             "recorded_at": utc_now().isoformat(),
         }
         normalized_contract_diagnostics = _normalize_json_dict(draft_contract_diagnostics)
@@ -5716,6 +5800,68 @@ class SEOMigrationService:
                 else (
                     max(1, int(details.get("attempt_count"))) if isinstance(details.get("attempt_count"), int) else None
                 )
+            ),
+            original_input_size=(
+                max(0, int(error.original_input_size))
+                if isinstance(error.original_input_size, int)
+                else (
+                    max(0, int(details.get("original_input_size")))
+                    if isinstance(details.get("original_input_size"), int)
+                    else None
+                )
+            ),
+            final_input_size=(
+                max(0, int(error.final_input_size))
+                if isinstance(error.final_input_size, int)
+                else (
+                    max(0, int(details.get("final_input_size")))
+                    if isinstance(details.get("final_input_size"), int)
+                    else None
+                )
+            ),
+            trimmed_bytes=(
+                max(0, int(error.trimmed_bytes))
+                if isinstance(error.trimmed_bytes, int)
+                else (
+                    max(0, int(details.get("trimmed_bytes")))
+                    if isinstance(details.get("trimmed_bytes"), int)
+                    else None
+                )
+            ),
+            trimming_pass_count=(
+                max(0, int(error.trimming_pass_count))
+                if isinstance(error.trimming_pass_count, int)
+                else (
+                    max(0, int(details.get("trimming_pass_count")))
+                    if isinstance(details.get("trimming_pass_count"), int)
+                    else None
+                )
+            ),
+            difficulty_score=(
+                max(0, min(100, int(error.difficulty_score)))
+                if isinstance(error.difficulty_score, int)
+                else (
+                    max(0, min(100, int(details.get("difficulty_score"))))
+                    if isinstance(details.get("difficulty_score"), int)
+                    else None
+                )
+            ),
+            budget_outcome=_normalize_string(
+                error.budget_outcome or details.get("budget_outcome"),
+                max_length=80,
+            ),
+            retry_suppressed=(
+                error.retry_suppressed
+                if isinstance(error.retry_suppressed, bool)
+                else (
+                    details.get("retry_suppressed")
+                    if isinstance(details.get("retry_suppressed"), bool)
+                    else None
+                )
+            ),
+            degraded_state=_normalize_string(
+                error.degraded_state or details.get("degraded_state"),
+                max_length=120,
             ),
         )
 
