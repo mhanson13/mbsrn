@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 from app.core.time import utc_now
 from app.models.github_publish_config import GitHubPublishConfig
 from app.repositories.github_publish_config_repository import GitHubPublishConfigRepository
-from app.schemas.github_publish_config import GitHubPublishConfigUpdateRequest
+from pydantic import ValidationError
+
+from app.schemas.github_publish_config import (
+    GitHubPublishConfigUpdateRequest,
+    normalize_namespace_isolation_defaults,
+)
 
 _VALID_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 _VALID_BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]{1,120}$")
@@ -18,6 +23,7 @@ _VALID_TARGET_ENVIRONMENT_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$"
 _DEFAULT_DEPLOY_WORKFLOW_MODE = "site_repo_template_v1"
 _DEFAULT_TARGET_ENVIRONMENT_KEY = "gke_prod"
 _TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
+_DEFAULT_NAMESPACE_ISOLATION_DEFAULTS = normalize_namespace_isolation_defaults(None).model_dump(mode="json")
 _ALLOWED_DEPLOY_WORKFLOW_MODES = {
     "site_repo_template_v1",
 }
@@ -62,6 +68,7 @@ class GitHubPublishConfigService:
             deploy_workflow_mode=_DEFAULT_DEPLOY_WORKFLOW_MODE,
             target_environment_key=_DEFAULT_TARGET_ENVIRONMENT_KEY,
             target_environment_source=_TARGET_ENVIRONMENT_SOURCE_ADMIN,
+            namespace_isolation_defaults_json=dict(_DEFAULT_NAMESPACE_ISOLATION_DEFAULTS),
             enabled=False,
         )
 
@@ -90,6 +97,25 @@ class GitHubPublishConfigService:
         )
         target_environment_source = _TARGET_ENVIRONMENT_SOURCE_ADMIN
         enabled = bool(payload.enabled)
+        existing = self.repository.get_singleton()
+        raw_namespace_defaults = payload.namespace_isolation_defaults
+        if raw_namespace_defaults is None and existing is not None:
+            raw_namespace_defaults = existing.namespace_isolation_defaults_json
+        try:
+            namespace_isolation_defaults = normalize_namespace_isolation_defaults(
+                raw_namespace_defaults
+            ).model_dump(mode="json")
+        except ValidationError as exc:
+            first_error = exc.errors()[0] if exc.errors() else {}
+            location = ".".join(str(item) for item in first_error.get("loc", ()))
+            detail = str(first_error.get("msg") or "Invalid namespace isolation defaults.")
+            if location:
+                raise GitHubPublishConfigValidationError(
+                    f"Namespace isolation defaults are invalid at '{location}': {detail}"
+                ) from exc
+            raise GitHubPublishConfigValidationError(
+                f"Namespace isolation defaults are invalid: {detail}"
+            ) from exc
 
         if enabled and not owner:
             raise GitHubPublishConfigValidationError("GitHub owner is required when GitHub publishing is enabled.")
@@ -122,7 +148,6 @@ class GitHubPublishConfigService:
                 "Target environment key is invalid. Use lowercase letters, numbers, '-' or '_'."
             )
 
-        existing = self.repository.get_singleton()
         previous_values = {
             "owner": (existing.repository if existing is not None else ""),
             "default_branch": (existing.default_branch if existing is not None else "main"),
@@ -136,6 +161,11 @@ class GitHubPublishConfigService:
             "target_environment_source": (
                 existing.target_environment_source if existing is not None else _TARGET_ENVIRONMENT_SOURCE_ADMIN
             ),
+            "namespace_isolation_defaults": (
+                normalize_namespace_isolation_defaults(
+                    existing.namespace_isolation_defaults_json if existing is not None else None
+                ).model_dump(mode="json")
+            ),
             "enabled": bool(existing.enabled) if existing is not None else False,
         }
         updated_values = {
@@ -145,6 +175,7 @@ class GitHubPublishConfigService:
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
             "target_environment_source": target_environment_source,
+            "namespace_isolation_defaults": namespace_isolation_defaults,
             "enabled": enabled,
         }
 
@@ -156,6 +187,7 @@ class GitHubPublishConfigService:
                 deploy_workflow_mode=deploy_workflow_mode,
                 target_environment_key=target_environment_key,
                 target_environment_source=target_environment_source,
+                namespace_isolation_defaults_json=namespace_isolation_defaults,
                 enabled=enabled,
             )
         else:
@@ -165,6 +197,7 @@ class GitHubPublishConfigService:
             existing.deploy_workflow_mode = deploy_workflow_mode
             existing.target_environment_key = target_environment_key
             existing.target_environment_source = target_environment_source
+            existing.namespace_isolation_defaults_json = namespace_isolation_defaults
             existing.enabled = enabled
         self.repository.save(existing)
         self.session.commit()
@@ -178,6 +211,7 @@ class GitHubPublishConfigService:
                 "deploy_workflow_mode",
                 "target_environment_key",
                 "target_environment_source",
+                "namespace_isolation_defaults",
                 "enabled",
             )
             if previous_values.get(field_name) != updated_values.get(field_name)
@@ -205,6 +239,9 @@ class GitHubPublishConfigService:
                     "deploy_workflow_mode": existing.deploy_workflow_mode,
                     "target_environment_key": existing.target_environment_key,
                     "target_environment_source": existing.target_environment_source,
+                    "namespace_isolation_defaults": normalize_namespace_isolation_defaults(
+                        existing.namespace_isolation_defaults_json
+                    ).model_dump(mode="json"),
                     "enabled": bool(existing.enabled),
                 },
             },

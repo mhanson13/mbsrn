@@ -195,6 +195,13 @@ interface MigrationDestinationSummaryEvaluation {
   deployNamespaceModelStatus: string | null;
   deployWorkflowNamespaceAligned: boolean | null;
   deployManifestNamespaceAligned: boolean | null;
+  managedResourceQuotaExpected: boolean | null;
+  managedResourceQuotaPresent: boolean | null;
+  managedLimitRangeExpected: boolean | null;
+  managedLimitRangePresent: boolean | null;
+  managedNetworkPolicyExpected: boolean | null;
+  managedNetworkPolicyPresent: boolean | null;
+  managedNamespacePoliciesAligned: boolean | null;
   currentSiteUrl: string | null;
 }
 
@@ -1437,6 +1444,27 @@ function deriveMigrationDestinationSummary(params: {
   const deployManifestNamespaceAligned =
     asBooleanOrNull(deployDestination.manifest_namespace_aligned) ??
     asBooleanOrNull(params.deployTarget.manifest_namespace_aligned);
+  const managedResourceQuotaExpected =
+    asBooleanOrNull(deployDestination.managed_resource_quota_expected) ??
+    asBooleanOrNull(params.deployTarget.managed_resource_quota_expected);
+  const managedResourceQuotaPresent =
+    asBooleanOrNull(deployDestination.managed_resource_quota_present) ??
+    asBooleanOrNull(params.deployTarget.managed_resource_quota_present);
+  const managedLimitRangeExpected =
+    asBooleanOrNull(deployDestination.managed_limit_range_expected) ??
+    asBooleanOrNull(params.deployTarget.managed_limit_range_expected);
+  const managedLimitRangePresent =
+    asBooleanOrNull(deployDestination.managed_limit_range_present) ??
+    asBooleanOrNull(params.deployTarget.managed_limit_range_present);
+  const managedNetworkPolicyExpected =
+    asBooleanOrNull(deployDestination.managed_network_policy_expected) ??
+    asBooleanOrNull(params.deployTarget.managed_network_policy_expected);
+  const managedNetworkPolicyPresent =
+    asBooleanOrNull(deployDestination.managed_network_policy_present) ??
+    asBooleanOrNull(params.deployTarget.managed_network_policy_present);
+  const managedNamespacePoliciesAligned =
+    asBooleanOrNull(deployDestination.managed_namespace_policies_aligned) ??
+    asBooleanOrNull(params.deployTarget.managed_namespace_policies_aligned);
 
   return {
     draftPreviewState: asStringOrNull(draftPreview.state) || "unavailable",
@@ -1464,6 +1492,13 @@ function deriveMigrationDestinationSummary(params: {
     deployNamespaceModelStatus,
     deployWorkflowNamespaceAligned,
     deployManifestNamespaceAligned,
+    managedResourceQuotaExpected,
+    managedResourceQuotaPresent,
+    managedLimitRangeExpected,
+    managedLimitRangePresent,
+    managedNetworkPolicyExpected,
+    managedNetworkPolicyPresent,
+    managedNamespacePoliciesAligned,
     currentSiteUrl: asStringOrNull(destinationSummary.current_site_url) || params.currentSiteUrl,
   };
 }
@@ -1945,6 +1980,34 @@ export function MigrationWorkspacePanel({
     asBooleanOrNull(selectedDeployHistoryRecord.manifest_namespace_aligned) ??
     asBooleanOrNull(deployTarget.manifest_namespace_aligned) ??
     destinationSummary.deployManifestNamespaceAligned;
+  const managedResourceQuotaExpected =
+    asBooleanOrNull(selectedDeployHistoryRecord.managed_resource_quota_expected) ??
+    asBooleanOrNull(deployTarget.managed_resource_quota_expected) ??
+    destinationSummary.managedResourceQuotaExpected;
+  const managedResourceQuotaPresent =
+    asBooleanOrNull(selectedDeployHistoryRecord.managed_resource_quota_present) ??
+    asBooleanOrNull(deployTarget.managed_resource_quota_present) ??
+    destinationSummary.managedResourceQuotaPresent;
+  const managedLimitRangeExpected =
+    asBooleanOrNull(selectedDeployHistoryRecord.managed_limit_range_expected) ??
+    asBooleanOrNull(deployTarget.managed_limit_range_expected) ??
+    destinationSummary.managedLimitRangeExpected;
+  const managedLimitRangePresent =
+    asBooleanOrNull(selectedDeployHistoryRecord.managed_limit_range_present) ??
+    asBooleanOrNull(deployTarget.managed_limit_range_present) ??
+    destinationSummary.managedLimitRangePresent;
+  const managedNetworkPolicyExpected =
+    asBooleanOrNull(selectedDeployHistoryRecord.managed_network_policy_expected) ??
+    asBooleanOrNull(deployTarget.managed_network_policy_expected) ??
+    destinationSummary.managedNetworkPolicyExpected;
+  const managedNetworkPolicyPresent =
+    asBooleanOrNull(selectedDeployHistoryRecord.managed_network_policy_present) ??
+    asBooleanOrNull(deployTarget.managed_network_policy_present) ??
+    destinationSummary.managedNetworkPolicyPresent;
+  const managedNamespacePoliciesAligned =
+    asBooleanOrNull(selectedDeployHistoryRecord.managed_namespace_policies_aligned) ??
+    asBooleanOrNull(deployTarget.managed_namespace_policies_aligned) ??
+    destinationSummary.managedNamespacePoliciesAligned;
   const deployTraceRepoOwner =
     asStringOrNull(selectedDeployHistoryRecord.repo_owner) || asStringOrNull(deployTarget.repo_owner);
   const deployTraceRepoName =
@@ -3117,6 +3180,32 @@ export function MigrationWorkspacePanel({
               {deployManifestNamespaceAligned !== null ? (
                 <WorkspaceMetadataItem label="Manifest namespace aligned">
                   {formatBooleanStateLabel(deployManifestNamespaceAligned)}
+                </WorkspaceMetadataItem>
+              ) : null}
+              {managedResourceQuotaExpected !== null ? (
+                <WorkspaceMetadataItem label="Managed ResourceQuota">
+                  {managedResourceQuotaExpected
+                    ? formatBooleanStateLabel(managedResourceQuotaPresent)
+                    : "Not enabled"}
+                </WorkspaceMetadataItem>
+              ) : null}
+              {managedLimitRangeExpected !== null ? (
+                <WorkspaceMetadataItem label="Managed LimitRange">
+                  {managedLimitRangeExpected
+                    ? formatBooleanStateLabel(managedLimitRangePresent)
+                    : "Not enabled"}
+                </WorkspaceMetadataItem>
+              ) : null}
+              {managedNetworkPolicyExpected !== null ? (
+                <WorkspaceMetadataItem label="Managed NetworkPolicy">
+                  {managedNetworkPolicyExpected
+                    ? formatBooleanStateLabel(managedNetworkPolicyPresent)
+                    : "Not enabled"}
+                </WorkspaceMetadataItem>
+              ) : null}
+              {managedNamespacePoliciesAligned !== null ? (
+                <WorkspaceMetadataItem label="Managed namespace policy set aligned">
+                  {formatBooleanStateLabel(managedNamespacePoliciesAligned)}
                 </WorkspaceMetadataItem>
               ) : null}
               <WorkspaceMetadataItem label="Deploy URL state">

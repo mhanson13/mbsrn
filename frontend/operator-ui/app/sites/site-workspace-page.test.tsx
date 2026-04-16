@@ -672,6 +672,32 @@ describe("site migration workflow route", () => {
   });
 
   it("consolidates destination metadata labels and removes analytics insertion rules from migration route", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        deploy_readiness: {
+          ready: false,
+          reasons: ["Deploy target is not enabled."],
+          target: {
+            enabled: false,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            workflow_id: "deploy-tnmfire-www-prod.yml",
+            ref: "main",
+            deploy_workflow_mode: "site_repo_template_v1",
+            target_environment_key: "gke_prod",
+            target_environment_source: "admin_config",
+            site_workflow_file_path: ".github/workflows/deploy-tnmfire-www-prod.yml",
+            managed_resource_quota_expected: true,
+            managed_resource_quota_present: true,
+            managed_limit_range_expected: true,
+            managed_limit_range_present: true,
+            managed_network_policy_expected: false,
+            managed_network_policy_present: null,
+            managed_namespace_policies_aligned: true,
+          },
+        },
+      }),
+    );
     render(<SiteMigrationWorkflowPage />);
 
     const destinationSummary = await screen.findByTestId("migration-destination-summary");
@@ -681,6 +707,10 @@ describe("site migration workflow route", () => {
     expect(within(destinationSummary).getByTestId("migration-destination-runtime-block")).toBeInTheDocument();
     expect(within(destinationSummary).getAllByText("Admin-set").length).toBeGreaterThan(0);
     expect(within(destinationSummary).getAllByText("Runtime").length).toBeGreaterThan(0);
+    expect(within(destinationSummary).getByText("Managed ResourceQuota")).toBeInTheDocument();
+    expect(within(destinationSummary).getByText("Managed LimitRange")).toBeInTheDocument();
+    expect(within(destinationSummary).getByText("Managed NetworkPolicy")).toBeInTheDocument();
+    expect(within(destinationSummary).getByText("Managed namespace policy set aligned")).toBeInTheDocument();
 
     const publishReadiness = screen.getByTestId("migration-publish-readiness");
     const deployReadiness = screen.getByTestId("migration-deploy-readiness");

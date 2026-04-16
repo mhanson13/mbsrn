@@ -110,7 +110,20 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         self.publish_calls: list[tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], bool]] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
-        self.workflow_provision_calls: list[tuple[str, str, str, str, bool]] = []
+        self.workflow_provision_calls: list[
+            tuple[
+                str,
+                str,
+                str,
+                str,
+                bool,
+                str | None,
+                str | None,
+                str | None,
+                dict[str, object] | None,
+                str | None,
+            ]
+        ] = []
 
     def publish_files(
         self,
@@ -196,6 +209,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         deploy_workflow_mode: str | None = None,
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
+        namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         self.workflow_provision_calls.append(
@@ -208,6 +222,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
                 deploy_workflow_mode,
                 target_environment_key,
                 target_environment_source,
+                namespace_isolation_defaults,
                 site_id,
             )
         )

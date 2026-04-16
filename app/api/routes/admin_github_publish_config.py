@@ -13,6 +13,7 @@ from app.models.principal import Principal
 from app.schemas.github_publish_config import (
     GitHubPublishConfigRead,
     GitHubPublishConfigUpdateRequest,
+    normalize_namespace_isolation_defaults,
 )
 from app.services.github_publish_config import (
     GitHubPublishConfigService,
@@ -36,6 +37,9 @@ def _to_github_publish_config_read(config) -> GitHubPublishConfigRead:  # noqa: 
         ),
         target_environment_key=(getattr(config, "target_environment_key", "gke_prod") or "gke_prod"),
         target_environment_source=(getattr(config, "target_environment_source", "admin_config") or "admin_config"),
+        namespace_isolation_defaults=normalize_namespace_isolation_defaults(
+            getattr(config, "namespace_isolation_defaults_json", None)
+        ),
         enabled=bool(getattr(config, "enabled", False)),
         created_at=getattr(config, "created_at", None),
         updated_at=getattr(config, "updated_at", None),

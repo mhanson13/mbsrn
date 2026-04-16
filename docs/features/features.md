@@ -272,6 +272,11 @@ It transforms a business's website and market context into structured insights a
 - Migration publish now provisions site-specific deploy workflows from an approved MBSRN-managed template mode and records the effective workflow path in publish history for deploy traceability.
 - Admin controls deploy template/environment mapping metadata (`deploy_workflow_mode`, `target_environment_key`, `target_environment_source`); operators can view the effective values read-only in workspace diagnostics.
 - Platform-managed deploy provisioning now enforces namespace-per-site isolation for managed GKE resources (`kubernetes_namespace`) with deterministic derivation from trusted target metadata and namespace alignment diagnostics (`namespace_model_status`, `workflow_namespace_aligned`, `manifest_namespace_aligned`).
+- Admin now controls namespace isolation defaults for managed site namespaces (structured, validated fields only):
+  - ResourceQuota defaults
+  - LimitRange defaults
+  - optional bounded NetworkPolicy defaults
+  - when enabled, publish provisions and verifies `k8s/resourcequota.yaml`, `k8s/limitrange.yaml`, and `k8s/networkpolicy.yaml` as platform-managed files.
 - Readiness explicitly distinguishes merged metadata readiness from runtime publisher capability (for example credential unavailable vs runtime integration unavailable) so publish blockers map to the correct actor.
 - Deploy readiness now exposes explicit blocker classes (`published_artifact_missing`, deploy target config missing/invalid, deploy runtime/integration unavailable) so deploy blockers map to the correct actor without generic "runtime missing" ambiguity.
 - Runtime publisher credentials remain environment-managed (`MIGRATION_GITHUB_TOKEN`) and are never exposed through Admin/workspace payloads.

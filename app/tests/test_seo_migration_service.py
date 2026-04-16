@@ -223,7 +223,20 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         ] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
-        self.workflow_provision_calls: list[tuple[str, str, str, str, bool]] = []
+        self.workflow_provision_calls: list[
+            tuple[
+                str,
+                str,
+                str,
+                str,
+                bool,
+                str | None,
+                str | None,
+                str | None,
+                dict[str, object] | None,
+                str | None,
+            ]
+        ] = []
 
     def publish_files(
         self,
@@ -317,6 +330,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         deploy_workflow_mode: str | None = None,
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
+        namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         self.workflow_provision_calls.append(
@@ -329,6 +343,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 deploy_workflow_mode,
                 target_environment_key,
                 target_environment_source,
+                namespace_isolation_defaults,
                 site_id,
             )
         )
@@ -361,9 +376,10 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         allow_ref_repair: bool = False,
         allow_workflow_repair: bool = False,
         dry_run: bool = False,
+        namespace_isolation_defaults: dict[str, object] | None = None,
         remediation_mode: str = "none",
     ) -> SEOMigrationGitHubTargetReadinessResult:
-        del allow_ref_repair, allow_workflow_repair, dry_run
+        del allow_ref_repair, allow_workflow_repair, dry_run, namespace_isolation_defaults
         workflow_path = (
             target.workflow_id
             if str(target.workflow_id or "").startswith(".github/workflows/")
@@ -3416,19 +3432,20 @@ def test_publish_provisions_missing_deploy_workflow_once(db_session, caplog) -> 
         analytics_measurement_id=None,
         principal_id="principal-1",
     )
-    assert publisher.workflow_provision_calls == [
-        (
-            "acme",
-            "tnmfire-site",
-            "main",
-            "deploy-tnmfire-www-prod.yml",
-            False,
-            "site_repo_template_v1",
-            "gke_prod",
-            "admin_config",
-            site_id,
-        )
-    ]
+    assert len(publisher.workflow_provision_calls) == 1
+    workflow_call = publisher.workflow_provision_calls[0]
+    assert workflow_call[:8] == (
+        "acme",
+        "tnmfire-site",
+        "main",
+        "deploy-tnmfire-www-prod.yml",
+        False,
+        "site_repo_template_v1",
+        "gke_prod",
+        "admin_config",
+    )
+    assert isinstance(workflow_call[8], dict)
+    assert workflow_call[9] == site_id
     assert result.result.get("deploy_workflow_provisioned") is True
     assert result.result.get("deploy_workflow_id") == "deploy-tnmfire-www-prod.yml"
     assert result.result.get("deploy_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
@@ -3488,19 +3505,20 @@ def test_publish_does_not_overwrite_existing_deploy_workflow(db_session, caplog)
         analytics_measurement_id=None,
         principal_id="principal-1",
     )
-    assert publisher.workflow_provision_calls == [
-        (
-            "acme",
-            "tnmfire-site",
-            "main",
-            "deploy-tnmfire-www-prod.yml",
-            False,
-            "site_repo_template_v1",
-            "gke_prod",
-            "admin_config",
-            site_id,
-        )
-    ]
+    assert len(publisher.workflow_provision_calls) == 1
+    workflow_call = publisher.workflow_provision_calls[0]
+    assert workflow_call[:8] == (
+        "acme",
+        "tnmfire-site",
+        "main",
+        "deploy-tnmfire-www-prod.yml",
+        False,
+        "site_repo_template_v1",
+        "gke_prod",
+        "admin_config",
+    )
+    assert isinstance(workflow_call[8], dict)
+    assert workflow_call[9] == site_id
     assert result.result.get("deploy_workflow_provisioned") is False
     provision_logs = [
         record

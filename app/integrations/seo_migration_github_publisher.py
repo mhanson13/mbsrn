@@ -97,6 +97,13 @@ class SEOMigrationGitHubWorkflowProvisionResult:
     namespace_source: str | None = None
     managed_manifest_paths: tuple[str, ...] = ()
     namespace_model_status: str | None = None
+    managed_resource_quota_expected: bool = False
+    managed_resource_quota_present: bool | None = None
+    managed_limit_range_expected: bool = False
+    managed_limit_range_present: bool | None = None
+    managed_network_policy_expected: bool = False
+    managed_network_policy_present: bool | None = None
+    managed_namespace_policies_aligned: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +134,13 @@ class SEOMigrationGitHubTargetReadinessResult:
     workflow_namespace_aligned: bool | None = None
     manifest_namespace_aligned: bool | None = None
     namespace_model_status: str | None = None
+    managed_resource_quota_expected: bool = False
+    managed_resource_quota_present: bool | None = None
+    managed_limit_range_expected: bool = False
+    managed_limit_range_present: bool | None = None
+    managed_network_policy_expected: bool = False
+    managed_network_policy_present: bool | None = None
+    managed_namespace_policies_aligned: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -187,9 +201,16 @@ class SEOMigrationGitHubPublisher:
         deploy_workflow_mode: str | None = None,
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
+        namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
-        del deploy_workflow_mode, target_environment_key, target_environment_source, site_id
+        del (
+            deploy_workflow_mode,
+            target_environment_key,
+            target_environment_source,
+            namespace_isolation_defaults,
+            site_id,
+        )
         workflow_path = _workflow_repo_path(workflow_id)
         return SEOMigrationGitHubWorkflowProvisionResult(
             repo_owner=repo_owner,
@@ -212,8 +233,9 @@ class SEOMigrationGitHubPublisher:
         allow_workflow_repair: bool = False,
         dry_run: bool = False,
         remediation_mode: str = "none",
+        namespace_isolation_defaults: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
-        del allow_ref_repair, allow_workflow_repair, dry_run
+        del allow_ref_repair, allow_workflow_repair, dry_run, namespace_isolation_defaults
         workflow_path = _workflow_repo_path(target.workflow_id)
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
@@ -292,8 +314,16 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         allow_workflow_repair: bool = False,
         dry_run: bool = False,
         remediation_mode: str = "none",
+        namespace_isolation_defaults: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
-        del target, allow_ref_repair, allow_workflow_repair, dry_run, remediation_mode
+        del (
+            target,
+            allow_ref_repair,
+            allow_workflow_repair,
+            dry_run,
+            remediation_mode,
+            namespace_isolation_defaults,
+        )
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -929,22 +959,26 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         repo_name: str,
         ref: str,
         kubernetes_namespace: str,
-    ) -> tuple[bool, dict[str, bool]]:
+        manifest_paths: tuple[str, ...] | list[str] | None = None,
+    ) -> tuple[bool, dict[str, bool], dict[str, bool]]:
         alignment_by_path: dict[str, bool] = {}
-        for manifest_path in _MBSRN_MANAGED_MANIFEST_PATHS:
+        presence_by_path: dict[str, bool] = {}
+        effective_manifest_paths = tuple(manifest_paths or _MBSRN_MANAGED_CORE_MANIFEST_PATHS)
+        for manifest_path in effective_manifest_paths:
             payload = self._fetch_workflow_file_payload_on_ref(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
                 ref=ref,
                 workflow_path=manifest_path,
             )
+            presence_by_path[manifest_path] = isinstance(payload, dict)
             manifest_content = _decode_workflow_file_content(payload)
             alignment_by_path[manifest_path] = _manifest_content_matches_namespace(
                 manifest_path=manifest_path,
                 manifest_content=manifest_content,
                 kubernetes_namespace=kubernetes_namespace,
             )
-        return all(alignment_by_path.values()), alignment_by_path
+        return all(alignment_by_path.values()), alignment_by_path, presence_by_path
 
     def _ensure_workflow_dispatch_ready_for_target(
         self,
@@ -1151,6 +1185,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         deploy_workflow_mode: str | None = None,
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
+        namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         normalized_workflow_id = str(workflow_id or "").strip()
@@ -1162,6 +1197,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         normalized_workflow_mode = _normalize_deploy_workflow_mode(deploy_workflow_mode)
         normalized_target_environment_key = _normalize_target_environment_key(target_environment_key)
         normalized_target_environment_source = _normalize_target_environment_source(target_environment_source)
+        normalized_namespace_isolation_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
+        policy_expectations = _managed_policy_expectations(normalized_namespace_isolation_defaults)
         derived_namespace, namespace_source = derive_site_kubernetes_namespace(
             repo_name=repo_name,
             site_id=site_id,
@@ -1192,9 +1229,11 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             target_environment_source=normalized_target_environment_source,
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
+            namespace_isolation_defaults=normalized_namespace_isolation_defaults,
             site_id=site_id,
         )
-        managed_manifest_paths = tuple(manifest_file_payloads.keys())
+        expected_managed_manifest_paths = _expected_managed_manifest_paths(normalized_namespace_isolation_defaults)
+        managed_manifest_paths = tuple(path for path in expected_managed_manifest_paths if path in manifest_file_payloads)
 
         commit_sha: str | None = None
         any_file_updated = False
@@ -1235,14 +1274,32 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         deployment_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_DEPLOYMENT_FILE_PATH)
         service_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_SERVICE_FILE_PATH)
         ingress_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_INGRESS_FILE_PATH)
+        resource_quota_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH)
+        limit_range_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH)
+        network_policy_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH)
+        expected_manifest_shas = [file_sha_by_path.get(path) for path in expected_managed_manifest_paths]
+        managed_namespace_policies_aligned = (
+            True
+            if (
+                not policy_expectations.get("resource_quota_expected")
+                and not policy_expectations.get("limit_range_expected")
+                and not policy_expectations.get("network_policy_expected")
+            )
+            else all(
+                bool(file_sha_by_path.get(path))
+                for path, expected in (
+                    (_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH, policy_expectations.get("resource_quota_expected")),
+                    (_MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH, policy_expectations.get("limit_range_expected")),
+                    (_MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH, policy_expectations.get("network_policy_expected")),
+                )
+                if expected
+            )
+        )
         namespace_model_status = (
             _NAMESPACE_MODEL_STATUS_ALIGNED
             if (
                 verified_workflow_sha
-                and namespace_manifest_sha
-                and deployment_manifest_sha
-                and service_manifest_sha
-                and ingress_manifest_sha
+                and all(bool(item) for item in expected_manifest_shas)
             )
             else _NAMESPACE_MODEL_STATUS_UNKNOWN
         )
@@ -1262,6 +1319,25 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 namespace_source=namespace_source,
                 managed_manifest_paths=managed_manifest_paths,
                 namespace_model_status=namespace_model_status,
+                managed_resource_quota_expected=bool(policy_expectations.get("resource_quota_expected")),
+                managed_resource_quota_present=(
+                    bool(resource_quota_manifest_sha)
+                    if policy_expectations.get("resource_quota_expected")
+                    else None
+                ),
+                managed_limit_range_expected=bool(policy_expectations.get("limit_range_expected")),
+                managed_limit_range_present=(
+                    bool(limit_range_manifest_sha)
+                    if policy_expectations.get("limit_range_expected")
+                    else None
+                ),
+                managed_network_policy_expected=bool(policy_expectations.get("network_policy_expected")),
+                managed_network_policy_present=(
+                    bool(network_policy_manifest_sha)
+                    if policy_expectations.get("network_policy_expected")
+                    else None
+                ),
+                managed_namespace_policies_aligned=managed_namespace_policies_aligned,
             )
         if (
             not verified_workflow_sha
@@ -1269,6 +1345,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             or not deployment_manifest_sha
             or not service_manifest_sha
             or not ingress_manifest_sha
+            or not all(bool(item) for item in expected_manifest_shas)
         ):
             raise SEOMigrationGitHubPublisherError(
                 code="workflow_provisioning_failed",
@@ -1290,6 +1367,25 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             namespace_source=namespace_source,
             managed_manifest_paths=managed_manifest_paths,
             namespace_model_status=namespace_model_status,
+            managed_resource_quota_expected=bool(policy_expectations.get("resource_quota_expected")),
+            managed_resource_quota_present=(
+                bool(resource_quota_manifest_sha)
+                if policy_expectations.get("resource_quota_expected")
+                else None
+            ),
+            managed_limit_range_expected=bool(policy_expectations.get("limit_range_expected")),
+            managed_limit_range_present=(
+                bool(limit_range_manifest_sha)
+                if policy_expectations.get("limit_range_expected")
+                else None
+            ),
+            managed_network_policy_expected=bool(policy_expectations.get("network_policy_expected")),
+            managed_network_policy_present=(
+                bool(network_policy_manifest_sha)
+                if policy_expectations.get("network_policy_expected")
+                else None
+            ),
+            managed_namespace_policies_aligned=managed_namespace_policies_aligned,
         )
 
     def check_deploy_target_readiness(
@@ -1300,6 +1396,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         allow_workflow_repair: bool = False,
         dry_run: bool = False,
         remediation_mode: str = "none",
+        namespace_isolation_defaults: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
         workflow_path = _workflow_repo_path(target.workflow_id)
         self._ensure_repo_exists(repo_owner=target.repo_owner, repo_name=target.repo_name)
@@ -1345,6 +1442,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             target=target,
             workflow_file_payload=workflow_file_payload,
         )
+        normalized_namespace_isolation_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
+        policy_expectations = _managed_policy_expectations(normalized_namespace_isolation_defaults)
+        expected_manifest_paths = _expected_managed_manifest_paths(normalized_namespace_isolation_defaults)
         derived_namespace, namespace_source = derive_site_kubernetes_namespace(
             repo_name=target.repo_name,
             site_id=None,
@@ -1359,17 +1459,56 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 workflow_content=workflow_content,
                 kubernetes_namespace=derived_namespace,
             )
-            manifest_namespace_aligned, _ = self._evaluate_manifest_namespace_alignment(
+            manifest_namespace_aligned, _, manifest_presence_by_path = self._evaluate_manifest_namespace_alignment(
                 repo_owner=target.repo_owner,
                 repo_name=target.repo_name,
                 ref=target.ref,
                 kubernetes_namespace=derived_namespace,
+                manifest_paths=expected_manifest_paths,
+            )
+            managed_resource_quota_present = (
+                bool(manifest_presence_by_path.get(_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH))
+                if policy_expectations.get("resource_quota_expected")
+                else None
+            )
+            managed_limit_range_present = (
+                bool(manifest_presence_by_path.get(_MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH))
+                if policy_expectations.get("limit_range_expected")
+                else None
+            )
+            managed_network_policy_present = (
+                bool(manifest_presence_by_path.get(_MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH))
+                if policy_expectations.get("network_policy_expected")
+                else None
+            )
+            managed_namespace_policies_aligned = (
+                True
+                if (
+                    not policy_expectations.get("resource_quota_expected")
+                    and not policy_expectations.get("limit_range_expected")
+                    and not policy_expectations.get("network_policy_expected")
+                )
+                else all(
+                    bool(manifest_namespace_aligned)
+                    and bool(manifest_presence_by_path.get(path))
+                    for path, expected in (
+                        (_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH, policy_expectations.get("resource_quota_expected")),
+                        (_MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH, policy_expectations.get("limit_range_expected")),
+                        (_MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH, policy_expectations.get("network_policy_expected")),
+                    )
+                    if expected
+                )
             )
             namespace_model_status = (
                 _NAMESPACE_MODEL_STATUS_ALIGNED
                 if workflow_namespace_aligned and manifest_namespace_aligned
                 else _NAMESPACE_MODEL_STATUS_MISALIGNED
             )
+        else:
+            managed_resource_quota_present = None
+            managed_limit_range_present = None
+            managed_network_policy_present = None
+            managed_namespace_policies_aligned = None
         dispatch_service_availability = True
         dispatch_service_reason_code = "available"
         if managed_workflow and namespace_model_status == _NAMESPACE_MODEL_STATUS_MISALIGNED:
@@ -1402,6 +1541,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_namespace_aligned=workflow_namespace_aligned if managed_workflow else None,
             manifest_namespace_aligned=manifest_namespace_aligned if managed_workflow else None,
             namespace_model_status=namespace_model_status,
+            managed_resource_quota_expected=bool(policy_expectations.get("resource_quota_expected")),
+            managed_resource_quota_present=managed_resource_quota_present,
+            managed_limit_range_expected=bool(policy_expectations.get("limit_range_expected")),
+            managed_limit_range_present=managed_limit_range_present,
+            managed_network_policy_expected=bool(policy_expectations.get("network_policy_expected")),
+            managed_network_policy_present=managed_network_policy_present,
+            managed_namespace_policies_aligned=managed_namespace_policies_aligned,
         )
 
     def _fetch_existing_sha(
@@ -1721,15 +1867,56 @@ _MBSRN_MANAGED_NAMESPACE_FILE_PATH = "k8s/namespace.yaml"
 _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH = "k8s/deployment.yaml"
 _MBSRN_MANAGED_SERVICE_FILE_PATH = "k8s/service.yaml"
 _MBSRN_MANAGED_INGRESS_FILE_PATH = "k8s/ingress.yaml"
-_MBSRN_MANAGED_MANIFEST_PATHS: tuple[str, ...] = (
+_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH = "k8s/resourcequota.yaml"
+_MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH = "k8s/limitrange.yaml"
+_MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH = "k8s/networkpolicy.yaml"
+_MBSRN_MANAGED_CORE_MANIFEST_PATHS: tuple[str, ...] = (
     _MBSRN_MANAGED_NAMESPACE_FILE_PATH,
     _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH,
     _MBSRN_MANAGED_SERVICE_FILE_PATH,
     _MBSRN_MANAGED_INGRESS_FILE_PATH,
 )
+_MBSRN_MANAGED_OPTIONAL_POLICY_MANIFEST_PATHS: tuple[str, ...] = (
+    _MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH,
+    _MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH,
+    _MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH,
+)
+_MBSRN_MANAGED_MANIFEST_PATHS: tuple[str, ...] = (
+    *_MBSRN_MANAGED_CORE_MANIFEST_PATHS,
+    *_MBSRN_MANAGED_OPTIONAL_POLICY_MANIFEST_PATHS,
+)
 _NAMESPACE_MODEL_STATUS_ALIGNED = "aligned"
 _NAMESPACE_MODEL_STATUS_MISALIGNED = "misaligned"
 _NAMESPACE_MODEL_STATUS_UNKNOWN = "unknown"
+_DEFAULT_NAMESPACE_ISOLATION_DEFAULTS = {
+    "resource_quota": {
+        "enabled": False,
+        "requests_cpu": "1000m",
+        "requests_memory": "1Gi",
+        "limits_cpu": "2000m",
+        "limits_memory": "2Gi",
+        "pods": 20,
+        "services": 10,
+        "configmaps": 40,
+        "secrets": 40,
+        "persistentvolumeclaims": 10,
+    },
+    "limit_range": {
+        "enabled": False,
+        "default_cpu": "500m",
+        "default_memory": "512Mi",
+        "default_request_cpu": "250m",
+        "default_request_memory": "256Mi",
+        "min_cpu": "100m",
+        "min_memory": "128Mi",
+        "max_cpu": "2000m",
+        "max_memory": "2Gi",
+    },
+    "network_policy": {
+        "enabled": False,
+        "mode": "default_deny_ingress",
+    },
+}
 
 
 def _safe_identifier_fragment(value: object, *, fallback: str, max_length: int = 80) -> str:
@@ -1755,6 +1942,105 @@ def derive_site_kubernetes_namespace(*, repo_name: object, site_id: object | Non
         safe_message="Kubernetes namespace could not be derived from deploy target metadata.",
         stage="workflow_provisioning",
     )
+
+
+def _coerce_bool(value: object, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "y", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _normalize_namespace_isolation_defaults(value: object | None) -> dict[str, object]:
+    normalized = json.loads(json.dumps(_DEFAULT_NAMESPACE_ISOLATION_DEFAULTS))
+    if not isinstance(value, dict):
+        return normalized
+
+    resource_quota = value.get("resource_quota")
+    if isinstance(resource_quota, dict):
+        normalized_rq = normalized["resource_quota"]
+        if isinstance(normalized_rq, dict):
+            normalized_rq["enabled"] = _coerce_bool(resource_quota.get("enabled"), default=False)
+            for key in (
+                "requests_cpu",
+                "requests_memory",
+                "limits_cpu",
+                "limits_memory",
+                "pods",
+                "services",
+                "configmaps",
+                "secrets",
+                "persistentvolumeclaims",
+            ):
+                if key in resource_quota and resource_quota.get(key) is not None:
+                    normalized_rq[key] = str(resource_quota.get(key)).strip()
+
+    limit_range = value.get("limit_range")
+    if isinstance(limit_range, dict):
+        normalized_lr = normalized["limit_range"]
+        if isinstance(normalized_lr, dict):
+            normalized_lr["enabled"] = _coerce_bool(limit_range.get("enabled"), default=False)
+            for key in (
+                "default_cpu",
+                "default_memory",
+                "default_request_cpu",
+                "default_request_memory",
+                "min_cpu",
+                "min_memory",
+                "max_cpu",
+                "max_memory",
+            ):
+                if key in limit_range and limit_range.get(key) is not None:
+                    normalized_lr[key] = str(limit_range.get(key)).strip()
+
+    network_policy = value.get("network_policy")
+    if isinstance(network_policy, dict):
+        normalized_np = normalized["network_policy"]
+        if isinstance(normalized_np, dict):
+            normalized_np["enabled"] = _coerce_bool(network_policy.get("enabled"), default=False)
+            mode = _coerce_string(network_policy.get("mode")) or "default_deny_ingress"
+            normalized_np["mode"] = mode.strip().lower()[:80] or "default_deny_ingress"
+
+    return normalized
+
+
+def _managed_policy_expectations(namespace_isolation_defaults: dict[str, object] | None) -> dict[str, bool]:
+    normalized = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
+    resource_quota = normalized.get("resource_quota")
+    limit_range = normalized.get("limit_range")
+    network_policy = normalized.get("network_policy")
+    return {
+        "resource_quota_expected": _coerce_bool(
+            resource_quota.get("enabled") if isinstance(resource_quota, dict) else None,
+            default=False,
+        ),
+        "limit_range_expected": _coerce_bool(
+            limit_range.get("enabled") if isinstance(limit_range, dict) else None,
+            default=False,
+        ),
+        "network_policy_expected": _coerce_bool(
+            network_policy.get("enabled") if isinstance(network_policy, dict) else None,
+            default=False,
+        ),
+    }
+
+
+def _expected_managed_manifest_paths(namespace_isolation_defaults: dict[str, object] | None) -> tuple[str, ...]:
+    expectations = _managed_policy_expectations(namespace_isolation_defaults)
+    expected_paths: list[str] = list(_MBSRN_MANAGED_CORE_MANIFEST_PATHS)
+    if expectations.get("resource_quota_expected"):
+        expected_paths.append(_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH)
+    if expectations.get("limit_range_expected"):
+        expected_paths.append(_MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH)
+    if expectations.get("network_policy_expected"):
+        expected_paths.append(_MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH)
+    return tuple(expected_paths)
 
 
 def _render_managed_deploy_workflow_yaml(
@@ -1855,6 +2141,7 @@ def _render_managed_gke_manifest_files(
     target_environment_source: str,
     kubernetes_namespace: str,
     namespace_source: str,
+    namespace_isolation_defaults: dict[str, object] | None,
     site_id: str | None,
 ) -> dict[str, str]:
     repo_fragment = _safe_identifier_fragment(repo_name, fallback="site", max_length=40)
@@ -1956,12 +2243,89 @@ def _render_managed_gke_manifest_files(
         "                port:\n"
         "                  number: 80\n"
     )
-    return {
+    manifests: dict[str, str] = {
         _MBSRN_MANAGED_NAMESPACE_FILE_PATH: namespace_manifest,
         _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH: deployment_manifest,
         _MBSRN_MANAGED_SERVICE_FILE_PATH: service_manifest,
         _MBSRN_MANAGED_INGRESS_FILE_PATH: ingress_manifest,
     }
+    normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
+    resource_quota_defaults = normalized_defaults.get("resource_quota")
+    if isinstance(resource_quota_defaults, dict) and _coerce_bool(resource_quota_defaults.get("enabled"), default=False):
+        resource_quota_manifest = (
+            f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+            "apiVersion: v1\n"
+            "kind: ResourceQuota\n"
+            "metadata:\n"
+            "  name: site-resources\n"
+            f"  namespace: {namespace}\n"
+            "  labels:\n"
+            f"{labels}"
+            "spec:\n"
+            "  hard:\n"
+            f"    requests.cpu: {resource_quota_defaults.get('requests_cpu')}\n"
+            f"    requests.memory: {resource_quota_defaults.get('requests_memory')}\n"
+            f"    limits.cpu: {resource_quota_defaults.get('limits_cpu')}\n"
+            f"    limits.memory: {resource_quota_defaults.get('limits_memory')}\n"
+            f"    pods: \"{resource_quota_defaults.get('pods')}\"\n"
+            f"    services: \"{resource_quota_defaults.get('services')}\"\n"
+            f"    configmaps: \"{resource_quota_defaults.get('configmaps')}\"\n"
+            f"    secrets: \"{resource_quota_defaults.get('secrets')}\"\n"
+            f"    persistentvolumeclaims: \"{resource_quota_defaults.get('persistentvolumeclaims')}\"\n"
+        )
+        manifests[_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH] = resource_quota_manifest
+
+    limit_range_defaults = normalized_defaults.get("limit_range")
+    if isinstance(limit_range_defaults, dict) and _coerce_bool(limit_range_defaults.get("enabled"), default=False):
+        limit_range_manifest = (
+            f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+            "apiVersion: v1\n"
+            "kind: LimitRange\n"
+            "metadata:\n"
+            "  name: site-container-limits\n"
+            f"  namespace: {namespace}\n"
+            "  labels:\n"
+            f"{labels}"
+            "spec:\n"
+            "  limits:\n"
+            "    - type: Container\n"
+            "      default:\n"
+            f"        cpu: {limit_range_defaults.get('default_cpu')}\n"
+            f"        memory: {limit_range_defaults.get('default_memory')}\n"
+            "      defaultRequest:\n"
+            f"        cpu: {limit_range_defaults.get('default_request_cpu')}\n"
+            f"        memory: {limit_range_defaults.get('default_request_memory')}\n"
+            "      min:\n"
+            f"        cpu: {limit_range_defaults.get('min_cpu')}\n"
+            f"        memory: {limit_range_defaults.get('min_memory')}\n"
+            "      max:\n"
+            f"        cpu: {limit_range_defaults.get('max_cpu')}\n"
+            f"        memory: {limit_range_defaults.get('max_memory')}\n"
+        )
+        manifests[_MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH] = limit_range_manifest
+
+    network_policy_defaults = normalized_defaults.get("network_policy")
+    if isinstance(network_policy_defaults, dict) and _coerce_bool(
+        network_policy_defaults.get("enabled"), default=False
+    ):
+        mode = _safe_identifier_fragment(network_policy_defaults.get("mode"), fallback="default-deny-ingress", max_length=60)
+        network_policy_manifest = (
+            f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: NetworkPolicy\n"
+            "metadata:\n"
+            "  name: site-default-deny-ingress\n"
+            f"  namespace: {namespace}\n"
+            "  labels:\n"
+            f"{labels}"
+            f"    mbsrn.io/network-policy-mode: {mode}\n"
+            "spec:\n"
+            "  podSelector: {}\n"
+            "  policyTypes:\n"
+            "    - Ingress\n"
+        )
+        manifests[_MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH] = network_policy_manifest
+    return manifests
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:

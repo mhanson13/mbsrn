@@ -378,6 +378,13 @@ Key non-secret fields:
   - `namespace_model_status`
   - `workflow_namespace_aligned`
   - `manifest_namespace_aligned`
+  - `managed_resource_quota_expected`
+  - `managed_resource_quota_present`
+  - `managed_limit_range_expected`
+  - `managed_limit_range_present`
+  - `managed_network_policy_expected`
+  - `managed_network_policy_present`
+  - `managed_namespace_policies_aligned`
 - `workflow_run_lookup_attempted`, `workflow_run_found`, `workflow_job_failure_detected`
 - `post_dispatch_state`
 - `expected_workflow_outputs`
@@ -471,6 +478,9 @@ Dispatch-stage interpretation note:
 - if `workflow_dispatch_supported=true` but `dispatch_service_availability=false`, treat this as service/function readiness unavailability (not workflow identity/trigger mismatch).
 - if `workflow_dispatch_supported=true` and `dispatch_service_availability=true`, this still only proves control-plane dispatch readiness; it does not by itself prove that target-repo GitHub Actions has all required GKE deploy prerequisites (workflow logic/secrets/permissions/cluster access).
 - if `namespace_model_status=misaligned`, managed workflow/manifests no longer agree on the derived namespace; treat this as `target_configuration_invalid` and re-run managed workflow provisioning from publish before retrying deploy.
+- if `managed_*_expected=true` but matching `managed_*_present=false`, publish did not verify all expected policy manifests for this namespace model; re-run publish/provision and inspect managed file verification logs.
+- `managed_namespace_policies_aligned=false` means at least one expected policy file is missing or namespace-misaligned for the current derived namespace.
+- NetworkPolicy defaults are intentionally bounded and may be disabled by default; absence is only a blocker when `managed_network_policy_expected=true`.
 
 ### Production Verification Checklist (TnM Fire)
 

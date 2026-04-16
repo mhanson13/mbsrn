@@ -66,6 +66,35 @@ def test_get_github_publish_config_returns_defaults_when_unset(db_session, seede
     assert payload["deploy_workflow_mode"] == "site_repo_template_v1"
     assert payload["target_environment_key"] == "gke_prod"
     assert payload["target_environment_source"] == "admin_config"
+    assert payload["namespace_isolation_defaults"] == {
+        "resource_quota": {
+            "enabled": False,
+            "requests_cpu": "1000m",
+            "requests_memory": "1Gi",
+            "limits_cpu": "2000m",
+            "limits_memory": "2Gi",
+            "pods": 20,
+            "services": 10,
+            "configmaps": 40,
+            "secrets": 40,
+            "persistentvolumeclaims": 10,
+        },
+        "limit_range": {
+            "enabled": False,
+            "default_cpu": "500m",
+            "default_memory": "512Mi",
+            "default_request_cpu": "250m",
+            "default_request_memory": "256Mi",
+            "min_cpu": "100m",
+            "min_memory": "128Mi",
+            "max_cpu": "2000m",
+            "max_memory": "2Gi",
+        },
+        "network_policy": {
+            "enabled": False,
+            "mode": "default_deny_ingress",
+        },
+    }
     assert payload["enabled"] is False
 
 
@@ -80,6 +109,35 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
             "base_path": "/site",
             "deploy_workflow_mode": "site_repo_template_v1",
             "target_environment_key": "gke_prod_us_central1",
+            "namespace_isolation_defaults": {
+                "resource_quota": {
+                    "enabled": True,
+                    "requests_cpu": "1200m",
+                    "requests_memory": "2Gi",
+                    "limits_cpu": "2400m",
+                    "limits_memory": "3Gi",
+                    "pods": 25,
+                    "services": 12,
+                    "configmaps": 50,
+                    "secrets": 50,
+                    "persistentvolumeclaims": 12,
+                },
+                "limit_range": {
+                    "enabled": True,
+                    "default_cpu": "600m",
+                    "default_memory": "768Mi",
+                    "default_request_cpu": "300m",
+                    "default_request_memory": "384Mi",
+                    "min_cpu": "150m",
+                    "min_memory": "192Mi",
+                    "max_cpu": "2600m",
+                    "max_memory": "4Gi",
+                },
+                "network_policy": {
+                    "enabled": True,
+                    "mode": "default_deny_ingress",
+                },
+            },
             "enabled": True,
         },
     )
@@ -92,6 +150,13 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert updated["deploy_workflow_mode"] == "site_repo_template_v1"
     assert updated["target_environment_key"] == "gke_prod_us_central1"
     assert updated["target_environment_source"] == "admin_config"
+    assert updated["namespace_isolation_defaults"]["resource_quota"]["enabled"] is True
+    assert updated["namespace_isolation_defaults"]["resource_quota"]["requests_cpu"] == "1200m"
+    assert updated["namespace_isolation_defaults"]["limit_range"]["enabled"] is True
+    assert updated["namespace_isolation_defaults"]["network_policy"] == {
+        "enabled": True,
+        "mode": "default_deny_ingress",
+    }
     assert updated["enabled"] is True
 
     get_response = client.get("/api/admin/github-publish-config")
@@ -104,7 +169,35 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert fetched["deploy_workflow_mode"] == "site_repo_template_v1"
     assert fetched["target_environment_key"] == "gke_prod_us_central1"
     assert fetched["target_environment_source"] == "admin_config"
+    assert fetched["namespace_isolation_defaults"] == updated["namespace_isolation_defaults"]
     assert fetched["enabled"] is True
+
+
+def test_put_github_publish_config_rejects_invalid_namespace_isolation_defaults(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "owner": "mhanson13",
+            "default_branch": "main",
+            "base_path": "/",
+            "namespace_isolation_defaults": {
+                "resource_quota": {
+                    "enabled": True,
+                    "requests_cpu": "bad-cpu",
+                }
+            },
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 422
+    detail = str(response.json().get("detail", ""))
+    assert "requests_cpu" in detail
 
 
 def test_put_github_publish_config_rejects_enabled_without_owner(db_session, seeded_business) -> None:

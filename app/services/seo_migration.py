@@ -47,6 +47,7 @@ from app.repositories.seo_migration_repository import SEOMigrationRepository
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
+from app.schemas.github_publish_config import normalize_namespace_isolation_defaults
 from app.services.ai_response_contract_evaluator import (
     AIResponseContractEvaluation,
     evaluate_migration_artifact_response,
@@ -1049,6 +1050,7 @@ class SEOMigrationService:
                     deploy_workflow_mode=deploy_workflow_mode,
                     target_environment_key=target_environment_key,
                     target_environment_source=target_environment_source,
+                    namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
                     site_id=site.id,
                 )
                 workflow_provisioning_verified = True
@@ -1078,6 +1080,13 @@ class SEOMigrationService:
                     namespace_source=deploy_workflow_provision_result.namespace_source,
                     namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
                     managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
+                    managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
+                    managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
+                    managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
+                    managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
+                    managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
+                    managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
+                    managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
                     commit_sha=deploy_workflow_provision_result.commit_sha,
                     verified=True,
                 )
@@ -1101,6 +1110,13 @@ class SEOMigrationService:
                     namespace_source=deploy_workflow_provision_result.namespace_source,
                     namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
                     managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
+                    managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
+                    managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
+                    managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
+                    managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
+                    managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
+                    managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
+                    managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
                     commit_sha=deploy_workflow_provision_result.commit_sha,
                     verified=True,
                 )
@@ -1239,6 +1255,41 @@ class SEOMigrationService:
                         deploy_workflow_provision_result.managed_manifest_paths
                         if deploy_workflow_provision_result is not None
                         else ()
+                    ),
+                    managed_resource_quota_expected=(
+                        deploy_workflow_provision_result.managed_resource_quota_expected
+                        if deploy_workflow_provision_result is not None
+                        else None
+                    ),
+                    managed_resource_quota_present=(
+                        deploy_workflow_provision_result.managed_resource_quota_present
+                        if deploy_workflow_provision_result is not None
+                        else None
+                    ),
+                    managed_limit_range_expected=(
+                        deploy_workflow_provision_result.managed_limit_range_expected
+                        if deploy_workflow_provision_result is not None
+                        else None
+                    ),
+                    managed_limit_range_present=(
+                        deploy_workflow_provision_result.managed_limit_range_present
+                        if deploy_workflow_provision_result is not None
+                        else None
+                    ),
+                    managed_network_policy_expected=(
+                        deploy_workflow_provision_result.managed_network_policy_expected
+                        if deploy_workflow_provision_result is not None
+                        else None
+                    ),
+                    managed_network_policy_present=(
+                        deploy_workflow_provision_result.managed_network_policy_present
+                        if deploy_workflow_provision_result is not None
+                        else None
+                    ),
+                    managed_namespace_policies_aligned=(
+                        deploy_workflow_provision_result.managed_namespace_policies_aligned
+                        if deploy_workflow_provision_result is not None
+                        else None
                     ),
                     verified=workflow_provisioning_verified,
                     error_code=exc.code,
@@ -1399,6 +1450,41 @@ class SEOMigrationService:
                 if deploy_workflow_provision_result is not None
                 else ()
             ),
+            "managed_resource_quota_expected": (
+                deploy_workflow_provision_result.managed_resource_quota_expected
+                if deploy_workflow_provision_result is not None
+                else None
+            ),
+            "managed_resource_quota_present": (
+                deploy_workflow_provision_result.managed_resource_quota_present
+                if deploy_workflow_provision_result is not None
+                else None
+            ),
+            "managed_limit_range_expected": (
+                deploy_workflow_provision_result.managed_limit_range_expected
+                if deploy_workflow_provision_result is not None
+                else None
+            ),
+            "managed_limit_range_present": (
+                deploy_workflow_provision_result.managed_limit_range_present
+                if deploy_workflow_provision_result is not None
+                else None
+            ),
+            "managed_network_policy_expected": (
+                deploy_workflow_provision_result.managed_network_policy_expected
+                if deploy_workflow_provision_result is not None
+                else None
+            ),
+            "managed_network_policy_present": (
+                deploy_workflow_provision_result.managed_network_policy_present
+                if deploy_workflow_provision_result is not None
+                else None
+            ),
+            "managed_namespace_policies_aligned": (
+                deploy_workflow_provision_result.managed_namespace_policies_aligned
+                if deploy_workflow_provision_result is not None
+                else None
+            ),
             "deploy_workflow_provisioned": bool(
                 not dry_run
                 and deploy_workflow_provision_result is not None
@@ -1558,6 +1644,7 @@ class SEOMigrationService:
                 correlation_id=deploy_trace_id,
             )
             raise SEOMigrationValidationError(failure_message) from exc
+        namespace_isolation_defaults = _normalize_json_dict(workflow_resolution.get("namespace_isolation_defaults"))
         workflow_resolution_path = _normalize_workflow_path_for_deploy(workflow_resolution.get("workflow_path"))
         dispatch_identifier_diagnostics = _resolve_workflow_dispatch_identifier(
             workflow_id=deploy_target.get("workflow_id"),
@@ -1728,6 +1815,7 @@ class SEOMigrationService:
                     allow_workflow_repair=False,
                     dry_run=False,
                     remediation_mode="none",
+                    namespace_isolation_defaults=namespace_isolation_defaults,
                 )
                 requested_ref = target_readiness.requested_ref
                 resolved_ref = target_readiness.resolved_ref
@@ -1796,6 +1884,13 @@ class SEOMigrationService:
                     namespace_model_status=target_readiness.namespace_model_status,
                     workflow_namespace_aligned=target_readiness.workflow_namespace_aligned,
                     manifest_namespace_aligned=target_readiness.manifest_namespace_aligned,
+                    managed_resource_quota_expected=target_readiness.managed_resource_quota_expected,
+                    managed_resource_quota_present=target_readiness.managed_resource_quota_present,
+                    managed_limit_range_expected=target_readiness.managed_limit_range_expected,
+                    managed_limit_range_present=target_readiness.managed_limit_range_present,
+                    managed_network_policy_expected=target_readiness.managed_network_policy_expected,
+                    managed_network_policy_present=target_readiness.managed_network_policy_present,
+                    managed_namespace_policies_aligned=target_readiness.managed_namespace_policies_aligned,
                     deploy_trace_id=deploy_trace_id,
                     remediation_mode=target_readiness.remediation_mode,
                 )
@@ -2019,6 +2114,41 @@ class SEOMigrationService:
                         if target_readiness is not None
                         else None
                     ),
+                    managed_resource_quota_expected=(
+                        target_readiness.managed_resource_quota_expected
+                        if target_readiness is not None
+                        else None
+                    ),
+                    managed_resource_quota_present=(
+                        target_readiness.managed_resource_quota_present
+                        if target_readiness is not None
+                        else None
+                    ),
+                    managed_limit_range_expected=(
+                        target_readiness.managed_limit_range_expected
+                        if target_readiness is not None
+                        else None
+                    ),
+                    managed_limit_range_present=(
+                        target_readiness.managed_limit_range_present
+                        if target_readiness is not None
+                        else None
+                    ),
+                    managed_network_policy_expected=(
+                        target_readiness.managed_network_policy_expected
+                        if target_readiness is not None
+                        else None
+                    ),
+                    managed_network_policy_present=(
+                        target_readiness.managed_network_policy_present
+                        if target_readiness is not None
+                        else None
+                    ),
+                    managed_namespace_policies_aligned=(
+                        target_readiness.managed_namespace_policies_aligned
+                        if target_readiness is not None
+                        else None
+                    ),
                     deploy_trace_id=deploy_trace_id,
                     remediation_mode="none",
                 )
@@ -2159,6 +2289,27 @@ class SEOMigrationService:
                     "manifest_namespace_aligned": (
                         target_readiness.manifest_namespace_aligned if target_readiness is not None else None
                     ),
+                    "managed_resource_quota_expected": (
+                        target_readiness.managed_resource_quota_expected if target_readiness is not None else None
+                    ),
+                    "managed_resource_quota_present": (
+                        target_readiness.managed_resource_quota_present if target_readiness is not None else None
+                    ),
+                    "managed_limit_range_expected": (
+                        target_readiness.managed_limit_range_expected if target_readiness is not None else None
+                    ),
+                    "managed_limit_range_present": (
+                        target_readiness.managed_limit_range_present if target_readiness is not None else None
+                    ),
+                    "managed_network_policy_expected": (
+                        target_readiness.managed_network_policy_expected if target_readiness is not None else None
+                    ),
+                    "managed_network_policy_present": (
+                        target_readiness.managed_network_policy_present if target_readiness is not None else None
+                    ),
+                    "managed_namespace_policies_aligned": (
+                        target_readiness.managed_namespace_policies_aligned if target_readiness is not None else None
+                    ),
                 },
             )
             self._update_workspace_readiness_statuses(workspace=workspace, site=site)
@@ -2240,6 +2391,27 @@ class SEOMigrationService:
                     ),
                     "manifest_namespace_aligned": (
                         target_readiness.manifest_namespace_aligned if target_readiness is not None else None
+                    ),
+                    "managed_resource_quota_expected": (
+                        target_readiness.managed_resource_quota_expected if target_readiness is not None else None
+                    ),
+                    "managed_resource_quota_present": (
+                        target_readiness.managed_resource_quota_present if target_readiness is not None else None
+                    ),
+                    "managed_limit_range_expected": (
+                        target_readiness.managed_limit_range_expected if target_readiness is not None else None
+                    ),
+                    "managed_limit_range_present": (
+                        target_readiness.managed_limit_range_present if target_readiness is not None else None
+                    ),
+                    "managed_network_policy_expected": (
+                        target_readiness.managed_network_policy_expected if target_readiness is not None else None
+                    ),
+                    "managed_network_policy_present": (
+                        target_readiness.managed_network_policy_present if target_readiness is not None else None
+                    ),
+                    "managed_namespace_policies_aligned": (
+                        target_readiness.managed_namespace_policies_aligned if target_readiness is not None else None
                     ),
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
@@ -2719,6 +2891,27 @@ class SEOMigrationService:
             "manifest_namespace_aligned": (
                 target_readiness.manifest_namespace_aligned if target_readiness is not None else None
             ),
+            "managed_resource_quota_expected": (
+                target_readiness.managed_resource_quota_expected if target_readiness is not None else None
+            ),
+            "managed_resource_quota_present": (
+                target_readiness.managed_resource_quota_present if target_readiness is not None else None
+            ),
+            "managed_limit_range_expected": (
+                target_readiness.managed_limit_range_expected if target_readiness is not None else None
+            ),
+            "managed_limit_range_present": (
+                target_readiness.managed_limit_range_present if target_readiness is not None else None
+            ),
+            "managed_network_policy_expected": (
+                target_readiness.managed_network_policy_expected if target_readiness is not None else None
+            ),
+            "managed_network_policy_present": (
+                target_readiness.managed_network_policy_present if target_readiness is not None else None
+            ),
+            "managed_namespace_policies_aligned": (
+                target_readiness.managed_namespace_policies_aligned if target_readiness is not None else None
+            ),
             "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
             "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
             "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -2812,6 +3005,27 @@ class SEOMigrationService:
                 ),
                 "manifest_namespace_aligned": (
                     target_readiness.manifest_namespace_aligned if target_readiness is not None else None
+                ),
+                "managed_resource_quota_expected": (
+                    target_readiness.managed_resource_quota_expected if target_readiness is not None else None
+                ),
+                "managed_resource_quota_present": (
+                    target_readiness.managed_resource_quota_present if target_readiness is not None else None
+                ),
+                "managed_limit_range_expected": (
+                    target_readiness.managed_limit_range_expected if target_readiness is not None else None
+                ),
+                "managed_limit_range_present": (
+                    target_readiness.managed_limit_range_present if target_readiness is not None else None
+                ),
+                "managed_network_policy_expected": (
+                    target_readiness.managed_network_policy_expected if target_readiness is not None else None
+                ),
+                "managed_network_policy_present": (
+                    target_readiness.managed_network_policy_present if target_readiness is not None else None
+                ),
+                "managed_namespace_policies_aligned": (
+                    target_readiness.managed_namespace_policies_aligned if target_readiness is not None else None
                 ),
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
@@ -3670,6 +3884,41 @@ class SEOMigrationService:
             "manifest_namespace_aligned": (
                 bool(history_item.get("manifest_namespace_aligned"))
                 if isinstance(history_item.get("manifest_namespace_aligned"), bool)
+                else None
+            ),
+            "managed_resource_quota_expected": (
+                bool(history_item.get("managed_resource_quota_expected"))
+                if isinstance(history_item.get("managed_resource_quota_expected"), bool)
+                else None
+            ),
+            "managed_resource_quota_present": (
+                bool(history_item.get("managed_resource_quota_present"))
+                if isinstance(history_item.get("managed_resource_quota_present"), bool)
+                else None
+            ),
+            "managed_limit_range_expected": (
+                bool(history_item.get("managed_limit_range_expected"))
+                if isinstance(history_item.get("managed_limit_range_expected"), bool)
+                else None
+            ),
+            "managed_limit_range_present": (
+                bool(history_item.get("managed_limit_range_present"))
+                if isinstance(history_item.get("managed_limit_range_present"), bool)
+                else None
+            ),
+            "managed_network_policy_expected": (
+                bool(history_item.get("managed_network_policy_expected"))
+                if isinstance(history_item.get("managed_network_policy_expected"), bool)
+                else None
+            ),
+            "managed_network_policy_present": (
+                bool(history_item.get("managed_network_policy_present"))
+                if isinstance(history_item.get("managed_network_policy_present"), bool)
+                else None
+            ),
+            "managed_namespace_policies_aligned": (
+                bool(history_item.get("managed_namespace_policies_aligned"))
+                if isinstance(history_item.get("managed_namespace_policies_aligned"), bool)
                 else None
             ),
             "workflow_dispatch_supported": (
@@ -6777,6 +7026,13 @@ class SEOMigrationService:
             "namespace_source": provision_result.namespace_source,
             "managed_manifest_paths": list(provision_result.managed_manifest_paths or ()),
             "namespace_model_status": provision_result.namespace_model_status,
+            "managed_resource_quota_expected": provision_result.managed_resource_quota_expected,
+            "managed_resource_quota_present": provision_result.managed_resource_quota_present,
+            "managed_limit_range_expected": provision_result.managed_limit_range_expected,
+            "managed_limit_range_present": provision_result.managed_limit_range_present,
+            "managed_network_policy_expected": provision_result.managed_network_policy_expected,
+            "managed_network_policy_present": provision_result.managed_network_policy_present,
+            "managed_namespace_policies_aligned": provision_result.managed_namespace_policies_aligned,
         }
         self._emit_structured_service_log(
             payload=payload,
@@ -6806,6 +7062,13 @@ class SEOMigrationService:
         namespace_source: str | None = None,
         namespace_model_status: str | None = None,
         managed_manifest_paths: tuple[str, ...] | list[str] | None = None,
+        managed_resource_quota_expected: bool | None = None,
+        managed_resource_quota_present: bool | None = None,
+        managed_limit_range_expected: bool | None = None,
+        managed_limit_range_present: bool | None = None,
+        managed_network_policy_expected: bool | None = None,
+        managed_network_policy_present: bool | None = None,
+        managed_namespace_policies_aligned: bool | None = None,
         commit_sha: str | None = None,
         verified: bool | None = None,
         error_code: str | None = None,
@@ -6853,6 +7116,20 @@ class SEOMigrationService:
                     normalized_manifest_paths.append(normalized)
         if normalized_manifest_paths:
             payload["managed_manifest_paths"] = normalized_manifest_paths
+        if managed_resource_quota_expected is not None:
+            payload["managed_resource_quota_expected"] = bool(managed_resource_quota_expected)
+        if managed_resource_quota_present is not None:
+            payload["managed_resource_quota_present"] = bool(managed_resource_quota_present)
+        if managed_limit_range_expected is not None:
+            payload["managed_limit_range_expected"] = bool(managed_limit_range_expected)
+        if managed_limit_range_present is not None:
+            payload["managed_limit_range_present"] = bool(managed_limit_range_present)
+        if managed_network_policy_expected is not None:
+            payload["managed_network_policy_expected"] = bool(managed_network_policy_expected)
+        if managed_network_policy_present is not None:
+            payload["managed_network_policy_present"] = bool(managed_network_policy_present)
+        if managed_namespace_policies_aligned is not None:
+            payload["managed_namespace_policies_aligned"] = bool(managed_namespace_policies_aligned)
         normalized_sha = _normalize_string(commit_sha, max_length=80)
         if normalized_sha:
             payload["commit_sha"] = normalized_sha
@@ -6909,6 +7186,13 @@ class SEOMigrationService:
         namespace_model_status: str | None = None,
         workflow_namespace_aligned: bool | None = None,
         manifest_namespace_aligned: bool | None = None,
+        managed_resource_quota_expected: bool | None = None,
+        managed_resource_quota_present: bool | None = None,
+        managed_limit_range_expected: bool | None = None,
+        managed_limit_range_present: bool | None = None,
+        managed_network_policy_expected: bool | None = None,
+        managed_network_policy_present: bool | None = None,
+        managed_namespace_policies_aligned: bool | None = None,
         deploy_trace_id: str | None = None,
         remediation_mode: str,
     ) -> None:
@@ -6994,6 +7278,20 @@ class SEOMigrationService:
             payload["workflow_namespace_aligned"] = bool(workflow_namespace_aligned)
         if manifest_namespace_aligned is not None:
             payload["manifest_namespace_aligned"] = bool(manifest_namespace_aligned)
+        if managed_resource_quota_expected is not None:
+            payload["managed_resource_quota_expected"] = bool(managed_resource_quota_expected)
+        if managed_resource_quota_present is not None:
+            payload["managed_resource_quota_present"] = bool(managed_resource_quota_present)
+        if managed_limit_range_expected is not None:
+            payload["managed_limit_range_expected"] = bool(managed_limit_range_expected)
+        if managed_limit_range_present is not None:
+            payload["managed_limit_range_present"] = bool(managed_limit_range_present)
+        if managed_network_policy_expected is not None:
+            payload["managed_network_policy_expected"] = bool(managed_network_policy_expected)
+        if managed_network_policy_present is not None:
+            payload["managed_network_policy_present"] = bool(managed_network_policy_present)
+        if managed_namespace_policies_aligned is not None:
+            payload["managed_namespace_policies_aligned"] = bool(managed_namespace_policies_aligned)
         if dispatch_service_availability is not None:
             payload["dispatch_service_availability"] = bool(dispatch_service_availability)
         normalized_dispatch_service_reason = _normalize_dispatch_service_reason_code(dispatch_service_reason_code)
@@ -7040,15 +7338,17 @@ class SEOMigrationService:
             normalized = normalized.split("/", 1)[0].strip()
         return normalized
 
-    def _resolve_admin_deploy_template_metadata(self) -> dict[str, str]:
+    def _resolve_admin_deploy_template_metadata(self) -> dict[str, object]:
         deploy_workflow_mode = _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
         target_environment_key = _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY
         target_environment_source = _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN
+        namespace_isolation_defaults = normalize_namespace_isolation_defaults(None).model_dump(mode="json")
         if self.github_publish_config_service is None:
             return {
                 "deploy_workflow_mode": deploy_workflow_mode,
                 "target_environment_key": target_environment_key,
                 "target_environment_source": target_environment_source,
+                "namespace_isolation_defaults": namespace_isolation_defaults,
             }
         admin_config = self.github_publish_config_service.get()
         candidate_mode = _normalize_string(
@@ -7069,10 +7369,16 @@ class SEOMigrationService:
         )
         if candidate_source:
             target_environment_source = candidate_source
+        candidate_namespace_defaults = normalize_namespace_isolation_defaults(
+            getattr(admin_config, "namespace_isolation_defaults_json", None)
+        ).model_dump(mode="json")
+        if isinstance(candidate_namespace_defaults, dict):
+            namespace_isolation_defaults = candidate_namespace_defaults
         return {
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
             "target_environment_source": target_environment_source,
+            "namespace_isolation_defaults": namespace_isolation_defaults,
         }
 
     @staticmethod
@@ -7325,6 +7631,9 @@ class SEOMigrationService:
             "deploy_workflow_mode": admin_deploy_metadata.get("deploy_workflow_mode"),
             "target_environment_key": admin_deploy_metadata.get("target_environment_key"),
             "target_environment_source": admin_deploy_metadata.get("target_environment_source"),
+            "namespace_isolation_defaults": _normalize_json_dict(
+                admin_deploy_metadata.get("namespace_isolation_defaults")
+            ),
             "kubernetes_namespace": resolved_namespace,
             "namespace_source": resolved_namespace_source,
             "namespace_model_status": "unknown",
@@ -7358,6 +7667,7 @@ class SEOMigrationService:
             ref=normalized_ref,
             inputs={},
         )
+        admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
         try:
             readiness = self.github_publisher.check_deploy_target_readiness(
                 target=target,
@@ -7365,6 +7675,9 @@ class SEOMigrationService:
                 allow_workflow_repair=False,
                 dry_run=False,
                 remediation_mode="none",
+                namespace_isolation_defaults=_normalize_json_dict(
+                    admin_deploy_metadata.get("namespace_isolation_defaults")
+                ),
             )
         except SEOMigrationGitHubPublisherError as exc:
             return False, _normalize_deploy_failure_reason_code(exc.code)
@@ -7415,6 +7728,69 @@ class SEOMigrationService:
             else (
                 bool(deploy_readiness.get("manifest_namespace_aligned"))
                 if isinstance(deploy_readiness.get("manifest_namespace_aligned"), bool)
+                else None
+            )
+        )
+        managed_resource_quota_expected = (
+            bool(deploy_target.get("managed_resource_quota_expected"))
+            if isinstance(deploy_target.get("managed_resource_quota_expected"), bool)
+            else (
+                bool(deploy_readiness.get("managed_resource_quota_expected"))
+                if isinstance(deploy_readiness.get("managed_resource_quota_expected"), bool)
+                else None
+            )
+        )
+        managed_resource_quota_present = (
+            bool(deploy_target.get("managed_resource_quota_present"))
+            if isinstance(deploy_target.get("managed_resource_quota_present"), bool)
+            else (
+                bool(deploy_readiness.get("managed_resource_quota_present"))
+                if isinstance(deploy_readiness.get("managed_resource_quota_present"), bool)
+                else None
+            )
+        )
+        managed_limit_range_expected = (
+            bool(deploy_target.get("managed_limit_range_expected"))
+            if isinstance(deploy_target.get("managed_limit_range_expected"), bool)
+            else (
+                bool(deploy_readiness.get("managed_limit_range_expected"))
+                if isinstance(deploy_readiness.get("managed_limit_range_expected"), bool)
+                else None
+            )
+        )
+        managed_limit_range_present = (
+            bool(deploy_target.get("managed_limit_range_present"))
+            if isinstance(deploy_target.get("managed_limit_range_present"), bool)
+            else (
+                bool(deploy_readiness.get("managed_limit_range_present"))
+                if isinstance(deploy_readiness.get("managed_limit_range_present"), bool)
+                else None
+            )
+        )
+        managed_network_policy_expected = (
+            bool(deploy_target.get("managed_network_policy_expected"))
+            if isinstance(deploy_target.get("managed_network_policy_expected"), bool)
+            else (
+                bool(deploy_readiness.get("managed_network_policy_expected"))
+                if isinstance(deploy_readiness.get("managed_network_policy_expected"), bool)
+                else None
+            )
+        )
+        managed_network_policy_present = (
+            bool(deploy_target.get("managed_network_policy_present"))
+            if isinstance(deploy_target.get("managed_network_policy_present"), bool)
+            else (
+                bool(deploy_readiness.get("managed_network_policy_present"))
+                if isinstance(deploy_readiness.get("managed_network_policy_present"), bool)
+                else None
+            )
+        )
+        managed_namespace_policies_aligned = (
+            bool(deploy_target.get("managed_namespace_policies_aligned"))
+            if isinstance(deploy_target.get("managed_namespace_policies_aligned"), bool)
+            else (
+                bool(deploy_readiness.get("managed_namespace_policies_aligned"))
+                if isinstance(deploy_readiness.get("managed_namespace_policies_aligned"), bool)
                 else None
             )
         )
@@ -7537,6 +7913,13 @@ class SEOMigrationService:
                 "namespace_model_status": deploy_namespace_model_status,
                 "workflow_namespace_aligned": deploy_workflow_namespace_aligned,
                 "manifest_namespace_aligned": deploy_manifest_namespace_aligned,
+                "managed_resource_quota_expected": managed_resource_quota_expected,
+                "managed_resource_quota_present": managed_resource_quota_present,
+                "managed_limit_range_expected": managed_limit_range_expected,
+                "managed_limit_range_present": managed_limit_range_present,
+                "managed_network_policy_expected": managed_network_policy_expected,
+                "managed_network_policy_present": managed_network_policy_present,
+                "managed_namespace_policies_aligned": managed_namespace_policies_aligned,
                 "ref": _normalize_string(deploy_target.get("ref"), max_length=120),
             },
             "current_site_url": _normalize_string(site.base_url, max_length=2048),
@@ -7979,6 +8362,41 @@ class SEOMigrationService:
                     if isinstance(item.get("manifest_namespace_aligned"), bool)
                     else None
                 ),
+                "managed_resource_quota_expected": (
+                    bool(item.get("managed_resource_quota_expected"))
+                    if isinstance(item.get("managed_resource_quota_expected"), bool)
+                    else None
+                ),
+                "managed_resource_quota_present": (
+                    bool(item.get("managed_resource_quota_present"))
+                    if isinstance(item.get("managed_resource_quota_present"), bool)
+                    else None
+                ),
+                "managed_limit_range_expected": (
+                    bool(item.get("managed_limit_range_expected"))
+                    if isinstance(item.get("managed_limit_range_expected"), bool)
+                    else None
+                ),
+                "managed_limit_range_present": (
+                    bool(item.get("managed_limit_range_present"))
+                    if isinstance(item.get("managed_limit_range_present"), bool)
+                    else None
+                ),
+                "managed_network_policy_expected": (
+                    bool(item.get("managed_network_policy_expected"))
+                    if isinstance(item.get("managed_network_policy_expected"), bool)
+                    else None
+                ),
+                "managed_network_policy_present": (
+                    bool(item.get("managed_network_policy_present"))
+                    if isinstance(item.get("managed_network_policy_present"), bool)
+                    else None
+                ),
+                "managed_namespace_policies_aligned": (
+                    bool(item.get("managed_namespace_policies_aligned"))
+                    if isinstance(item.get("managed_namespace_policies_aligned"), bool)
+                    else None
+                ),
                 "failure_remediation_hint": failure_remediation_hint,
             }
         return {}
@@ -8170,6 +8588,41 @@ class SEOMigrationService:
                 "manifest_namespace_aligned": (
                     bool(item.get("manifest_namespace_aligned"))
                     if isinstance(item.get("manifest_namespace_aligned"), bool)
+                    else None
+                ),
+                "managed_resource_quota_expected": (
+                    bool(item.get("managed_resource_quota_expected"))
+                    if isinstance(item.get("managed_resource_quota_expected"), bool)
+                    else None
+                ),
+                "managed_resource_quota_present": (
+                    bool(item.get("managed_resource_quota_present"))
+                    if isinstance(item.get("managed_resource_quota_present"), bool)
+                    else None
+                ),
+                "managed_limit_range_expected": (
+                    bool(item.get("managed_limit_range_expected"))
+                    if isinstance(item.get("managed_limit_range_expected"), bool)
+                    else None
+                ),
+                "managed_limit_range_present": (
+                    bool(item.get("managed_limit_range_present"))
+                    if isinstance(item.get("managed_limit_range_present"), bool)
+                    else None
+                ),
+                "managed_network_policy_expected": (
+                    bool(item.get("managed_network_policy_expected"))
+                    if isinstance(item.get("managed_network_policy_expected"), bool)
+                    else None
+                ),
+                "managed_network_policy_present": (
+                    bool(item.get("managed_network_policy_present"))
+                    if isinstance(item.get("managed_network_policy_present"), bool)
+                    else None
+                ),
+                "managed_namespace_policies_aligned": (
+                    bool(item.get("managed_namespace_policies_aligned"))
+                    if isinstance(item.get("managed_namespace_policies_aligned"), bool)
                     else None
                 ),
             }
@@ -8568,6 +9021,69 @@ class SEOMigrationService:
                 else None
             )
         )
+        managed_resource_quota_expected = (
+            bool(latest_traceability.get("managed_resource_quota_expected"))
+            if isinstance(latest_traceability.get("managed_resource_quota_expected"), bool)
+            else (
+                bool(target_summary.get("managed_resource_quota_expected"))
+                if isinstance(target_summary.get("managed_resource_quota_expected"), bool)
+                else None
+            )
+        )
+        managed_resource_quota_present = (
+            bool(latest_traceability.get("managed_resource_quota_present"))
+            if isinstance(latest_traceability.get("managed_resource_quota_present"), bool)
+            else (
+                bool(target_summary.get("managed_resource_quota_present"))
+                if isinstance(target_summary.get("managed_resource_quota_present"), bool)
+                else None
+            )
+        )
+        managed_limit_range_expected = (
+            bool(latest_traceability.get("managed_limit_range_expected"))
+            if isinstance(latest_traceability.get("managed_limit_range_expected"), bool)
+            else (
+                bool(target_summary.get("managed_limit_range_expected"))
+                if isinstance(target_summary.get("managed_limit_range_expected"), bool)
+                else None
+            )
+        )
+        managed_limit_range_present = (
+            bool(latest_traceability.get("managed_limit_range_present"))
+            if isinstance(latest_traceability.get("managed_limit_range_present"), bool)
+            else (
+                bool(target_summary.get("managed_limit_range_present"))
+                if isinstance(target_summary.get("managed_limit_range_present"), bool)
+                else None
+            )
+        )
+        managed_network_policy_expected = (
+            bool(latest_traceability.get("managed_network_policy_expected"))
+            if isinstance(latest_traceability.get("managed_network_policy_expected"), bool)
+            else (
+                bool(target_summary.get("managed_network_policy_expected"))
+                if isinstance(target_summary.get("managed_network_policy_expected"), bool)
+                else None
+            )
+        )
+        managed_network_policy_present = (
+            bool(latest_traceability.get("managed_network_policy_present"))
+            if isinstance(latest_traceability.get("managed_network_policy_present"), bool)
+            else (
+                bool(target_summary.get("managed_network_policy_present"))
+                if isinstance(target_summary.get("managed_network_policy_present"), bool)
+                else None
+            )
+        )
+        managed_namespace_policies_aligned = (
+            bool(latest_traceability.get("managed_namespace_policies_aligned"))
+            if isinstance(latest_traceability.get("managed_namespace_policies_aligned"), bool)
+            else (
+                bool(target_summary.get("managed_namespace_policies_aligned"))
+                if isinstance(target_summary.get("managed_namespace_policies_aligned"), bool)
+                else None
+            )
+        )
         if kubernetes_namespace and not _normalize_string(target_summary.get("kubernetes_namespace"), max_length=63):
             target_summary["kubernetes_namespace"] = kubernetes_namespace
         if namespace_source and not _normalize_string(target_summary.get("namespace_source"), max_length=60):
@@ -8584,6 +9100,41 @@ class SEOMigrationService:
             and not isinstance(target_summary.get("manifest_namespace_aligned"), bool)
         ):
             target_summary["manifest_namespace_aligned"] = manifest_namespace_aligned
+        if (
+            managed_resource_quota_expected is not None
+            and not isinstance(target_summary.get("managed_resource_quota_expected"), bool)
+        ):
+            target_summary["managed_resource_quota_expected"] = managed_resource_quota_expected
+        if (
+            managed_resource_quota_present is not None
+            and not isinstance(target_summary.get("managed_resource_quota_present"), bool)
+        ):
+            target_summary["managed_resource_quota_present"] = managed_resource_quota_present
+        if (
+            managed_limit_range_expected is not None
+            and not isinstance(target_summary.get("managed_limit_range_expected"), bool)
+        ):
+            target_summary["managed_limit_range_expected"] = managed_limit_range_expected
+        if (
+            managed_limit_range_present is not None
+            and not isinstance(target_summary.get("managed_limit_range_present"), bool)
+        ):
+            target_summary["managed_limit_range_present"] = managed_limit_range_present
+        if (
+            managed_network_policy_expected is not None
+            and not isinstance(target_summary.get("managed_network_policy_expected"), bool)
+        ):
+            target_summary["managed_network_policy_expected"] = managed_network_policy_expected
+        if (
+            managed_network_policy_present is not None
+            and not isinstance(target_summary.get("managed_network_policy_present"), bool)
+        ):
+            target_summary["managed_network_policy_present"] = managed_network_policy_present
+        if (
+            managed_namespace_policies_aligned is not None
+            and not isinstance(target_summary.get("managed_namespace_policies_aligned"), bool)
+        ):
+            target_summary["managed_namespace_policies_aligned"] = managed_namespace_policies_aligned
         last_failure_workflow_exists = (
             bool(latest_failure_detail.get("workflow_exists"))
             if isinstance(latest_failure_detail.get("workflow_exists"), bool)
@@ -8639,6 +9190,13 @@ class SEOMigrationService:
             "namespace_model_status": namespace_model_status,
             "workflow_namespace_aligned": workflow_namespace_aligned,
             "manifest_namespace_aligned": manifest_namespace_aligned,
+            "managed_resource_quota_expected": managed_resource_quota_expected,
+            "managed_resource_quota_present": managed_resource_quota_present,
+            "managed_limit_range_expected": managed_limit_range_expected,
+            "managed_limit_range_present": managed_limit_range_present,
+            "managed_network_policy_expected": managed_network_policy_expected,
+            "managed_network_policy_present": managed_network_policy_present,
+            "managed_namespace_policies_aligned": managed_namespace_policies_aligned,
             "last_deploy_trace_id": latest_traceability.get("deploy_trace_id"),
             "last_dispatch_attempted": latest_traceability.get("dispatch_attempted"),
             "last_dispatch_result_stage": latest_traceability.get("dispatch_result_stage"),

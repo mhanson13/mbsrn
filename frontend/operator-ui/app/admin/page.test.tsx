@@ -107,6 +107,38 @@ describe("admin route", () => {
       repository: "",
       default_branch: "main",
       base_path: "/",
+      deploy_workflow_mode: "site_repo_template_v1",
+      target_environment_key: "gke_prod",
+      target_environment_source: "admin_config",
+      namespace_isolation_defaults: {
+        resource_quota: {
+          enabled: false,
+          requests_cpu: "1000m",
+          requests_memory: "1Gi",
+          limits_cpu: "2000m",
+          limits_memory: "2Gi",
+          pods: 20,
+          services: 10,
+          configmaps: 40,
+          secrets: 40,
+          persistentvolumeclaims: 10,
+        },
+        limit_range: {
+          enabled: false,
+          default_cpu: "500m",
+          default_memory: "512Mi",
+          default_request_cpu: "250m",
+          default_request_memory: "256Mi",
+          min_cpu: "100m",
+          min_memory: "128Mi",
+          max_cpu: "2000m",
+          max_memory: "2Gi",
+        },
+        network_policy: {
+          enabled: false,
+          mode: "default_deny_ingress",
+        },
+      },
       enabled: false,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
@@ -117,6 +149,38 @@ describe("admin route", () => {
       repository: "mhanson13",
       default_branch: "main",
       base_path: "/site",
+      deploy_workflow_mode: "site_repo_template_v1",
+      target_environment_key: "gke_prod",
+      target_environment_source: "admin_config",
+      namespace_isolation_defaults: {
+        resource_quota: {
+          enabled: true,
+          requests_cpu: "1200m",
+          requests_memory: "2Gi",
+          limits_cpu: "2400m",
+          limits_memory: "3Gi",
+          pods: 30,
+          services: 15,
+          configmaps: 50,
+          secrets: 50,
+          persistentvolumeclaims: 15,
+        },
+        limit_range: {
+          enabled: false,
+          default_cpu: "500m",
+          default_memory: "512Mi",
+          default_request_cpu: "250m",
+          default_request_memory: "256Mi",
+          min_cpu: "100m",
+          min_memory: "128Mi",
+          max_cpu: "2000m",
+          max_memory: "2Gi",
+        },
+        network_policy: {
+          enabled: false,
+          mode: "default_deny_ingress",
+        },
+      },
       enabled: true,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
@@ -218,6 +282,9 @@ describe("admin route", () => {
     expect(screen.getByLabelText("GitHub account/owner")).toBeInTheDocument();
     expect(screen.getByLabelText("Default Branch")).toBeInTheDocument();
     expect(screen.getByLabelText("Base Path")).toBeInTheDocument();
+    expect(screen.getByLabelText("Enable ResourceQuota for managed site namespaces")).toBeInTheDocument();
+    expect(screen.getByLabelText("Enable LimitRange for managed site namespaces")).toBeInTheDocument();
+    expect(screen.getByLabelText("Enable managed NetworkPolicy scaffold")).toBeInTheDocument();
     expect(screen.getByText("Platform operations tools for diagnostics, site maintenance, and safe configuration updates.")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Property" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Enabled" })).toBeInTheDocument();
@@ -376,6 +443,35 @@ describe("admin route", () => {
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod",
       target_environment_source: "admin_config",
+      namespace_isolation_defaults: {
+        resource_quota: {
+          enabled: false,
+          requests_cpu: "1000m",
+          requests_memory: "1Gi",
+          limits_cpu: "2000m",
+          limits_memory: "2Gi",
+          pods: 20,
+          services: 10,
+          configmaps: 40,
+          secrets: 40,
+          persistentvolumeclaims: 10,
+        },
+        limit_range: {
+          enabled: false,
+          default_cpu: "500m",
+          default_memory: "512Mi",
+          default_request_cpu: "250m",
+          default_request_memory: "256Mi",
+          min_cpu: "100m",
+          min_memory: "128Mi",
+          max_cpu: "2000m",
+          max_memory: "2Gi",
+        },
+        network_policy: {
+          enabled: false,
+          mode: "default_deny_ingress",
+        },
+      },
       enabled: true,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
@@ -389,6 +485,35 @@ describe("admin route", () => {
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod_blue",
       target_environment_source: "admin_config",
+      namespace_isolation_defaults: {
+        resource_quota: {
+          enabled: true,
+          requests_cpu: "1200m",
+          requests_memory: "2Gi",
+          limits_cpu: "2400m",
+          limits_memory: "3Gi",
+          pods: 30,
+          services: 15,
+          configmaps: 50,
+          secrets: 50,
+          persistentvolumeclaims: 15,
+        },
+        limit_range: {
+          enabled: false,
+          default_cpu: "500m",
+          default_memory: "512Mi",
+          default_request_cpu: "250m",
+          default_request_memory: "256Mi",
+          min_cpu: "100m",
+          min_memory: "128Mi",
+          max_cpu: "2000m",
+          max_memory: "2Gi",
+        },
+        network_policy: {
+          enabled: false,
+          mode: "default_deny_ingress",
+        },
+      },
       enabled: true,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
@@ -430,6 +555,16 @@ describe("admin route", () => {
     fireEvent.change(defaultBranchInput, { target: { value: "release" } });
     fireEvent.change(basePathInput, { target: { value: "site//content/" } });
     fireEvent.change(targetEnvironmentKeyInput, { target: { value: "gke_prod_blue" } });
+    fireEvent.click(screen.getByLabelText("Enable ResourceQuota for managed site namespaces"));
+    fireEvent.change(screen.getByLabelText("Requests CPU"), { target: { value: "1200m" } });
+    fireEvent.change(screen.getByLabelText("Requests Memory"), { target: { value: "2Gi" } });
+    fireEvent.change(screen.getByLabelText("Limits CPU"), { target: { value: "2400m" } });
+    fireEvent.change(screen.getByLabelText("Limits Memory"), { target: { value: "3Gi" } });
+    fireEvent.change(screen.getByLabelText("Pods"), { target: { value: "30" } });
+    fireEvent.change(screen.getByLabelText("Services"), { target: { value: "15" } });
+    fireEvent.change(screen.getByLabelText("ConfigMaps"), { target: { value: "50" } });
+    fireEvent.change(screen.getByLabelText("Secrets"), { target: { value: "50" } });
+    fireEvent.change(screen.getByLabelText("PersistentVolumeClaims"), { target: { value: "15" } });
     expect(screen.getByTestId("github-publish-effective-preview")).toHaveTextContent("/site/content");
     fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
 
@@ -442,6 +577,35 @@ describe("admin route", () => {
       base_path: "/site/content",
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod_blue",
+      namespace_isolation_defaults: {
+        resource_quota: {
+          enabled: true,
+          requests_cpu: "1200m",
+          requests_memory: "2Gi",
+          limits_cpu: "2400m",
+          limits_memory: "3Gi",
+          pods: 30,
+          services: 15,
+          configmaps: 50,
+          secrets: 50,
+          persistentvolumeclaims: 15,
+        },
+        limit_range: {
+          enabled: false,
+          default_cpu: "500m",
+          default_memory: "512Mi",
+          default_request_cpu: "250m",
+          default_request_memory: "256Mi",
+          min_cpu: "100m",
+          min_memory: "128Mi",
+          max_cpu: "2000m",
+          max_memory: "2Gi",
+        },
+        network_policy: {
+          enabled: false,
+          mode: "default_deny_ingress",
+        },
+      },
       enabled: true,
     });
     expect(await screen.findByLabelText("Default Branch")).toHaveValue("release");

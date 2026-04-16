@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 
 def _normalize_optional_text(value: object, *, max_length: int) -> str | None:
@@ -39,6 +39,7 @@ class GitHubPublishConfigRead(BaseModel):
     deploy_workflow_mode: str = "site_repo_template_v1"
     target_environment_key: str = "gke_prod"
     target_environment_source: str = "admin_config"
+    namespace_isolation_defaults: "GitHubNamespaceIsolationDefaults"
     enabled: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -51,6 +52,7 @@ class GitHubPublishConfigUpdateRequest(BaseModel):
     base_path: str | None = Field(default="/", max_length=160)
     deploy_workflow_mode: str | None = Field(default="site_repo_template_v1", max_length=60)
     target_environment_key: str | None = Field(default="gke_prod", max_length=80)
+    namespace_isolation_defaults: "GitHubNamespaceIsolationDefaults | None" = None
     enabled: bool = False
 
     @field_validator("owner", mode="before")
@@ -84,3 +86,198 @@ class GitHubPublishConfigUpdateRequest(BaseModel):
     def _normalize_target_environment_key(cls, value: object) -> str | None:
         normalized = _normalize_optional_text(value, max_length=80)
         return normalized.lower() if normalized else None
+
+
+_VALID_CPU_PATTERN = r"^(?:[1-9]\d*m|[1-9]\d*(?:\.\d+)?)$"
+_VALID_MEMORY_PATTERN = r"^(?:[1-9]\d*(?:Ei|Pi|Ti|Gi|Mi|Ki)|[1-9]\d*(?:\.\d+)?(?:E|P|T|G|M|K)i?)$"
+_VALID_NONNEGATIVE_COUNT_PATTERN = r"^\d{1,6}$"
+_DEFAULT_NETWORK_POLICY_MODE = "default_deny_ingress"
+_ALLOWED_NETWORK_POLICY_MODES = {_DEFAULT_NETWORK_POLICY_MODE}
+
+
+def _normalize_quantity(
+    value: object,
+    *,
+    max_length: int,
+) -> str | None:
+    normalized = _normalize_optional_text(value, max_length=max_length)
+    return normalized if normalized else None
+
+
+def _normalize_nonnegative_count(
+    value: object,
+    *,
+    default: int,
+) -> int:
+    if value is None or str(value).strip() == "":
+        return default
+    candidate = str(value).strip()
+    if not candidate.isdigit():
+        raise ValueError("must be a non-negative integer.")
+    parsed = int(candidate)
+    if parsed < 0:
+        raise ValueError("must be a non-negative integer.")
+    return parsed
+
+
+class GitHubNamespaceResourceQuotaDefaults(BaseModel):
+    enabled: bool = False
+    requests_cpu: str = "1000m"
+    requests_memory: str = "1Gi"
+    limits_cpu: str = "2000m"
+    limits_memory: str = "2Gi"
+    pods: int = 20
+    services: int = 10
+    configmaps: int = 40
+    secrets: int = 40
+    persistentvolumeclaims: int = 10
+
+    @field_validator(
+        "requests_cpu",
+        "limits_cpu",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_cpu(cls, value: object) -> str:
+        normalized = _normalize_quantity(value, max_length=32)
+        if not normalized:
+            raise ValueError("is required.")
+        import re
+
+        if not re.fullmatch(_VALID_CPU_PATTERN, normalized):
+            raise ValueError("must be a valid Kubernetes CPU quantity (for example: 500m, 1, 2).")
+        return normalized
+
+    @field_validator(
+        "requests_memory",
+        "limits_memory",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_memory(cls, value: object) -> str:
+        normalized = _normalize_quantity(value, max_length=32)
+        if not normalized:
+            raise ValueError("is required.")
+        import re
+
+        if not re.fullmatch(_VALID_MEMORY_PATTERN, normalized):
+            raise ValueError("must be a valid Kubernetes memory quantity (for example: 512Mi, 1Gi).")
+        return normalized
+
+    @field_validator(
+        "pods",
+        "services",
+        "configmaps",
+        "secrets",
+        "persistentvolumeclaims",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_counts(cls, value: object) -> int:
+        parsed = _normalize_nonnegative_count(value, default=0)
+        import re
+
+        if not re.fullmatch(_VALID_NONNEGATIVE_COUNT_PATTERN, str(parsed)):
+            raise ValueError("must be between 0 and 999999.")
+        return parsed
+
+
+class GitHubNamespaceLimitRangeDefaults(BaseModel):
+    enabled: bool = False
+    default_cpu: str = "500m"
+    default_memory: str = "512Mi"
+    default_request_cpu: str = "250m"
+    default_request_memory: str = "256Mi"
+    min_cpu: str = "100m"
+    min_memory: str = "128Mi"
+    max_cpu: str = "2000m"
+    max_memory: str = "2Gi"
+
+    @field_validator(
+        "default_cpu",
+        "default_request_cpu",
+        "min_cpu",
+        "max_cpu",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_cpu(cls, value: object) -> str:
+        normalized = _normalize_quantity(value, max_length=32)
+        if not normalized:
+            raise ValueError("is required.")
+        import re
+
+        if not re.fullmatch(_VALID_CPU_PATTERN, normalized):
+            raise ValueError("must be a valid Kubernetes CPU quantity (for example: 500m, 1).")
+        return normalized
+
+    @field_validator(
+        "default_memory",
+        "default_request_memory",
+        "min_memory",
+        "max_memory",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_memory(cls, value: object) -> str:
+        normalized = _normalize_quantity(value, max_length=32)
+        if not normalized:
+            raise ValueError("is required.")
+        import re
+
+        if not re.fullmatch(_VALID_MEMORY_PATTERN, normalized):
+            raise ValueError("must be a valid Kubernetes memory quantity (for example: 512Mi, 1Gi).")
+        return normalized
+
+
+class GitHubNamespaceNetworkPolicyDefaults(BaseModel):
+    enabled: bool = False
+    mode: str = _DEFAULT_NETWORK_POLICY_MODE
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _normalize_mode(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, max_length=80) or _DEFAULT_NETWORK_POLICY_MODE
+        normalized = normalized.lower()
+        if normalized not in _ALLOWED_NETWORK_POLICY_MODES:
+            raise ValueError(
+                "is invalid. Supported values: " + ", ".join(sorted(_ALLOWED_NETWORK_POLICY_MODES)) + "."
+            )
+        return normalized
+
+
+class GitHubNamespaceIsolationDefaults(BaseModel):
+    resource_quota: GitHubNamespaceResourceQuotaDefaults = Field(
+        default_factory=GitHubNamespaceResourceQuotaDefaults
+    )
+    limit_range: GitHubNamespaceLimitRangeDefaults = Field(default_factory=GitHubNamespaceLimitRangeDefaults)
+    network_policy: GitHubNamespaceNetworkPolicyDefaults = Field(
+        default_factory=GitHubNamespaceNetworkPolicyDefaults
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def normalize_namespace_isolation_defaults(
+    value: object | None,
+) -> GitHubNamespaceIsolationDefaults:
+    if isinstance(value, GitHubNamespaceIsolationDefaults):
+        return value
+    if value is None:
+        return GitHubNamespaceIsolationDefaults()
+    if isinstance(value, dict):
+        return GitHubNamespaceIsolationDefaults.model_validate(value)
+    raise ValidationError.from_exception_data(
+        "GitHubNamespaceIsolationDefaults",
+        [
+            {
+                "type": "value_error",
+                "loc": ("namespace_isolation_defaults",),
+                "msg": "must be an object.",
+                "input": value,
+            }
+        ],
+    )
+
+
+GitHubPublishConfigRead.model_rebuild()

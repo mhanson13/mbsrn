@@ -126,9 +126,46 @@ export interface GitHubPublishConfig {
   deploy_workflow_mode: string;
   target_environment_key: string;
   target_environment_source: string;
+  namespace_isolation_defaults: GitHubNamespaceIsolationDefaults;
   enabled: boolean;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface GitHubNamespaceResourceQuotaDefaults {
+  enabled: boolean;
+  requests_cpu: string;
+  requests_memory: string;
+  limits_cpu: string;
+  limits_memory: string;
+  pods: number;
+  services: number;
+  configmaps: number;
+  secrets: number;
+  persistentvolumeclaims: number;
+}
+
+export interface GitHubNamespaceLimitRangeDefaults {
+  enabled: boolean;
+  default_cpu: string;
+  default_memory: string;
+  default_request_cpu: string;
+  default_request_memory: string;
+  min_cpu: string;
+  min_memory: string;
+  max_cpu: string;
+  max_memory: string;
+}
+
+export interface GitHubNamespaceNetworkPolicyDefaults {
+  enabled: boolean;
+  mode: string;
+}
+
+export interface GitHubNamespaceIsolationDefaults {
+  resource_quota: GitHubNamespaceResourceQuotaDefaults;
+  limit_range: GitHubNamespaceLimitRangeDefaults;
+  network_policy: GitHubNamespaceNetworkPolicyDefaults;
 }
 
 export interface GitHubPublishConfigUpdateRequest {
@@ -138,6 +175,7 @@ export interface GitHubPublishConfigUpdateRequest {
   base_path?: string | null;
   deploy_workflow_mode?: string | null;
   target_environment_key?: string | null;
+  namespace_isolation_defaults?: GitHubNamespaceIsolationDefaults | null;
   enabled: boolean;
 }
 
@@ -590,6 +628,13 @@ export interface MigrationDestinationDeploySummary {
   namespace_model_status?: string | null;
   workflow_namespace_aligned?: boolean | null;
   manifest_namespace_aligned?: boolean | null;
+  managed_resource_quota_expected?: boolean | null;
+  managed_resource_quota_present?: boolean | null;
+  managed_limit_range_expected?: boolean | null;
+  managed_limit_range_present?: boolean | null;
+  managed_network_policy_expected?: boolean | null;
+  managed_network_policy_present?: boolean | null;
+  managed_namespace_policies_aligned?: boolean | null;
   ref?: string | null;
 }
 

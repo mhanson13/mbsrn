@@ -866,12 +866,62 @@ Deploy behavior:
   - `namespace_model_status` (`aligned`, `misaligned`, `unknown`)
   - `workflow_namespace_aligned`
   - `manifest_namespace_aligned`
+- admin now controls namespace isolation defaults for platform-managed deploy targets using structured fields (no raw YAML):
+  - `namespace_isolation_defaults.resource_quota`
+  - `namespace_isolation_defaults.limit_range`
+  - `namespace_isolation_defaults.network_policy`
+- default enablement is conservative:
+  - ResourceQuota: disabled by default
+  - LimitRange: disabled by default
+  - NetworkPolicy: disabled by default (`mode=default_deny_ingress` when enabled)
+- when enabled by Admin, publish provisions additional managed files in target repos:
+  - `k8s/resourcequota.yaml`
+  - `k8s/limitrange.yaml`
+  - `k8s/networkpolicy.yaml`
+- managed-file verification/readiness now tracks namespace policy presence/alignment explicitly:
+  - `managed_resource_quota_expected` / `managed_resource_quota_present`
+  - `managed_limit_range_expected` / `managed_limit_range_present`
+  - `managed_network_policy_expected` / `managed_network_policy_present`
+  - `managed_namespace_policies_aligned`
 - deployment history captured with status/result metadata
 - duplicate non-dry-run deploy requests for the same artifact+target+inputs are rejected with operator-readable validation errors
 - retry after a failed deploy is supported and recorded as a new history event
 - deploy dry-run records history but does not overwrite prior successful deploy request markers
 
 Current deployment model is reused via workflow dispatch conventions; platform deployment architecture is not redesigned by this feature.
+
+### Namespace Isolation Defaults (Admin-Owned)
+
+These controls are platform-managed defaults applied to each derived site namespace during publish provisioning:
+
+- ResourceQuota defaults
+  - `enabled`
+  - `requests.cpu`, `requests.memory`
+  - `limits.cpu`, `limits.memory`
+  - `pods`, `services`, `configmaps`, `secrets`, `persistentvolumeclaims`
+- LimitRange defaults
+  - `enabled`
+  - `default` CPU/memory
+  - `defaultRequest` CPU/memory
+  - `min` CPU/memory
+  - `max` CPU/memory
+- NetworkPolicy defaults
+  - `enabled`
+  - bounded mode set (currently `default_deny_ingress`)
+
+Safety/ownership rules:
+- these policies are generated from vetted platform templates, not model output
+- operators do not hand-author these controls in normal workflow
+- unknown custom repo files are not blindly overwritten
+- policy values are schema-validated and normalized before rendering
+
+### Future Hardening (Not Required for Current Contract)
+
+Namespace isolation is now in place; additional hardening can be layered later without changing the current publish/deploy contract:
+- per-namespace `ResourceQuota` tuning by environment class
+- per-namespace `LimitRange` tightening by workload profile
+- optional baseline `NetworkPolicy` expansion once ingress/egress expectations are fully validated
+- namespace-scoped RBAC/service-account hardening
 
 ## Analytics Insertion Rules
 Analytics is controlled by platform logic, not model snippets.

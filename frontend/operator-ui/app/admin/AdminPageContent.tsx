@@ -32,6 +32,10 @@ import type {
   BusinessSettings,
   GCPLogEntry,
   GitHubPublishConfig,
+  GitHubNamespaceIsolationDefaults,
+  GitHubNamespaceLimitRangeDefaults,
+  GitHubNamespaceNetworkPolicyDefaults,
+  GitHubNamespaceResourceQuotaDefaults,
   Principal,
   PrincipalIdentity,
   PrincipalRole,
@@ -89,6 +93,39 @@ const GITHUB_BRANCH_PATTERN = /^[A-Za-z0-9._/-]{1,120}$/;
 const GITHUB_BASE_PATH_PATTERN = /^\/[A-Za-z0-9._/-]{0,159}$/;
 const GITHUB_TARGET_ENVIRONMENT_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const GITHUB_DEPLOY_WORKFLOW_MODE_OPTIONS = ["site_repo_template_v1"] as const;
+const GITHUB_NAMESPACE_CPU_PATTERN = /^(?:[1-9]\d*m|[1-9]\d*(?:\.\d+)?)$/;
+const GITHUB_NAMESPACE_MEMORY_PATTERN = /^(?:[1-9]\d*(?:Ei|Pi|Ti|Gi|Mi|Ki)|[1-9]\d*(?:\.\d+)?(?:E|P|T|G|M|K)i?)$/;
+const GITHUB_NAMESPACE_COUNT_PATTERN = /^\d{1,6}$/;
+const GITHUB_NETWORK_POLICY_MODE_OPTIONS = ["default_deny_ingress"] as const;
+const DEFAULT_NAMESPACE_ISOLATION_DEFAULTS: GitHubNamespaceIsolationDefaults = {
+  resource_quota: {
+    enabled: false,
+    requests_cpu: "1000m",
+    requests_memory: "1Gi",
+    limits_cpu: "2000m",
+    limits_memory: "2Gi",
+    pods: 20,
+    services: 10,
+    configmaps: 40,
+    secrets: 40,
+    persistentvolumeclaims: 10,
+  },
+  limit_range: {
+    enabled: false,
+    default_cpu: "500m",
+    default_memory: "512Mi",
+    default_request_cpu: "250m",
+    default_request_memory: "256Mi",
+    min_cpu: "100m",
+    min_memory: "128Mi",
+    max_cpu: "2000m",
+    max_memory: "2Gi",
+  },
+  network_policy: {
+    enabled: false,
+    mode: "default_deny_ingress",
+  },
+};
 
 type AdminPageMode = "all" | "admin" | "userMgmt";
 
@@ -115,6 +152,7 @@ interface GitHubPublishConfigValidationResult {
   deployWorkflowModeError: string | null;
   targetEnvironmentKeyError: string | null;
   basePathWarning: string | null;
+  namespaceIsolationErrors: string[];
   blockingError: string | null;
 }
 
@@ -617,12 +655,139 @@ function normalizeGitHubPublishBasePath(value: string): string {
   return normalized || "/";
 }
 
+function normalizeNamespaceCount(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 999_999) {
+    return value;
+  }
+  const normalized = String(value ?? "").trim();
+  if (normalized && /^\d+$/.test(normalized)) {
+    const parsed = Number(normalized);
+    if (Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 999_999) {
+      return parsed;
+    }
+  }
+  return fallback;
+}
+
+function normalizeNamespaceIsolationDefaults(
+  value: GitHubNamespaceIsolationDefaults | null | undefined,
+): GitHubNamespaceIsolationDefaults {
+  const defaults = DEFAULT_NAMESPACE_ISOLATION_DEFAULTS;
+  const source = value || defaults;
+  return {
+    resource_quota: {
+      enabled: Boolean(source.resource_quota?.enabled),
+      requests_cpu: (source.resource_quota?.requests_cpu || defaults.resource_quota.requests_cpu).trim(),
+      requests_memory: (source.resource_quota?.requests_memory || defaults.resource_quota.requests_memory).trim(),
+      limits_cpu: (source.resource_quota?.limits_cpu || defaults.resource_quota.limits_cpu).trim(),
+      limits_memory: (source.resource_quota?.limits_memory || defaults.resource_quota.limits_memory).trim(),
+      pods: normalizeNamespaceCount(source.resource_quota?.pods, defaults.resource_quota.pods),
+      services: normalizeNamespaceCount(source.resource_quota?.services, defaults.resource_quota.services),
+      configmaps: normalizeNamespaceCount(source.resource_quota?.configmaps, defaults.resource_quota.configmaps),
+      secrets: normalizeNamespaceCount(source.resource_quota?.secrets, defaults.resource_quota.secrets),
+      persistentvolumeclaims: normalizeNamespaceCount(
+        source.resource_quota?.persistentvolumeclaims,
+        defaults.resource_quota.persistentvolumeclaims,
+      ),
+    },
+    limit_range: {
+      enabled: Boolean(source.limit_range?.enabled),
+      default_cpu: (source.limit_range?.default_cpu || defaults.limit_range.default_cpu).trim(),
+      default_memory: (source.limit_range?.default_memory || defaults.limit_range.default_memory).trim(),
+      default_request_cpu: (
+        source.limit_range?.default_request_cpu || defaults.limit_range.default_request_cpu
+      ).trim(),
+      default_request_memory: (
+        source.limit_range?.default_request_memory || defaults.limit_range.default_request_memory
+      ).trim(),
+      min_cpu: (source.limit_range?.min_cpu || defaults.limit_range.min_cpu).trim(),
+      min_memory: (source.limit_range?.min_memory || defaults.limit_range.min_memory).trim(),
+      max_cpu: (source.limit_range?.max_cpu || defaults.limit_range.max_cpu).trim(),
+      max_memory: (source.limit_range?.max_memory || defaults.limit_range.max_memory).trim(),
+    },
+    network_policy: {
+      enabled: Boolean(source.network_policy?.enabled),
+      mode: (
+        source.network_policy?.mode ||
+        defaults.network_policy.mode
+      ).trim().toLowerCase(),
+    },
+  };
+}
+
+function validateNamespaceIsolationDefaults(defaults: GitHubNamespaceIsolationDefaults): string[] {
+  const errors: string[] = [];
+  const normalized = normalizeNamespaceIsolationDefaults(defaults);
+
+  if (normalized.resource_quota.enabled) {
+    if (!GITHUB_NAMESPACE_CPU_PATTERN.test(normalized.resource_quota.requests_cpu)) {
+      errors.push("ResourceQuota requests CPU is invalid (for example: 500m or 1).");
+    }
+    if (!GITHUB_NAMESPACE_MEMORY_PATTERN.test(normalized.resource_quota.requests_memory)) {
+      errors.push("ResourceQuota requests memory is invalid (for example: 512Mi or 1Gi).");
+    }
+    if (!GITHUB_NAMESPACE_CPU_PATTERN.test(normalized.resource_quota.limits_cpu)) {
+      errors.push("ResourceQuota limits CPU is invalid (for example: 2000m or 2).");
+    }
+    if (!GITHUB_NAMESPACE_MEMORY_PATTERN.test(normalized.resource_quota.limits_memory)) {
+      errors.push("ResourceQuota limits memory is invalid (for example: 2Gi).");
+    }
+    ([
+      ["pods", normalized.resource_quota.pods],
+      ["services", normalized.resource_quota.services],
+      ["configmaps", normalized.resource_quota.configmaps],
+      ["secrets", normalized.resource_quota.secrets],
+      ["persistentvolumeclaims", normalized.resource_quota.persistentvolumeclaims],
+    ] as const).forEach(([label, count]) => {
+      if (!GITHUB_NAMESPACE_COUNT_PATTERN.test(String(count))) {
+        errors.push(`ResourceQuota ${label} must be between 0 and 999999.`);
+      }
+    });
+  }
+
+  if (normalized.limit_range.enabled) {
+    ([
+      ["default CPU", normalized.limit_range.default_cpu],
+      ["default request CPU", normalized.limit_range.default_request_cpu],
+      ["min CPU", normalized.limit_range.min_cpu],
+      ["max CPU", normalized.limit_range.max_cpu],
+    ] as const).forEach(([label, value]) => {
+      if (!GITHUB_NAMESPACE_CPU_PATTERN.test(value)) {
+        errors.push(`LimitRange ${label} is invalid (for example: 500m or 1).`);
+      }
+    });
+    ([
+      ["default memory", normalized.limit_range.default_memory],
+      ["default request memory", normalized.limit_range.default_request_memory],
+      ["min memory", normalized.limit_range.min_memory],
+      ["max memory", normalized.limit_range.max_memory],
+    ] as const).forEach(([label, value]) => {
+      if (!GITHUB_NAMESPACE_MEMORY_PATTERN.test(value)) {
+        errors.push(`LimitRange ${label} is invalid (for example: 512Mi or 1Gi).`);
+      }
+    });
+  }
+
+  if (normalized.network_policy.enabled) {
+    if (
+      !GITHUB_NETWORK_POLICY_MODE_OPTIONS.includes(
+        normalized.network_policy.mode as (typeof GITHUB_NETWORK_POLICY_MODE_OPTIONS)[number],
+      )
+    ) {
+      errors.push("NetworkPolicy mode is invalid for platform-managed defaults.");
+    }
+  }
+
+  return errors;
+}
+
 function validateGitHubPublishConfigInputs({
   ownerInput,
   defaultBranchInput,
   basePathInput,
   deployWorkflowModeInput,
   targetEnvironmentKeyInput,
+  namespaceIsolationDefaults,
   enabled,
 }: {
   ownerInput: string;
@@ -630,6 +795,7 @@ function validateGitHubPublishConfigInputs({
   basePathInput: string;
   deployWorkflowModeInput: string;
   targetEnvironmentKeyInput: string;
+  namespaceIsolationDefaults: GitHubNamespaceIsolationDefaults;
   enabled: boolean;
 }): GitHubPublishConfigValidationResult {
   const owner = ownerInput.trim();
@@ -646,6 +812,7 @@ function validateGitHubPublishConfigInputs({
   let deployWorkflowModeError: string | null = null;
   let targetEnvironmentKeyError: string | null = null;
   let basePathWarning: string | null = null;
+  const namespaceIsolationErrors = validateNamespaceIsolationDefaults(namespaceIsolationDefaults);
 
   if (enabled && !owner) {
     ownerError = "GitHub owner is required when GitHub publishing is enabled.";
@@ -689,6 +856,7 @@ function validateGitHubPublishConfigInputs({
     basePathError ||
     deployWorkflowModeError ||
     targetEnvironmentKeyError ||
+    namespaceIsolationErrors[0] ||
     null;
   return {
     owner,
@@ -702,6 +870,7 @@ function validateGitHubPublishConfigInputs({
     deployWorkflowModeError,
     targetEnvironmentKeyError,
     basePathWarning,
+    namespaceIsolationErrors,
     blockingError,
   };
 }
@@ -741,6 +910,7 @@ function applyGitHubPublishConfigInputs(
     setBasePath: (value: string) => void;
     setDeployWorkflowMode: (value: string) => void;
     setTargetEnvironmentKey: (value: string) => void;
+    setNamespaceIsolationDefaults: (value: GitHubNamespaceIsolationDefaults) => void;
     setEnabled: (value: boolean) => void;
   },
 ): void {
@@ -749,6 +919,7 @@ function applyGitHubPublishConfigInputs(
   setters.setBasePath(config.base_path || "/");
   setters.setDeployWorkflowMode(config.deploy_workflow_mode || "site_repo_template_v1");
   setters.setTargetEnvironmentKey(config.target_environment_key || "gke_prod");
+  setters.setNamespaceIsolationDefaults(normalizeNamespaceIsolationDefaults(config.namespace_isolation_defaults));
   setters.setEnabled(Boolean(config.enabled));
 }
 
@@ -837,6 +1008,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [githubPublishTargetEnvironmentKeyInput, setGitHubPublishTargetEnvironmentKeyInput] = useState(
     "gke_prod",
   );
+  const [githubNamespaceIsolationDefaults, setGitHubNamespaceIsolationDefaults] = useState<GitHubNamespaceIsolationDefaults>(
+    DEFAULT_NAMESPACE_ISOLATION_DEFAULTS,
+  );
   const [githubPublishEnabled, setGitHubPublishEnabled] = useState(false);
   const [githubPublishConfigLoading, setGitHubPublishConfigLoading] = useState(false);
   const [githubPublishConfigSubmitting, setGitHubPublishConfigSubmitting] = useState(false);
@@ -873,17 +1047,19 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         basePathInput: githubPublishBasePathInput,
         deployWorkflowModeInput: githubPublishDeployWorkflowModeInput,
         targetEnvironmentKeyInput: githubPublishTargetEnvironmentKeyInput,
+        namespaceIsolationDefaults: githubNamespaceIsolationDefaults,
         enabled: githubPublishEnabled,
       }),
-    [
-      githubPublishBasePathInput,
-      githubPublishDeployWorkflowModeInput,
-      githubPublishDefaultBranchInput,
-      githubPublishEnabled,
-      githubPublishOwnerInput,
-      githubPublishTargetEnvironmentKeyInput,
-    ],
-  );
+      [
+        githubPublishBasePathInput,
+        githubPublishDeployWorkflowModeInput,
+        githubPublishDefaultBranchInput,
+        githubPublishEnabled,
+        githubNamespaceIsolationDefaults,
+        githubPublishOwnerInput,
+        githubPublishTargetEnvironmentKeyInput,
+      ],
+    );
   const githubPublishPreviewOwner = githubPublishValidation.owner || "Not configured";
 
   const loadUsersData = useCallback(async (): Promise<AdminPageLoadResult> => {
@@ -1041,6 +1217,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             setBasePath: setGitHubPublishBasePathInput,
             setDeployWorkflowMode: setGitHubPublishDeployWorkflowModeInput,
             setTargetEnvironmentKey: setGitHubPublishTargetEnvironmentKeyInput,
+            setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
             setEnabled: setGitHubPublishEnabled,
           });
         } else {
@@ -1415,6 +1592,45 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     }
   };
 
+  const updateNamespaceResourceQuota = <K extends keyof GitHubNamespaceResourceQuotaDefaults>(
+    key: K,
+    value: GitHubNamespaceResourceQuotaDefaults[K],
+  ) => {
+    setGitHubNamespaceIsolationDefaults((current) => ({
+      ...current,
+      resource_quota: {
+        ...current.resource_quota,
+        [key]: value,
+      },
+    }));
+  };
+
+  const updateNamespaceLimitRange = <K extends keyof GitHubNamespaceLimitRangeDefaults>(
+    key: K,
+    value: GitHubNamespaceLimitRangeDefaults[K],
+  ) => {
+    setGitHubNamespaceIsolationDefaults((current) => ({
+      ...current,
+      limit_range: {
+        ...current.limit_range,
+        [key]: value,
+      },
+    }));
+  };
+
+  const updateNamespaceNetworkPolicy = <K extends keyof GitHubNamespaceNetworkPolicyDefaults>(
+    key: K,
+    value: GitHubNamespaceNetworkPolicyDefaults[K],
+  ) => {
+    setGitHubNamespaceIsolationDefaults((current) => ({
+      ...current,
+      network_policy: {
+        ...current.network_policy,
+        [key]: value,
+      },
+    }));
+  };
+
   const handleSaveGitHubPublishConfig = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setGitHubPublishConfigMessage(null);
@@ -1426,6 +1642,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       basePathInput: githubPublishBasePathInput,
       deployWorkflowModeInput: githubPublishDeployWorkflowModeInput,
       targetEnvironmentKeyInput: githubPublishTargetEnvironmentKeyInput,
+      namespaceIsolationDefaults: githubNamespaceIsolationDefaults,
       enabled: githubPublishEnabled,
     });
     if (validation.blockingError) {
@@ -1441,6 +1658,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         base_path: validation.basePath,
         deploy_workflow_mode: validation.deployWorkflowMode,
         target_environment_key: validation.targetEnvironmentKey,
+        namespace_isolation_defaults: normalizeNamespaceIsolationDefaults(githubNamespaceIsolationDefaults),
         enabled: githubPublishEnabled,
       });
       applyGitHubPublishConfigInputs(updated, {
@@ -1449,6 +1667,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         setBasePath: setGitHubPublishBasePathInput,
         setDeployWorkflowMode: setGitHubPublishDeployWorkflowModeInput,
         setTargetEnvironmentKey: setGitHubPublishTargetEnvironmentKeyInput,
+        setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
         setEnabled: setGitHubPublishEnabled,
       });
       setGitHubPublishConfigMessage("GitHub publish configuration updated.");
@@ -2439,6 +2658,276 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               <p className="hint error">{githubPublishValidation.targetEnvironmentKeyError}</p>
             ) : null}
 
+            <div className="panel panel-compact stack-tight">
+              <strong>Namespace ResourceQuota defaults</strong>
+              <label htmlFor="github-publish-resource-quota-enabled" className="checkbox-chip">
+                <input
+                  id="github-publish-resource-quota-enabled"
+                  type="checkbox"
+                  checked={githubNamespaceIsolationDefaults.resource_quota.enabled}
+                  onChange={(event) => updateNamespaceResourceQuota("enabled", event.target.checked)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                />
+                Enable ResourceQuota for managed site namespaces
+              </label>
+              <div className="grid grid-2">
+                <label htmlFor="github-publish-resource-quota-requests-cpu" className="stack-tight">
+                  <span className="hint muted">Requests CPU</span>
+                  <input
+                    id="github-publish-resource-quota-requests-cpu"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.resource_quota.requests_cpu}
+                    onChange={(event) => updateNamespaceResourceQuota("requests_cpu", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-resource-quota-requests-memory" className="stack-tight">
+                  <span className="hint muted">Requests Memory</span>
+                  <input
+                    id="github-publish-resource-quota-requests-memory"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.resource_quota.requests_memory}
+                    onChange={(event) => updateNamespaceResourceQuota("requests_memory", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-resource-quota-limits-cpu" className="stack-tight">
+                  <span className="hint muted">Limits CPU</span>
+                  <input
+                    id="github-publish-resource-quota-limits-cpu"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.resource_quota.limits_cpu}
+                    onChange={(event) => updateNamespaceResourceQuota("limits_cpu", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-resource-quota-limits-memory" className="stack-tight">
+                  <span className="hint muted">Limits Memory</span>
+                  <input
+                    id="github-publish-resource-quota-limits-memory"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.resource_quota.limits_memory}
+                    onChange={(event) => updateNamespaceResourceQuota("limits_memory", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+              </div>
+              <div className="grid grid-2">
+                <label htmlFor="github-publish-resource-quota-pods" className="stack-tight">
+                  <span className="hint muted">Pods</span>
+                  <input
+                    id="github-publish-resource-quota-pods"
+                    type="number"
+                    min={0}
+                    max={999999}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.resource_quota.pods}
+                    onChange={(event) =>
+                      updateNamespaceResourceQuota(
+                        "pods",
+                        Number.parseInt(event.target.value, 10) || 0,
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-resource-quota-services" className="stack-tight">
+                  <span className="hint muted">Services</span>
+                  <input
+                    id="github-publish-resource-quota-services"
+                    type="number"
+                    min={0}
+                    max={999999}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.resource_quota.services}
+                    onChange={(event) =>
+                      updateNamespaceResourceQuota(
+                        "services",
+                        Number.parseInt(event.target.value, 10) || 0,
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-resource-quota-configmaps" className="stack-tight">
+                  <span className="hint muted">ConfigMaps</span>
+                  <input
+                    id="github-publish-resource-quota-configmaps"
+                    type="number"
+                    min={0}
+                    max={999999}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.resource_quota.configmaps}
+                    onChange={(event) =>
+                      updateNamespaceResourceQuota(
+                        "configmaps",
+                        Number.parseInt(event.target.value, 10) || 0,
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-resource-quota-secrets" className="stack-tight">
+                  <span className="hint muted">Secrets</span>
+                  <input
+                    id="github-publish-resource-quota-secrets"
+                    type="number"
+                    min={0}
+                    max={999999}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.resource_quota.secrets}
+                    onChange={(event) =>
+                      updateNamespaceResourceQuota(
+                        "secrets",
+                        Number.parseInt(event.target.value, 10) || 0,
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-resource-quota-pvcs" className="stack-tight">
+                  <span className="hint muted">PersistentVolumeClaims</span>
+                  <input
+                    id="github-publish-resource-quota-pvcs"
+                    type="number"
+                    min={0}
+                    max={999999}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.resource_quota.persistentvolumeclaims}
+                    onChange={(event) =>
+                      updateNamespaceResourceQuota(
+                        "persistentvolumeclaims",
+                        Number.parseInt(event.target.value, 10) || 0,
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="panel panel-compact stack-tight">
+              <strong>Namespace LimitRange defaults</strong>
+              <label htmlFor="github-publish-limit-range-enabled" className="checkbox-chip">
+                <input
+                  id="github-publish-limit-range-enabled"
+                  type="checkbox"
+                  checked={githubNamespaceIsolationDefaults.limit_range.enabled}
+                  onChange={(event) => updateNamespaceLimitRange("enabled", event.target.checked)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                />
+                Enable LimitRange for managed site namespaces
+              </label>
+              <div className="grid grid-2">
+                <label htmlFor="github-publish-limit-range-default-cpu" className="stack-tight">
+                  <span className="hint muted">Default CPU</span>
+                  <input
+                    id="github-publish-limit-range-default-cpu"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.limit_range.default_cpu}
+                    onChange={(event) => updateNamespaceLimitRange("default_cpu", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-limit-range-default-memory" className="stack-tight">
+                  <span className="hint muted">Default Memory</span>
+                  <input
+                    id="github-publish-limit-range-default-memory"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.limit_range.default_memory}
+                    onChange={(event) => updateNamespaceLimitRange("default_memory", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-limit-range-default-request-cpu" className="stack-tight">
+                  <span className="hint muted">Default request CPU</span>
+                  <input
+                    id="github-publish-limit-range-default-request-cpu"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.limit_range.default_request_cpu}
+                    onChange={(event) => updateNamespaceLimitRange("default_request_cpu", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-limit-range-default-request-memory" className="stack-tight">
+                  <span className="hint muted">Default request memory</span>
+                  <input
+                    id="github-publish-limit-range-default-request-memory"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.limit_range.default_request_memory}
+                    onChange={(event) => updateNamespaceLimitRange("default_request_memory", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-limit-range-min-cpu" className="stack-tight">
+                  <span className="hint muted">Min CPU</span>
+                  <input
+                    id="github-publish-limit-range-min-cpu"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.limit_range.min_cpu}
+                    onChange={(event) => updateNamespaceLimitRange("min_cpu", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-limit-range-min-memory" className="stack-tight">
+                  <span className="hint muted">Min Memory</span>
+                  <input
+                    id="github-publish-limit-range-min-memory"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.limit_range.min_memory}
+                    onChange={(event) => updateNamespaceLimitRange("min_memory", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-limit-range-max-cpu" className="stack-tight">
+                  <span className="hint muted">Max CPU</span>
+                  <input
+                    id="github-publish-limit-range-max-cpu"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.limit_range.max_cpu}
+                    onChange={(event) => updateNamespaceLimitRange("max_cpu", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-limit-range-max-memory" className="stack-tight">
+                  <span className="hint muted">Max Memory</span>
+                  <input
+                    id="github-publish-limit-range-max-memory"
+                    type="text"
+                    value={githubNamespaceIsolationDefaults.limit_range.max_memory}
+                    onChange={(event) => updateNamespaceLimitRange("max_memory", event.target.value)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="panel panel-compact stack-tight">
+              <strong>Namespace NetworkPolicy defaults</strong>
+              <label htmlFor="github-publish-network-policy-enabled" className="checkbox-chip">
+                <input
+                  id="github-publish-network-policy-enabled"
+                  type="checkbox"
+                  checked={githubNamespaceIsolationDefaults.network_policy.enabled}
+                  onChange={(event) => updateNamespaceNetworkPolicy("enabled", event.target.checked)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                />
+                Enable managed NetworkPolicy scaffold
+              </label>
+              <label htmlFor="github-publish-network-policy-mode">Policy mode</label>
+              <select
+                id="github-publish-network-policy-mode"
+                value={githubNamespaceIsolationDefaults.network_policy.mode}
+                onChange={(event) => updateNamespaceNetworkPolicy("mode", event.target.value)}
+                disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              >
+                <option value="default_deny_ingress">default_deny_ingress</option>
+              </select>
+              <p className="hint muted">
+                Keep disabled until cluster ingress/egress expectations are validated for this environment.
+              </p>
+            </div>
+
             <label htmlFor="github-publish-enabled" className="checkbox-chip">
               <input
                 id="github-publish-enabled"
@@ -2475,6 +2964,18 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 <WorkspaceMetadataItem label="Target environment source">
                   <code>admin_config</code>
                 </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="ResourceQuota default">
+                  <span>{githubNamespaceIsolationDefaults.resource_quota.enabled ? "Enabled" : "Disabled"}</span>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="LimitRange default">
+                  <span>{githubNamespaceIsolationDefaults.limit_range.enabled ? "Enabled" : "Disabled"}</span>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="NetworkPolicy default">
+                  <span>{githubNamespaceIsolationDefaults.network_policy.enabled ? "Enabled" : "Disabled"}</span>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="NetworkPolicy mode">
+                  <code>{githubNamespaceIsolationDefaults.network_policy.mode}</code>
+                </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Enabled">
                   <span>{githubPublishEnabled ? "Yes" : "No"}</span>
                 </WorkspaceMetadataItem>
@@ -2496,6 +2997,15 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             </div>
             {githubPublishValidation.blockingError ? (
               <p className="hint warning">Resolve validation issues above before saving.</p>
+            ) : null}
+            {githubPublishValidation.namespaceIsolationErrors.length > 0 ? (
+              <ul className="compact-list">
+                {githubPublishValidation.namespaceIsolationErrors.map((error) => (
+                  <li key={error} className="hint error">
+                    {error}
+                  </li>
+                ))}
+              </ul>
             ) : null}
             {githubPublishConfigLoading ? <p className="hint muted">Loading GitHub publish configuration...</p> : null}
             {githubPublishConfigMessage ? <p className="hint">{githubPublishConfigMessage}</p> : null}
