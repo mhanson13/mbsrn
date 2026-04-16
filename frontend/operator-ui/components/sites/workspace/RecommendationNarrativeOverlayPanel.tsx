@@ -124,6 +124,32 @@ interface RecommendationNarrativeOverlayPanelProps {
   formatSignedDelta: (value: number) => string;
 }
 
+function formatAIDiagnosticsSecondarySummary(summary: AIDiagnosticsSummary): string | null {
+  const parts: string[] = [];
+  if (summary.failure_source) {
+    parts.push(`source ${summary.failure_source.replace(/_/g, " ")}`);
+  }
+  if (summary.budget_outcome) {
+    parts.push(`budget ${summary.budget_outcome.replace(/_/g, " ")}`);
+  }
+  if (typeof summary.retry_suppressed === "boolean") {
+    parts.push(`retry suppressed ${summary.retry_suppressed ? "yes" : "no"}`);
+  }
+  if (typeof summary.trimming_pass_count === "number") {
+    parts.push(`trim passes ${summary.trimming_pass_count}`);
+  }
+  if (summary.difficulty_bucket) {
+    parts.push(`difficulty ${summary.difficulty_bucket.replace(/_/g, " ")}`);
+  }
+  if (summary.input_size_bucket) {
+    parts.push(`input ${summary.input_size_bucket.replace(/_/g, " ")}`);
+  }
+  if (summary.degraded_state) {
+    parts.push(`state ${summary.degraded_state.replace(/_/g, " ")}`);
+  }
+  return parts.length > 0 ? parts.join("; ") : null;
+}
+
 export function RecommendationNarrativeOverlayPanel({
   promptPreviewContent,
   latestCompletedRecommendationNarrative,
@@ -169,6 +195,10 @@ export function RecommendationNarrativeOverlayPanel({
   formatTuningSettingLabel,
   formatSignedDelta,
 }: RecommendationNarrativeOverlayPanelProps): JSX.Element {
+  const narrativeAIDiagnosticsSecondarySummary = narrativeAIDiagnosticsSummary
+    ? formatAIDiagnosticsSecondarySummary(narrativeAIDiagnosticsSummary)
+    : null;
+
   return (
     <>
       <h4>AI Narrative Overlay</h4>
@@ -209,6 +239,11 @@ export function RecommendationNarrativeOverlayPanel({
               {typeof narrativeAIDiagnosticsSummary.retryable === "boolean"
                 ? ` (retryable: ${narrativeAIDiagnosticsSummary.retryable ? "yes" : "no"})`
                 : ""}
+            </p>
+          ) : null}
+          {narrativeAIDiagnosticsSecondarySummary ? (
+            <p className="hint muted" data-testid="recommendation-ai-diagnostics-secondary-summary">
+              <strong>AI execution:</strong> {narrativeAIDiagnosticsSecondarySummary}
             </p>
           ) : null}
           {narrativeActionSummary ? (

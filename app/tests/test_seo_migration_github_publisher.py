@@ -383,7 +383,7 @@ def test_check_deploy_target_readiness_marks_workflow_conformant_when_managed_co
     assert len(calls) == 4
 
 
-def test_check_deploy_target_readiness_preserves_placeholder_conformance_without_blocking_dispatch(monkeypatch) -> None:
+def test_check_deploy_target_readiness_blocks_placeholder_workflow_as_not_production_ready(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     encoded_workflow = _encode_workflow_yaml(
         (
@@ -426,18 +426,70 @@ def test_check_deploy_target_readiness_preserves_placeholder_conformance_without
         calls,
     )
     publisher = GitHubSEOMigrationPublisher(token="test-token")
-    readiness = publisher.check_deploy_target_readiness(
-        target=_dispatch_target(),
-        allow_ref_repair=False,
-        allow_workflow_repair=False,
-        dry_run=False,
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.check_deploy_target_readiness(
+            target=_dispatch_target(),
+            allow_ref_repair=False,
+            allow_workflow_repair=False,
+            dry_run=False,
+        )
+    assert exc_info.value.code == "workflow_not_production_ready"
+    assert exc_info.value.stage == "workflow_lookup"
+    assert len(calls) == 4
+
+
+def test_check_deploy_target_readiness_blocks_customize_before_rollout_placeholder_marker(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    encoded_workflow = _encode_workflow_yaml(
+        (
+            "name: Deploy Site\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Provisioned workflow notice\n"
+            '        run: echo "Deploy workflow (deploy-tnmfire-www-prod.yml) provisioned; customize before production rollout."\n'
+        )
     )
-    assert readiness.workflow_dispatch_ready is True
-    assert readiness.workflow_dispatch_supported is True
-    assert readiness.workflow_conformance_checked is True
-    assert readiness.workflow_conformance_status == "workflow_placeholder_detected"
-    assert readiness.workflow_conformance_reasons == ("placeholder_workflow_content_detected",)
-    assert "placeholder_markers" in str(readiness.workflow_conformance_evidence_summary or "")
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": "wfsha",
+                        "encoding": "base64",
+                        "content": encoded_workflow,
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.check_deploy_target_readiness(
+            target=_dispatch_target(),
+            allow_ref_repair=False,
+            allow_workflow_repair=False,
+            dry_run=False,
+        )
+    assert exc_info.value.code == "workflow_not_production_ready"
+    assert exc_info.value.stage == "workflow_lookup"
     assert len(calls) == 4
 
 

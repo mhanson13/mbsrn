@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.integrations.ai_execution_core import build_ai_diagnostics_summary
+from app.integrations.ai_execution_core import build_ai_diagnostics_summary, build_ai_failure_hint
 from app.integrations.seo_migration_artifact_provider import (
     MisconfiguredSEOMigrationArtifactGenerationProvider,
     SEOMigrationArtifactGenerationOutput,
@@ -187,6 +187,7 @@ _DEPLOY_TARGET_REASON_REF_INVALID = "branch_not_found_or_ref_invalid"
 _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED = "workflow_dispatch_not_supported"
 _DEPLOY_TARGET_REASON_TOKEN_UNAUTHORIZED = "token_not_authorized"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE = "workflow_not_dispatchable"
+_DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY = "workflow_not_production_ready"
 _DEPLOY_DISPATCH_SERVICE_REASON_AVAILABLE = "available"
 _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE = "runtime_unavailable"
 _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID = "target_configuration_invalid"
@@ -1829,6 +1830,7 @@ class SEOMigrationService:
                 if failure_stage == "workflow_lookup" and failure_reason_code in {
                     _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
                     _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
+                    _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
                 }:
                     # Workflow lookup completed against an existing workflow, but dispatch
                     # requirements were not met (for example non-dispatchable trigger/contract).
@@ -1860,6 +1862,14 @@ class SEOMigrationService:
                     if target_readiness is not None
                     else workflow_conformance_evidence_summary
                 )
+                if (
+                    failure_reason_code == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY
+                    and workflow_conformance_status is None
+                ):
+                    workflow_conformance_checked = True
+                    workflow_conformance_status = "workflow_placeholder_detected"
+                    if not workflow_conformance_reasons:
+                        workflow_conformance_reasons = ["placeholder_workflow_content_detected"]
                 dispatch_identifier_type = (
                     target_readiness.dispatch_identifier_type if target_readiness is not None else "workflow_id"
                 )
@@ -5898,21 +5908,11 @@ class SEOMigrationService:
         normalized_failure_reason: str | None,
     ) -> str | None:
         normalized_reason = _normalize_string(normalized_failure_reason, max_length=120)
-        normalized_category = _normalize_string(normalized_failure_category, max_length=80)
-        reason = _normalize_string(failure_reason, max_length=80)
-        if normalized_reason in {"request_too_large", "request_too_large_or_complex"}:
-            return "Input too large"
-        if normalized_category == "remote_timeout" or reason == "timeout":
-            return "Try again later"
-        if normalized_category in {"configuration_missing", "configuration_invalid"}:
-            return "Provider configuration required"
-        if normalized_category == "remote_invalid_response" or reason in {
-            "malformed_response",
-            "malformed_output",
-            "validation_failed",
-        }:
-            return "Provider returned invalid response"
-        return None
+        fallback_reason = _normalize_string(failure_reason, max_length=80)
+        return build_ai_failure_hint(
+            failure_category=_normalize_string(normalized_failure_category, max_length=80),
+            failure_reason=normalized_reason or fallback_reason,
+        )
 
     def _provider_model_fallback_name(self) -> str | None:
         runtime_provider_model = _normalize_string(getattr(self.artifact_provider, "model_name", None), max_length=128)
@@ -6984,6 +6984,7 @@ class SEOMigrationService:
                 if candidate_reason_code in {
                     _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
                     _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
+                    _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
                 }:
                     # Preserve higher-priority target truth when the workflow exists but is
                     # not dispatchable; do not silently fall through to lower-priority defaults.
@@ -7114,11 +7115,6 @@ class SEOMigrationService:
             deploy_state = "expected_after_deploy"
         elif resolved_live_url:
             deploy_state = "expected_after_deploy"
-
-        if not resolved_live_url and deployed_live and expected_publish_url:
-            resolved_live_url = expected_publish_url
-            resolved_live_url_source = expected_publish_url_source
-            resolved_live_url_source_detail = expected_publish_url_source_detail
 
         draft_preview_entry_path = self._derive_preview_entry_path(latest_artifact)
         draft_preview_state = "available" if draft_preview_entry_path else "unavailable"
@@ -7291,8 +7287,6 @@ class SEOMigrationService:
         if explicit_live_url:
             return explicit_live_url, _MIGRATION_URL_SOURCE_DEPLOY_RESULT, "deploy_result:live_url"
 
-        if expected_publish_url:
-            return expected_publish_url, expected_publish_url_source, expected_publish_url_source_detail
         return None, _MIGRATION_URL_SOURCE_UNKNOWN, None
 
     def _resolve_latest_deploy_live_url(
@@ -7473,6 +7467,7 @@ class SEOMigrationService:
             _DEPLOY_TARGET_REASON_REF_INVALID,
             _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
+            _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
         }:
             return "target_invalid"
         if action == "deploy":
@@ -8674,6 +8669,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
         _DEPLOY_TARGET_REASON_TOKEN_UNAUTHORIZED,
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
+        _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
         "github_target_not_found",
         "github_request_failed",
         "github_temporal_failure",
@@ -8987,6 +8983,7 @@ def _derive_dispatch_service_reason_code(
     if normalized_failure_reason in {
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
         _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
+        _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
     }:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID
     if normalized_failure_stage in {"repo_lookup", "ref_lookup", "workflow_lookup"}:
@@ -9012,6 +9009,11 @@ def _derive_deploy_failure_remediation_hint(
         and workflow_exists_bool is True
     ):
         return "Selected workflow exists but is not dispatchable for this deploy target."
+    if normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY:
+        return (
+            "Selected workflow is scaffold-only and not production-ready. "
+            "Replace it with a deploy-capable workflow that emits explicit deploy evidence."
+        )
     if normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND and normalized_stage == "workflow_lookup":
         return "Selected workflow file could not be found in the target repository/ref."
     if normalized_reason == _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED:

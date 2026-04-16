@@ -33,7 +33,7 @@ from app.api.deps import (
     get_tenant_context,
     resolve_tenant_business_id,
 )
-from app.integrations.ai_execution_core import build_ai_diagnostics_summary
+from app.integrations.ai_execution_core import build_ai_diagnostics_summary, build_ai_failure_hint
 from app.models.principal import Principal, PrincipalRole
 from app.models.seo_audit_page import SEOAuditPage
 from app.models.seo_competitor_tuning_preview_event import SEOCompetitorTuningPreviewEvent
@@ -5114,17 +5114,10 @@ def _derive_competitor_ai_diagnostics_summary(
     if retryable_value is None and normalized_failure_category in {"remote_timeout", "remote_rate_limited"}:
         retryable_value = True
 
-    hint: str | None = None
-    if normalized_failure_reason in {"request_too_large", "request_too_large_or_complex"}:
-        hint = "Input too large"
-    elif normalized_failure_category == "remote_timeout":
-        hint = "Provider timeout"
-    elif normalized_failure_category in {"configuration_missing", "configuration_invalid"}:
-        hint = "Configuration issue"
-    elif normalized_failure_category == "remote_invalid_response":
-        hint = "Invalid provider response"
-    elif normalized_failure_category == "remote_unavailable":
-        hint = "Try again later"
+    hint = build_ai_failure_hint(
+        failure_category=normalized_failure_category,
+        failure_reason=normalized_failure_reason,
+    )
 
     prompt_total_chars = latest_attempt_payload.get("prompt_total_chars")
     prompt_chars_value = (

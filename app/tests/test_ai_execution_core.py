@@ -12,6 +12,7 @@ from app.integrations.ai_execution_core import (
     AIExecutionPolicy,
     apply_request_budget,
     build_ai_diagnostics_summary,
+    build_ai_failure_hint,
     execute_json_request,
     normalize_provider_failure,
 )
@@ -303,3 +304,27 @@ def test_build_ai_diagnostics_summary_marks_retry_suppressed_timeouts() -> None:
 
     assert summary["budget_outcome"] == "retry_suppressed"
     assert summary["retry_suppressed"] is True
+
+
+@pytest.mark.parametrize(
+    ("failure_category", "failure_reason", "expected_hint"),
+    [
+        ("local_validation_failure", "request_too_large_or_complex", "Input too large"),
+        ("remote_timeout", "provider_timeout", "Provider timeout"),
+        ("configuration_invalid", "provider_auth_or_configuration_invalid", "Configuration issue"),
+        ("remote_invalid_response", "provider_invalid_response", "Invalid provider response"),
+        ("remote_unavailable", "provider_transport_error", "Try again later"),
+    ],
+)
+def test_build_ai_failure_hint_maps_shared_operator_wording(
+    failure_category: str,
+    failure_reason: str,
+    expected_hint: str,
+) -> None:
+    assert (
+        build_ai_failure_hint(
+            failure_category=failure_category,
+            failure_reason=failure_reason,
+        )
+        == expected_hint
+    )

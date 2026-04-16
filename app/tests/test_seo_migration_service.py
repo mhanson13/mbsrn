@@ -52,6 +52,20 @@ from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_ingest import SEOMigrationSourceIngestService
 from app.services.github_publish_config import GitHubPublishConfigService
 
+_AI_DIAGNOSTICS_SUMMARY_KEYS = {
+    "failure_category",
+    "failure_reason",
+    "failure_source",
+    "retryable",
+    "hint",
+    "budget_outcome",
+    "retry_suppressed",
+    "trimming_pass_count",
+    "difficulty_bucket",
+    "input_size_bucket",
+    "degraded_state",
+}
+
 
 class _StaticMigrationProvider(SEOMigrationArtifactGenerationProvider):
     def __init__(self, output: SEOMigrationArtifactGenerationOutput) -> None:
@@ -158,6 +172,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         readiness_workflow_conformance_evidence_summary: str | None = "managed_contract_markers_present",
         available_workflow_paths: set[str] | None = None,
         non_dispatchable_workflow_paths: set[str] | None = None,
+        non_production_ready_workflow_paths: set[str] | None = None,
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
@@ -196,6 +211,11 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.non_dispatchable_workflow_paths = (
             {str(item).strip() for item in non_dispatchable_workflow_paths if str(item).strip()}
             if non_dispatchable_workflow_paths is not None
+            else set()
+        )
+        self.non_production_ready_workflow_paths = (
+            {str(item).strip() for item in non_production_ready_workflow_paths if str(item).strip()}
+            if non_production_ready_workflow_paths is not None
             else set()
         )
         self.publish_calls: list[
@@ -359,6 +379,12 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             raise SEOMigrationGitHubPublisherError(
                 code="workflow_not_dispatchable",
                 safe_message="GitHub workflow is not dispatchable for the deploy target.",
+                stage="workflow_lookup",
+            )
+        if workflow_path in self.non_production_ready_workflow_paths:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_not_production_ready",
+                safe_message="GitHub workflow target is scaffold-only and not production-ready for deploy execution.",
                 stage="workflow_lookup",
             )
         dispatch_identifier_type = self.readiness_dispatch_identifier_type or (
@@ -1823,14 +1849,15 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
     assert migration_diagnostics.get("last_failure_normalized_source") == "remote_provider"
     assert migration_diagnostics.get("last_failure_normalized_retryable") is True
     assert migration_diagnostics.get("last_failure_provider_attempt_count") == 2
-    assert migration_diagnostics.get("last_draft_failure_hint") == "Try again later"
+    assert migration_diagnostics.get("last_draft_failure_hint") == "Provider timeout"
     draft_ai_summary = migration_diagnostics.get("last_draft_ai_diagnostics_summary")
     assert isinstance(draft_ai_summary, dict)
+    assert set(draft_ai_summary.keys()) == _AI_DIAGNOSTICS_SUMMARY_KEYS
     assert draft_ai_summary.get("failure_category") == "remote_timeout"
     assert draft_ai_summary.get("failure_reason") == "provider_timeout"
     assert draft_ai_summary.get("failure_source") == "remote_provider"
     assert draft_ai_summary.get("retryable") is True
-    assert draft_ai_summary.get("hint") == "Try again later"
+    assert draft_ai_summary.get("hint") == "Provider timeout"
     assert migration_diagnostics.get("draft_timeout_seconds") == 120
     assert migration_diagnostics.get("draft_timeout_source") == "default"
     assert migration_diagnostics.get("last_draft_failure_model_requested") is None
@@ -1898,6 +1925,7 @@ def test_generate_artifacts_request_too_large_persists_non_retryable_hint(db_ses
     assert migration_diagnostics.get("last_draft_failure_hint") == "Input too large"
     draft_ai_summary = migration_diagnostics.get("last_draft_ai_diagnostics_summary")
     assert isinstance(draft_ai_summary, dict)
+    assert set(draft_ai_summary.keys()) == _AI_DIAGNOSTICS_SUMMARY_KEYS
     assert draft_ai_summary.get("failure_category") == "local_validation_failure"
     assert draft_ai_summary.get("failure_reason") == "request_too_large_or_complex"
     assert draft_ai_summary.get("failure_source") == "local_validation"
@@ -2534,7 +2562,7 @@ def test_deploy_records_resolved_live_url_from_deploy_result(db_session) -> None
     assert deploy_destination.get("resolved_live_url") == "https://live.tnmfire.com"
 
 
-def test_deploy_falls_back_to_expected_publish_url_when_live_url_not_returned(db_session) -> None:
+def test_deploy_does_not_confirm_live_url_without_explicit_deploy_evidence(db_session) -> None:
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
         db_session,
@@ -2584,16 +2612,22 @@ def test_deploy_falls_back_to_expected_publish_url_when_live_url_not_returned(db
         dry_run=False,
         principal_id="principal-1",
     )
-    assert deploy_result.result.get("resolved_live_url") == "https://www.tnmfire.com"
-    assert deploy_result.result.get("url_source") == "deterministic_target_config"
-    assert deploy_result.result.get("url_source_detail") == "deploy_input:site_url"
+    assert deploy_result.result.get("resolved_live_url") is None
+    assert deploy_result.result.get("url_source") == "unknown"
+    assert deploy_result.result.get("url_source_detail") is None
+    assert deploy_result.result.get("expected_publish_url") == "https://www.tnmfire.com"
+    assert deploy_result.result.get("deploy_evidence_contract_status") in {
+        "evidence_pending",
+        "workflow_succeeded_without_explicit_evidence",
+    }
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     destination = (summary.context_summary or {}).get("destination_summary") or {}
     deploy_destination = destination.get("deploy_destination") or {}
     assert deploy_destination.get("state") == "expected_after_deploy"
     assert deploy_destination.get("active_url") is None
-    assert deploy_destination.get("resolved_live_url") == "https://www.tnmfire.com"
+    assert deploy_destination.get("resolved_live_url") is None
+    assert deploy_destination.get("expected_publish_url") == "https://www.tnmfire.com"
 
 
 def test_deploy_records_resolved_live_url_from_workflow_output(db_session) -> None:
@@ -3015,8 +3049,9 @@ def test_deploy_completed_without_explicit_live_url_evidence_is_advisory(db_sess
     )
 
 
-def test_deploy_placeholder_workflow_sets_contract_advisory_without_blocking_dispatch(db_session) -> None:
+def test_deploy_placeholder_workflow_is_blocked_as_not_production_ready(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
+        non_production_ready_workflow_paths={".github/workflows/deploy-tnmfire-www-prod.yml"},
         readiness_workflow_conformance_status="workflow_placeholder_detected",
         readiness_workflow_conformance_reasons=("placeholder_workflow_content_detected",),
         readiness_workflow_conformance_evidence_summary="workflow_dispatch=true;placeholder_markers=placeholder",
@@ -3052,20 +3087,22 @@ def test_deploy_placeholder_workflow_sets_contract_advisory_without_blocking_dis
         principal_id="principal-1",
     )
 
-    deploy_result = service.deploy_artifact_version(
-        business_id=business_id,
-        site_id=site_id,
-        artifact_version_id=artifact.id,
-        dry_run=False,
-        principal_id="principal-1",
-    )
-    assert deploy_result.result.get("dispatch_attempted") is True
-    assert deploy_result.result.get("workflow_conformance_status") == "workflow_placeholder_detected"
-    assert deploy_result.result.get("deploy_evidence_contract_status") == "workflow_placeholder_advisory"
-    assert deploy_result.result.get("deploy_evidence_contract_reasons") == ["workflow_placeholder_detected"]
-    assert deploy_result.result.get("workflow_contract_advisory") == (
-        "Selected workflow appears placeholder/non-deploying and may not emit explicit deploy evidence."
-    )
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+    assert "scaffold-only and not production-ready" in str(exc_info.value)
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("last_failure_reason") == "workflow_not_production_ready"
+    assert deploy_readiness.get("last_failure_stage") == "workflow_lookup"
+    assert deploy_readiness.get("workflow_conformance_status") == "workflow_placeholder_detected"
+    assert deploy_readiness.get("last_deploy_evidence_contract_status") == "workflow_placeholder_advisory"
 
 
 def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output_url(db_session, caplog) -> None:

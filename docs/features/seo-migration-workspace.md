@@ -352,6 +352,12 @@ Operator-visible AI diagnostics summary:
   - `input_size_bucket`
   - `degraded_state`
 - this summary is intentionally bounded for operators/admins; full provider/request telemetry remains log-only.
+- shared hint semantics now align with recommendation/competitor surfaces:
+  - `Input too large`
+  - `Provider timeout`
+  - `Invalid provider response`
+  - `Configuration issue`
+  - `Try again later` (transport/rate-limit availability cases)
 
 Structured logging:
 - shared execution-core lifecycle emits:
@@ -393,6 +399,7 @@ Maintainer tuning guidance:
   - `_MIGRATION_REQUIRED_CONTEXT_KEYS`
   - `_MIGRATION_OPTIONAL_TRIM_ORDER`
 - change budget constants only with test updates that prove required context blocks remain retained and optional trim order stays deterministic.
+- tune budgets based on telemetry trends (`budget_outcome`, `retry_suppressed`, `difficulty_bucket`, `input_size_bucket`) rather than one-off failures.
   - `request_fingerprint_has_null_optional_fields`
   - `request_fingerprint_has_extra_request_options`
   - `request_fingerprint_contains_tools`
@@ -731,7 +738,7 @@ Publish behavior:
 - dry-run publish records history but does not overwrite prior successful publish commit metadata
 - workflow provisioning is idempotent: existing workflow files are never overwritten
 - auto-provisioned workflow uses a minimal `workflow_dispatch` placeholder job and is intended to be customized by platform teams.
-- auto-provisioned placeholder workflows are dispatchable by contract, but are not automatically equivalent to a production-ready GKE rollout workflow (platform teams must supply target-repo workflow logic + required GitHub/GCP secrets/variables).
+- auto-provisioned placeholder workflows are scaffold-only and now fail deploy readiness as `workflow_not_production_ready` until replaced with a real deploy-capable workflow contract.
 
 ### GitHub Publish Configuration (Admin)
 Migration publish now depends on an admin-managed GitHub target baseline:
@@ -954,6 +961,9 @@ Workflow conformance semantics:
 - `workflow_unreadable`: workflow file exists but content could not be decoded/read for conformance checks
 - `workflow_missing`: workflow payload was unavailable during conformance evaluation
 
+Deploy-failure reason additions:
+- `workflow_not_production_ready`: workflow identity resolved and trigger support exists, but workflow content still matches scaffold/placeholder deploy behavior.
+
 ## Target Repo Deploy Contract
 MBSRN now distinguishes control-plane success from target-repo deploy confirmation using an explicit deploy evidence contract.
 
@@ -1158,7 +1168,8 @@ Deploy failures:
   - `workflow_exists=false` means workflow bootstrap/repair did not verify on target ref
   - `workflow_dispatch_ready=false` means workflow metadata exists but is not dispatchable on target ref
   - `workflow_dispatch_supported=false` means trigger-level dispatch support is missing/invalid for the target ref
-  - `workflow_conformance_status=workflow_placeholder_detected` or `workflow_contract_incomplete` indicates managed-template quality warnings while trigger-level dispatch support is reported separately
+  - `workflow_conformance_status=workflow_placeholder_detected` now maps to deploy-stage blocker `workflow_not_production_ready` (scaffold workflow detected)
+  - `workflow_contract_incomplete` remains advisory quality signal unless other dispatch/readiness blockers are present
   - mismatched `requested_ref` vs `resolved_ref` indicates ref resolution drift
   - dispatch payload inputs are taken from explicit `deploy_config.inputs` only (no implicit auto-injected workflow inputs), keeping GitHub `workflow_dispatch` input contracts deterministic
 

@@ -116,6 +116,14 @@ Operator-visible AI diagnostics summary:
   - `degraded_state`
 - goal: quick triage (`Input too large`, `Provider timeout`, `Invalid provider response`, `Configuration issue`) without opening logs first.
 - deep request/transport traces stay log-only for admin/support runbook workflows.
+- hint semantics are shared with migration/competitor diagnostics so operator retry guidance has one meaning across all AI workflows.
+
+Production tuning prep:
+- monitor recommendation `feature_area="recommendation_ai"` for:
+  - `ai_execution_precall_rejected`
+  - `ai_execution_retry_suppressed`
+  - `budget_outcome` trends from `recommendation_narrative_request_budget`
+- prioritize adapter budget tuning when oversized/suppressed failures dominate; prioritize prompt/context quality improvements when invalid-response/validation failures dominate.
 
 ## Route-Level Action Cluster Consistency
 

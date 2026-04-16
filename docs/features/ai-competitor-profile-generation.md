@@ -133,6 +133,11 @@ Operator-visible AI diagnostics summary:
   - `input_size_bucket`
   - `degraded_state`
 - this is bounded triage context for operator/admin UI surfaces; raw provider payloads and deep execution traces remain log-only.
+- hint semantics are aligned with migration/recommendation diagnostics (`Input too large`, `Provider timeout`, `Invalid provider response`, `Configuration issue`, `Try again later`) so operator triage is consistent.
+
+Production tuning prep:
+- monitor competitor `feature_area="competitor_ai"` shared-core events for pre-call rejection and retry suppression.
+- correlate with `competitor_request_budget` `budget_outcome` and dropped optional-block trends before tuning `_COMPETITOR_MAX_TOTAL_INPUT_SIZE` or trim priorities.
 
 ## Architecture / Flow
 

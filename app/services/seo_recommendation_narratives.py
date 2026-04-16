@@ -10,7 +10,11 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.integrations.ai_execution_core import build_ai_diagnostics_summary, normalize_provider_failure
+from app.integrations.ai_execution_core import (
+    build_ai_diagnostics_summary,
+    build_ai_failure_hint,
+    normalize_provider_failure,
+)
 from app.integrations.seo_recommendation_narrative_provider import SEORecommendationNarrativeProviderError
 from app.integrations.seo_summary_provider import SEORecommendationNarrativeProvider
 from app.models.business import Business
@@ -696,17 +700,10 @@ class SEORecommendationNarrativeService:
         normalized_retryable = (
             error.normalized_retryable if isinstance(error.normalized_retryable, bool) else normalized_failure.retryable
         )
-        failure_hint: str | None
-        if normalized_failure_reason in {"request_too_large", "request_too_large_or_complex"}:
-            failure_hint = "Input too large"
-        elif normalized_failure_category == "remote_timeout":
-            failure_hint = "Try again later"
-        elif normalized_failure_category in {"configuration_missing", "configuration_invalid"}:
-            failure_hint = "Provider configuration required"
-        elif normalized_failure_category == "remote_invalid_response":
-            failure_hint = "Provider returned invalid response"
-        else:
-            failure_hint = None
+        failure_hint = build_ai_failure_hint(
+            failure_category=normalized_failure_category,
+            failure_reason=normalized_failure_reason,
+        )
         return {
             "failure_category": failure_category,
             "failure_reason": code,

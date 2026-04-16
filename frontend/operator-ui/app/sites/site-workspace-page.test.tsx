@@ -3488,6 +3488,9 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(within(outcomeSummary).getByTestId("competitor-ai-diagnostics-summary")).toHaveTextContent(
       "AI diagnostics: remote_timeout / provider_timeout — Provider timeout (retryable: yes)",
     );
+    expect(within(outcomeSummary).getByTestId("competitor-ai-diagnostics-secondary-summary")).toHaveTextContent(
+      "AI execution: source remote provider; budget trimmed provider submission; retry suppressed no; trim passes 1; difficulty medium; input medium; state degraded",
+    );
     expect(within(outcomeSummary).getByText(/Only 1 valid competitor remained after filtering\./i)).toHaveTextContent(
       "strict validation filtered weak candidates",
     );
@@ -4056,6 +4059,56 @@ describe("site workspace ai competitor profile drafts", () => {
     expect(summary).toHaveTextContent(
       "AI diagnostics: remote_timeout / provider_timeout — Provider timeout (retryable: yes)",
     );
+    const secondarySummary = screen.getByTestId("recommendation-ai-diagnostics-secondary-summary");
+    expect(secondarySummary).toHaveTextContent(
+      "AI execution: source remote provider; budget provider submission; retry suppressed no; difficulty medium; input medium; state degraded",
+    );
+  });
+
+  it("handles recommendation ai diagnostics summary when absent", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        latest_narrative: buildRecommendationNarrative({
+          ai_diagnostics_summary: null,
+        }),
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await screen.findByText("AI Narrative Overlay");
+    expect(screen.queryByTestId("recommendation-ai-diagnostics-summary")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-ai-diagnostics-secondary-summary")).not.toBeInTheDocument();
+  });
+
+  it("handles recommendation ai diagnostics summary when partial", async () => {
+    seedRichWorkspaceData();
+    mockFetchRecommendationWorkspaceSummary.mockResolvedValue(
+      buildRecommendationWorkspaceSummary({
+        latest_narrative: buildRecommendationNarrative({
+          ai_diagnostics_summary: {
+            failure_category: "remote_unavailable",
+            failure_reason: null,
+            failure_source: null,
+            retryable: null,
+            hint: "Try again later",
+            budget_outcome: null,
+            retry_suppressed: null,
+            trimming_pass_count: null,
+            difficulty_bucket: null,
+            input_size_bucket: null,
+            degraded_state: null,
+          },
+        }),
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const summary = await screen.findByTestId("recommendation-ai-diagnostics-summary");
+    expect(summary).toHaveTextContent("AI diagnostics: remote_unavailable — Try again later");
+    expect(screen.queryByTestId("recommendation-ai-diagnostics-secondary-summary")).not.toBeInTheDocument();
   });
 
   it("removes legacy recommendation metadata table headers from the workspace recommendation surface", async () => {

@@ -664,7 +664,7 @@ def test_recommendation_narrative_structured_output_failure_is_safe_and_auditabl
     assert narratives[0].sections_json["normalized_failure_reason"] == "response_schema_validation_failed"
     assert narratives[0].sections_json["normalized_failure_source"] == "local_validation"
     assert narratives[0].sections_json["normalized_retryable"] is False
-    assert narratives[0].sections_json["failure_hint"] is None
+    assert narratives[0].sections_json["failure_hint"] == "Invalid provider response"
     latest_payload = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/narratives/latest"
     )
@@ -676,7 +676,7 @@ def test_recommendation_narrative_structured_output_failure_is_safe_and_auditabl
         "failure_reason": "response_schema_validation_failed",
         "failure_source": "local_validation",
         "retryable": False,
-        "hint": None,
+        "hint": "Invalid provider response",
         "budget_outcome": None,
         "retry_suppressed": False,
         "trimming_pass_count": None,
@@ -728,7 +728,7 @@ def test_recommendation_narrative_contract_rejects_generic_filler_output(
     assert narratives[0].sections_json["normalized_failure_reason"] == "response_schema_validation_failed"
     assert narratives[0].sections_json["normalized_failure_source"] == "local_validation"
     assert narratives[0].sections_json["normalized_retryable"] is False
-    assert narratives[0].sections_json["failure_hint"] is None
+    assert narratives[0].sections_json["failure_hint"] == "Invalid provider response"
 
     evaluation_payloads = [
         record.__dict__.get("json_fields")

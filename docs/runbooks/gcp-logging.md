@@ -149,6 +149,38 @@ Calibration queries (safe counters):
 - "How often did timeout retries get suppressed?"
   - `event="ai_execution_retry_suppressed"` and inspect `reason=request_too_large_or_complex`
 
+Production tuning filters by workflow (`feature_area`):
+- migration drafts:
+  - shared core events with `feature_area="migration_draft"`
+  - adapter budget events: `event="seo_migration_draft_request_budget"`
+- recommendation narratives:
+  - shared core events with `feature_area="recommendation_ai"`
+  - adapter budget events: `event="recommendation_narrative_request_budget"`
+- competitor AI:
+  - shared core events with `feature_area="competitor_ai"`
+  - adapter budget events: `event="competitor_request_budget"`
+
+Concrete monitoring slices:
+- pre-call rejection rate by workflow:
+  - `event="ai_execution_precall_rejected"` grouped by `feature_area`
+- retry suppression rate by workflow:
+  - `event="ai_execution_retry_suppressed"` grouped by `feature_area`
+- budget outcome distribution by workflow:
+  - adapter budget events grouped by `event` + `budget_outcome`
+- failure breakdown by workflow:
+  - shared failure events grouped by `feature_area`, `normalized_failure_category`, `normalized_failure_reason`
+- difficulty/input distribution by workflow:
+  - summarize `difficulty_bucket` and `input_size_bucket` from surfaced diagnostics payloads and shared execution events
+
+Tuning-first checklist (maintainer):
+1. Watch these fields first in production: `budget_outcome`, `retry_suppressed`, `failure_category`, `failure_reason`, `difficulty_bucket`, `input_size_bucket`.
+2. Tune adapter budgets when:
+   - pre-call rejection and retry-suppressed rates are high for one workflow, and
+   - failures cluster around `request_too_large` / `request_too_large_or_complex`.
+3. Improve workflow-specific prompt/context quality when:
+   - failures are dominated by `remote_invalid_response` or `local_validation_failure` with low trim pressure.
+4. Do not tune from single failures; use at least several deploy/draft/narrative cycles of telemetry before changing budget constants.
+
 Trim-order tuning guidance:
 - check `dropped_optional_blocks` over time per feature area before changing budgets.
 - do not promote optional context blocks to required without adapter test updates proving required-content safety and bounded request size.
@@ -384,6 +416,7 @@ Reason-code guidance:
 - `branch_not_found_or_ref_invalid`: dispatch ref is invalid or missing in target repo.
 - `workflow_not_dispatchable`: workflow exists but is not in a dispatch-ready state for target ref.
 - `workflow_dispatch_not_supported`: workflow exists but does not expose `workflow_dispatch`.
+- `workflow_not_production_ready`: workflow exists and is dispatchable, but is still scaffold/placeholder content and is blocked before dispatch.
 - `token_not_authorized`: runtime token lacks required repository/workflow permissions.
 - `workflow_provisioning_failed`: publish could not verify workflow file presence after provisioning attempt.
 
@@ -397,7 +430,8 @@ Workflow conformance status guidance:
 
 Dispatch-support interpretation:
 - `workflow_exists=true` with `workflow_dispatch_supported=false` means the selected workflow file resolved, but trigger-level manual dispatch support could not be confirmed (for example `workflow_dispatch` missing).
-- `workflow_conformance_status=workflow_placeholder_detected` or `workflow_contract_incomplete` is advisory for managed-deploy quality and is surfaced separately from trigger-level dispatch support.
+- `workflow_conformance_status=workflow_placeholder_detected` is treated as a deploy blocker (`workflow_not_production_ready`) for scaffold workflows.
+- `workflow_contract_incomplete` remains advisory for managed-deploy quality and is surfaced separately from trigger-level dispatch support.
 - Dispatch payload contract is bounded to explicitly configured deploy inputs (`deploy_config.inputs`) to avoid GitHub `workflow_dispatch` input-contract rejections from undeclared implicit fields.
 
 Post-dispatch state interpretation:
@@ -535,6 +569,7 @@ Live URL confirmation guidance:
 
 - `url_source=deploy_result` or `url_source=workflow_output` indicates confirmed live URL evidence from deploy/runtime metadata.
 - `url_source=deterministic_target_config` remains expected guidance only and should not be treated as confirmed live state.
+- `resolved_live_url` remains null when only deterministic guidance is available; successful dispatch/run without explicit URL evidence is not treated as confirmed live deploy.
 - deploy request inputs (for example `site_url`) are not confirmed-live evidence.
 - workflow-output URL confirmation requires run-correlated completion metadata (for example deployment status `environment_url` linked to the dispatched workflow run id).
 - refresh no-op reasons:

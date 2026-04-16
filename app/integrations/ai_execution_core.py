@@ -638,6 +638,37 @@ def build_ai_diagnostics_summary(
     return payload
 
 
+def build_ai_failure_hint(
+    *,
+    failure_category: str | None = None,
+    failure_reason: str | None = None,
+) -> str | None:
+    normalized_category = _clean_optional_value(failure_category)
+    normalized_reason = _clean_optional_value(failure_reason)
+
+    if normalized_reason in {"request_too_large", "request_too_large_or_complex"}:
+        return "Input too large"
+    if normalized_category == "remote_timeout" or normalized_reason in {"provider_timeout", "timeout"}:
+        return "Provider timeout"
+    if normalized_category in {"configuration_missing", "configuration_invalid"} or normalized_reason in {
+        "provider_auth_or_configuration_invalid",
+        "authentication_failed",
+        "unsupported_configuration",
+    }:
+        return "Configuration issue"
+    if normalized_category == "remote_invalid_response" or normalized_reason in {
+        "provider_invalid_response",
+        "response_schema_validation_failed",
+        "malformed_response",
+        "malformed_output",
+        "validation_failed",
+    }:
+        return "Invalid provider response"
+    if normalized_category in {"remote_unavailable", "remote_rate_limited"}:
+        return "Try again later"
+    return None
+
+
 def _normalize_http_failure(*, http_status: int) -> AINormalizedFailure:
     if http_status in {401, 403}:
         return AINormalizedFailure(

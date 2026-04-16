@@ -939,6 +939,32 @@ function normalizeAIDiagnosticsSummary(value: unknown): AIDiagnosticsSummary | n
   return summary;
 }
 
+function formatAIDiagnosticsSecondarySummary(summary: AIDiagnosticsSummary): string | null {
+  const parts: string[] = [];
+  if (summary.failure_source) {
+    parts.push(`source ${summary.failure_source.replace(/_/g, " ")}`);
+  }
+  if (summary.budget_outcome) {
+    parts.push(`budget ${summary.budget_outcome.replace(/_/g, " ")}`);
+  }
+  if (typeof summary.retry_suppressed === "boolean") {
+    parts.push(`retry suppressed ${summary.retry_suppressed ? "yes" : "no"}`);
+  }
+  if (typeof summary.trimming_pass_count === "number") {
+    parts.push(`trim passes ${summary.trimming_pass_count}`);
+  }
+  if (summary.difficulty_bucket) {
+    parts.push(`difficulty ${summary.difficulty_bucket.replace(/_/g, " ")}`);
+  }
+  if (summary.input_size_bucket) {
+    parts.push(`input ${summary.input_size_bucket.replace(/_/g, " ")}`);
+  }
+  if (summary.degraded_state) {
+    parts.push(`state ${summary.degraded_state.replace(/_/g, " ")}`);
+  }
+  return parts.length > 0 ? parts.join("; ") : null;
+}
+
 function responseContractSummaryHintClass(summary: OperatorResponseContractSummary | null): string {
   if (!summary) {
     return "hint muted";
@@ -4843,6 +4869,10 @@ export default function SiteWorkspacePage() {
     () => normalizeAIDiagnosticsSummary(latestCompletedRecommendationNarrative?.ai_diagnostics_summary),
     [latestCompletedRecommendationNarrative],
   );
+  const competitorAIDiagnosticsSecondarySummary = useMemo(
+    () => (competitorAIDiagnosticsSummary ? formatAIDiagnosticsSecondarySummary(competitorAIDiagnosticsSummary) : null),
+    [competitorAIDiagnosticsSummary],
+  );
 
   const recommendationApplyOutcome = useMemo(
     () => normalizeRecommendationApplyOutcome(latestRecommendationApplyOutcome),
@@ -8532,6 +8562,11 @@ export default function SiteWorkspacePage() {
                   {typeof competitorAIDiagnosticsSummary.retryable === "boolean"
                     ? ` (retryable: ${competitorAIDiagnosticsSummary.retryable ? "yes" : "no"})`
                     : ""}
+                </p>
+              ) : null}
+              {competitorAIDiagnosticsSecondarySummary ? (
+                <p className="hint muted" data-testid="competitor-ai-diagnostics-secondary-summary">
+                  <strong>AI execution:</strong> {competitorAIDiagnosticsSecondarySummary}
                 </p>
               ) : null}
               {competitorOutcomeSummary?.used_timeout_recovery ? (

@@ -971,6 +971,14 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 safe_message="GitHub workflow is not dispatchable for the deploy target.",
                 stage="workflow_lookup",
             )
+        if conformance.conformance_status == _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_PLACEHOLDER_DETECTED:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_not_production_ready",
+                safe_message=(
+                    "GitHub workflow target is scaffold-only and not production-ready for deploy execution."
+                ),
+                stage="workflow_lookup",
+            )
         return True, tuple(sorted(trigger_types)), conformance
 
     def _dispatch_workflow_request(
@@ -1676,6 +1684,7 @@ _WORKFLOW_CONFORMANCE_PLACEHOLDER_MARKERS: tuple[str, ...] = (
     "mbsrn managed deploy placeholder",
     "placeholder deploy",
     "deploy step not yet implemented",
+    "customize before production rollout",
     "get started with github actions",
 )
 

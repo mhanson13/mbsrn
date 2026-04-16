@@ -183,6 +183,13 @@ It transforms a business's website and market context into structured insights a
   - `optional_sections`
   - `trim_priority_order`
 - Retry suppression is intentional for unchanged timeout payloads (`request_too_large_or_complex`): do not re-enable blind retries for identical oversized synchronous requests.
+- Production tuning should start with telemetry evidence from:
+  - `budget_outcome`
+  - `retry_suppressed`
+  - `failure_category` / `failure_reason`
+  - `difficulty_bucket`
+  - `input_size_bucket`
+  before changing per-adapter budget constants or required-context classifications.
 
 ---
 
