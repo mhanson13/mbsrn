@@ -89,6 +89,34 @@ Bounded exclusion telemetry is persisted at run level for tuning:
 - Preserves current trust and authorization boundaries.
 - Uses additive schema changes only (`failure_category` + cleanup execution records) for backward-compatible observability.
 
+## Shared AI Reliability Substrate (Competitor Adapter)
+
+Competitor AI generation now uses the same synchronous execution substrate as migration draft generation and recommendation narratives.
+
+Shared reliability model:
+- bounded timeout + retry execution
+- normalized failure taxonomy across provider timeout/transport/rate-limit/invalid-response/config/validation failures
+- request budgeting before provider submission (optional context trimmed first)
+- shared transport boundary with workflow-specific parser/validator adapters
+- structured, secret-safe telemetry fields for failure category/reason/source and retryability
+- timeout retry suppression for unchanged oversized/complex payloads (`request_too_large_or_complex`) so retries are only used when meaningful
+- calibration telemetry includes:
+  - shared core events (`ai_execution_preflight`, `ai_execution_precall_rejected`, `ai_execution_retry_suppressed`, `ai_execution_completed`, `ai_execution_failed`)
+  - competitor budget events (`competitor_request_budget`) with `budget_outcome`, `trimmed_bytes`, `trimming_pass_count`, and `dropped_optional_blocks`
+
+Competitor-specific behavior remains feature-bounded:
+- deterministic degraded/fallback paths remain in competitor orchestration
+- no fabricated competitor intelligence beyond existing deterministic fallback rules
+- review/accept trust gate remains unchanged
+
+Maintainer tuning guidance:
+- competitor adapter budget policy is defined in `app/integrations/seo_competitor_profile_generation_provider.py`:
+  - `_COMPETITOR_CONTEXT_BUDGET_CHARS`
+  - `_COMPETITOR_MAX_TOTAL_INPUT_SIZE`
+  - `_COMPETITOR_REQUIRED_CONTEXT_KEYS`
+  - `_COMPETITOR_OPTIONAL_TRIM_ORDER`
+- keep required sections minimal and trim breadth-first optional context (`existing_domains`, then `seed_candidates`) unless tests and production telemetry justify a policy change.
+
 ## Architecture / Flow
 
 ### Generation flow

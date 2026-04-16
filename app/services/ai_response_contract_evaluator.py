@@ -136,11 +136,7 @@ def evaluate_migration_artifact_response(
     has_summary = summary_text is not None
     has_index_html = any(_normalized_path(item.get("path")) == "index.html" for item in generated_files)
     has_any_html = any(_normalized_path(item.get("path")).endswith(".html") for item in generated_files)
-    required_artifact_files_present = (
-        ("index.html",)
-        if has_index_html
-        else ()
-    )
+    required_artifact_files_present = ("index.html",) if has_index_html else ()
     missing_required_artifact_files = tuple(
         item for item in required_artifact_files_expected if item not in required_artifact_files_present
     )
@@ -209,10 +205,7 @@ def evaluate_migration_artifact_response(
         elif "insufficient_content_density" in reasons_tuple and valid_item_count > 0:
             retry_likelihood = "conditionally_useful"
             retryable = True
-        elif (
-            "missing_required_artifact_files" in reasons_tuple
-            or "invalid_artifact_structure" in reasons_tuple
-        ):
+        elif "missing_required_artifact_files" in reasons_tuple or "invalid_artifact_structure" in reasons_tuple:
             retry_likelihood = "unlikely_without_contract_fix"
             retryable = False
         else:

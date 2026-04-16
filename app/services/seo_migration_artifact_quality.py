@@ -63,10 +63,9 @@ def evaluate_migration_artifact_quality(artifact_bundle: dict[str, object]) -> d
         or "services" in index_text_lower
         or any("service" in path for path in html_paths_lower)
     )
-    has_contact_section = (
-        any(token in index_text_lower for token in ("contact", "call", "phone", "email", "quote"))
-        or any("contact" in path for path in html_paths_lower)
-    )
+    has_contact_section = any(
+        token in index_text_lower for token in ("contact", "call", "phone", "email", "quote")
+    ) or any("contact" in path for path in html_paths_lower)
     if not has_services_section:
         missing_sections.append("services")
     if not has_contact_section:
@@ -82,9 +81,7 @@ def evaluate_migration_artifact_quality(artifact_bundle: dict[str, object]) -> d
     placeholder_matches = [phrase for phrase in _PLACEHOLDER_PHRASES if phrase in combined_text_lower]
     empty_heading_count = sum(len(_EMPTY_HEADING_PATTERN.findall(item["content"])) for item in html_files)
     repeated_generic_paragraph_count = _count_repeated_generic_paragraphs(html_files)
-    placeholder_detected = bool(
-        placeholder_matches or empty_heading_count > 0 or repeated_generic_paragraph_count > 0
-    )
+    placeholder_detected = bool(placeholder_matches or empty_heading_count > 0 or repeated_generic_paragraph_count > 0)
     if placeholder_matches:
         issues.append(
             {

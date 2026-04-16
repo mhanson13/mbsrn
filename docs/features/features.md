@@ -134,15 +134,42 @@ It transforms a business's website and market context into structured insights a
 - fast path (deterministic, low latency)
 - full path (tool-enabled, higher quality)
 - degraded fallback (safe completion)
+- Shared synchronous AI execution substrate for:
+  - migration draft generation (`migration_draft` adapter)
+  - recommendation narrative generation (`recommendation_ai` adapter)
+  - competitor AI generation/analysis (`competitor_ai` adapter)
 
 ### Key capability
 - Prevents:
 - total failures
 - repeated timeouts
 - broken user experience
+- Enforces one reliability contract across all three AI feature areas:
+  - bounded timeout + retry execution
+  - normalized failure taxonomy (`remote_timeout`, `remote_unavailable`, `remote_rate_limited`, `remote_invalid_response`, `local_validation_failure`, `configuration_missing`, `configuration_invalid`)
+  - request budgeting with required-vs-optional context trimming
+  - workflow-specific response validation through adapter parsers
+  - structured, secret-safe observability envelope
+  - calibration events for operations:
+    - `ai_execution_preflight`
+    - `ai_execution_precall_rejected`
+    - `ai_execution_retry_suppressed`
+    - `seo_migration_draft_request_budget`
+    - `recommendation_narrative_request_budget`
+    - `competitor_request_budget`
 
 ### Operator value
 > "The system works reliably, even when AI tools are limited."
+
+### Maintainer guidance
+- New synchronous AI features should plug into the shared execution core and provide only adapter/policy differences (prompt/context assembly, validation schema, degraded behavior, persistence side effects).
+- Do not add one-off provider transport handling per feature path.
+- Adapter policies must define explicit budgeting knobs:
+  - `max_total_input_size`
+  - `required_sections`
+  - `optional_sections`
+  - `trim_priority_order`
+- Retry suppression is intentional for unchanged timeout payloads (`request_too_large_or_complex`): do not re-enable blind retries for identical oversized synchronous requests.
 
 ---
 

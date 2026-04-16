@@ -654,11 +654,15 @@ def test_recommendation_narrative_structured_output_failure_is_safe_and_auditabl
     assert narratives[0].model_name == "gpt-4o-mini"
     assert narratives[0].prompt_version == "seo-recommendation-narrative-v2"
     assert narratives[0].error_message == "Recommendation narrative returned invalid structured output."
-    assert narratives[0].sections_json == {
-        "failure_category": "validation_failed",
-        "failure_reason": "schema_validation",
-        "retryable": True,
-    }
+    assert narratives[0].sections_json is not None
+    assert narratives[0].sections_json["failure_category"] == "validation_failed"
+    assert narratives[0].sections_json["failure_reason"] == "schema_validation"
+    assert narratives[0].sections_json["retryable"] is False
+    assert narratives[0].sections_json["normalized_failure_category"] == "local_validation_failure"
+    assert narratives[0].sections_json["normalized_failure_reason"] == "response_schema_validation_failed"
+    assert narratives[0].sections_json["normalized_failure_source"] == "local_validation"
+    assert narratives[0].sections_json["normalized_retryable"] is False
+    assert narratives[0].sections_json["failure_hint"] is None
 
     recs_after = client.get(
         f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
@@ -695,11 +699,15 @@ def test_recommendation_narrative_contract_rejects_generic_filler_output(
     assert len(narratives) == 1
     assert narratives[0].status == "failed"
     assert narratives[0].provider_name == "generic-test-provider"
-    assert narratives[0].sections_json == {
-        "failure_category": "validation_failed",
-        "failure_reason": "schema_validation",
-        "retryable": True,
-    }
+    assert narratives[0].sections_json is not None
+    assert narratives[0].sections_json["failure_category"] == "validation_failed"
+    assert narratives[0].sections_json["failure_reason"] == "schema_validation"
+    assert narratives[0].sections_json["retryable"] is False
+    assert narratives[0].sections_json["normalized_failure_category"] == "local_validation_failure"
+    assert narratives[0].sections_json["normalized_failure_reason"] == "response_schema_validation_failed"
+    assert narratives[0].sections_json["normalized_failure_source"] == "local_validation"
+    assert narratives[0].sections_json["normalized_retryable"] is False
+    assert narratives[0].sections_json["failure_hint"] is None
 
     evaluation_payloads = [
         record.__dict__.get("json_fields")

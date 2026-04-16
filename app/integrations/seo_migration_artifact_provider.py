@@ -4,13 +4,18 @@ from dataclasses import dataclass
 import json
 import logging
 import re
-import socket
 import time
-import urllib.error
 import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.integrations.ai_execution_core import (
+    AIContextBlock,
+    AIExecutionError,
+    AIExecutionPolicy,
+    apply_request_budget,
+    execute_json_request,
+)
 from app.services.seo_migration_prompt import SEO_MIGRATION_PROMPT_VERSION, build_seo_migration_prompt
 
 
@@ -58,8 +63,12 @@ _COMPAT_REASON_VALUES = {
 }
 _COMPAT_OPERATOR_MESSAGE_SUPPORTED = "AI configuration is compatible with migration draft generation."
 _COMPAT_OPERATOR_MESSAGE_NOT_CONFIGURED = "The current AI configuration does not support migration draft generation."
-_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS = "This model/provider setup is not compatible with the current migration request settings."
-_COMPAT_OPERATOR_MESSAGE_REQUEST_SHAPE = "Current AI model/configuration is not compatible with migration draft generation."
+_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS = (
+    "This model/provider setup is not compatible with the current migration request settings."
+)
+_COMPAT_OPERATOR_MESSAGE_REQUEST_SHAPE = (
+    "Current AI model/configuration is not compatible with migration draft generation."
+)
 _COMPAT_OPERATOR_MESSAGE_FULL_CAPABILITY_REQUIRED = "Full AI capability is required for migration draft generation."
 _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS = "/chat/completions"
 _MIGRATION_COMPAT_ENDPOINT_RESPONSES = "/responses"
@@ -102,6 +111,17 @@ _MAX_TEXT_FIELD_LENGTH = 8000
 _RESPONSES_CONTRACT_TOP_LEVEL_KEYS = ("input", "model", "text")
 _RESPONSES_CONTRACT_TEXT_TOP_LEVEL_KEYS = ("format",)
 _RESPONSES_CONTRACT_TEXT_FORMAT_KEYS = ("name", "schema", "strict", "type")
+_MIGRATION_DRAFT_CONTEXT_BUDGET_CHARS = 24000
+_MIGRATION_DRAFT_CONTEXT_REQUIRED_KEYS = ("site_snapshot", "migration_workspace")
+_MIGRATION_DRAFT_CONTEXT_OPTIONAL_TRIM_ORDER = (
+    "existing_context_summaries",
+    "brand_business_facts_snapshot",
+    "enriched_content_notes",
+    "operator_requirements",
+    "source_snapshot",
+)
+_MIGRATION_DRAFT_MAX_TOTAL_INPUT_SIZE = 120000
+_MIGRATION_DRAFT_MAX_TRIMMING_PASSES = 3
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +163,11 @@ class SEOMigrationArtifactProviderError(RuntimeError):
     correlation_id: str | None = None
     raw_output: str | None = None
     internal_details: dict[str, object] | None = None
+    normalized_failure_category: str | None = None
+    normalized_failure_reason: str | None = None
+    normalized_failure_source: str | None = None
+    normalized_retryable: bool | None = None
+    attempt_count: int | None = None
 
     def __str__(self) -> str:
         return self.safe_message
@@ -206,8 +231,7 @@ class _MigrationRequestShapeMatrixRule:
         if not self.model_prefixes:
             return True
         return any(
-            shape.model_name == prefix or shape.model_name.startswith(f"{prefix}-")
-            for prefix in self.model_prefixes
+            shape.model_name == prefix or shape.model_name.startswith(f"{prefix}-") for prefix in self.model_prefixes
         )
 
     def to_decision(self, *, shape: _MigrationRequestShape) -> _MigrationRequestShapeCompatibilityDecision:
@@ -665,10 +689,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 supported=False,
                 reason_code=_COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE,
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
-                admin_summary=(
-                    "execution_mode_unsupported "
-                    f"model={shape.model_name} mode={shape.execution_mode}"
-                ),
+                admin_summary=("execution_mode_unsupported " f"model={shape.model_name} mode={shape.execution_mode}"),
             )
         if shape.endpoint_path not in {
             _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS,
@@ -678,10 +699,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 supported=False,
                 reason_code=_COMPAT_REASON_UNSUPPORTED_ENDPOINT_MODE,
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
-                admin_summary=(
-                    "endpoint_path_unsupported "
-                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
-                ),
+                admin_summary=("endpoint_path_unsupported " f"model={shape.model_name} endpoint={shape.endpoint_path}"),
             )
         if shape.response_format_mode != _MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA:
             return _MigrationRequestShapeCompatibilityDecision(
@@ -823,8 +841,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
                 admin_summary=(
-                    "responses_request_body_input_empty "
-                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                    "responses_request_body_input_empty " f"model={shape.model_name} endpoint={shape.endpoint_path}"
                 ),
             )
         text_payload = payload.get("text")
@@ -865,8 +882,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
                 admin_summary=(
-                    "responses_request_body_contains_tools "
-                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                    "responses_request_body_contains_tools " f"model={shape.model_name} endpoint={shape.endpoint_path}"
                 ),
             )
         top_level_keys = tuple(sorted(str(key) for key in payload.keys()))
@@ -881,7 +897,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     f"top_level_keys={list(top_level_keys)}"
                 ),
             )
-        text_top_level_keys = tuple(sorted(str(key) for key in text_payload.keys())) if isinstance(text_payload, dict) else ()
+        text_top_level_keys = (
+            tuple(sorted(str(key) for key in text_payload.keys())) if isinstance(text_payload, dict) else ()
+        )
         if text_top_level_keys != _RESPONSES_CONTRACT_TEXT_TOP_LEVEL_KEYS:
             return _MigrationRequestShapeCompatibilityDecision(
                 supported=False,
@@ -971,8 +989,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
                 admin_summary=(
-                    "chat_request_body_invalid_messages "
-                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                    "chat_request_body_invalid_messages " f"model={shape.model_name} endpoint={shape.endpoint_path}"
                 ),
             )
         if not self._messages_include_system_and_user(messages):
@@ -981,8 +998,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
                 admin_summary=(
-                    "chat_request_body_missing_roles "
-                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                    "chat_request_body_missing_roles " f"model={shape.model_name} endpoint={shape.endpoint_path}"
                 ),
             )
         format_payload = payload.get("response_format")
@@ -993,8 +1009,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 reason_code=_COMPAT_REASON_UNSUPPORTED_REQUEST_SHAPE,
                 operator_message=_COMPAT_OPERATOR_MESSAGE_REQUEST_SETTINGS,
                 admin_summary=(
-                    "chat_request_body_json_schema_invalid "
-                    f"model={shape.model_name} endpoint={shape.endpoint_path}"
+                    "chat_request_body_json_schema_invalid " f"model={shape.model_name} endpoint={shape.endpoint_path}"
                 ),
             )
         return _MigrationRequestShapeCompatibilityDecision(
@@ -1077,7 +1092,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         schema_name = _clean_optional_value(payload.get("name"))
         strict_value = payload.get("strict")
         schema_payload = payload.get("schema")
-        return bool(schema_name) and isinstance(strict_value, bool) and strict_value and isinstance(schema_payload, dict)
+        return (
+            bool(schema_name) and isinstance(strict_value, bool) and strict_value and isinstance(schema_payload, dict)
+        )
 
     @staticmethod
     def _is_chat_json_schema_payload(format_payload: object, schema_payload: object) -> bool:
@@ -1143,9 +1160,49 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         return object_nodes_total, object_nodes_non_false, object_nodes_missing_required
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
+        budgeted_context, budget_result = self._apply_migration_context_budget(migration_context)
         request_context = self._build_request_context(migration_context)
+        if bool(budget_result.get("overflow")) or (
+            isinstance(budget_result.get("trimming_pass_count"), int)
+            and int(budget_result.get("trimming_pass_count") or 0) > _MIGRATION_DRAFT_MAX_TRIMMING_PASSES
+        ):
+            self._log_request_budget(
+                request_context=request_context,
+                budget_result=budget_result,
+                budget_outcome="precall_rejected",
+            )
+            self._log_provider_request_failure(
+                request_context=request_context,
+                reason=_DRAFT_REASON_VALIDATION_FAILED,
+                retryable=False,
+                failure_source="local_preflight",
+                request_fingerprint={"context_budget": budget_result},
+            )
+            raise self._provider_error(
+                code=_DRAFT_REASON_VALIDATION_FAILED,
+                reason=_DRAFT_REASON_VALIDATION_FAILED,
+                safe_message=(
+                    "Migration draft request is too large or complex for synchronous generation. "
+                    "Reduce optional context and try again."
+                ),
+                retryable=False,
+                internal_details={
+                    "request_failure_logged": False,
+                    "normalized_failure_category": "local_validation_failure",
+                    "normalized_failure_reason": "request_too_large_or_complex",
+                    "normalized_failure_source": "local_validation",
+                    "normalized_retryable": False,
+                    "attempt_count": 0,
+                    "context_budget": budget_result,
+                },
+                normalized_failure_category="local_validation_failure",
+                normalized_failure_reason="request_too_large_or_complex",
+                normalized_failure_source="local_validation",
+                normalized_retryable=False,
+                attempt_count=0,
+            )
         prompt = build_seo_migration_prompt(
-            migration_context=migration_context,
+            migration_context=budgeted_context,
             prompt_version=self.prompt_version,
             prompt_text_recommendations=self.prompt_text_recommendations,
         )
@@ -1157,6 +1214,12 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         request_fingerprint = self._build_request_fingerprint(
             payload=payload,
             request_context=request_context,
+        )
+        request_fingerprint["context_budget"] = budget_result
+        self._log_request_budget(
+            request_context=request_context,
+            budget_result=budget_result,
+            budget_outcome="provider_submission",
         )
         started_at = time.perf_counter()
         try:
@@ -1332,55 +1395,70 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "Content-Type": "application/json",
             },
         )
-        started_at = time.perf_counter()
         self._log_provider_request_start(
             request_context=request_context,
             endpoint_path=endpoint_path,
             request_fingerprint=request_fingerprint,
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                body_text = response.read().decode("utf-8", errors="replace")
-                duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
-                correlation_id = self._extract_response_correlation_id(getattr(response, "headers", None))
-                self._log_provider_request_complete(
-                    request_context=request_context,
-                    endpoint_path=endpoint_path,
-                    duration_ms=duration_ms,
-                    correlation_id=correlation_id,
-                    request_fingerprint=request_fingerprint,
-                )
-                return body_text
-        except urllib.error.HTTPError as exc:
-            body_text = exc.read().decode("utf-8", errors="replace")
-            duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
-            correlation_id = self._extract_response_correlation_id(getattr(exc, "headers", None))
-            reason = _DRAFT_REASON_TRANSPORT_ERROR
-            retryable = True
-            safe_message = "Migration draft generation failed while communicating with the AI provider."
-            if exc.code in {401, 403}:
-                reason = _DRAFT_REASON_AUTHENTICATION_FAILED
-                retryable = False
-                safe_message = "AI provider authentication failed for migration draft generation."
-            elif exc.code == 429:
-                reason = _DRAFT_REASON_RATE_LIMITED
-                retryable = True
-                safe_message = "Migration draft generation is currently rate-limited by the AI provider."
-            elif exc.code in {400, 404, 422}:
-                reason = _DRAFT_REASON_UNSUPPORTED_CONFIGURATION
-                retryable = False
-                safe_message = "AI provider configuration is invalid for migration draft generation."
-            elif exc.code in {408, 504}:
-                reason = _DRAFT_REASON_TIMEOUT
-                retryable = True
-                safe_message = "Migration draft generation timed out while calling the AI provider."
+            context_budget = (
+                request_fingerprint.get("context_budget")
+                if isinstance(request_fingerprint, dict) and isinstance(request_fingerprint.get("context_budget"), dict)
+                else {}
+            )
+            execution_response = execute_json_request(
+                request=request,
+                policy=AIExecutionPolicy(
+                    feature_area="migration_draft",
+                    timeout_seconds=max(1, int(self.timeout_seconds)),
+                    max_attempts=2,
+                    retry_backoff_seconds=0.2,
+                    max_input_size=_MIGRATION_DRAFT_MAX_TOTAL_INPUT_SIZE,
+                    original_input_size=context_budget.get("initial_size_bytes"),
+                    final_input_size=context_budget.get("final_size_bytes"),
+                    trimming_pass_count=(
+                        int(context_budget.get("trimming_pass_count"))
+                        if isinstance(context_budget.get("trimming_pass_count"), int)
+                        else 0
+                    ),
+                    section_count=context_budget.get("section_count"),
+                    schema_complexity_flag=(
+                        self._coerce_optional_non_negative_int(
+                            (
+                                request_fingerprint.get("schema_object_nodes_total")
+                                if isinstance(request_fingerprint, dict)
+                                else None
+                            ),
+                        )
+                        or 0
+                    )
+                    >= 10,
+                ),
+                extract_correlation_id=self._extract_response_correlation_id,
+            )
+            self._log_provider_request_complete(
+                request_context=request_context,
+                endpoint_path=endpoint_path,
+                duration_ms=execution_response.duration_ms,
+                correlation_id=execution_response.correlation_id,
+                request_fingerprint=request_fingerprint,
+            )
+            return execution_response.body_text
+        except AIExecutionError as exc:
+            reason, safe_message = self._migration_reason_from_execution_error(exc)
+            retryable = (
+                bool(exc.normalized_failure.retryable) if isinstance(exc.normalized_failure.retryable, bool) else None
+            )
+            http_status = (
+                int(exc.normalized_failure.http_status) if isinstance(exc.normalized_failure.http_status, int) else None
+            )
             self._log_provider_request_failure(
                 request_context=request_context,
                 reason=reason,
                 retryable=retryable,
-                correlation_id=correlation_id,
-                duration_ms=duration_ms,
-                http_status=exc.code,
+                correlation_id=exc.correlation_id,
+                duration_ms=exc.duration_ms,
+                http_status=http_status,
                 request_fingerprint=request_fingerprint,
             )
             raise self._provider_error(
@@ -1388,77 +1466,30 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 reason=reason,
                 safe_message=safe_message,
                 retryable=retryable,
-                correlation_id=correlation_id,
-                raw_output=body_text,
+                correlation_id=exc.correlation_id,
+                raw_output=exc.raw_response_text,
                 internal_details={
                     "request_failure_logged": True,
-                    "http_status": int(exc.code),
+                    "http_status": http_status,
+                    "attempt_count": max(1, int(exc.attempt_count)),
+                    "normalized_failure_category": exc.normalized_failure.category,
+                    "normalized_failure_reason": exc.normalized_failure.reason,
+                    "normalized_failure_source": exc.normalized_failure.source,
+                    "normalized_retryable": bool(exc.normalized_failure.retryable),
+                    "normalized_timeout_type": _clean_optional_value(exc.normalized_failure.timeout_type),
                     **request_shape_details,
                 },
+                normalized_failure_category=exc.normalized_failure.category,
+                normalized_failure_reason=exc.normalized_failure.reason,
+                normalized_failure_source=exc.normalized_failure.source,
+                normalized_retryable=bool(exc.normalized_failure.retryable),
+                attempt_count=max(1, int(exc.attempt_count)),
             ) from exc
-        except (TimeoutError, socket.timeout) as exc:
-            duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
-            self._log_provider_request_failure(
-                request_context=request_context,
-                reason=_DRAFT_REASON_TIMEOUT,
-                retryable=True,
-                duration_ms=duration_ms,
-                request_fingerprint=request_fingerprint,
-            )
-            raise self._provider_error(
-                code=_DRAFT_REASON_TIMEOUT,
-                reason=_DRAFT_REASON_TIMEOUT,
-                safe_message="Migration draft generation timed out while calling the AI provider.",
-                retryable=True,
-                internal_details={
-                    "request_failure_logged": True,
-                    **request_shape_details,
-                },
-            ) from exc
-        except urllib.error.URLError as exc:
-            duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
-            if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
-                self._log_provider_request_failure(
-                    request_context=request_context,
-                    reason=_DRAFT_REASON_TIMEOUT,
-                    retryable=True,
-                    duration_ms=duration_ms,
-                    request_fingerprint=request_fingerprint,
-                )
-                raise self._provider_error(
-                    code=_DRAFT_REASON_TIMEOUT,
-                    reason=_DRAFT_REASON_TIMEOUT,
-                    safe_message="Migration draft generation timed out while calling the AI provider.",
-                    retryable=True,
-                    internal_details={
-                        "request_failure_logged": True,
-                        **request_shape_details,
-                    },
-                ) from exc
-            self._log_provider_request_failure(
-                request_context=request_context,
-                reason=_DRAFT_REASON_TRANSPORT_ERROR,
-                retryable=True,
-                duration_ms=duration_ms,
-                request_fingerprint=request_fingerprint,
-            )
-            raise self._provider_error(
-                code=_DRAFT_REASON_TRANSPORT_ERROR,
-                reason=_DRAFT_REASON_TRANSPORT_ERROR,
-                safe_message="Migration draft generation failed while communicating with the AI provider.",
-                retryable=True,
-                internal_details={
-                    "request_failure_logged": True,
-                    **request_shape_details,
-                },
-            ) from exc
-        except Exception as exc:
-            duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+        except Exception as exc:  # pragma: no cover - defensive unexpected boundary
             self._log_provider_request_failure(
                 request_context=request_context,
                 reason=_DRAFT_REASON_UNKNOWN,
                 retryable=None,
-                duration_ms=duration_ms,
                 request_fingerprint=request_fingerprint,
             )
             raise self._provider_error(
@@ -1480,7 +1511,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         request_profile: dict[str, object] | None = None,
     ) -> dict[str, object]:
         profile = request_profile or self.get_request_profile()
-        endpoint_path = _clean_optional_value(profile.get("endpoint_path")) or _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS
+        endpoint_path = (
+            _clean_optional_value(profile.get("endpoint_path")) or _MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS
+        )
         request_body_mode = _clean_optional_value(profile.get("request_body_mode"))
         if endpoint_path == _MIGRATION_COMPAT_ENDPOINT_RESPONSES:
             return self._build_responses_request_payload(
@@ -2276,6 +2309,11 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         correlation_id: str | None = None,
         raw_output: str | None = None,
         internal_details: dict[str, object] | None = None,
+        normalized_failure_category: str | None = None,
+        normalized_failure_reason: str | None = None,
+        normalized_failure_source: str | None = None,
+        normalized_retryable: bool | None = None,
+        attempt_count: int | None = None,
     ) -> SEOMigrationArtifactProviderError:
         normalized_reason = _clean_optional_value((reason or code).strip().lower()) or _DRAFT_REASON_UNKNOWN
         if normalized_reason not in _DRAFT_REASON_VALUES:
@@ -2291,7 +2329,112 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             correlation_id=_clean_optional_value(correlation_id),
             raw_output=raw_output,
             internal_details=internal_details,
+            normalized_failure_category=_clean_optional_value(normalized_failure_category),
+            normalized_failure_reason=_clean_optional_value(normalized_failure_reason),
+            normalized_failure_source=_clean_optional_value(normalized_failure_source),
+            normalized_retryable=(bool(normalized_retryable) if isinstance(normalized_retryable, bool) else None),
+            attempt_count=(max(1, int(attempt_count)) if isinstance(attempt_count, int) else None),
         )
+
+    @staticmethod
+    def _migration_reason_from_execution_error(error: AIExecutionError) -> tuple[str, str]:
+        failure = error.normalized_failure
+        status = failure.http_status
+        if failure.category == "remote_timeout":
+            return _DRAFT_REASON_TIMEOUT, "Migration draft generation timed out while calling the AI provider."
+        if failure.category == "remote_rate_limited":
+            return (
+                _DRAFT_REASON_RATE_LIMITED,
+                "Migration draft generation is currently rate-limited by the AI provider.",
+            )
+        if failure.category == "configuration_missing":
+            return (
+                _DRAFT_REASON_UNSUPPORTED_CONFIGURATION,
+                "AI provider configuration is missing for migration draft generation.",
+            )
+        if failure.category == "configuration_invalid":
+            if status in {401, 403}:
+                return (
+                    _DRAFT_REASON_AUTHENTICATION_FAILED,
+                    "AI provider authentication failed for migration draft generation.",
+                )
+            return (
+                _DRAFT_REASON_UNSUPPORTED_CONFIGURATION,
+                "AI provider configuration is invalid for migration draft generation.",
+            )
+        if failure.category == "remote_invalid_response":
+            return _DRAFT_REASON_MALFORMED_RESPONSE, "Migration draft response could not be parsed."
+        if failure.category == "local_validation_failure":
+            if failure.reason in {"request_too_large", "request_too_large_or_complex"}:
+                return (
+                    _DRAFT_REASON_VALIDATION_FAILED,
+                    "Migration draft request is too large or complex for synchronous generation.",
+                )
+            return _DRAFT_REASON_VALIDATION_FAILED, "Migration draft returned invalid structured output."
+        if failure.category == "remote_unavailable":
+            return (
+                _DRAFT_REASON_TRANSPORT_ERROR,
+                "Migration draft generation failed while communicating with the AI provider.",
+            )
+        return _DRAFT_REASON_UNKNOWN, "Migration draft generation failed due to an unexpected AI provider error."
+
+    def _apply_migration_context_budget(
+        self,
+        migration_context: dict[str, object],
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        required_keys = [key for key in _MIGRATION_DRAFT_CONTEXT_REQUIRED_KEYS if key in migration_context]
+        optional_keys: list[object] = [
+            key
+            for key in _MIGRATION_DRAFT_CONTEXT_OPTIONAL_TRIM_ORDER
+            if key in migration_context and key not in required_keys
+        ]
+        for key in migration_context.keys():
+            if key in required_keys or key in optional_keys:
+                continue
+            optional_keys.append(key)
+
+        blocks: list[AIContextBlock] = []
+        for key in required_keys:
+            blocks.append(AIContextBlock(name=key, value=migration_context.get(key), required=True, trim_priority=0))
+        for index, key in enumerate(optional_keys):
+            blocks.append(
+                AIContextBlock(
+                    name=str(key),
+                    value=migration_context.get(key),
+                    required=False,
+                    trim_priority=max(1, len(optional_keys) - index),
+                )
+            )
+
+        decision = apply_request_budget(
+            blocks=blocks,
+            budget_size_chars=_MIGRATION_DRAFT_CONTEXT_BUDGET_CHARS,
+        )
+        retained = dict(decision.retained_blocks)
+        budgeted_context: dict[str, object] = {}
+        for key in required_keys:
+            budgeted_context[key] = retained.get(key, migration_context.get(key, {}))
+        for key in optional_keys:
+            retained_key = str(key)
+            if retained_key in retained:
+                budgeted_context[key] = retained[retained_key]
+
+        budget_result = {
+            "initial_size_chars": decision.result.initial_size_chars,
+            "final_size_chars": decision.result.final_size_chars,
+            "initial_size_bytes": decision.result.initial_size_bytes,
+            "final_size_bytes": decision.result.final_size_bytes,
+            "trimmed_bytes": decision.result.trimmed_bytes,
+            "trimming_pass_count": decision.result.trimming_pass_count,
+            "section_count": decision.result.section_count,
+            "budget_size_chars": decision.result.budget_size_chars,
+            "dropped_optional_blocks": list(decision.result.dropped_optional_blocks),
+            "dropped_duplicate_blocks": list(decision.result.dropped_duplicate_blocks),
+            "required_blocks_retained": list(decision.result.required_blocks_retained),
+            "optional_blocks_retained": list(decision.result.optional_blocks_retained),
+            "overflow": bool(decision.result.overflow),
+        }
+        return budgeted_context, budget_result
 
     def _build_request_context(self, migration_context: dict[str, object]) -> dict[str, object]:
         site_snapshot = migration_context.get("site_snapshot")
@@ -2344,30 +2487,26 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         text_format_payload = text_payload.get("format") if isinstance(text_payload, dict) else None
         response_format_payload = payload.get("response_format")
         legacy_json_schema_payload = (
-            response_format_payload.get("json_schema")
-            if isinstance(response_format_payload, dict)
-            else None
+            response_format_payload.get("json_schema") if isinstance(response_format_payload, dict) else None
         )
         schema_payload = (
             text_format_payload.get("schema")
             if isinstance(text_format_payload, dict)
-            else legacy_json_schema_payload.get("schema")
-            if isinstance(legacy_json_schema_payload, dict)
-            else None
+            else legacy_json_schema_payload.get("schema") if isinstance(legacy_json_schema_payload, dict) else None
         )
         schema_name = (
             _clean_optional_value(text_format_payload.get("name"))
             if isinstance(text_format_payload, dict)
-            else _clean_optional_value(legacy_json_schema_payload.get("name"))
-            if isinstance(legacy_json_schema_payload, dict)
-            else None
+            else (
+                _clean_optional_value(legacy_json_schema_payload.get("name"))
+                if isinstance(legacy_json_schema_payload, dict)
+                else None
+            )
         )
         strict_enabled_raw = (
             text_format_payload.get("strict")
             if isinstance(text_format_payload, dict)
-            else legacy_json_schema_payload.get("strict")
-            if isinstance(legacy_json_schema_payload, dict)
-            else None
+            else legacy_json_schema_payload.get("strict") if isinstance(legacy_json_schema_payload, dict) else None
         )
         input_mode: str | None = None
         input_length_chars: int | None = None
@@ -2413,19 +2552,13 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "strict_enabled": strict_enabled_raw if isinstance(strict_enabled_raw, bool) else None,
             "top_level_keys": top_level_keys,
             "text_top_level_keys": (
-                sorted(str(key) for key in text_payload.keys())
-                if isinstance(text_payload, dict)
-                else []
+                sorted(str(key) for key in text_payload.keys()) if isinstance(text_payload, dict) else []
             ),
             "text_format_keys": (
-                sorted(str(key) for key in text_format_payload.keys())
-                if isinstance(text_format_payload, dict)
-                else []
+                sorted(str(key) for key in text_format_payload.keys()) if isinstance(text_format_payload, dict) else []
             ),
             "schema_top_level_keys": (
-                sorted(str(key) for key in schema_payload.keys())
-                if isinstance(schema_payload, dict)
-                else []
+                sorted(str(key) for key in schema_payload.keys()) if isinstance(schema_payload, dict) else []
             ),
             "input_mode": input_mode,
             "contains_tools": "tools" in payload,
@@ -2482,9 +2615,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "request_fingerprint_text_format_type": _clean_optional_value(fingerprint.get("text_format_type")),
             "request_fingerprint_schema_name": _clean_optional_value(fingerprint.get("schema_name")),
             "request_fingerprint_strict_enabled": (
-                bool(fingerprint.get("strict_enabled"))
-                if isinstance(fingerprint.get("strict_enabled"), bool)
-                else None
+                bool(fingerprint.get("strict_enabled")) if isinstance(fingerprint.get("strict_enabled"), bool) else None
             ),
             "request_fingerprint_top_level_keys": (
                 [str(item) for item in fingerprint.get("top_level_keys", []) if isinstance(item, str)]
@@ -2508,9 +2639,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             ),
             "request_fingerprint_input_mode": _clean_optional_value(fingerprint.get("input_mode")),
             "request_fingerprint_contains_tools": (
-                bool(fingerprint.get("contains_tools"))
-                if isinstance(fingerprint.get("contains_tools"), bool)
-                else None
+                bool(fingerprint.get("contains_tools")) if isinstance(fingerprint.get("contains_tools"), bool) else None
             ),
             "request_fingerprint_contains_response_format_legacy": (
                 bool(fingerprint.get("contains_response_format_legacy"))
@@ -2544,6 +2673,76 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "request_fingerprint_schema_object_nodes_missing_required": self._coerce_optional_non_negative_int(
                 fingerprint.get("schema_object_nodes_missing_required"),
             ),
+            "request_fingerprint_context_budget_initial_size_chars": self._coerce_optional_non_negative_int(
+                (
+                    (fingerprint.get("context_budget") or {}).get("initial_size_chars")
+                    if isinstance(fingerprint.get("context_budget"), dict)
+                    else None
+                ),
+            ),
+            "request_fingerprint_context_budget_final_size_chars": self._coerce_optional_non_negative_int(
+                (
+                    (fingerprint.get("context_budget") or {}).get("final_size_chars")
+                    if isinstance(fingerprint.get("context_budget"), dict)
+                    else None
+                ),
+            ),
+            "request_fingerprint_context_budget_original_input_size": self._coerce_optional_non_negative_int(
+                (
+                    (fingerprint.get("context_budget") or {}).get("initial_size_bytes")
+                    if isinstance(fingerprint.get("context_budget"), dict)
+                    else None
+                ),
+            ),
+            "request_fingerprint_context_budget_final_input_size": self._coerce_optional_non_negative_int(
+                (
+                    (fingerprint.get("context_budget") or {}).get("final_size_bytes")
+                    if isinstance(fingerprint.get("context_budget"), dict)
+                    else None
+                ),
+            ),
+            "request_fingerprint_context_budget_trimmed_bytes": self._coerce_optional_non_negative_int(
+                (
+                    (fingerprint.get("context_budget") or {}).get("trimmed_bytes")
+                    if isinstance(fingerprint.get("context_budget"), dict)
+                    else None
+                ),
+            ),
+            "request_fingerprint_context_budget_trimming_pass_count": self._coerce_optional_non_negative_int(
+                (
+                    (fingerprint.get("context_budget") or {}).get("trimming_pass_count")
+                    if isinstance(fingerprint.get("context_budget"), dict)
+                    else None
+                ),
+            ),
+            "request_fingerprint_context_budget_section_count": self._coerce_optional_non_negative_int(
+                (
+                    (fingerprint.get("context_budget") or {}).get("section_count")
+                    if isinstance(fingerprint.get("context_budget"), dict)
+                    else None
+                ),
+            ),
+            "request_fingerprint_context_budget_size_chars": self._coerce_optional_non_negative_int(
+                (
+                    (fingerprint.get("context_budget") or {}).get("budget_size_chars")
+                    if isinstance(fingerprint.get("context_budget"), dict)
+                    else None
+                ),
+            ),
+            "request_fingerprint_context_budget_dropped_optional_blocks": (
+                [
+                    str(item)
+                    for item in (fingerprint.get("context_budget") or {}).get("dropped_optional_blocks", [])
+                    if isinstance(item, str)
+                ]
+                if isinstance(fingerprint.get("context_budget"), dict)
+                else []
+            ),
+            "request_fingerprint_context_budget_overflow": (
+                bool((fingerprint.get("context_budget") or {}).get("overflow"))
+                if isinstance((fingerprint.get("context_budget") or {}).get("overflow"), bool)
+                else None
+            ),
         }
 
     def _extract_response_correlation_id(self, headers: object) -> str | None:
@@ -2564,6 +2763,51 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         except (TypeError, ValueError):
             serialized = event
         logger.log(level, serialized, extra={"json_fields": safe_payload})
+
+    def _log_request_budget(
+        self,
+        *,
+        request_context: dict[str, object] | None,
+        budget_result: dict[str, object],
+        budget_outcome: str,
+    ) -> None:
+        context = request_context or {}
+        self._emit_structured_provider_log(
+            level=logging.INFO,
+            event="seo_migration_draft_request_budget",
+            payload={
+                "feature_area": "migration_draft",
+                "business_id": _clean_optional_value(context.get("business_id")),
+                "site_id": _clean_optional_value(context.get("site_id")),
+                "workspace_id": _clean_optional_value(context.get("workspace_id")),
+                "budget_outcome": _clean_optional_value(budget_outcome) or "unknown",
+                "initial_size_chars": self._coerce_optional_non_negative_int(budget_result.get("initial_size_chars")),
+                "final_size_chars": self._coerce_optional_non_negative_int(budget_result.get("final_size_chars")),
+                "budget_size_chars": self._coerce_optional_non_negative_int(budget_result.get("budget_size_chars")),
+                "original_input_size": self._coerce_optional_non_negative_int(budget_result.get("initial_size_bytes")),
+                "final_input_size": self._coerce_optional_non_negative_int(budget_result.get("final_size_bytes")),
+                "trimmed_bytes": self._coerce_optional_non_negative_int(budget_result.get("trimmed_bytes")),
+                "trimming_pass_count": self._coerce_optional_non_negative_int(
+                    budget_result.get("trimming_pass_count")
+                ),
+                "section_count": self._coerce_optional_non_negative_int(budget_result.get("section_count")),
+                "dropped_optional_blocks": [
+                    str(item)
+                    for item in budget_result.get("dropped_optional_blocks", [])
+                    if isinstance(item, str)
+                ],
+                "dropped_duplicate_blocks": [
+                    str(item)
+                    for item in budget_result.get("dropped_duplicate_blocks", [])
+                    if isinstance(item, str)
+                ],
+                "overflow": (
+                    bool(budget_result.get("overflow"))
+                    if isinstance(budget_result.get("overflow"), bool)
+                    else None
+                ),
+            },
+        )
 
     def _log_provider_request_start(
         self,

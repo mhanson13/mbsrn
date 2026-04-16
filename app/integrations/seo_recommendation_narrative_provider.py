@@ -4,12 +4,17 @@ from dataclasses import dataclass
 import json
 import logging
 import re
-import socket
-import urllib.error
 import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.integrations.ai_execution_core import (
+    AIContextBlock,
+    AIExecutionError,
+    AIExecutionPolicy,
+    apply_request_budget,
+    execute_json_request,
+)
 from app.integrations.seo_summary_provider import SEORecommendationNarrativeOutput
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_run import SEORecommendationRun
@@ -51,6 +56,13 @@ _MAX_RECOMMENDATION_REFERENCES = 25
 _MAX_TUNING_SUGGESTIONS = 4
 _MAX_TUNING_REASON_LENGTH = 320
 _MAX_TUNING_LINKED_RECOMMENDATION_IDS = 8
+_RECOMMENDATION_CONTEXT_BUDGET_CHARS = 28000
+_RECOMMENDATION_MAX_TOTAL_INPUT_SIZE = 95000
+_RECOMMENDATION_REQUIRED_CONTEXT_KEYS = ("current_tuning_values",)
+_RECOMMENDATION_OPTIONAL_TRIM_ORDER = (
+    "competitor_context",
+    "competitor_telemetry_summary",
+)
 
 _ALLOWED_TUNING_SETTINGS_BOUNDS: dict[str, tuple[int, int]] = {
     "competitor_candidate_min_relevance_score": (
@@ -81,6 +93,11 @@ class SEORecommendationNarrativeProviderError(RuntimeError):
     model_name: str
     prompt_version: str
     raw_output: str | None = None
+    normalized_failure_category: str | None = None
+    normalized_failure_reason: str | None = None
+    normalized_failure_source: str | None = None
+    normalized_retryable: bool | None = None
+    attempt_count: int | None = None
 
     def __str__(self) -> str:
         return self.safe_message
@@ -189,6 +206,16 @@ class OpenAISEORecommendationNarrativeProvider:
         competitor_context: dict[str, object] | None = None,
     ) -> SEORecommendationNarrativeOutput:
         self._log_prompt_resolution_metadata()
+        (
+            budgeted_competitor_telemetry_summary,
+            budgeted_current_tuning_values,
+            budgeted_competitor_context,
+            budget_result,
+        ) = self._apply_recommendation_context_budget(
+            competitor_telemetry_summary=competitor_telemetry_summary,
+            current_tuning_values=current_tuning_values,
+            competitor_context=competitor_context,
+        )
         prompt = build_seo_recommendation_narrative_prompt(
             run=run,
             recommendations=recommendations,
@@ -198,17 +225,35 @@ class OpenAISEORecommendationNarrativeProvider:
             by_effort_bucket=by_effort_bucket,
             by_priority_band=by_priority_band,
             backlog=backlog,
-            competitor_telemetry_summary=competitor_telemetry_summary,
-            current_tuning_values=current_tuning_values,
-            competitor_context=competitor_context,
+            competitor_telemetry_summary=budgeted_competitor_telemetry_summary,
+            current_tuning_values=budgeted_current_tuning_values,
+            competitor_context=budgeted_competitor_context,
             prompt_version=self.prompt_version,
             prompt_text_recommendations=self.prompt_text_recommendations,
+        )
+        if bool(budget_result.get("overflow")):
+            self._log_budget_decision(
+                budget_result=budget_result,
+                budget_outcome="precall_rejected",
+            )
+            raise self._provider_error(
+                code=_PROVIDER_ERROR_REQUEST,
+                safe_message=("Recommendation narrative request is too large or complex for synchronous generation."),
+                normalized_failure_category="local_validation_failure",
+                normalized_failure_reason="request_too_large_or_complex",
+                normalized_failure_source="local_validation",
+                normalized_retryable=False,
+                attempt_count=0,
+            )
+        self._log_budget_decision(
+            budget_result=budget_result,
+            budget_outcome="provider_submission",
         )
         payload = self._build_request_payload(
             system_prompt=prompt.system_prompt,
             user_prompt=prompt.user_prompt,
         )
-        raw_response = self._request_completion(payload)
+        raw_response = self._request_completion(payload, budget_result=budget_result)
         response_json = self._parse_json_object(
             raw_response,
             code=_PROVIDER_ERROR_PARSING,
@@ -293,7 +338,7 @@ class OpenAISEORecommendationNarrativeProvider:
                 self.provider_name,
             )
 
-    def _request_completion(self, payload: dict[str, object]) -> str:
+    def _request_completion(self, payload: dict[str, object], *, budget_result: dict[str, object]) -> str:
         body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
         request = urllib.request.Request(
             url=f"{self.api_base_url}/chat/completions",
@@ -305,43 +350,95 @@ class OpenAISEORecommendationNarrativeProvider:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                return response.read().decode("utf-8", errors="replace")
-        except urllib.error.HTTPError as exc:
-            body_text = exc.read().decode("utf-8", errors="replace")
-            if exc.code in {401, 403}:
-                raise self._provider_error(
-                    code=_PROVIDER_ERROR_AUTH_CONFIG,
-                    safe_message=(
-                        "AI provider authentication failed. Verify recommendation narrative provider credentials."
+            execution_response = execute_json_request(
+                request=request,
+                policy=AIExecutionPolicy(
+                    feature_area="recommendation_ai",
+                    timeout_seconds=max(1, int(self.timeout_seconds)),
+                    max_attempts=2,
+                    retry_backoff_seconds=0.15,
+                    max_input_size=_RECOMMENDATION_MAX_TOTAL_INPUT_SIZE,
+                    original_input_size=budget_result.get("initial_size_bytes"),
+                    final_input_size=budget_result.get("final_size_bytes"),
+                    trimming_pass_count=(
+                        int(budget_result.get("trimming_pass_count"))
+                        if isinstance(budget_result.get("trimming_pass_count"), int)
+                        else 0
                     ),
-                    raw_output=body_text,
-                ) from exc
-            if exc.code in {408, 504}:
-                raise self._provider_error(
-                    code=_PROVIDER_ERROR_TIMEOUT,
-                    safe_message="Recommendation narrative generation timed out while calling the AI provider.",
-                    raw_output=body_text,
-                ) from exc
+                    section_count=budget_result.get("section_count"),
+                    schema_complexity_flag=True,
+                ),
+            )
+            logger.info(
+                (
+                    "recommendation_narrative_provider_request_complete provider_name=%s model_name=%s "
+                    "attempt_count=%s duration_ms=%s original_input_size=%s final_input_size=%s "
+                    "trimmed_bytes=%s trimming_pass_count=%s difficulty_score=%s"
+                ),
+                self.provider_name,
+                self.model_name,
+                execution_response.attempt_count,
+                execution_response.duration_ms,
+                execution_response.original_input_size,
+                execution_response.final_input_size,
+                execution_response.trimmed_bytes,
+                execution_response.trimming_pass_count,
+                execution_response.difficulty_score,
+            )
+            return execution_response.body_text
+        except AIExecutionError as exc:
+            code = _PROVIDER_ERROR_REQUEST
+            safe_message = "Recommendation narrative provider request failed."
+            if exc.normalized_failure.category in {"configuration_missing", "configuration_invalid"}:
+                code = _PROVIDER_ERROR_AUTH_CONFIG
+                safe_message = (
+                    "AI provider authentication failed. Verify recommendation narrative provider credentials."
+                )
+            elif exc.normalized_failure.category == "remote_timeout":
+                code = _PROVIDER_ERROR_TIMEOUT
+                safe_message = "Recommendation narrative generation timed out while calling the AI provider."
+                if exc.normalized_failure.reason == "request_too_large_or_complex":
+                    code = _PROVIDER_ERROR_REQUEST
+                    safe_message = (
+                        "Recommendation narrative request is too large or complex for synchronous generation."
+                    )
+            elif exc.normalized_failure.category == "local_validation_failure" and exc.normalized_failure.reason in {
+                "request_too_large",
+                "request_too_large_or_complex",
+            }:
+                code = _PROVIDER_ERROR_REQUEST
+                safe_message = "Recommendation narrative request is too large or complex for synchronous generation."
+            logger.warning(
+                (
+                    "recommendation_narrative_provider_request_failure provider_name=%s model_name=%s code=%s "
+                    "normalized_failure_category=%s normalized_failure_reason=%s normalized_failure_source=%s "
+                    "normalized_retryable=%s attempt_count=%s duration_ms=%s original_input_size=%s "
+                    "final_input_size=%s trimmed_bytes=%s trimming_pass_count=%s difficulty_score=%s"
+                ),
+                self.provider_name,
+                self.model_name,
+                code,
+                exc.normalized_failure.category,
+                exc.normalized_failure.reason,
+                exc.normalized_failure.source,
+                exc.normalized_failure.retryable,
+                exc.attempt_count,
+                exc.duration_ms,
+                exc.original_input_size,
+                exc.final_input_size,
+                exc.trimmed_bytes,
+                exc.trimming_pass_count,
+                exc.difficulty_score,
+            )
             raise self._provider_error(
-                code=_PROVIDER_ERROR_REQUEST,
-                safe_message="Recommendation narrative provider request failed.",
-                raw_output=body_text,
-            ) from exc
-        except (TimeoutError, socket.timeout) as exc:
-            raise self._provider_error(
-                code=_PROVIDER_ERROR_TIMEOUT,
-                safe_message="Recommendation narrative generation timed out while calling the AI provider.",
-            ) from exc
-        except urllib.error.URLError as exc:
-            if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
-                raise self._provider_error(
-                    code=_PROVIDER_ERROR_TIMEOUT,
-                    safe_message="Recommendation narrative generation timed out while calling the AI provider.",
-                ) from exc
-            raise self._provider_error(
-                code=_PROVIDER_ERROR_REQUEST,
-                safe_message="Recommendation narrative provider request failed.",
+                code=code,
+                safe_message=safe_message,
+                raw_output=exc.raw_response_text,
+                normalized_failure_category=exc.normalized_failure.category,
+                normalized_failure_reason=exc.normalized_failure.reason,
+                normalized_failure_source=exc.normalized_failure.source,
+                normalized_retryable=bool(exc.normalized_failure.retryable),
+                attempt_count=max(1, int(exc.attempt_count)),
             ) from exc
 
     def _build_request_payload(
@@ -775,12 +872,147 @@ class OpenAISEORecommendationNarrativeProvider:
             return 0
         return max(0, parsed)
 
+    def _apply_recommendation_context_budget(
+        self,
+        *,
+        competitor_telemetry_summary: dict[str, object],
+        current_tuning_values: dict[str, int],
+        competitor_context: dict[str, object] | None,
+    ) -> tuple[dict[str, object], dict[str, int], dict[str, object] | None, dict[str, object]]:
+        available_blocks: dict[str, object] = {
+            "competitor_telemetry_summary": competitor_telemetry_summary,
+            "competitor_context": competitor_context or {},
+            "current_tuning_values": current_tuning_values,
+        }
+        required_keys = [key for key in _RECOMMENDATION_REQUIRED_CONTEXT_KEYS if key in available_blocks]
+        optional_keys: list[str] = [
+            key for key in _RECOMMENDATION_OPTIONAL_TRIM_ORDER if key in available_blocks and key not in required_keys
+        ]
+        for key in available_blocks.keys():
+            if key in required_keys or key in optional_keys:
+                continue
+            optional_keys.append(str(key))
+
+        blocks: list[AIContextBlock] = []
+        for key in required_keys:
+            blocks.append(
+                AIContextBlock(
+                    name=key,
+                    value=available_blocks.get(key),
+                    required=True,
+                    trim_priority=0,
+                )
+            )
+        for index, key in enumerate(optional_keys):
+            blocks.append(
+                AIContextBlock(
+                    name=key,
+                    value=available_blocks.get(key),
+                    required=False,
+                    trim_priority=max(1, len(optional_keys) - index),
+                )
+            )
+        decision = apply_request_budget(
+            blocks=blocks,
+            budget_size_chars=_RECOMMENDATION_CONTEXT_BUDGET_CHARS,
+        )
+        retained = decision.retained_blocks
+        dropped_optional_blocks = list(decision.result.dropped_optional_blocks)
+        aggressive_trim_applied = len(dropped_optional_blocks) > 0
+        # Recommendation degraded behavior: if we had to trim for budget, remove
+        # enrichment context entirely instead of mixing partial enrichment.
+        budgeted_competitor_telemetry_summary = (
+            competitor_telemetry_summary
+            if "competitor_telemetry_summary" in retained and not aggressive_trim_applied
+            else {}
+        )
+        budgeted_current_tuning_values = current_tuning_values if "current_tuning_values" in retained else {}
+        if "competitor_context" in retained and not aggressive_trim_applied:
+            budgeted_competitor_context = competitor_context or {}
+        else:
+            budgeted_competitor_context = None
+        budget_result = {
+            "initial_size_chars": decision.result.initial_size_chars,
+            "final_size_chars": decision.result.final_size_chars,
+            "initial_size_bytes": decision.result.initial_size_bytes,
+            "final_size_bytes": decision.result.final_size_bytes,
+            "trimmed_bytes": decision.result.trimmed_bytes,
+            "trimming_pass_count": decision.result.trimming_pass_count,
+            "section_count": decision.result.section_count,
+            "budget_size_chars": decision.result.budget_size_chars,
+            "dropped_optional_blocks": dropped_optional_blocks,
+            "dropped_duplicate_blocks": list(decision.result.dropped_duplicate_blocks),
+            "required_blocks_retained": list(decision.result.required_blocks_retained),
+            "optional_blocks_retained": list(decision.result.optional_blocks_retained),
+            "aggressive_trim_applied": aggressive_trim_applied,
+            "overflow": bool(decision.result.overflow),
+        }
+        return (
+            budgeted_competitor_telemetry_summary,
+            budgeted_current_tuning_values,
+            budgeted_competitor_context,
+            budget_result,
+        )
+
+    def _log_budget_decision(self, *, budget_result: dict[str, object], budget_outcome: str) -> None:
+        logger.info(
+            (
+                "recommendation_narrative_request_budget provider_name=%s model_name=%s initial_size_chars=%s "
+                "final_size_chars=%s budget_size_chars=%s original_input_size=%s final_input_size=%s "
+                "trimmed_bytes=%s trimming_pass_count=%s section_count=%s dropped_optional_blocks=%s "
+                "dropped_duplicate_blocks=%s aggressive_trim_applied=%s overflow=%s"
+            ),
+            self.provider_name,
+            self.model_name,
+            budget_result.get("initial_size_chars"),
+            budget_result.get("final_size_chars"),
+            budget_result.get("budget_size_chars"),
+            budget_result.get("initial_size_bytes"),
+            budget_result.get("final_size_bytes"),
+            budget_result.get("trimmed_bytes"),
+            budget_result.get("trimming_pass_count"),
+            budget_result.get("section_count"),
+            budget_result.get("dropped_optional_blocks"),
+            budget_result.get("dropped_duplicate_blocks"),
+            budget_result.get("aggressive_trim_applied"),
+            budget_result.get("overflow"),
+        )
+        payload = {
+            "event": "recommendation_narrative_request_budget",
+            "feature_area": "recommendation_ai",
+            "provider_name": self.provider_name,
+            "model_name": self.model_name,
+            "budget_outcome": budget_outcome,
+            "initial_size_chars": budget_result.get("initial_size_chars"),
+            "final_size_chars": budget_result.get("final_size_chars"),
+            "budget_size_chars": budget_result.get("budget_size_chars"),
+            "original_input_size": budget_result.get("initial_size_bytes"),
+            "final_input_size": budget_result.get("final_size_bytes"),
+            "trimmed_bytes": budget_result.get("trimmed_bytes"),
+            "trimming_pass_count": budget_result.get("trimming_pass_count"),
+            "section_count": budget_result.get("section_count"),
+            "dropped_optional_blocks": budget_result.get("dropped_optional_blocks"),
+            "dropped_duplicate_blocks": budget_result.get("dropped_duplicate_blocks"),
+            "aggressive_trim_applied": budget_result.get("aggressive_trim_applied"),
+            "overflow": budget_result.get("overflow"),
+        }
+        safe_payload = {key: value for key, value in payload.items() if value is not None}
+        logger.info(
+            json.dumps(safe_payload, ensure_ascii=True, sort_keys=True),
+            extra={"json_fields": safe_payload},
+        )
+
     def _provider_error(
         self,
         *,
         code: str,
         safe_message: str,
         raw_output: str | None = None,
+        normalized_failure_category: str | None = None,
+        normalized_failure_reason: str | None = None,
+        normalized_failure_source: str | None = None,
+        normalized_retryable: bool | None = None,
+        attempt_count: int | None = None,
     ) -> SEORecommendationNarrativeProviderError:
         return SEORecommendationNarrativeProviderError(
             code=code,
@@ -789,6 +1021,11 @@ class OpenAISEORecommendationNarrativeProvider:
             model_name=self.model_name,
             prompt_version=self.prompt_version,
             raw_output=raw_output,
+            normalized_failure_category=_clean_optional_value(normalized_failure_category),
+            normalized_failure_reason=_clean_optional_value(normalized_failure_reason),
+            normalized_failure_source=_clean_optional_value(normalized_failure_source),
+            normalized_retryable=(bool(normalized_retryable) if isinstance(normalized_retryable, bool) else None),
+            attempt_count=(max(1, int(attempt_count)) if isinstance(attempt_count, int) else None),
         )
 
 

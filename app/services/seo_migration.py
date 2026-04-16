@@ -363,6 +363,11 @@ class SEOMigrationDraftFailure:
     response_format_mode: str | None = None
     request_body_mode: str | None = None
     compatibility_reason_code: str | None = None
+    normalized_failure_category: str | None = None
+    normalized_failure_reason: str | None = None
+    normalized_failure_source: str | None = None
+    normalized_retryable: bool | None = None
+    provider_attempt_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -729,9 +734,7 @@ class SEOMigrationService:
                 changed_restricted_fields.append(field_name)
 
         if changed_restricted_fields:
-            raise SEOMigrationValidationError(
-                "Only admin principals can update deploy repository/workflow controls."
-            )
+            raise SEOMigrationValidationError("Only admin principals can update deploy repository/workflow controls.")
 
         merged_config = dict(normalized_current)
         if "enabled" in provided_fields:
@@ -966,18 +969,27 @@ class SEOMigrationService:
         duplicate_publish_repaired = False
         publish_result: SEOMigrationGitHubPublishResult | None = None
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
-        deploy_workflow_mode = _normalize_string(
-            admin_deploy_metadata.get("deploy_workflow_mode"),
-            max_length=60,
-        ) or _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
-        target_environment_key = _normalize_string(
-            admin_deploy_metadata.get("target_environment_key"),
-            max_length=80,
-        ) or _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY
-        target_environment_source = _normalize_string(
-            admin_deploy_metadata.get("target_environment_source"),
-            max_length=60,
-        ) or _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN
+        deploy_workflow_mode = (
+            _normalize_string(
+                admin_deploy_metadata.get("deploy_workflow_mode"),
+                max_length=60,
+            )
+            or _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
+        )
+        target_environment_key = (
+            _normalize_string(
+                admin_deploy_metadata.get("target_environment_key"),
+                max_length=80,
+            )
+            or _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY
+        )
+        target_environment_source = (
+            _normalize_string(
+                admin_deploy_metadata.get("target_environment_source"),
+                max_length=60,
+            )
+            or _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN
+        )
         try:
             deploy_target_for_workflow: dict[str, object] | None = None
             try:
@@ -1082,10 +1094,7 @@ class SEOMigrationService:
                         provision_result=deploy_workflow_provision_result,
                     )
             if duplicate_publish_attempt:
-                if (
-                    deploy_workflow_provision_result is not None
-                    and deploy_workflow_provision_result.provisioned
-                ):
+                if deploy_workflow_provision_result is not None and deploy_workflow_provision_result.provisioned:
                     duplicate_publish_repaired = True
                     publish_result = SEOMigrationGitHubPublishResult(
                         dry_run=False,
@@ -1266,7 +1275,9 @@ class SEOMigrationService:
                 artifact.last_published_at = now
             artifact.last_publish_error_summary = None
             if not duplicate_publish_repaired:
-                artifact.last_published_commit_sha = publish_result.commit_shas[-1] if publish_result.commit_shas else None
+                artifact.last_published_commit_sha = (
+                    publish_result.commit_shas[-1] if publish_result.commit_shas else None
+                )
             workspace.last_published_artifact_version_id = artifact.id
             workspace.last_published_artifact_version_number = artifact.version
             if not duplicate_publish_repaired or workspace.last_published_commit_sha is None:
@@ -1499,12 +1510,15 @@ class SEOMigrationService:
             dispatch_identifier_diagnostics.get("workflow_dispatch_resolution_source"),
             max_length=60,
         )
-        workflow_file_path = _normalize_workflow_path_for_deploy(
-            dispatch_identifier_diagnostics.get("workflow_file_path")
-        ) or workflow_resolution_path
+        workflow_file_path = (
+            _normalize_workflow_path_for_deploy(dispatch_identifier_diagnostics.get("workflow_file_path"))
+            or workflow_resolution_path
+        )
         workflow_name = _normalize_string(dispatch_identifier_diagnostics.get("workflow_name"), max_length=160)
         if workflow_identifier_used is None:
-            workflow_identifier_used = _normalize_workflow_id_for_deploy(deploy_target.get("workflow_id")) or _normalize_string(
+            workflow_identifier_used = _normalize_workflow_id_for_deploy(
+                deploy_target.get("workflow_id")
+            ) or _normalize_string(
                 deploy_target.get("workflow_id"),
                 max_length=160,
             )
@@ -1562,9 +1576,8 @@ class SEOMigrationService:
         workflow_conformance_status: str | None = None
         workflow_conformance_reasons: list[str] = []
         workflow_conformance_evidence_summary: str | None = None
-        dispatch_identifier_type: str | None = (
-            workflow_identifier_type_used
-            or _infer_dispatch_identifier_type(workflow_identifier_used or deploy_target.get("workflow_id"))
+        dispatch_identifier_type: str | None = workflow_identifier_type_used or _infer_dispatch_identifier_type(
+            workflow_identifier_used or deploy_target.get("workflow_id")
         )
         actual_dispatch_identifier_sent: str | None = None
         actual_dispatch_identifier_type_sent: str | None = None
@@ -1661,7 +1674,9 @@ class SEOMigrationService:
                         target_readiness.dispatch_identifier_type,
                         max_length=80,
                     )
-                workflow_file_path = _normalize_workflow_path_for_deploy(target_readiness.workflow_path) or workflow_file_path
+                workflow_file_path = (
+                    _normalize_workflow_path_for_deploy(target_readiness.workflow_path) or workflow_file_path
+                )
                 workflow_name = _workflow_id_from_path_for_deploy(workflow_file_path) or workflow_name
                 if workflow_identifier_requested and workflow_identifier_used:
                     if workflow_identifier_requested != workflow_identifier_used:
@@ -1815,14 +1830,16 @@ class SEOMigrationService:
                     if target_readiness is not None
                     else failure_stage not in {"repo_lookup", "ref_lookup", "workflow_lookup", "workflow_dispatch"}
                 )
-                workflow_trigger_types = (
-                    target_readiness.workflow_trigger_types if target_readiness is not None else ()
-                )
+                workflow_trigger_types = target_readiness.workflow_trigger_types if target_readiness is not None else ()
                 workflow_conformance_checked = (
-                    target_readiness.workflow_conformance_checked if target_readiness is not None else workflow_conformance_checked
+                    target_readiness.workflow_conformance_checked
+                    if target_readiness is not None
+                    else workflow_conformance_checked
                 )
                 workflow_conformance_status = (
-                    target_readiness.workflow_conformance_status if target_readiness is not None else workflow_conformance_status
+                    target_readiness.workflow_conformance_status
+                    if target_readiness is not None
+                    else workflow_conformance_status
                 )
                 workflow_conformance_reasons = (
                     list(target_readiness.workflow_conformance_reasons or ())
@@ -1842,18 +1859,15 @@ class SEOMigrationService:
                         target_readiness.dispatch_service_availability if target_readiness is not None else False
                     )
                 if dispatch_service_reason_code is None:
-                    dispatch_service_reason_code = (
-                        _normalize_dispatch_service_reason_code(
-                            target_readiness.dispatch_service_reason_code if target_readiness is not None else None
-                        )
-                        or _derive_dispatch_service_reason_code(
-                            runtime_reason_code="",
-                            target_valid=repo_exists and ref_exists and workflow_exists,
-                            target_enabled=True,
-                            dispatch_service_availability=bool(dispatch_service_availability),
-                            failure_reason_code=failure_reason_code,
-                            failure_stage=failure_stage,
-                        )
+                    dispatch_service_reason_code = _normalize_dispatch_service_reason_code(
+                        target_readiness.dispatch_service_reason_code if target_readiness is not None else None
+                    ) or _derive_dispatch_service_reason_code(
+                        runtime_reason_code="",
+                        target_valid=repo_exists and ref_exists and workflow_exists,
+                        target_enabled=True,
+                        dispatch_service_availability=bool(dispatch_service_availability),
+                        failure_reason_code=failure_reason_code,
+                        failure_stage=failure_stage,
                     )
                 self._log_target_readiness_check(
                     business_id=business_id,
@@ -1898,7 +1912,9 @@ class SEOMigrationService:
                 )
             if dispatch_service_reason_code is None:
                 dispatch_service_reason_code = _derive_dispatch_service_reason_code(
-                    runtime_reason_code=str(self._runtime_publisher_diagnostics(action="deploy").get("reason_code") or ""),
+                    runtime_reason_code=str(
+                        self._runtime_publisher_diagnostics(action="deploy").get("reason_code") or ""
+                    ),
                     target_valid=True,
                     target_enabled=True,
                     dispatch_service_availability=bool(dispatch_service_availability),
@@ -2347,10 +2363,7 @@ class SEOMigrationService:
                 fallback_message="seo_migration_workflow_run_result_captured",
                 level=logging.INFO,
             )
-        if (
-            resolved_live_url
-            and resolved_live_url_source == _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT
-        ):
+        if resolved_live_url and resolved_live_url_source == _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT:
             self._emit_structured_service_log(
                 payload={
                     "event": "seo_migration_workflow_output_url_captured",
@@ -2486,7 +2499,9 @@ class SEOMigrationService:
             "repo_exists": target_readiness.repo_exists if target_readiness is not None else None,
             "ref_exists": target_readiness.ref_exists if target_readiness is not None else None,
             "workflow_exists": target_readiness.workflow_exists if target_readiness is not None else None,
-            "workflow_dispatch_ready": target_readiness.workflow_dispatch_ready if target_readiness is not None else None,
+            "workflow_dispatch_ready": (
+                target_readiness.workflow_dispatch_ready if target_readiness is not None else None
+            ),
             "analytics_measurement_id": effective_ga_measurement_id,
             "analytics_insertion_mode": analytics_insertion_mode,
             "analytics_applied": bool(effective_ga_measurement_id),
@@ -2689,9 +2704,9 @@ class SEOMigrationService:
         workflow_file_path = _normalize_workflow_path_for_deploy(
             target_history_item.get("workflow_file_path")
         ) or _normalize_workflow_path_for_deploy(target_history_item.get("workflow_path"))
-        workflow_name = _normalize_string(target_history_item.get("workflow_name"), max_length=160) or _workflow_id_from_path_for_deploy(
-            workflow_file_path
-        )
+        workflow_name = _normalize_string(
+            target_history_item.get("workflow_name"), max_length=160
+        ) or _workflow_id_from_path_for_deploy(workflow_file_path)
         dispatch_service_availability = (
             bool(target_history_item.get("dispatch_service_availability"))
             if isinstance(target_history_item.get("dispatch_service_availability"), bool)
@@ -2706,7 +2721,9 @@ class SEOMigrationService:
             else None
         )
         dispatch_result_stage = _normalize_string(target_history_item.get("dispatch_result_stage"), max_length=40)
-        dispatch_ref_sent = _normalize_string(target_history_item.get("dispatch_ref_sent"), max_length=120) or _normalize_string(
+        dispatch_ref_sent = _normalize_string(
+            target_history_item.get("dispatch_ref_sent"), max_length=120
+        ) or _normalize_string(
             target_history_item.get("ref"),
             max_length=120,
         )
@@ -4040,9 +4057,7 @@ class SEOMigrationService:
             model_resolved=model_resolved,
             model_used=artifact_model_used,
             endpoint_path=(
-                draft_failure.endpoint_path
-                if draft_failure and generation_status == "partial"
-                else draft_endpoint_path
+                draft_failure.endpoint_path if draft_failure and generation_status == "partial" else draft_endpoint_path
             ),
             execution_mode=(
                 draft_failure.execution_mode
@@ -4132,7 +4147,9 @@ class SEOMigrationService:
             response_format_mode=(
                 draft_failure.response_format_mode if draft_failure and generation_status == "partial" else None
             ),
-            request_body_mode=(draft_failure.request_body_mode if draft_failure and generation_status == "partial" else None),
+            request_body_mode=(
+                draft_failure.request_body_mode if draft_failure and generation_status == "partial" else None
+            ),
             compatibility_decision="allowed",
             failure_source=("remote_provider" if draft_failure and generation_status == "partial" else None),
         )
@@ -4185,7 +4202,10 @@ class SEOMigrationService:
                 workspace_id=workspace.id,
             )
 
-        if artifact.id == workspace.last_published_artifact_version_id or artifact.id == workspace.last_deployed_artifact_version_id:
+        if (
+            artifact.id == workspace.last_published_artifact_version_id
+            or artifact.id == workspace.last_deployed_artifact_version_id
+        ):
             raise SEOMigrationValidationError(
                 "Artifacts referenced by publish/deploy pointers cannot be deleted.",
                 failure_category="artifact_invalid",
@@ -4339,9 +4359,7 @@ class SEOMigrationService:
             history=workspace.deploy_history_json,
             action="deploy",
         )
-        latest_deploy_failure_detail = self._derive_latest_deploy_failure_detail(
-            history=workspace.deploy_history_json
-        )
+        latest_deploy_failure_detail = self._derive_latest_deploy_failure_detail(history=workspace.deploy_history_json)
         draft_diagnostics = self._derive_draft_generation_diagnostics(artifact=latest_artifact)
         draft_readiness = self._build_draft_generation_readiness(
             business_id=business_id,
@@ -4391,9 +4409,7 @@ class SEOMigrationService:
             "last_failure_workflow_identifier_requested": latest_deploy_failure_detail.get(
                 "workflow_identifier_requested"
             ),
-            "last_failure_workflow_identifier_used": latest_deploy_failure_detail.get(
-                "workflow_identifier_used"
-            ),
+            "last_failure_workflow_identifier_used": latest_deploy_failure_detail.get("workflow_identifier_used"),
             "last_failure_workflow_file_path": latest_deploy_failure_detail.get("workflow_file_path"),
             "last_failure_workflow_exists": latest_deploy_failure_detail.get("workflow_exists"),
             "last_failure_workflow_dispatch_resolution_source": latest_deploy_failure_detail.get(
@@ -4402,15 +4418,11 @@ class SEOMigrationService:
             "last_failure_dispatch_service_reason_code": latest_deploy_failure_detail.get(
                 "dispatch_service_reason_code"
             ),
-            "last_failure_workflow_conformance_status": latest_deploy_failure_detail.get(
-                "workflow_conformance_status"
-            ),
+            "last_failure_workflow_conformance_status": latest_deploy_failure_detail.get("workflow_conformance_status"),
             "last_failure_workflow_conformance_reasons": latest_deploy_failure_detail.get(
                 "workflow_conformance_reasons"
             ),
-            "last_failure_resolved_workflow_source": latest_deploy_failure_detail.get(
-                "resolved_workflow_source"
-            ),
+            "last_failure_resolved_workflow_source": latest_deploy_failure_detail.get("resolved_workflow_source"),
             "last_failure_target_environment_key": latest_deploy_failure_detail.get("target_environment_key"),
             "last_failure_target_environment_source": latest_deploy_failure_detail.get("target_environment_source"),
         }
@@ -4463,18 +4475,31 @@ class SEOMigrationService:
                 "last_draft_failure_message": draft_diagnostics.get("last_failure_message"),
                 "last_draft_failure_retryable": draft_diagnostics.get("last_failure_retryable"),
                 "last_draft_failure_code": draft_diagnostics.get("last_failure_code"),
+                "last_draft_failure_normalized_category": draft_diagnostics.get("last_failure_normalized_category"),
+                "last_draft_failure_normalized_reason": draft_diagnostics.get("last_failure_normalized_reason"),
+                "last_draft_failure_normalized_source": draft_diagnostics.get("last_failure_normalized_source"),
+                "last_draft_failure_normalized_retryable": draft_diagnostics.get("last_failure_normalized_retryable"),
+                "last_draft_failure_provider_attempt_count": draft_diagnostics.get(
+                    "last_failure_provider_attempt_count"
+                ),
+                # Keep legacy aliases for existing diagnostics consumers while draft-prefixed
+                # keys remain the canonical migration_diagnostics fields.
+                "last_failure_normalized_category": draft_diagnostics.get("last_failure_normalized_category"),
+                "last_failure_normalized_reason": draft_diagnostics.get("last_failure_normalized_reason"),
+                "last_failure_normalized_source": draft_diagnostics.get("last_failure_normalized_source"),
+                "last_failure_normalized_retryable": draft_diagnostics.get("last_failure_normalized_retryable"),
+                "last_failure_provider_attempt_count": draft_diagnostics.get("last_failure_provider_attempt_count"),
                 "last_draft_failure_correlation_id": draft_diagnostics.get("last_failure_correlation_id"),
                 "last_draft_failure_artifact_version_id": draft_diagnostics.get("last_failure_artifact_version_id"),
                 "last_draft_failure_source": draft_diagnostics.get("last_failure_source"),
                 "last_draft_failure_endpoint_path": draft_diagnostics.get("last_failure_endpoint_path"),
                 "last_draft_failure_execution_mode": draft_diagnostics.get("last_failure_execution_mode"),
-                "last_draft_failure_response_format_mode": draft_diagnostics.get(
-                    "last_failure_response_format_mode"
-                ),
+                "last_draft_failure_response_format_mode": draft_diagnostics.get("last_failure_response_format_mode"),
                 "last_draft_failure_request_body_mode": draft_diagnostics.get("last_failure_request_body_mode"),
                 "last_draft_failure_model_requested": draft_diagnostics.get("last_failure_model_requested"),
                 "last_draft_failure_model_resolved": draft_diagnostics.get("last_failure_model_resolved"),
                 "last_draft_failure_model_used": draft_diagnostics.get("last_failure_model_used"),
+                "last_draft_failure_hint": draft_diagnostics.get("last_failure_hint"),
                 "last_draft_failure_timeout_seconds": draft_diagnostics.get("last_failure_timeout_seconds"),
                 "last_draft_failure_timeout_source": draft_diagnostics.get("last_failure_timeout_source"),
                 "last_draft_contract_status": draft_diagnostics.get("last_contract_status"),
@@ -4565,6 +4590,11 @@ class SEOMigrationService:
                 "last_failure_message": None,
                 "last_failure_retryable": None,
                 "last_failure_code": None,
+                "last_failure_normalized_category": None,
+                "last_failure_normalized_reason": None,
+                "last_failure_normalized_source": None,
+                "last_failure_normalized_retryable": None,
+                "last_failure_provider_attempt_count": None,
                 "last_failure_correlation_id": None,
                 "last_failure_artifact_version_id": None,
                 "last_failure_source": None,
@@ -4575,6 +4605,7 @@ class SEOMigrationService:
                 "last_failure_model_requested": None,
                 "last_failure_model_resolved": None,
                 "last_failure_model_used": None,
+                "last_failure_hint": None,
                 "last_failure_timeout_seconds": None,
                 "last_failure_timeout_source": None,
                 "last_contract_status": None,
@@ -4606,6 +4637,27 @@ class SEOMigrationService:
         if failure_reason not in _DRAFT_FAILURE_REASON_VALUES:
             failure_reason = None
         failure_code = _normalize_string(diagnostics_payload.get("error_code"), max_length=80)
+        normalized_failure_category = _normalize_string(
+            diagnostics_payload.get("normalized_failure_category"),
+            max_length=80,
+        )
+        normalized_failure_reason = _normalize_string(
+            diagnostics_payload.get("normalized_failure_reason"),
+            max_length=120,
+        )
+        normalized_failure_source = _normalize_string(
+            diagnostics_payload.get("normalized_failure_source"),
+            max_length=80,
+        )
+        normalized_failure_retryable = (
+            bool(diagnostics_payload.get("normalized_retryable"))
+            if isinstance(diagnostics_payload.get("normalized_retryable"), bool)
+            else None
+        )
+        provider_attempt_count_raw = diagnostics_payload.get("provider_attempt_count")
+        provider_attempt_count = (
+            max(1, int(provider_attempt_count_raw)) if isinstance(provider_attempt_count_raw, int) else None
+        )
         retryable = diagnostics_payload.get("retryable")
         retryable_flag = retryable if isinstance(retryable, bool) else None
         correlation_id = _normalize_string(diagnostics_payload.get("correlation_id"), max_length=120)
@@ -4619,12 +4671,9 @@ class SEOMigrationService:
         model_requested = _normalize_string(diagnostics_payload.get("model_requested"), max_length=128)
         model_resolved = _normalize_string(diagnostics_payload.get("model_resolved"), max_length=128)
         model_used = _normalize_string(diagnostics_payload.get("model_used"), max_length=128)
+        failure_hint = _normalize_string(diagnostics_payload.get("failure_hint"), max_length=120)
         timeout_seconds_raw = diagnostics_payload.get("timeout_seconds")
-        timeout_seconds = (
-            max(1, int(timeout_seconds_raw))
-            if isinstance(timeout_seconds_raw, int)
-            else None
-        )
+        timeout_seconds = max(1, int(timeout_seconds_raw)) if isinstance(timeout_seconds_raw, int) else None
         timeout_source = _normalize_string(diagnostics_payload.get("timeout_source"), max_length=20)
         if timeout_source not in {"admin", "default"}:
             timeout_source = None
@@ -4648,9 +4697,7 @@ class SEOMigrationService:
             max(0, int(normalized_item_count_raw)) if isinstance(normalized_item_count_raw, int) else None
         )
         dropped_item_count_raw = contract_payload.get("dropped_item_count")
-        dropped_item_count = (
-            max(0, int(dropped_item_count_raw)) if isinstance(dropped_item_count_raw, int) else None
-        )
+        dropped_item_count = max(0, int(dropped_item_count_raw)) if isinstance(dropped_item_count_raw, int) else None
         required_files_expected = _normalize_string_list(
             contract_payload.get("required_artifact_files_expected"),
             max_items=12,
@@ -4691,6 +4738,11 @@ class SEOMigrationService:
             "last_failure_message": _normalize_string(artifact.error_summary, max_length=400),
             "last_failure_retryable": retryable_flag,
             "last_failure_code": failure_code,
+            "last_failure_normalized_category": normalized_failure_category,
+            "last_failure_normalized_reason": normalized_failure_reason,
+            "last_failure_normalized_source": normalized_failure_source,
+            "last_failure_normalized_retryable": normalized_failure_retryable,
+            "last_failure_provider_attempt_count": provider_attempt_count,
             "last_failure_correlation_id": correlation_id,
             "last_failure_artifact_version_id": artifact.id,
             "last_failure_source": failure_source,
@@ -4701,6 +4753,7 @@ class SEOMigrationService:
             "last_failure_model_requested": model_requested,
             "last_failure_model_resolved": model_resolved,
             "last_failure_model_used": model_used,
+            "last_failure_hint": failure_hint,
             "last_failure_timeout_seconds": timeout_seconds,
             "last_failure_timeout_source": timeout_source,
             "last_contract_status": contract_status,
@@ -5408,7 +5461,9 @@ class SEOMigrationService:
         normalized_failure_source = _normalize_string(failure_source, max_length=40)
         if normalized_failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
             normalized_failure_source = None
-        compatibility_decision = "blocked_local_preflight" if normalized_failure_source == "local_preflight" else "allowed"
+        compatibility_decision = (
+            "blocked_local_preflight" if normalized_failure_source == "local_preflight" else "allowed"
+        )
         resolved_timeout_seconds = (
             max(1, int(timeout_seconds))
             if isinstance(timeout_seconds, int)
@@ -5440,14 +5495,28 @@ class SEOMigrationService:
         payload["draft_generation_failure"] = {
             "failure_category": failure.failure_category,
             "failure_reason": failure.failure_reason,
+            "normalized_failure_category": _normalize_string(failure.normalized_failure_category, max_length=80),
+            "normalized_failure_reason": _normalize_string(failure.normalized_failure_reason, max_length=120),
+            "normalized_failure_source": _normalize_string(failure.normalized_failure_source, max_length=80),
             "error_code": failure.error_code,
             "message": failure.message_for_operator,
             "retryable": failure.retryable,
+            "normalized_retryable": (
+                failure.normalized_retryable if isinstance(failure.normalized_retryable, bool) else None
+            ),
+            "provider_attempt_count": (
+                max(1, int(failure.provider_attempt_count)) if isinstance(failure.provider_attempt_count, int) else None
+            ),
             "failure_source": normalized_failure_source,
             "correlation_id": failure.correlation_id or draft_run_id,
             "provider_name": failure.provider_name,
             "model_name": failure.model_name,
             "prompt_version": failure.prompt_version,
+            "failure_hint": self._draft_failure_hint(
+                failure_reason=failure.failure_reason,
+                normalized_failure_category=failure.normalized_failure_category,
+                normalized_failure_reason=failure.normalized_failure_reason,
+            ),
             "endpoint_path": _normalize_string(failure.endpoint_path, max_length=120),
             "execution_mode": _normalize_string(failure.execution_mode, max_length=40),
             "response_format_mode": _normalize_string(failure.response_format_mode, max_length=60),
@@ -5620,6 +5689,34 @@ class SEOMigrationService:
             execution_mode=_normalize_string(details.get("execution_mode"), max_length=40),
             response_format_mode=_normalize_string(details.get("response_format_mode"), max_length=60),
             request_body_mode=_normalize_string(details.get("request_body_mode"), max_length=80),
+            normalized_failure_category=_normalize_string(
+                error.normalized_failure_category or details.get("normalized_failure_category"),
+                max_length=80,
+            ),
+            normalized_failure_reason=_normalize_string(
+                error.normalized_failure_reason or details.get("normalized_failure_reason"),
+                max_length=120,
+            ),
+            normalized_failure_source=_normalize_string(
+                error.normalized_failure_source or details.get("normalized_failure_source"),
+                max_length=80,
+            ),
+            normalized_retryable=(
+                error.normalized_retryable
+                if isinstance(error.normalized_retryable, bool)
+                else (
+                    details.get("normalized_retryable")
+                    if isinstance(details.get("normalized_retryable"), bool)
+                    else None
+                )
+            ),
+            provider_attempt_count=(
+                max(1, int(error.attempt_count))
+                if isinstance(error.attempt_count, int)
+                else (
+                    max(1, int(details.get("attempt_count"))) if isinstance(details.get("attempt_count"), int) else None
+                )
+            ),
         )
 
     @staticmethod
@@ -5646,6 +5743,30 @@ class SEOMigrationService:
         if normalized not in _DRAFT_FAILURE_REASON_VALUES:
             return "unknown"
         return normalized
+
+    @staticmethod
+    def _draft_failure_hint(
+        *,
+        failure_reason: str | None,
+        normalized_failure_category: str | None,
+        normalized_failure_reason: str | None,
+    ) -> str | None:
+        normalized_reason = _normalize_string(normalized_failure_reason, max_length=120)
+        normalized_category = _normalize_string(normalized_failure_category, max_length=80)
+        reason = _normalize_string(failure_reason, max_length=80)
+        if normalized_reason in {"request_too_large", "request_too_large_or_complex"}:
+            return "Input too large"
+        if normalized_category == "remote_timeout" or reason == "timeout":
+            return "Try again later"
+        if normalized_category in {"configuration_missing", "configuration_invalid"}:
+            return "Provider configuration required"
+        if normalized_category == "remote_invalid_response" or reason in {
+            "malformed_response",
+            "malformed_output",
+            "validation_failed",
+        }:
+            return "Provider returned invalid response"
+        return None
 
     def _provider_model_fallback_name(self) -> str | None:
         runtime_provider_model = _normalize_string(getattr(self.artifact_provider, "model_name", None), max_length=128)
@@ -6619,9 +6740,7 @@ class SEOMigrationService:
         candidate_owner = str(
             normalized_deploy_config.get("repo_owner") or publish_target.get("repo_owner") or ""
         ).strip()
-        candidate_repo = str(
-            normalized_deploy_config.get("repo_name") or publish_target.get("repo_name") or ""
-        ).strip()
+        candidate_repo = str(normalized_deploy_config.get("repo_name") or publish_target.get("repo_name") or "").strip()
         candidate_ref = str(normalized_deploy_config.get("ref") or self.deploy_default_ref or "").strip()
         history_workflow_id, history_workflow_path = _resolve_publish_history_workflow_identity(
             history=workspace.publish_history_json,
@@ -6808,9 +6927,7 @@ class SEOMigrationService:
         publish_repo = _normalize_string(publish_target.get("repo_name"), max_length=120)
         publish_branch = _normalize_string(publish_target.get("branch"), max_length=120) or "main"
         publish_root = (_normalize_string(publish_target.get("artifact_root"), max_length=120) or "").strip("/")
-        publish_repository = (
-            f"{publish_owner}/{publish_repo}" if publish_owner and publish_repo else None
-        )
+        publish_repository = f"{publish_owner}/{publish_repo}" if publish_owner and publish_repo else None
         publish_tree_url = self._derive_publish_tree_url(
             repo_owner=publish_owner,
             repo_name=publish_repo,
@@ -6819,9 +6936,7 @@ class SEOMigrationService:
         )
         publish_root_display = f"/{publish_root}" if publish_root else "/"
         expected_publish_location = (
-            f"{publish_repository}@{publish_branch}:{publish_root_display}"
-            if publish_repository
-            else None
+            f"{publish_repository}@{publish_branch}:{publish_root_display}" if publish_repository else None
         )
 
         expected_publish_url, expected_publish_url_source, expected_publish_url_source_detail = (
@@ -6904,9 +7019,7 @@ class SEOMigrationService:
                 ),
                 "is_deployed": deployed_live,
                 "last_deployed_at": (
-                    workspace.last_deployed_at.isoformat()
-                    if hasattr(workspace.last_deployed_at, "isoformat")
-                    else None
+                    workspace.last_deployed_at.isoformat() if hasattr(workspace.last_deployed_at, "isoformat") else None
                 ),
                 "target_repository": (
                     f"{_normalize_string(deploy_target.get('repo_owner'), max_length=80) or ''}/"
@@ -7140,7 +7253,9 @@ class SEOMigrationService:
 
     @staticmethod
     def _categorize_readiness_failure(*, reasons: object, action: str, blocker_codes: object = None) -> str:
-        normalized_blockers = [str(item or "").strip().lower() for item in blocker_codes or [] if str(item or "").strip()]
+        normalized_blockers = [
+            str(item or "").strip().lower() for item in blocker_codes or [] if str(item or "").strip()
+        ]
         if normalized_blockers:
             if _DEPLOY_BLOCKER_CONFIGURATION_INVALID in normalized_blockers:
                 return "target_invalid"
@@ -7320,9 +7435,7 @@ class SEOMigrationService:
                     max_length=80,
                 ),
                 "workflow_exists": (
-                    bool(item.get("workflow_exists"))
-                    if isinstance(item.get("workflow_exists"), bool)
-                    else None
+                    bool(item.get("workflow_exists")) if isinstance(item.get("workflow_exists"), bool) else None
                 ),
                 "dispatch_service_reason_code": _normalize_dispatch_service_reason_code(
                     item.get("dispatch_service_reason_code")
@@ -7370,12 +7483,12 @@ class SEOMigrationService:
             workflow_run_lookup_attempted = item.get("workflow_run_lookup_attempted")
             workflow_run_found = item.get("workflow_run_found")
             workflow_job_failure_detected = item.get("workflow_job_failure_detected")
-            workflow_file_path = _normalize_workflow_path_for_deploy(item.get("workflow_file_path")) or _normalize_workflow_path_for_deploy(
-                item.get("workflow_path")
-            )
-            workflow_name = _normalize_string(item.get("workflow_name"), max_length=160) or _workflow_id_from_path_for_deploy(
-                workflow_file_path
-            )
+            workflow_file_path = _normalize_workflow_path_for_deploy(
+                item.get("workflow_file_path")
+            ) or _normalize_workflow_path_for_deploy(item.get("workflow_path"))
+            workflow_name = _normalize_string(
+                item.get("workflow_name"), max_length=160
+            ) or _workflow_id_from_path_for_deploy(workflow_file_path)
             workflow_identifier_requested = _normalize_string(item.get("workflow_identifier_requested"), max_length=200)
             workflow_identifier_used = _normalize_string(item.get("workflow_identifier_used"), max_length=200)
             if workflow_identifier_requested is None:
@@ -7386,7 +7499,9 @@ class SEOMigrationService:
             workflow_run_status = _normalize_string(item.get("workflow_run_status"), max_length=40)
             workflow_run_conclusion = _normalize_string(item.get("workflow_run_conclusion"), max_length=40)
             resolved_live_url = _normalize_url_candidate(item.get("resolved_live_url"))
-            post_dispatch_state = _normalize_string(item.get("post_dispatch_state"), max_length=80) or _derive_post_dispatch_state(
+            post_dispatch_state = _normalize_string(
+                item.get("post_dispatch_state"), max_length=80
+            ) or _derive_post_dispatch_state(
                 dispatch_attempted=dispatch_attempted,
                 dispatch_result_stage=item.get("dispatch_result_stage"),
                 workflow_run_id=workflow_run_id,
@@ -7453,17 +7568,13 @@ class SEOMigrationService:
                     item.get("workflow_trigger_types")
                 ),
                 "dispatch_service_availability": (
-                    bool(dispatch_service_availability)
-                    if isinstance(dispatch_service_availability, bool)
-                    else None
+                    bool(dispatch_service_availability) if isinstance(dispatch_service_availability, bool) else None
                 ),
                 "dispatch_service_reason_code": _normalize_dispatch_service_reason_code(
                     item.get("dispatch_service_reason_code")
                 ),
                 "workflow_conformance_checked": (
-                    bool(workflow_conformance_checked)
-                    if isinstance(workflow_conformance_checked, bool)
-                    else None
+                    bool(workflow_conformance_checked) if isinstance(workflow_conformance_checked, bool) else None
                 ),
                 "workflow_conformance_status": _normalize_string(
                     item.get("workflow_conformance_status"),
@@ -7490,13 +7601,9 @@ class SEOMigrationService:
                 "workflow_inputs_sent_keys": _normalize_dispatch_input_keys(item.get("workflow_inputs_sent_keys"))
                 or _normalize_dispatch_input_keys(item.get("inputs")),
                 "workflow_run_lookup_attempted": (
-                    bool(workflow_run_lookup_attempted)
-                    if isinstance(workflow_run_lookup_attempted, bool)
-                    else None
+                    bool(workflow_run_lookup_attempted) if isinstance(workflow_run_lookup_attempted, bool) else None
                 ),
-                "workflow_run_found": (
-                    bool(workflow_run_found) if isinstance(workflow_run_found, bool) else None
-                ),
+                "workflow_run_found": (bool(workflow_run_found) if isinstance(workflow_run_found, bool) else None),
                 "workflow_job_failure_detected": (
                     bool(workflow_job_failure_detected)
                     if isinstance(workflow_job_failure_detected, bool)
@@ -7517,12 +7624,8 @@ class SEOMigrationService:
                 ),
                 "deploy_evidence_contract_reasons": deploy_evidence_contract_reasons,
                 "workflow_contract_advisory": workflow_contract_advisory,
-                "repo_exists": (
-                    bool(item.get("repo_exists")) if isinstance(item.get("repo_exists"), bool) else None
-                ),
-                "ref_exists": (
-                    bool(item.get("ref_exists")) if isinstance(item.get("ref_exists"), bool) else None
-                ),
+                "repo_exists": (bool(item.get("repo_exists")) if isinstance(item.get("repo_exists"), bool) else None),
+                "ref_exists": (bool(item.get("ref_exists")) if isinstance(item.get("ref_exists"), bool) else None),
                 "workflow_exists": (
                     bool(item.get("workflow_exists")) if isinstance(item.get("workflow_exists"), bool) else None
                 ),
@@ -7614,7 +7717,9 @@ class SEOMigrationService:
                 blocker_codes.append("publish_artifact_invalid")
         runtime_diagnostics = self._runtime_publisher_diagnostics(action="publish")
         if not bool(runtime_diagnostics.get("configured")):
-            reasons.append(str(runtime_diagnostics.get("status_message") or "GitHub migration publisher is not configured."))
+            reasons.append(
+                str(runtime_diagnostics.get("status_message") or "GitHub migration publisher is not configured.")
+            )
             reason_code = str(runtime_diagnostics.get("reason_code") or "").strip().lower()
             if reason_code == _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE:
                 blocker_codes.append("publish_integration_unavailable")
@@ -7683,7 +7788,9 @@ class SEOMigrationService:
                 target, workflow_resolution = self._resolve_deploy_target_with_workflow_precedence(
                     workspace=workspace,
                     effective_publish_config=effective_publish_config,
-                    artifact_version_id=artifact.id if artifact is not None else workspace.last_published_artifact_version_id,
+                    artifact_version_id=(
+                        artifact.id if artifact is not None else workspace.last_published_artifact_version_id
+                    ),
                     validate_workflow_candidates=False,
                 )
                 target_valid = True
@@ -7703,7 +7810,8 @@ class SEOMigrationService:
                     workflow_path=workflow_resolution.get("workflow_path"),
                 )
                 workflow_identifier = _derive_workflow_identifier(
-                    workflow_id=dispatch_identifier_diagnostics.get("workflow_identifier_used") or target.get("workflow_id"),
+                    workflow_id=dispatch_identifier_diagnostics.get("workflow_identifier_used")
+                    or target.get("workflow_id"),
                     workflow_path=workflow_resolution.get("workflow_path"),
                 )
                 dispatch_identifier_type = _normalize_string(
@@ -7713,7 +7821,9 @@ class SEOMigrationService:
                 target_summary["workflow_identifier_requested"] = dispatch_identifier_diagnostics.get(
                     "workflow_identifier_requested"
                 )
-                target_summary["workflow_identifier_used"] = dispatch_identifier_diagnostics.get("workflow_identifier_used")
+                target_summary["workflow_identifier_used"] = dispatch_identifier_diagnostics.get(
+                    "workflow_identifier_used"
+                )
                 target_summary["workflow_identifier_type_requested"] = dispatch_identifier_diagnostics.get(
                     "workflow_identifier_type_requested"
                 )
@@ -7743,7 +7853,9 @@ class SEOMigrationService:
                 blocker_codes.append(_DEPLOY_BLOCKER_PUBLISHED_ARTIFACT_MISSING)
         runtime_diagnostics = self._runtime_publisher_diagnostics(action="deploy")
         if not bool(runtime_diagnostics.get("configured")):
-            reasons.append(str(runtime_diagnostics.get("status_message") or "GitHub migration publisher is not configured."))
+            reasons.append(
+                str(runtime_diagnostics.get("status_message") or "GitHub migration publisher is not configured.")
+            )
             reason_code = str(runtime_diagnostics.get("reason_code") or "").strip().lower()
             if reason_code == _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE:
                 blocker_codes.append(_DEPLOY_BLOCKER_INTEGRATION_UNAVAILABLE)
@@ -7805,7 +7917,9 @@ class SEOMigrationService:
         workflow_file_path = _normalize_workflow_path_for_deploy(
             latest_traceability.get("workflow_file_path")
         ) or _normalize_workflow_path_for_deploy(target_summary.get("workflow_file_path"))
-        workflow_name = _normalize_string(latest_traceability.get("workflow_name"), max_length=160) or _normalize_string(
+        workflow_name = _normalize_string(
+            latest_traceability.get("workflow_name"), max_length=160
+        ) or _normalize_string(
             target_summary.get("workflow_name"),
             max_length=160,
         )
@@ -7835,12 +7949,8 @@ class SEOMigrationService:
             latest_failure_detail.get("failure_category"),
             max_length=40,
         )
-        last_failure_reason = _normalize_deploy_failure_reason_code(
-            latest_failure_detail.get("failure_reason")
-        )
-        last_failure_stage = _normalize_deploy_failure_stage(
-            latest_failure_detail.get("failure_stage")
-        )
+        last_failure_reason = _normalize_deploy_failure_reason_code(latest_failure_detail.get("failure_reason"))
+        last_failure_stage = _normalize_deploy_failure_stage(latest_failure_detail.get("failure_stage"))
         last_failure_message = _normalize_string(
             latest_failure_detail.get("failure_message"),
             max_length=300,
@@ -7940,8 +8050,7 @@ class SEOMigrationService:
             "last_dispatch_attempted": latest_traceability.get("dispatch_attempted"),
             "last_dispatch_result_stage": latest_traceability.get("dispatch_result_stage"),
             "last_dispatch_ref_sent": latest_traceability.get("dispatch_ref_sent"),
-            "last_workflow_inputs_configured_keys": latest_traceability.get("workflow_inputs_configured_keys")
-            or [],
+            "last_workflow_inputs_configured_keys": latest_traceability.get("workflow_inputs_configured_keys") or [],
             "last_workflow_inputs_sent_keys": latest_traceability.get("workflow_inputs_sent_keys") or [],
             "last_workflow_run_lookup_attempted": latest_traceability.get("workflow_run_lookup_attempted"),
             "last_workflow_run_found": latest_traceability.get("workflow_run_found"),
@@ -8986,7 +9095,9 @@ def _history_references_artifact(*, history: object, artifact_version_id: str, a
     return False
 
 
-def _find_latest_deploy_history_index_for_refresh(*, history: list[dict[str, object]], artifact_version_id: str) -> int | None:
+def _find_latest_deploy_history_index_for_refresh(
+    *, history: list[dict[str, object]], artifact_version_id: str
+) -> int | None:
     artifact_id = str(artifact_version_id or "").strip()
     if not artifact_id:
         return None

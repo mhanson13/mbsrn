@@ -584,11 +584,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 },
                 error_stage="workflow_result_lookup",
             )
-            runs_payload = (
-                runs_response.get("workflow_runs")
-                if isinstance(runs_response, dict)
-                else None
-            )
+            runs_payload = runs_response.get("workflow_runs") if isinstance(runs_response, dict) else None
             if not isinstance(runs_payload, list):
                 return None
 
@@ -1519,10 +1515,7 @@ def _normalize_target_environment_source(value: object) -> str:
 
 def _safe_identifier_fragment(value: object, *, fallback: str, max_length: int = 80) -> str:
     raw = _coerce_string(value) or ""
-    cleaned = "".join(
-        character.lower() if character.isalnum() else "-"
-        for character in raw
-    )
+    cleaned = "".join(character.lower() if character.isalnum() else "-" for character in raw)
     while "--" in cleaned:
         cleaned = cleaned.replace("--", "-")
     cleaned = cleaned.strip("-")
@@ -1567,12 +1560,12 @@ def _render_managed_deploy_workflow_yaml(
             "    steps:\n"
             "      - name: MBSRN managed deploy placeholder\n"
             "        run: |\n"
-            f"          echo \"MBSRN managed deploy workflow: {normalized_workflow_id}\"\n"
-            f"          echo \"Repository: {repo_owner}/{repo_name}\"\n"
-            f"          echo \"Branch: {branch}\"\n"
-            f"          echo \"Target environment key: {normalized_environment_key}\"\n"
-            f"          echo \"Target environment source: {normalized_environment_source}\"\n"
-            f"          echo \"Site identity: {normalized_site_fragment}\"\n"
+            f'          echo "MBSRN managed deploy workflow: {normalized_workflow_id}"\n'
+            f'          echo "Repository: {repo_owner}/{repo_name}"\n'
+            f'          echo "Branch: {branch}"\n'
+            f'          echo "Target environment key: {normalized_environment_key}"\n'
+            f'          echo "Target environment source: {normalized_environment_source}"\n'
+            f'          echo "Site identity: {normalized_site_fragment}"\n'
         )
     return (
         f"name: {normalized_name}\n"
@@ -1585,7 +1578,7 @@ def _render_managed_deploy_workflow_yaml(
         "    runs-on: ubuntu-latest\n"
         "    steps:\n"
         "      - name: Placeholder deploy\n"
-        f"        run: echo \"Deploy workflow ({normalized_workflow_id}) provisioned in mode {normalized_mode}.\"\n"
+        f'        run: echo "Deploy workflow ({normalized_workflow_id}) provisioned in mode {normalized_mode}."\n'
     )
 
 
@@ -1726,9 +1719,7 @@ def _evaluate_workflow_conformance(
 
     lowered = decoded_content.lower()
     normalized_trigger_types = {
-        str(item).strip().lower()
-        for item in (workflow_trigger_types or [])
-        if str(item).strip()
+        str(item).strip().lower() for item in (workflow_trigger_types or []) if str(item).strip()
     }
     has_dispatch_trigger = "workflow_dispatch" in lowered or "workflow_dispatch" in normalized_trigger_types
     if not has_dispatch_trigger:
@@ -1739,26 +1730,17 @@ def _evaluate_workflow_conformance(
             evidence_summary="workflow_dispatch=false",
         )
 
-    placeholder_markers = tuple(
-        marker
-        for marker in _WORKFLOW_CONFORMANCE_PLACEHOLDER_MARKERS
-        if marker in lowered
-    )
+    placeholder_markers = tuple(marker for marker in _WORKFLOW_CONFORMANCE_PLACEHOLDER_MARKERS if marker in lowered)
     if placeholder_markers:
         return SEOMigrationGitHubWorkflowConformanceResult(
             is_conformant=False,
             conformance_status=_WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_PLACEHOLDER_DETECTED,
             conformance_reasons=("placeholder_workflow_content_detected",),
-            evidence_summary=(
-                "workflow_dispatch=true;"
-                f"placeholder_markers={','.join(placeholder_markers)}"
-            ),
+            evidence_summary=("workflow_dispatch=true;" f"placeholder_markers={','.join(placeholder_markers)}"),
         )
 
     required_marker_hits = tuple(
-        marker
-        for marker in _WORKFLOW_CONFORMANCE_REQUIRED_DEPLOY_MARKERS
-        if marker in lowered
+        marker for marker in _WORKFLOW_CONFORMANCE_REQUIRED_DEPLOY_MARKERS if marker in lowered
     )
     if not required_marker_hits:
         return SEOMigrationGitHubWorkflowConformanceResult(
@@ -1772,10 +1754,7 @@ def _evaluate_workflow_conformance(
         is_conformant=True,
         conformance_status=_WORKFLOW_CONFORMANCE_STATUS_CONFORMANT,
         conformance_reasons=(),
-        evidence_summary=(
-            "workflow_dispatch=true;"
-            f"required_deploy_markers={','.join(required_marker_hits)}"
-        ),
+        evidence_summary=("workflow_dispatch=true;" f"required_deploy_markers={','.join(required_marker_hits)}"),
     )
 
 

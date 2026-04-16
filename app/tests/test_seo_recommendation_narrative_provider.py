@@ -291,7 +291,12 @@ def test_openai_recommendation_narrative_provider_timeout_is_normalized(monkeypa
             current_tuning_values=_current_tuning_values(),
         )
 
-    assert exc_info.value.code == "timeout"
+    assert exc_info.value.code == "provider_request"
+    assert exc_info.value.normalized_failure_category == "remote_timeout"
+    assert exc_info.value.normalized_failure_reason == "request_too_large_or_complex"
+    assert exc_info.value.normalized_failure_source == "remote_provider"
+    assert exc_info.value.normalized_retryable is False
+    assert exc_info.value.attempt_count == 1
 
 
 def test_openai_recommendation_narrative_provider_auth_error_is_normalized(monkeypatch) -> None:
@@ -326,6 +331,126 @@ def test_openai_recommendation_narrative_provider_auth_error_is_normalized(monke
         )
 
     assert exc_info.value.code == "provider_auth_config"
+    assert exc_info.value.normalized_failure_category == "configuration_invalid"
+    assert exc_info.value.normalized_failure_reason == "provider_auth_or_configuration_invalid"
+    assert exc_info.value.normalized_failure_source == "local_configuration"
+    assert exc_info.value.normalized_retryable is False
+    assert exc_info.value.attempt_count == 1
+
+
+def test_recommendation_context_budget_keeps_required_and_aggressively_trims_optional_context() -> None:
+    provider = OpenAISEORecommendationNarrativeProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+    competitor_context = {
+        "top_opportunities": ["A" * 12000],
+        "competitor_summary": "B" * 12000,
+        "competitor_names": ["C" * 4000],
+    }
+    competitor_telemetry_summary = {
+        "total_raw_candidate_count": 200,
+        "total_excluded_candidate_count": 100,
+        "dense_payload": "D" * 24000,
+    }
+
+    (
+        budgeted_telemetry,
+        budgeted_tuning,
+        budgeted_competitor_context,
+        budget_result,
+    ) = provider._apply_recommendation_context_budget(
+        competitor_telemetry_summary=competitor_telemetry_summary,
+        current_tuning_values=_current_tuning_values(),
+        competitor_context=competitor_context,
+    )
+
+    # Required tuning block must always remain available.
+    assert budgeted_tuning == _current_tuning_values()
+    # Recommendation adapter policy: once any trim occurs, enrichment context is removed entirely.
+    assert budget_result["aggressive_trim_applied"] is True
+    assert budgeted_telemetry == {}
+    assert budgeted_competitor_context is None
+    dropped_blocks = budget_result.get("dropped_optional_blocks") or []
+    assert dropped_blocks
+    assert dropped_blocks[0] == "competitor_context"
+    assert isinstance(budget_result.get("trimming_pass_count"), int)
+    assert isinstance(budget_result.get("trimmed_bytes"), int)
+
+
+def test_recommendation_budget_logs_submission_telemetry(caplog, monkeypatch) -> None:
+    caplog.set_level(logging.INFO, logger="app.integrations.seo_recommendation_narrative_provider")
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        response = {
+            "model": "gpt-4.1-mini-2026-02-01",
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "narrative_text": "Budgeted narrative.",
+                                "top_themes": ["metadata quality"],
+                                "sections": {
+                                    "summary": "Budgeted.",
+                                    "priority_rationale": "Budgeted rationale.",
+                                    "next_actions": ["Complete highest priority recommendation."],
+                                    "recommendation_references": ["rec-1"],
+                                    "tuning_suggestions": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ],
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEORecommendationNarrativeProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    provider.generate_narrative(
+        run=_run(),
+        recommendations=_recommendations(),
+        by_status={"open": 1, "in_progress": 1},
+        by_category={"SEO": 1, "CONTENT": 1},
+        by_severity={"WARNING": 1, "CRITICAL": 1},
+        by_effort_bucket={"LOW": 1, "HIGH": 1},
+        by_priority_band={"high": 1, "critical": 1},
+        backlog=_recommendations(),
+        competitor_telemetry_summary={
+            "total_raw_candidate_count": 300,
+            "total_excluded_candidate_count": 120,
+            "dense_payload": "D" * 32000,
+        },
+        current_tuning_values=_current_tuning_values(),
+        competitor_context={
+            "top_opportunities": ["A" * 14000],
+            "competitor_summary": "B" * 14000,
+            "competitor_names": ["C" * 5000],
+        },
+    )
+
+    budget_events = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "recommendation_narrative_request_budget"
+    ]
+    assert budget_events
+    latest_budget_event = budget_events[-1]
+    assert latest_budget_event.get("feature_area") == "recommendation_ai"
+    assert latest_budget_event.get("budget_outcome") == "provider_submission"
+    assert isinstance(latest_budget_event.get("trimmed_bytes"), int)
+    assert isinstance(latest_budget_event.get("trimming_pass_count"), int)
+    assert latest_budget_event.get("aggressive_trim_applied") is True
+    dropped_optional = latest_budget_event.get("dropped_optional_blocks")
+    assert isinstance(dropped_optional, list)
+    assert "competitor_context" in dropped_optional
 
 
 def test_openai_recommendation_narrative_provider_malformed_content_is_normalized(monkeypatch) -> None:

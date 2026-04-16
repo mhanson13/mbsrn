@@ -322,7 +322,31 @@ Behavior:
 - failure is persisted using existing draft-failure diagnostics (`failure_category`, `failure_reason`, `error_code`, `retryable`, correlation id)
 - operator receives a concise sanitized message (for example, unsupported model/request-shape guidance)
 
+### Shared AI reliability substrate (migration adapter)
+Migration draft generation now runs through the same synchronous reliability core used by recommendation and competitor AI paths:
+- bounded timeout + retry policy
+- normalized failure taxonomy
+- request budgeting (optional context trimmed before required context)
+- workflow-specific validation entrypoint
+- structured, secret-safe execution telemetry
+
+Migration-specific degraded behavior remains strict:
+- no fake draft artifacts are created on provider failure
+- failed runs persist explicit diagnostics and retryability metadata
+- artifact trust boundaries are unchanged (approval/publish/deploy gates remain explicit)
+- unchanged oversized/complex timeout payloads are not blindly retried (`request_too_large_or_complex`)
+
 Structured logging:
+- shared execution-core lifecycle emits:
+  - `event=ai_execution_preflight`
+  - `event=ai_execution_precall_rejected`
+  - `event=ai_execution_retry_suppressed`
+  - `event=ai_execution_completed`
+  - `event=ai_execution_failed`
+- migration adapter budget summary emits:
+  - `event=seo_migration_draft_request_budget`
+  - `budget_outcome=precall_rejected|provider_submission`
+  - `dropped_optional_blocks` (trim order evidence)
 - compatibility evaluation emits `event=seo_migration_provider_compatibility_evaluation`
 - includes identifiers and request-shape metadata (`business_id`, `site_id`, `workspace_id`, `provider_name`, `model`, `endpoint_path`, `execution_mode`, `web_search_enabled`, `degraded_mode`, `response_format_mode`, `request_body_mode`, `supported`, `reason_code`, `retryable`)
 - migration summary diagnostics also expose `draft_provider_compatibility_admin_summary` (sanitized admin hint from compatibility decision) for operator/admin troubleshooting
@@ -344,6 +368,14 @@ Structured logging:
   - `request_fingerprint_schema_top_level_keys`
   - `request_fingerprint_input_mode`
   - `request_fingerprint_input_length_chars`
+
+Maintainer tuning guidance:
+- adapter budget knobs are defined in `app/integrations/seo_migration_artifact_provider.py`:
+  - `_MIGRATION_CONTEXT_BUDGET_CHARS`
+  - `_MIGRATION_DRAFT_MAX_TOTAL_INPUT_SIZE`
+  - `_MIGRATION_REQUIRED_CONTEXT_KEYS`
+  - `_MIGRATION_OPTIONAL_TRIM_ORDER`
+- change budget constants only with test updates that prove required context blocks remain retained and optional trim order stays deterministic.
   - `request_fingerprint_has_null_optional_fields`
   - `request_fingerprint_has_extra_request_options`
   - `request_fingerprint_contains_tools`

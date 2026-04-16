@@ -153,13 +153,9 @@ def test_dispatch_deploy_uses_workflow_file_path_identifier_when_provided(monkey
     publisher = GitHubSEOMigrationPublisher(token="test-token")
     result = publisher.dispatch_deploy(target=_dispatch_target_with_workflow_path(), dry_run=False)
     assert result.workflow_id == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert any(call[1].endswith("/actions/workflows/deploy-tnmfire-www-prod.yml/dispatches") for call in calls)
     assert any(
-        call[1].endswith("/actions/workflows/deploy-tnmfire-www-prod.yml/dispatches")
-        for call in calls
-    )
-    assert any(
-        call[1].endswith("/actions/workflows/.github%2Fworkflows%2Fdeploy-tnmfire-www-prod.yml")
-        for call in calls
+        call[1].endswith("/actions/workflows/.github%2Fworkflows%2Fdeploy-tnmfire-www-prod.yml") for call in calls
     )
 
 
@@ -328,7 +324,9 @@ def test_dispatch_deploy_classifies_workflow_not_dispatchable_when_trigger_missi
     assert len(calls) == 4
 
 
-def test_check_deploy_target_readiness_marks_workflow_conformant_when_managed_contract_markers_present(monkeypatch) -> None:
+def test_check_deploy_target_readiness_marks_workflow_conformant_when_managed_contract_markers_present(
+    monkeypatch,
+) -> None:
     calls: list[tuple[str, str]] = []
     encoded_workflow = _encode_workflow_yaml(
         (
@@ -397,7 +395,7 @@ def test_check_deploy_target_readiness_preserves_placeholder_conformance_without
             "    runs-on: ubuntu-latest\n"
             "    steps:\n"
             "      - name: Placeholder deploy\n"
-            "        run: echo \"Deploy step not yet implemented\"\n"
+            '        run: echo "Deploy step not yet implemented"\n'
         )
     )
     _install_urlopen_stub(
@@ -443,7 +441,9 @@ def test_check_deploy_target_readiness_preserves_placeholder_conformance_without
     assert len(calls) == 4
 
 
-def test_check_deploy_target_readiness_classifies_unreadable_workflow_content_without_forcing_block(monkeypatch) -> None:
+def test_check_deploy_target_readiness_classifies_unreadable_workflow_content_without_forcing_block(
+    monkeypatch,
+) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(
         monkeypatch,

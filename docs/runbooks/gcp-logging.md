@@ -84,6 +84,75 @@ Quick triage examples:
   - pattern: required files present, `content_density_failures_by_file` populated
   - action: improve draft content depth; retry can be conditionally useful.
 
+## Shared AI Reliability Telemetry (Migration / Recommendations / Competitors)
+
+All synchronous AI paths now emit a normalized reliability envelope. Use this to distinguish provider transport failures from local validation/configuration failures consistently across feature areas.
+
+Key fields to inspect (event-specific availability):
+- `normalized_failure_category`
+- `normalized_failure_reason`
+- `normalized_failure_source`
+- `normalized_retryable`
+- `attempt_count` (or feature-specific attempt count field)
+- calibration event names:
+  - `ai_execution_preflight`
+  - `ai_execution_precall_rejected`
+  - `ai_execution_retry_suppressed`
+  - `ai_execution_completed`
+  - `ai_execution_failed`
+  - `seo_migration_draft_request_budget`
+  - `recommendation_narrative_request_budget`
+  - `competitor_request_budget`
+- request-budget metadata:
+  - `request_fingerprint_context_budget_initial_size_chars`
+  - `request_fingerprint_context_budget_final_size_chars`
+  - `request_fingerprint_context_budget_dropped_optional_blocks`
+  - `request_fingerprint_context_budget_overflow`
+  - `original_input_size`
+  - `final_input_size`
+  - `trimmed_bytes`
+  - `trimming_pass_count`
+  - `difficulty_score`
+  - `budget_outcome` (`precall_rejected` | `provider_submission`)
+
+Normalized category meanings:
+- `remote_timeout`: provider timeout boundary
+- `remote_unavailable`: transport/unavailable upstream boundary
+- `remote_rate_limited`: provider rate-limit boundary
+- `remote_invalid_response`: provider returned malformed/invalid payload
+- `local_validation_failure`: response failed local schema/contract validation
+- `configuration_missing`: required local/provider configuration is missing
+- `configuration_invalid`: local/provider authentication/configuration is invalid
+
+Operator/admin guidance:
+- retry only when the normalized category/reason indicates retryable remote conditions.
+- avoid blind retries for `configuration_*` and `local_validation_failure` until configuration or contract issues are corrected.
+
+Timeout vs request-too-large interpretation:
+- `normalized_failure_category=remote_timeout` + `normalized_failure_reason=provider_timeout`
+  - provider timed out under normal budget assumptions
+  - retry can be useful when marked retryable.
+- `normalized_failure_reason=request_too_large_or_complex`
+  - timeout retry was suppressed because the payload size/complexity did not change
+  - fix by reducing optional context (adapter budget trimming) before retrying.
+- `normalized_failure_category=local_validation_failure` + `normalized_failure_reason=request_too_large` (or `request_too_large_or_complex`)
+  - request was rejected before provider call due to synchronous budget guardrails
+  - retry is not useful until request size/shape is reduced.
+
+Calibration queries (safe counters):
+- "How often did each workflow trim?"
+  - filter on `event in {"seo_migration_draft_request_budget","recommendation_narrative_request_budget","competitor_request_budget"}` and `trimming_pass_count>0`
+- "How often did trimming still submit to provider?"
+  - same events with `budget_outcome="provider_submission"` and `trimming_pass_count>0`
+- "How often were requests rejected pre-call?"
+  - `event="ai_execution_precall_rejected"` OR adapter budget events with `budget_outcome="precall_rejected"`
+- "How often did timeout retries get suppressed?"
+  - `event="ai_execution_retry_suppressed"` and inspect `reason=request_too_large_or_complex`
+
+Trim-order tuning guidance:
+- check `dropped_optional_blocks` over time per feature area before changing budgets.
+- do not promote optional context blocks to required without adapter test updates proving required-content safety and bounded request size.
+
 ## Migration Provider Compatibility Queries
 
 For migration draft preflight compatibility troubleshooting:

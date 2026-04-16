@@ -71,6 +71,34 @@ The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) 
 
 This is a presentation-only improvement. Recommendation generation, queue mutation semantics, polling behavior, and backend/API workflow contracts are unchanged.
 
+## Shared AI Reliability Substrate (Recommendation Adapter)
+
+Recommendation narrative generation now uses the shared synchronous AI execution core that is also used by migration draft and competitor AI flows.
+
+Shared guarantees:
+- bounded timeout + retry execution
+- normalized failure taxonomy (`remote_timeout`, `remote_unavailable`, `remote_rate_limited`, `remote_invalid_response`, `local_validation_failure`, `configuration_missing`, `configuration_invalid`)
+- request budgeting with optional-context trimming before required content
+- workflow-specific parser/validator invoked through adapter policy
+- structured, secret-safe logging envelope
+- timeout retries are suppressed for unchanged oversized/complex payloads (`request_too_large_or_complex`) to avoid wasteful repeat calls
+- calibration telemetry includes:
+  - shared core events (`ai_execution_preflight`, `ai_execution_precall_rejected`, `ai_execution_retry_suppressed`, `ai_execution_completed`, `ai_execution_failed`)
+  - recommendation budget events (`recommendation_narrative_request_budget`) with `budget_outcome`, `trimmed_bytes`, `trimming_pass_count`, and `dropped_optional_blocks`
+
+Recommendation-specific behavior remains unchanged:
+- provider failures produce deterministic failed/degraded narrative states
+- no fabricated narrative output is persisted on provider failure
+- queue/run semantics and recommendation workflow rules are unchanged
+
+Maintainer tuning guidance:
+- recommendation adapter budget policy is defined in `app/integrations/seo_recommendation_narrative_provider.py`:
+  - `_RECOMMENDATION_CONTEXT_BUDGET_CHARS`
+  - `_RECOMMENDATION_MAX_TOTAL_INPUT_SIZE`
+  - `_RECOMMENDATION_REQUIRED_CONTEXT_KEYS`
+  - `_RECOMMENDATION_OPTIONAL_TRIM_ORDER`
+- keep required context stable and trim optional enrichment first; update tests before promoting optional sections to required.
+
 ## Route-Level Action Cluster Consistency
 
 Recommendation routes now use a shared route-level action cluster near hero/control surfaces to keep action hierarchy consistent across:

@@ -32,16 +32,10 @@ def _to_github_publish_config_read(config) -> GitHubPublishConfigRead:  # noqa: 
         default_branch=getattr(config, "default_branch", "main") or "main",
         base_path=getattr(config, "base_path", "/") or "/",
         deploy_workflow_mode=(
-            getattr(config, "deploy_workflow_mode", "site_repo_template_v1")
-            or "site_repo_template_v1"
+            getattr(config, "deploy_workflow_mode", "site_repo_template_v1") or "site_repo_template_v1"
         ),
-        target_environment_key=(
-            getattr(config, "target_environment_key", "gke_prod") or "gke_prod"
-        ),
-        target_environment_source=(
-            getattr(config, "target_environment_source", "admin_config")
-            or "admin_config"
-        ),
+        target_environment_key=(getattr(config, "target_environment_key", "gke_prod") or "gke_prod"),
+        target_environment_source=(getattr(config, "target_environment_source", "admin_config") or "admin_config"),
         enabled=bool(getattr(config, "enabled", False)),
         created_at=getattr(config, "created_at", None),
         updated_at=getattr(config, "updated_at", None),

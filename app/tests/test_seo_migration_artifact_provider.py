@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import socket
 import urllib.error
 import urllib.request
@@ -141,9 +142,7 @@ def _count_non_false_additional_properties(schema_payload: object) -> int:
         if not isinstance(candidate, dict):
             continue
         candidate_type = candidate.get("type")
-        is_object_node = candidate_type == "object" or (
-            isinstance(candidate_type, list) and "object" in candidate_type
-        )
+        is_object_node = candidate_type == "object" or (isinstance(candidate_type, list) and "object" in candidate_type)
         if is_object_node and candidate.get("additionalProperties") is not False:
             count += 1
         properties = candidate.get("properties")
@@ -172,9 +171,7 @@ def _count_object_nodes_missing_full_required(schema_payload: object) -> int:
         if not isinstance(candidate, dict):
             continue
         candidate_type = candidate.get("type")
-        is_object_node = candidate_type == "object" or (
-            isinstance(candidate_type, list) and "object" in candidate_type
-        )
+        is_object_node = candidate_type == "object" or (isinstance(candidate_type, list) and "object" in candidate_type)
         if is_object_node:
             properties = candidate.get("properties")
             if isinstance(properties, dict) and properties:
@@ -411,7 +408,11 @@ def test_openai_migration_provider_compatibility_rejects_responses_schema_with_n
                 schema_payload = format_payload.get("schema")
                 if isinstance(schema_payload, dict):
                     schema_payload["properties"] = {
-                        **(schema_payload.get("properties") if isinstance(schema_payload.get("properties"), dict) else {}),
+                        **(
+                            schema_payload.get("properties")
+                            if isinstance(schema_payload.get("properties"), dict)
+                            else {}
+                        ),
                         "cta_contact_structure": {"type": "object", "additionalProperties": True},
                     }
         return payload
@@ -637,8 +638,83 @@ def test_openai_migration_provider_timeout_maps_to_retryable_timeout_reason(monk
         provider.generate_artifacts(migration_context=_build_migration_context())
     error = exc_info.value
     assert error.reason == "timeout"
-    assert error.retryable is True
+    assert error.retryable is False
+    assert error.normalized_failure_category == "remote_timeout"
+    assert error.normalized_failure_reason == "request_too_large_or_complex"
+    assert error.normalized_failure_source == "remote_provider"
+    assert error.normalized_retryable is False
+    assert error.attempt_count == 1
     assert "timed out" in error.safe_message.lower()
+
+
+def test_openai_migration_provider_fails_early_when_required_context_exceeds_budget(monkeypatch, caplog) -> None:
+    caplog.set_level(logging.INFO, logger="app.integrations.seo_migration_artifact_provider")
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    migration_context = _build_migration_context()
+    site_snapshot = dict(migration_context.get("site_snapshot") or {})
+    site_snapshot["display_name"] = "X" * 180000
+    migration_context["site_snapshot"] = site_snapshot
+
+    provider_called = False
+
+    def _fail_if_called(request, timeout):  # noqa: ANN001
+        del request, timeout
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("provider call should not happen for oversized required context")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fail_if_called)
+
+    with pytest.raises(SEOMigrationArtifactProviderError) as exc_info:
+        provider.generate_artifacts(migration_context=migration_context)
+
+    error = exc_info.value
+    assert provider_called is False
+    assert error.reason == "validation_failed"
+    assert error.retryable is False
+    assert error.normalized_failure_category == "local_validation_failure"
+    assert error.normalized_failure_reason == "request_too_large_or_complex"
+    assert error.normalized_failure_source == "local_validation"
+    assert error.attempt_count == 1
+    budget_events = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_draft_request_budget"
+    ]
+    assert budget_events
+    latest_budget_event = budget_events[-1]
+    assert latest_budget_event.get("feature_area") == "migration_draft"
+    assert latest_budget_event.get("budget_outcome") == "precall_rejected"
+    assert isinstance(latest_budget_event.get("trimmed_bytes"), int)
+    assert isinstance(latest_budget_event.get("trimming_pass_count"), int)
+
+
+def test_openai_migration_provider_budget_trimming_preserves_required_context_blocks() -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    migration_context = _build_migration_context()
+    migration_context["existing_context_summaries"] = {"summary": "A" * 22000}
+    migration_context["brand_business_facts_snapshot"] = {"facts": "B" * 22000}
+    migration_context["enriched_content_notes"] = {"notes": "C" * 22000}
+
+    budgeted_context, budget_result = provider._apply_migration_context_budget(migration_context)
+
+    assert "site_snapshot" in budgeted_context
+    assert "migration_workspace" in budgeted_context
+    assert "existing_context_summaries" not in budgeted_context
+    assert "brand_business_facts_snapshot" not in budgeted_context
+    dropped_blocks = budget_result.get("dropped_optional_blocks") or []
+    assert dropped_blocks[:2] == ["existing_context_summaries", "brand_business_facts_snapshot"]
+    assert isinstance(budget_result.get("trimming_pass_count"), int)
+    assert isinstance(budget_result.get("trimmed_bytes"), int)
 
 
 def test_openai_migration_provider_auth_failure_maps_to_non_retryable_auth_reason(monkeypatch) -> None:
@@ -666,6 +742,11 @@ def test_openai_migration_provider_auth_failure_maps_to_non_retryable_auth_reaso
     assert error.reason == "authentication_failed"
     assert error.retryable is False
     assert error.correlation_id == "provider-auth-1"
+    assert error.normalized_failure_category == "configuration_invalid"
+    assert error.normalized_failure_reason == "provider_auth_or_configuration_invalid"
+    assert error.normalized_failure_source == "local_configuration"
+    assert error.normalized_retryable is False
+    assert error.attempt_count == 1
     assert "authentication failed" in error.safe_message.lower()
 
 

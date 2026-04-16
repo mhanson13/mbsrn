@@ -353,6 +353,10 @@ class SEOCompetitorProfileProviderAttemptDebug:
     requested_candidate_count: int
     outcome: str
     failure_kind: str | None
+    normalized_failure_category: str | None
+    normalized_failure_reason: str | None
+    normalized_failure_source: str | None
+    normalized_retryable: bool | None
     malformed_output_reason: str | None
     request_duration_ms: int | None
     timeout_seconds: int | None
@@ -2760,6 +2764,10 @@ class SEOCompetitorProfileGenerationService:
                 requested_candidate_count=max(1, int(requested_candidate_count or 1)),
                 outcome="success",
                 failure_kind=None,
+                normalized_failure_category=None,
+                normalized_failure_reason=None,
+                normalized_failure_source=None,
+                normalized_retryable=None,
                 malformed_output_reason=None,
                 request_duration_ms=0,
                 timeout_seconds=None,
@@ -4551,6 +4559,10 @@ class SEOCompetitorProfileGenerationService:
         max_attempts: int | None = None,
     ) -> SEOCompetitorProfileProviderAttemptDebug:
         failure_kind = "unknown"
+        normalized_failure_category: str | None = None
+        normalized_failure_reason: str | None = None
+        normalized_failure_source: str | None = None
+        normalized_retryable: bool | None = None
         malformed_output_reason: str | None = None
         endpoint_path: str | None = None
         prompt_size_risk: str | None = None
@@ -4570,6 +4582,14 @@ class SEOCompetitorProfileGenerationService:
         google_places_seed_count = max(0, int(fallback_google_places_seed_count))
 
         if provider_error is not None:
+            normalized_failure_category = self._clean_optional(provider_error.normalized_failure_category)
+            normalized_failure_reason = self._clean_optional(provider_error.normalized_failure_reason)
+            normalized_failure_source = self._clean_optional(provider_error.normalized_failure_source)
+            normalized_retryable = (
+                bool(provider_error.normalized_retryable)
+                if isinstance(provider_error.normalized_retryable, bool)
+                else None
+            )
             if provider_error.code == "timeout":
                 failure_kind = "timeout"
             elif provider_error.code == "provider_request":
@@ -4580,6 +4600,14 @@ class SEOCompetitorProfileGenerationService:
             if provider_debug is not None:
                 if provider_debug.failure_kind in {"timeout", "provider_request", "malformed_output"}:
                     failure_kind = provider_debug.failure_kind
+                if provider_debug.normalized_failure_category:
+                    normalized_failure_category = provider_debug.normalized_failure_category
+                if provider_debug.normalized_failure_reason:
+                    normalized_failure_reason = provider_debug.normalized_failure_reason
+                if provider_debug.normalized_failure_source:
+                    normalized_failure_source = provider_debug.normalized_failure_source
+                if isinstance(provider_debug.normalized_retryable, bool):
+                    normalized_retryable = provider_debug.normalized_retryable
                 if provider_debug.malformed_output_reason:
                     malformed_output_reason = provider_debug.malformed_output_reason
                 endpoint_path = provider_debug.endpoint_path
@@ -4650,6 +4678,10 @@ class SEOCompetitorProfileGenerationService:
             requested_candidate_count=max(1, int(requested_candidate_count)),
             outcome=outcome,
             failure_kind=None if provider_error is None else failure_kind,
+            normalized_failure_category=normalized_failure_category,
+            normalized_failure_reason=normalized_failure_reason,
+            normalized_failure_source=normalized_failure_source,
+            normalized_retryable=normalized_retryable,
             malformed_output_reason=malformed_output_reason,
             request_duration_ms=request_duration_ms,
             timeout_seconds=timeout_seconds,
@@ -4667,6 +4699,10 @@ class SEOCompetitorProfileGenerationService:
     @dataclass(frozen=True)
     class _ProviderFailureDebug:
         failure_kind: str
+        normalized_failure_category: str | None
+        normalized_failure_reason: str | None
+        normalized_failure_source: str | None
+        normalized_retryable: bool | None
         malformed_output_reason: str | None
         endpoint_path: str | None
         provider_call_type: str | None
@@ -4693,6 +4729,18 @@ class SEOCompetitorProfileGenerationService:
         raw_failure_kind = self._clean_optional(str(parsed.get("failure_kind") or "")) or "unknown"
         if raw_failure_kind not in {"timeout", "provider_request", "malformed_output"}:
             raw_failure_kind = "unknown"
+        normalized_failure_category = self._clean_optional(
+            str(parsed.get("normalized_failure_category") or ""),
+        )
+        normalized_failure_reason = self._clean_optional(
+            str(parsed.get("normalized_failure_reason") or ""),
+        )
+        normalized_failure_source = self._clean_optional(
+            str(parsed.get("normalized_failure_source") or ""),
+        )
+        normalized_retryable = parsed.get("normalized_retryable")
+        if not isinstance(normalized_retryable, bool):
+            normalized_retryable = None
         malformed_output_reason = self._clean_optional(str(parsed.get("malformed_output_reason") or ""))
         if malformed_output_reason and len(malformed_output_reason) > 64:
             malformed_output_reason = malformed_output_reason[:64]
@@ -4753,6 +4801,10 @@ class SEOCompetitorProfileGenerationService:
                 google_places_seed_count = None
         return self._ProviderFailureDebug(
             failure_kind=raw_failure_kind,
+            normalized_failure_category=normalized_failure_category,
+            normalized_failure_reason=normalized_failure_reason,
+            normalized_failure_source=normalized_failure_source,
+            normalized_retryable=normalized_retryable,
             malformed_output_reason=malformed_output_reason,
             endpoint_path=endpoint_path,
             provider_call_type=provider_call_type,
@@ -4879,6 +4931,14 @@ class SEOCompetitorProfileGenerationService:
             }
             if item.failure_kind:
                 payload["failure_kind"] = item.failure_kind
+            if item.normalized_failure_category:
+                payload["normalized_failure_category"] = item.normalized_failure_category
+            if item.normalized_failure_reason:
+                payload["normalized_failure_reason"] = item.normalized_failure_reason
+            if item.normalized_failure_source:
+                payload["normalized_failure_source"] = item.normalized_failure_source
+            if isinstance(item.normalized_retryable, bool):
+                payload["normalized_retryable"] = item.normalized_retryable
             if item.malformed_output_reason:
                 payload["malformed_output_reason"] = item.malformed_output_reason
             if item.request_duration_ms is not None:
@@ -4958,6 +5018,18 @@ class SEOCompetitorProfileGenerationService:
                 failure_kind = self._clean_optional(str(raw_item.get("failure_kind") or ""))
                 if failure_kind not in {"timeout", "provider_request", "malformed_output", "unknown"}:
                     failure_kind = None
+                normalized_failure_category = self._clean_optional(
+                    str(raw_item.get("normalized_failure_category") or ""),
+                )
+                normalized_failure_reason = self._clean_optional(
+                    str(raw_item.get("normalized_failure_reason") or ""),
+                )
+                normalized_failure_source = self._clean_optional(
+                    str(raw_item.get("normalized_failure_source") or ""),
+                )
+                normalized_retryable = raw_item.get("normalized_retryable")
+                if not isinstance(normalized_retryable, bool):
+                    normalized_retryable = None
                 malformed_output_reason = self._clean_optional(str(raw_item.get("malformed_output_reason") or ""))
                 if malformed_output_reason and len(malformed_output_reason) > 64:
                     malformed_output_reason = malformed_output_reason[:64]
@@ -5030,6 +5102,10 @@ class SEOCompetitorProfileGenerationService:
                         requested_candidate_count=requested_candidate_count,
                         outcome=outcome,
                         failure_kind=failure_kind,
+                        normalized_failure_category=normalized_failure_category,
+                        normalized_failure_reason=normalized_failure_reason,
+                        normalized_failure_source=normalized_failure_source,
+                        normalized_retryable=normalized_retryable,
                         malformed_output_reason=malformed_output_reason,
                         request_duration_ms=request_duration_ms,
                         timeout_seconds=timeout_seconds,

@@ -103,9 +103,7 @@ def upsert_seo_migration_workspace(
                 normalized_payload.deploy_config.model_dump(mode="json") if normalized_payload.deploy_config else None
             ),
             deploy_config_field_names=(
-                set(normalized_payload.deploy_config.model_fields_set)
-                if normalized_payload.deploy_config
-                else None
+                set(normalized_payload.deploy_config.model_fields_set) if normalized_payload.deploy_config else None
             ),
             analytics_config=(
                 normalized_payload.analytics_config.model_dump(mode="json")
@@ -500,7 +498,9 @@ def delete_seo_migration_artifact_version(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOMigrationValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
     return SEOMigrationArtifactDeleteActionRead(
         workspace=_to_workspace_read(action_result.workspace),
         deleted_artifact_version_id=action_result.deleted_artifact_version_id,

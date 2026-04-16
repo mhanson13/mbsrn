@@ -523,6 +523,10 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
     requested_candidate_count: int = Field(ge=1)
     outcome: str = Field(min_length=1, max_length=64)
     failure_kind: str | None = Field(default=None, max_length=64)
+    normalized_failure_category: str | None = Field(default=None, max_length=80)
+    normalized_failure_reason: str | None = Field(default=None, max_length=120)
+    normalized_failure_source: str | None = Field(default=None, max_length=80)
+    normalized_retryable: bool | None = None
     malformed_output_reason: str | None = Field(default=None, max_length=64)
     request_duration_ms: int | None = Field(default=None, ge=0)
     timeout_seconds: int | None = Field(default=None, ge=1)
@@ -558,6 +562,9 @@ class SEOCompetitorProfileProviderAttemptRead(BaseModel):
     @field_validator(
         "provider_call_type",
         "failure_kind",
+        "normalized_failure_category",
+        "normalized_failure_reason",
+        "normalized_failure_source",
         "malformed_output_reason",
         "prompt_size_risk",
         "endpoint_path",

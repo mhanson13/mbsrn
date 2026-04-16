@@ -182,7 +182,9 @@ def test_patch_business_settings_accepts_and_clears_default_ai_model(db_session,
     assert clear_payload["default_ai_model"] is None
 
 
-def test_patch_business_settings_accepts_and_clears_migration_draft_timeout_seconds(db_session, seeded_business) -> None:
+def test_patch_business_settings_accepts_and_clears_migration_draft_timeout_seconds(
+    db_session, seeded_business
+) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
 
     save_response = client.patch(

@@ -1768,6 +1768,11 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
         prompt_version="seo-migration-v1",
         retryable=True,
         correlation_id="provider-timeout-1",
+        normalized_failure_category="remote_timeout",
+        normalized_failure_reason="provider_timeout",
+        normalized_failure_source="remote_provider",
+        normalized_retryable=True,
+        attempt_count=2,
     )
     service = _build_service(db_session, _RaisingMigrationProvider(provider_error))
     business_id, site_id = _seed_business_and_site(db_session)
@@ -1813,6 +1818,12 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
     assert migration_diagnostics.get("last_draft_failure_source") == "remote_provider"
     assert migration_diagnostics.get("last_draft_failure_timeout_seconds") == 120
     assert migration_diagnostics.get("last_draft_failure_timeout_source") == "default"
+    assert migration_diagnostics.get("last_failure_normalized_category") == "remote_timeout"
+    assert migration_diagnostics.get("last_failure_normalized_reason") == "provider_timeout"
+    assert migration_diagnostics.get("last_failure_normalized_source") == "remote_provider"
+    assert migration_diagnostics.get("last_failure_normalized_retryable") is True
+    assert migration_diagnostics.get("last_failure_provider_attempt_count") == 2
+    assert migration_diagnostics.get("last_draft_failure_hint") == "Try again later"
     assert migration_diagnostics.get("draft_timeout_seconds") == 120
     assert migration_diagnostics.get("draft_timeout_source") == "default"
     assert migration_diagnostics.get("last_draft_failure_model_requested") is None
@@ -1837,6 +1848,47 @@ def test_generate_artifacts_provider_timeout_persists_failed_diagnostics(db_sess
     assert isinstance(top_state, dict)
     assert top_state.get("status") == "generation_failed"
     assert top_state.get("summary") == "Migration draft generation timed out while calling the AI provider."
+
+
+def test_generate_artifacts_request_too_large_persists_non_retryable_hint(db_session) -> None:
+    provider_error = SEOMigrationArtifactProviderError(
+        code="validation_failed",
+        reason="validation_failed",
+        safe_message="Migration draft request is too large or complex for synchronous generation.",
+        provider_name="openai",
+        model_name="gpt-4o-mini",
+        prompt_version="seo-migration-v1",
+        retryable=False,
+        normalized_failure_category="local_validation_failure",
+        normalized_failure_reason="request_too_large_or_complex",
+        normalized_failure_source="local_validation",
+        normalized_retryable=False,
+        attempt_count=0,
+    )
+    service = _build_service(db_session, _RaisingMigrationProvider(provider_error))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    error = exc_info.value
+    assert error.failure_category == "artifact_invalid"
+    assert error.failure_reason == "validation_failed"
+    assert error.retryable is False
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    migration_diagnostics = summary.context_summary.get("migration_diagnostics")
+    assert isinstance(migration_diagnostics, dict)
+    assert migration_diagnostics.get("last_draft_failure_retryable") is False
+    assert migration_diagnostics.get("last_failure_normalized_category") == "local_validation_failure"
+    assert migration_diagnostics.get("last_failure_normalized_reason") == "request_too_large_or_complex"
+    assert migration_diagnostics.get("last_failure_normalized_source") == "local_validation"
+    assert migration_diagnostics.get("last_failure_normalized_retryable") is False
+    assert migration_diagnostics.get("last_draft_failure_hint") == "Input too large"
 
 
 def test_generate_artifacts_success_state_overrides_stale_failure_messaging(db_session) -> None:
@@ -2873,7 +2925,9 @@ def test_deploy_records_run_failure_without_live_url_confirmation(db_session) ->
     assert deploy_result.result.get("workflow_run_found") is True
     assert deploy_result.result.get("workflow_job_failure_detected") is True
     assert deploy_result.result.get("post_dispatch_state") == "workflow_run_failed"
-    assert deploy_result.result.get("deploy_evidence_contract_status") == "workflow_run_failed_without_explicit_evidence"
+    assert (
+        deploy_result.result.get("deploy_evidence_contract_status") == "workflow_run_failed_without_explicit_evidence"
+    )
     assert deploy_result.result.get("workflow_contract_advisory") == (
         "Workflow run failed before explicit live URL evidence was captured."
     )
@@ -2885,7 +2939,9 @@ def test_deploy_records_run_failure_without_live_url_confirmation(db_session) ->
     assert deploy_readiness.get("last_workflow_run_found") is True
     assert deploy_readiness.get("last_workflow_job_failure_detected") is True
     assert deploy_readiness.get("last_post_dispatch_state") == "workflow_run_failed"
-    assert deploy_readiness.get("last_deploy_evidence_contract_status") == "workflow_run_failed_without_explicit_evidence"
+    assert (
+        deploy_readiness.get("last_deploy_evidence_contract_status") == "workflow_run_failed_without_explicit_evidence"
+    )
 
 
 def test_deploy_completed_without_explicit_live_url_evidence_is_advisory(db_session) -> None:
@@ -2994,6 +3050,7 @@ def test_deploy_placeholder_workflow_sets_contract_advisory_without_blocking_dis
     assert deploy_result.result.get("workflow_contract_advisory") == (
         "Selected workflow appears placeholder/non-deploying and may not emit explicit deploy evidence."
     )
+
 
 def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output_url(db_session, caplog) -> None:
     publisher = _RecordingGitHubPublisher(
@@ -3207,6 +3264,7 @@ def test_refresh_deploy_status_preserves_stronger_existing_confirmed_url(db_sess
     assert refresh_result.result.get("status") == "updated"
     assert refresh_result.result.get("resolved_live_url") == "https://deploy-live.tnmfire.com"
     assert refresh_result.result.get("url_source") == "deploy_result"
+
 
 def test_publish_filters_invalid_stored_paths_before_publish(db_session) -> None:
     publisher = _RecordingGitHubPublisher()
@@ -4189,14 +4247,8 @@ def test_deploy_prefers_site_specific_workflow_even_when_non_dispatchable(db_ses
         deploy_readiness.get("last_failure_remediation_hint")
         == "Selected workflow exists but is not dispatchable for this deploy target."
     )
-    assert (
-        deploy_readiness.get("last_failure_workflow_identifier_requested")
-        == "deploy-tnmfire-www-prod.yml"
-    )
-    assert (
-        deploy_readiness.get("last_failure_workflow_file_path")
-        == ".github/workflows/deploy-tnmfire-www-prod.yml"
-    )
+    assert deploy_readiness.get("last_failure_workflow_identifier_requested") == "deploy-tnmfire-www-prod.yml"
+    assert deploy_readiness.get("last_failure_workflow_file_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert deploy_readiness.get("last_failure_workflow_exists") is True
     assert deploy_readiness.get("workflow_identifier_requested") == "deploy-tnmfire-www-prod.yml"
     assert deploy_readiness.get("workflow_identifier_used") == ".github/workflows/deploy-tnmfire-www-prod.yml"
@@ -4205,14 +4257,8 @@ def test_deploy_prefers_site_specific_workflow_even_when_non_dispatchable(db_ses
         diagnostics.get("last_deploy_failure_remediation_hint")
         == "Selected workflow exists but is not dispatchable for this deploy target."
     )
-    assert (
-        diagnostics.get("last_deploy_failure_workflow_identifier_requested")
-        == "deploy-tnmfire-www-prod.yml"
-    )
-    assert (
-        diagnostics.get("last_deploy_failure_workflow_file_path")
-        == ".github/workflows/deploy-tnmfire-www-prod.yml"
-    )
+    assert diagnostics.get("last_deploy_failure_workflow_identifier_requested") == "deploy-tnmfire-www-prod.yml"
+    assert diagnostics.get("last_deploy_failure_workflow_file_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
 
 
 @pytest.mark.parametrize(
@@ -4521,9 +4567,7 @@ def test_publish_rejects_reserved_git_root_path(db_session) -> None:
 
 
 def test_deploy_uses_publish_history_workflow_when_workspace_workflow_path_is_invalid(db_session) -> None:
-    publisher = _RecordingGitHubPublisher(
-        available_workflow_paths={".github/workflows/deploy-www-prod.yml"}
-    )
+    publisher = _RecordingGitHubPublisher(available_workflow_paths={".github/workflows/deploy-www-prod.yml"})
     service = _build_service(
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
@@ -4930,7 +4974,9 @@ def test_runtime_publisher_readiness_log_includes_reason_code(db_session, caplog
         for record in caplog.records
         if isinstance(record.__dict__.get("json_fields"), dict)
     ]
-    runtime_events = [payload for payload in payloads if payload.get("event") == "seo_migration_runtime_publisher_readiness"]
+    runtime_events = [
+        payload for payload in payloads if payload.get("event") == "seo_migration_runtime_publisher_readiness"
+    ]
     assert runtime_events
     assert any(
         event.get("runtime_publisher_reason_code") == "runtime_credential_missing" and event.get("action") == "publish"
@@ -5191,9 +5237,7 @@ def test_publish_deploy_emit_structured_control_plane_logs(db_session, caplog) -
         if isinstance(record.__dict__.get("json_fields"), dict)
     ]
     readiness_events = [
-        payload
-        for payload in service_events
-        if payload.get("event") == "seo_migration_target_readiness_check"
+        payload for payload in service_events if payload.get("event") == "seo_migration_target_readiness_check"
     ]
     assert readiness_events
     assert any(
@@ -5343,9 +5387,7 @@ def test_deploy_logs_distinguish_trigger_support_from_dispatch_service_availabil
         if isinstance(record.__dict__.get("json_fields"), dict)
     ]
     readiness_events = [
-        payload
-        for payload in event_payloads
-        if payload.get("event") == "seo_migration_target_readiness_check"
+        payload for payload in event_payloads if payload.get("event") == "seo_migration_target_readiness_check"
     ]
     assert readiness_events
     assert any(

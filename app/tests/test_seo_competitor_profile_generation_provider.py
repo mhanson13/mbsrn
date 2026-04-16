@@ -438,10 +438,20 @@ def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
         provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
 
     assert exc_info.value.code == "timeout"
+    assert exc_info.value.normalized_failure_category == "remote_timeout"
+    assert exc_info.value.normalized_failure_reason == "request_too_large_or_complex"
+    assert exc_info.value.normalized_failure_source == "remote_provider"
+    assert exc_info.value.normalized_retryable is False
+    assert exc_info.value.attempt_count == 1
     assert exc_info.value.raw_output is not None
     raw_debug_payload = json.loads(exc_info.value.raw_output)
     assert raw_debug_payload["failure_kind"] == "timeout"
     assert raw_debug_payload["timeout_type"] == "read"
+    assert raw_debug_payload["normalized_failure_category"] == "remote_timeout"
+    assert raw_debug_payload["normalized_failure_reason"] == "request_too_large_or_complex"
+    assert raw_debug_payload["normalized_failure_source"] == "remote_provider"
+    assert raw_debug_payload["normalized_retryable"] is False
+    assert raw_debug_payload["attempt_count"] == 1
     assert raw_debug_payload["endpoint_path"] == "/responses"
     assert isinstance(raw_debug_payload.get("request_debug"), dict)
     assert raw_debug_payload["request_debug"]["prompt_total_chars"] >= 1
@@ -473,6 +483,93 @@ def test_openai_provider_auth_error_is_normalized(monkeypatch) -> None:
         provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
 
     assert exc_info.value.code == "provider_auth_config"
+    assert exc_info.value.normalized_failure_category == "configuration_invalid"
+    assert exc_info.value.normalized_failure_reason == "provider_auth_or_configuration_invalid"
+    assert exc_info.value.normalized_failure_source == "local_configuration"
+    assert exc_info.value.normalized_retryable is False
+    assert exc_info.value.attempt_count == 1
+
+
+def test_competitor_context_budget_trims_breadth_before_depth_and_preserves_required_prompt() -> None:
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+    existing_domains = [f"example-{index}.test{'x' * 1200}" for index in range(20)]
+    seed_candidates = [{"domain": f"seed-{index}.test", "summary": "Y" * 1800} for index in range(20)]
+
+    (
+        budgeted_existing_domains,
+        budgeted_seed_candidates,
+        budgeted_prompt_text,
+        budget_result,
+    ) = provider._apply_competitor_context_budget(
+        existing_domains=existing_domains,
+        seed_candidates=seed_candidates,
+        prompt_text_competitor=provider.prompt_text_competitor,
+    )
+
+    # Required prompt text must not be removed by budget trimming.
+    assert budgeted_prompt_text == provider.prompt_text_competitor
+    dropped_blocks = budget_result.get("dropped_optional_blocks") or []
+    assert dropped_blocks
+    # Competitor adapter policy: trim breadth first.
+    assert dropped_blocks[0] == "existing_domains"
+    if len(dropped_blocks) > 1:
+        assert dropped_blocks[1] == "seed_candidates"
+    if "existing_domains" in dropped_blocks:
+        assert budgeted_existing_domains == []
+    if "seed_candidates" in dropped_blocks:
+        assert budgeted_seed_candidates == []
+    assert isinstance(budget_result.get("trimmed_bytes"), int)
+    assert isinstance(budget_result.get("trimming_pass_count"), int)
+
+
+def test_competitor_budget_logs_submission_telemetry(caplog, monkeypatch) -> None:
+    caplog.set_level(logging.INFO, logger="app.integrations.seo_competitor_profile_generation_provider")
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del timeout
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-4.1-mini-2026-01-01")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    provider.generate_competitor_profiles(
+        site=_site(),
+        existing_domains=[f"{idx}-{'x' * 600}.example" for idx in range(70)],
+        candidate_count=1,
+        seed_candidates=[
+            {
+                "domain": f"seed-{idx}.example",
+                "name": "Seed Competitor",
+                "place_types": ["fire_protection"],
+                "source": "google_places",
+            }
+            for idx in range(24)
+        ],
+    )
+
+    budget_events = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "competitor_request_budget"
+    ]
+    assert budget_events
+    latest_budget_event = budget_events[-1]
+    assert latest_budget_event.get("feature_area") == "competitor_ai"
+    assert latest_budget_event.get("budget_outcome") == "provider_submission"
+    assert isinstance(latest_budget_event.get("trimmed_bytes"), int)
+    assert isinstance(latest_budget_event.get("trimming_pass_count"), int)
+    dropped_optional = latest_budget_event.get("dropped_optional_blocks")
+    assert isinstance(dropped_optional, list)
+    assert dropped_optional
+    assert dropped_optional[0] == "existing_domains"
 
 
 def test_openai_provider_malformed_content_is_normalized(monkeypatch) -> None:

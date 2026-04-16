@@ -803,6 +803,7 @@ def test_operator_can_toggle_deploy_enabled_without_changing_admin_owned_fields(
     assert deploy_config_json.get("workflow_id") == "deploy-tnmfire-www-prod.yml"
     assert deploy_config_json.get("ref") == "main"
 
+
 def test_refresh_migration_deploy_status_updates_run_metadata_and_confirms_live_url(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"

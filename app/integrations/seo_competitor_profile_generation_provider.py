@@ -4,14 +4,19 @@ from dataclasses import dataclass
 import json
 import logging
 import re
-import socket
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.integrations.ai_execution_core import (
+    AIContextBlock,
+    AIExecutionError,
+    AIExecutionPolicy,
+    apply_request_budget,
+    execute_json_request,
+)
 from app.integrations.seo_summary_provider import (
     SEOCompetitorProfileDraftCandidateOutput,
     SEOCompetitorProfileGenerationOutput,
@@ -98,6 +103,13 @@ _TYPE_MISMATCH_DISCARD_REASONS = {
     "invalid_string_type",
     "invalid_candidate_shape",
 }
+_COMPETITOR_CONTEXT_BUDGET_CHARS = 16000
+_COMPETITOR_MAX_TOTAL_INPUT_SIZE = 90000
+_COMPETITOR_REQUIRED_CONTEXT_KEYS = ("prompt_text_competitor",)
+_COMPETITOR_OPTIONAL_TRIM_ORDER = (
+    "existing_domains",
+    "seed_candidates",
+)
 
 
 class _MissingValueType:
@@ -116,6 +128,11 @@ class SEOCompetitorProfileProviderError(RuntimeError):
     model_name: str
     prompt_version: str
     raw_output: str | None = None
+    normalized_failure_category: str | None = None
+    normalized_failure_reason: str | None = None
+    normalized_failure_source: str | None = None
+    normalized_retryable: bool | None = None
+    attempt_count: int | None = None
 
     def __str__(self) -> str:
         return self.safe_message
@@ -243,14 +260,40 @@ class OpenAISEOCompetitorProfileGenerationProvider:
     ) -> SEOCompetitorProfileGenerationOutput:
         effective_timeout_seconds = self._resolve_timeout_seconds(timeout_seconds)
         self._log_prompt_resolution_metadata()
+        (
+            budgeted_existing_domains,
+            budgeted_seed_candidates,
+            budgeted_prompt_text_competitor,
+            budget_result,
+        ) = self._apply_competitor_context_budget(
+            existing_domains=existing_domains,
+            seed_candidates=list(seed_candidates or []),
+            prompt_text_competitor=self.prompt_text_competitor,
+        )
+        if bool(budget_result.get("overflow")):
+            self._log_request_budget(
+                budget_result=budget_result,
+                budget_outcome="precall_rejected",
+                run_id=run_id,
+                attempt_number=attempt_number,
+            )
+            raise self._provider_error(
+                code=_PROVIDER_ERROR_REQUEST,
+                safe_message=("Competitor profile request is too large or complex for synchronous generation."),
+                normalized_failure_category="local_validation_failure",
+                normalized_failure_reason="request_too_large_or_complex",
+                normalized_failure_source="local_validation",
+                normalized_retryable=False,
+                attempt_count=0,
+            )
         prompt = build_seo_competitor_profile_prompt(
             site=site,
-            existing_domains=existing_domains,
+            existing_domains=budgeted_existing_domains,
             candidate_count=candidate_count,
             reduced_context_mode=reduced_context_mode,
             prompt_version=self.prompt_version,
-            prompt_text_competitor=self.prompt_text_competitor,
-            seed_candidates=list(seed_candidates or []),
+            prompt_text_competitor=budgeted_prompt_text_competitor,
+            seed_candidates=budgeted_seed_candidates,
         )
         resolved_prompt_version = self._resolve_prompt_version_from_user_prompt(
             prompt.user_prompt,
@@ -274,7 +317,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             attempt_number=attempt_number,
             degraded_mode=degraded_mode,
             timeout_seconds=effective_timeout_seconds,
-            google_places_seed_count=len(seed_candidates or []),
+            google_places_seed_count=len(budgeted_seed_candidates),
+        )
+        request_debug["request_budget"] = budget_result
+        self._log_request_budget(
+            budget_result=budget_result,
+            budget_outcome="provider_submission",
+            run_id=run_id,
+            attempt_number=attempt_number,
         )
         self._log_prompt_telemetry(request_debug)
         allow_legacy_responses_fallback = (
@@ -311,7 +361,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 attempt_number=attempt_number,
                 degraded_mode=degraded_mode,
                 timeout_seconds=effective_timeout_seconds,
-                google_places_seed_count=len(seed_candidates or []),
+                google_places_seed_count=len(budgeted_seed_candidates),
             )
             logger.warning(
                 (
@@ -1462,24 +1512,86 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=effective_timeout_seconds) as response:
-                body_text = response.read().decode("utf-8", errors="replace")
-            request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
-            return _OpenAICompletionResponse(
-                body_text=body_text,
-                request_duration_ms=request_duration_ms,
+            request_budget = (
+                request_debug.get("request_budget")
+                if isinstance(request_debug, dict) and isinstance(request_debug.get("request_budget"), dict)
+                else {}
             )
-        except urllib.error.HTTPError as exc:
-            request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
-            body_text = exc.read().decode("utf-8", errors="replace")
+            response = execute_json_request(
+                request=request,
+                policy=AIExecutionPolicy(
+                    feature_area="competitor_ai",
+                    timeout_seconds=effective_timeout_seconds,
+                    max_attempts=2,
+                    retry_backoff_seconds=0.2,
+                    max_input_size=_COMPETITOR_MAX_TOTAL_INPUT_SIZE,
+                    original_input_size=request_budget.get("initial_size_bytes"),
+                    final_input_size=request_budget.get("final_size_bytes"),
+                    trimming_pass_count=(
+                        int(request_budget.get("trimming_pass_count"))
+                        if isinstance(request_budget.get("trimming_pass_count"), int)
+                        else 0
+                    ),
+                    section_count=request_budget.get("section_count"),
+                    schema_complexity_flag=True,
+                ),
+            )
+            return _OpenAICompletionResponse(
+                body_text=response.body_text,
+                request_duration_ms=response.duration_ms,
+            )
+        except AIExecutionError as exc:
+            request_duration_ms = exc.duration_ms or max(0, int((time.perf_counter() - request_started_at) * 1000))
+            body_text = exc.raw_response_text or ""
             error_type, error_code, error_message = self._extract_provider_error_details(body_text)
+            failure_category = _clean_optional_value(exc.normalized_failure.category)
+            http_status = exc.normalized_failure.http_status
+            timeout_type = _clean_optional_value(exc.normalized_failure.timeout_type)
+
+            if (
+                failure_category == "configuration_invalid"
+                and isinstance(http_status, int)
+                and http_status in {401, 403}
+            ):
+                self._log_provider_request_error(
+                    endpoint_path=normalized_endpoint,
+                    request_debug=request_debug,
+                    error_type=error_type or error_code or "auth_error",
+                    failure_kind="provider_request",
+                    request_duration_ms=request_duration_ms,
+                )
+                raise self._provider_error(
+                    code=_PROVIDER_ERROR_AUTH_CONFIG,
+                    safe_message=("AI provider authentication failed. Verify competitor profile provider credentials."),
+                    raw_output=body_text,
+                    normalized_failure_category=exc.normalized_failure.category,
+                    normalized_failure_reason=exc.normalized_failure.reason,
+                    normalized_failure_source=exc.normalized_failure.source,
+                    normalized_retryable=bool(exc.normalized_failure.retryable),
+                    attempt_count=max(1, int(exc.attempt_count)),
+                ) from exc
+
+            failure_kind = "timeout" if failure_category == "remote_timeout" else "provider_request"
+            if failure_category == "local_validation_failure" and exc.normalized_failure.reason in {
+                "request_too_large",
+                "request_too_large_or_complex",
+            }:
+                failure_kind = "provider_request"
+            provider_error_body = (
+                body_text
+                or error_message
+                or (str(http_status) if isinstance(http_status, int) else None)
+                or _compact_log_message(exc.safe_message)
+            )
+
             logger.warning(
                 (
                     "SEO competitor provider HTTP error status=%s provider_name=%s model_name=%s "
                     "endpoint=%s error_type=%s error_code=%s error_message=%s "
-                    "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
+                    "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s "
+                    "original_input_size=%s final_input_size=%s trimmed_bytes=%s trimming_pass_count=%s difficulty_score=%s"
                 ),
-                exc.code,
+                http_status,
                 self.provider_name,
                 self.model_name,
                 normalized_endpoint,
@@ -1489,23 +1601,21 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 request_debug.get("prompt_total_chars") if request_debug else None,
                 request_debug.get("context_json_chars") if request_debug else None,
                 request_debug.get("prompt_size_risk") if request_debug else None,
+                exc.original_input_size,
+                exc.final_input_size,
+                exc.trimmed_bytes,
+                exc.trimming_pass_count,
+                exc.difficulty_score,
             )
-            failure_kind = "timeout" if exc.code in {408, 504} else "provider_request"
             self._log_provider_request_error(
                 endpoint_path=normalized_endpoint,
                 request_debug=request_debug,
                 error_type=error_type or error_code or "http_error",
                 failure_kind=failure_kind,
-                timeout_type=(_TIMEOUT_TYPE_OVERALL if failure_kind == "timeout" else None),
+                timeout_type=(timeout_type or _TIMEOUT_TYPE_OVERALL if failure_kind == "timeout" else None),
                 request_duration_ms=request_duration_ms,
             )
-            if exc.code in {401, 403}:
-                raise self._provider_error(
-                    code=_PROVIDER_ERROR_AUTH_CONFIG,
-                    safe_message=("AI provider authentication failed. Verify competitor profile provider credentials."),
-                    raw_output=body_text,
-                ) from exc
-            if exc.code in {408, 504}:
+            if failure_kind == "timeout":
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_TIMEOUT,
                     safe_message="Competitor profile generation timed out while calling the AI provider.",
@@ -1513,127 +1623,46 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                         endpoint_path=normalized_endpoint,
                         failure_kind="timeout",
                         request_debug=request_debug,
-                        provider_error_body=body_text,
-                        timeout_type=_TIMEOUT_TYPE_OVERALL,
+                        provider_error_body=provider_error_body,
+                        timeout_type=(timeout_type or _TIMEOUT_TYPE_OVERALL),
                         request_duration_ms=request_duration_ms,
+                        normalized_failure_category=exc.normalized_failure.category,
+                        normalized_failure_reason=exc.normalized_failure.reason,
+                        normalized_failure_source=exc.normalized_failure.source,
+                        normalized_retryable=bool(exc.normalized_failure.retryable),
+                        attempt_count=max(1, int(exc.attempt_count)),
                     ),
+                    normalized_failure_category=exc.normalized_failure.category,
+                    normalized_failure_reason=exc.normalized_failure.reason,
+                    normalized_failure_source=exc.normalized_failure.source,
+                    normalized_retryable=bool(exc.normalized_failure.retryable),
+                    attempt_count=max(1, int(exc.attempt_count)),
                 ) from exc
             raise self._provider_error(
                 code=_PROVIDER_ERROR_REQUEST,
-                safe_message="Competitor profile generation provider request failed.",
+                safe_message=(
+                    "Competitor profile generation request is too large or complex for synchronous generation."
+                    if failure_category == "local_validation_failure"
+                    and exc.normalized_failure.reason in {"request_too_large", "request_too_large_or_complex"}
+                    else "Competitor profile generation provider request failed."
+                ),
                 raw_output=self._build_request_failure_debug_payload(
                     endpoint_path=normalized_endpoint,
                     failure_kind="provider_request",
                     request_debug=request_debug,
-                    provider_error_body=body_text,
+                    provider_error_body=provider_error_body,
                     request_duration_ms=request_duration_ms,
+                    normalized_failure_category=exc.normalized_failure.category,
+                    normalized_failure_reason=exc.normalized_failure.reason,
+                    normalized_failure_source=exc.normalized_failure.source,
+                    normalized_retryable=bool(exc.normalized_failure.retryable),
+                    attempt_count=max(1, int(exc.attempt_count)),
                 ),
-            ) from exc
-        except (TimeoutError, socket.timeout) as exc:
-            request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
-            timeout_type = self._infer_timeout_type(str(exc))
-            logger.warning(
-                (
-                    "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s timeout_type=%s reason=%s "
-                    "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
-                ),
-                self.provider_name,
-                self.model_name,
-                normalized_endpoint,
-                timeout_type,
-                str(exc),
-                request_debug.get("prompt_total_chars") if request_debug else None,
-                request_debug.get("context_json_chars") if request_debug else None,
-                request_debug.get("prompt_size_risk") if request_debug else None,
-            )
-            self._log_provider_request_error(
-                endpoint_path=normalized_endpoint,
-                request_debug=request_debug,
-                error_type="timeout",
-                failure_kind="timeout",
-                timeout_type=timeout_type,
-                request_duration_ms=request_duration_ms,
-            )
-            raise self._provider_error(
-                code=_PROVIDER_ERROR_TIMEOUT,
-                safe_message="Competitor profile generation timed out while calling the AI provider.",
-                raw_output=self._build_request_failure_debug_payload(
-                    endpoint_path=normalized_endpoint,
-                    failure_kind="timeout",
-                    request_debug=request_debug,
-                    provider_error_body=str(exc),
-                    timeout_type=timeout_type,
-                    request_duration_ms=request_duration_ms,
-                ),
-            ) from exc
-        except urllib.error.URLError as exc:
-            request_duration_ms = max(0, int((time.perf_counter() - request_started_at) * 1000))
-            if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
-                timeout_type = self._infer_timeout_type(str(exc.reason))
-                logger.warning(
-                    (
-                        "SEO competitor provider timeout provider_name=%s model_name=%s endpoint=%s timeout_type=%s reason=%s "
-                        "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
-                    ),
-                    self.provider_name,
-                    self.model_name,
-                    normalized_endpoint,
-                    timeout_type,
-                    str(exc.reason),
-                    request_debug.get("prompt_total_chars") if request_debug else None,
-                    request_debug.get("context_json_chars") if request_debug else None,
-                    request_debug.get("prompt_size_risk") if request_debug else None,
-                )
-                self._log_provider_request_error(
-                    endpoint_path=normalized_endpoint,
-                    request_debug=request_debug,
-                    error_type="timeout",
-                    failure_kind="timeout",
-                    timeout_type=timeout_type,
-                    request_duration_ms=request_duration_ms,
-                )
-                raise self._provider_error(
-                    code=_PROVIDER_ERROR_TIMEOUT,
-                    safe_message="Competitor profile generation timed out while calling the AI provider.",
-                    raw_output=self._build_request_failure_debug_payload(
-                        endpoint_path=normalized_endpoint,
-                        failure_kind="timeout",
-                        request_debug=request_debug,
-                        provider_error_body=str(exc.reason),
-                        timeout_type=timeout_type,
-                        request_duration_ms=request_duration_ms,
-                    ),
-                ) from exc
-            logger.warning(
-                (
-                    "SEO competitor provider URL error provider_name=%s model_name=%s endpoint=%s reason=%s "
-                    "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
-                ),
-                self.provider_name,
-                self.model_name,
-                normalized_endpoint,
-                str(exc.reason),
-                request_debug.get("prompt_total_chars") if request_debug else None,
-                request_debug.get("context_json_chars") if request_debug else None,
-                request_debug.get("prompt_size_risk") if request_debug else None,
-            )
-            self._log_provider_request_error(
-                endpoint_path=normalized_endpoint,
-                request_debug=request_debug,
-                error_type=exc.reason.__class__.__name__ if exc.reason is not None else "url_error",
-                failure_kind="provider_request",
-                request_duration_ms=request_duration_ms,
-            )
-            raise self._provider_error(
-                code=_PROVIDER_ERROR_REQUEST,
-                safe_message="Competitor profile generation provider request failed.",
-                raw_output=self._build_request_failure_debug_payload(
-                    endpoint_path=normalized_endpoint,
-                    failure_kind="provider_request",
-                    request_debug=request_debug,
-                    provider_error_body=str(exc.reason),
-                    request_duration_ms=request_duration_ms,
-                ),
+                normalized_failure_category=exc.normalized_failure.category,
+                normalized_failure_reason=exc.normalized_failure.reason,
+                normalized_failure_source=exc.normalized_failure.source,
+                normalized_retryable=bool(exc.normalized_failure.retryable),
+                attempt_count=max(1, int(exc.attempt_count)),
             ) from exc
 
     def _should_fallback_to_chat_completions(
@@ -1802,6 +1831,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         prompt_total_chars = request_debug.get("prompt_total_chars")
         context_json_chars = request_debug.get("context_json_chars")
         prompt_size_risk = request_debug.get("prompt_size_risk")
+        budget_payload = (
+            request_debug.get("request_budget") if isinstance(request_debug.get("request_budget"), dict) else {}
+        )
         level = logging.WARNING if prompt_size_risk in {"high", "elevated"} else logging.INFO
         logger.log(
             level,
@@ -1809,7 +1841,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "SEO competitor prompt assembly telemetry provider_name=%s model_name=%s "
                 "provider_call_type=%s execution_mode=%s endpoint=%s "
                 "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s "
-                "google_places_seed_count=%s"
+                "google_places_seed_count=%s context_budget_initial_size_chars=%s "
+                "context_budget_final_size_chars=%s context_budget_size_chars=%s "
+                "context_budget_original_input_size=%s context_budget_final_input_size=%s "
+                "context_budget_trimmed_bytes=%s context_budget_trimming_pass_count=%s "
+                "context_budget_overflow=%s context_budget_dropped_optional_blocks=%s"
             ),
             self.provider_name,
             self.model_name,
@@ -1820,6 +1856,73 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             context_json_chars,
             prompt_size_risk,
             request_debug.get("google_places_seed_count"),
+            budget_payload.get("initial_size_chars"),
+            budget_payload.get("final_size_chars"),
+            budget_payload.get("budget_size_chars"),
+            budget_payload.get("initial_size_bytes"),
+            budget_payload.get("final_size_bytes"),
+            budget_payload.get("trimmed_bytes"),
+            budget_payload.get("trimming_pass_count"),
+            budget_payload.get("overflow"),
+            budget_payload.get("dropped_optional_blocks"),
+        )
+
+    def _log_request_budget(
+        self,
+        *,
+        budget_result: dict[str, object],
+        budget_outcome: str,
+        run_id: str | None,
+        attempt_number: int | None,
+    ) -> None:
+        logger.info(
+            (
+                "competitor_request_budget provider_name=%s model_name=%s run_id=%s attempt_number=%s "
+                "budget_outcome=%s initial_size_chars=%s final_size_chars=%s budget_size_chars=%s "
+                "original_input_size=%s final_input_size=%s trimmed_bytes=%s trimming_pass_count=%s "
+                "section_count=%s dropped_optional_blocks=%s dropped_duplicate_blocks=%s overflow=%s"
+            ),
+            self.provider_name,
+            self.model_name,
+            _clean_optional_value(run_id),
+            _coerce_optional_bounded_int(attempt_number, minimum=0, maximum=1000),
+            _clean_optional_value(budget_outcome) or "unknown",
+            budget_result.get("initial_size_chars"),
+            budget_result.get("final_size_chars"),
+            budget_result.get("budget_size_chars"),
+            budget_result.get("initial_size_bytes"),
+            budget_result.get("final_size_bytes"),
+            budget_result.get("trimmed_bytes"),
+            budget_result.get("trimming_pass_count"),
+            budget_result.get("section_count"),
+            budget_result.get("dropped_optional_blocks"),
+            budget_result.get("dropped_duplicate_blocks"),
+            budget_result.get("overflow"),
+        )
+        payload = {
+            "event": "competitor_request_budget",
+            "feature_area": "competitor_ai",
+            "provider_name": self.provider_name,
+            "model_name": self.model_name,
+            "run_id": _clean_optional_value(run_id),
+            "attempt_number": _coerce_optional_bounded_int(attempt_number, minimum=0, maximum=1000),
+            "budget_outcome": _clean_optional_value(budget_outcome) or "unknown",
+            "initial_size_chars": budget_result.get("initial_size_chars"),
+            "final_size_chars": budget_result.get("final_size_chars"),
+            "budget_size_chars": budget_result.get("budget_size_chars"),
+            "original_input_size": budget_result.get("initial_size_bytes"),
+            "final_input_size": budget_result.get("final_size_bytes"),
+            "trimmed_bytes": budget_result.get("trimmed_bytes"),
+            "trimming_pass_count": budget_result.get("trimming_pass_count"),
+            "section_count": budget_result.get("section_count"),
+            "dropped_optional_blocks": budget_result.get("dropped_optional_blocks"),
+            "dropped_duplicate_blocks": budget_result.get("dropped_duplicate_blocks"),
+            "overflow": budget_result.get("overflow"),
+        }
+        safe_payload = {key: value for key, value in payload.items() if value is not None}
+        logger.info(
+            json.dumps(safe_payload, ensure_ascii=True, sort_keys=True),
+            extra={"json_fields": safe_payload},
         )
 
     def _build_request_debug_metadata(
@@ -1906,6 +2009,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         request_duration_ms: int | None = None,
         malformed_output_reason: str | None = None,
         recovery_actions: tuple[str, ...] | None = None,
+        normalized_failure_category: str | None = None,
+        normalized_failure_reason: str | None = None,
+        normalized_failure_source: str | None = None,
+        normalized_retryable: bool | None = None,
+        attempt_count: int | None = None,
     ) -> str | None:
         normalized_failure_kind = (failure_kind or "").strip().lower()
         if normalized_failure_kind not in {"timeout", "provider_request", "malformed_output"}:
@@ -1914,12 +2022,28 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "failure_kind": normalized_failure_kind,
             "endpoint_path": endpoint_path,
         }
+        normalized_failure_category_value = _clean_optional_value(normalized_failure_category)
+        if normalized_failure_category_value:
+            payload["normalized_failure_category"] = normalized_failure_category_value
+        normalized_failure_reason_value = _clean_optional_value(normalized_failure_reason)
+        if normalized_failure_reason_value:
+            payload["normalized_failure_reason"] = normalized_failure_reason_value
+        normalized_failure_source_value = _clean_optional_value(normalized_failure_source)
+        if normalized_failure_source_value:
+            payload["normalized_failure_source"] = normalized_failure_source_value
+        if isinstance(normalized_retryable, bool):
+            payload["normalized_retryable"] = normalized_retryable
+        if isinstance(attempt_count, int):
+            payload["attempt_count"] = max(1, int(attempt_count))
         normalized_timeout_type = _clean_optional_value((timeout_type or "").strip().lower())
         if normalized_failure_kind == "timeout":
             payload["timeout_type"] = (
                 normalized_timeout_type if normalized_timeout_type in _TIMEOUT_TYPE_VALUES else _TIMEOUT_TYPE_UNKNOWN
             )
         if request_debug:
+            request_budget = (
+                request_debug.get("request_budget") if isinstance(request_debug.get("request_budget"), dict) else {}
+            )
             payload["request_debug"] = {
                 "run_id": request_debug.get("run_id"),
                 "attempt_number": request_debug.get("attempt_number"),
@@ -1935,6 +2059,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "timeout_seconds": request_debug.get("timeout_seconds"),
                 "web_search_enabled": request_debug.get("web_search_enabled"),
                 "google_places_seed_count": request_debug.get("google_places_seed_count"),
+                "original_input_size": request_budget.get("initial_size_bytes"),
+                "final_input_size": request_budget.get("final_size_bytes"),
+                "trimmed_bytes": request_budget.get("trimmed_bytes"),
+                "trimming_pass_count": request_budget.get("trimming_pass_count"),
             }
         if request_duration_ms is not None:
             payload.setdefault("request_debug", {})
@@ -2082,12 +2210,87 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             )
         return parsed
 
+    def _apply_competitor_context_budget(
+        self,
+        *,
+        existing_domains: list[str],
+        seed_candidates: list[dict[str, object]],
+        prompt_text_competitor: str | None,
+    ) -> tuple[list[str], list[dict[str, object]], str | None, dict[str, object]]:
+        available_blocks: dict[str, object] = {
+            "existing_domains": existing_domains,
+            "seed_candidates": seed_candidates,
+            "prompt_text_competitor": prompt_text_competitor or "",
+        }
+        required_keys = [key for key in _COMPETITOR_REQUIRED_CONTEXT_KEYS if key in available_blocks]
+        optional_keys: list[str] = [
+            key for key in _COMPETITOR_OPTIONAL_TRIM_ORDER if key in available_blocks and key not in required_keys
+        ]
+        for key in available_blocks.keys():
+            if key in required_keys or key in optional_keys:
+                continue
+            optional_keys.append(str(key))
+
+        blocks: list[AIContextBlock] = []
+        for key in required_keys:
+            blocks.append(
+                AIContextBlock(
+                    name=key,
+                    value=available_blocks.get(key),
+                    required=True,
+                    trim_priority=0,
+                )
+            )
+        for index, key in enumerate(optional_keys):
+            blocks.append(
+                AIContextBlock(
+                    name=key,
+                    value=available_blocks.get(key),
+                    required=False,
+                    trim_priority=max(1, len(optional_keys) - index),
+                )
+            )
+        decision = apply_request_budget(
+            blocks=blocks,
+            budget_size_chars=_COMPETITOR_CONTEXT_BUDGET_CHARS,
+        )
+        retained = decision.retained_blocks
+        budgeted_existing_domains = list(existing_domains) if "existing_domains" in retained else []
+        budgeted_seed_candidates = list(seed_candidates) if "seed_candidates" in retained else []
+        budgeted_prompt_text_competitor = prompt_text_competitor if "prompt_text_competitor" in retained else None
+        budget_result = {
+            "initial_size_chars": decision.result.initial_size_chars,
+            "final_size_chars": decision.result.final_size_chars,
+            "initial_size_bytes": decision.result.initial_size_bytes,
+            "final_size_bytes": decision.result.final_size_bytes,
+            "trimmed_bytes": decision.result.trimmed_bytes,
+            "trimming_pass_count": decision.result.trimming_pass_count,
+            "section_count": decision.result.section_count,
+            "budget_size_chars": decision.result.budget_size_chars,
+            "dropped_optional_blocks": list(decision.result.dropped_optional_blocks),
+            "dropped_duplicate_blocks": list(decision.result.dropped_duplicate_blocks),
+            "required_blocks_retained": list(decision.result.required_blocks_retained),
+            "optional_blocks_retained": list(decision.result.optional_blocks_retained),
+            "overflow": bool(decision.result.overflow),
+        }
+        return (
+            budgeted_existing_domains,
+            budgeted_seed_candidates,
+            budgeted_prompt_text_competitor,
+            budget_result,
+        )
+
     def _provider_error(
         self,
         *,
         code: str,
         safe_message: str,
         raw_output: str | None = None,
+        normalized_failure_category: str | None = None,
+        normalized_failure_reason: str | None = None,
+        normalized_failure_source: str | None = None,
+        normalized_retryable: bool | None = None,
+        attempt_count: int | None = None,
     ) -> SEOCompetitorProfileProviderError:
         return SEOCompetitorProfileProviderError(
             code=code,
@@ -2096,6 +2299,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             model_name=self.model_name,
             prompt_version=self.prompt_version,
             raw_output=raw_output,
+            normalized_failure_category=_clean_optional_value(normalized_failure_category),
+            normalized_failure_reason=_clean_optional_value(normalized_failure_reason),
+            normalized_failure_source=_clean_optional_value(normalized_failure_source),
+            normalized_retryable=(bool(normalized_retryable) if isinstance(normalized_retryable, bool) else None),
+            attempt_count=(max(1, int(attempt_count)) if isinstance(attempt_count, int) else None),
         )
 
 

@@ -10,6 +10,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
+from app.integrations.ai_execution_core import normalize_provider_failure
 from app.integrations.seo_recommendation_narrative_provider import SEORecommendationNarrativeProviderError
 from app.integrations.seo_summary_provider import SEORecommendationNarrativeProvider
 from app.models.business import Business
@@ -686,10 +687,38 @@ class SEORecommendationNarrativeService:
             "schema_validation": "validation_failed",
             "parsing_error": "malformed_output",
         }.get(code, "provider_error")
+        normalized_failure = normalize_provider_failure(code=code)
+        normalized_failure_category = (
+            str(error.normalized_failure_category or "").strip() or normalized_failure.category
+        )
+        normalized_failure_reason = str(error.normalized_failure_reason or "").strip() or normalized_failure.reason
+        normalized_failure_source = str(error.normalized_failure_source or "").strip() or normalized_failure.source
+        normalized_retryable = (
+            error.normalized_retryable if isinstance(error.normalized_retryable, bool) else normalized_failure.retryable
+        )
+        failure_hint: str | None
+        if normalized_failure_reason in {"request_too_large", "request_too_large_or_complex"}:
+            failure_hint = "Input too large"
+        elif normalized_failure_category == "remote_timeout":
+            failure_hint = "Try again later"
+        elif normalized_failure_category in {"configuration_missing", "configuration_invalid"}:
+            failure_hint = "Provider configuration required"
+        elif normalized_failure_category == "remote_invalid_response":
+            failure_hint = "Provider returned invalid response"
+        else:
+            failure_hint = None
         return {
             "failure_category": failure_category,
             "failure_reason": code,
-            "retryable": code not in {"provider_auth_config"},
+            "retryable": bool(normalized_retryable),
+            "normalized_failure_category": normalized_failure_category,
+            "normalized_failure_reason": normalized_failure_reason,
+            "normalized_failure_source": normalized_failure_source,
+            "normalized_retryable": bool(normalized_retryable),
+            "failure_hint": failure_hint,
+            "provider_attempt_count": (
+                max(1, int(error.attempt_count)) if isinstance(error.attempt_count, int) else None
+            ),
         }
 
     @staticmethod

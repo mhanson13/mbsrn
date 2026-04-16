@@ -84,9 +84,7 @@ class GitHubPublishConfigService:
         raw_default_branch = (payload.default_branch or "").strip()
         default_branch = raw_default_branch or "main"
         base_path = _normalize_base_path(payload.base_path)
-        deploy_workflow_mode = (
-            str(payload.deploy_workflow_mode or "").strip().lower() or _DEFAULT_DEPLOY_WORKFLOW_MODE
-        )
+        deploy_workflow_mode = str(payload.deploy_workflow_mode or "").strip().lower() or _DEFAULT_DEPLOY_WORKFLOW_MODE
         target_environment_key = (
             str(payload.target_environment_key or "").strip().lower() or _DEFAULT_TARGET_ENVIRONMENT_KEY
         )
@@ -94,17 +92,13 @@ class GitHubPublishConfigService:
         enabled = bool(payload.enabled)
 
         if enabled and not owner:
-            raise GitHubPublishConfigValidationError(
-                "GitHub owner is required when GitHub publishing is enabled."
-            )
+            raise GitHubPublishConfigValidationError("GitHub owner is required when GitHub publishing is enabled.")
         if owner and not _VALID_OWNER_PATTERN.fullmatch(owner):
             raise GitHubPublishConfigValidationError(
                 "GitHub owner is invalid. Use a GitHub account/organization name (for example: mhanson13)."
             )
         if enabled and not raw_default_branch:
-            raise GitHubPublishConfigValidationError(
-                "Default branch is required when GitHub publishing is enabled."
-            )
+            raise GitHubPublishConfigValidationError("Default branch is required when GitHub publishing is enabled.")
         if (
             not _VALID_BRANCH_PATTERN.fullmatch(default_branch)
             or ".." in default_branch

@@ -985,10 +985,19 @@ class _ProviderRequestFailureObservingProvider:
             provider_name=self.provider_name,
             model_name=self.model_name,
             prompt_version=self.prompt_version,
+            normalized_failure_category="remote_unavailable",
+            normalized_failure_reason="provider_transport_error",
+            normalized_failure_source="remote_provider",
+            normalized_retryable=True,
+            attempt_count=2,
             raw_output=(
                 '{"failure_kind":"provider_request","endpoint_path":"'
                 f"{endpoint_path}"
                 '",'
+                '"normalized_failure_category":"remote_unavailable",'
+                '"normalized_failure_reason":"provider_transport_error",'
+                '"normalized_failure_source":"remote_provider",'
+                '"normalized_retryable":true,'
                 '"request_debug":{"request_duration_ms":2200,"timeout_seconds":30,'
                 '"web_search_enabled":'
                 f"{web_search_value}"
@@ -3365,12 +3374,20 @@ def test_non_timeout_provider_failure_does_not_retry(db_session, seeded_business
     assert payload["provider_attempts"][0]["degraded_mode"] is False
     assert payload["provider_attempts"][0]["reduced_context_mode"] is True
     assert payload["provider_attempts"][0]["failure_kind"] == "provider_request"
+    assert payload["provider_attempts"][0]["normalized_failure_category"] == "remote_unavailable"
+    assert payload["provider_attempts"][0]["normalized_failure_reason"] == "provider_transport_error"
+    assert payload["provider_attempts"][0]["normalized_failure_source"] == "remote_provider"
+    assert payload["provider_attempts"][0]["normalized_retryable"] is True
     assert payload["provider_attempts"][1]["attempt_number"] == 1
     assert payload["provider_attempts"][1]["execution_mode"] == "full"
     assert payload["provider_attempts"][1]["provider_call_type"] == "tool_enabled"
     assert payload["provider_attempts"][1]["degraded_mode"] is False
     assert payload["provider_attempts"][1]["reduced_context_mode"] is False
     assert payload["provider_attempts"][1]["failure_kind"] == "provider_request"
+    assert payload["provider_attempts"][1]["normalized_failure_category"] == "remote_unavailable"
+    assert payload["provider_attempts"][1]["normalized_failure_reason"] == "provider_transport_error"
+    assert payload["provider_attempts"][1]["normalized_failure_source"] == "remote_provider"
+    assert payload["provider_attempts"][1]["normalized_retryable"] is True
     assert provider.requested_candidate_counts == [7, 7]
     assert provider.reduced_context_modes == [True, False]
     assert provider.execution_modes == ["fast_path", "full"]
