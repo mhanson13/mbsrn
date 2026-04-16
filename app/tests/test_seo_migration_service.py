@@ -148,10 +148,16 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         deploy_workflow_run_id: int | None = None,
         deploy_workflow_run_status: str | None = None,
         deploy_workflow_run_conclusion: str | None = None,
+        deploy_workflow_run_failure_reason_code: str | None = None,
+        deploy_workflow_run_failure_stage: str | None = None,
+        deploy_workflow_run_failure_step: str | None = None,
         refresh_workflow_output: dict[str, str] | None = None,
         refresh_workflow_run_id: int | None = None,
         refresh_workflow_run_status: str | None = None,
         refresh_workflow_run_conclusion: str | None = None,
+        refresh_workflow_run_failure_reason_code: str | None = None,
+        refresh_workflow_run_failure_stage: str | None = None,
+        refresh_workflow_run_failure_step: str | None = None,
         fail_refresh: bool = False,
         refresh_error_code: str | None = None,
         refresh_error_message: str | None = None,
@@ -181,10 +187,16 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.deploy_workflow_run_id = deploy_workflow_run_id
         self.deploy_workflow_run_status = deploy_workflow_run_status
         self.deploy_workflow_run_conclusion = deploy_workflow_run_conclusion
+        self.deploy_workflow_run_failure_reason_code = deploy_workflow_run_failure_reason_code
+        self.deploy_workflow_run_failure_stage = deploy_workflow_run_failure_stage
+        self.deploy_workflow_run_failure_step = deploy_workflow_run_failure_step
         self.refresh_workflow_output = dict(refresh_workflow_output or {})
         self.refresh_workflow_run_id = refresh_workflow_run_id
         self.refresh_workflow_run_status = refresh_workflow_run_status
         self.refresh_workflow_run_conclusion = refresh_workflow_run_conclusion
+        self.refresh_workflow_run_failure_reason_code = refresh_workflow_run_failure_reason_code
+        self.refresh_workflow_run_failure_stage = refresh_workflow_run_failure_stage
+        self.refresh_workflow_run_failure_step = refresh_workflow_run_failure_step
         self.fail_refresh = fail_refresh
         self.refresh_error_code = refresh_error_code
         self.refresh_error_message = refresh_error_message
@@ -291,6 +303,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_run_id=self.deploy_workflow_run_id,
             workflow_run_status=self.deploy_workflow_run_status,
             workflow_run_conclusion=self.deploy_workflow_run_conclusion,
+            workflow_run_failure_reason_code=self.deploy_workflow_run_failure_reason_code,
+            workflow_run_failure_stage=self.deploy_workflow_run_failure_stage,
+            workflow_run_failure_step=self.deploy_workflow_run_failure_step,
         )
 
     def refresh_deploy_run_status(
@@ -316,6 +331,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_run_status=self.refresh_workflow_run_status,
             workflow_run_conclusion=self.refresh_workflow_run_conclusion,
             workflow_output=dict(self.refresh_workflow_output),
+            workflow_run_failure_reason_code=self.refresh_workflow_run_failure_reason_code,
+            workflow_run_failure_stage=self.refresh_workflow_run_failure_stage,
+            workflow_run_failure_step=self.refresh_workflow_run_failure_step,
             refreshed_at="2026-04-07T12:15:00+00:00",
         )
 
@@ -2945,6 +2963,9 @@ def test_deploy_records_run_failure_without_live_url_confirmation(db_session) ->
         deploy_workflow_run_id=556677,
         deploy_workflow_run_status="completed",
         deploy_workflow_run_conclusion="failure",
+        deploy_workflow_run_failure_reason_code="rollout_verification_failed",
+        deploy_workflow_run_failure_stage="rollout_verify",
+        deploy_workflow_run_failure_step="Verify rollout",
     )
     service = _build_service(
         db_session,
@@ -2990,6 +3011,12 @@ def test_deploy_records_run_failure_without_live_url_confirmation(db_session) ->
     assert deploy_result.result.get("workflow_run_lookup_attempted") is True
     assert deploy_result.result.get("workflow_run_found") is True
     assert deploy_result.result.get("workflow_job_failure_detected") is True
+    assert deploy_result.result.get("workflow_run_failure_reason_code") == "rollout_verification_failed"
+    assert deploy_result.result.get("workflow_run_failure_stage") == "rollout_verify"
+    assert deploy_result.result.get("workflow_run_failure_step") == "Verify rollout"
+    assert deploy_result.result.get("workflow_run_failure_hint") == (
+        "Deployment rollout verification failed or timed out in the deploy workflow run."
+    )
     assert deploy_result.result.get("post_dispatch_state") == "workflow_run_failed"
     assert (
         deploy_result.result.get("deploy_evidence_contract_status") == "workflow_run_failed_without_explicit_evidence"
@@ -3004,6 +3031,12 @@ def test_deploy_records_run_failure_without_live_url_confirmation(db_session) ->
     assert deploy_readiness.get("last_workflow_run_lookup_attempted") is True
     assert deploy_readiness.get("last_workflow_run_found") is True
     assert deploy_readiness.get("last_workflow_job_failure_detected") is True
+    assert deploy_readiness.get("last_workflow_run_failure_reason_code") == "rollout_verification_failed"
+    assert deploy_readiness.get("last_workflow_run_failure_stage") == "rollout_verify"
+    assert deploy_readiness.get("last_workflow_run_failure_step") == "Verify rollout"
+    assert deploy_readiness.get("last_workflow_run_failure_hint") == (
+        "Deployment rollout verification failed or timed out in the deploy workflow run."
+    )
     assert deploy_readiness.get("last_post_dispatch_state") == "workflow_run_failed"
     assert (
         deploy_readiness.get("last_deploy_evidence_contract_status") == "workflow_run_failed_without_explicit_evidence"
@@ -3219,6 +3252,84 @@ def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output
     assert any('"event": "seo_migration_workflow_output_url_captured_via_refresh"' in item for item in refresh_logs)
     assert any('"event": "seo_migration_deploy_status_refresh_completed"' in item for item in refresh_logs)
     assert "MIGRATION_GITHUB_TOKEN" not in " ".join(refresh_logs)
+
+
+def test_refresh_deploy_status_records_run_failure_classification(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=998877,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        refresh_workflow_run_id=998877,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="gcp_auth_failed",
+        refresh_workflow_run_failure_stage="gcp_auth",
+        refresh_workflow_run_failure_step="Authenticate to GCP",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("status") == "updated"
+    assert refresh_result.result.get("workflow_run_status") == "completed"
+    assert refresh_result.result.get("workflow_run_conclusion") == "failure"
+    assert refresh_result.result.get("workflow_job_failure_detected") is True
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "gcp_auth_failed"
+    assert refresh_result.result.get("workflow_run_failure_stage") == "gcp_auth"
+    assert refresh_result.result.get("workflow_run_failure_step") == "Authenticate to GCP"
+    assert refresh_result.result.get("workflow_run_failure_hint") == (
+        "GCP authentication failed in the deploy workflow run."
+    )
+    assert refresh_result.result.get("resolved_live_url") is None
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("last_workflow_run_failure_reason_code") == "gcp_auth_failed"
+    assert deploy_readiness.get("last_workflow_run_failure_stage") == "gcp_auth"
+    assert deploy_readiness.get("last_workflow_run_failure_step") == "Authenticate to GCP"
+    assert deploy_readiness.get("last_workflow_run_failure_hint") == (
+        "GCP authentication failed in the deploy workflow run."
+    )
 
 
 def test_refresh_deploy_status_is_noop_without_workflow_run_metadata(db_session) -> None:

@@ -190,6 +190,22 @@ _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED = "workflow_dispatch_not_supported"
 _DEPLOY_TARGET_REASON_TOKEN_UNAUTHORIZED = "token_not_authorized"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE = "workflow_not_dispatchable"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY = "workflow_not_production_ready"
+_DEPLOY_RUN_FAILURE_REASON_GCP_AUTH = "gcp_auth_failed"
+_DEPLOY_RUN_FAILURE_REASON_CLUSTER_CREDENTIALS = "gke_credentials_failed"
+_DEPLOY_RUN_FAILURE_REASON_MANIFEST_APPLY = "kubectl_apply_failed"
+_DEPLOY_RUN_FAILURE_REASON_ROLLOUT = "rollout_verification_failed"
+_DEPLOY_RUN_FAILURE_REASON_INGRESS_VERIFY = "service_ingress_verification_failed"
+_DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE = "ingress_endpoint_not_ready"
+_DEPLOY_RUN_FAILURE_REASON_CANCELLED = "workflow_run_cancelled"
+_DEPLOY_RUN_FAILURE_REASON_TIMED_OUT = "workflow_run_timed_out"
+_DEPLOY_RUN_FAILURE_REASON_GENERIC = "workflow_run_failed"
+_DEPLOY_RUN_FAILURE_STAGE_GCP_AUTH = "gcp_auth"
+_DEPLOY_RUN_FAILURE_STAGE_CLUSTER_CREDENTIALS = "cluster_credentials"
+_DEPLOY_RUN_FAILURE_STAGE_MANIFEST_APPLY = "manifest_apply"
+_DEPLOY_RUN_FAILURE_STAGE_ROLLOUT = "rollout_verify"
+_DEPLOY_RUN_FAILURE_STAGE_INGRESS_VERIFY = "ingress_verify"
+_DEPLOY_RUN_FAILURE_STAGE_INGRESS_EVIDENCE = "ingress_evidence"
+_DEPLOY_RUN_FAILURE_STAGE_WORKFLOW_EXECUTION = "workflow_execution"
 _DEPLOY_DISPATCH_SERVICE_REASON_AVAILABLE = "available"
 _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE = "runtime_unavailable"
 _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID = "target_configuration_invalid"
@@ -1747,6 +1763,10 @@ class SEOMigrationService:
         workflow_run_lookup_attempted: bool | None = None
         workflow_run_found: bool | None = None
         workflow_job_failure_detected: bool | None = None
+        workflow_run_failure_reason_code: str | None = None
+        workflow_run_failure_stage: str | None = None
+        workflow_run_failure_step: str | None = None
+        workflow_run_failure_hint: str | None = None
         post_dispatch_state: str | None = None
         expected_workflow_outputs = list(_DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS)
         deploy_evidence_contract_status = _DEPLOY_EVIDENCE_CONTRACT_STATUS_UNKNOWN
@@ -1955,6 +1975,20 @@ class SEOMigrationService:
                 workflow_run_status=getattr(deploy_result, "workflow_run_status", None),
                 workflow_run_conclusion=getattr(deploy_result, "workflow_run_conclusion", None),
             )
+            workflow_run_failure_reason_code = _normalize_workflow_run_failure_reason_code(
+                getattr(deploy_result, "workflow_run_failure_reason_code", None)
+            )
+            workflow_run_failure_stage = _normalize_workflow_run_failure_stage(
+                getattr(deploy_result, "workflow_run_failure_stage", None)
+            )
+            workflow_run_failure_step = _normalize_string(
+                getattr(deploy_result, "workflow_run_failure_step", None),
+                max_length=200,
+            )
+            if workflow_job_failure_detected and workflow_run_failure_reason_code is None:
+                workflow_run_failure_reason_code = _DEPLOY_RUN_FAILURE_REASON_GENERIC
+            if workflow_job_failure_detected and workflow_run_failure_stage is None:
+                workflow_run_failure_stage = _DEPLOY_RUN_FAILURE_STAGE_WORKFLOW_EXECUTION
             if dispatch_service_availability is None:
                 if dry_run:
                     runtime_diagnostics = self._runtime_publisher_diagnostics(action="deploy")
@@ -2573,6 +2607,10 @@ class SEOMigrationService:
             resolved_live_url=resolved_live_url,
             url_source=resolved_live_url_source,
         )
+        workflow_run_failure_hint = _derive_workflow_run_failure_hint(
+            failure_reason=workflow_run_failure_reason_code,
+            post_dispatch_state=post_dispatch_state,
+        )
         self._emit_structured_service_log(
             payload={
                 "event": "seo_migration_deploy_dispatch_accepted",
@@ -2623,6 +2661,10 @@ class SEOMigrationService:
                 "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                 "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                 "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+                "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+                "workflow_run_failure_stage": workflow_run_failure_stage,
+                "workflow_run_failure_step": workflow_run_failure_step,
+                "workflow_run_failure_hint": workflow_run_failure_hint,
             },
             fallback_message="seo_migration_deploy_dispatch_accepted",
             level=logging.INFO,
@@ -2671,6 +2713,10 @@ class SEOMigrationService:
                 "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                 "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                 "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+                "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+                "workflow_run_failure_stage": workflow_run_failure_stage,
+                "workflow_run_failure_step": workflow_run_failure_step,
+                "workflow_run_failure_hint": workflow_run_failure_hint,
             },
             fallback_message="seo_migration_workflow_run_lookup_attempted",
             level=logging.INFO,
@@ -2718,6 +2764,10 @@ class SEOMigrationService:
                     "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                     "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                     "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+                    "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+                    "workflow_run_failure_stage": workflow_run_failure_stage,
+                    "workflow_run_failure_step": workflow_run_failure_step,
+                    "workflow_run_failure_hint": workflow_run_failure_hint,
                 },
                 fallback_message="seo_migration_workflow_run_result_captured",
                 level=logging.INFO,
@@ -2765,6 +2815,10 @@ class SEOMigrationService:
                     "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                     "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                     "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+                    "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+                    "workflow_run_failure_stage": workflow_run_failure_stage,
+                    "workflow_run_failure_step": workflow_run_failure_step,
+                    "workflow_run_failure_hint": workflow_run_failure_hint,
                     "resolved_live_url": resolved_live_url,
                     "url_source": resolved_live_url_source,
                     "url_source_detail": resolved_live_url_source_detail,
@@ -2915,6 +2969,10 @@ class SEOMigrationService:
             "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
             "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
             "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+            "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+            "workflow_run_failure_stage": workflow_run_failure_stage,
+            "workflow_run_failure_step": workflow_run_failure_step,
+            "workflow_run_failure_hint": workflow_run_failure_hint,
             "expected_publish_url": expected_publish_url,
             "resolved_live_url": resolved_live_url,
             "url_source": resolved_live_url_source,
@@ -3046,6 +3104,10 @@ class SEOMigrationService:
                 "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
                 "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
                 "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
+                "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+                "workflow_run_failure_stage": workflow_run_failure_stage,
+                "workflow_run_failure_step": workflow_run_failure_step,
+                "workflow_run_failure_hint": workflow_run_failure_hint,
                 "expected_publish_url": expected_publish_url,
                 "resolved_live_url": resolved_live_url,
                 "url_source": resolved_live_url_source,
@@ -3400,6 +3462,32 @@ class SEOMigrationService:
             )
             raise SEOMigrationValidationError(exc.safe_message) from exc
 
+        next_item = dict(target_history_item)
+        updated = False
+        workflow_run_lookup_attempted = True
+        workflow_run_found = _coerce_int(refresh_result.workflow_run_id) is not None
+        workflow_job_failure_detected = _derive_workflow_job_failure_detected(
+            workflow_run_status=refresh_result.workflow_run_status,
+            workflow_run_conclusion=refresh_result.workflow_run_conclusion,
+        )
+        workflow_run_failure_reason_code = _normalize_workflow_run_failure_reason_code(
+            getattr(refresh_result, "workflow_run_failure_reason_code", None)
+        )
+        workflow_run_failure_stage = _normalize_workflow_run_failure_stage(
+            getattr(refresh_result, "workflow_run_failure_stage", None)
+        )
+        workflow_run_failure_step = _normalize_string(
+            getattr(refresh_result, "workflow_run_failure_step", None),
+            max_length=200,
+        )
+        if workflow_job_failure_detected and workflow_run_failure_reason_code is None:
+            workflow_run_failure_reason_code = _DEPLOY_RUN_FAILURE_REASON_GENERIC
+        if workflow_job_failure_detected and workflow_run_failure_stage is None:
+            workflow_run_failure_stage = _DEPLOY_RUN_FAILURE_STAGE_WORKFLOW_EXECUTION
+        workflow_run_failure_hint = _derive_workflow_run_failure_hint(
+            failure_reason=workflow_run_failure_reason_code,
+            post_dispatch_state=post_dispatch_state,
+        )
         self._emit_structured_service_log(
             payload={
                 "event": "seo_migration_workflow_run_refresh_result_captured",
@@ -3416,23 +3504,22 @@ class SEOMigrationService:
                 "workflow_run_id": refresh_result.workflow_run_id,
                 "workflow_run_status": refresh_result.workflow_run_status,
                 "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
+                "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+                "workflow_run_failure_stage": workflow_run_failure_stage,
+                "workflow_run_failure_step": workflow_run_failure_step,
+                "workflow_run_failure_hint": workflow_run_failure_hint,
             },
             fallback_message="seo_migration_workflow_run_refresh_result_captured",
             level=logging.INFO,
-        )
-
-        next_item = dict(target_history_item)
-        updated = False
-        workflow_run_lookup_attempted = True
-        workflow_run_found = _coerce_int(refresh_result.workflow_run_id) is not None
-        workflow_job_failure_detected = _derive_workflow_job_failure_detected(
-            workflow_run_status=refresh_result.workflow_run_status,
-            workflow_run_conclusion=refresh_result.workflow_run_conclusion,
         )
         for field_name, field_value in (
             ("workflow_run_id", refresh_result.workflow_run_id),
             ("workflow_run_status", _normalize_string(refresh_result.workflow_run_status, max_length=40)),
             ("workflow_run_conclusion", _normalize_string(refresh_result.workflow_run_conclusion, max_length=40)),
+            ("workflow_run_failure_reason_code", workflow_run_failure_reason_code),
+            ("workflow_run_failure_stage", workflow_run_failure_stage),
+            ("workflow_run_failure_step", workflow_run_failure_step),
+            ("workflow_run_failure_hint", workflow_run_failure_hint),
             ("dispatch_ref_sent", dispatch_ref_sent),
             ("workflow_inputs_configured_keys", workflow_inputs_configured_keys),
             ("workflow_inputs_sent_keys", workflow_inputs_sent_keys),
@@ -3508,6 +3595,13 @@ class SEOMigrationService:
         )
         if next_item.get("post_dispatch_state") != post_dispatch_state:
             next_item["post_dispatch_state"] = post_dispatch_state
+            updated = True
+        workflow_run_failure_hint = _derive_workflow_run_failure_hint(
+            failure_reason=workflow_run_failure_reason_code,
+            post_dispatch_state=post_dispatch_state,
+        )
+        if next_item.get("workflow_run_failure_hint") != workflow_run_failure_hint:
+            next_item["workflow_run_failure_hint"] = workflow_run_failure_hint
             updated = True
         (
             deploy_evidence_contract_status,
@@ -3639,6 +3733,10 @@ class SEOMigrationService:
             "workflow_run_id": refresh_result.workflow_run_id,
             "workflow_run_status": refresh_result.workflow_run_status,
             "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
+            "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+            "workflow_run_failure_stage": workflow_run_failure_stage,
+            "workflow_run_failure_step": workflow_run_failure_step,
+            "workflow_run_failure_hint": workflow_run_failure_hint,
             "resolved_live_url": existing_live_url,
             "url_source": existing_url_source,
             "url_source_detail": existing_url_source_detail,
@@ -3694,6 +3792,10 @@ class SEOMigrationService:
                 "workflow_run_id": refresh_result.workflow_run_id,
                 "workflow_run_status": refresh_result.workflow_run_status,
                 "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
+                "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+                "workflow_run_failure_stage": workflow_run_failure_stage,
+                "workflow_run_failure_step": workflow_run_failure_step,
+                "workflow_run_failure_hint": workflow_run_failure_hint,
                 "resolved_live_url": existing_live_url,
                 "url_source": existing_url_source,
                 "url_source_detail": existing_url_source_detail,
@@ -3752,6 +3854,10 @@ class SEOMigrationService:
                 "workflow_run_id": refresh_result.workflow_run_id,
                 "workflow_run_status": refresh_result.workflow_run_status,
                 "workflow_run_conclusion": refresh_result.workflow_run_conclusion,
+                "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+                "workflow_run_failure_stage": workflow_run_failure_stage,
+                "workflow_run_failure_step": workflow_run_failure_step,
+                "workflow_run_failure_hint": workflow_run_failure_hint,
                 "resolved_live_url": existing_live_url,
                 "url_source": existing_url_source,
                 "url_source_detail": existing_url_source_detail,
@@ -3965,6 +4071,18 @@ class SEOMigrationService:
             "workflow_run_id": _coerce_int(history_item.get("workflow_run_id")),
             "workflow_run_status": _normalize_string(history_item.get("workflow_run_status"), max_length=40),
             "workflow_run_conclusion": _normalize_string(history_item.get("workflow_run_conclusion"), max_length=40),
+            "workflow_run_failure_reason_code": _normalize_workflow_run_failure_reason_code(
+                history_item.get("workflow_run_failure_reason_code")
+            ),
+            "workflow_run_failure_stage": _normalize_workflow_run_failure_stage(
+                history_item.get("workflow_run_failure_stage")
+            ),
+            "workflow_run_failure_step": _normalize_string(history_item.get("workflow_run_failure_step"), max_length=200),
+            "workflow_run_failure_hint": _normalize_string(history_item.get("workflow_run_failure_hint"), max_length=240)
+            or _derive_workflow_run_failure_hint(
+                failure_reason=history_item.get("workflow_run_failure_reason_code"),
+                post_dispatch_state=history_item.get("post_dispatch_state"),
+            ),
             "resolved_live_url": _normalize_url_candidate(history_item.get("resolved_live_url")),
             "url_source": _normalize_migration_url_source(history_item.get("url_source")),
             "url_source_detail": _normalize_string(history_item.get("url_source_detail"), max_length=120),
@@ -4063,6 +4181,10 @@ class SEOMigrationService:
                 "workflow_run_id": result_payload.get("workflow_run_id"),
                 "workflow_run_status": result_payload.get("workflow_run_status"),
                 "workflow_run_conclusion": result_payload.get("workflow_run_conclusion"),
+                "workflow_run_failure_reason_code": result_payload.get("workflow_run_failure_reason_code"),
+                "workflow_run_failure_stage": result_payload.get("workflow_run_failure_stage"),
+                "workflow_run_failure_step": result_payload.get("workflow_run_failure_step"),
+                "workflow_run_failure_hint": result_payload.get("workflow_run_failure_hint"),
             },
             fallback_message="seo_migration_deploy_status_refresh_no_change",
             level=logging.INFO,
@@ -4115,6 +4237,12 @@ class SEOMigrationService:
                 "deploy_evidence_contract_reasons": result_payload.get("deploy_evidence_contract_reasons"),
                 "workflow_contract_advisory": result_payload.get("workflow_contract_advisory"),
                 "workflow_run_id": result_payload.get("workflow_run_id"),
+                "workflow_run_status": result_payload.get("workflow_run_status"),
+                "workflow_run_conclusion": result_payload.get("workflow_run_conclusion"),
+                "workflow_run_failure_reason_code": result_payload.get("workflow_run_failure_reason_code"),
+                "workflow_run_failure_stage": result_payload.get("workflow_run_failure_stage"),
+                "workflow_run_failure_step": result_payload.get("workflow_run_failure_step"),
+                "workflow_run_failure_hint": result_payload.get("workflow_run_failure_hint"),
             },
             duration_ms=self._duration_ms(started_at),
             correlation_id=_normalize_string(result_payload.get("deploy_trace_id"), max_length=80),
@@ -8438,6 +8566,14 @@ class SEOMigrationService:
             workflow_run_id = _coerce_int(item.get("workflow_run_id"))
             workflow_run_status = _normalize_string(item.get("workflow_run_status"), max_length=40)
             workflow_run_conclusion = _normalize_string(item.get("workflow_run_conclusion"), max_length=40)
+            workflow_run_failure_reason_code = _normalize_workflow_run_failure_reason_code(
+                item.get("workflow_run_failure_reason_code")
+            )
+            workflow_run_failure_stage = _normalize_workflow_run_failure_stage(
+                item.get("workflow_run_failure_stage")
+            )
+            workflow_run_failure_step = _normalize_string(item.get("workflow_run_failure_step"), max_length=200)
+            workflow_run_failure_hint = _normalize_string(item.get("workflow_run_failure_hint"), max_length=240)
             resolved_live_url = _normalize_url_candidate(item.get("resolved_live_url"))
             post_dispatch_state = _normalize_string(
                 item.get("post_dispatch_state"), max_length=80
@@ -8577,6 +8713,10 @@ class SEOMigrationService:
                 "workflow_run_id": workflow_run_id,
                 "workflow_run_status": workflow_run_status,
                 "workflow_run_conclusion": workflow_run_conclusion,
+                "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+                "workflow_run_failure_stage": workflow_run_failure_stage,
+                "workflow_run_failure_step": workflow_run_failure_step,
+                "workflow_run_failure_hint": workflow_run_failure_hint,
                 "kubernetes_namespace": _normalize_string(item.get("kubernetes_namespace"), max_length=63),
                 "namespace_source": _normalize_string(item.get("namespace_source"), max_length=60),
                 "namespace_model_status": _normalize_string(item.get("namespace_model_status"), max_length=40),
@@ -9219,6 +9359,10 @@ class SEOMigrationService:
             "last_workflow_run_id": latest_traceability.get("workflow_run_id"),
             "last_workflow_run_status": latest_traceability.get("workflow_run_status"),
             "last_workflow_run_conclusion": latest_traceability.get("workflow_run_conclusion"),
+            "last_workflow_run_failure_reason_code": latest_traceability.get("workflow_run_failure_reason_code"),
+            "last_workflow_run_failure_stage": latest_traceability.get("workflow_run_failure_stage"),
+            "last_workflow_run_failure_step": latest_traceability.get("workflow_run_failure_step"),
+            "last_workflow_run_failure_hint": latest_traceability.get("workflow_run_failure_hint"),
             "target": target_summary,
             "config_prerequisites": {
                 "github_publisher_configured": self.github_publisher_configured,
@@ -9703,6 +9847,46 @@ def _normalize_deploy_failure_stage(value: object) -> str | None:
     return None
 
 
+def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
+    normalized = _normalize_string(value, max_length=80)
+    if not normalized:
+        return None
+    normalized_lower = normalized.lower()
+    allowed = {
+        _DEPLOY_RUN_FAILURE_REASON_GCP_AUTH,
+        _DEPLOY_RUN_FAILURE_REASON_CLUSTER_CREDENTIALS,
+        _DEPLOY_RUN_FAILURE_REASON_MANIFEST_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_ROLLOUT,
+        _DEPLOY_RUN_FAILURE_REASON_INGRESS_VERIFY,
+        _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE,
+        _DEPLOY_RUN_FAILURE_REASON_CANCELLED,
+        _DEPLOY_RUN_FAILURE_REASON_TIMED_OUT,
+        _DEPLOY_RUN_FAILURE_REASON_GENERIC,
+    }
+    if normalized_lower in allowed:
+        return normalized_lower
+    return None
+
+
+def _normalize_workflow_run_failure_stage(value: object) -> str | None:
+    normalized = _normalize_string(value, max_length=80)
+    if not normalized:
+        return None
+    normalized_lower = normalized.lower()
+    allowed = {
+        _DEPLOY_RUN_FAILURE_STAGE_GCP_AUTH,
+        _DEPLOY_RUN_FAILURE_STAGE_CLUSTER_CREDENTIALS,
+        _DEPLOY_RUN_FAILURE_STAGE_MANIFEST_APPLY,
+        _DEPLOY_RUN_FAILURE_STAGE_ROLLOUT,
+        _DEPLOY_RUN_FAILURE_STAGE_INGRESS_VERIFY,
+        _DEPLOY_RUN_FAILURE_STAGE_INGRESS_EVIDENCE,
+        _DEPLOY_RUN_FAILURE_STAGE_WORKFLOW_EXECUTION,
+    }
+    if normalized_lower in allowed:
+        return normalized_lower
+    return None
+
+
 def _normalize_dispatch_service_reason_code(value: object) -> str | None:
     normalized = _normalize_string(value, max_length=80)
     if not normalized:
@@ -10033,6 +10217,36 @@ def _derive_deploy_failure_remediation_hint(
         and normalized_stage == "workflow_lookup"
     ):
         return "Deploy target configuration resolved to a workflow or target that is not usable."
+    return None
+
+
+def _derive_workflow_run_failure_hint(
+    *,
+    failure_reason: object,
+    post_dispatch_state: object,
+) -> str | None:
+    normalized_reason = _normalize_workflow_run_failure_reason_code(failure_reason)
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_GCP_AUTH:
+        return "GCP authentication failed in the deploy workflow run."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_CLUSTER_CREDENTIALS:
+        return "GKE credential acquisition failed in the deploy workflow run."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_MANIFEST_APPLY:
+        return "Applying Kubernetes manifests failed in the deploy workflow run."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_ROLLOUT:
+        return "Deployment rollout verification failed or timed out in the deploy workflow run."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_VERIFY:
+        return "Service or ingress verification failed in the deploy workflow run."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE:
+        return "Ingress endpoint was not available before workflow evidence timeout."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_TIMED_OUT:
+        return "Deploy workflow run timed out before completion."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_CANCELLED:
+        return "Deploy workflow run was cancelled before completion."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_GENERIC:
+        return "Deploy workflow run failed before explicit live URL evidence was captured."
+    normalized_post_state = _normalize_string(post_dispatch_state, max_length=80)
+    if normalized_post_state == "workflow_run_succeeded_without_live_url":
+        return "Workflow run succeeded but did not emit explicit live URL evidence."
     return None
 
 

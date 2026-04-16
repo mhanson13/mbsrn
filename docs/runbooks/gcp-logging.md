@@ -571,9 +571,38 @@ Explicit evidence troubleshooting quick guide:
 - Fallback workflow handling:
   - if fallback workflow is selected, evidence handling is identical; `resolved_live_url` is still confirmed only from explicit evidence keys.
 
+Managed workflow deploy evidence notes:
+- The managed GKE deploy workflow resolves live URL evidence from ingress status (`status.loadBalancer.ingress[0].hostname|ip`).
+- On successful evidence capture, workflow outputs include:
+  - `resolved_live_url`
+  - `live_url`
+  - `deployed_url`
+- If rollout succeeds but ingress status has no concrete endpoint, workflow fails and no explicit live URL evidence is emitted.
+
+Managed real-deploy prerequisites (GitHub Actions secrets):
+- `OIDC_WORKLOAD_IDENTITY_PROVIDER`
+- `DEPLOY_SERVICE_ACCOUNT`
+- `KUBERNETES_CLUSTER_NAME`
+- `KUBERNETES_CLUSTER_LOCATION`
+- `GCP_PROJECT_ID`
+
+Post-dispatch workflow run failure diagnostics:
+- `workflow_run_failure_reason_code`
+- `workflow_run_failure_stage`
+- `workflow_run_failure_step`
+- `workflow_run_failure_hint`
+
+Common stage-aware interpretations:
+- `gcp_auth_failed` / `gcp_auth`: Workload Identity auth step failed.
+- `gke_credentials_failed` / `cluster_credentials`: `get-gke-credentials` step failed.
+- `kubectl_apply_failed` / `manifest_apply`: managed manifest apply failed.
+- `rollout_verification_failed` / `rollout_verify`: deployment rollout timed out/failed.
+- `service_ingress_verification_failed` / `ingress_verify`: service or ingress verification failed.
+- `ingress_endpoint_not_ready` / `ingress_evidence`: deployment ran but ingress endpoint did not become available before workflow evidence timeout.
+
 5. **Dispatch succeeds but deployment still does not reach GKE**
    - Signals:
-     - `dispatch_attempted=true`
+      - `dispatch_attempted=true`
      - workflow run exists (`workflow_run_id` present)
      - repo/ref/workflow preflight passed
      - no successful deployment-side evidence (and/or workflow run fails downstream)

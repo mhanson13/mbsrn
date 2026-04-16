@@ -887,6 +887,32 @@ Deploy behavior:
 - duplicate non-dry-run deploy requests for the same artifact+target+inputs are rejected with operator-readable validation errors
 - retry after a failed deploy is supported and recorded as a new history event
 - deploy dry-run records history but does not overwrite prior successful deploy request markers
+- platform-managed deploy workflow now performs a real GKE apply/rollout path for managed site workloads:
+  - authenticate to GCP via Workload Identity (`google-github-actions/auth`)
+  - fetch GKE credentials (`google-github-actions/get-gke-credentials`)
+  - apply namespace first (`kubectl apply -f k8s/namespace.yaml`)
+  - apply managed manifests (`kubectl apply -f k8s/`)
+  - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
+  - verify service/ingress presence
+- required GitHub Actions secret/variable contract for real deploy execution:
+  - `OIDC_WORKLOAD_IDENTITY_PROVIDER`
+  - `DEPLOY_SERVICE_ACCOUNT`
+  - `KUBERNETES_CLUSTER_NAME`
+  - `KUBERNETES_CLUSTER_LOCATION`
+  - `GCP_PROJECT_ID`
+- explicit deploy evidence contract for live URL confirmation:
+  - workflow resolves URL from ingress status (`.status.loadBalancer.ingress[0].hostname|ip`)
+  - workflow emits all three output keys on success:
+    - `live_url`
+    - `resolved_live_url`
+    - `deployed_url`
+  - no URL output is emitted when ingress status has no concrete endpoint; workflow fails instead
+- post-dispatch workflow run diagnostics now distinguish execution-stage failures:
+  - `workflow_run_failure_reason_code`
+  - `workflow_run_failure_stage`
+  - `workflow_run_failure_step`
+  - `workflow_run_failure_hint`
+  - examples include `gcp_auth_failed`, `gke_credentials_failed`, `kubectl_apply_failed`, `rollout_verification_failed`, `service_ingress_verification_failed`, and `ingress_endpoint_not_ready`
 
 Current deployment model is reused via workflow dispatch conventions; platform deployment architecture is not redesigned by this feature.
 

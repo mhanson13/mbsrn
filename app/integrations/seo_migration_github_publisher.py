@@ -66,6 +66,9 @@ class SEOMigrationGitHubDeployResult:
     workflow_run_id: int | None = None
     workflow_run_status: str | None = None
     workflow_run_conclusion: str | None = None
+    workflow_run_failure_reason_code: str | None = None
+    workflow_run_failure_stage: str | None = None
+    workflow_run_failure_step: str | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +81,9 @@ class SEOMigrationGitHubDeployRunStatusResult:
     workflow_run_status: str | None = None
     workflow_run_conclusion: str | None = None
     workflow_output: dict[str, str] | None = None
+    workflow_run_failure_reason_code: str | None = None
+    workflow_run_failure_stage: str | None = None
+    workflow_run_failure_step: str | None = None
     refreshed_at: str | None = None
 
 
@@ -441,6 +447,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         workflow_run_id: int | None = None
         workflow_run_status: str | None = None
         workflow_run_conclusion: str | None = None
+        workflow_run_failure_reason_code: str | None = None
+        workflow_run_failure_stage: str | None = None
+        workflow_run_failure_step: str | None = None
         readiness_result: SEOMigrationGitHubTargetReadinessResult | None = None
         if not dry_run:
             readiness_result = self.check_deploy_target_readiness(
@@ -461,6 +470,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 workflow_run_status,
                 workflow_run_conclusion,
                 workflow_output,
+                workflow_run_failure_reason_code,
+                workflow_run_failure_stage,
+                workflow_run_failure_step,
             ) = self._try_capture_post_dispatch_workflow_result(
                 target=target,
                 dispatched_at=dispatched_at,
@@ -478,6 +490,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_run_id=workflow_run_id,
             workflow_run_status=workflow_run_status,
             workflow_run_conclusion=workflow_run_conclusion,
+            workflow_run_failure_reason_code=workflow_run_failure_reason_code,
+            workflow_run_failure_stage=workflow_run_failure_stage,
+            workflow_run_failure_step=workflow_run_failure_step,
         )
 
     def refresh_deploy_run_status(
@@ -533,6 +548,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
 
         dispatched_at_candidate = _coerce_string(dispatched_at) or created_at or refreshed_at
         workflow_output: dict[str, str] | None = None
+        workflow_run_failure_reason_code: str | None = None
+        workflow_run_failure_stage: str | None = None
+        workflow_run_failure_step: str | None = None
         if run_status == "completed" and run_conclusion == "success":
             live_url = self._resolve_live_url_from_workflow_completion_metadata(
                 target=target,
@@ -541,6 +559,17 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             )
             if live_url:
                 workflow_output = {"live_url": live_url}
+        elif run_status == "completed" and run_conclusion:
+            (
+                workflow_run_failure_reason_code,
+                workflow_run_failure_stage,
+                workflow_run_failure_step,
+            ) = self._resolve_workflow_run_failure_details(
+                target=target,
+                workflow_run_id=run_id,
+                workflow_run_status=run_status,
+                workflow_run_conclusion=run_conclusion,
+            )
 
         return SEOMigrationGitHubDeployRunStatusResult(
             repo_owner=target.repo_owner,
@@ -551,6 +580,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_run_status=run_status,
             workflow_run_conclusion=run_conclusion,
             workflow_output=workflow_output,
+            workflow_run_failure_reason_code=workflow_run_failure_reason_code,
+            workflow_run_failure_stage=workflow_run_failure_stage,
+            workflow_run_failure_step=workflow_run_failure_step,
             refreshed_at=refreshed_at,
         )
 
@@ -559,23 +591,34 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         *,
         target: SEOMigrationGitHubDeployTarget,
         dispatched_at: str,
-    ) -> tuple[int | None, str | None, str | None, dict[str, str] | None]:
+    ) -> tuple[
+        int | None,
+        str | None,
+        str | None,
+        dict[str, str] | None,
+        str | None,
+        str | None,
+        str | None,
+    ]:
         try:
             run_payload = self._find_recent_workflow_run_for_dispatch(
                 target=target,
                 dispatched_at=dispatched_at,
             )
         except SEOMigrationGitHubPublisherError:
-            return None, None, None, None
+            return None, None, None, None, None, None, None
 
         if not isinstance(run_payload, dict):
-            return None, None, None, None
+            return None, None, None, None, None, None, None
 
         workflow_run_id = _coerce_int(run_payload.get("id"))
         workflow_run_status = _coerce_string(run_payload.get("status"))
         workflow_run_conclusion = _coerce_string(run_payload.get("conclusion"))
 
         workflow_output: dict[str, str] | None = None
+        workflow_run_failure_reason_code: str | None = None
+        workflow_run_failure_stage: str | None = None
+        workflow_run_failure_step: str | None = None
         if workflow_run_status == "completed" and workflow_run_conclusion == "success":
             live_url = self._resolve_live_url_from_workflow_completion_metadata(
                 target=target,
@@ -584,8 +627,27 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             )
             if live_url:
                 workflow_output = {"live_url": live_url}
+        elif workflow_run_status == "completed" and workflow_run_conclusion:
+            (
+                workflow_run_failure_reason_code,
+                workflow_run_failure_stage,
+                workflow_run_failure_step,
+            ) = self._resolve_workflow_run_failure_details(
+                target=target,
+                workflow_run_id=workflow_run_id,
+                workflow_run_status=workflow_run_status,
+                workflow_run_conclusion=workflow_run_conclusion,
+            )
 
-        return workflow_run_id, workflow_run_status, workflow_run_conclusion, workflow_output
+        return (
+            workflow_run_id,
+            workflow_run_status,
+            workflow_run_conclusion,
+            workflow_output,
+            workflow_run_failure_reason_code,
+            workflow_run_failure_stage,
+            workflow_run_failure_step,
+        )
 
     def _find_recent_workflow_run_for_dispatch(
         self,
@@ -718,6 +780,61 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                         continue
                     return environment_url
         return None
+
+    def _resolve_workflow_run_failure_details(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        workflow_run_id: int | None,
+        workflow_run_status: str | None,
+        workflow_run_conclusion: str | None,
+    ) -> tuple[str | None, str | None, str | None]:
+        run_id = workflow_run_id if isinstance(workflow_run_id, int) and workflow_run_id > 0 else None
+        run_status = (_coerce_string(workflow_run_status) or "").strip().lower()
+        run_conclusion = (_coerce_string(workflow_run_conclusion) or "").strip().lower()
+        if run_id is None or run_status != "completed" or run_conclusion in {"", "success"}:
+            return None, None, None
+
+        jobs_response = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
+                f"/actions/runs/{run_id}/jobs?per_page=20"
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_stage="workflow_result_lookup",
+        )
+        jobs_payload = jobs_response.get("jobs") if isinstance(jobs_response, dict) else None
+        failed_step_name: str | None = None
+        if isinstance(jobs_payload, list):
+            for job_item in jobs_payload:
+                if not isinstance(job_item, dict):
+                    continue
+                job_conclusion = (_coerce_string(job_item.get("conclusion")) or "").strip().lower()
+                if job_conclusion in {"", "success"}:
+                    continue
+                steps_payload = job_item.get("steps")
+                if isinstance(steps_payload, list):
+                    for step_item in steps_payload:
+                        if not isinstance(step_item, dict):
+                            continue
+                        step_conclusion = (_coerce_string(step_item.get("conclusion")) or "").strip().lower()
+                        if step_conclusion in {"", "success"}:
+                            continue
+                        failed_step_name = _coerce_string(step_item.get("name")) or _coerce_string(
+                            job_item.get("name")
+                        )
+                        break
+                if failed_step_name is None:
+                    failed_step_name = _coerce_string(job_item.get("name"))
+                break
+
+        reason_code, failure_stage = _classify_workflow_run_failure(
+            failed_step_name=failed_step_name,
+            run_conclusion=run_conclusion,
+        )
+        return reason_code, failure_stage, failed_step_name
 
     def _ensure_repo_exists(self, *, repo_owner: str, repo_name: str) -> None:
         self._request_json(
@@ -2084,7 +2201,13 @@ def _render_managed_deploy_workflow_yaml(
             "jobs:\n"
             "  deploy:\n"
             "    runs-on: ubuntu-latest\n"
-            f"    environment: {normalized_environment_key}\n"
+            "    outputs:\n"
+            "      live_url: ${{ steps.resolve_live_url.outputs.live_url }}\n"
+            "      resolved_live_url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
+            "      deployed_url: ${{ steps.resolve_live_url.outputs.deployed_url }}\n"
+            "    environment:\n"
+            f"      name: {normalized_environment_key}\n"
+            "      url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
             "    env:\n"
             f"      K8S_NAMESPACE: {normalized_namespace}\n"
             f"      MBSRN_NAMESPACE_SOURCE: {normalized_namespace_source}\n"
@@ -2092,22 +2215,60 @@ def _render_managed_deploy_workflow_yaml(
             f"      MBSRN_TARGET_ENVIRONMENT_SOURCE: {normalized_environment_source}\n"
             f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
             "    steps:\n"
-            "      - uses: actions/checkout@v4\n"
-            "      - uses: google-github-actions/auth@v2\n"
+            "      - name: Checkout repository\n"
+            "        uses: actions/checkout@v4\n"
+            "      - name: Authenticate to GCP\n"
+            "        uses: google-github-actions/auth@v2\n"
             "        with:\n"
             "          workload_identity_provider: ${{ secrets.OIDC_WORKLOAD_IDENTITY_PROVIDER }}\n"
             "          service_account: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}\n"
-            "      - uses: google-github-actions/get-gke-credentials@v2\n"
+            "      - name: Get GKE credentials\n"
+            "        uses: google-github-actions/get-gke-credentials@v2\n"
             "        with:\n"
             "          cluster_name: ${{ secrets.KUBERNETES_CLUSTER_NAME }}\n"
             "          location: ${{ secrets.KUBERNETES_CLUSTER_LOCATION }}\n"
+            "          project_id: ${{ secrets.GCP_PROJECT_ID }}\n"
             "      - name: Ensure namespace exists\n"
             "        run: kubectl apply -f k8s/namespace.yaml\n"
-            "      - name: Apply namespaced resources\n"
+            "      - name: Apply managed manifests\n"
             "        run: |\n"
-            "          kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml -f k8s/service.yaml -f k8s/ingress.yaml\n"
+            "          kubectl apply -f k8s/\n"
             "      - name: Verify rollout\n"
             "        run: kubectl rollout status deployment/site-web --namespace \"$K8S_NAMESPACE\" --timeout=180s\n"
+            "      - name: Verify service and ingress\n"
+            "        run: |\n"
+            "          kubectl get service site-web --namespace \"$K8S_NAMESPACE\"\n"
+            "          kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"\n"
+            "      - name: Resolve live URL from ingress status\n"
+            "        id: resolve_live_url\n"
+            "        run: |\n"
+            "          set -euo pipefail\n"
+            "          ingress_host=\"\"\n"
+            "          ingress_ip=\"\"\n"
+            "          for _ in $(seq 1 20); do\n"
+            "            ingress_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)\"\n"
+            "            ingress_ip=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)\"\n"
+            "            if [ -n \"$ingress_host\" ] || [ -n \"$ingress_ip\" ]; then\n"
+            "              break\n"
+            "            fi\n"
+            "            sleep 15\n"
+            "          done\n"
+            "          live_url=\"\"\n"
+            "          if [ -n \"$ingress_host\" ]; then\n"
+            "            live_url=\"https://$ingress_host\"\n"
+            "          elif [ -n \"$ingress_ip\" ]; then\n"
+            "            live_url=\"http://$ingress_ip\"\n"
+            "          fi\n"
+            "          if [ -z \"$live_url\" ]; then\n"
+            "            echo \"Unable to resolve live URL from ingress status for namespace $K8S_NAMESPACE.\"\n"
+            "            kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
+            "            exit 1\n"
+            "          fi\n"
+            "          {\n"
+            "            echo \"live_url=$live_url\"\n"
+            "            echo \"resolved_live_url=$live_url\"\n"
+            "            echo \"deployed_url=$live_url\"\n"
+            "          } >> \"$GITHUB_OUTPUT\"\n"
             "      - name: Emit managed deployment metadata\n"
             "        run: |\n"
             f'          echo "MBSRN managed deploy workflow: {normalized_workflow_id}"\n'
@@ -2430,6 +2591,34 @@ def _status_links_to_workflow_run(*, status_item: dict[str, object], workflow_ru
         if value and needle in value:
             return True
     return False
+
+
+def _classify_workflow_run_failure(
+    *,
+    failed_step_name: str | None,
+    run_conclusion: str | None,
+) -> tuple[str, str]:
+    step_name = (failed_step_name or "").strip().lower()
+    conclusion = (run_conclusion or "").strip().lower()
+    if step_name:
+        if "authenticate to gcp" in step_name or "google-github-actions/auth" in step_name:
+            return "gcp_auth_failed", "gcp_auth"
+        if "get gke credentials" in step_name or "get-gke-credentials" in step_name:
+            return "gke_credentials_failed", "cluster_credentials"
+        if "apply managed manifests" in step_name or "kubectl apply" in step_name:
+            return "kubectl_apply_failed", "manifest_apply"
+        if "verify rollout" in step_name or "rollout status" in step_name:
+            return "rollout_verification_failed", "rollout_verify"
+        if "verify service and ingress" in step_name:
+            return "service_ingress_verification_failed", "ingress_verify"
+        if "resolve live url from ingress status" in step_name:
+            return "ingress_endpoint_not_ready", "ingress_evidence"
+
+    if conclusion == "cancelled":
+        return "workflow_run_cancelled", "workflow_execution"
+    if conclusion == "timed_out":
+        return "workflow_run_timed_out", "workflow_execution"
+    return "workflow_run_failed", "workflow_execution"
 
 
 _WORKFLOW_CONFORMANCE_STATUS_CONFORMANT = "conformant"

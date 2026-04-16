@@ -1019,6 +1019,126 @@ def test_dispatch_deploy_without_completion_output_keeps_workflow_output_empty(m
     assert len(calls) == 6
 
 
+def test_dispatch_deploy_classifies_failed_run_step_for_diagnostics(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    created_at = utc_now().isoformat()
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "wfsha"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(status=204),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 99994,
+                                "status": "completed",
+                                "conclusion": "failure",
+                                "event": "workflow_dispatch",
+                                "head_branch": "main",
+                                "created_at": created_at,
+                            }
+                        ]
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "jobs": [
+                            {
+                                "name": "deploy",
+                                "conclusion": "failure",
+                                "steps": [
+                                    {"name": "Checkout repository", "conclusion": "success"},
+                                    {"name": "Resolve live URL from ingress status", "conclusion": "failure"},
+                                ],
+                            }
+                        ]
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
+    assert result.workflow_run_id == 99994
+    assert result.workflow_run_status == "completed"
+    assert result.workflow_run_conclusion == "failure"
+    assert result.workflow_output is None
+    assert result.workflow_run_failure_reason_code == "ingress_endpoint_not_ready"
+    assert result.workflow_run_failure_stage == "ingress_evidence"
+    assert result.workflow_run_failure_step == "Resolve live URL from ingress status"
+    assert len(calls) == 7
+
+
+def test_refresh_deploy_run_status_classifies_failed_run_step(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "id": 777001,
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "created_at": "2026-04-16T11:00:00+00:00",
+                        "updated_at": "2026-04-16T11:03:00+00:00",
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "jobs": [
+                            {
+                                "name": "deploy",
+                                "conclusion": "failure",
+                                "steps": [
+                                    {"name": "Authenticate to GCP", "conclusion": "failure"},
+                                ],
+                            }
+                        ]
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.refresh_deploy_run_status(
+        target=_dispatch_target(),
+        workflow_run_id=777001,
+        dispatched_at="2026-04-16T11:00:00+00:00",
+    )
+    assert result.workflow_run_id == 777001
+    assert result.workflow_run_status == "completed"
+    assert result.workflow_run_conclusion == "failure"
+    assert result.workflow_output is None
+    assert result.workflow_run_failure_reason_code == "gcp_auth_failed"
+    assert result.workflow_run_failure_stage == "gcp_auth"
+    assert result.workflow_run_failure_step == "Authenticate to GCP"
+    assert len(calls) == 2
+
+
 def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(monkeypatch, _managed_provisioning_responses(), calls)
@@ -1093,6 +1213,31 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     workflow_yaml = base64.b64decode(encoded_content).decode("utf-8")
     assert "workflow_dispatch" in workflow_yaml
     assert "K8S_NAMESPACE: tnmfire" in workflow_yaml
+    assert "Authenticate to GCP" in workflow_yaml
+    assert "Get GKE credentials" in workflow_yaml
+    assert "Ensure namespace exists" in workflow_yaml
+    assert "Apply managed manifests" in workflow_yaml
+    assert "Verify rollout" in workflow_yaml
+    assert "Verify service and ingress" in workflow_yaml
+    assert "project_id: ${{ secrets.GCP_PROJECT_ID }}" in workflow_yaml
+    assert "workload_identity_provider: ${{ secrets.OIDC_WORKLOAD_IDENTITY_PROVIDER }}" in workflow_yaml
+    assert "service_account: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}" in workflow_yaml
+    assert "cluster_name: ${{ secrets.KUBERNETES_CLUSTER_NAME }}" in workflow_yaml
+    assert "location: ${{ secrets.KUBERNETES_CLUSTER_LOCATION }}" in workflow_yaml
+    assert "outputs:" in workflow_yaml
+    assert "live_url: ${{ steps.resolve_live_url.outputs.live_url }}" in workflow_yaml
+    assert "resolved_live_url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}" in workflow_yaml
+    assert "deployed_url: ${{ steps.resolve_live_url.outputs.deployed_url }}" in workflow_yaml
+    assert "url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}" in workflow_yaml
+    assert "kubectl apply -f k8s/" in workflow_yaml
+    assert "kubectl rollout status deployment/site-web" in workflow_yaml
+    assert "Resolve live URL from ingress status" in workflow_yaml
+    assert "kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
+    assert "Unable to resolve live URL from ingress status for namespace $K8S_NAMESPACE." in workflow_yaml
+    assert "exit 1" in workflow_yaml
+    assert "echo \"resolved_live_url=$live_url\"" in workflow_yaml
+    assert "echo \"live_url=$live_url\"" in workflow_yaml
+    assert "echo \"deployed_url=$live_url\"" in workflow_yaml
     assert len(calls) == 17
 
 

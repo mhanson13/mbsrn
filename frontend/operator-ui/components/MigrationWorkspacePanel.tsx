@@ -2145,6 +2145,23 @@ export function MigrationWorkspacePanel({
   const workflowRunConclusion =
     asStringOrNull(selectedDeployHistoryRecord.workflow_run_conclusion) ||
     asStringOrNull(deployReadiness.last_workflow_run_conclusion);
+  const deployRunFailureReasonCodeFromSelected = asStringOrNull(
+    selectedDeployHistoryRecord.workflow_run_failure_reason_code,
+  );
+  const deployRunFailureReasonCodeFromSummary = asStringOrNull(
+    deployReadiness.last_workflow_run_failure_reason_code,
+  );
+  const deployRunFailureReasonCode =
+    deployRunFailureReasonCodeFromSelected || deployRunFailureReasonCodeFromSummary;
+  const deployRunFailureStageFromSelected = asStringOrNull(selectedDeployHistoryRecord.workflow_run_failure_stage);
+  const deployRunFailureStageFromSummary = asStringOrNull(deployReadiness.last_workflow_run_failure_stage);
+  const deployRunFailureStage = deployRunFailureStageFromSelected || deployRunFailureStageFromSummary;
+  const deployRunFailureStepFromSelected = asStringOrNull(selectedDeployHistoryRecord.workflow_run_failure_step);
+  const deployRunFailureStepFromSummary = asStringOrNull(deployReadiness.last_workflow_run_failure_step);
+  const deployRunFailureStep = deployRunFailureStepFromSelected || deployRunFailureStepFromSummary;
+  const deployRunFailureHintFromSelected = asStringOrNull(selectedDeployHistoryRecord.workflow_run_failure_hint);
+  const deployRunFailureHintFromSummary = asStringOrNull(deployReadiness.last_workflow_run_failure_hint);
+  const deployRunFailureHint = deployRunFailureHintFromSelected || deployRunFailureHintFromSummary;
   const deployFailureReasonCodeFromSelected = asStringOrNull(selectedDeployHistoryRecord.failure_reason);
   const deployFailureReasonCodeFromSummary =
     asStringOrNull(deployReadiness.last_failure_reason) ||
@@ -2179,7 +2196,11 @@ export function MigrationWorkspacePanel({
       (!dispatchServiceReasonCodeFromSelected && !!dispatchServiceReasonCodeFromSummary) ||
       (!workflowConformanceStatusFromSelected && !!workflowConformanceStatusFromSummary) ||
       (deployWorkflowExistsFromSelected === null && deployWorkflowExistsFromSummary !== null) ||
-      (!deployFailureRemediationHintFromSelected && !!deployFailureRemediationHintFromSummary));
+      (!deployFailureRemediationHintFromSelected && !!deployFailureRemediationHintFromSummary) ||
+      (!deployRunFailureReasonCodeFromSelected && !!deployRunFailureReasonCodeFromSummary) ||
+      (!deployRunFailureStageFromSelected && !!deployRunFailureStageFromSummary) ||
+      (!deployRunFailureStepFromSelected && !!deployRunFailureStepFromSummary) ||
+      (!deployRunFailureHintFromSelected && !!deployRunFailureHintFromSummary));
   const draftReadiness = parseDraftReadiness(contextSummary);
   const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
   const draftGenerationState = parseDraftGenerationState({
@@ -3947,6 +3968,22 @@ export function MigrationWorkspacePanel({
             {deployFailureRemediationHint ? (
               <span className="hint warning">Remediation hint: {deployFailureRemediationHint}</span>
             ) : null}
+            {deployRunFailureReasonCode ? (
+              <span className="hint warning">
+                Workflow run failure reason: {formatReasonCodeLabel(deployRunFailureReasonCode)}
+              </span>
+            ) : null}
+            {deployRunFailureStage ? (
+              <span className="hint warning">
+                Workflow run failure stage: {formatReasonCodeLabel(deployRunFailureStage)}
+              </span>
+            ) : null}
+            {deployRunFailureStep ? (
+              <span className="hint warning">Workflow run failed step: {deployRunFailureStep}</span>
+            ) : null}
+            {deployRunFailureHint ? (
+              <span className="hint warning">Workflow run guidance: {deployRunFailureHint}</span>
+            ) : null}
             {dispatchAttempted === false ? (
               <span className="hint warning" data-testid="migration-dispatch-state-hint">
                 Dispatch was not attempted because deploy readiness failed. Resolve blockers and retry deploy.
@@ -4258,7 +4295,23 @@ export function MigrationWorkspacePanel({
                 <span className="hint">
                   Workflow job failure detected: {formatBooleanStateLabel(workflowJobFailureDetected)}
                 </span>
+                <span className="hint">Workflow run status: {workflowRunStatus || "Not available"}</span>
+                <span className="hint">Workflow run conclusion: {workflowRunConclusion || "Not available"}</span>
                 <span className="hint">Post-dispatch state: {postDispatchState || "Not available"}</span>
+                <span className="hint">
+                  Workflow run failure reason:{" "}
+                  {deployRunFailureReasonCode ? formatReasonCodeLabel(deployRunFailureReasonCode) : "Not available"}
+                </span>
+                <span className="hint">
+                  Workflow run failure stage:{" "}
+                  {deployRunFailureStage ? formatReasonCodeLabel(deployRunFailureStage) : "Not available"}
+                </span>
+                <span className="hint">
+                  Workflow run failed step: {deployRunFailureStep || "Not available"}
+                </span>
+                {deployRunFailureHint ? (
+                  <span className="hint warning">Workflow run guidance: {deployRunFailureHint}</span>
+                ) : null}
                 <span className="hint">
                   Deploy evidence contract status: {deployEvidenceContractStatus || "Not available"}
                 </span>
