@@ -363,6 +363,16 @@ Key non-secret fields:
 - `failure_reason_code` / `target.failure_reason_code`
 - `failure_stage` (`repo_lookup`, `ref_lookup`, `workflow_lookup`, `workflow_dispatch`)
 - `failure_remediation_hint` (deterministic advisory summary derived from failure reason/stage evidence)
+- duplicate-blocker context (when `failure_category=duplicate_request`):
+  - `target.blocking_post_dispatch_state`
+  - `target.blocking_dispatch_result_stage`
+  - `target.blocking_workflow_run_id`
+  - `target.blocking_workflow_run_status`
+  - `target.blocking_workflow_run_conclusion`
+  - `target.blocking_deploy_trace_id`
+  - `target.blocking_timestamp`
+  - `target.blocking_dispatched_at`
+  - `target.blocking_refreshed_at`
 - `workflow_id`, optional `workflow_path`, `ref`, `repo_owner`, `repo_name`
 - `workflow_identifier_requested`, `workflow_identifier_used`
 - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
@@ -456,6 +466,21 @@ Post-dispatch state interpretation:
 - `post_dispatch_state=workflow_run_failed` means run evidence exists with non-success terminal conclusion.
 - `post_dispatch_state=workflow_run_succeeded_without_live_url` means run completed successfully but no explicit live URL evidence has been captured.
 - `post_dispatch_state=workflow_run_succeeded_with_live_url` means explicit live URL evidence is present.
+
+Duplicate deploy blocking interpretation:
+- `failure_category=duplicate_request` on deploy means a prior active in-flight deploy attempt for the same artifact+target+inputs was detected.
+- this is intentionally narrow concurrency protection; it is not a blanket "history exists" block.
+- retries are expected to be allowed once prior attempts become terminal/stale.
+- stale no-run evaluation is deterministic and uses this timestamp precedence:
+  - `refreshed_at` (if present)
+  - else `dispatched_at`
+  - else `occurred_at`
+  - else `timestamp`
+  - with a 30-minute stale threshold for `dispatch_accepted_no_run` blockers
+- quick triage:
+  - use `target.blocking_post_dispatch_state` and blocker run fields to confirm whether the prior attempt is still active.
+  - use `target.blocking_stale_reference_field`, `target.blocking_stale_reference_at`, `target.blocking_stale_age_seconds`, and `target.blocking_stale_threshold_seconds` to validate stale classification.
+  - if blocker state is `dispatch_accepted_no_run`, run **Refresh Deploy Status** and retry after status transitions to terminal/stale.
 
 Deploy evidence contract interpretation:
 - `deploy_evidence_contract_status=confirmed_live_evidence` means explicit deploy evidence set `resolved_live_url`.

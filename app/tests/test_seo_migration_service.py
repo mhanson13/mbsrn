@@ -4032,7 +4032,8 @@ def test_duplicate_publish_rejection_still_allows_deploy(db_session) -> None:
     assert len(publisher.deploy_calls) == 1
 
 
-def test_deploy_duplicate_non_dry_run_is_rejected(db_session) -> None:
+def test_deploy_duplicate_non_dry_run_is_rejected(db_session, caplog) -> None:
+    caplog.set_level("WARNING", logger="app.services.seo_migration")
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
         db_session,
@@ -4071,7 +4072,524 @@ def test_deploy_duplicate_non_dry_run_is_rejected(db_session) -> None:
         dry_run=False,
         principal_id="principal-1",
     )
-    with pytest.raises(SEOMigrationValidationError, match="already recorded"):
+    with pytest.raises(SEOMigrationValidationError, match="already in progress"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+    assert len(publisher.deploy_calls) == 1
+    duplicate_failure_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_control_plane_action"
+        and record.__dict__["json_fields"].get("action") == "deploy"
+        and record.__dict__["json_fields"].get("failure_category") == "duplicate_request"
+    ]
+    assert duplicate_failure_payloads
+    duplicate_target = duplicate_failure_payloads[-1].get("target") or {}
+    assert "blocking_post_dispatch_state" in duplicate_target
+    assert "blocking_deploy_trace_id" in duplicate_target
+    assert "blocking_stale_reference_field" in duplicate_target
+    assert "blocking_stale_threshold_seconds" in duplicate_target
+
+
+@pytest.mark.parametrize(
+    "active_run_status",
+    ("queued", "waiting", "requested", "pending", "in_progress", "running"),
+)
+def test_deploy_duplicate_blocks_for_active_workflow_run_status(db_session, active_run_status: str) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=445566,
+        deploy_workflow_run_status=active_run_status,
+        deploy_workflow_run_conclusion=None,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    with pytest.raises(SEOMigrationValidationError, match="already in progress"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+    assert len(publisher.deploy_calls) == 1
+
+
+def test_deploy_retry_allowed_after_terminal_failed_run(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=445566,
+        deploy_workflow_run_status="completed",
+        deploy_workflow_run_conclusion="failure",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert len(publisher.deploy_calls) == 2
+
+
+def test_deploy_retry_allowed_after_terminal_cancelled_run(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=998801,
+        deploy_workflow_run_status="completed",
+        deploy_workflow_run_conclusion="cancelled",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert len(publisher.deploy_calls) == 2
+
+
+def test_deploy_retry_allowed_after_completed_run_without_conclusion(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=112233,
+        deploy_workflow_run_status="completed",
+        deploy_workflow_run_conclusion=None,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert len(publisher.deploy_calls) == 2
+
+
+def test_deploy_retry_allowed_when_no_run_record_is_stale(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    history = workspace.deploy_history_json or []
+    assert history
+    stale_item = next(
+        (
+            dict(item)
+            for item in reversed(history)
+            if str(item.get("action") or "").strip().lower() == "deploy"
+            and str(item.get("status") or "").strip().lower() == "deploy_requested"
+        ),
+        None,
+    )
+    assert stale_item is not None
+    stale_item["dispatched_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["occurred_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["timestamp"] = "2000-01-01T00:00:00+00:00"
+    workspace.deploy_history_json = [stale_item]
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    latest_deploy_entry = next(
+        (
+            item
+            for item in reversed(workspace.deploy_history_json or [])
+            if str(item.get("action") or "").strip().lower() == "deploy"
+            and str(item.get("status") or "").strip().lower() == "deploy_requested"
+        ),
+        None,
+    )
+    assert latest_deploy_entry is not None
+    assert latest_deploy_entry.get("timestamp") == "2000-01-01T00:00:00+00:00"
+    assert latest_deploy_entry.get("dispatched_at") == "2000-01-01T00:00:00+00:00"
+
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert len(publisher.deploy_calls) == 2
+
+
+def test_deploy_duplicate_no_run_uses_most_recent_activity_timestamp(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    history = workspace.deploy_history_json or []
+    assert history
+    latest_deploy_index = next(
+        (
+            index
+            for index in range(len(history) - 1, -1, -1)
+            if str(history[index].get("action") or "").strip().lower() == "deploy"
+            and str(history[index].get("status") or "").strip().lower() == "deploy_requested"
+        ),
+        None,
+    )
+    assert latest_deploy_index is not None
+    latest_deploy_item = dict(history[latest_deploy_index])
+    latest_deploy_item["dispatched_at"] = "2000-01-01T00:00:00+00:00"
+    latest_deploy_item["occurred_at"] = "2000-01-01T00:00:00+00:00"
+    latest_deploy_item["timestamp"] = utc_now().isoformat()
+    history[latest_deploy_index] = latest_deploy_item
+    workspace.deploy_history_json = history
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    with pytest.raises(SEOMigrationValidationError, match="already in progress"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+    assert len(publisher.deploy_calls) == 1
+
+
+def test_deploy_duplicate_gate_respects_target_tuple(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_config = dict(workspace.deploy_config_json or {})
+    deploy_config["ref"] = "release"
+    workspace.deploy_config_json = deploy_config
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert len(publisher.deploy_calls) == 2
+
+
+def test_deploy_duplicate_gate_matches_active_record_via_configured_workflow_id(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    history = workspace.deploy_history_json or []
+    assert history
+    latest_deploy_index = next(
+        (
+            index
+            for index in range(len(history) - 1, -1, -1)
+            if str(history[index].get("action") or "").strip().lower() == "deploy"
+            and str(history[index].get("status") or "").strip().lower() == "deploy_requested"
+        ),
+        None,
+    )
+    assert latest_deploy_index is not None
+    mutated_item = dict(history[latest_deploy_index])
+    mutated_item["workflow_id"] = "stale-workflow-id.yml"
+    mutated_item["workflow_identifier_used"] = ".github/workflows/stale-workflow-id.yml"
+    history[latest_deploy_index] = mutated_item
+    workspace.deploy_history_json = history
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    with pytest.raises(SEOMigrationValidationError, match="already in progress"):
         service.deploy_artifact_version(
             business_id=business_id,
             site_id=site_id,

@@ -884,7 +884,10 @@ Deploy behavior:
   - `managed_network_policy_expected` / `managed_network_policy_present`
   - `managed_namespace_policies_aligned`
 - deployment history captured with status/result metadata
-- duplicate non-dry-run deploy requests for the same artifact+target+inputs are rejected with operator-readable validation errors
+- duplicate non-dry-run deploy requests are blocked only when the same artifact+target+inputs already has an active in-flight deploy attempt
+  - active blockers include non-terminal states such as `dispatch_accepted_no_run`, `workflow_run_pending`, and `workflow_run_in_progress`
+  - terminal/stale historical records (`workflow_run_failed`, `workflow_run_succeeded_without_live_url`, `workflow_run_succeeded_with_live_url`, cancelled/completed non-active, or stale no-run records) do not block a new deploy retry
+  - stale no-run detection uses deterministic activity precedence: `refreshed_at` -> `dispatched_at` -> `occurred_at` -> `timestamp` with a 30-minute threshold
 - retry after a failed deploy is supported and recorded as a new history event
 - deploy dry-run records history but does not overwrite prior successful deploy request markers
 - platform-managed deploy workflow now performs a real GKE apply/rollout path for managed site workloads:
@@ -989,7 +992,8 @@ Migration publish/deploy paths normalize failures into stable categories:
   - Operator action: approve artifact first; deploy only after successful publish.
 - `duplicate_request`
   - Duplicate publish/deploy request for same artifact + equivalent target context.
-  - Operator action: verify prior request outcome before resubmitting.
+  - Deploy duplicate blocking now applies to active in-flight attempts only, not all historical records.
+  - Operator action: if blocked, refresh deploy status and retry after the prior attempt reaches a terminal/stale state.
 - `artifact_invalid`
   - Selected artifact files were not publishable under bounded static-file rules.
   - Operator action: regenerate/re-approve a valid artifact version.
@@ -1250,6 +1254,7 @@ Deploy failures:
 - verify deploy target enabled/workflow/ref values
 - inspect deploy history inputs and workflow execution status
 - if duplicate deploy is reported, verify whether the prior deploy request already covers the same artifact+target+inputs
+  - duplicate blocking means an active in-flight attempt exists; completed/failed/cancelled/stale historical attempts should not block retry
 - if readiness is blocked, use deploy blocker class + message to identify the owning actor:
   - `published_artifact_missing` -> Operator must publish first
   - `deploy_configuration_missing` / `deploy_configuration_invalid` -> Operator/Admin must fix target config

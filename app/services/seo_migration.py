@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import logging
 import re
@@ -67,6 +68,7 @@ _MAX_FILE_BYTES = 120_000
 _MAX_TOTAL_BYTES = 350_000
 _MAX_CONTENT_FOR_STORAGE = 120_000
 _MAX_HISTORY_ITEMS = 80
+_DUPLICATE_DEPLOY_ACCEPTED_NO_RUN_STALE_SECONDS = 30 * 60
 _ALLOWED_FILE_EXTENSIONS = (
     ".html",
     ".css",
@@ -1787,15 +1789,52 @@ class SEOMigrationService:
             override_measurement_id=None,
             phase="deploy",
         )
-        if not dry_run and _is_duplicate_deploy_attempt(
-            history=workspace.deploy_history_json,
-            artifact_version_id=artifact.id,
-            target={
-                **deploy_target,
-                "inputs": deploy_inputs,
-            },
-        ):
-            failure_message = "A deploy request for this artifact and target is already recorded."
+        duplicate_active_record = None
+        if not dry_run:
+            duplicate_active_record = _find_active_duplicate_deploy_attempt(
+                history=workspace.deploy_history_json,
+                artifact_version_id=artifact.id,
+                target={
+                    **deploy_target,
+                    "inputs": deploy_inputs,
+                },
+            )
+        if duplicate_active_record is not None:
+            duplicate_post_dispatch_state = _normalize_string(
+                duplicate_active_record.get("post_dispatch_state"), max_length=80
+            ) or _derive_post_dispatch_state(
+                dispatch_attempted=duplicate_active_record.get("dispatch_attempted"),
+                dispatch_result_stage=duplicate_active_record.get("dispatch_result_stage"),
+                workflow_run_id=duplicate_active_record.get("workflow_run_id"),
+                workflow_run_status=duplicate_active_record.get("workflow_run_status"),
+                workflow_run_conclusion=duplicate_active_record.get("workflow_run_conclusion"),
+                resolved_live_url=duplicate_active_record.get("resolved_live_url"),
+            )
+            duplicate_dispatch_result_stage = _normalize_deploy_failure_stage(
+                duplicate_active_record.get("dispatch_result_stage")
+            )
+            duplicate_workflow_run_status = _normalize_string(
+                duplicate_active_record.get("workflow_run_status"),
+                max_length=40,
+            )
+            duplicate_workflow_run_conclusion = _normalize_string(
+                duplicate_active_record.get("workflow_run_conclusion"),
+                max_length=40,
+            )
+            duplicate_workflow_run_id = _coerce_int(duplicate_active_record.get("workflow_run_id"))
+            duplicate_deploy_trace_id = _normalize_string(
+                duplicate_active_record.get("deploy_trace_id"),
+                max_length=80,
+            )
+            duplicate_stale_observability = _build_deploy_history_stale_observability(
+                item=duplicate_active_record,
+                now=utc_now(),
+                stale_after_seconds=_DUPLICATE_DEPLOY_ACCEPTED_NO_RUN_STALE_SECONDS,
+            )
+            failure_message = _build_active_duplicate_deploy_message(
+                post_dispatch_state=duplicate_post_dispatch_state,
+                dispatch_result_stage=duplicate_dispatch_result_stage,
+            )
             self._log_control_plane_action(
                 action="deploy",
                 status="failed",
@@ -1812,6 +1851,25 @@ class SEOMigrationService:
                     "resolved_workflow_source": workflow_resolution.get("source"),
                     "workflow_identifier": workflow_identifier,
                     "deploy_trace_id": deploy_trace_id,
+                    "blocking_post_dispatch_state": duplicate_post_dispatch_state,
+                    "blocking_dispatch_result_stage": duplicate_dispatch_result_stage,
+                    "blocking_workflow_run_id": duplicate_workflow_run_id,
+                    "blocking_workflow_run_status": duplicate_workflow_run_status,
+                    "blocking_workflow_run_conclusion": duplicate_workflow_run_conclusion,
+                    "blocking_deploy_trace_id": duplicate_deploy_trace_id,
+                    "blocking_timestamp": _normalize_string(
+                        duplicate_active_record.get("timestamp"),
+                        max_length=64,
+                    ),
+                    "blocking_dispatched_at": _normalize_string(
+                        duplicate_active_record.get("dispatched_at"),
+                        max_length=64,
+                    ),
+                    "blocking_refreshed_at": _normalize_string(
+                        duplicate_active_record.get("refreshed_at"),
+                        max_length=64,
+                    ),
+                    **duplicate_stale_observability,
                 },
                 failure_category="duplicate_request",
                 failure_reason=failure_message,
@@ -2242,6 +2300,7 @@ class SEOMigrationService:
                     "repo_owner": deploy_target["repo_owner"],
                     "repo_name": deploy_target["repo_name"],
                     "workflow_id": workflow_identifier_used or deploy_target["workflow_id"],
+                    "configured_workflow_id": deploy_target["workflow_id"],
                     "workflow_path": workflow_file_path or workflow_resolution.get("workflow_path"),
                     "workflow_file_path": workflow_file_path or workflow_resolution.get("workflow_path"),
                     "workflow_identifier": workflow_identifier,
@@ -2856,6 +2915,7 @@ class SEOMigrationService:
             "repo_owner": deploy_result.repo_owner,
             "repo_name": deploy_result.repo_name,
             "workflow_id": workflow_identifier_used or deploy_result.workflow_id,
+            "configured_workflow_id": deploy_target["workflow_id"],
             "workflow_identifier": workflow_identifier,
             "workflow_identifier_requested": workflow_identifier_requested,
             "workflow_identifier_used": workflow_identifier_used,
@@ -10448,6 +10508,15 @@ def _canonical_dispatch_workflow_identifier(value: object) -> str | None:
     return _normalize_string(value, max_length=200)
 
 
+def _collect_canonical_workflow_identifiers(values: list[object]) -> set[str]:
+    normalized: set[str] = set()
+    for candidate in values:
+        canonical = _canonical_dispatch_workflow_identifier(candidate)
+        if canonical:
+            normalized.add(canonical)
+    return normalized
+
+
 def _normalize_history_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
@@ -10531,21 +10600,25 @@ def _is_duplicate_publish_attempt(
     return False
 
 
-def _is_duplicate_deploy_attempt(
+def _find_active_duplicate_deploy_attempt(
     *,
     history: object,
     artifact_version_id: str,
     target: dict[str, object],
-) -> bool:
+) -> dict[str, object] | None:
     normalized = _normalize_history_list(history)
     expected_inputs = _normalize_history_inputs(target.get("inputs"))
-    target_workflow_identifier = _canonical_dispatch_workflow_identifier(
-        target.get("actual_dispatch_identifier_sent")
-        or target.get("workflow_identifier_used")
-        or target.get("workflow_path")
-        or target.get("workflow_file_path")
-        or target.get("workflow_id")
+    target_workflow_identifiers = _collect_canonical_workflow_identifiers(
+        [
+            target.get("workflow_identifier_requested"),
+            target.get("workflow_id"),
+            target.get("workflow_path"),
+            target.get("workflow_file_path"),
+            target.get("workflow_identifier_used"),
+            target.get("actual_dispatch_identifier_sent"),
+        ]
     )
+    now = utc_now()
     for item in reversed(normalized):
         if str(item.get("action") or "").strip().lower() != "deploy":
             continue
@@ -10560,21 +10633,183 @@ def _is_duplicate_deploy_attempt(
             continue
         if str(item.get("repo_name") or "").strip() != str(target.get("repo_name") or "").strip():
             continue
-        item_workflow_identifier = _canonical_dispatch_workflow_identifier(
-            item.get("actual_dispatch_identifier_sent")
-            or item.get("workflow_identifier_used")
-            or item.get("workflow_id")
+        item_workflow_identifiers = _collect_canonical_workflow_identifiers(
+            [
+                item.get("configured_workflow_id"),
+                item.get("workflow_identifier_requested"),
+                item.get("workflow_id"),
+                item.get("workflow_identifier_used"),
+                item.get("actual_dispatch_identifier_sent"),
+                item.get("workflow_path"),
+                item.get("workflow_file_path"),
+            ]
         )
-        if not item_workflow_identifier or not target_workflow_identifier:
+        if not item_workflow_identifiers or not target_workflow_identifiers:
             continue
-        if item_workflow_identifier != target_workflow_identifier:
+        if item_workflow_identifiers.isdisjoint(target_workflow_identifiers):
             continue
         if str(item.get("ref") or "").strip() != str(target.get("ref") or "").strip():
             continue
         if _normalize_history_inputs(item.get("inputs")) != expected_inputs:
             continue
+        if _is_active_duplicate_deploy_history_entry(item=item, now=now):
+            return item
+    return None
+
+
+def _is_active_duplicate_deploy_history_entry(
+    *,
+    item: dict[str, object],
+    now: datetime,
+) -> bool:
+    post_dispatch_state = _normalize_string(item.get("post_dispatch_state"), max_length=80) or _derive_post_dispatch_state(
+        dispatch_attempted=item.get("dispatch_attempted"),
+        dispatch_result_stage=item.get("dispatch_result_stage"),
+        workflow_run_id=item.get("workflow_run_id"),
+        workflow_run_status=item.get("workflow_run_status"),
+        workflow_run_conclusion=item.get("workflow_run_conclusion"),
+        resolved_live_url=item.get("resolved_live_url"),
+    )
+    dispatch_result_stage = _normalize_deploy_failure_stage(item.get("dispatch_result_stage"))
+
+    terminal_states = {
+        "dispatch_not_attempted",
+        "workflow_run_failed",
+        "workflow_run_completed",
+        "workflow_run_succeeded_without_live_url",
+        "workflow_run_succeeded_with_live_url",
+    }
+    if post_dispatch_state in terminal_states:
+        return False
+    if post_dispatch_state.startswith("dispatch_blocked_"):
+        return False
+
+    if post_dispatch_state == "dispatch_accepted_no_run":
+        if _is_deploy_history_entry_stale(
+            item=item,
+            now=now,
+            stale_after_seconds=_DUPLICATE_DEPLOY_ACCEPTED_NO_RUN_STALE_SECONDS,
+        ):
+            return False
+        return True
+
+    if post_dispatch_state in {"workflow_run_pending", "workflow_run_in_progress"}:
+        return True
+    if post_dispatch_state == "workflow_run_observed":
+        return True
+
+    workflow_run_status = (_normalize_string(item.get("workflow_run_status"), max_length=40) or "").strip().lower()
+    if workflow_run_status in {"queued", "waiting", "requested", "pending", "in_progress", "running"}:
+        return True
+    if workflow_run_status == "completed":
+        return False
+
+    workflow_run_id = _coerce_int(item.get("workflow_run_id"))
+    dispatch_attempted = _coerce_bool(item.get("dispatch_attempted"), default=False)
+    if dispatch_attempted and workflow_run_id is None:
+        if _is_deploy_history_entry_stale(
+            item=item,
+            now=now,
+            stale_after_seconds=_DUPLICATE_DEPLOY_ACCEPTED_NO_RUN_STALE_SECONDS,
+        ):
+            return False
         return True
     return False
+
+
+def _is_deploy_history_entry_stale(
+    *,
+    item: dict[str, object],
+    now: datetime,
+    stale_after_seconds: int,
+) -> bool:
+    _, latest_activity = _resolve_deploy_history_activity_reference(item=item)
+    if latest_activity is None:
+        return False
+    age_seconds = (now - latest_activity).total_seconds()
+    return age_seconds >= float(stale_after_seconds)
+
+
+def _latest_deploy_history_activity_at(*, item: dict[str, object]) -> datetime | None:
+    _, activity_at = _resolve_deploy_history_activity_reference(item=item)
+    return activity_at
+
+
+def _resolve_deploy_history_activity_reference(
+    *,
+    item: dict[str, object],
+) -> tuple[str | None, datetime | None]:
+    candidates: list[tuple[str, datetime]] = []
+    for field_name in ("refreshed_at", "dispatched_at", "occurred_at", "timestamp"):
+        parsed = _parse_iso8601_datetime(item.get(field_name))
+        if parsed is not None:
+            candidates.append((field_name, parsed))
+    if not candidates:
+        return None, None
+    # Use the newest known activity timestamp to keep stale classification deterministic
+    # across refresh/dispatch/history-write paths.
+    return max(candidates, key=lambda candidate: candidate[1])
+
+
+def _build_deploy_history_stale_observability(
+    *,
+    item: dict[str, object],
+    now: datetime,
+    stale_after_seconds: int,
+) -> dict[str, object]:
+    reference_field, reference_at = _resolve_deploy_history_activity_reference(item=item)
+    if reference_at is None:
+        return {
+            "blocking_stale_reference_field": reference_field,
+            "blocking_stale_reference_at": None,
+            "blocking_stale_age_seconds": None,
+            "blocking_stale_threshold_seconds": stale_after_seconds,
+            "blocking_stale_evaluated": False,
+        }
+    age_seconds = max(0, int((now - reference_at).total_seconds()))
+    return {
+        "blocking_stale_reference_field": reference_field,
+        "blocking_stale_reference_at": reference_at.isoformat(),
+        "blocking_stale_age_seconds": age_seconds,
+        "blocking_stale_threshold_seconds": stale_after_seconds,
+        "blocking_stale_evaluated": True,
+    }
+
+
+def _parse_iso8601_datetime(value: object) -> datetime | None:
+    normalized = _normalize_string(value, max_length=64)
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _build_active_duplicate_deploy_message(
+    *,
+    post_dispatch_state: str | None,
+    dispatch_result_stage: str | None,
+) -> str:
+    normalized_state = _normalize_string(post_dispatch_state, max_length=80)
+    if normalized_state == "dispatch_accepted_no_run":
+        return (
+            "A deploy request for this artifact and target is already in progress "
+            "(dispatch accepted; workflow run evidence pending). "
+            "Refresh deploy status and retry after the prior attempt reaches a terminal state."
+        )
+    if normalized_state in {"workflow_run_pending", "workflow_run_in_progress"}:
+        return (
+            "A deploy request for this artifact and target is already in progress. "
+            "Refresh deploy status and retry after the prior attempt reaches a terminal state."
+        )
+    return (
+        "A deploy request for this artifact and target is already active. "
+        "Refresh deploy status and retry after the prior attempt reaches a terminal state."
+    )
 
 
 def _normalize_history_inputs(value: object) -> dict[str, str]:
