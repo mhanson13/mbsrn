@@ -342,6 +342,7 @@ When migration deploy fails after publish, query these structured events:
 - `jsonPayload.event="seo_migration_workflow_candidate_alignment"` (explicit publish-candidate vs readiness-candidate id/path/ref match signal)
 - `jsonPayload.event="seo_migration_target_readiness_check"` (repo/ref/workflow dispatch preflight)
 - `jsonPayload.event="seo_migration_workflow_provisioning"` (publish-time workflow bootstrap/verification)
+- `jsonPayload.event="seo_migration_deploy_secret_propagation"` (publish-time guarded `GCP_DEPLOY_KEY` propagation to approved managed repos)
 - `jsonPayload.event="seo_migration_deploy_dispatch_accepted"`
 - `jsonPayload.event="seo_migration_workflow_run_lookup_attempted"`
 - `jsonPayload.event="seo_migration_workflow_run_result_captured"`
@@ -445,12 +446,32 @@ Key non-secret fields:
     - with `seo_migration_deploy_workflow_readiness_source` (`workflow_id`, `workflow_path`, `requested_ref`)
     - and `seo_migration_target_readiness_check` (`workflow_identifier_requested`, `workflow_identifier_used`, `requested_ref`, `resolved_ref`)
     - and confirm `seo_migration_workflow_candidate_alignment.workflow_candidate_alignment_exact=true`
+- deploy-secret propagation fields:
+  - `attempted`
+  - `status` (`not_attempted`, `created`, `updated`, `skipped_guardrail`, `failed`)
+  - `reason`
+  - `action` (`created` / `updated` when write occurs)
+  - `secret_name` (name only; value is never logged)
+  - guardrail failures (`status=skipped_guardrail`) indicate propagation was intentionally denied for non-approved tuple/owner/config state.
+  - write failures (`status=failed`) mean publish may have succeeded but deploy is likely blocked until secret propagation succeeds.
 
 Managed workflow contract quick check:
 - `workflow_dispatch` trigger present
 - production deploy markers present (`google-github-actions/auth`, `google-github-actions/get-gke-credentials`, `kubectl apply`, `kubectl rollout`)
 - explicit evidence outputs emitted (`resolved_live_url`, `live_url`, `deployed_url`)
 - if missing, deploy remains blocked as `workflow_not_production_ready`
+
+Hybrid deploy-secret propagation quick check:
+- `seo_migration_deploy_secret_propagation.status=created|updated` -> secret propagation succeeded for approved managed repo.
+- `status=skipped_guardrail` -> propagation denied by policy boundary (review owner/tuple/admin enablement).
+- `status=failed` -> propagation attempted but GitHub write failed; inspect `reason` and retry publish/remediation flow.
+
+Approved vs denied propagation verification:
+1. Run publish against an approved managed repo tuple.
+   - Expect `attempted=true` and `status=created|updated`.
+2. Run publish against a denied tuple/owner case.
+   - Expect `attempted=false`, `status=skipped_guardrail`, and a deterministic `reason` (for example `repo_owner_not_approved` or `target_tuple_mismatch`).
+3. If publish succeeds but propagation reports `failed`, treat deploy as not ready until propagation succeeds.
 
 Workflow lookup failure quick triage:
 - when `failure_stage=workflow_lookup`, compare:

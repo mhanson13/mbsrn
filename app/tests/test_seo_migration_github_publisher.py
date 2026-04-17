@@ -258,6 +258,100 @@ def test_derive_site_kubernetes_namespace_rejects_empty_source_values() -> None:
     assert exc_info.value.stage == "workflow_provisioning"
 
 
+def test_upsert_actions_secret_creates_secret_when_missing(monkeypatch) -> None:
+    nacl_public = pytest.importorskip("nacl.public")
+    nacl_encoding = pytest.importorskip("nacl.encoding")
+    secret_key = nacl_public.PrivateKey.generate()
+    public_key_b64 = secret_key.public_key.encode(encoder=nacl_encoding.Base64Encoder()).decode("utf-8")
+
+    calls: list[tuple[str, str]] = []
+    captured_put_payload: dict[str, object] = {}
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body="{}"),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/actions/secrets/GCP_DEPLOY_KEY",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps({"key_id": "key-1", "key": public_key_b64}),
+        ),
+        _FakeHTTPResponse(status=201, body=""),
+    ]
+
+    def _stub(request, timeout=None):
+        del timeout
+        calls.append((request.get_method(), request.full_url))
+        if (
+            request.get_method() == "PUT"
+            and request.full_url.endswith("/actions/secrets/GCP_DEPLOY_KEY")
+            and request.data
+        ):
+            captured_put_payload.update(json.loads(request.data.decode("utf-8")))
+        next_item = queue.pop(0)
+        if isinstance(next_item, Exception):
+            raise next_item
+        return next_item
+
+    monkeypatch.setattr(urllib.request, "urlopen", _stub)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.upsert_actions_secret(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        secret_name="GCP_DEPLOY_KEY",
+        secret_value='{"type":"service_account"}',
+    )
+
+    assert result.action == "created"
+    assert result.secret_name == "GCP_DEPLOY_KEY"
+    assert captured_put_payload.get("key_id") == "key-1"
+    encrypted_value = str(captured_put_payload.get("encrypted_value") or "")
+    assert encrypted_value
+    assert '{"type":"service_account"}' not in encrypted_value
+    assert any(
+        method == "GET" and url.endswith("/actions/secrets/public-key")
+        for method, url in calls
+    )
+
+
+def test_upsert_actions_secret_updates_existing_secret(monkeypatch) -> None:
+    nacl_public = pytest.importorskip("nacl.public")
+    nacl_encoding = pytest.importorskip("nacl.encoding")
+    secret_key = nacl_public.PrivateKey.generate()
+    public_key_b64 = secret_key.public_key.encode(encoder=nacl_encoding.Base64Encoder()).decode("utf-8")
+
+    calls: list[tuple[str, str]] = []
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body="{}"),
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_DEPLOY_KEY", "updated_at": "2026-04-17"})),
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps({"key_id": "key-2", "key": public_key_b64}),
+        ),
+        _FakeHTTPResponse(status=204, body=""),
+    ]
+
+    _install_urlopen_stub(monkeypatch, queue, calls)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.upsert_actions_secret(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        secret_name="GCP_DEPLOY_KEY",
+        secret_value='{"type":"service_account"}',
+    )
+
+    assert result.action == "updated"
+    assert any(
+        method == "GET" and url.endswith("/actions/secrets/GCP_DEPLOY_KEY")
+        for method, url in calls
+    )
+    assert any(
+        method == "PUT" and url.endswith("/actions/secrets/GCP_DEPLOY_KEY")
+        for method, url in calls
+    )
+
+
 def test_dispatch_deploy_classifies_repo_not_found(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(

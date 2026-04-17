@@ -282,6 +282,11 @@ It transforms a business's website and market context into structured insights a
 - Runtime publisher credentials remain environment-managed (`MIGRATION_GITHUB_TOKEN`) and are never exposed through Admin/workspace payloads.
 - Local development uses the same `MIGRATION_GITHUB_TOKEN` env var name (with a local test token value when needed) to avoid test/runtime naming drift.
 - Production deployment injects `MIGRATION_GITHUB_TOKEN` into `mbsrn-api` through existing `mbsrn-api-auth` secret wiring; the token is not stored/editable in application UI.
+- Hybrid deploy-secret bridge model:
+  - MBSRN runtime is the source of truth for `GCP_DEPLOY_KEY`.
+  - publish can propagate `GCP_DEPLOY_KEY` into approved managed target repos so site-repo GitHub Actions deploys can authenticate to GCP.
+  - propagation is guardrailed (approved owner + aligned target tuple + admin/deploy enablement) and auditable (`deploy_secret_propagation_attempted/status/reason`).
+  - secret values are never exposed in payloads/logs; namespace-level isolation still depends on cluster-side RBAC/service-account boundaries.
 - approve/publish/deploy button enablement is driven by authoritative readiness prerequisites after mutation refresh, not local stale assumptions.
 - analytics insertion rules remain workspace-level controls and now persist/reload reliably after save.
 - publish now enforces workflow bootstrap verification on every non-dry-run publish for target/generated repos:

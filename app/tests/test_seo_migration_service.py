@@ -16,6 +16,7 @@ from app.integrations.seo_migration_artifact_provider import (
 )
 from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
+    SEOMigrationGitHubActionsSecretUpsertResult,
     SEOMigrationGitHubDeployResult,
     SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
@@ -192,6 +193,11 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         available_workflow_paths: set[str] | None = None,
         non_dispatchable_workflow_paths: set[str] | None = None,
         non_production_ready_workflow_paths: set[str] | None = None,
+        fail_secret_propagation: bool = False,
+        secret_propagation_error_code: str | None = None,
+        secret_propagation_error_message: str | None = None,
+        secret_propagation_error_stage: str | None = None,
+        existing_deploy_secret: bool = False,
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
@@ -256,12 +262,18 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             if non_production_ready_workflow_paths is not None
             else set()
         )
+        self.fail_secret_propagation = fail_secret_propagation
+        self.secret_propagation_error_code = secret_propagation_error_code
+        self.secret_propagation_error_message = secret_propagation_error_message
+        self.secret_propagation_error_stage = secret_propagation_error_stage
+        self.existing_deploy_secret = existing_deploy_secret
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.lookup_calls: list[tuple[SEOMigrationGitHubDeployTarget, str | None]] = []
+        self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
         self.workflow_provision_calls: list[
             tuple[
                 str,
@@ -302,6 +314,31 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             commit_shas=() if dry_run else ("abc123",),
             committed_paths=tuple(item.path for item in files),
             published_at="2026-04-07T12:00:00+00:00",
+        )
+
+    def upsert_actions_secret(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        secret_name: str,
+        secret_value: str,
+    ) -> SEOMigrationGitHubActionsSecretUpsertResult:
+        self.secret_upsert_calls.append((repo_owner, repo_name, secret_name, secret_value))
+        if self.fail_secret_propagation:
+            raise SEOMigrationGitHubPublisherError(
+                code=self.secret_propagation_error_code or "github_request_failed",
+                safe_message=self.secret_propagation_error_message or "Simulated deploy secret propagation failure.",
+                stage=self.secret_propagation_error_stage or "secret_propagation",
+            )
+        action = "updated" if self.existing_deploy_secret else "created"
+        self.existing_deploy_secret = True
+        return SEOMigrationGitHubActionsSecretUpsertResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            secret_name=secret_name,
+            action=action,
+            updated_at="2026-04-07T12:01:00+00:00",
         )
 
     def dispatch_deploy(
@@ -566,6 +603,7 @@ def _build_service(
     *,
     github_publisher: SEOMigrationGitHubPublisher | None = None,
     env_default_model_name: str | None = None,
+    deploy_secret_gcp_key: str | None = "{\"type\":\"service_account\"}",
 ) -> SEOMigrationService:
     github_publish_config_service = GitHubPublishConfigService(
         session=db_session,
@@ -590,6 +628,7 @@ def _build_service(
         provider_name="mock",
         provider_model_name="mock-seo-migration-v1",
         env_default_model_name=env_default_model_name,
+        deploy_secret_gcp_key=deploy_secret_gcp_key,
     )
 
 
@@ -4096,6 +4135,159 @@ def test_publish_duplicate_request_logs_workflow_remediation_attempted(db_sessio
     duplicate_target = duplicate_failure_logs[-1].get("target") or {}
     assert duplicate_target.get("workflow_remediation_attempted") is True
     assert duplicate_target.get("workflow_remediation_outcome") == "remediation_already_current"
+
+
+def test_publish_propagates_deploy_secret_for_approved_managed_target(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(existing_workflow=True)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        deploy_secret_gcp_key="{\"type\":\"service_account\",\"project_id\":\"acme\"}",
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    publish_result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert len(publisher.secret_upsert_calls) == 1
+    secret_call = publisher.secret_upsert_calls[0]
+    assert secret_call[0] == "acme"
+    assert secret_call[1] == "tnmfire-site"
+    assert secret_call[2] == "GCP_DEPLOY_KEY"
+    assert publish_result.result.get("deploy_secret_propagation_attempted") is True
+    assert publish_result.result.get("deploy_secret_propagation_status") == "created"
+    assert publish_result.result.get("deploy_secret_propagation_reason") is None
+
+
+def test_publish_skips_deploy_secret_propagation_for_unapproved_target_owner(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(existing_workflow=True)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        deploy_secret_gcp_key="{\"type\":\"service_account\",\"project_id\":\"acme\"}",
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "repo_owner": "unapproved-owner",
+            "repo_name": "tnmfire-site",
+            "workflow_id": "deploy-tnmfire-www-prod.yml",
+            "ref": "main",
+        },
+        deploy_config_field_names={"enabled", "repo_owner", "repo_name", "workflow_id", "ref"},
+        principal_id="admin-principal",
+        principal_role=PrincipalRole.ADMIN,
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    publish_result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert not publisher.secret_upsert_calls
+    assert publish_result.result.get("deploy_secret_propagation_attempted") is False
+    assert publish_result.result.get("deploy_secret_propagation_status") == "skipped_guardrail"
+    assert publish_result.result.get("deploy_secret_propagation_reason") == "repo_owner_not_approved"
+
+
+def test_publish_surfaces_deploy_secret_propagation_failure_without_blocking_publish(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        existing_workflow=True,
+        fail_secret_propagation=True,
+        secret_propagation_error_code="token_not_authorized",
+        secret_propagation_error_message="Simulated token authorization failure.",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        deploy_secret_gcp_key="{\"type\":\"service_account\",\"project_id\":\"acme\"}",
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    publish_result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert len(publisher.secret_upsert_calls) == 1
+    assert publish_result.workspace.publish_status == "published"
+    assert publish_result.result.get("deploy_secret_propagation_attempted") is True
+    assert publish_result.result.get("deploy_secret_propagation_status") == "failed"
+    assert publish_result.result.get("deploy_secret_propagation_reason") == "token_not_authorized"
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    assert summary.publish_readiness.get("last_deploy_secret_propagation_status") == "failed"
+    assert summary.publish_readiness.get("last_deploy_secret_propagation_reason") == "token_not_authorized"
 
 
 def test_publish_duplicate_repairs_missing_workflow_without_republishing_artifact(db_session) -> None:

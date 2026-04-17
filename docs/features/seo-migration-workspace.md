@@ -899,6 +899,10 @@ Deploy behavior:
   - `managed_network_policy_expected` / `managed_network_policy_present`
   - `managed_namespace_policies_aligned`
 - deployment history captured with status/result metadata
+- publish/deploy diagnostics include bounded deploy-secret propagation fields:
+  - `deploy_secret_propagation_attempted`
+  - `deploy_secret_propagation_status` (`not_attempted`, `created`, `updated`, `skipped_guardrail`, `failed`)
+  - `deploy_secret_propagation_reason`
 - duplicate non-dry-run deploy requests are blocked only when the same artifact+target+inputs already has an active in-flight deploy attempt
   - active blockers include confirmed non-terminal run states such as `workflow_run_pending`, `workflow_run_in_progress`, and `workflow_run_observed` (run-id backed)
   - run-backed active blockers are freshness-bound (30-minute stale window based on newest activity timestamp: `refreshed_at` -> `dispatched_at` -> `occurred_at` -> `timestamp`)
@@ -920,6 +924,18 @@ Deploy behavior:
   - `KUBERNETES_CLUSTER_LOCATION`
   - `GCP_PROJECT_ID`
   - optional workflow pre-check fails fast with `Missing GCP_DEPLOY_KEY secret` when absent
+- hybrid deploy-secret propagation (bridge model):
+  - MBSRN runtime is the source of truth for `GCP_DEPLOY_KEY`.
+  - publish can propagate `GCP_DEPLOY_KEY` into target repo Actions secrets so managed site-repo workflows can execute deploy.
+  - propagation is guardrailed and allowed only when all conditions pass:
+    - deploy target is enabled for the workspace
+    - admin publish target is configured and enabled
+    - target repo owner matches the approved admin owner boundary
+    - managed deploy tuple aligns to the publish/deploy tuple being provisioned (`owner/repo/ref`)
+  - if guardrails fail, propagation is skipped with explicit status/reason (`skipped_guardrail`).
+  - if propagation write fails, artifact publish history still records publish outcome while exposing deploy-secret propagation failure for follow-up.
+  - secret contents are never returned in API payloads, logs, or UI surfaces.
+  - this is intentionally a bridge model and can later be replaced by centralized deploy execution or OIDC-based federation.
 - explicit deploy evidence contract for live URL confirmation:
   - workflow resolves URL from ingress status (`.status.loadBalancer.ingress[0].hostname|ip`)
   - workflow emits all three output keys on success:
@@ -960,6 +976,7 @@ Safety/ownership rules:
 - operators do not hand-author these controls in normal workflow
 - unknown custom repo files are not blindly overwritten
 - policy values are schema-validated and normalized before rendering
+- namespace isolation controls are platform-managed and should be paired with namespace-scoped RBAC/service-account guardrails in target clusters.
 
 ### Future Hardening (Not Required for Current Contract)
 
@@ -1143,6 +1160,7 @@ Migration control-plane actions emit structured logs (`event=seo_migration_contr
 - deploy workflow source resolution (`event=seo_migration_deploy_workflow_resolution`) when publish-history workflow identity is used
 - deploy target readiness preflight (`event=seo_migration_target_readiness_check`) with repo/ref/workflow/dispatch-ready booleans
 - deploy dispatch failure diagnostics (`event=seo_migration_deploy_dispatch_failed`)
+- deploy secret propagation audit (`event=seo_migration_deploy_secret_propagation`) for guardrailed `GCP_DEPLOY_KEY` create/update/skip/failure outcomes
 
 Draft generation also emits structured logs:
 - service-level lifecycle (`event=seo_migration_draft_generation`) with requested/completed/partial/failed states
@@ -1172,6 +1190,12 @@ Logged fields are safe metadata only:
 - draft-generation fields include `model_requested`, `model_resolved`, `model_used`, request-shape metadata (`endpoint_path`, `execution_mode`, `response_format_mode`, `request_body_mode`), and `failure_source` (`local_preflight` vs `remote_provider`) for request-path traceability
 - provider parse logs include `raw_length`, `parsed_candidate_count`, `salvaged_candidate_count`, and `malformed_output_reason` (when present)
 - runtime publisher diagnostics include `runtime_publisher_reason_code` plus ownership-level booleans (`admin_publish_configured`, `admin_publish_config_enabled`, `operator_repository_configured`)
+- deploy secret propagation diagnostics include:
+  - `secret_name` (name only; value never logged)
+  - `attempted`
+  - `status` (`created`, `updated`, `skipped_guardrail`, `failed`)
+  - `reason`
+  - `action` (`created`/`updated` when applicable)
 
 Not logged:
 - tokens/secrets

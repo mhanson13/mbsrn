@@ -23,6 +23,7 @@ from app.integrations.seo_migration_artifact_provider import (
 )
 from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
+    SEOMigrationGitHubActionsSecretUpsertResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishResult,
@@ -211,6 +212,12 @@ _WORKFLOW_REMEDIATION_OUTCOME_UPGRADED_MANAGED_PLACEHOLDER = "remediation_upgrad
 _WORKFLOW_REMEDIATION_OUTCOME_ALREADY_CURRENT = "remediation_already_current"
 _WORKFLOW_REMEDIATION_OUTCOME_PRESERVED_CUSTOM = "remediation_preserved_custom"
 _WORKFLOW_REMEDIATION_OUTCOME_WRITE_FAILED = "remediation_write_failed"
+_DEPLOY_SECRET_NAME_GCP_DEPLOY_KEY = "GCP_DEPLOY_KEY"
+_DEPLOY_SECRET_PROPAGATION_STATUS_NOT_ATTEMPTED = "not_attempted"
+_DEPLOY_SECRET_PROPAGATION_STATUS_CREATED = "created"
+_DEPLOY_SECRET_PROPAGATION_STATUS_UPDATED = "updated"
+_DEPLOY_SECRET_PROPAGATION_STATUS_SKIPPED_GUARDRAIL = "skipped_guardrail"
+_DEPLOY_SECRET_PROPAGATION_STATUS_FAILED = "failed"
 _DEPLOY_TARGET_REASON_REPO_NOT_FOUND = "repo_not_found"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND = "workflow_not_found"
 _DEPLOY_TARGET_REASON_REF_INVALID = "branch_not_found_or_ref_invalid"
@@ -467,6 +474,7 @@ class SEOMigrationService:
         publish_commit_message_prefix: str = "[MBSRN Migration]",
         deploy_default_workflow_id: str = "deploy-www-prod.yml",
         deploy_default_ref: str = "main",
+        deploy_secret_gcp_key: str | None = None,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
@@ -522,6 +530,7 @@ class SEOMigrationService:
         self.publish_commit_message_prefix = publish_commit_message_prefix.strip() or "[MBSRN Migration]"
         self.deploy_default_workflow_id = deploy_default_workflow_id.strip() or "deploy-www-prod.yml"
         self.deploy_default_ref = deploy_default_ref.strip() or "main"
+        self.deploy_secret_gcp_key = (deploy_secret_gcp_key or "").strip() or None
         self._resolved_migration_draft_timeout_seconds = _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS
         self._resolved_migration_draft_timeout_source = "default"
 
@@ -949,7 +958,11 @@ class SEOMigrationService:
             raise SEOMigrationValidationError(reason_text)
 
         try:
-            effective_publish_config, _, _ = self._build_effective_publish_config(
+            (
+                effective_publish_config,
+                admin_publish_prerequisites,
+                _,
+            ) = self._build_effective_publish_config(
                 workspace_publish_config=workspace.publish_config_json,
                 require_admin=True,
             )
@@ -1020,6 +1033,9 @@ class SEOMigrationService:
         workflow_provisioning_remediation_mode: str | None = None
         workflow_remediation_attempted = False
         workflow_remediation_outcome = _WORKFLOW_REMEDIATION_OUTCOME_NOT_ATTEMPTED
+        deploy_secret_propagation_attempted = False
+        deploy_secret_propagation_status = _DEPLOY_SECRET_PROPAGATION_STATUS_NOT_ATTEMPTED
+        deploy_secret_propagation_reason: str | None = None
         workflow_provisioning_verified = False
         workflow_resolution_for_provision: dict[str, object] | None = None
         expected_publish_url: str | None = None
@@ -1219,6 +1235,23 @@ class SEOMigrationService:
                         principal_id=principal_id,
                         provision_result=deploy_workflow_provision_result,
                     )
+                (
+                    deploy_secret_propagation_attempted,
+                    deploy_secret_propagation_status,
+                    deploy_secret_propagation_reason,
+                ) = self._attempt_deploy_secret_propagation(
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    artifact_version_id=artifact.id,
+                    principal_id=principal_id,
+                    workflow_owner=workflow_owner,
+                    workflow_repo=workflow_repo,
+                    workflow_ref=workflow_ref,
+                    publish_target=target,
+                    deploy_target=deploy_target_for_workflow,
+                    admin_prerequisites=admin_publish_prerequisites,
+                )
             if duplicate_publish_attempt:
                 if deploy_workflow_provision_result is not None and deploy_workflow_provision_result.provisioned:
                     duplicate_publish_repaired = True
@@ -1252,6 +1285,9 @@ class SEOMigrationService:
                             "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
                             "workflow_remediation_attempted": workflow_remediation_attempted,
                             "workflow_remediation_outcome": workflow_remediation_outcome,
+                            "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
+                            "deploy_secret_propagation_status": deploy_secret_propagation_status,
+                            "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
                         },
                         failure_category="duplicate_request",
                         failure_reason=failure_message,
@@ -1423,6 +1459,9 @@ class SEOMigrationService:
                     "expected_publish_url": expected_publish_url,
                     "url_source": expected_publish_url_source,
                     "url_source_detail": expected_publish_url_source_detail,
+                    "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
+                    "deploy_secret_propagation_status": deploy_secret_propagation_status,
+                    "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
                     "failure_reason": _normalize_string(exc.code, max_length=80),
                     "failure_category": failure_category,
                     "error": exc.safe_message,
@@ -1450,6 +1489,9 @@ class SEOMigrationService:
                     "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
                     "workflow_remediation_attempted": workflow_remediation_attempted,
                     "workflow_remediation_outcome": workflow_remediation_outcome,
+                    "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
+                    "deploy_secret_propagation_status": deploy_secret_propagation_status,
+                    "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
                     "kubernetes_namespace": (
                         deploy_workflow_provision_result.kubernetes_namespace
                         if deploy_workflow_provision_result is not None
@@ -1533,6 +1575,9 @@ class SEOMigrationService:
             "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
             "workflow_remediation_attempted": workflow_remediation_attempted,
             "workflow_remediation_outcome": workflow_remediation_outcome,
+            "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
+            "deploy_secret_propagation_status": deploy_secret_propagation_status,
+            "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
             "workflow_provisioning_verified": workflow_provisioning_verified,
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
@@ -1635,6 +1680,9 @@ class SEOMigrationService:
                 "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
                 "workflow_remediation_attempted": workflow_remediation_attempted,
                 "workflow_remediation_outcome": workflow_remediation_outcome,
+                "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
+                "deploy_secret_propagation_status": deploy_secret_propagation_status,
+                "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
                 "workflow_provisioning_verified": workflow_provisioning_verified,
                 "deploy_workflow_mode": deploy_workflow_mode,
                 "target_environment_key": target_environment_key,
@@ -5768,6 +5816,15 @@ class SEOMigrationService:
             "last_workflow_remediation_outcome": publish_diagnostics.get(
                 "last_workflow_remediation_outcome"
             ),
+            "last_deploy_secret_propagation_attempted": publish_diagnostics.get(
+                "last_deploy_secret_propagation_attempted"
+            ),
+            "last_deploy_secret_propagation_status": publish_diagnostics.get(
+                "last_deploy_secret_propagation_status"
+            ),
+            "last_deploy_secret_propagation_reason": publish_diagnostics.get(
+                "last_deploy_secret_propagation_reason"
+            ),
         }
         deploy_readiness = {
             **deploy_readiness,
@@ -5810,6 +5867,15 @@ class SEOMigrationService:
                 ),
                 "last_publish_workflow_remediation_outcome": publish_diagnostics.get(
                     "last_workflow_remediation_outcome"
+                ),
+                "last_publish_deploy_secret_propagation_attempted": publish_diagnostics.get(
+                    "last_deploy_secret_propagation_attempted"
+                ),
+                "last_publish_deploy_secret_propagation_status": publish_diagnostics.get(
+                    "last_deploy_secret_propagation_status"
+                ),
+                "last_publish_deploy_secret_propagation_reason": publish_diagnostics.get(
+                    "last_deploy_secret_propagation_reason"
                 ),
                 "last_deploy_status": deploy_diagnostics.get("last_status"),
                 "last_deploy_failure_category": deploy_diagnostics.get("last_failure_category"),
@@ -8015,6 +8081,186 @@ class SEOMigrationService:
             level=level,
         )
 
+    def _log_deploy_secret_propagation(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace_id: str | None,
+        artifact_version_id: str | None,
+        principal_id: str | None,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        attempted: bool,
+        status: str,
+        reason: str | None = None,
+        action: str | None = None,
+    ) -> None:
+        payload: dict[str, object] = {
+            "event": "seo_migration_deploy_secret_propagation",
+            "timestamp": utc_now().isoformat(),
+            "business_id": business_id,
+            "site_id": site_id,
+            "workspace_id": workspace_id,
+            "artifact_version_id": artifact_version_id,
+            "principal_id": principal_id,
+            "repo_owner": _normalize_string(repo_owner, max_length=120),
+            "repo_name": _normalize_string(repo_name, max_length=120),
+            "ref": _normalize_string(ref, max_length=120),
+            "secret_name": _DEPLOY_SECRET_NAME_GCP_DEPLOY_KEY,
+            "attempted": bool(attempted),
+            "status": _normalize_string(status, max_length=60)
+            or _DEPLOY_SECRET_PROPAGATION_STATUS_NOT_ATTEMPTED,
+        }
+        normalized_reason = _normalize_string(reason, max_length=120)
+        if normalized_reason:
+            payload["reason"] = normalized_reason
+        normalized_action = _normalize_string(action, max_length=40)
+        if normalized_action:
+            payload["action"] = normalized_action
+        level = logging.INFO if payload.get("status") != _DEPLOY_SECRET_PROPAGATION_STATUS_FAILED else logging.WARNING
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message="seo_migration_deploy_secret_propagation",
+            level=level,
+        )
+
+    def _attempt_deploy_secret_propagation(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        workspace_id: str | None,
+        artifact_version_id: str,
+        principal_id: str | None,
+        workflow_owner: str,
+        workflow_repo: str,
+        workflow_ref: str,
+        publish_target: dict[str, object],
+        deploy_target: dict[str, object] | None,
+        admin_prerequisites: dict[str, bool],
+    ) -> tuple[bool, str, str | None]:
+        normalized_owner = _normalize_string(workflow_owner, max_length=120) or ""
+        normalized_repo = _normalize_string(workflow_repo, max_length=120) or ""
+        normalized_ref = _normalize_string(workflow_ref, max_length=120) or ""
+        normalized_publish_owner = _normalize_string(publish_target.get("repo_owner"), max_length=120) or ""
+        normalized_publish_repo = _normalize_string(publish_target.get("repo_name"), max_length=120) or ""
+        normalized_publish_branch = _normalize_string(publish_target.get("branch"), max_length=120) or ""
+
+        guardrail_reason: str | None = None
+        if not bool((deploy_target or {}).get("enabled")):
+            guardrail_reason = "deploy_target_not_enabled"
+        elif not bool(admin_prerequisites.get("admin_publish_configured")):
+            guardrail_reason = "admin_publish_target_not_configured"
+        elif not bool(admin_prerequisites.get("admin_publish_config_enabled")):
+            guardrail_reason = "admin_publish_target_disabled"
+        elif normalized_owner != normalized_publish_owner:
+            guardrail_reason = "repo_owner_not_approved"
+        elif (
+            normalized_owner != normalized_publish_owner
+            or normalized_repo != normalized_publish_repo
+            or normalized_ref != normalized_publish_branch
+        ):
+            guardrail_reason = "target_tuple_mismatch"
+
+        if guardrail_reason is not None:
+            self._log_deploy_secret_propagation(
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace_id,
+                artifact_version_id=artifact_version_id,
+                principal_id=principal_id,
+                repo_owner=normalized_owner,
+                repo_name=normalized_repo,
+                ref=normalized_ref,
+                attempted=False,
+                status=_DEPLOY_SECRET_PROPAGATION_STATUS_SKIPPED_GUARDRAIL,
+                reason=guardrail_reason,
+            )
+            return (
+                False,
+                _DEPLOY_SECRET_PROPAGATION_STATUS_SKIPPED_GUARDRAIL,
+                guardrail_reason,
+            )
+
+        if not self.deploy_secret_gcp_key:
+            reason = _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING
+            self._log_deploy_secret_propagation(
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace_id,
+                artifact_version_id=artifact_version_id,
+                principal_id=principal_id,
+                repo_owner=normalized_owner,
+                repo_name=normalized_repo,
+                ref=normalized_ref,
+                attempted=False,
+                status=_DEPLOY_SECRET_PROPAGATION_STATUS_FAILED,
+                reason=reason,
+            )
+            return (
+                False,
+                _DEPLOY_SECRET_PROPAGATION_STATUS_FAILED,
+                reason,
+            )
+
+        try:
+            propagation_result: SEOMigrationGitHubActionsSecretUpsertResult = (
+                self.github_publisher.upsert_actions_secret(
+                    repo_owner=normalized_owner,
+                    repo_name=normalized_repo,
+                    secret_name=_DEPLOY_SECRET_NAME_GCP_DEPLOY_KEY,
+                    secret_value=self.deploy_secret_gcp_key,
+                )
+            )
+            normalized_action = (
+                _normalize_string(getattr(propagation_result, "action", None), max_length=20) or ""
+            ).lower()
+            status = (
+                _DEPLOY_SECRET_PROPAGATION_STATUS_UPDATED
+                if normalized_action == _DEPLOY_SECRET_PROPAGATION_STATUS_UPDATED
+                else _DEPLOY_SECRET_PROPAGATION_STATUS_CREATED
+            )
+            self._log_deploy_secret_propagation(
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace_id,
+                artifact_version_id=artifact_version_id,
+                principal_id=principal_id,
+                repo_owner=normalized_owner,
+                repo_name=normalized_repo,
+                ref=normalized_ref,
+                attempted=True,
+                status=status,
+                action=normalized_action or status,
+            )
+            return (
+                True,
+                status,
+                None,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            normalized_reason = _normalize_string(exc.code, max_length=120) or "secret_propagation_failed"
+            self._log_deploy_secret_propagation(
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace_id,
+                artifact_version_id=artifact_version_id,
+                principal_id=principal_id,
+                repo_owner=normalized_owner,
+                repo_name=normalized_repo,
+                ref=normalized_ref,
+                attempted=True,
+                status=_DEPLOY_SECRET_PROPAGATION_STATUS_FAILED,
+                reason=normalized_reason,
+            )
+            return (
+                True,
+                _DEPLOY_SECRET_PROPAGATION_STATUS_FAILED,
+                normalized_reason,
+            )
+
     def _log_target_readiness_check(
         self,
         *,
@@ -9106,6 +9352,9 @@ class SEOMigrationService:
         last_failure_remediation_hint: str | None = None
         last_workflow_remediation_attempted: bool | None = None
         last_workflow_remediation_outcome: str | None = None
+        last_deploy_secret_propagation_attempted: bool | None = None
+        last_deploy_secret_propagation_status: str | None = None
+        last_deploy_secret_propagation_reason: str | None = None
         for item in reversed(normalized_history):
             if str(item.get("action") or "").strip().lower() != target_action:
                 continue
@@ -9119,6 +9368,17 @@ class SEOMigrationService:
                 last_workflow_remediation_outcome = _normalize_string(
                     item.get("workflow_remediation_outcome"),
                     max_length=80,
+                )
+                deploy_secret_attempted_value = item.get("deploy_secret_propagation_attempted")
+                if isinstance(deploy_secret_attempted_value, bool):
+                    last_deploy_secret_propagation_attempted = deploy_secret_attempted_value
+                last_deploy_secret_propagation_status = _normalize_string(
+                    item.get("deploy_secret_propagation_status"),
+                    max_length=80,
+                )
+                last_deploy_secret_propagation_reason = _normalize_string(
+                    item.get("deploy_secret_propagation_reason"),
+                    max_length=120,
                 )
             status_lower = str(item.get("status") or "").strip().lower()
             if status_lower == "failed":
@@ -9153,6 +9413,9 @@ class SEOMigrationService:
             "last_failure_remediation_hint": last_failure_remediation_hint,
             "last_workflow_remediation_attempted": last_workflow_remediation_attempted,
             "last_workflow_remediation_outcome": last_workflow_remediation_outcome,
+            "last_deploy_secret_propagation_attempted": last_deploy_secret_propagation_attempted,
+            "last_deploy_secret_propagation_status": last_deploy_secret_propagation_status,
+            "last_deploy_secret_propagation_reason": last_deploy_secret_propagation_reason,
         }
 
     @staticmethod

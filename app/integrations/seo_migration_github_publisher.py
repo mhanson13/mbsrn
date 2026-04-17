@@ -47,6 +47,15 @@ class SEOMigrationGitHubPublishResult:
 
 
 @dataclass(frozen=True)
+class SEOMigrationGitHubActionsSecretUpsertResult:
+    repo_owner: str
+    repo_name: str
+    secret_name: str
+    action: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class SEOMigrationGitHubDeployTarget:
     repo_owner: str
     repo_name: str
@@ -183,6 +192,16 @@ class SEOMigrationGitHubPublisher:
     ) -> SEOMigrationGitHubPublishResult:
         raise NotImplementedError
 
+    def upsert_actions_secret(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        secret_name: str,
+        secret_value: str,
+    ) -> SEOMigrationGitHubActionsSecretUpsertResult:
+        raise NotImplementedError
+
     def dispatch_deploy(
         self,
         *,
@@ -295,6 +314,20 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         dry_run: bool,
     ) -> SEOMigrationGitHubPublishResult:
         del target, files, commit_message, dry_run
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
+    def upsert_actions_secret(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        secret_name: str,
+        secret_value: str,
+    ) -> SEOMigrationGitHubActionsSecretUpsertResult:
+        del repo_owner, repo_name, secret_name, secret_value
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -459,6 +492,135 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             commit_shas=tuple(_dedupe_strings(commit_shas)),
             committed_paths=tuple(committed_paths),
             published_at=published_at,
+        )
+
+    def upsert_actions_secret(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        secret_name: str,
+        secret_value: str,
+    ) -> SEOMigrationGitHubActionsSecretUpsertResult:
+        normalized_secret_name = (_coerce_string(secret_name) or "").upper()
+        if not normalized_secret_name or not re.fullmatch(r"[A-Z0-9_]{1,80}", normalized_secret_name):
+            raise SEOMigrationGitHubPublisherError(
+                code="github_secret_invalid",
+                safe_message="GitHub Actions secret target is invalid.",
+                stage="secret_propagation",
+            )
+        normalized_secret_value = _coerce_string(secret_value)
+        if not normalized_secret_value:
+            raise SEOMigrationGitHubPublisherError(
+                code="runtime_credential_missing",
+                safe_message="Deploy credential is unavailable for repository propagation.",
+                stage="secret_propagation",
+            )
+
+        self._ensure_repo_exists(repo_owner=repo_owner, repo_name=repo_name)
+        secret_path = (
+            f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+            f"/actions/secrets/{urllib.parse.quote(normalized_secret_name, safe='')}"
+        )
+        existing_secret_payload = self._request_json(
+            method="GET",
+            path=secret_path,
+            expected_statuses=(200,),
+            allow_404=True,
+            error_stage="secret_propagation",
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy secret propagation.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy secret propagation.",
+                ),
+                404: (
+                    "repo_not_found",
+                    "GitHub repository target was not found.",
+                ),
+            },
+        )
+        action = "updated" if isinstance(existing_secret_payload, dict) else "created"
+
+        public_key_payload = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                "/actions/secrets/public-key"
+            ),
+            expected_statuses=(200,),
+            error_stage="secret_propagation",
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy secret propagation.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy secret propagation.",
+                ),
+                404: (
+                    "repo_not_found",
+                    "GitHub repository target was not found.",
+                ),
+            },
+        )
+        if not isinstance(public_key_payload, dict):
+            raise SEOMigrationGitHubPublisherError(
+                code="github_secret_public_key_invalid",
+                safe_message="GitHub Actions secret public key response was malformed.",
+                stage="secret_propagation",
+            )
+        key_id = _coerce_string(public_key_payload.get("key_id"))
+        public_key_value = _coerce_string(public_key_payload.get("key"))
+        if not key_id or not public_key_value:
+            raise SEOMigrationGitHubPublisherError(
+                code="github_secret_public_key_invalid",
+                safe_message="GitHub Actions secret public key response was malformed.",
+                stage="secret_propagation",
+            )
+        encrypted_value = _encrypt_actions_secret_value(
+            public_key=public_key_value,
+            secret_value=normalized_secret_value,
+        )
+        self._request_json(
+            method="PUT",
+            path=secret_path,
+            payload={
+                "encrypted_value": encrypted_value,
+                "key_id": key_id,
+            },
+            expected_statuses=(201, 204),
+            expect_object=False,
+            error_stage="secret_propagation",
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy secret propagation.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy secret propagation.",
+                ),
+                404: (
+                    "repo_not_found",
+                    "GitHub repository target was not found.",
+                ),
+                422: (
+                    "github_secret_invalid",
+                    "GitHub Actions secret payload is invalid.",
+                ),
+            },
+        )
+        return SEOMigrationGitHubActionsSecretUpsertResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            secret_name=normalized_secret_name,
+            action=action,
+            updated_at=utc_now().isoformat(),
         )
 
     def dispatch_deploy(
@@ -2080,6 +2242,43 @@ def _join_repo_path(root: str, path: str) -> str:
     if not normalized_path:
         return normalized_root
     return f"{normalized_root}/{normalized_path}"
+
+
+def _encrypt_actions_secret_value(*, public_key: str, secret_value: str) -> str:
+    normalized_public_key = _coerce_string(public_key)
+    normalized_secret_value = _coerce_string(secret_value)
+    if not normalized_public_key or not normalized_secret_value:
+        raise SEOMigrationGitHubPublisherError(
+            code="github_secret_invalid",
+            safe_message="GitHub Actions secret payload is invalid.",
+            stage="secret_propagation",
+        )
+    try:
+        import nacl.encoding
+        import nacl.public
+    except Exception as exc:  # pragma: no cover - dependency/runtime guard
+        raise SEOMigrationGitHubPublisherError(
+            code="runtime_configuration_invalid",
+            safe_message="GitHub Actions secret encryption support is unavailable.",
+            stage="secret_propagation",
+        ) from exc
+    try:
+        key = nacl.public.PublicKey(
+            normalized_public_key.encode("utf-8"),
+            encoder=nacl.encoding.Base64Encoder(),
+        )
+        sealed_box = nacl.public.SealedBox(key)
+        encrypted = sealed_box.encrypt(
+            normalized_secret_value.encode("utf-8"),
+            encoder=nacl.encoding.Base64Encoder(),
+        )
+    except Exception as exc:
+        raise SEOMigrationGitHubPublisherError(
+            code="github_secret_invalid",
+            safe_message="GitHub Actions secret payload is invalid.",
+            stage="secret_propagation",
+        ) from exc
+    return encrypted.decode("utf-8")
 
 
 def _workflow_repo_path(workflow_id: str) -> str:

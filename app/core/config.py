@@ -102,6 +102,7 @@ class Settings:
     seo_competitor_profile_run_retention_days: int
     seo_competitor_profile_rejected_draft_retention_days: int
     migration_github_token: str | None = field(repr=False)
+    gcp_deploy_key: str | None = field(repr=False)
     migration_github_api_base_url: str
     migration_github_timeout_seconds: int
     migration_publish_commit_message_prefix: str
@@ -465,6 +466,7 @@ def get_settings() -> Settings:
             min_value=1,
         ),
         migration_github_token=os.getenv("MIGRATION_GITHUB_TOKEN"),
+        gcp_deploy_key=os.getenv("GCP_DEPLOY_KEY"),
         migration_github_api_base_url=(
             os.getenv("MIGRATION_GITHUB_API_BASE_URL", "https://api.github.com").strip() or "https://api.github.com"
         ),

@@ -27,6 +27,7 @@ from app.integrations.seo_migration_artifact_provider import (
 from app.integrations.seo_migration_github_publisher import (
     GitHubSEOMigrationPublisher,
     MisconfiguredSEOMigrationGitHubPublisher,
+    SEOMigrationGitHubActionsSecretUpsertResult,
     SEOMigrationGitHubDeployResult,
     SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
@@ -110,6 +111,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         self.publish_calls: list[tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], bool]] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
+        self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
         self.workflow_provision_calls: list[
             tuple[
                 str,
@@ -151,6 +153,23 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             commit_shas=() if dry_run else ("abc123",),
             committed_paths=tuple(item.path for item in files),
             published_at="2026-04-07T12:00:00+00:00",
+        )
+
+    def upsert_actions_secret(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        secret_name: str,
+        secret_value: str,
+    ) -> SEOMigrationGitHubActionsSecretUpsertResult:
+        self.secret_upsert_calls.append((repo_owner, repo_name, secret_name, secret_value))
+        return SEOMigrationGitHubActionsSecretUpsertResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            secret_name=secret_name,
+            action="created",
+            updated_at="2026-04-07T12:01:00+00:00",
         )
 
     def dispatch_deploy(
@@ -578,6 +597,9 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert "url_source" in (publish_response.json().get("result") or {})
     assert "workflow_remediation_attempted" in (publish_response.json().get("result") or {})
     assert "workflow_remediation_outcome" in (publish_response.json().get("result") or {})
+    assert "deploy_secret_propagation_attempted" in (publish_response.json().get("result") or {})
+    assert "deploy_secret_propagation_status" in (publish_response.json().get("result") or {})
+    assert "deploy_secret_propagation_reason" in (publish_response.json().get("result") or {})
 
     deploy_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy",
@@ -1260,6 +1282,9 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_failure_message" in payload["publish_readiness"]
     assert "last_workflow_remediation_attempted" in payload["publish_readiness"]
     assert "last_workflow_remediation_outcome" in payload["publish_readiness"]
+    assert "last_deploy_secret_propagation_attempted" in payload["publish_readiness"]
+    assert "last_deploy_secret_propagation_status" in payload["publish_readiness"]
+    assert "last_deploy_secret_propagation_reason" in payload["publish_readiness"]
     assert isinstance(payload["deploy_readiness"].get("ready"), bool)
     assert isinstance(payload["deploy_readiness"].get("reasons"), list)
     assert isinstance(payload["deploy_readiness"].get("blocker_codes"), list)
@@ -1305,6 +1330,9 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert isinstance(migration_diagnostics, dict)
     assert "last_publish_workflow_remediation_attempted" in migration_diagnostics
     assert "last_publish_workflow_remediation_outcome" in migration_diagnostics
+    assert "last_publish_deploy_secret_propagation_attempted" in migration_diagnostics
+    assert "last_publish_deploy_secret_propagation_status" in migration_diagnostics
+    assert "last_publish_deploy_secret_propagation_reason" in migration_diagnostics
     draft_readiness = payload.get("context_summary", {}).get("draft_generation_readiness")
     assert isinstance(draft_readiness, dict)
     assert draft_readiness.get("status") in {"ready", "ready_with_warnings", "not_ready"}
