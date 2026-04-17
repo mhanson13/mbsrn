@@ -460,6 +460,71 @@ describe("site migration workflow route", () => {
     expect(screen.queryByTestId("migration-deploy-diagnostics-fallback-note")).not.toBeInTheDocument();
   });
 
+  it("surfaces workflow remediation outcome and post-conformance guidance in diagnostics", async () => {
+    const user = userEvent.setup();
+    const publishHistoryWithRemediation = {
+      timestamp: "2026-03-21T00:42:00Z",
+      status: "failed",
+      artifact_version_id: "migration-artifact-1",
+      workflow_remediation_attempted: true,
+      workflow_remediation_outcome: "remediation_upgraded_managed_placeholder",
+    };
+    const deployHistoryWithPostConformance = {
+      timestamp: "2026-03-21T00:43:00Z",
+      status: "failed",
+      artifact_version_id: "migration-artifact-1",
+      post_conformance_stage: "workflow_dispatch_succeeded_waiting_for_run",
+      post_conformance_reason_text: "Workflow dispatch succeeded but run evidence is still pending.",
+      post_conformance_remediation_message:
+        "Dispatch succeeded but run evidence is not visible yet. Refresh deploy status.",
+    };
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        migration_diagnostics: {
+          last_publish_workflow_remediation_attempted: false,
+          last_publish_workflow_remediation_outcome: "remediation_already_current",
+          last_deploy_post_conformance_stage: "workflow_dispatch_failed",
+          last_deploy_post_conformance_reason_text: "Workflow dispatch was rejected by API.",
+          last_deploy_post_conformance_remediation_message:
+            "GitHub rejected workflow dispatch. Verify repo/workflow/ref access and retry.",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({
+      items: [publishHistoryWithRemediation],
+      total: 1,
+    });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({
+      items: [deployHistoryWithPostConformance],
+      total: 1,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const publishDiagnostics = screen.getByTestId("migration-publish-diagnostics");
+    expect(publishDiagnostics).toHaveTextContent("Workflow remediation attempted: Yes");
+    expect(publishDiagnostics).toHaveTextContent(
+      "Workflow remediation outcome: remediation upgraded managed placeholder",
+    );
+    expect(publishDiagnostics).toHaveTextContent(
+      "Next step guidance: Managed workflow was upgraded during publish. Retry deploy.",
+    );
+
+    const deployDiagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(deployDiagnostics).toHaveTextContent(
+      "Post-conformance stage: workflow dispatch succeeded waiting for run",
+    );
+    expect(deployDiagnostics).toHaveTextContent(
+      "Post-conformance detail: Workflow dispatch succeeded but run evidence is still pending.",
+    );
+    expect(deployDiagnostics).toHaveTextContent(
+      "Next step guidance: Dispatch succeeded but run evidence is not visible yet. Refresh deploy status.",
+    );
+  });
+
   it("updates selected draft diagnostics context when artifact selection changes", async () => {
     const user = userEvent.setup();
     const artifactOne = buildMigrationArtifactVersion({ id: "artifact-v1", version: 1 });

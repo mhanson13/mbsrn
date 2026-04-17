@@ -701,11 +701,17 @@ Managed workflow deploy evidence notes:
 - If rollout succeeds but ingress status has no concrete endpoint, workflow fails and no explicit live URL evidence is emitted.
 
 Managed real-deploy prerequisites (GitHub Actions secrets):
-- `OIDC_WORKLOAD_IDENTITY_PROVIDER`
-- `DEPLOY_SERVICE_ACCOUNT`
+- `GCP_DEPLOY_KEY` (full JSON service account key with Kubernetes Engine Admin-equivalent scoped access to the target cluster/project)
 - `KUBERNETES_CLUSTER_NAME`
 - `KUBERNETES_CLUSTER_LOCATION`
 - `GCP_PROJECT_ID`
+
+Required credential note:
+- `google-github-actions/auth@v2` uses:
+  - `credentials_json: ${{ secrets.GCP_DEPLOY_KEY }}`
+  - `create_credentials_file: true`
+  - `export_environment_variables: true`
+- workflow includes a fast-fail pre-check step that exits with `Missing GCP_DEPLOY_KEY secret` if absent.
 
 Post-dispatch workflow run failure diagnostics:
 - `workflow_run_failure_reason_code`
@@ -714,7 +720,7 @@ Post-dispatch workflow run failure diagnostics:
 - `workflow_run_failure_hint`
 
 Common stage-aware interpretations:
-- `gcp_auth_failed` / `gcp_auth`: Workload Identity auth step failed.
+- `gcp_auth_failed` / `gcp_auth`: GCP auth step failed (missing/invalid `GCP_DEPLOY_KEY` or key permissions issue).
 - `gke_credentials_failed` / `cluster_credentials`: `get-gke-credentials` step failed.
 - `kubectl_apply_failed` / `manifest_apply`: managed manifest apply failed.
 - `rollout_verification_failed` / `rollout_verify`: deployment rollout timed out/failed.

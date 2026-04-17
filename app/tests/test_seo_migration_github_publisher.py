@@ -1281,8 +1281,13 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Verify rollout" in workflow_yaml
     assert "Verify service and ingress" in workflow_yaml
     assert "project_id: ${{ secrets.GCP_PROJECT_ID }}" in workflow_yaml
-    assert "workload_identity_provider: ${{ secrets.OIDC_WORKLOAD_IDENTITY_PROVIDER }}" in workflow_yaml
-    assert "service_account: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}" in workflow_yaml
+    assert "Validate GCP credentials" in workflow_yaml
+    assert "Missing GCP_DEPLOY_KEY secret" in workflow_yaml
+    assert "credentials_json: ${{ secrets.GCP_DEPLOY_KEY }}" in workflow_yaml
+    assert "create_credentials_file: true" in workflow_yaml
+    assert "export_environment_variables: true" in workflow_yaml
+    assert "workload_identity_provider:" not in workflow_yaml
+    assert "service_account:" not in workflow_yaml
     assert "cluster_name: ${{ secrets.KUBERNETES_CLUSTER_NAME }}" in workflow_yaml
     assert "location: ${{ secrets.KUBERNETES_CLUSTER_LOCATION }}" in workflow_yaml
     assert "outputs:" in workflow_yaml

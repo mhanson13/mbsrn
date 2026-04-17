@@ -576,6 +576,8 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert publish_response.json()["artifact"]["publish_status"] == "published"
     assert "expected_publish_url" in (publish_response.json().get("result") or {})
     assert "url_source" in (publish_response.json().get("result") or {})
+    assert "workflow_remediation_attempted" in (publish_response.json().get("result") or {})
+    assert "workflow_remediation_outcome" in (publish_response.json().get("result") or {})
 
     deploy_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy",
@@ -1221,6 +1223,11 @@ def test_publish_duplicate_repairs_missing_workflow_when_artifact_already_exists
     assert result_payload.get("deploy_workflow_provisioned") is True
     assert result_payload.get("workflow_provisioning_remediation_mode") == "duplicate_publish_repair"
     assert result_payload.get("workflow_provisioning_status") == "created"
+    assert result_payload.get("workflow_remediation_attempted") is True
+    assert result_payload.get("workflow_remediation_outcome") in {
+        "remediation_already_current",
+        "remediation_upgraded_managed_placeholder",
+    }
     assert len(publisher.publish_calls) == 1
     assert len(publisher.workflow_provision_calls) == 2
 
@@ -1251,6 +1258,8 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_status" in payload["publish_readiness"]
     assert "last_failure_category" in payload["publish_readiness"]
     assert "last_failure_message" in payload["publish_readiness"]
+    assert "last_workflow_remediation_attempted" in payload["publish_readiness"]
+    assert "last_workflow_remediation_outcome" in payload["publish_readiness"]
     assert isinstance(payload["deploy_readiness"].get("ready"), bool)
     assert isinstance(payload["deploy_readiness"].get("reasons"), list)
     assert isinstance(payload["deploy_readiness"].get("blocker_codes"), list)
@@ -1294,6 +1303,8 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_workflow_exists" in payload["deploy_readiness"]
     migration_diagnostics = payload.get("context_summary", {}).get("migration_diagnostics")
     assert isinstance(migration_diagnostics, dict)
+    assert "last_publish_workflow_remediation_attempted" in migration_diagnostics
+    assert "last_publish_workflow_remediation_outcome" in migration_diagnostics
     draft_readiness = payload.get("context_summary", {}).get("draft_generation_readiness")
     assert isinstance(draft_readiness, dict)
     assert draft_readiness.get("status") in {"ready", "ready_with_warnings", "not_ready"}

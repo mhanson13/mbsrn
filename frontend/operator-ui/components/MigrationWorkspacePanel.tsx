@@ -522,6 +522,40 @@ function formatDispatchStageLabel(value: string | null): string {
   return normalized.replace(/_/g, " ");
 }
 
+function formatWorkflowRemediationOutcomeLabel(value: string | null): string {
+  if (!value) {
+    return "Not available";
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return "Not available";
+  }
+  return normalized.replace(/_/g, " ");
+}
+
+function toWorkflowRemediationOutcomeGuidance(value: string | null): string | null {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "remediation_upgraded_managed_placeholder") {
+    return "Managed workflow was upgraded during publish. Retry deploy.";
+  }
+  if (normalized === "remediation_already_current") {
+    return "Managed workflow was already current.";
+  }
+  if (normalized === "remediation_preserved_custom") {
+    return "Custom workflow was preserved. Manual workflow correction may be required.";
+  }
+  if (normalized === "remediation_write_failed") {
+    return "Workflow remediation could not be written. Review integration/log details.";
+  }
+  if (normalized === "remediation_not_attempted") {
+    return "Workflow remediation was not attempted on the last publish action.";
+  }
+  return null;
+}
+
 function parseStringNumberMap(value: unknown): Record<string, number> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -1885,12 +1919,34 @@ export function MigrationWorkspacePanel({
     asStringOrNull(migrationDiagnostics.last_publish_failure_stage) ||
     asStringOrNull(publishReadiness.last_failure_stage);
   const publishDiagnosticsFailureStage = publishFailureStageFromSelected || publishFailureStageFromSummary;
+  const publishWorkflowRemediationAttemptedFromSelected = asBooleanOrNull(
+    selectedPublishHistoryRecord.workflow_remediation_attempted,
+  );
+  const publishWorkflowRemediationAttemptedFromSummary =
+    asBooleanOrNull(migrationDiagnostics.last_publish_workflow_remediation_attempted) ??
+    asBooleanOrNull(publishReadiness.last_workflow_remediation_attempted);
+  const publishWorkflowRemediationAttempted =
+    publishWorkflowRemediationAttemptedFromSelected ?? publishWorkflowRemediationAttemptedFromSummary;
+  const publishWorkflowRemediationOutcomeFromSelected = asStringOrNull(
+    selectedPublishHistoryRecord.workflow_remediation_outcome,
+  );
+  const publishWorkflowRemediationOutcomeFromSummary =
+    asStringOrNull(migrationDiagnostics.last_publish_workflow_remediation_outcome) ||
+    asStringOrNull(publishReadiness.last_workflow_remediation_outcome);
+  const publishWorkflowRemediationOutcome =
+    publishWorkflowRemediationOutcomeFromSelected || publishWorkflowRemediationOutcomeFromSummary;
+  const publishWorkflowRemediationGuidance = toWorkflowRemediationOutcomeGuidance(
+    publishWorkflowRemediationOutcome,
+  );
   const publishDiagnosticsUsingSummaryFallback =
     hasSelectedPublishAttempt &&
     ((!publishFailureCategoryFromSelected && !!publishFailureCategoryFromSummary) ||
       (!publishFailureMessageFromSelected && !!publishFailureMessageFromSummary) ||
       (!publishFailureReasonCodeFromSelected && !!publishFailureReasonCodeFromSummary) ||
-      (!publishFailureStageFromSelected && !!publishFailureStageFromSummary));
+      (!publishFailureStageFromSelected && !!publishFailureStageFromSummary) ||
+      (publishWorkflowRemediationAttemptedFromSelected === null &&
+        publishWorkflowRemediationAttemptedFromSummary !== null) ||
+      (!publishWorkflowRemediationOutcomeFromSelected && !!publishWorkflowRemediationOutcomeFromSummary));
 
   const deployTraceId =
     asStringOrNull(selectedDeployHistoryRecord.deploy_trace_id) ||
@@ -2104,6 +2160,25 @@ export function MigrationWorkspacePanel({
   const postDispatchState =
     asStringOrNull(selectedDeployHistoryRecord.post_dispatch_state) ||
     asStringOrNull(deployReadiness.last_post_dispatch_state);
+  const postConformanceStageFromSelected = asStringOrNull(selectedDeployHistoryRecord.post_conformance_stage);
+  const postConformanceStageFromSummary =
+    asStringOrNull(deployReadiness.last_post_conformance_stage) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_post_conformance_stage);
+  const postConformanceStage = postConformanceStageFromSelected || postConformanceStageFromSummary;
+  const postConformanceReasonTextFromSelected = asStringOrNull(
+    selectedDeployHistoryRecord.post_conformance_reason_text,
+  );
+  const postConformanceReasonTextFromSummary =
+    asStringOrNull(deployReadiness.last_post_conformance_reason_text) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_post_conformance_reason_text);
+  const postConformanceReasonText = postConformanceReasonTextFromSelected || postConformanceReasonTextFromSummary;
+  const postConformanceGuidanceFromSelected = asStringOrNull(
+    selectedDeployHistoryRecord.post_conformance_remediation_message,
+  );
+  const postConformanceGuidanceFromSummary =
+    asStringOrNull(deployReadiness.last_post_conformance_remediation_message) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_post_conformance_remediation_message);
+  const postConformanceGuidance = postConformanceGuidanceFromSelected || postConformanceGuidanceFromSummary;
   const expectedWorkflowOutputs = (() => {
     const historyKeys = asStringList(selectedDeployHistoryRecord.expected_workflow_outputs);
     if (historyKeys.length > 0) {
@@ -2200,7 +2275,10 @@ export function MigrationWorkspacePanel({
       (!deployRunFailureReasonCodeFromSelected && !!deployRunFailureReasonCodeFromSummary) ||
       (!deployRunFailureStageFromSelected && !!deployRunFailureStageFromSummary) ||
       (!deployRunFailureStepFromSelected && !!deployRunFailureStepFromSummary) ||
-      (!deployRunFailureHintFromSelected && !!deployRunFailureHintFromSummary));
+      (!deployRunFailureHintFromSelected && !!deployRunFailureHintFromSummary) ||
+      (!postConformanceStageFromSelected && !!postConformanceStageFromSummary) ||
+      (!postConformanceReasonTextFromSelected && !!postConformanceReasonTextFromSummary) ||
+      (!postConformanceGuidanceFromSelected && !!postConformanceGuidanceFromSummary));
   const draftReadiness = parseDraftReadiness(contextSummary);
   const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
   const draftGenerationState = parseDraftGenerationState({
@@ -4239,6 +4317,15 @@ export function MigrationWorkspacePanel({
                     Publish failure reason: {formatReasonCodeLabel(publishDiagnosticsFailureReasonCode)}
                   </span>
                 ) : null}
+                <span className="hint">
+                  Workflow remediation attempted: {formatBooleanStateLabel(publishWorkflowRemediationAttempted)}
+                </span>
+                <span className="hint">
+                  Workflow remediation outcome: {formatWorkflowRemediationOutcomeLabel(publishWorkflowRemediationOutcome)}
+                </span>
+                {publishWorkflowRemediationGuidance ? (
+                  <span className="hint warning">Next step guidance: {publishWorkflowRemediationGuidance}</span>
+                ) : null}
               </div>
 
               <div className="panel panel-compact stack-tight" data-testid="migration-deploy-diagnostics">
@@ -4298,6 +4385,15 @@ export function MigrationWorkspacePanel({
                 <span className="hint">Workflow run status: {workflowRunStatus || "Not available"}</span>
                 <span className="hint">Workflow run conclusion: {workflowRunConclusion || "Not available"}</span>
                 <span className="hint">Post-dispatch state: {postDispatchState || "Not available"}</span>
+                <span className="hint">
+                  Post-conformance stage: {formatReasonCodeLabel(postConformanceStage)}
+                </span>
+                <span className="hint">
+                  Post-conformance detail: {postConformanceReasonText || "Not available"}
+                </span>
+                {postConformanceGuidance ? (
+                  <span className="hint warning">Next step guidance: {postConformanceGuidance}</span>
+                ) : null}
                 <span className="hint">
                   Workflow run failure reason:{" "}
                   {deployRunFailureReasonCode ? formatReasonCodeLabel(deployRunFailureReasonCode) : "Not available"}

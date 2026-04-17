@@ -908,18 +908,18 @@ Deploy behavior:
 - retry after a failed deploy is supported and recorded as a new history event
 - deploy dry-run records history but does not overwrite prior successful deploy request markers
 - platform-managed deploy workflow now performs a real GKE apply/rollout path for managed site workloads:
-  - authenticate to GCP via Workload Identity (`google-github-actions/auth`)
+  - authenticate to GCP using repository secret JSON credentials (`google-github-actions/auth` with `credentials_json`)
   - fetch GKE credentials (`google-github-actions/get-gke-credentials`)
   - apply namespace first (`kubectl apply -f k8s/namespace.yaml`)
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
   - verify service/ingress presence
 - required GitHub Actions secret/variable contract for real deploy execution:
-  - `OIDC_WORKLOAD_IDENTITY_PROVIDER`
-  - `DEPLOY_SERVICE_ACCOUNT`
+  - `GCP_DEPLOY_KEY` (full JSON service account key with Kubernetes Engine Admin-equivalent scoped access to target cluster/project)
   - `KUBERNETES_CLUSTER_NAME`
   - `KUBERNETES_CLUSTER_LOCATION`
   - `GCP_PROJECT_ID`
+  - optional workflow pre-check fails fast with `Missing GCP_DEPLOY_KEY secret` when absent
 - explicit deploy evidence contract for live URL confirmation:
   - workflow resolves URL from ingress status (`.status.loadBalancer.ingress[0].hostname|ip`)
   - workflow emits all three output keys on success:
@@ -1239,8 +1239,21 @@ In **Advanced Diagnostics -> Deploy Diagnostics**, operator-safe failure evidenc
 - workflow resolution source
 - dispatch service reason code
 - remediation hint (`deploy_failure_remediation_hint`) derived deterministically from failure reason/stage evidence when a known mapping applies
+- post-conformance stage (`post_conformance_stage`) and reason text (`post_conformance_reason_text`)
+- concise post-conformance next-step guidance (`post_conformance_remediation_message`) to distinguish refresh/retry/log-inspection actions
 
 Use this block to diagnose workflow-lookup failures without relying only on coarse `target invalid` category labels.
+
+In **Advanced Diagnostics -> Publish Diagnostics**, workflow remediation visibility is now explicit:
+- `workflow_remediation_attempted` (`Yes` / `No`)
+- `workflow_remediation_outcome` (attempt result classification)
+- concise next-step guidance based on remediation outcome
+
+Use publish remediation outcome before retrying blindly:
+- `remediation_upgraded_managed_placeholder`: retry deploy/readiness
+- `remediation_already_current`: move to next blocker domain
+- `remediation_preserved_custom`: manual custom workflow correction required
+- `remediation_write_failed`: inspect integration/provisioning failure details first
 
 Deploy history and latest failure summary preserve the same deploy truth model:
 - latest failure summary (`deploy_readiness.last_failure_*`) carries reason/stage plus requested vs resolved workflow evidence when available

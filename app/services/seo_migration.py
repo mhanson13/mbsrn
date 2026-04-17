@@ -5762,6 +5762,12 @@ class SEOMigrationService:
             "last_failure_reason": publish_diagnostics.get("last_failure_reason"),
             "last_failure_stage": publish_diagnostics.get("last_failure_stage"),
             "last_failure_message": publish_diagnostics.get("last_failure_message"),
+            "last_workflow_remediation_attempted": publish_diagnostics.get(
+                "last_workflow_remediation_attempted"
+            ),
+            "last_workflow_remediation_outcome": publish_diagnostics.get(
+                "last_workflow_remediation_outcome"
+            ),
         }
         deploy_readiness = {
             **deploy_readiness,
@@ -5799,6 +5805,12 @@ class SEOMigrationService:
                 "last_publish_failure_reason": publish_diagnostics.get("last_failure_reason"),
                 "last_publish_failure_stage": publish_diagnostics.get("last_failure_stage"),
                 "last_publish_failure_message": publish_diagnostics.get("last_failure_message"),
+                "last_publish_workflow_remediation_attempted": publish_diagnostics.get(
+                    "last_workflow_remediation_attempted"
+                ),
+                "last_publish_workflow_remediation_outcome": publish_diagnostics.get(
+                    "last_workflow_remediation_outcome"
+                ),
                 "last_deploy_status": deploy_diagnostics.get("last_status"),
                 "last_deploy_failure_category": deploy_diagnostics.get("last_failure_category"),
                 "last_deploy_failure_reason": deploy_diagnostics.get("last_failure_reason"),
@@ -9092,6 +9104,8 @@ class SEOMigrationService:
         last_failure_reason: str | None = None
         last_failure_stage: str | None = None
         last_failure_remediation_hint: str | None = None
+        last_workflow_remediation_attempted: bool | None = None
+        last_workflow_remediation_outcome: str | None = None
         for item in reversed(normalized_history):
             if str(item.get("action") or "").strip().lower() != target_action:
                 continue
@@ -9099,6 +9113,13 @@ class SEOMigrationService:
                 status_value = _normalize_string(item.get("status"), max_length=40)
                 if status_value:
                     last_status = status_value
+                remediation_attempted_value = item.get("workflow_remediation_attempted")
+                if isinstance(remediation_attempted_value, bool):
+                    last_workflow_remediation_attempted = remediation_attempted_value
+                last_workflow_remediation_outcome = _normalize_string(
+                    item.get("workflow_remediation_outcome"),
+                    max_length=80,
+                )
             status_lower = str(item.get("status") or "").strip().lower()
             if status_lower == "failed":
                 category_value = _normalize_string(item.get("failure_category"), max_length=40)
@@ -9130,6 +9151,8 @@ class SEOMigrationService:
             "last_failure_reason": last_failure_reason,
             "last_failure_stage": last_failure_stage,
             "last_failure_remediation_hint": last_failure_remediation_hint,
+            "last_workflow_remediation_attempted": last_workflow_remediation_attempted,
+            "last_workflow_remediation_outcome": last_workflow_remediation_outcome,
         }
 
     @staticmethod
