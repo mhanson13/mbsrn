@@ -68,6 +68,7 @@ _MAX_FILE_BYTES = 120_000
 _MAX_TOTAL_BYTES = 350_000
 _MAX_CONTENT_FOR_STORAGE = 120_000
 _MAX_HISTORY_ITEMS = 80
+_DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS = 30 * 60
 _DUPLICATE_DEPLOY_UNVERIFIED_DISPATCH_STALE_SECONDS = 2 * 60
 _ALLOWED_FILE_EXTENSIONS = (
     ".html",
@@ -1791,10 +1792,12 @@ class SEOMigrationService:
         )
         duplicate_active_record = None
         stale_unverified_dispatch_record = None
+        stale_active_dispatch_record = None
         if not dry_run:
             (
                 duplicate_active_record,
                 stale_unverified_dispatch_record,
+                stale_active_dispatch_record,
             ) = _find_active_duplicate_deploy_attempt(
                 history=workspace.deploy_history_json,
                 artifact_version_id=artifact.id,
@@ -1832,21 +1835,13 @@ class SEOMigrationService:
                 duplicate_active_record.get("deploy_trace_id"),
                 max_length=80,
             )
-            if _is_unverified_dispatch_history_entry(item=duplicate_active_record):
-                stale_threshold_seconds = _DUPLICATE_DEPLOY_UNVERIFIED_DISPATCH_STALE_SECONDS
-                duplicate_stale_observability = _build_deploy_history_stale_observability(
-                    item=duplicate_active_record,
-                    now=utc_now(),
-                    stale_after_seconds=stale_threshold_seconds,
-                )
-            else:
-                duplicate_stale_observability = {
-                    "blocking_stale_reference_field": None,
-                    "blocking_stale_reference_at": None,
-                    "blocking_stale_age_seconds": None,
-                    "blocking_stale_threshold_seconds": None,
-                    "blocking_stale_evaluated": False,
-                }
+            stale_threshold_seconds = _derive_duplicate_blocker_stale_threshold_seconds(item=duplicate_active_record)
+            duplicate_stale_observability = _build_deploy_history_stale_observability(
+                item=duplicate_active_record,
+                now=utc_now(),
+                stale_after_seconds=stale_threshold_seconds,
+            )
+            duplicate_stale_observability["blocking_treated_as_stale"] = False
             failure_message = _build_active_duplicate_deploy_message(
                 post_dispatch_state=duplicate_post_dispatch_state,
                 dispatch_result_stage=duplicate_dispatch_result_stage,
@@ -1893,9 +1888,55 @@ class SEOMigrationService:
                 correlation_id=deploy_trace_id,
             )
             raise SEOMigrationValidationError(failure_message)
+        if stale_active_dispatch_record is not None:
+            stale_reference_field, stale_reference_at = _resolve_deploy_history_activity_reference(
+                item=stale_active_dispatch_record
+            )
+            stale_active_observability = _build_deploy_history_stale_observability(
+                item=stale_active_dispatch_record,
+                now=utc_now(),
+                stale_after_seconds=_DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS,
+            )
+            self._emit_structured_service_log(
+                payload={
+                    "event": "downgrade_to_stale_active_deploy_blocker",
+                    "business_id": business_id,
+                    "site_id": site_id,
+                    "workspace_id": workspace.id,
+                    "artifact_version_id": artifact.id,
+                    "artifact_version": artifact.version,
+                    "deploy_trace_id": deploy_trace_id,
+                    "blocking_deploy_trace_id": _normalize_string(
+                        stale_active_dispatch_record.get("deploy_trace_id"),
+                        max_length=80,
+                    ),
+                    "repo_owner": deploy_target["repo_owner"],
+                    "repo_name": deploy_target["repo_name"],
+                    "workflow_id": deploy_target["workflow_id"],
+                    "ref": deploy_target["ref"],
+                    "blocking_post_dispatch_state": _normalize_string(
+                        stale_active_dispatch_record.get("post_dispatch_state"),
+                        max_length=80,
+                    ),
+                    "stale_reference_field": stale_reference_field,
+                    "stale_reference_at": stale_reference_at.isoformat() if stale_reference_at is not None else None,
+                    "stale_threshold_seconds": _DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS,
+                    "stale_age_seconds": stale_active_observability.get("blocking_stale_age_seconds"),
+                    "stale_evaluated": stale_active_observability.get("blocking_stale_evaluated"),
+                    "stale_is_stale": stale_active_observability.get("blocking_stale_is_stale"),
+                    "blocking_treated_as_stale": True,
+                },
+                fallback_message="downgrade_to_stale_active_deploy_blocker",
+                level=logging.INFO,
+            )
         if stale_unverified_dispatch_record is not None:
             stale_reference_field, stale_reference_at = _resolve_deploy_history_activity_reference(
                 item=stale_unverified_dispatch_record
+            )
+            stale_unverified_observability = _build_deploy_history_stale_observability(
+                item=stale_unverified_dispatch_record,
+                now=utc_now(),
+                stale_after_seconds=_DUPLICATE_DEPLOY_UNVERIFIED_DISPATCH_STALE_SECONDS,
             )
             self._emit_structured_service_log(
                 payload={
@@ -1917,6 +1958,10 @@ class SEOMigrationService:
                     "stale_reference_field": stale_reference_field,
                     "stale_reference_at": stale_reference_at.isoformat() if stale_reference_at is not None else None,
                     "stale_threshold_seconds": _DUPLICATE_DEPLOY_UNVERIFIED_DISPATCH_STALE_SECONDS,
+                    "stale_age_seconds": stale_unverified_observability.get("blocking_stale_age_seconds"),
+                    "stale_evaluated": stale_unverified_observability.get("blocking_stale_evaluated"),
+                    "stale_is_stale": stale_unverified_observability.get("blocking_stale_is_stale"),
+                    "blocking_treated_as_stale": True,
                 },
                 fallback_message="downgrade_to_stale_unverified_dispatch",
                 level=logging.INFO,
@@ -10888,7 +10933,7 @@ def _find_active_duplicate_deploy_attempt(
     history: object,
     artifact_version_id: str,
     target: dict[str, object],
-) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+) -> tuple[dict[str, object] | None, dict[str, object] | None, dict[str, object] | None]:
     normalized = _normalize_history_list(history)
     expected_inputs = _normalize_history_inputs(target.get("inputs"))
     target_workflow_identifiers = _collect_canonical_workflow_identifiers(
@@ -10903,6 +10948,7 @@ def _find_active_duplicate_deploy_attempt(
     )
     now = utc_now()
     stale_unverified_record: dict[str, object] | None = None
+    stale_active_record: dict[str, object] | None = None
     for item in reversed(normalized):
         if str(item.get("action") or "").strip().lower() != "deploy":
             continue
@@ -10937,7 +10983,7 @@ def _find_active_duplicate_deploy_attempt(
         if _normalize_history_inputs(item.get("inputs")) != expected_inputs:
             continue
         if _is_active_duplicate_deploy_history_entry(item=item, now=now):
-            return item, stale_unverified_record
+            return item, stale_unverified_record, stale_active_record
         if (
             stale_unverified_record is None
             and _is_unverified_dispatch_history_entry(item=item)
@@ -10948,7 +10994,17 @@ def _find_active_duplicate_deploy_attempt(
             )
         ):
             stale_unverified_record = item
-    return None, stale_unverified_record
+        if (
+            stale_active_record is None
+            and _is_confirmed_active_run_history_entry(item=item)
+            and _is_deploy_history_entry_stale(
+                item=item,
+                now=now,
+                stale_after_seconds=_DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS,
+            )
+        ):
+            stale_active_record = item
+    return None, stale_unverified_record, stale_active_record
 
 
 def _is_active_duplicate_deploy_history_entry(
@@ -10991,19 +11047,31 @@ def _is_active_duplicate_deploy_history_entry(
 
     workflow_run_status = (_normalize_string(item.get("workflow_run_status"), max_length=40) or "").strip().lower()
     if workflow_run_id is not None and workflow_run_status in {"queued", "waiting", "requested", "pending", "in_progress", "running"}:
-        return True
+        return _is_deploy_history_entry_fresh(
+            item=item,
+            now=now,
+            stale_after_seconds=_DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS,
+        )
     if workflow_run_id is not None and post_dispatch_state in {
         "workflow_run_pending",
         "workflow_run_in_progress",
         "workflow_run_observed",
     }:
-        return True
+        return _is_deploy_history_entry_fresh(
+            item=item,
+            now=now,
+            stale_after_seconds=_DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS,
+        )
     if workflow_run_status == "completed":
         return False
 
     if workflow_run_id is not None:
-        # A run id is confirmed but status is not terminal/known yet; keep as a strong blocker.
-        return True
+        # A run id with unknown/non-terminal status still requires active freshness evidence.
+        return _is_deploy_history_entry_fresh(
+            item=item,
+            now=now,
+            stale_after_seconds=_DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS,
+        )
 
     if _is_unverified_dispatch_history_entry(item=item):
         reference_field, reference_at = _resolve_deploy_history_activity_reference(item=item)
@@ -11059,6 +11127,64 @@ def _is_unverified_dispatch_history_entry(*, item: dict[str, object]) -> bool:
     }
 
 
+def _is_confirmed_active_run_history_entry(*, item: dict[str, object]) -> bool:
+    workflow_run_id = _coerce_int(item.get("workflow_run_id"))
+    if workflow_run_id is None:
+        return False
+    dispatch_attempted = _coerce_bool(item.get("dispatch_attempted"), default=False)
+    workflow_run_lookup_attempted = (
+        bool(item.get("workflow_run_lookup_attempted"))
+        if isinstance(item.get("workflow_run_lookup_attempted"), bool)
+        else None
+    )
+    workflow_run_found = (
+        bool(item.get("workflow_run_found")) if isinstance(item.get("workflow_run_found"), bool) else None
+    )
+    post_dispatch_state = _normalize_string(item.get("post_dispatch_state"), max_length=80) or _derive_post_dispatch_state(
+        dispatch_attempted=dispatch_attempted,
+        dispatch_result_stage=item.get("dispatch_result_stage"),
+        workflow_run_id=workflow_run_id,
+        workflow_run_status=item.get("workflow_run_status"),
+        workflow_run_conclusion=item.get("workflow_run_conclusion"),
+        resolved_live_url=item.get("resolved_live_url"),
+        workflow_run_lookup_attempted=workflow_run_lookup_attempted,
+        workflow_run_found=workflow_run_found,
+    )
+    if post_dispatch_state.startswith("dispatch_blocked_"):
+        return False
+    if post_dispatch_state in {
+        "dispatch_not_attempted",
+        "workflow_run_failed",
+        "workflow_run_completed",
+        "workflow_run_succeeded_without_live_url",
+        "workflow_run_succeeded_with_live_url",
+    }:
+        return False
+    workflow_run_status = (_normalize_string(item.get("workflow_run_status"), max_length=40) or "").strip().lower()
+    if workflow_run_status == "completed":
+        return False
+    return True
+
+
+def _derive_duplicate_blocker_stale_threshold_seconds(*, item: dict[str, object]) -> int:
+    if _is_unverified_dispatch_history_entry(item=item):
+        return _DUPLICATE_DEPLOY_UNVERIFIED_DISPATCH_STALE_SECONDS
+    return _DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS
+
+
+def _is_deploy_history_entry_fresh(
+    *,
+    item: dict[str, object],
+    now: datetime,
+    stale_after_seconds: int,
+) -> bool:
+    _, latest_activity = _resolve_deploy_history_activity_reference(item=item)
+    if latest_activity is None:
+        return False
+    age_seconds = (now - latest_activity).total_seconds()
+    return age_seconds < float(stale_after_seconds)
+
+
 def _is_deploy_history_entry_stale(
     *,
     item: dict[str, object],
@@ -11107,6 +11233,7 @@ def _build_deploy_history_stale_observability(
             "blocking_stale_age_seconds": None,
             "blocking_stale_threshold_seconds": stale_after_seconds,
             "blocking_stale_evaluated": False,
+            "blocking_stale_is_stale": None,
         }
     age_seconds = max(0, int((now - reference_at).total_seconds()))
     return {
@@ -11115,6 +11242,7 @@ def _build_deploy_history_stale_observability(
         "blocking_stale_age_seconds": age_seconds,
         "blocking_stale_threshold_seconds": stale_after_seconds,
         "blocking_stale_evaluated": True,
+        "blocking_stale_is_stale": age_seconds >= int(stale_after_seconds),
     }
 
 

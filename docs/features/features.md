@@ -303,6 +303,11 @@ It transforms a business's website and market context into structured insights a
 - platform-managed GKE deploy workflow now executes real namespace-scoped apply/rollout and emits explicit URL evidence outputs (`resolved_live_url`, `live_url`, `deployed_url`) from ingress status before deployment is treated as live-confirmed.
 - deploy diagnostics now include post-dispatch workflow-run failure fields (`workflow_run_failure_reason_code`, `workflow_run_failure_stage`, `workflow_run_failure_step`, `workflow_run_failure_hint`) so auth, cluster-credentials, manifest-apply, rollout, ingress-verification, and ingress-evidence timeout failures are operationally distinct.
 - production verification guidance now explicitly checks target-repo Pages source (`GitHub Actions`), workflow evidence outputs, and confirmed `resolved_live_url` loadability before declaring deploy success.
+- short production shakeout guidance is now standardized across feature/runbook docs:
+  - publish success + managed workflow/manifests + namespace alignment
+  - required deploy secrets/vars verification
+  - duplicate-blocker interpretation (run-backed blockers vs unverified-dispatch 2-minute TTL)
+  - explicit `resolved_live_url` confirmation criteria
 - deploy dispatch classification now preserves preflight context so post-preflight dispatch failures are treated as workflow dispatchability problems when appropriate, instead of being mislabeled as branch/ref missing.
 - workspace now surfaces effective migration destinations with explicit URL states (expected published URL vs resolved live URL), deterministic URL source labeling, and clear draft/expected/live distinction for pre-execution trust.
 - deploy now performs a best-effort post-dispatch workflow-run result capture; when explicit workflow completion metadata includes a live URL signal, it is stored as `resolved_live_url` with `url_source=workflow_output`.

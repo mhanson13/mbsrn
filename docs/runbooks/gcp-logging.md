@@ -477,15 +477,19 @@ Duplicate deploy blocking interpretation:
   - else `dispatched_at`
   - else `occurred_at`
   - else `timestamp`
+  - run-backed active blockers (`workflow_run_pending`, `workflow_run_in_progress`, `workflow_run_observed`, and active run statuses) use a 30-minute stale window
   - with a 2-minute stale threshold for unverified dispatch blockers (`dispatch_accepted_no_run` / `dispatch_unverified_no_run`)
 - quick triage:
   - use `target.blocking_post_dispatch_state` and blocker run fields to confirm whether the prior attempt is still active.
-  - use `target.blocking_stale_reference_field`, `target.blocking_stale_reference_at`, `target.blocking_stale_age_seconds`, and `target.blocking_stale_threshold_seconds` to validate stale classification.
+  - use `target.blocking_stale_reference_field`, `target.blocking_stale_reference_at`, `target.blocking_stale_age_seconds`, `target.blocking_stale_threshold_seconds`, `target.blocking_stale_evaluated`, `target.blocking_stale_is_stale`, and `target.blocking_treated_as_stale` to validate stale classification.
   - if blocker state is `dispatch_accepted_no_run` or `dispatch_unverified_no_run`, run **Refresh Deploy Status** and retry after status transitions to terminal/stale.
+  - if blocker state is run-backed (`workflow_run_pending` / `workflow_run_in_progress` / `workflow_run_observed`) and stale fields show old activity with no recent refresh evidence, retry is expected to become available.
   - observe unverified-dispatch reconciliation events:
     - `dispatch_attempted_without_run`
     - `no_run_observed_after_refresh`
     - `downgrade_to_stale_unverified_dispatch`
+  - observe stale active-blocker reconciliation event:
+    - `downgrade_to_stale_active_deploy_blocker`
 
 Deploy evidence contract interpretation:
 - `deploy_evidence_contract_status=confirmed_live_evidence` means explicit deploy evidence set `resolved_live_url`.
@@ -540,6 +544,47 @@ Use this sequence for one bounded production deploy validation:
    - `resolved_live_url` is only confirmed when explicit evidence is present with `url_source=workflow_output` or `url_source=deploy_result`
 9. If deploy still fails, route by `failure_stage` + `failure_reason_code` without guessing at hidden causes.
 10. When `resolved_live_url` is present with explicit evidence source, open it and confirm the deployed site loads successfully.
+
+### Production Shakeout Checklist (Short)
+Use this bounded checklist for first production exercises:
+1. Publish succeeded for the selected approved artifact.
+2. Managed workflow is present and platform-managed.
+3. Managed manifests are present and namespace-aligned.
+4. Required deploy secrets/variables are configured in the target repository.
+5. Deploy started and a workflow run was created.
+6. Stage classification is clear:
+   - `gcp_auth`
+   - `cluster_credentials`
+   - `manifest_apply`
+   - `rollout_verify`
+   - `ingress_verify`
+   - `ingress_evidence`
+7. Duplicate blocker interpretation:
+   - run-backed active blocker: keep blocked
+   - unverified dispatch blocker (`dispatch_accepted_no_run` / `dispatch_unverified_no_run`): short 2-minute TTL
+   - stale/terminal attempts: retry allowed
+8. `resolved_live_url` is only confirmed when explicit evidence exists (`url_source=workflow_output` or `url_source=deploy_result`).
+
+### First Production Deploy Quick Path
+Before deploy:
+1. Verify approved + published artifact selection.
+2. Verify destination tuple (`repo`, `ref`, `workflow`, `namespace`).
+3. Verify target repo deploy prerequisites/secrets are configured.
+
+After deploy click:
+1. Capture `deploy_trace_id`.
+2. Confirm dispatch attempted and workflow run id appears.
+3. Use refresh to reconcile post-dispatch state to run evidence.
+
+If no run appears:
+1. Refresh deploy status.
+2. Treat no-run states as unverified dispatch uncertainty.
+3. Retry only after stale transition (2-minute TTL) or terminal prior state.
+
+If ingress evidence does not appear:
+1. Inspect `workflow_run_failure_stage` / `workflow_run_failure_reason_code`.
+2. Prioritize ingress readiness troubleshooting for `ingress_verify` / `ingress_evidence`.
+3. Do not treat `expected_publish_url` as deploy confirmation.
 
 ### TnM Fire Outcome Decision Tree
 

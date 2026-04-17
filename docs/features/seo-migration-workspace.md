@@ -886,6 +886,7 @@ Deploy behavior:
 - deployment history captured with status/result metadata
 - duplicate non-dry-run deploy requests are blocked only when the same artifact+target+inputs already has an active in-flight deploy attempt
   - active blockers include confirmed non-terminal run states such as `workflow_run_pending`, `workflow_run_in_progress`, and `workflow_run_observed` (run-id backed)
+  - run-backed active blockers are freshness-bound (30-minute stale window based on newest activity timestamp: `refreshed_at` -> `dispatched_at` -> `occurred_at` -> `timestamp`)
   - unverified dispatch states without run evidence (`dispatch_accepted_no_run` / `dispatch_unverified_no_run`) are weak blockers with a short 2-minute stale window
   - terminal/stale historical records (`workflow_run_failed`, `workflow_run_succeeded_without_live_url`, `workflow_run_succeeded_with_live_url`, cancelled/completed non-active, or stale no-run records) do not block a new deploy retry
   - stale no-run detection uses deterministic activity precedence: `refreshed_at` -> `dispatched_at` -> `occurred_at` -> `timestamp` with a 2-minute threshold for unverified dispatch records
@@ -1238,6 +1239,47 @@ Use this checklist for a bounded real-world migration exercise:
 14. Confirm `resolved_live_url` is shown only when explicit deploy evidence exists and that URL loads successfully in-browser.
 15. Confirm DNS/A-record cutover remains manual and outside the app.
 16. Confirm rollback path: select prior stable artifact, re-approve, then explicitly re-publish and re-deploy.
+
+## Production Shakeout Checklist (Bounded)
+Use this short checklist for the first production shakeout cycle:
+1. Publish completed successfully for the selected approved artifact.
+2. Managed workflow file is present and marked as platform-managed.
+3. Managed manifests are present and namespace-aligned for the derived site namespace.
+4. Required GitHub repository secrets/variables for deploy are configured.
+5. Deploy request starts and records a GitHub workflow run id.
+6. Deploy stage classification is interpretable from diagnostics:
+   - `gcp_auth`
+   - `cluster_credentials`
+   - `manifest_apply`
+   - `rollout_verify`
+   - `ingress_verify`
+   - `ingress_evidence`
+7. Duplicate blocker interpretation is correct:
+   - run-backed active blocker = block
+   - unverified dispatch blocker = short 2-minute TTL
+   - stale/terminal records = retry allowed
+8. `resolved_live_url` is confirmed only when explicit deploy evidence is present (`workflow_output` or `deploy_result`).
+
+## First Production Deploy (Operator Path)
+Before clicking deploy:
+1. Confirm the selected artifact is approved and published.
+2. Confirm destination summary values (repo, ref, workflow, namespace) match intent.
+3. Confirm required deploy secrets/variables are set for the target repository.
+
+After clicking deploy:
+1. Capture `deploy_trace_id`.
+2. Confirm dispatch attempted and workflow run creation (`workflow_run_id`).
+3. Confirm stage progression and run conclusion from diagnostics/refresh.
+
+If no run appears:
+1. Use **Refresh Deploy Status**.
+2. Treat `dispatch_accepted_no_run` / `dispatch_unverified_no_run` as short-lived uncertainty.
+3. Retry once no-run state becomes stale (2-minute TTL) or the prior attempt reaches terminal state.
+
+If ingress evidence does not appear:
+1. Check `workflow_run_failure_stage` and `workflow_run_failure_reason_code` for `ingress_verify` or `ingress_evidence`.
+2. Confirm ingress endpoint readiness in target runtime and rerun refresh.
+3. Do not treat expected URL guidance as live confirmation without explicit `resolved_live_url` evidence.
 
 ## Troubleshooting and Rollback
 Publish failures:
