@@ -113,6 +113,7 @@ class SEOMigrationGitHubWorkflowProvisionResult:
     managed_network_policy_expected: bool = False
     managed_network_policy_present: bool | None = None
     managed_namespace_policies_aligned: bool | None = None
+    managed_workflow_outcome: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1403,7 +1404,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         commit_sha: str | None = None
         any_file_updated = False
         file_sha_by_path: dict[str, str | None] = {}
-        workflow_updated, workflow_sha = self._upsert_managed_repo_file(
+        workflow_updated, workflow_sha, workflow_managed_outcome = self._upsert_managed_repo_file(
             repo_owner=repo_owner,
             repo_name=repo_name,
             branch=branch,
@@ -1421,7 +1422,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             commit_sha = workflow_sha
 
         for manifest_path, manifest_content in manifest_file_payloads.items():
-            manifest_updated, manifest_sha = self._upsert_managed_repo_file(
+            manifest_updated, manifest_sha, _ = self._upsert_managed_repo_file(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
                 branch=branch,
@@ -1516,6 +1517,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     else None
                 ),
                 managed_namespace_policies_aligned=managed_namespace_policies_aligned,
+                managed_workflow_outcome=workflow_managed_outcome,
             )
         if (
             not verified_workflow_sha
@@ -1565,6 +1567,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 else None
             ),
             managed_namespace_policies_aligned=managed_namespace_policies_aligned,
+            managed_workflow_outcome=workflow_managed_outcome,
         )
 
     def check_deploy_target_readiness(
@@ -1826,7 +1829,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         dry_run: bool,
         allow_managed_placeholder_upgrade: bool = False,
         workflow_id: str | None = None,
-    ) -> tuple[bool, str | None]:
+    ) -> tuple[bool, str | None, str | None]:
         existing_payload = self._fetch_existing_file_payload(
             repo_owner=repo_owner,
             repo_name=repo_name,
@@ -1874,6 +1877,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             existing_decoded = _decode_workflow_file_content(existing_payload) or ""
             should_write = existing_decoded.strip() != content.strip()
 
+        workflow_outcome: str | None = None
         if allow_managed_placeholder_upgrade:
             workflow_outcome = _derive_managed_workflow_outcome(
                 existing_payload=existing_payload,
@@ -1897,9 +1901,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             )
 
         if not should_write:
-            return False, existing_sha
+            return False, existing_sha, workflow_outcome
         if dry_run:
-            return False, existing_sha
+            return False, existing_sha, workflow_outcome
 
         encoded_content = base64.b64encode(content.encode("utf-8")).decode("ascii")
         payload: dict[str, object] = {
@@ -1933,7 +1937,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             path=path,
         )
         del commit_sha
-        return True, verified_sha
+        return True, verified_sha, workflow_outcome
 
     def _request_json(
         self,
@@ -2849,7 +2853,11 @@ def _derive_managed_workflow_outcome(
     if not isinstance(existing_payload, dict):
         return "managed_workflow_created"
     normalized_classification = str(classification or "").strip().lower()
-    if normalized_classification in {"managed_placeholder", "managed_conformant_or_unknown"}:
+    if normalized_classification in {
+        "managed_placeholder",
+        "managed_conformant_or_unknown",
+        "placeholder_non_managed",
+    }:
         if should_write:
             return "managed_workflow_upgraded"
         return "managed_workflow_already_current"

@@ -734,6 +734,13 @@ Publish behavior:
 - duplicate non-dry-run publish attempts for the same artifact+target are rejected with operator-readable validation errors
 - duplicate artifact protection remains in place for file writes, but no longer short-circuits workflow bootstrap
 - if artifact content is already published and workflow is missing, a follow-up publish can repair workflow bootstrap without re-writing artifact files (`duplicate_publish_repair`)
+- duplicate publish handling now always attempts managed workflow remediation before duplicate rejection (`workflow_remediation_attempted=true` in publish diagnostics/log target fields)
+- duplicate publish diagnostics now also emit `workflow_remediation_outcome`:
+  - `remediation_upgraded_managed_placeholder`: managed scaffold/legacy workflow was replaced with current production template content
+  - `remediation_already_current`: managed workflow already matched current contract; no write needed
+  - `remediation_preserved_custom`: custom/non-managed workflow was intentionally preserved
+  - `remediation_write_failed`: remediation attempt failed due to GitHub write/provision error
+  - `remediation_not_attempted`: remediation path was not invoked (for example non-duplicate publish)
 - retry after a failed publish is supported and recorded as a new history event
 - dry-run publish records history but does not overwrite prior successful publish commit metadata
 - workflow provisioning is idempotent for deploy-capable managed workflows and preserves unknown custom workflows
@@ -1312,6 +1319,12 @@ Publish failures:
   - `event=seo_migration_workflow_provisioning`
   - statuses: `created`, `already_exists`, `verified`, `failed`
   - remediation modes: `bootstrap`, `already_present`, `duplicate_publish_repair`
+  - `workflow_remediation_attempted=true` means publish attempted managed workflow verification/upgrade even when artifact publish was duplicate-skipped
+  - `workflow_remediation_outcome` interpretation:
+    - `remediation_upgraded_managed_placeholder` -> retry deploy readiness (managed workflow was updated)
+    - `remediation_already_current` -> investigate next blocker domain (workflow was already current)
+    - `remediation_preserved_custom` -> custom workflow must be fixed intentionally outside managed auto-upgrade
+    - `remediation_write_failed` -> inspect GitHub provisioning failure and retry publish once write issue is resolved
   - managed placeholder signatures (for example `Placeholder deploy` with `Deploy step not yet implemented`, `provisioned in mode`, or `customize before production rollout`) are auto-upgraded during publish provisioning
   - unknown custom workflows are preserved and may stay non-production-ready until replaced intentionally
   - remediation for older repos with scaffold workflows: run a non-dry-run publish for an approved artifact to trigger managed workflow verification/upgrade; if workflow remains non-production-ready and is custom/non-managed, replace it intentionally with a deploy-capable workflow contract

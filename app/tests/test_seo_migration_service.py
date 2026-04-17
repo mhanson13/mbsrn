@@ -178,6 +178,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         deploy_error_stage: str | None = None,
         fail_workflow_provision: bool = False,
         existing_workflow: bool = False,
+        existing_workflow_placeholder: bool = False,
+        existing_workflow_custom: bool = False,
         readiness_workflow_dispatch_supported: bool = True,
         readiness_workflow_trigger_types: tuple[str, ...] | None = None,
         readiness_dispatch_service_availability: bool = True,
@@ -228,6 +230,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.deploy_error_stage = deploy_error_stage
         self.fail_workflow_provision = fail_workflow_provision
         self.existing_workflow = existing_workflow
+        self.existing_workflow_placeholder = existing_workflow_placeholder
+        self.existing_workflow_custom = existing_workflow_custom
         self.readiness_workflow_dispatch_supported = readiness_workflow_dispatch_supported
         self.readiness_workflow_trigger_types = readiness_workflow_trigger_types or ("workflow_dispatch",)
         self.readiness_dispatch_service_availability = readiness_dispatch_service_availability
@@ -423,10 +427,23 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 code="workflow_provision_failed",
                 safe_message="Simulated workflow provisioning failure.",
             )
-        provisioned = (not self.existing_workflow) and (not dry_run)
+        provisioned = (not dry_run) and (not self.existing_workflow or self.existing_workflow_placeholder)
+        managed_workflow_outcome: str | None = None
+        if provisioned:
+            if self.existing_workflow_placeholder:
+                managed_workflow_outcome = "managed_workflow_upgraded"
+            else:
+                managed_workflow_outcome = "managed_workflow_created"
+        else:
+            if self.existing_workflow_custom:
+                managed_workflow_outcome = "managed_workflow_preserved_custom"
+            else:
+                managed_workflow_outcome = "managed_workflow_already_current"
         commit_sha = "wf123" if provisioned else None
         if provisioned:
             self.existing_workflow = True
+            self.existing_workflow_placeholder = False
+            self.existing_workflow_custom = False
         return SEOMigrationGitHubWorkflowProvisionResult(
             repo_owner=repo_owner,
             repo_name=repo_name,
@@ -438,6 +455,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             deploy_workflow_mode=deploy_workflow_mode,
             target_environment_key=target_environment_key,
             target_environment_source=target_environment_source,
+            managed_workflow_outcome=managed_workflow_outcome,
         )
 
     def check_deploy_target_readiness(
@@ -4011,6 +4029,73 @@ def test_publish_duplicate_non_dry_run_is_rejected(db_session) -> None:
             principal_id="principal-1",
         )
     assert len(publisher.publish_calls) == 1
+    assert len(publisher.workflow_provision_calls) == 2
+
+
+def test_publish_duplicate_request_logs_workflow_remediation_attempted(db_session, caplog) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    publisher = _RecordingGitHubPublisher(existing_workflow=True)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    with pytest.raises(SEOMigrationValidationError, match="already published"):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message=None,
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+
+    assert len(publisher.publish_calls) == 1
+    assert len(publisher.workflow_provision_calls) == 2
+    duplicate_failure_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_control_plane_action"
+        and record.__dict__["json_fields"].get("action") == "publish"
+        and record.__dict__["json_fields"].get("failure_category") == "duplicate_request"
+    ]
+    assert duplicate_failure_logs
+    duplicate_target = duplicate_failure_logs[-1].get("target") or {}
+    assert duplicate_target.get("workflow_remediation_attempted") is True
+    assert duplicate_target.get("workflow_remediation_outcome") == "remediation_already_current"
 
 
 def test_publish_duplicate_repairs_missing_workflow_without_republishing_artifact(db_session) -> None:
@@ -4071,6 +4156,202 @@ def test_publish_duplicate_repairs_missing_workflow_without_republishing_artifac
     assert repair_result.result.get("workflow_provisioning_remediation_mode") == "duplicate_publish_repair"
     assert repair_result.result.get("workflow_provisioning_status") == "created"
     assert repair_result.result.get("workflow_provisioning_verified") is True
+    assert repair_result.result.get("workflow_remediation_attempted") is True
+    assert repair_result.result.get("workflow_remediation_outcome") == "remediation_upgraded_managed_placeholder"
+
+
+def test_publish_duplicate_repairs_managed_placeholder_workflow_without_republishing_artifact(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(existing_workflow=True)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert len(publisher.publish_calls) == 1
+    assert len(publisher.workflow_provision_calls) == 1
+
+    # Simulate a managed placeholder drift on an already-published artifact target.
+    publisher.existing_workflow = True
+    publisher.existing_workflow_placeholder = True
+    repair_result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    assert len(publisher.publish_calls) == 1
+    assert len(publisher.workflow_provision_calls) == 2
+    assert repair_result.result.get("duplicate_artifact_skipped") is True
+    assert repair_result.result.get("deploy_workflow_provisioned") is True
+    assert repair_result.result.get("workflow_provisioning_remediation_mode") == "duplicate_publish_repair"
+    assert repair_result.result.get("workflow_provisioning_status") == "created"
+    assert repair_result.result.get("workflow_provisioning_verified") is True
+    assert repair_result.result.get("workflow_remediation_attempted") is True
+    assert repair_result.result.get("workflow_remediation_outcome") == "remediation_upgraded_managed_placeholder"
+
+
+def test_publish_duplicate_preserves_custom_workflow_and_reports_outcome(db_session, caplog) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    publisher = _RecordingGitHubPublisher(existing_workflow=True, existing_workflow_custom=True)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    with pytest.raises(SEOMigrationValidationError, match="already published"):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message=None,
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+    assert len(publisher.publish_calls) == 1
+    assert len(publisher.workflow_provision_calls) == 2
+    duplicate_failure_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_control_plane_action"
+        and record.__dict__["json_fields"].get("action") == "publish"
+        and record.__dict__["json_fields"].get("failure_category") == "duplicate_request"
+    ]
+    assert duplicate_failure_logs
+    duplicate_target = duplicate_failure_logs[-1].get("target") or {}
+    assert duplicate_target.get("workflow_remediation_attempted") is True
+    assert duplicate_target.get("workflow_remediation_outcome") == "remediation_preserved_custom"
+
+
+def test_publish_duplicate_write_failure_reports_remediation_write_failed(db_session, caplog) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    publisher = _RecordingGitHubPublisher(existing_workflow=True)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    publisher.fail_workflow_provision = True
+    with pytest.raises(SEOMigrationValidationError, match="workflow provisioning failure"):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message=None,
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+    failure_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_control_plane_action"
+        and record.__dict__["json_fields"].get("action") == "publish"
+        and record.__dict__["json_fields"].get("status") == "failed"
+        and record.__dict__["json_fields"].get("failure_category") == "target_invalid"
+    ]
+    assert failure_logs
+    failure_target = failure_logs[-1].get("target") or {}
+    assert failure_target.get("workflow_remediation_attempted") is True
+    assert failure_target.get("workflow_remediation_outcome") == "remediation_write_failed"
 
 
 def test_publish_fails_when_workflow_provisioning_fails(db_session) -> None:

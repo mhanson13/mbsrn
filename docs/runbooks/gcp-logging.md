@@ -423,6 +423,13 @@ Key non-secret fields:
 - workflow provisioning fields:
   - `status` (`created`, `already_exists`, `verified`, `failed`)
   - `remediation_mode` (`bootstrap`, `already_present`, `duplicate_publish_repair`)
+  - `workflow_remediation_attempted` (publish attempted managed workflow verification/upgrade even when artifact write was duplicate-skipped)
+  - `workflow_remediation_outcome`
+    - `remediation_upgraded_managed_placeholder`: managed scaffold was updated to current production workflow contract
+    - `remediation_already_current`: managed workflow already current; no update needed
+    - `remediation_preserved_custom`: custom/non-managed workflow preserved intentionally
+    - `remediation_write_failed`: publish remediation attempted but write/provision failed
+    - `remediation_not_attempted`: remediation path not invoked on that publish action
   - `workflow_id`, `workflow_path`, `ref`, `repo_owner`, `repo_name`
   - optional `error_code` / `error_message` on failed provisioning
   - managed placeholder workflow signatures are eligible for publish-time upgrade to the current production template

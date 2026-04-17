@@ -1229,6 +1229,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert result.managed_network_policy_expected is False
     assert result.managed_network_policy_present is None
     assert result.managed_namespace_policies_aligned is True
+    assert result.managed_workflow_outcome == "managed_workflow_created"
     assert len(calls) == 18
     assert calls[0][1].endswith("/repos/mhanson13/tnmfire")
     assert calls[1][1].endswith("/repos/mhanson13/tnmfire/branches/main")
@@ -1381,6 +1382,7 @@ def test_ensure_deploy_workflow_upgrades_platform_managed_placeholder_workflow(m
     assert "Resolve live URL from ingress status" in upgraded_workflow
     assert "customize before production rollout" not in upgraded_workflow.lower()
     assert "placeholder deploy" not in upgraded_workflow.lower()
+    assert result.managed_workflow_outcome == "managed_workflow_upgraded"
 
 
 def test_ensure_deploy_workflow_upgrades_legacy_platform_placeholder_workflow(monkeypatch) -> None:
@@ -1463,6 +1465,7 @@ def test_ensure_deploy_workflow_upgrades_legacy_platform_placeholder_workflow(mo
     assert "Resolve live URL from ingress status" in upgraded_workflow
     assert "deploy step not yet implemented" not in upgraded_workflow.lower()
     assert "placeholder deploy" not in upgraded_workflow.lower()
+    assert result.managed_workflow_outcome == "managed_workflow_upgraded"
 
 
 def test_ensure_deploy_workflow_uses_production_template_for_unknown_mode(monkeypatch) -> None:
@@ -1647,6 +1650,7 @@ def test_ensure_deploy_workflow_preserves_unknown_custom_workflow(monkeypatch) -
         dry_run=False,
     )
     assert result.provisioned is False
+    assert result.managed_workflow_outcome == "managed_workflow_preserved_custom"
     assert not any(
         method == "PUT" and url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
         for method, url in calls

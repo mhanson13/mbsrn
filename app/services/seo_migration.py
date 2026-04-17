@@ -206,6 +206,11 @@ _POST_CONFORMANCE_STAGE_VALUES = {
     _POST_CONFORMANCE_STAGE_LIVE_URL_EVIDENCE_MISSING,
     _POST_CONFORMANCE_STAGE_DEPLOY_SUCCEEDED,
 }
+_WORKFLOW_REMEDIATION_OUTCOME_NOT_ATTEMPTED = "remediation_not_attempted"
+_WORKFLOW_REMEDIATION_OUTCOME_UPGRADED_MANAGED_PLACEHOLDER = "remediation_upgraded_managed_placeholder"
+_WORKFLOW_REMEDIATION_OUTCOME_ALREADY_CURRENT = "remediation_already_current"
+_WORKFLOW_REMEDIATION_OUTCOME_PRESERVED_CUSTOM = "remediation_preserved_custom"
+_WORKFLOW_REMEDIATION_OUTCOME_WRITE_FAILED = "remediation_write_failed"
 _DEPLOY_TARGET_REASON_REPO_NOT_FOUND = "repo_not_found"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND = "workflow_not_found"
 _DEPLOY_TARGET_REASON_REF_INVALID = "branch_not_found_or_ref_invalid"
@@ -1013,6 +1018,8 @@ class SEOMigrationService:
         deploy_workflow_provision_result: SEOMigrationGitHubWorkflowProvisionResult | None = None
         workflow_provisioning_status: str | None = None
         workflow_provisioning_remediation_mode: str | None = None
+        workflow_remediation_attempted = False
+        workflow_remediation_outcome = _WORKFLOW_REMEDIATION_OUTCOME_NOT_ATTEMPTED
         workflow_provisioning_verified = False
         workflow_resolution_for_provision: dict[str, object] | None = None
         expected_publish_url: str | None = None
@@ -1077,6 +1084,7 @@ class SEOMigrationService:
                 workflow_provisioning_remediation_mode = (
                     "duplicate_publish_repair" if duplicate_publish_attempt else "bootstrap"
                 )
+                workflow_remediation_attempted = bool(duplicate_publish_attempt)
                 workflow_owner = str(deploy_target_for_workflow.get("repo_owner") or target["repo_owner"])
                 workflow_repo = str(deploy_target_for_workflow.get("repo_name") or target["repo_name"])
                 workflow_ref = str(deploy_target_for_workflow.get("ref") or target["branch"])
@@ -1130,6 +1138,11 @@ class SEOMigrationService:
                     site_id=site.id,
                 )
                 workflow_provisioning_verified = True
+                workflow_remediation_outcome = _derive_workflow_remediation_outcome(
+                    remediation_attempted=workflow_remediation_attempted,
+                    managed_workflow_outcome=deploy_workflow_provision_result.managed_workflow_outcome,
+                    write_failed=False,
+                )
                 workflow_path = deploy_workflow_provision_result.workflow_path
                 workflow_provisioning_status = (
                     "created" if deploy_workflow_provision_result.provisioned else "already_exists"
@@ -1163,6 +1176,7 @@ class SEOMigrationService:
                     managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
                     managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
                     managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
+                    workflow_remediation_outcome=workflow_remediation_outcome,
                     commit_sha=deploy_workflow_provision_result.commit_sha,
                     verified=True,
                 )
@@ -1193,6 +1207,7 @@ class SEOMigrationService:
                     managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
                     managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
                     managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
+                    workflow_remediation_outcome=workflow_remediation_outcome,
                     commit_sha=deploy_workflow_provision_result.commit_sha,
                     verified=True,
                 )
@@ -1235,6 +1250,8 @@ class SEOMigrationService:
                             **target,
                             "workflow_provisioning_status": workflow_provisioning_status,
                             "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+                            "workflow_remediation_attempted": workflow_remediation_attempted,
+                            "workflow_remediation_outcome": workflow_remediation_outcome,
                         },
                         failure_category="duplicate_request",
                         failure_reason=failure_message,
@@ -1255,6 +1272,15 @@ class SEOMigrationService:
                 )
         except SEOMigrationGitHubPublisherError as exc:
             if workflow_provisioning_remediation_mode:
+                workflow_remediation_outcome = _derive_workflow_remediation_outcome(
+                    remediation_attempted=workflow_remediation_attempted,
+                    managed_workflow_outcome=(
+                        deploy_workflow_provision_result.managed_workflow_outcome
+                        if deploy_workflow_provision_result is not None
+                        else None
+                    ),
+                    write_failed=True,
+                )
                 workflow_identifier = (
                     deploy_workflow_provision_result.workflow_id
                     if deploy_workflow_provision_result is not None
@@ -1367,6 +1393,7 @@ class SEOMigrationService:
                         if deploy_workflow_provision_result is not None
                         else None
                     ),
+                    workflow_remediation_outcome=workflow_remediation_outcome,
                     verified=workflow_provisioning_verified,
                     error_code=exc.code,
                     error_message=exc.safe_message,
@@ -1421,6 +1448,8 @@ class SEOMigrationService:
                     "failure_reason_code": _normalize_string(exc.code, max_length=80),
                     "workflow_provisioning_status": workflow_provisioning_status,
                     "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+                    "workflow_remediation_attempted": workflow_remediation_attempted,
+                    "workflow_remediation_outcome": workflow_remediation_outcome,
                     "kubernetes_namespace": (
                         deploy_workflow_provision_result.kubernetes_namespace
                         if deploy_workflow_provision_result is not None
@@ -1502,6 +1531,8 @@ class SEOMigrationService:
             "duplicate_artifact_skipped": bool(duplicate_publish_repaired),
             "workflow_provisioning_status": workflow_provisioning_status,
             "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+            "workflow_remediation_attempted": workflow_remediation_attempted,
+            "workflow_remediation_outcome": workflow_remediation_outcome,
             "workflow_provisioning_verified": workflow_provisioning_verified,
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
@@ -1602,6 +1633,8 @@ class SEOMigrationService:
                 "duplicate_artifact_skipped": bool(duplicate_publish_repaired),
                 "workflow_provisioning_status": workflow_provisioning_status,
                 "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+                "workflow_remediation_attempted": workflow_remediation_attempted,
+                "workflow_remediation_outcome": workflow_remediation_outcome,
                 "workflow_provisioning_verified": workflow_provisioning_verified,
                 "deploy_workflow_mode": deploy_workflow_mode,
                 "target_environment_key": target_environment_key,
@@ -1830,6 +1863,7 @@ class SEOMigrationService:
         post_dispatch_state: str | None = None
         post_conformance_stage: str | None = None
         post_conformance_reason_text: str | None = None
+        post_conformance_remediation_message: str | None = None
         expected_workflow_outputs = list(_DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS)
         deploy_evidence_contract_status = _DEPLOY_EVIDENCE_CONTRACT_STATUS_UNKNOWN
         deploy_evidence_contract_reasons: list[str] = []
@@ -2522,6 +2556,9 @@ class SEOMigrationService:
                 workflow_run_failure_stage=workflow_run_failure_stage,
                 post_dispatch_state=post_dispatch_state,
             )
+            post_conformance_remediation_message = _derive_post_conformance_remediation_message(
+                post_conformance_stage=post_conformance_stage
+            )
             artifact.deploy_status = "deploy_failed"
             artifact.last_deploy_error_summary = exc.safe_message
             workspace.deploy_status = "deploy_failed"
@@ -2584,6 +2621,7 @@ class SEOMigrationService:
                     "post_dispatch_state": post_dispatch_state,
                     "post_conformance_stage": post_conformance_stage,
                     "post_conformance_reason_text": post_conformance_reason_text,
+                    "post_conformance_remediation_message": post_conformance_remediation_message,
                     "expected_workflow_outputs": expected_workflow_outputs,
                     "deploy_evidence_contract_status": deploy_evidence_contract_status,
                     "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
@@ -2762,6 +2800,7 @@ class SEOMigrationService:
                     "post_dispatch_state": post_dispatch_state,
                     "post_conformance_stage": post_conformance_stage,
                     "post_conformance_reason_text": post_conformance_reason_text,
+                    "post_conformance_remediation_message": post_conformance_remediation_message,
                     "expected_workflow_outputs": expected_workflow_outputs,
                     "deploy_evidence_contract_status": deploy_evidence_contract_status,
                     "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
@@ -2865,6 +2904,7 @@ class SEOMigrationService:
                     "post_dispatch_state": post_dispatch_state,
                     "post_conformance_stage": post_conformance_stage,
                     "post_conformance_reason_text": post_conformance_reason_text,
+                    "post_conformance_remediation_message": post_conformance_remediation_message,
                     "expected_workflow_outputs": expected_workflow_outputs,
                     "deploy_evidence_contract_status": deploy_evidence_contract_status,
                     "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
@@ -2934,6 +2974,9 @@ class SEOMigrationService:
             workflow_run_failure_stage=workflow_run_failure_stage,
             post_dispatch_state=post_dispatch_state,
         )
+        post_conformance_remediation_message = _derive_post_conformance_remediation_message(
+            post_conformance_stage=post_conformance_stage
+        )
         dispatch_verification_state = _derive_dispatch_verification_state(
             dispatch_attempted=dispatch_attempted,
             workflow_run_id=getattr(deploy_result, "workflow_run_id", None),
@@ -2985,6 +3028,7 @@ class SEOMigrationService:
                 "post_dispatch_state": post_dispatch_state,
                 "post_conformance_stage": post_conformance_stage,
                 "post_conformance_reason_text": post_conformance_reason_text,
+                "post_conformance_remediation_message": post_conformance_remediation_message,
                 "expected_workflow_outputs": expected_workflow_outputs,
                 "deploy_evidence_contract_status": deploy_evidence_contract_status,
                 "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
@@ -3041,6 +3085,7 @@ class SEOMigrationService:
                 "post_dispatch_state": post_dispatch_state,
                 "post_conformance_stage": post_conformance_stage,
                 "post_conformance_reason_text": post_conformance_reason_text,
+                "post_conformance_remediation_message": post_conformance_remediation_message,
                 "expected_workflow_outputs": expected_workflow_outputs,
                 "deploy_evidence_contract_status": deploy_evidence_contract_status,
                 "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
@@ -3078,6 +3123,7 @@ class SEOMigrationService:
                     "post_dispatch_state": post_dispatch_state,
                     "post_conformance_stage": post_conformance_stage,
                     "post_conformance_reason_text": post_conformance_reason_text,
+                    "post_conformance_remediation_message": post_conformance_remediation_message,
                     "dispatch_verification_state": _derive_dispatch_verification_state(
                         dispatch_attempted=dispatch_attempted,
                         workflow_run_id=getattr(deploy_result, "workflow_run_id", None),
@@ -3127,6 +3173,7 @@ class SEOMigrationService:
                     "post_dispatch_state": post_dispatch_state,
                     "post_conformance_stage": post_conformance_stage,
                     "post_conformance_reason_text": post_conformance_reason_text,
+                    "post_conformance_remediation_message": post_conformance_remediation_message,
                     "expected_workflow_outputs": expected_workflow_outputs,
                     "deploy_evidence_contract_status": deploy_evidence_contract_status,
                     "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
@@ -3181,6 +3228,7 @@ class SEOMigrationService:
                     "post_dispatch_state": post_dispatch_state,
                     "post_conformance_stage": post_conformance_stage,
                     "post_conformance_reason_text": post_conformance_reason_text,
+                    "post_conformance_remediation_message": post_conformance_remediation_message,
                     "expected_workflow_outputs": expected_workflow_outputs,
                     "deploy_evidence_contract_status": deploy_evidence_contract_status,
                     "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
@@ -3282,6 +3330,7 @@ class SEOMigrationService:
             "post_dispatch_state": post_dispatch_state,
             "post_conformance_stage": post_conformance_stage,
             "post_conformance_reason_text": post_conformance_reason_text,
+            "post_conformance_remediation_message": post_conformance_remediation_message,
             "expected_workflow_outputs": expected_workflow_outputs,
             "deploy_evidence_contract_status": deploy_evidence_contract_status,
             "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
@@ -3477,6 +3526,7 @@ class SEOMigrationService:
                 "post_dispatch_state": post_dispatch_state,
                 "post_conformance_stage": post_conformance_stage,
                 "post_conformance_reason_text": post_conformance_reason_text,
+                "post_conformance_remediation_message": post_conformance_remediation_message,
                 "expected_workflow_outputs": expected_workflow_outputs,
                 "deploy_evidence_contract_status": deploy_evidence_contract_status,
                 "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
@@ -3679,6 +3729,12 @@ class SEOMigrationService:
             workflow_run_failure_stage=target_history_item.get("workflow_run_failure_stage"),
             post_dispatch_state=post_dispatch_state,
         )
+        post_conformance_remediation_message = _normalize_string(
+            target_history_item.get("post_conformance_remediation_message"),
+            max_length=280,
+        ) or _derive_post_conformance_remediation_message(
+            post_conformance_stage=post_conformance_stage
+        )
 
         repo_owner = _normalize_string(target_history_item.get("repo_owner"), max_length=80)
         repo_name = _normalize_string(target_history_item.get("repo_name"), max_length=120)
@@ -3751,6 +3807,7 @@ class SEOMigrationService:
                 "post_dispatch_state": post_dispatch_state,
                 "post_conformance_stage": post_conformance_stage,
                 "post_conformance_reason_text": post_conformance_reason_text,
+                "post_conformance_remediation_message": post_conformance_remediation_message,
                 "workflow_run_id": workflow_run_id,
             },
             fallback_message="seo_migration_workflow_run_refresh_lookup_attempted",
@@ -3814,6 +3871,9 @@ class SEOMigrationService:
                     "post_dispatch_state": "dispatch_unverified_no_run",
                     "post_conformance_stage": _POST_CONFORMANCE_STAGE_WORKFLOW_DISPATCH_WAITING_FOR_RUN,
                     "post_conformance_reason_text": "Workflow dispatch succeeded but run evidence is still pending.",
+                    "post_conformance_remediation_message": _derive_post_conformance_remediation_message(
+                        post_conformance_stage=_POST_CONFORMANCE_STAGE_WORKFLOW_DISPATCH_WAITING_FOR_RUN
+                    ),
                     "refreshed_at": refreshed_at,
                 }
                 for field_name, field_value in expected_updates.items():
@@ -4022,6 +4082,9 @@ class SEOMigrationService:
             workflow_run_failure_stage=workflow_run_failure_stage,
             post_dispatch_state=post_dispatch_state,
         )
+        post_conformance_remediation_message = _derive_post_conformance_remediation_message(
+            post_conformance_stage=post_conformance_stage
+        )
         self._emit_structured_service_log(
             payload={
                 "event": "seo_migration_workflow_run_refresh_result_captured",
@@ -4044,6 +4107,7 @@ class SEOMigrationService:
                 "workflow_run_failure_hint": workflow_run_failure_hint,
                 "post_conformance_stage": post_conformance_stage,
                 "post_conformance_reason_text": post_conformance_reason_text,
+                "post_conformance_remediation_message": post_conformance_remediation_message,
             },
             fallback_message="seo_migration_workflow_run_refresh_result_captured",
             level=logging.INFO,
@@ -4073,6 +4137,7 @@ class SEOMigrationService:
             ("workflow_job_failure_detected", workflow_job_failure_detected),
             ("post_conformance_stage", post_conformance_stage),
             ("post_conformance_reason_text", post_conformance_reason_text),
+            ("post_conformance_remediation_message", post_conformance_remediation_message),
         ):
             if next_item.get(field_name) != field_value:
                 next_item[field_name] = field_value
@@ -4187,11 +4252,17 @@ class SEOMigrationService:
             workflow_run_failure_stage=workflow_run_failure_stage,
             post_dispatch_state=post_dispatch_state,
         )
+        post_conformance_remediation_message = _derive_post_conformance_remediation_message(
+            post_conformance_stage=post_conformance_stage
+        )
         if next_item.get("post_conformance_stage") != post_conformance_stage:
             next_item["post_conformance_stage"] = post_conformance_stage
             updated = True
         if next_item.get("post_conformance_reason_text") != post_conformance_reason_text:
             next_item["post_conformance_reason_text"] = post_conformance_reason_text
+            updated = True
+        if next_item.get("post_conformance_remediation_message") != post_conformance_remediation_message:
+            next_item["post_conformance_remediation_message"] = post_conformance_remediation_message
             updated = True
 
         refresh_status = "updated" if updated else "no_change"
@@ -4300,6 +4371,7 @@ class SEOMigrationService:
             "post_dispatch_state": post_dispatch_state,
             "post_conformance_stage": post_conformance_stage,
             "post_conformance_reason_text": post_conformance_reason_text,
+            "post_conformance_remediation_message": post_conformance_remediation_message,
             "expected_workflow_outputs": _normalize_string_list(
                 next_item.get("expected_workflow_outputs"),
                 max_items=8,
@@ -4367,6 +4439,7 @@ class SEOMigrationService:
                 "post_dispatch_state": post_dispatch_state,
                 "post_conformance_stage": post_conformance_stage,
                 "post_conformance_reason_text": post_conformance_reason_text,
+                "post_conformance_remediation_message": post_conformance_remediation_message,
                 "expected_workflow_outputs": result_payload.get("expected_workflow_outputs"),
                 "deploy_evidence_contract_status": result_payload.get("deploy_evidence_contract_status"),
                 "deploy_evidence_contract_reasons": result_payload.get("deploy_evidence_contract_reasons"),
@@ -4431,6 +4504,7 @@ class SEOMigrationService:
                 "post_dispatch_state": post_dispatch_state,
                 "post_conformance_stage": post_conformance_stage,
                 "post_conformance_reason_text": post_conformance_reason_text,
+                "post_conformance_remediation_message": post_conformance_remediation_message,
                 "expected_workflow_outputs": result_payload.get("expected_workflow_outputs"),
                 "deploy_evidence_contract_status": result_payload.get("deploy_evidence_contract_status"),
                 "deploy_evidence_contract_reasons": result_payload.get("deploy_evidence_contract_reasons"),
@@ -4751,8 +4825,15 @@ class SEOMigrationService:
             workflow_run_failure_stage=result_payload.get("workflow_run_failure_stage"),
             post_dispatch_state=result_payload.get("post_dispatch_state"),
         )
+        post_conformance_remediation_message = _normalize_string(
+            history_item.get("post_conformance_remediation_message"),
+            max_length=280,
+        ) or _derive_post_conformance_remediation_message(
+            post_conformance_stage=post_conformance_stage
+        )
         result_payload["post_conformance_stage"] = post_conformance_stage
         result_payload["post_conformance_reason_text"] = post_conformance_reason_text
+        result_payload["post_conformance_remediation_message"] = post_conformance_remediation_message
         self._emit_structured_service_log(
             payload={
                 "event": "seo_migration_deploy_status_refresh_no_change",
@@ -4797,6 +4878,7 @@ class SEOMigrationService:
                 "post_dispatch_state": result_payload.get("post_dispatch_state"),
                 "post_conformance_stage": result_payload.get("post_conformance_stage"),
                 "post_conformance_reason_text": result_payload.get("post_conformance_reason_text"),
+                "post_conformance_remediation_message": result_payload.get("post_conformance_remediation_message"),
                 "expected_workflow_outputs": result_payload.get("expected_workflow_outputs"),
                 "deploy_evidence_contract_status": result_payload.get("deploy_evidence_contract_status"),
                 "deploy_evidence_contract_reasons": result_payload.get("deploy_evidence_contract_reasons"),
@@ -4858,6 +4940,7 @@ class SEOMigrationService:
                 "post_dispatch_state": result_payload.get("post_dispatch_state"),
                 "post_conformance_stage": result_payload.get("post_conformance_stage"),
                 "post_conformance_reason_text": result_payload.get("post_conformance_reason_text"),
+                "post_conformance_remediation_message": result_payload.get("post_conformance_remediation_message"),
                 "expected_workflow_outputs": result_payload.get("expected_workflow_outputs"),
                 "deploy_evidence_contract_status": result_payload.get("deploy_evidence_contract_status"),
                 "deploy_evidence_contract_reasons": result_payload.get("deploy_evidence_contract_reasons"),
@@ -5750,6 +5833,13 @@ class SEOMigrationService:
                 ),
                 "last_deploy_failure_target_environment_source": latest_deploy_failure_detail.get(
                     "target_environment_source"
+                ),
+                "last_deploy_post_conformance_stage": deploy_readiness.get("last_post_conformance_stage"),
+                "last_deploy_post_conformance_reason_text": deploy_readiness.get(
+                    "last_post_conformance_reason_text"
+                ),
+                "last_deploy_post_conformance_remediation_message": deploy_readiness.get(
+                    "last_post_conformance_remediation_message"
                 ),
                 "last_draft_generation_status": draft_diagnostics.get("last_status"),
                 "last_draft_failure_category": draft_diagnostics.get("last_failure_category"),
@@ -7787,6 +7877,10 @@ class SEOMigrationService:
             "managed_network_policy_expected": provision_result.managed_network_policy_expected,
             "managed_network_policy_present": provision_result.managed_network_policy_present,
             "managed_namespace_policies_aligned": provision_result.managed_namespace_policies_aligned,
+            "managed_workflow_outcome": _normalize_string(
+                provision_result.managed_workflow_outcome,
+                max_length=80,
+            ),
         }
         self._emit_structured_service_log(
             payload=payload,
@@ -7823,6 +7917,7 @@ class SEOMigrationService:
         managed_network_policy_expected: bool | None = None,
         managed_network_policy_present: bool | None = None,
         managed_namespace_policies_aligned: bool | None = None,
+        workflow_remediation_outcome: str | None = None,
         commit_sha: str | None = None,
         verified: bool | None = None,
         error_code: str | None = None,
@@ -7884,6 +7979,12 @@ class SEOMigrationService:
             payload["managed_network_policy_present"] = bool(managed_network_policy_present)
         if managed_namespace_policies_aligned is not None:
             payload["managed_namespace_policies_aligned"] = bool(managed_namespace_policies_aligned)
+        normalized_workflow_remediation_outcome = _normalize_string(
+            workflow_remediation_outcome,
+            max_length=80,
+        )
+        if normalized_workflow_remediation_outcome:
+            payload["workflow_remediation_outcome"] = normalized_workflow_remediation_outcome
         normalized_sha = _normalize_string(commit_sha, max_length=80)
         if normalized_sha:
             payload["commit_sha"] = normalized_sha
@@ -9263,6 +9364,12 @@ class SEOMigrationService:
                 workflow_run_failure_stage=workflow_run_failure_stage,
                 post_dispatch_state=post_dispatch_state,
             )
+            post_conformance_remediation_message = _normalize_string(
+                item.get("post_conformance_remediation_message"),
+                max_length=280,
+            ) or _derive_post_conformance_remediation_message(
+                post_conformance_stage=post_conformance_stage
+            )
             return {
                 "deploy_trace_id": _normalize_string(item.get("deploy_trace_id"), max_length=80),
                 "workflow_identifier": _derive_workflow_identifier(
@@ -9352,6 +9459,7 @@ class SEOMigrationService:
                 "post_dispatch_state": post_dispatch_state,
                 "post_conformance_stage": post_conformance_stage,
                 "post_conformance_reason_text": post_conformance_reason_text,
+                "post_conformance_remediation_message": post_conformance_remediation_message,
                 "expected_workflow_outputs": _normalize_string_list(
                     item.get("expected_workflow_outputs"),
                     max_items=8,
@@ -10012,6 +10120,9 @@ class SEOMigrationService:
             "last_post_dispatch_state": latest_traceability.get("post_dispatch_state"),
             "last_post_conformance_stage": latest_traceability.get("post_conformance_stage"),
             "last_post_conformance_reason_text": latest_traceability.get("post_conformance_reason_text"),
+            "last_post_conformance_remediation_message": latest_traceability.get(
+                "post_conformance_remediation_message"
+            ),
             "expected_workflow_outputs": latest_traceability.get("expected_workflow_outputs")
             or list(_DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS),
             "last_deploy_evidence_contract_status": latest_traceability.get("deploy_evidence_contract_status"),
@@ -10801,6 +10912,58 @@ def _derive_post_conformance_reason_text(
     if normalized_stage == _POST_CONFORMANCE_STAGE_DEPLOY_SUCCEEDED:
         return "Deploy succeeded with explicit live URL evidence."
     return None
+
+
+def _derive_post_conformance_remediation_message(
+    *,
+    post_conformance_stage: object,
+) -> str | None:
+    normalized_stage = _normalize_post_conformance_stage(post_conformance_stage)
+    if normalized_stage == _POST_CONFORMANCE_STAGE_WORKFLOW_CONFORMANCE_FAILED:
+        return "The repo workflow is not deploy-capable yet. Republish if managed; manually fix if custom."
+    if normalized_stage == _POST_CONFORMANCE_STAGE_WORKFLOW_DISPATCH_BLOCKED:
+        return "Deploy prerequisites are still blocking dispatch. Review target readiness details."
+    if normalized_stage == _POST_CONFORMANCE_STAGE_WORKFLOW_DISPATCH_ATTEMPTED:
+        return "Dispatch was attempted. Refresh deploy status to confirm workflow run evidence."
+    if normalized_stage == _POST_CONFORMANCE_STAGE_WORKFLOW_DISPATCH_FAILED:
+        return "GitHub rejected the dispatch request. Check repo/workflow/ref access and dispatch support."
+    if normalized_stage == _POST_CONFORMANCE_STAGE_WORKFLOW_DISPATCH_WAITING_FOR_RUN:
+        return "Dispatch succeeded but run evidence is not visible yet. Refresh deploy status."
+    if normalized_stage == _POST_CONFORMANCE_STAGE_WORKFLOW_RUN_FAILED:
+        return "The workflow run failed before deployment completed. Review GitHub Actions logs."
+    if normalized_stage == _POST_CONFORMANCE_STAGE_ROLLOUT_FAILED:
+        return (
+            "The workflow reached rollout but deployment did not become healthy. "
+            "Review kubectl rollout output and GKE workload state."
+        )
+    if normalized_stage == _POST_CONFORMANCE_STAGE_LIVE_URL_EVIDENCE_MISSING:
+        return (
+            "Deployment may have completed, but no live URL evidence was captured. "
+            "Confirm workflow outputs and deployment result reporting."
+        )
+    if normalized_stage == _POST_CONFORMANCE_STAGE_DEPLOY_SUCCEEDED:
+        return "Deployment completed and live URL evidence was captured."
+    return None
+
+
+def _derive_workflow_remediation_outcome(
+    *,
+    remediation_attempted: bool,
+    managed_workflow_outcome: object,
+    write_failed: bool,
+) -> str:
+    if not remediation_attempted:
+        return _WORKFLOW_REMEDIATION_OUTCOME_NOT_ATTEMPTED
+    if write_failed:
+        return _WORKFLOW_REMEDIATION_OUTCOME_WRITE_FAILED
+    normalized_managed_outcome = _normalize_string(managed_workflow_outcome, max_length=80)
+    if normalized_managed_outcome in {"managed_workflow_upgraded", "managed_workflow_created"}:
+        return _WORKFLOW_REMEDIATION_OUTCOME_UPGRADED_MANAGED_PLACEHOLDER
+    if normalized_managed_outcome == "managed_workflow_already_current":
+        return _WORKFLOW_REMEDIATION_OUTCOME_ALREADY_CURRENT
+    if normalized_managed_outcome == "managed_workflow_preserved_custom":
+        return _WORKFLOW_REMEDIATION_OUTCOME_PRESERVED_CUSTOM
+    return _WORKFLOW_REMEDIATION_OUTCOME_ALREADY_CURRENT
 
 
 def _derive_deploy_evidence_contract(
