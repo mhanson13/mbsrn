@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import base64
 import json
+import logging
 import re
 import socket
 import time
@@ -12,6 +13,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from app.core.time import utc_now
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -1618,6 +1621,26 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             target=target,
             workflow_file_payload=workflow_file_payload,
         )
+        workflow_management_classification = _classify_workflow_management_state(
+            file_payload=workflow_file_payload,
+            workflow_id=target.workflow_id,
+            marker=_MBSRN_MANAGED_WORKFLOW_MARKER,
+        )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_deploy_workflow_readiness_source",
+                "repo_owner": target.repo_owner,
+                "repo_name": target.repo_name,
+                "requested_ref": target.ref,
+                "workflow_id": target.workflow_id,
+                "workflow_path": workflow_path,
+                "workflow_management_classification": workflow_management_classification,
+                "workflow_conformance_status": workflow_conformance.conformance_status,
+                "workflow_conformance_reasons": list(workflow_conformance.conformance_reasons),
+            },
+            fallback_message="seo_migration_deploy_workflow_readiness_source",
+            level=logging.INFO,
+        )
         normalized_namespace_isolation_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
         policy_expectations = _managed_policy_expectations(normalized_namespace_isolation_defaults)
         expected_manifest_paths = _expected_managed_manifest_paths(normalized_namespace_isolation_defaults)
@@ -1814,6 +1837,26 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             _coerce_string(existing_payload.get("sha")) if isinstance(existing_payload, dict) else None
         )
         should_write = existing_payload is None
+        existing_workflow_classification: str | None = None
+        if allow_managed_placeholder_upgrade:
+            existing_workflow_classification = _classify_workflow_management_state(
+                file_payload=existing_payload,
+                workflow_id=_coerce_string(workflow_id) or "",
+                marker=marker,
+            )
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_publish_workflow_file_inspected",
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": branch,
+                    "workflow_path": path,
+                    "workflow_id": _coerce_string(workflow_id),
+                    "workflow_management_classification": existing_workflow_classification,
+                },
+                fallback_message="seo_migration_publish_workflow_file_inspected",
+                level=logging.INFO,
+            )
         if isinstance(existing_payload, dict) and self._is_managed_file_payload(
             file_payload=existing_payload,
             marker=marker.lower(),
@@ -1830,6 +1873,28 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         ):
             existing_decoded = _decode_workflow_file_content(existing_payload) or ""
             should_write = existing_decoded.strip() != content.strip()
+
+        if allow_managed_placeholder_upgrade:
+            workflow_outcome = _derive_managed_workflow_outcome(
+                existing_payload=existing_payload,
+                classification=existing_workflow_classification,
+                should_write=should_write,
+            )
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_publish_workflow_file_upsert_decision",
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": branch,
+                    "workflow_path": path,
+                    "workflow_id": _coerce_string(workflow_id),
+                    "workflow_management_classification": existing_workflow_classification,
+                    "workflow_upsert_action": "write" if should_write else "preserve",
+                    "managed_workflow_outcome": workflow_outcome,
+                },
+                fallback_message="seo_migration_publish_workflow_file_upsert_decision",
+                level=logging.INFO,
+            )
 
         if not should_write:
             return False, existing_sha
@@ -2747,6 +2812,64 @@ def _is_managed_placeholder_workflow_content(*, workflow_content: str, workflow_
     if has_placeholder_step and has_not_implemented_marker:
         return True
     return False
+
+
+def _classify_workflow_management_state(
+    *,
+    file_payload: dict[str, object] | None,
+    workflow_id: str,
+    marker: str,
+) -> str:
+    if not isinstance(file_payload, dict):
+        return "missing"
+    decoded = _decode_workflow_file_content(file_payload)
+    if not decoded:
+        return "unreadable"
+    lowered = decoded.lower()
+    managed = marker.lower() in lowered
+    placeholder = _is_managed_placeholder_workflow_content(
+        workflow_content=decoded,
+        workflow_id=workflow_id,
+    )
+    if managed and placeholder:
+        return "managed_placeholder"
+    if managed:
+        return "managed_conformant_or_unknown"
+    if placeholder:
+        return "placeholder_non_managed"
+    return "custom_or_non_managed"
+
+
+def _derive_managed_workflow_outcome(
+    *,
+    existing_payload: dict[str, object] | None,
+    classification: str | None,
+    should_write: bool,
+) -> str:
+    if not isinstance(existing_payload, dict):
+        return "managed_workflow_created"
+    normalized_classification = str(classification or "").strip().lower()
+    if normalized_classification in {"managed_placeholder", "managed_conformant_or_unknown"}:
+        if should_write:
+            return "managed_workflow_upgraded"
+        return "managed_workflow_already_current"
+    return "managed_workflow_preserved_custom"
+
+
+def _emit_structured_publisher_log(
+    *,
+    payload: dict[str, object],
+    fallback_message: str,
+    level: int = logging.INFO,
+) -> None:
+    if not isinstance(payload, dict):
+        _LOGGER.log(level, fallback_message)
+        return
+    try:
+        message = json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str)
+    except TypeError:
+        message = fallback_message
+    _LOGGER.log(level, message)
 
 
 def _decode_workflow_file_content(workflow_file_payload: dict[str, object] | None) -> str | None:

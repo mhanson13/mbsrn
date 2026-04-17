@@ -3001,6 +3001,10 @@ def test_deploy_does_not_treat_request_inputs_as_confirmed_live_url(db_session) 
     assert deploy_result.result.get("workflow_run_found") is False
     assert deploy_result.result.get("dispatch_verification_state") == "unverified_dispatch_no_run_observed"
     assert deploy_result.result.get("post_dispatch_state") == "dispatch_unverified_no_run"
+    assert deploy_result.result.get("post_conformance_stage") == "workflow_dispatch_succeeded_waiting_for_run"
+    assert deploy_result.result.get("post_conformance_reason_text") == (
+        "Workflow dispatch succeeded but run evidence is still pending."
+    )
     assert deploy_result.result.get("deploy_evidence_contract_status") == "evidence_pending"
     assert deploy_result.result.get("deploy_evidence_contract_reasons") == ["dispatch_unverified_no_run"]
 
@@ -3072,6 +3076,10 @@ def test_deploy_records_run_failure_without_live_url_confirmation(db_session) ->
         "Deployment rollout verification failed or timed out in the deploy workflow run."
     )
     assert deploy_result.result.get("post_dispatch_state") == "workflow_run_failed"
+    assert deploy_result.result.get("post_conformance_stage") == "rollout_failed"
+    assert deploy_result.result.get("post_conformance_reason_text") == (
+        "Deployment rollout verification failed or timed out in the deploy workflow run."
+    )
     assert (
         deploy_result.result.get("deploy_evidence_contract_status") == "workflow_run_failed_without_explicit_evidence"
     )
@@ -3092,6 +3100,10 @@ def test_deploy_records_run_failure_without_live_url_confirmation(db_session) ->
         "Deployment rollout verification failed or timed out in the deploy workflow run."
     )
     assert deploy_readiness.get("last_post_dispatch_state") == "workflow_run_failed"
+    assert deploy_readiness.get("last_post_conformance_stage") == "rollout_failed"
+    assert deploy_readiness.get("last_post_conformance_reason_text") == (
+        "Deployment rollout verification failed or timed out in the deploy workflow run."
+    )
     assert (
         deploy_readiness.get("last_deploy_evidence_contract_status") == "workflow_run_failed_without_explicit_evidence"
     )
@@ -3146,6 +3158,10 @@ def test_deploy_completed_without_explicit_live_url_evidence_is_advisory(db_sess
     assert deploy_result.result.get("workflow_run_conclusion") == "success"
     assert deploy_result.result.get("resolved_live_url") is None
     assert deploy_result.result.get("post_dispatch_state") == "workflow_run_succeeded_without_live_url"
+    assert deploy_result.result.get("post_conformance_stage") == "live_url_evidence_missing"
+    assert deploy_result.result.get("post_conformance_reason_text") == (
+        "Workflow run completed without resolved_live_url evidence."
+    )
     assert deploy_result.result.get("deploy_evidence_contract_status") == "workflow_succeeded_without_explicit_evidence"
     assert deploy_result.result.get("workflow_contract_advisory") == (
         "Workflow run completed but did not emit explicit live URL evidence."
@@ -3205,6 +3221,10 @@ def test_deploy_placeholder_workflow_is_blocked_as_not_production_ready(db_sessi
     assert deploy_readiness.get("last_failure_reason") == "workflow_not_production_ready"
     assert deploy_readiness.get("last_failure_stage") == "workflow_lookup"
     assert deploy_readiness.get("workflow_conformance_status") == "workflow_placeholder_detected"
+    assert deploy_readiness.get("last_post_conformance_stage") == "workflow_conformance_failed"
+    assert deploy_readiness.get("last_post_conformance_reason_text") == (
+        "Workflow conformance validation failed before dispatch."
+    )
     assert deploy_readiness.get("last_deploy_evidence_contract_status") == "workflow_placeholder_advisory"
 
 
@@ -3635,6 +3655,70 @@ def test_publish_provisions_missing_deploy_workflow_once(db_session, caplog) -> 
     assert any('"status": "created"' in record.msg for record in provisioning_logs)
     assert any('"status": "verified"' in record.msg for record in provisioning_logs)
     assert any('"remediation_mode": "bootstrap"' in record.msg for record in provisioning_logs)
+
+
+def test_publish_workflow_resolution_aligns_with_deploy_candidate_precedence(db_session, caplog) -> None:
+    site_specific_workflow_id = "deploy-tnmfire-www-prod.yml"
+    site_specific_workflow_path = f".github/workflows/{site_specific_workflow_id}"
+    publisher = _RecordingGitHubPublisher(
+        existing_workflow=False,
+        available_workflow_paths={site_specific_workflow_path, ".github/workflows/deploy-www-prod.yml"},
+        non_production_ready_workflow_paths={site_specific_workflow_path},
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert result.result.get("deploy_workflow_id") == site_specific_workflow_id
+    assert result.result.get("deploy_workflow_path") == site_specific_workflow_path
+    assert len(publisher.workflow_provision_calls) == 1
+    workflow_call = publisher.workflow_provision_calls[0]
+    assert workflow_call[:4] == (
+        "acme",
+        "tnmfire-site",
+        "main",
+        site_specific_workflow_id,
+    )
+    resolution_logs = [
+        record
+        for record in caplog.records
+        if isinstance(record.msg, str) and '"event": "seo_migration_publish_workflow_resolution"' in record.msg
+    ]
+    assert resolution_logs
+    assert f'"workflow_path": "{site_specific_workflow_path}"' in resolution_logs[-1].msg
+    assert '"resolved_workflow_source": "site_specific_workflow"' in resolution_logs[-1].msg
 
 
 def test_publish_does_not_overwrite_existing_deploy_workflow(db_session, caplog) -> None:
@@ -5015,6 +5099,19 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
     assert preflight_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_id"
     assert preflight_payloads[-1].get("workflow_conformance_checked") is True
     assert preflight_payloads[-1].get("workflow_conformance_status") == "conformant"
+    alignment_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_workflow_candidate_alignment"
+    ]
+    assert alignment_payloads
+    assert alignment_payloads[-1].get("publish_resolved_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert alignment_payloads[-1].get("readiness_resolved_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert alignment_payloads[-1].get("publish_resolved_ref") == "main"
+    assert alignment_payloads[-1].get("readiness_resolved_ref") == "main"
+    assert alignment_payloads[-1].get("workflow_candidate_alignment_exact") is True
+    assert alignment_payloads[-1].get("publish_history_workflow_path") == ".github/workflows/deploy-www-prod.yml"
 
 
 def test_deploy_keeps_requested_workflow_identifier_when_history_workflow_path_missing(db_session) -> None:
@@ -6337,6 +6434,9 @@ def test_deploy_logs_distinguish_trigger_support_from_dispatch_service_availabil
         and payload.get("target", {}).get("dispatch_service_availability") is False
         and payload.get("target", {}).get("dispatch_service_reason_code") == "runtime_unavailable"
         and payload.get("target", {}).get("dispatch_result_stage") == "workflow_dispatch"
+        and payload.get("target", {}).get("post_conformance_stage") == "workflow_dispatch_failed"
+        and payload.get("target", {}).get("post_conformance_reason_text")
+        == "GitHub workflow dispatch rejected by API."
         and payload.get("target", {}).get("failure_reason_code") == "workflow_dispatch_not_supported"
         and isinstance(payload.get("target", {}).get("deploy_trace_id"), str)
         and payload.get("target", {}).get("deploy_trace_id")

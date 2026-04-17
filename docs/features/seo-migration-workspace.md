@@ -745,6 +745,8 @@ Publish behavior:
   - dispatch trigger: `on.workflow_dispatch`
   - real deploy steps: GCP auth, GKE credentials, `kubectl apply -f k8s/`, rollout verification, ingress-based URL resolution
   - explicit evidence outputs: `resolved_live_url` (preferred), plus `live_url` and `deployed_url`
+- publish-time workflow provisioning now resolves workflow identity using the same precedence used by deploy dispatch candidate selection (`site_specific_workflow` → `publish_history_workflow` → workspace/default fallback) before writing.
+- deploy readiness/dispatch then validates the same resolved workflow file path on the same resolved ref.
 
 ### GitHub Publish Configuration (Admin)
 Migration publish now depends on an admin-managed GitHub target baseline:
@@ -1048,12 +1050,25 @@ Post-dispatch evidence fields are now explicitly tracked so transport acceptance
 - `workflow_run_found`
 - `workflow_job_failure_detected`
 - `post_dispatch_state` (for example `dispatch_not_attempted`, `dispatch_accepted_no_run`, `dispatch_unverified_no_run`, `workflow_run_pending`, `workflow_run_in_progress`, `workflow_run_failed`, `workflow_run_succeeded_without_live_url`, `workflow_run_succeeded_with_live_url`)
+- `post_conformance_stage` (normalized post-conformance stage classification)
+- `post_conformance_reason_text` (operator-safe explanation for the normalized stage)
 
 This keeps trigger-level and service-level readiness distinct:
 - workflow trigger support: `workflow_dispatch_supported`, `workflow_trigger_types`
 - workflow conformance support: `workflow_conformance_checked`, `workflow_conformance_status`, `workflow_conformance_reasons`
 - deployment-side service/function availability: `dispatch_service_availability`, `dispatch_service_reason_code`
 - dispatch outcome evidence: `dispatch_attempted`, `dispatch_result_stage`, `workflow_run_id`
+
+Post-conformance stage values are normalized and additive (existing structured reason codes/stages remain authoritative):
+- `workflow_conformance_failed`
+- `workflow_dispatch_blocked`
+- `workflow_dispatch_attempted`
+- `workflow_dispatch_failed`
+- `workflow_dispatch_succeeded_waiting_for_run`
+- `workflow_run_failed`
+- `rollout_failed`
+- `live_url_evidence_missing`
+- `deploy_succeeded`
 
 Workflow conformance semantics:
 - `conformant`: workflow content is dispatchable and includes managed deploy contract markers
@@ -1300,6 +1315,16 @@ Publish failures:
   - managed placeholder signatures (for example `Placeholder deploy` with `Deploy step not yet implemented`, `provisioned in mode`, or `customize before production rollout`) are auto-upgraded during publish provisioning
   - unknown custom workflows are preserved and may stay non-production-ready until replaced intentionally
   - remediation for older repos with scaffold workflows: run a non-dry-run publish for an approved artifact to trigger managed workflow verification/upgrade; if workflow remains non-production-ready and is custom/non-managed, replace it intentionally with a deploy-capable workflow contract
+  - confirm publish/readiness path/ref alignment in logs:
+    - `seo_migration_publish_workflow_resolution` (`workflow_id`, `workflow_path`, `ref`, `resolved_workflow_source`)
+    - `seo_migration_publish_workflow_file_inspected` / `..._upsert_decision` (managed-vs-custom classification and write/preserve decision)
+    - `seo_migration_deploy_workflow_readiness_source` (`workflow_path`, `requested_ref`, conformance status/reasons)
+    - `seo_migration_workflow_candidate_alignment` (`publish_resolved_*` vs `readiness_resolved_*`, with `workflow_candidate_alignment_exact=true` expected after successful republish)
+  - managed workflow provisioning outcomes:
+    - `managed_workflow_created`
+    - `managed_workflow_upgraded`
+    - `managed_workflow_already_current`
+    - `managed_workflow_preserved_custom`
 
 Deploy failures:
 - verify publish completed for selected artifact

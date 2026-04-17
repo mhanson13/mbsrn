@@ -112,7 +112,10 @@ def _managed_workflow_verify_response(
             "    runs-on: ubuntu-latest\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
+            "      - uses: google-github-actions/get-gke-credentials@v2\n"
+            "      - run: gcloud container clusters get-credentials mbsrn-prod --region us-central1\n"
             "      - run: kubectl apply -f k8s/\n"
+            "      - run: kubectl rollout status deployment/mbsrn-www -n mbsrn\n"
         )
     )
     return _FakeHTTPResponse(
@@ -1502,6 +1505,92 @@ def test_ensure_deploy_workflow_uses_production_template_for_unknown_mode(monkey
     assert "resolved_live_url" in rendered_workflow
     assert "placeholder deploy" not in rendered_workflow.lower()
     assert "provisioned in mode" not in rendered_workflow.lower()
+
+
+def test_publish_upgrade_and_readiness_validate_same_workflow_path_and_ref(monkeypatch, caplog) -> None:
+    calls: list[tuple[str, str]] = []
+    placeholder_workflow_content = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "# mbsrn managed deploy placeholder\n"
+            "name: Deploy Site\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+              "      - name: Placeholder deploy\n"
+            '        run: echo "Deploy step not yet implemented"\n'
+        )
+    )
+    queue = _managed_provisioning_responses()
+    queue[2] = _FakeHTTPResponse(
+        status=200,
+        body=json.dumps({"sha": "old-workflow-sha", "encoding": "base64", "content": placeholder_workflow_content}),
+    )
+    queue.extend(
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _managed_workflow_verify_response(sha="workflow-readiness"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
+            _managed_file_verify_response(sha="manifest-r-1", marker="mbsrn-managed-manifest:site_repo_template_v1"),
+            _managed_file_verify_response(sha="manifest-r-2", marker="mbsrn-managed-manifest:site_repo_template_v1"),
+            _managed_file_verify_response(sha="manifest-r-3", marker="mbsrn-managed-manifest:site_repo_template_v1"),
+            _managed_file_verify_response(sha="manifest-r-4", marker="mbsrn-managed-manifest:site_repo_template_v1"),
+        ]
+    )
+    _install_urlopen_stub(monkeypatch, queue, calls)
+    caplog.set_level("INFO", logger="app.integrations.seo_migration_github_publisher")
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    provision_result = publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+    )
+    assert provision_result.workflow_path == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    readiness_result = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+    assert readiness_result.workflow_path == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert readiness_result.requested_ref == "main"
+    assert readiness_result.resolved_ref == "main"
+    assert readiness_result.workflow_conformance_status == "conformant"
+    assert readiness_result.workflow_dispatch_ready is True
+    assert any(
+        method == "PUT" and url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+        for method, url in calls
+    )
+    assert any(
+        method == "GET" and url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main")
+        for method, url in calls
+    )
+    assert any(
+        method == "GET"
+        and url.endswith("/actions/workflows/deploy-tnmfire-www-prod.yml")
+        for method, url in calls
+    )
+    upsert_decision_logs = [
+        record
+        for record in caplog.records
+        if isinstance(record.msg, str) and '"event": "seo_migration_publish_workflow_file_upsert_decision"' in record.msg
+    ]
+    assert upsert_decision_logs
+    assert '"managed_workflow_outcome": "managed_workflow_upgraded"' in upsert_decision_logs[-1].msg
 
 
 def test_ensure_deploy_workflow_preserves_unknown_custom_workflow(monkeypatch) -> None:

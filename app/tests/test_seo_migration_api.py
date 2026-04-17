@@ -607,6 +607,8 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert "workflow_run_found" in deploy_result
     assert "workflow_job_failure_detected" in deploy_result
     assert "post_dispatch_state" in deploy_result
+    assert "post_conformance_stage" in deploy_result
+    assert "post_conformance_reason_text" in deploy_result
     assert "expected_workflow_outputs" in deploy_result
     assert "deploy_evidence_contract_status" in deploy_result
     assert "deploy_evidence_contract_reasons" in deploy_result
@@ -1283,6 +1285,8 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_workflow_run_failure_step" in payload["deploy_readiness"]
     assert "last_workflow_run_failure_hint" in payload["deploy_readiness"]
     assert "last_post_dispatch_state" in payload["deploy_readiness"]
+    assert "last_post_conformance_stage" in payload["deploy_readiness"]
+    assert "last_post_conformance_reason_text" in payload["deploy_readiness"]
     assert "expected_workflow_outputs" in payload["deploy_readiness"]
     assert "last_deploy_evidence_contract_status" in payload["deploy_readiness"]
     assert "last_deploy_evidence_contract_reasons" in payload["deploy_readiness"]

@@ -335,6 +335,11 @@ When migration deploy fails after publish, query these structured events:
 - `jsonPayload.event="seo_migration_control_plane_action"` with `jsonPayload.action="deploy"`
 - `jsonPayload.event="seo_migration_deploy_dispatch_failed"`
 - `jsonPayload.event="seo_migration_deploy_workflow_resolution"` (emitted when deploy uses publish-history workflow identity)
+- `jsonPayload.event="seo_migration_publish_workflow_resolution"` (publish-time resolved workflow candidate used for provisioning)
+- `jsonPayload.event="seo_migration_publish_workflow_file_inspected"` (publish-time managed/custom classification for the resolved workflow file)
+- `jsonPayload.event="seo_migration_publish_workflow_file_upsert_decision"` (publish-time write/preserve decision for the resolved workflow file)
+- `jsonPayload.event="seo_migration_deploy_workflow_readiness_source"` (deploy-time conformance classification for the workflow file being validated)
+- `jsonPayload.event="seo_migration_workflow_candidate_alignment"` (explicit publish-candidate vs readiness-candidate id/path/ref match signal)
 - `jsonPayload.event="seo_migration_target_readiness_check"` (repo/ref/workflow dispatch preflight)
 - `jsonPayload.event="seo_migration_workflow_provisioning"` (publish-time workflow bootstrap/verification)
 - `jsonPayload.event="seo_migration_deploy_dispatch_accepted"`
@@ -397,6 +402,7 @@ Key non-secret fields:
   - `managed_namespace_policies_aligned`
 - `workflow_run_lookup_attempted`, `workflow_run_found`, `workflow_job_failure_detected`
 - `post_dispatch_state`
+- `post_conformance_stage`, `post_conformance_reason_text`
 - `expected_workflow_outputs`
 - `deploy_evidence_contract_status`, `deploy_evidence_contract_reasons`
 - `workflow_contract_advisory`
@@ -422,6 +428,16 @@ Key non-secret fields:
   - managed placeholder workflow signatures are eligible for publish-time upgrade to the current production template
   - upgrade signatures include scaffold patterns such as `Placeholder deploy` + `Deploy step not yet implemented`, `provisioned in mode`, or `customize before production rollout`
   - unknown custom/non-managed workflows are preserved and surfaced via conformance diagnostics rather than overwritten
+  - `managed_workflow_outcome` emitted on upsert decision:
+    - `managed_workflow_created`
+    - `managed_workflow_upgraded`
+    - `managed_workflow_already_current`
+    - `managed_workflow_preserved_custom`
+  - publish/readiness path/ref alignment check:
+    - compare `seo_migration_publish_workflow_resolution` (`workflow_id`, `workflow_path`, `ref`, `resolved_workflow_source`)
+    - with `seo_migration_deploy_workflow_readiness_source` (`workflow_id`, `workflow_path`, `requested_ref`)
+    - and `seo_migration_target_readiness_check` (`workflow_identifier_requested`, `workflow_identifier_used`, `requested_ref`, `resolved_ref`)
+    - and confirm `seo_migration_workflow_candidate_alignment.workflow_candidate_alignment_exact=true`
 
 Managed workflow contract quick check:
 - `workflow_dispatch` trigger present
@@ -476,6 +492,19 @@ Post-dispatch state interpretation:
 - `post_dispatch_state=workflow_run_failed` means run evidence exists with non-success terminal conclusion.
 - `post_dispatch_state=workflow_run_succeeded_without_live_url` means run completed successfully but no explicit live URL evidence has been captured.
 - `post_dispatch_state=workflow_run_succeeded_with_live_url` means explicit live URL evidence is present.
+
+Post-conformance stage interpretation (`post_conformance_stage`):
+- `workflow_conformance_failed`: conformance checks failed before dispatch.
+- `workflow_dispatch_blocked`: dispatch did not proceed past readiness/preflight checks.
+- `workflow_dispatch_attempted`: dispatch attempt was issued and run evidence is not yet confirmed.
+- `workflow_dispatch_failed`: GitHub dispatch API rejected the request.
+- `workflow_dispatch_succeeded_waiting_for_run`: dispatch accepted, run evidence pending/not terminal yet.
+- `workflow_run_failed`: run reached terminal failure outside rollout verification.
+- `rollout_failed`: run reached rollout verification but rollout failed/timed out.
+- `live_url_evidence_missing`: run completed, but no explicit `resolved_live_url` evidence.
+- `deploy_succeeded`: explicit live URL evidence captured.
+
+Use `post_conformance_reason_text` as the concise operator-safe explanation for the current stage.
 
 Duplicate deploy blocking interpretation:
 - `failure_category=duplicate_request` on deploy means a prior active in-flight deploy attempt for the same artifact+target+inputs was detected.
@@ -642,9 +671,10 @@ Use the latest `deploy_trace_id` from the workspace traceability grid and evalua
    - Interpretation:
    - Run evidence exists, but no explicit URL evidence has been captured yet.
    - Contract reminder:
-     - `expected_publish_url` is guidance only.
-     - `deploy_evidence_contract_status` and `workflow_contract_advisory` explain whether run success still lacks required explicit evidence.
-     - compare workflow output payload keys against `expected_workflow_outputs`.
+      - `expected_publish_url` is guidance only.
+      - `deploy_evidence_contract_status` and `workflow_contract_advisory` explain whether run success still lacks required explicit evidence.
+      - `post_conformance_stage` should read `live_url_evidence_missing` until explicit evidence is captured.
+      - compare workflow output payload keys against `expected_workflow_outputs`.
    - Confirmed live URL appears only when explicit evidence sets `resolved_live_url` with `url_source=workflow_output` or `url_source=deploy_result`.
 
 Explicit evidence troubleshooting quick guide:
