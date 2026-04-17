@@ -96,6 +96,37 @@ def _managed_file_verify_response(*, sha: str, marker: str) -> _FakeHTTPResponse
     )
 
 
+def _managed_workflow_verify_response(
+    *,
+    sha: str,
+    workflow_id: str = "deploy-tnmfire-www-prod.yml",
+) -> _FakeHTTPResponse:
+    workflow_content = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            f"name: MBSRN Deploy {workflow_id}\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - run: kubectl apply -f k8s/\n"
+        )
+    )
+    return _FakeHTTPResponse(
+        status=200,
+        body=json.dumps(
+            {
+                "sha": sha,
+                "encoding": "base64",
+                "content": workflow_content,
+            }
+        ),
+    )
+
+
 def _managed_provisioning_responses(*, missing_verify_path: str | None = None) -> list[object]:
     responses: list[object] = [
         _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
@@ -126,12 +157,25 @@ def _managed_provisioning_responses(*, missing_verify_path: str | None = None) -
                 )
             )
         else:
-            marker = (
-                "mbsrn-managed-template:site_repo_template_v1"
-                if managed_path.endswith(".yml")
-                else "mbsrn-managed-manifest:site_repo_template_v1"
+            if managed_path.endswith(".yml"):
+                responses.append(_managed_workflow_verify_response(sha=f"verified-{index}"))
+            else:
+                responses.append(
+                    _managed_file_verify_response(
+                        sha=f"verified-{index}",
+                        marker="mbsrn-managed-manifest:site_repo_template_v1",
+                    )
+                )
+    if missing_verify_path == ".github/workflows/deploy-tnmfire-www-prod.yml":
+        responses.append(
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
+                status_code=404,
+                message="Not Found",
             )
-            responses.append(_managed_file_verify_response(sha=f"verified-{index}", marker=marker))
+        )
+    else:
+        responses.append(_managed_workflow_verify_response(sha="verified-final-workflow"))
     return responses
 
 
@@ -162,12 +206,25 @@ def _managed_provisioning_responses_with_paths(
                 )
             )
         else:
-            marker = (
-                "mbsrn-managed-template:site_repo_template_v1"
-                if managed_path.endswith(".yml")
-                else "mbsrn-managed-manifest:site_repo_template_v1"
+            if managed_path.endswith(".yml"):
+                responses.append(_managed_workflow_verify_response(sha=f"verified-{index}"))
+            else:
+                responses.append(
+                    _managed_file_verify_response(
+                        sha=f"verified-{index}",
+                        marker="mbsrn-managed-manifest:site_repo_template_v1",
+                    )
+                )
+    if missing_verify_path == ".github/workflows/deploy-tnmfire-www-prod.yml":
+        responses.append(
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
+                status_code=404,
+                message="Not Found",
             )
-            responses.append(_managed_file_verify_response(sha=f"verified-{index}", marker=marker))
+        )
+    else:
+        responses.append(_managed_workflow_verify_response(sha="verified-final-workflow"))
     return responses
 
 
@@ -1169,7 +1226,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert result.managed_network_policy_expected is False
     assert result.managed_network_policy_present is None
     assert result.managed_namespace_policies_aligned is True
-    assert len(calls) == 17
+    assert len(calls) == 18
     assert calls[0][1].endswith("/repos/mhanson13/tnmfire")
     assert calls[1][1].endswith("/repos/mhanson13/tnmfire/branches/main")
     assert calls[2][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main")
@@ -1238,7 +1295,273 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "echo \"resolved_live_url=$live_url\"" in workflow_yaml
     assert "echo \"live_url=$live_url\"" in workflow_yaml
     assert "echo \"deployed_url=$live_url\"" in workflow_yaml
-    assert len(calls) == 17
+    assert len(calls) == 18
+
+
+def test_ensure_deploy_workflow_upgrades_platform_managed_placeholder_workflow(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    captured_workflow_put_payload: dict[str, object] = {}
+    placeholder_workflow_content = _encode_workflow_yaml(
+        (
+            "name: Deploy Site\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Placeholder deploy\n"
+            '        run: echo "Deploy workflow (deploy-tnmfire-www-prod.yml) provisioned; customize before production rollout."\n'
+        )
+    )
+    custom_manifest_content = _encode_workflow_yaml("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: placeholder\n")
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _FakeHTTPResponse(status=200, body="{}"),
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps({"sha": "old-workflow-sha", "encoding": "base64", "content": placeholder_workflow_content}),
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
+        _managed_workflow_verify_response(sha="workflow-verified-upsert"),
+    ]
+    for index in range(1, 5):
+        queue.append(
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": f"manifest-custom-{index}",
+                        "encoding": "base64",
+                        "content": custom_manifest_content,
+                    }
+                ),
+            )
+        )
+    queue.append(_managed_workflow_verify_response(sha="workflow-verified-final"))
+
+    def _stub(request, timeout=None):
+        del timeout
+        calls.append((request.get_method(), request.full_url))
+        if (
+            request.get_method() == "PUT"
+            and request.full_url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+            and request.data
+        ):
+            captured_workflow_put_payload.update(json.loads(request.data.decode("utf-8")))
+        next_item = queue.pop(0)
+        if isinstance(next_item, Exception):
+            raise next_item
+        return next_item
+
+    monkeypatch.setattr(urllib.request, "urlopen", _stub)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+    )
+    assert result.provisioned is True
+    assert result.workflow_path == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert any(
+        method == "PUT" and url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+        for method, url in calls
+    )
+    encoded_content = str(captured_workflow_put_payload.get("content") or "")
+    assert encoded_content
+    upgraded_workflow = base64.b64decode(encoded_content).decode("utf-8")
+    assert "Authenticate to GCP" in upgraded_workflow
+    assert "Get GKE credentials" in upgraded_workflow
+    assert "Apply managed manifests" in upgraded_workflow
+    assert "Resolve live URL from ingress status" in upgraded_workflow
+    assert "customize before production rollout" not in upgraded_workflow.lower()
+    assert "placeholder deploy" not in upgraded_workflow.lower()
+
+
+def test_ensure_deploy_workflow_upgrades_legacy_platform_placeholder_workflow(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    captured_workflow_put_payload: dict[str, object] = {}
+    placeholder_workflow_content = _encode_workflow_yaml(
+        (
+            "name: Deploy Site\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Placeholder deploy\n"
+            '        run: echo "Deploy step not yet implemented"\n'
+        )
+    )
+    custom_manifest_content = _encode_workflow_yaml("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: placeholder\n")
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _FakeHTTPResponse(status=200, body="{}"),
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps({"sha": "old-workflow-sha", "encoding": "base64", "content": placeholder_workflow_content}),
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
+        _managed_workflow_verify_response(sha="workflow-verified-upsert"),
+    ]
+    for index in range(1, 5):
+        queue.append(
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": f"manifest-custom-{index}",
+                        "encoding": "base64",
+                        "content": custom_manifest_content,
+                    }
+                ),
+            )
+        )
+    queue.append(_managed_workflow_verify_response(sha="workflow-verified-final"))
+
+    def _stub(request, timeout=None):
+        del timeout
+        calls.append((request.get_method(), request.full_url))
+        if (
+            request.get_method() == "PUT"
+            and request.full_url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+            and request.data
+        ):
+            captured_workflow_put_payload.update(json.loads(request.data.decode("utf-8")))
+        next_item = queue.pop(0)
+        if isinstance(next_item, Exception):
+            raise next_item
+        return next_item
+
+    monkeypatch.setattr(urllib.request, "urlopen", _stub)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+    )
+    assert result.provisioned is True
+    assert result.workflow_path == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert any(
+        method == "PUT" and url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+        for method, url in calls
+    )
+    encoded_content = str(captured_workflow_put_payload.get("content") or "")
+    assert encoded_content
+    upgraded_workflow = base64.b64decode(encoded_content).decode("utf-8")
+    assert "Authenticate to GCP" in upgraded_workflow
+    assert "Get GKE credentials" in upgraded_workflow
+    assert "Apply managed manifests" in upgraded_workflow
+    assert "Resolve live URL from ingress status" in upgraded_workflow
+    assert "deploy step not yet implemented" not in upgraded_workflow.lower()
+    assert "placeholder deploy" not in upgraded_workflow.lower()
+
+
+def test_ensure_deploy_workflow_uses_production_template_for_unknown_mode(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    captured_workflow_put_payload: dict[str, object] = {}
+    queue = _managed_provisioning_responses()
+
+    def _stub(request, timeout=None):
+        del timeout
+        calls.append((request.get_method(), request.full_url))
+        if (
+            request.get_method() == "PUT"
+            and request.full_url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+            and request.data
+        ):
+            captured_workflow_put_payload.update(json.loads(request.data.decode("utf-8")))
+        next_item = queue.pop(0)
+        if isinstance(next_item, Exception):
+            raise next_item
+        return next_item
+
+    monkeypatch.setattr(urllib.request, "urlopen", _stub)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+        deploy_workflow_mode="legacy_scaffold_v0",
+    )
+    assert result.provisioned is True
+    encoded_content = str(captured_workflow_put_payload.get("content") or "")
+    assert encoded_content
+    rendered_workflow = base64.b64decode(encoded_content).decode("utf-8")
+    assert "workflow_dispatch" in rendered_workflow
+    assert "google-github-actions/auth@v2" in rendered_workflow
+    assert "google-github-actions/get-gke-credentials@v2" in rendered_workflow
+    assert "kubectl apply -f k8s/" in rendered_workflow
+    assert "resolved_live_url" in rendered_workflow
+    assert "placeholder deploy" not in rendered_workflow.lower()
+    assert "provisioned in mode" not in rendered_workflow.lower()
+
+
+def test_ensure_deploy_workflow_preserves_unknown_custom_workflow(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    custom_workflow_content = _encode_workflow_yaml(
+        (
+            "name: Custom Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Custom step\n"
+            "        run: echo custom deploy\n"
+        )
+    )
+    custom_manifest_content = _encode_workflow_yaml("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: custom\n")
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _FakeHTTPResponse(status=200, body="{}"),
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps({"sha": "custom-workflow-sha", "encoding": "base64", "content": custom_workflow_content}),
+        ),
+    ]
+    for index in range(1, 5):
+        queue.append(
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": f"manifest-custom-{index}",
+                        "encoding": "base64",
+                        "content": custom_manifest_content,
+                    }
+                ),
+            )
+        )
+    queue.append(
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps({"sha": "custom-workflow-sha", "encoding": "base64", "content": custom_workflow_content}),
+        )
+    )
+
+    _install_urlopen_stub(monkeypatch, queue, calls)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+    )
+    assert result.provisioned is False
+    assert not any(
+        method == "PUT" and url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+        for method, url in calls
+    )
 
 
 def test_ensure_deploy_workflow_includes_optional_namespace_policy_manifests_when_enabled(monkeypatch) -> None:
@@ -1292,6 +1615,85 @@ def test_ensure_deploy_workflow_includes_optional_namespace_policy_manifests_whe
     assert any(call[1].endswith("/contents/k8s/resourcequota.yaml?ref=main") for call in calls)
     assert any(call[1].endswith("/contents/k8s/limitrange.yaml?ref=main") for call in calls)
     assert any(call[1].endswith("/contents/k8s/networkpolicy.yaml?ref=main") for call in calls)
+
+
+def test_ensure_deploy_workflow_fails_when_upgraded_workflow_is_not_conformant(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    placeholder_workflow_content = _encode_workflow_yaml(
+        (
+            "name: Deploy Site\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Placeholder deploy\n"
+            '        run: echo "Deploy workflow (deploy-tnmfire-www-prod.yml) provisioned; customize before production rollout."\n'
+        )
+    )
+    non_conformant_workflow_content = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Verify only\n"
+            "        run: echo no deploy markers\n"
+        )
+    )
+    custom_manifest_content = _encode_workflow_yaml("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: placeholder\n")
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _FakeHTTPResponse(status=200, body="{}"),
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps({"sha": "old-workflow-sha", "encoding": "base64", "content": placeholder_workflow_content}),
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
+        _managed_workflow_verify_response(sha="workflow-verified-upsert"),
+    ]
+    for index in range(1, 5):
+        queue.append(
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": f"manifest-custom-{index}",
+                        "encoding": "base64",
+                        "content": custom_manifest_content,
+                    }
+                ),
+            )
+        )
+    queue.append(
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    "sha": "workflow-verified-final",
+                    "encoding": "base64",
+                    "content": non_conformant_workflow_content,
+                }
+            ),
+        )
+    )
+    _install_urlopen_stub(monkeypatch, queue, calls)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+        )
+    assert exc_info.value.code == "workflow_provisioning_failed"
+    assert exc_info.value.stage == "workflow_provisioning"
 
 
 def test_ensure_deploy_workflow_fails_when_post_write_verification_missing(monkeypatch) -> None:

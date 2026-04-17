@@ -736,9 +736,15 @@ Publish behavior:
 - if artifact content is already published and workflow is missing, a follow-up publish can repair workflow bootstrap without re-writing artifact files (`duplicate_publish_repair`)
 - retry after a failed publish is supported and recorded as a new history event
 - dry-run publish records history but does not overwrite prior successful publish commit metadata
-- workflow provisioning is idempotent: existing workflow files are never overwritten
-- auto-provisioned workflow uses a minimal `workflow_dispatch` placeholder job and is intended to be customized by platform teams.
-- auto-provisioned placeholder workflows are scaffold-only and now fail deploy readiness as `workflow_not_production_ready` until replaced with a real deploy-capable workflow contract.
+- workflow provisioning is idempotent for deploy-capable managed workflows and preserves unknown custom workflows
+- managed placeholder workflow signatures are auto-upgraded during publish provisioning to the current real production template
+- unknown custom/non-managed workflows are not overwritten and remain visible through conformance diagnostics
+- deploy remains blocked as `workflow_not_production_ready` until a deploy-capable workflow contract is present and verified
+- platform-managed workflow content is generated centrally from `app/integrations/seo_migration_github_publisher.py` (`_render_managed_deploy_workflow_yaml`)
+- minimum managed workflow contract:
+  - dispatch trigger: `on.workflow_dispatch`
+  - real deploy steps: GCP auth, GKE credentials, `kubectl apply -f k8s/`, rollout verification, ingress-based URL resolution
+  - explicit evidence outputs: `resolved_live_url` (preferred), plus `live_url` and `deployed_url`
 
 ### GitHub Publish Configuration (Admin)
 Migration publish now depends on an admin-managed GitHub target baseline:
@@ -1291,6 +1297,9 @@ Publish failures:
   - `event=seo_migration_workflow_provisioning`
   - statuses: `created`, `already_exists`, `verified`, `failed`
   - remediation modes: `bootstrap`, `already_present`, `duplicate_publish_repair`
+  - managed placeholder signatures (for example `Placeholder deploy` with `Deploy step not yet implemented`, `provisioned in mode`, or `customize before production rollout`) are auto-upgraded during publish provisioning
+  - unknown custom workflows are preserved and may stay non-production-ready until replaced intentionally
+  - remediation for older repos with scaffold workflows: run a non-dry-run publish for an approved artifact to trigger managed workflow verification/upgrade; if workflow remains non-production-ready and is custom/non-managed, replace it intentionally with a deploy-capable workflow contract
 
 Deploy failures:
 - verify publish completed for selected artifact

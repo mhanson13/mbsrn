@@ -419,6 +419,15 @@ Key non-secret fields:
   - `remediation_mode` (`bootstrap`, `already_present`, `duplicate_publish_repair`)
   - `workflow_id`, `workflow_path`, `ref`, `repo_owner`, `repo_name`
   - optional `error_code` / `error_message` on failed provisioning
+  - managed placeholder workflow signatures are eligible for publish-time upgrade to the current production template
+  - upgrade signatures include scaffold patterns such as `Placeholder deploy` + `Deploy step not yet implemented`, `provisioned in mode`, or `customize before production rollout`
+  - unknown custom/non-managed workflows are preserved and surfaced via conformance diagnostics rather than overwritten
+
+Managed workflow contract quick check:
+- `workflow_dispatch` trigger present
+- production deploy markers present (`google-github-actions/auth`, `google-github-actions/get-gke-credentials`, `kubectl apply`, `kubectl rollout`)
+- explicit evidence outputs emitted (`resolved_live_url`, `live_url`, `deployed_url`)
+- if missing, deploy remains blocked as `workflow_not_production_ready`
 
 Workflow lookup failure quick triage:
 - when `failure_stage=workflow_lookup`, compare:

@@ -1409,6 +1409,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             marker=_MBSRN_MANAGED_WORKFLOW_MARKER,
             commit_message=f"chore(migration): provision deploy workflow {normalized_workflow_id}",
             dry_run=dry_run,
+            allow_managed_placeholder_upgrade=True,
+            workflow_id=normalized_workflow_id,
         )
         any_file_updated = any_file_updated or workflow_updated
         file_sha_by_path[workflow_path] = workflow_sha
@@ -1440,6 +1442,17 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         limit_range_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH)
         network_policy_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH)
         expected_manifest_shas = [file_sha_by_path.get(path) for path in expected_managed_manifest_paths]
+        workflow_verify_payload = self._fetch_existing_file_payload(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            path=workflow_path,
+        )
+        workflow_verify_trigger_types = _extract_workflow_trigger_types(workflow_verify_payload)
+        workflow_verify_conformance = _evaluate_workflow_conformance(
+            workflow_file_payload=workflow_verify_payload,
+            workflow_trigger_types=workflow_verify_trigger_types,
+        )
         managed_namespace_policies_aligned = (
             True
             if (
@@ -1508,6 +1521,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             or not service_manifest_sha
             or not ingress_manifest_sha
             or not all(bool(item) for item in expected_manifest_shas)
+            or (workflow_updated and not workflow_verify_conformance.is_conformant)
         ):
             raise SEOMigrationGitHubPublisherError(
                 code="workflow_provisioning_failed",
@@ -1760,6 +1774,22 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             return False
         return marker in decoded.lower()
 
+    def _is_managed_placeholder_workflow_payload(
+        self,
+        *,
+        file_payload: dict[str, object] | None,
+        workflow_id: str,
+    ) -> bool:
+        if not isinstance(file_payload, dict):
+            return False
+        decoded = _decode_workflow_file_content(file_payload)
+        if not decoded:
+            return False
+        return _is_managed_placeholder_workflow_content(
+            workflow_content=decoded,
+            workflow_id=workflow_id,
+        )
+
     def _upsert_managed_repo_file(
         self,
         *,
@@ -1771,6 +1801,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         marker: str,
         commit_message: str,
         dry_run: bool,
+        allow_managed_placeholder_upgrade: bool = False,
+        workflow_id: str | None = None,
     ) -> tuple[bool, str | None]:
         existing_payload = self._fetch_existing_file_payload(
             repo_owner=repo_owner,
@@ -1785,6 +1817,16 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         if isinstance(existing_payload, dict) and self._is_managed_file_payload(
             file_payload=existing_payload,
             marker=marker.lower(),
+        ):
+            existing_decoded = _decode_workflow_file_content(existing_payload) or ""
+            should_write = existing_decoded.strip() != content.strip()
+        elif (
+            allow_managed_placeholder_upgrade
+            and isinstance(existing_payload, dict)
+            and self._is_managed_placeholder_workflow_payload(
+                file_payload=existing_payload,
+                workflow_id=_coerce_string(workflow_id) or "",
+            )
         ):
             existing_decoded = _decode_workflow_file_content(existing_payload) or ""
             should_write = existing_decoded.strip() != content.strip()
@@ -2024,6 +2066,7 @@ def _normalize_target_environment_source(value: object) -> str:
 _MBSRN_MANAGED_TEMPLATE_VERSION = "site_repo_template_v1"
 _MBSRN_MANAGED_WORKFLOW_MARKER = f"mbsrn-managed-template:{_MBSRN_MANAGED_TEMPLATE_VERSION}"
 _MBSRN_MANAGED_MANIFEST_MARKER = f"mbsrn-managed-manifest:{_MBSRN_MANAGED_TEMPLATE_VERSION}"
+_MBSRN_MANAGED_TEMPLATE_MARKER_PREFIX = "mbsrn-managed-template:"
 _MBSRN_MANAGED_LABEL = "mbsrn"
 _MBSRN_MANAGED_NAMESPACE_FILE_PATH = "k8s/namespace.yaml"
 _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH = "k8s/deployment.yaml"
@@ -2219,7 +2262,9 @@ def _render_managed_deploy_workflow_yaml(
     site_id: str | None = None,
 ) -> str:
     normalized_workflow_id = str(workflow_id or "").strip() or "deploy-www-prod.yml"
-    normalized_mode = _normalize_deploy_workflow_mode(deploy_workflow_mode)
+    # Keep mode normalization deterministic even though generation currently has
+    # a single production-safe template contract.
+    _ = _normalize_deploy_workflow_mode(deploy_workflow_mode)
     normalized_environment_key = _safe_identifier_fragment(
         target_environment_key,
         fallback="gke-prod",
@@ -2231,112 +2276,98 @@ def _render_managed_deploy_workflow_yaml(
     normalized_namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=normalized_repo_fragment, max_length=63)
     normalized_namespace_source = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     normalized_name = f"MBSRN Deploy {normalized_repo_fragment}"
-    if normalized_mode == "site_repo_template_v1":
-        return (
-            f"# {_MBSRN_MANAGED_WORKFLOW_MARKER}\n"
-            f"name: {normalized_name}\n"
-            "\n"
-            "on:\n"
-            "  workflow_dispatch:\n"
-            "\n"
-            "permissions:\n"
-            "  contents: read\n"
-            "  id-token: write\n"
-            "\n"
-            "jobs:\n"
-            "  deploy:\n"
-            "    runs-on: ubuntu-latest\n"
-            "    outputs:\n"
-            "      live_url: ${{ steps.resolve_live_url.outputs.live_url }}\n"
-            "      resolved_live_url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
-            "      deployed_url: ${{ steps.resolve_live_url.outputs.deployed_url }}\n"
-            "    environment:\n"
-            f"      name: {normalized_environment_key}\n"
-            "      url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
-            "    env:\n"
-            f"      K8S_NAMESPACE: {normalized_namespace}\n"
-            f"      MBSRN_NAMESPACE_SOURCE: {normalized_namespace_source}\n"
-            f"      MBSRN_TARGET_ENVIRONMENT_KEY: {normalized_environment_key}\n"
-            f"      MBSRN_TARGET_ENVIRONMENT_SOURCE: {normalized_environment_source}\n"
-            f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
-            "    steps:\n"
-            "      - name: Checkout repository\n"
-            "        uses: actions/checkout@v4\n"
-            "      - name: Authenticate to GCP\n"
-            "        uses: google-github-actions/auth@v2\n"
-            "        with:\n"
-            "          workload_identity_provider: ${{ secrets.OIDC_WORKLOAD_IDENTITY_PROVIDER }}\n"
-            "          service_account: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}\n"
-            "      - name: Get GKE credentials\n"
-            "        uses: google-github-actions/get-gke-credentials@v2\n"
-            "        with:\n"
-            "          cluster_name: ${{ secrets.KUBERNETES_CLUSTER_NAME }}\n"
-            "          location: ${{ secrets.KUBERNETES_CLUSTER_LOCATION }}\n"
-            "          project_id: ${{ secrets.GCP_PROJECT_ID }}\n"
-            "      - name: Ensure namespace exists\n"
-            "        run: kubectl apply -f k8s/namespace.yaml\n"
-            "      - name: Apply managed manifests\n"
-            "        run: |\n"
-            "          kubectl apply -f k8s/\n"
-            "      - name: Verify rollout\n"
-            "        run: kubectl rollout status deployment/site-web --namespace \"$K8S_NAMESPACE\" --timeout=180s\n"
-            "      - name: Verify service and ingress\n"
-            "        run: |\n"
-            "          kubectl get service site-web --namespace \"$K8S_NAMESPACE\"\n"
-            "          kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"\n"
-            "      - name: Resolve live URL from ingress status\n"
-            "        id: resolve_live_url\n"
-            "        run: |\n"
-            "          set -euo pipefail\n"
-            "          ingress_host=\"\"\n"
-            "          ingress_ip=\"\"\n"
-            "          for _ in $(seq 1 20); do\n"
-            "            ingress_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)\"\n"
-            "            ingress_ip=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)\"\n"
-            "            if [ -n \"$ingress_host\" ] || [ -n \"$ingress_ip\" ]; then\n"
-            "              break\n"
-            "            fi\n"
-            "            sleep 15\n"
-            "          done\n"
-            "          live_url=\"\"\n"
-            "          if [ -n \"$ingress_host\" ]; then\n"
-            "            live_url=\"https://$ingress_host\"\n"
-            "          elif [ -n \"$ingress_ip\" ]; then\n"
-            "            live_url=\"http://$ingress_ip\"\n"
-            "          fi\n"
-            "          if [ -z \"$live_url\" ]; then\n"
-            "            echo \"Unable to resolve live URL from ingress status for namespace $K8S_NAMESPACE.\"\n"
-            "            kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
-            "            exit 1\n"
-            "          fi\n"
-            "          {\n"
-            "            echo \"live_url=$live_url\"\n"
-            "            echo \"resolved_live_url=$live_url\"\n"
-            "            echo \"deployed_url=$live_url\"\n"
-            "          } >> \"$GITHUB_OUTPUT\"\n"
-            "      - name: Emit managed deployment metadata\n"
-            "        run: |\n"
-            f'          echo "MBSRN managed deploy workflow: {normalized_workflow_id}"\n'
-            f'          echo "Repository: {repo_owner}/{repo_name}"\n'
-            f'          echo "Branch: {branch}"\n'
-            f'          echo "Kubernetes namespace: {normalized_namespace}"\n'
-            f'          echo "Namespace source: {normalized_namespace_source}"\n'
-            f'          echo "Target environment key: {normalized_environment_key}"\n'
-            f'          echo "Target environment source: {normalized_environment_source}"\n'
-            f'          echo "Site identity: {normalized_site_fragment}"\n'
-        )
     return (
+        f"# {_MBSRN_MANAGED_WORKFLOW_MARKER}\n"
         f"name: {normalized_name}\n"
         "\n"
         "on:\n"
         "  workflow_dispatch:\n"
         "\n"
+        "permissions:\n"
+        "  contents: read\n"
+        "  id-token: write\n"
+        "\n"
         "jobs:\n"
         "  deploy:\n"
         "    runs-on: ubuntu-latest\n"
+        "    outputs:\n"
+        "      live_url: ${{ steps.resolve_live_url.outputs.live_url }}\n"
+        "      resolved_live_url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
+        "      deployed_url: ${{ steps.resolve_live_url.outputs.deployed_url }}\n"
+        "    environment:\n"
+        f"      name: {normalized_environment_key}\n"
+        "      url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
+        "    env:\n"
+        f"      K8S_NAMESPACE: {normalized_namespace}\n"
+        f"      MBSRN_NAMESPACE_SOURCE: {normalized_namespace_source}\n"
+        f"      MBSRN_TARGET_ENVIRONMENT_KEY: {normalized_environment_key}\n"
+        f"      MBSRN_TARGET_ENVIRONMENT_SOURCE: {normalized_environment_source}\n"
+        f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
         "    steps:\n"
-        "      - name: Placeholder deploy\n"
-        f'        run: echo "Deploy workflow ({normalized_workflow_id}) provisioned in mode {normalized_mode}."\n'
+        "      - name: Checkout repository\n"
+        "        uses: actions/checkout@v4\n"
+        "      - name: Authenticate to GCP\n"
+        "        uses: google-github-actions/auth@v2\n"
+        "        with:\n"
+        "          workload_identity_provider: ${{ secrets.OIDC_WORKLOAD_IDENTITY_PROVIDER }}\n"
+        "          service_account: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}\n"
+        "      - name: Get GKE credentials\n"
+        "        uses: google-github-actions/get-gke-credentials@v2\n"
+        "        with:\n"
+        "          cluster_name: ${{ secrets.KUBERNETES_CLUSTER_NAME }}\n"
+        "          location: ${{ secrets.KUBERNETES_CLUSTER_LOCATION }}\n"
+        "          project_id: ${{ secrets.GCP_PROJECT_ID }}\n"
+        "      - name: Ensure namespace exists\n"
+        "        run: kubectl apply -f k8s/namespace.yaml\n"
+        "      - name: Apply managed manifests\n"
+        "        run: |\n"
+        "          kubectl apply -f k8s/\n"
+        "      - name: Verify rollout\n"
+        "        run: kubectl rollout status deployment/site-web --namespace \"$K8S_NAMESPACE\" --timeout=180s\n"
+        "      - name: Verify service and ingress\n"
+        "        run: |\n"
+        "          kubectl get service site-web --namespace \"$K8S_NAMESPACE\"\n"
+        "          kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"\n"
+        "      - name: Resolve live URL from ingress status\n"
+        "        id: resolve_live_url\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        "          ingress_host=\"\"\n"
+        "          ingress_ip=\"\"\n"
+        "          for _ in $(seq 1 20); do\n"
+        "            ingress_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)\"\n"
+        "            ingress_ip=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)\"\n"
+        "            if [ -n \"$ingress_host\" ] || [ -n \"$ingress_ip\" ]; then\n"
+        "              break\n"
+        "            fi\n"
+        "            sleep 15\n"
+        "          done\n"
+        "          live_url=\"\"\n"
+        "          if [ -n \"$ingress_host\" ]; then\n"
+        "            live_url=\"https://$ingress_host\"\n"
+        "          elif [ -n \"$ingress_ip\" ]; then\n"
+        "            live_url=\"http://$ingress_ip\"\n"
+        "          fi\n"
+        "          if [ -z \"$live_url\" ]; then\n"
+        "            echo \"Unable to resolve live URL from ingress status for namespace $K8S_NAMESPACE.\"\n"
+        "            kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          {\n"
+        "            echo \"live_url=$live_url\"\n"
+        "            echo \"resolved_live_url=$live_url\"\n"
+        "            echo \"deployed_url=$live_url\"\n"
+        "          } >> \"$GITHUB_OUTPUT\"\n"
+        "      - name: Emit managed deployment metadata\n"
+        "        run: |\n"
+        f'          echo "MBSRN managed deploy workflow: {normalized_workflow_id}"\n'
+        f'          echo "Repository: {repo_owner}/{repo_name}"\n'
+        f'          echo "Branch: {branch}"\n'
+        f'          echo "Kubernetes namespace: {normalized_namespace}"\n'
+        f'          echo "Namespace source: {normalized_namespace_source}"\n'
+        f'          echo "Target environment key: {normalized_environment_key}"\n'
+        f'          echo "Target environment source: {normalized_environment_source}"\n'
+        f'          echo "Site identity: {normalized_site_fragment}"\n'
     )
 
 
@@ -2690,6 +2721,32 @@ _WORKFLOW_CONFORMANCE_PLACEHOLDER_MARKERS: tuple[str, ...] = (
     "customize before production rollout",
     "get started with github actions",
 )
+
+
+def _is_managed_placeholder_workflow_content(*, workflow_content: str, workflow_id: str) -> bool:
+    lowered = str(workflow_content or "").lower()
+    if not lowered:
+        return False
+    workflow_id_normalized = (str(workflow_id or "").strip().lower() or "deploy-www-prod.yml")
+    has_template_marker = _MBSRN_MANAGED_TEMPLATE_MARKER_PREFIX in lowered
+    has_placeholder_step = "placeholder deploy" in lowered
+    has_customize_marker = "customize before production rollout" in lowered
+    has_mode_scaffold_marker = "provisioned in mode" in lowered
+    has_not_implemented_marker = "deploy step not yet implemented" in lowered
+    has_workflow_provision_message = (
+        f"deploy workflow ({workflow_id_normalized}) provisioned" in lowered
+        or ("deploy workflow (" in lowered and "provisioned" in lowered)
+    )
+    has_mbsrn_placeholder_marker = "mbsrn managed deploy placeholder" in lowered
+    if has_mbsrn_placeholder_marker:
+        return True
+    if has_template_marker and (has_placeholder_step or has_customize_marker or has_mode_scaffold_marker):
+        return True
+    if has_placeholder_step and has_workflow_provision_message and (has_customize_marker or has_mode_scaffold_marker):
+        return True
+    if has_placeholder_step and has_not_implemented_marker:
+        return True
+    return False
 
 
 def _decode_workflow_file_content(workflow_file_payload: dict[str, object] | None) -> str | None:
